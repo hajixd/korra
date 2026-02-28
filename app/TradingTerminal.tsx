@@ -73,7 +73,7 @@ type MainStatisticsCard = {
   label: string;
   value: ReactNode;
   tone: "up" | "down" | "neutral";
-  span: 1 | 2 | 4;
+  span: 1 | 2 | 4 | 6;
   valueClassName?: string;
   children?: MainStatisticsCard[];
 };
@@ -95,6 +95,7 @@ type Candle = {
 };
 
 const EMPTY_CANDLES: Candle[] = [];
+const STATS_REFRESH_HOLD_MS = 900;
 
 const AI_ZIP_MONO_FONT =
   "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace";
@@ -1838,17 +1839,6 @@ const fetchHistoryApiCandles = async (timeframe: Timeframe, count: number): Prom
   return normalizeMarketCandles(payload.candles || []);
 };
 
-const historyBarsForLookback = (
-  timeframe: Timeframe,
-  lookbackYears: number,
-  maxBars: number
-): number => {
-  const tfMinutes = timeframeMinutes[timeframe] || 15;
-  const lookbackMinutes = lookbackYears * 365 * 24 * 60;
-  const bars = Math.ceil(lookbackMinutes / tfMinutes) + 16;
-  return Math.min(maxBars, Math.max(MIN_SEED_CANDLES, bars));
-};
-
 const fetchRecentOneMinuteCandles = async (
   recentOneMinutePromise?: Promise<Candle[]>
 ): Promise<Candle[]> => {
@@ -1918,13 +1908,7 @@ const fetchBacktestHistoryCandles = async (
   timeframe: Timeframe,
   recentOneMinutePromise?: Promise<Candle[]>
 ): Promise<Candle[]> => {
-  const targetBars = historyBarsForLookback(
-    timeframe,
-    BACKTEST_LOOKBACK_YEARS,
-    BACKTEST_MAX_HISTORY_CANDLES
-  );
-
-  return fetchHybridHistoryCandles(timeframe, targetBars, recentOneMinutePromise);
+  return fetchHybridHistoryCandles(timeframe, BACKTEST_MAX_HISTORY_CANDLES, recentOneMinutePromise);
 };
 
 const XAUUSD_PAIR = "XAU_USD";
@@ -3593,13 +3577,27 @@ const BacktestTradeMiniChart = ({
 const generateTradeBlueprints = (
   model: ModelProfile,
   total = BACKTEST_TARGET_TRADES,
-  nowMs = floorToTimeframe(Date.now(), "1m")
+  seedMs = floorToTimeframe(Date.now(), "1m"),
+  range?: { startMs: number; endMs: number }
 ): TradeBlueprint[] => {
-  const rand = createSeededRng(hashString(`blueprints-${model.id}`));
+  const rand = createSeededRng(hashString(`blueprints-${model.id}-${seedMs}`));
   const blueprints: TradeBlueprint[] = [];
   const usedTimes = new Set<number>();
-  const lookbackMinutes = BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60;
-  const spacingMinutes = Math.max(180, lookbackMinutes / Math.max(1, total));
+  const fallbackEndMs = floorToTimeframe(seedMs, "1m");
+  const fallbackStartMs =
+    fallbackEndMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000;
+  const rawStartMs = range?.startMs ?? fallbackStartMs;
+  const rawEndMs = range?.endMs ?? fallbackEndMs;
+  const endMs = floorToTimeframe(
+    Number.isFinite(rawEndMs) ? rawEndMs : fallbackEndMs,
+    "1m"
+  );
+  const startMs = floorToTimeframe(
+    Number.isFinite(rawStartMs) ? Math.min(rawStartMs, endMs - 60_000) : fallbackStartMs,
+    "1m"
+  );
+  const lookbackMinutes = Math.max(1, Math.floor((endMs - startMs) / 60_000));
+  const spacingMinutes = Math.max(1, Math.floor(lookbackMinutes / Math.max(1, total)));
 
   for (let i = 0; i < total; i += 1) {
     const symbol = futuresAssets[Math.floor(rand() * futuresAssets.length)].symbol;
@@ -3609,13 +3607,25 @@ const generateTradeBlueprints = (
     const riskPct = model.riskMin + rand() * (model.riskMax - model.riskMin);
     const holdMinutes = 35 + Math.floor(rand() * Math.max(720, spacingMinutes * 0.75));
     const baseOffsetMinutes = Math.round((i + 1) * spacingMinutes);
-    const jitterWindow = Math.max(45, Math.floor(spacingMinutes * 0.45));
+    const jitterWindow = Math.max(1, Math.floor(spacingMinutes * 0.45));
     const jitter = Math.floor((rand() - 0.5) * jitterWindow);
-    const exitOffsetMinutes = Math.max(45, baseOffsetMinutes + jitter);
-    const exitMs = floorToTimeframe(nowMs - exitOffsetMinutes * 60_000, "1m");
-    const uniqueExitMs = usedTimes.has(exitMs) ? exitMs - (i + 1) * 60_000 : exitMs;
+    const exitOffsetMinutes = Math.max(1, baseOffsetMinutes + jitter);
+    const exitMs = floorToTimeframe(
+      clamp(endMs - exitOffsetMinutes * 60_000, startMs + 60_000, endMs),
+      "1m"
+    );
+    let uniqueExitMs = exitMs;
+
+    while (usedTimes.has(uniqueExitMs) && uniqueExitMs > startMs + 60_000) {
+      uniqueExitMs -= 60_000;
+    }
+
+    while (usedTimes.has(uniqueExitMs) && uniqueExitMs < endMs) {
+      uniqueExitMs += 60_000;
+    }
+
     usedTimes.add(uniqueExitMs);
-    const entryMs = uniqueExitMs - holdMinutes * 60_000;
+    const entryMs = Math.max(startMs, uniqueExitMs - holdMinutes * 60_000);
     const units = 0.4 + rand() * 3.6;
 
     blueprints.push({
@@ -4038,6 +4048,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   );
   const [propResult, setPropResult] = useState<PropFirmResult | null>(null);
   const [propStats, setPropStats] = useState<PropFirmStats | null>(null);
+  const [backtestRefreshNowMs, setBacktestRefreshNowMs] = useState(() =>
+    floorToTimeframe(Date.now(), "1m")
+  );
+  const [statsRefreshOverlayVisible, setStatsRefreshOverlayVisible] = useState(false);
+  const [statsRefreshProgress, setStatsRefreshProgress] = useState(0);
 
   useEffect(() => {
     setAiModelStates((current) => syncAiModelStates(current, availableAiModelNames));
@@ -4431,6 +4446,34 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return backtestSeriesMap[selectedKey] ?? seriesMap[selectedKey] ?? EMPTY_CANDLES;
   }, [backtestSeriesMap, selectedKey, seriesMap]);
 
+  const backtestBlueprintRange = useMemo(() => {
+    const fallbackEndMs = floorToTimeframe(backtestRefreshNowMs, "1m");
+    const fallbackStartMs =
+      fallbackEndMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000;
+
+    if (selectedBacktestCandles.length < 2) {
+      return {
+        startMs: fallbackStartMs,
+        endMs: fallbackEndMs
+      };
+    }
+
+    const startMs = selectedBacktestCandles[0]?.time ?? fallbackStartMs;
+    const endMs = selectedBacktestCandles[selectedBacktestCandles.length - 1]?.time ?? fallbackEndMs;
+
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      return {
+        startMs: fallbackStartMs,
+        endMs: fallbackEndMs
+      };
+    }
+
+    return {
+      startMs,
+      endMs
+    };
+  }, [backtestRefreshNowMs, selectedBacktestCandles]);
+
   const deepChartCandles = backtestSeriesMap[selectedKey] ?? null;
   const usesDeepChartHistory = (deepChartCandles?.length ?? 0) > 0;
   const selectedChartCandles = useMemo(() => {
@@ -4486,7 +4529,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return [];
     }
 
-    const nowMs = floorToTimeframe(referenceNowMs, "1m");
     const perModelBase = Math.floor(BACKTEST_TARGET_TRADES / backtestModelProfiles.length);
     const remainder = BACKTEST_TARGET_TRADES % backtestModelProfiles.length;
     const blueprints: TradeBlueprint[] = [];
@@ -4498,13 +4540,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         return;
       }
 
-      blueprints.push(...generateTradeBlueprints(model, count, nowMs));
+      blueprints.push(
+        ...generateTradeBlueprints(model, count, backtestRefreshNowMs, backtestBlueprintRange)
+      );
     });
 
     return blueprints
       .sort((left, right) => right.exitMs - left.exitMs)
       .slice(0, BACKTEST_TARGET_TRADES);
-  }, [backtestModelProfiles, referenceNowMs]);
+  }, [backtestBlueprintRange, backtestModelProfiles, backtestRefreshNowMs]);
 
   const activeTrade = useMemo<ActiveTrade | null>(() => {
     if (selectedCandles.length < 70) {
@@ -5394,6 +5438,128 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [selectedTimeframe]);
+
+  useEffect(() => {
+    let frameId = 0;
+    let resetTimeout = 0;
+    let holdStart = 0;
+    let holdActive = false;
+    let holdCompleted = false;
+
+    const stopHold = (resetState = true) => {
+      holdActive = false;
+
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+        frameId = 0;
+      }
+
+      if (resetTimeout) {
+        window.clearTimeout(resetTimeout);
+        resetTimeout = 0;
+      }
+
+      if (resetState) {
+        setStatsRefreshOverlayVisible(false);
+        setStatsRefreshProgress(0);
+      }
+    };
+
+    const completeHold = () => {
+      if (holdCompleted) {
+        return;
+      }
+
+      holdActive = false;
+      holdCompleted = true;
+
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+        frameId = 0;
+      }
+
+      setStatsRefreshProgress(100);
+      setBacktestRefreshNowMs(floorToTimeframe(Date.now(), "1m"));
+      setPropResult(null);
+      setPropStats(null);
+
+      resetTimeout = window.setTimeout(() => {
+        setStatsRefreshOverlayVisible(false);
+        setStatsRefreshProgress(0);
+        resetTimeout = 0;
+      }, 220);
+    };
+
+    const tick = (timestamp: number) => {
+      if (!holdActive) {
+        return;
+      }
+
+      const nextProgress = clamp(((timestamp - holdStart) / STATS_REFRESH_HOLD_MS) * 100, 0, 100);
+      setStatsRefreshProgress(nextProgress);
+
+      if (nextProgress >= 100) {
+        completeHold();
+        return;
+      }
+
+      frameId = window.requestAnimationFrame(tick);
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Control" || event.repeat) {
+        return;
+      }
+
+      if (
+        selectedSurfaceTabRef.current !== "backtest" ||
+        holdActive ||
+        holdCompleted
+      ) {
+        return;
+      }
+
+      if (resetTimeout) {
+        window.clearTimeout(resetTimeout);
+        resetTimeout = 0;
+      }
+
+      holdActive = true;
+      holdStart = performance.now();
+      setStatsRefreshOverlayVisible(true);
+      setStatsRefreshProgress(0);
+      frameId = window.requestAnimationFrame(tick);
+    };
+
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key !== "Control") {
+        return;
+      }
+
+      if (holdCompleted) {
+        holdCompleted = false;
+        return;
+      }
+
+      stopHold();
+    };
+
+    const onBlur = () => {
+      holdCompleted = false;
+      stopHold();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+      stopHold(false);
+    };
+  }, []);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -6402,19 +6568,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         label: "Total PnL",
         value: formatSignedUsd(mainStatsSummary.totalPnl),
         tone: totalPnlTone,
-        span: 1
+        span: 6
       },
       {
         label: "Total Trades",
         value: mainStatsSummary.tradeCount.toLocaleString("en-US"),
         tone: "neutral",
-        span: 1
+        span: 2
       },
       {
         label: "Win Rate",
         value: `${mainStatsSummary.winRate.toFixed(2)}%`,
         tone: mainStatsSummary.winRate >= 55 ? "up" : mainStatsSummary.winRate >= 45 ? "neutral" : "down",
-        span: 1
+        span: 2
       },
       {
         label: "Profit Factor",
@@ -6425,19 +6591,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             : mainStatsSummary.profitFactor >= 1
               ? "neutral"
               : "down",
-        span: 1
+        span: 2
       },
       {
         label: "Expected Value",
         value: formatSignedUsd(mainStatsSummary.avgPnl),
         tone: mainStatsSummary.avgPnl >= 0 ? "up" : "down",
-        span: 1
+        span: 2
       },
       {
         label: "Risk to Reward",
         value: mainStatsSummary.avgR.toFixed(2),
         tone: mainStatsSummary.avgR >= 1 ? "up" : "down",
-        span: 1
+        span: 2
       },
       {
         label: "Avg PnL / Month",
@@ -6474,7 +6640,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         label: "Max Drawdown",
         value: formatSignedUsd(mainStatsSummary.maxDrawdown),
         tone: mainStatsSummary.maxDrawdown >= 0 ? "neutral" : "down",
-        span: 1
+        span: 2
       },
       {
         label: "Trades / Month",
@@ -9162,7 +9328,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         <h3>{mainStatsTitle}</h3>
                         <p>
                           Core AI.zip performance metrics for the active Main Settings trade slice
-                          on {backtestModelSelectionSummary} {selectedTimeframe}.
+                          on {backtestModelSelectionSummary} {selectedTimeframe}. Hold Control to
+                          sync this snapshot to the latest settings.
                         </p>
                       </div>
 
@@ -9228,7 +9395,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             className={`backtest-stat-card ${
                               item.tone === "neutral" ? "tone-neutral" : `tone-${item.tone}`
                             } ${
-                              item.span === 4 ? "stat-span-4" : item.span === 2 ? "stat-span-2" : ""
+                              item.span === 6
+                                ? "stat-span-6"
+                                : item.span === 4
+                                  ? "stat-span-4"
+                                  : item.span === 2
+                                    ? "stat-span-2"
+                                    : ""
                             }`}
                           >
                             <span>{item.label}</span>
@@ -12367,6 +12540,28 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           </div>
         </section>
       </section>
+
+      {statsRefreshOverlayVisible ? (
+        <div className="stats-refresh-overlay" aria-live="polite" aria-atomic="true">
+          <div className="stats-refresh-card">
+            <span className="stats-refresh-kicker">
+              {statsRefreshProgress >= 100 ? "Refreshing" : "Hold Control"}
+            </span>
+            <strong className="stats-refresh-title">
+              {statsRefreshProgress >= 100
+                ? "Syncing Main Statistics to the latest settings"
+                : "Hold to refresh the current stats snapshot"}
+            </strong>
+            <div className="stats-refresh-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(statsRefreshProgress)}>
+              <div
+                className="stats-refresh-fill"
+                style={{ width: `${statsRefreshProgress}%` }}
+              />
+            </div>
+            <span className="stats-refresh-meta">{Math.round(statsRefreshProgress)}%</span>
+          </div>
+        </div>
+      ) : null}
 
       <footer className="statusbar">
         <span>{selectedAsset.symbol}</span>
