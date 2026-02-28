@@ -15,6 +15,7 @@ import {
   type Time,
   type UTCTimestamp
 } from "lightweight-charts";
+import { ClusterMap as AIZipClusterMap, ClusterMap3D as AIZipClusterMap3D } from "./AIZipClusterModule";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type SurfaceTab = "chart" | "backtest";
@@ -742,7 +743,7 @@ const BACKTEST_CLUSTER_LEGEND_DEFAULTS: Record<BacktestClusterLegendKey, boolean
   chop: true
 };
 
-const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
+const chartHistoryCountByTimeframe: Record<Timeframe, number> = {
   "1m": 25000,
   "5m": 12000,
   "15m": 8000,
@@ -751,6 +752,10 @@ const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
   "1D": 700,
   "1W": 180
 };
+
+const BACKTEST_LOOKBACK_YEARS = 10;
+const BACKTEST_MAX_HISTORY_CANDLES = 400_000;
+const BACKTEST_TARGET_TRADES = 1200;
 
 const symbolTimeframeKey = (symbol: string, timeframe: Timeframe) => {
   return `${symbol}__${timeframe}`;
@@ -913,7 +918,7 @@ const mergeLivePriceIntoCandles = (
     });
   }
 
-  const maxBars = candleHistoryCountByTimeframe[timeframe];
+  const maxBars = chartHistoryCountByTimeframe[timeframe];
 
   return next.length > maxBars ? next.slice(next.length - maxBars) : next;
 };
@@ -948,10 +953,30 @@ const fetchMarketCandles = async (timeframe: Timeframe, limit: number): Promise<
   const params = new URLSearchParams({
     pair: XAUUSD_PAIR,
     timeframe: marketTimeframeMap[timeframe],
-    limit: String(Math.min(limit, MAX_REMOTE_HISTORY_CANDLES))
+    limit: String(Math.min(limit, MARKET_MAX_HISTORY_CANDLES))
   });
 
   const response = await fetch(`/api/market/candles?${params.toString()}`, {
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = await response.json();
+
+  return normalizeMarketCandles(payload.candles || []);
+};
+
+const fetchClickhouseCandles = async (timeframe: Timeframe, count: number): Promise<Candle[]> => {
+  const params = new URLSearchParams({
+    pair: XAUUSD_PAIR,
+    timeframe: marketTimeframeMap[timeframe],
+    count: String(count)
+  });
+
+  const response = await fetch(`/api/clickhouse/candles?${params.toString()}`, {
     cache: "no-store"
   });
 
@@ -984,11 +1009,35 @@ const fetchHistoryApiCandles = async (timeframe: Timeframe, count: number): Prom
   return normalizeMarketCandles(payload.candles || []);
 };
 
+const historyBarsForLookback = (
+  timeframe: Timeframe,
+  lookbackYears: number,
+  maxBars: number
+): number => {
+  const tfMinutes = timeframeMinutes[timeframe] || 15;
+  const lookbackMinutes = lookbackYears * 365 * 24 * 60;
+  const bars = Math.ceil(lookbackMinutes / tfMinutes) + 16;
+  return Math.min(maxBars, Math.max(MIN_SEED_CANDLES, bars));
+};
+
 const fetchHistoryCandles = async (timeframe: Timeframe): Promise<Candle[]> => {
-  const targetBars = Math.min(candleHistoryCountByTimeframe[timeframe], MAX_REMOTE_HISTORY_CANDLES);
+  const targetBars = chartHistoryCountByTimeframe[timeframe];
 
   try {
-    const historyCandles = await fetchHistoryApiCandles(timeframe, targetBars);
+    const clickhouseCandles = await fetchClickhouseCandles(timeframe, targetBars);
+
+    if (clickhouseCandles.length >= MIN_SEED_CANDLES) {
+      return clickhouseCandles.slice(-targetBars);
+    }
+  } catch {
+    // Fall through to secondary history source.
+  }
+
+  try {
+    const historyCandles = await fetchHistoryApiCandles(
+      timeframe,
+      Math.min(targetBars, MARKET_MAX_HISTORY_CANDLES)
+    );
 
     if (historyCandles.length >= MIN_SEED_CANDLES) {
       return historyCandles.slice(-targetBars);
@@ -1000,9 +1049,42 @@ const fetchHistoryCandles = async (timeframe: Timeframe): Promise<Candle[]> => {
   return [];
 };
 
+const fetchBacktestHistoryCandles = async (timeframe: Timeframe): Promise<Candle[]> => {
+  const targetBars = historyBarsForLookback(
+    timeframe,
+    BACKTEST_LOOKBACK_YEARS,
+    BACKTEST_MAX_HISTORY_CANDLES
+  );
+
+  try {
+    const clickhouseCandles = await fetchClickhouseCandles(timeframe, targetBars);
+
+    if (clickhouseCandles.length >= MIN_SEED_CANDLES) {
+      return clickhouseCandles.slice(-targetBars);
+    }
+  } catch {
+    // Fall through to secondary history source.
+  }
+
+  try {
+    const historyCandles = await fetchHistoryApiCandles(
+      timeframe,
+      Math.min(targetBars, MARKET_MAX_HISTORY_CANDLES)
+    );
+
+    if (historyCandles.length >= MIN_SEED_CANDLES) {
+      return historyCandles.slice(-targetBars);
+    }
+  } catch {
+    // Leave backtest to use chart history when deep history is unavailable.
+  }
+
+  return [];
+};
+
 const XAUUSD_PAIR = "XAU_USD";
 const MIN_SEED_CANDLES = 40;
-const MAX_REMOTE_HISTORY_CANDLES = 25_000;
+const MARKET_MAX_HISTORY_CANDLES = 25_000;
 const LIVE_MARKET_SYNC_LIMIT = 160;
 const MARKET_API_KEY =
   process.env.NEXT_PUBLIC_PRICE_STREAM_API_KEY ||
@@ -1933,35 +2015,112 @@ const buildDimensionFeatureBuckets = (
 
 const BacktestTradeMiniChart = ({
   trade,
-  candles
+  candles,
+  minutesPerBar,
+  isOpen
 }: {
   trade: HistoryItem;
   candles: Candle[];
+  minutesPerBar: number;
+  isOpen: boolean;
 }) => {
   const entryIndex = findCandleIndexAtOrBefore(candles, Number(trade.entryTime) * 1000);
   const exitIndex = findCandleIndexAtOrBefore(candles, Number(trade.exitTime) * 1000);
+  const hasValidIndices = entryIndex >= 0 && exitIndex >= entryIndex;
+  const startIndex = hasValidIndices ? Math.max(0, entryIndex - 1) : 0;
+  const endIndex = hasValidIndices ? Math.min(candles.length - 1, Math.max(entryIndex, exitIndex)) : -1;
+  const safeMinutesPerBar = Math.max(1, Number.isFinite(minutesPerBar) ? minutesPerBar : 1);
+  const clipIdSeed = trade.id.replace(/[^a-z0-9_-]/gi, "") || "trade";
+  const clipId = useMemo(() => `backtest-mini-clip-${clipIdSeed}`, [clipIdSeed]);
+  const [reveal, setReveal] = useState(isOpen ? 1 : 0);
 
-  if (entryIndex < 0 || exitIndex < entryIndex) {
+  useEffect(() => {
+    let raf = 0;
+
+    if (!isOpen) {
+      setReveal(0);
+      return () => cancelAnimationFrame(raf);
+    }
+
+    const durationMs = 1600;
+    const startedAt = performance.now();
+
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / durationMs);
+      setReveal(progress);
+
+      if (progress < 1) {
+        raf = requestAnimationFrame(tick);
+      }
+    };
+
+    raf = requestAnimationFrame(tick);
+
+    return () => cancelAnimationFrame(raf);
+  }, [isOpen, trade.id]);
+
+  const data = useMemo(() => {
+    if (!hasValidIndices || candles.length === 0) {
+      return [];
+    }
+
+    const rows: Array<{ bar: number; price: number; high: number; low: number; time: number }> = [];
+    const preCandle = candles[startIndex];
+    const prePrice = startIndex < entryIndex ? preCandle?.close ?? trade.entryPrice : trade.entryPrice;
+    const preTime = preCandle?.time ?? candles[entryIndex]?.time ?? Number(trade.entryTime) * 1000;
+    rows.push({
+      bar: -1,
+      price: prePrice,
+      high: prePrice,
+      low: prePrice,
+      time: preTime
+    });
+
+    let previousPrice = prePrice;
+
+    for (let index = entryIndex; index <= endIndex; index += 1) {
+      const candle = candles[index];
+      const close = candle?.close ?? previousPrice;
+      const high = candle?.high ?? close;
+      const low = candle?.low ?? close;
+
+      rows.push({
+        bar: (index - entryIndex) * safeMinutesPerBar,
+        price: close,
+        high,
+        low,
+        time: candle?.time ?? preTime
+      });
+
+      previousPrice = close;
+    }
+
+    if (rows.length > 0) {
+      const last = rows[rows.length - 1]!;
+      last.price = trade.outcomePrice;
+      last.high = Math.max(last.high, trade.outcomePrice);
+      last.low = Math.min(last.low, trade.outcomePrice);
+    }
+
+    return rows;
+  }, [
+    candles,
+    endIndex,
+    entryIndex,
+    hasValidIndices,
+    safeMinutesPerBar,
+    startIndex,
+    trade.entryPrice,
+    trade.entryTime,
+    trade.outcomePrice
+  ]);
+
+  if (data.length < 2) {
     return <div className="backtest-trade-mini-empty">Price movement unavailable.</div>;
   }
 
-  const startIndex = Math.max(0, entryIndex - 4);
-  const endIndex = Math.min(candles.length - 1, Math.max(entryIndex + 1, exitIndex + 4));
-  const segment = candles.slice(startIndex, endIndex + 1);
-
-  if (segment.length < 2) {
-    return <div className="backtest-trade-mini-empty">Price movement unavailable.</div>;
-  }
-
-  const width = 248;
-  const height = 110;
-  const padX = 8;
-  const padY = 8;
-  const innerWidth = width - padX * 2;
-  const innerHeight = height - padY * 2;
-  const values = segment.map((candle) => candle.close);
   const domain = [
-    ...segment.flatMap((candle) => [candle.high, candle.low]),
+    ...data.flatMap((point) => [point.high, point.low]),
     trade.entryPrice,
     trade.targetPrice,
     trade.stopPrice,
@@ -1969,36 +2128,78 @@ const BacktestTradeMiniChart = ({
   ];
   const min = Math.min(...domain);
   const max = Math.max(...domain);
-  const range = Math.max(0.000001, max - min);
-  const stepCount = Math.max(1, segment.length - 1);
+  const span = Math.max(0.000001, max - min);
+  const pad = Math.max(span * 0.12, Math.abs(trade.entryPrice) * 0.002, 1);
+  const minY = min - pad;
+  const maxY = max + pad;
+
+  const width = 760;
+  const height = 260;
+  const padX = 22;
+  const padY = 16;
+  const minBar = -1;
+  const maxBar = Math.max(0, data[data.length - 1]?.bar ?? 0);
+  const barSpan = Math.max(1, maxBar - minBar);
+  const toneByDelta = (delta: number): "up" | "down" | "flat" => {
+    if (delta > 0) {
+      return "up";
+    }
+
+    if (delta < 0) {
+      return "down";
+    }
+
+    return "flat";
+  };
+  const colorByTone = (tone: "up" | "down" | "flat"): string => {
+    if (tone === "up") {
+      return "#34d399";
+    }
+
+    if (tone === "down") {
+      return "#f87171";
+    }
+
+    return "#f8fafc";
+  };
+  const normalizeX = (bar: number): number => {
+    return padX + ((bar - minBar) / barSpan) * (width - padX * 2);
+  };
   const normalizeY = (value: number): number => {
-    return padY + innerHeight - ((value - min) / range) * innerHeight;
+    return padY + ((maxY - value) / Math.max(0.000001, maxY - minY)) * (height - padY * 2);
   };
-  const normalizeX = (absoluteIndex: number): number => {
-    return padX + ((absoluteIndex - startIndex) / Math.max(1, endIndex - startIndex)) * innerWidth;
-  };
-  const path = values
-    .map((value, index) => {
-      const x = padX + (index / stepCount) * innerWidth;
-      const y = normalizeY(value);
-      return `${index === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
-    })
-    .join(" ");
-  const entryX = normalizeX(entryIndex);
-  const exitX = normalizeX(exitIndex);
+
+  const segments = data.slice(1).map((point, index) => {
+    const previous = data[index]!;
+    const tone = toneByDelta(point.price - previous.price);
+
+    return {
+      x1: normalizeX(previous.bar),
+      y1: normalizeY(previous.price),
+      x2: normalizeX(point.bar),
+      y2: normalizeY(point.price),
+      tone
+    };
+  });
+
+  const entryPoint = data.find((point) => point.bar === 0) ?? data[0]!;
+  const exitPoint = data[data.length - 1]!;
+  const entryX = normalizeX(entryPoint.bar);
+  const exitX = normalizeX(exitPoint.bar);
   const entryY = normalizeY(trade.entryPrice);
   const exitY = normalizeY(trade.outcomePrice);
   const targetY = normalizeY(trade.targetPrice);
   const stopY = normalizeY(trade.stopPrice);
-  const lineTone = trade.pnlUsd >= 0 ? "#34d399" : "#fb7185";
+  const revealWidth = width * reveal;
 
   return (
     <div className="backtest-trade-mini-chart">
-      <div className="backtest-trade-mini-head">
-        <span>Entry {formatPrice(trade.entryPrice)}</span>
-        <span className={trade.pnlUsd >= 0 ? "up" : "down"}>{formatSignedUsd(trade.pnlUsd)}</span>
-      </div>
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Trade price movement">
+        <defs>
+          <clipPath id={clipId}>
+            <rect x="0" y="0" width={revealWidth} height={height} />
+          </clipPath>
+        </defs>
         <rect
           x="0.5"
           y="0.5"
@@ -2008,40 +2209,42 @@ const BacktestTradeMiniChart = ({
           fill="rgba(0,0,0,0.88)"
           stroke="rgba(255,255,255,0.08)"
         />
-        <line
-          x1={padX}
-          x2={width - padX}
-          y1={targetY}
-          y2={targetY}
-          stroke="rgba(52,211,153,0.55)"
-          strokeDasharray="4 4"
-        />
+        <line x1={padX} x2={width - padX} y1={targetY} y2={targetY} stroke="#34d399" strokeDasharray="4 6" />
         <line
           x1={padX}
           x2={width - padX}
           y1={entryY}
           y2={entryY}
-          stroke="rgba(255,255,255,0.2)"
-          strokeDasharray="3 5"
+          stroke="rgba(163,163,163,0.9)"
+          strokeDasharray="4 6"
         />
-        <line
-          x1={padX}
-          x2={width - padX}
-          y1={stopY}
-          y2={stopY}
-          stroke="rgba(248,113,113,0.55)"
-          strokeDasharray="4 4"
-        />
-        <path
-          d={path}
-          fill="none"
-          stroke={lineTone}
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <circle cx={entryX} cy={entryY} r="3.5" fill="#f8fafc" />
-        <circle cx={exitX} cy={exitY} r="3.5" fill={lineTone} />
+        <line x1={padX} x2={width - padX} y1={stopY} y2={stopY} stroke="#f87171" strokeDasharray="4 6" />
+        <g clipPath={`url(#${clipId})`}>
+          {segments.map((segment, index) => (
+            <line
+              key={`${trade.id}-segment-${index}`}
+              x1={segment.x1}
+              y1={segment.y1}
+              x2={segment.x2}
+              y2={segment.y2}
+              stroke={colorByTone(segment.tone)}
+              strokeWidth="3"
+              strokeLinecap="round"
+            />
+          ))}
+          <circle cx={entryX} cy={entryY} r="4" fill="#f8fafc" />
+          <circle cx={exitX} cy={exitY} r="4" fill={trade.pnlUsd >= 0 ? "#34d399" : "#f87171"} />
+        </g>
+        <text
+          x={width - padX}
+          y={height - 9}
+          fill="rgba(156,163,175,0.92)"
+          fontSize="11"
+          textAnchor="end"
+          fontFamily={AI_ZIP_MONO_FONT}
+        >
+          Minutes since entry
+        </text>
       </svg>
     </div>
   );
@@ -2049,12 +2252,14 @@ const BacktestTradeMiniChart = ({
 
 const generateTradeBlueprints = (
   model: ModelProfile,
-  total = 64,
+  total = BACKTEST_TARGET_TRADES,
   nowMs = floorToTimeframe(Date.now(), "1m")
 ): TradeBlueprint[] => {
   const rand = createSeededRng(hashString(`blueprints-${model.id}`));
   const blueprints: TradeBlueprint[] = [];
   const usedTimes = new Set<number>();
+  const lookbackMinutes = BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60;
+  const spacingMinutes = Math.max(180, lookbackMinutes / Math.max(1, total));
 
   for (let i = 0; i < total; i += 1) {
     const symbol = futuresAssets[Math.floor(rand() * futuresAssets.length)].symbol;
@@ -2062,16 +2267,19 @@ const generateTradeBlueprints = (
     const result: TradeResult = rand() <= model.winRate ? "Win" : "Loss";
     const rr = model.rrMin + rand() * (model.rrMax - model.rrMin);
     const riskPct = model.riskMin + rand() * (model.riskMax - model.riskMin);
-    const holdMinutes = 35 + Math.floor(rand() * 780);
-    const exitOffsetMinutes = 45 + i * 63 + Math.floor(rand() * 28);
-    const exitMs = nowMs - exitOffsetMinutes * 60_000;
-    const uniqueExitMs = exitMs - (usedTimes.has(exitMs) ? (i + 1) * 1_000 : 0);
+    const holdMinutes = 35 + Math.floor(rand() * Math.max(720, spacingMinutes * 0.75));
+    const baseOffsetMinutes = Math.round((i + 1) * spacingMinutes);
+    const jitterWindow = Math.max(45, Math.floor(spacingMinutes * 0.45));
+    const jitter = Math.floor((rand() - 0.5) * jitterWindow);
+    const exitOffsetMinutes = Math.max(45, baseOffsetMinutes + jitter);
+    const exitMs = floorToTimeframe(nowMs - exitOffsetMinutes * 60_000, "1m");
+    const uniqueExitMs = usedTimes.has(exitMs) ? exitMs - (i + 1) * 60_000 : exitMs;
     usedTimes.add(uniqueExitMs);
     const entryMs = uniqueExitMs - holdMinutes * 60_000;
     const units = 0.4 + rand() * 3.6;
 
     blueprints.push({
-      id: `${model.id}-t${String(i + 1).padStart(2, "0")}`,
+      id: `${model.id}-t${String(i + 1).padStart(4, "0")}`,
       modelId: model.id,
       symbol,
       side,
@@ -2347,6 +2555,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [seenNotificationIds, setSeenNotificationIds] = useState<string[]>([]);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>({});
+  const [backtestSeriesMap, setBacktestSeriesMap] = useState<Record<string, Candle[]>>({});
   const [backtestHistoryQuery, setBacktestHistoryQuery] = useState("");
   const [backtestHistoryCollapsed, setBacktestHistoryCollapsed] = useState(false);
   const [hoveredBacktestHistoryId, setHoveredBacktestHistoryId] = useState<string | null>(null);
@@ -2369,6 +2578,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [clusterLegendToggles, setClusterLegendToggles] = useState(() => ({
     ...BACKTEST_CLUSTER_LEGEND_DEFAULTS
   }));
+  const [aiZipClusterMapView, setAiZipClusterMapView] = useState<"2d" | "3d">("2d");
+  const [aiZipClusterResetKey, setAiZipClusterResetKey] = useState(0);
+  const [aiZipClusterTimelineIdx, setAiZipClusterTimelineIdx] = useState(0);
   const [enabledBacktestWeekdays, setEnabledBacktestWeekdays] = useState<string[]>([
     ...backtestWeekdayLabels
   ]);
@@ -2514,9 +2726,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     let stream: EventSource | null = null;
     let liveSyncInterval = 0;
     const key = selectedKey;
-    const historyLimit = candleHistoryCountByTimeframe[selectedTimeframe];
+    const historyLimit = chartHistoryCountByTimeframe[selectedTimeframe];
 
     const connect = async () => {
+      void (async () => {
+        try {
+          const deepHistoryCandles = await fetchBacktestHistoryCandles(selectedTimeframe);
+
+          if (!cancelled && deepHistoryCandles.length >= MIN_SEED_CANDLES) {
+            setBacktestSeriesMap((prev) => ({
+              ...prev,
+              [key]: deepHistoryCandles
+            }));
+          }
+        } catch {
+          // Backtest falls back to chart history if deep history cannot load.
+        }
+      })();
+
       try {
         const historicalCandles = await fetchHistoryCandles(selectedTimeframe);
 
@@ -2612,6 +2839,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return seriesMap[selectedKey] ?? EMPTY_CANDLES;
   }, [selectedKey, seriesMap]);
 
+  const selectedBacktestCandles = useMemo(() => {
+    return backtestSeriesMap[selectedKey] ?? seriesMap[selectedKey] ?? EMPTY_CANDLES;
+  }, [backtestSeriesMap, selectedKey, seriesMap]);
+
   const candleByUnix = useMemo(() => {
     const map = new Map<number, Candle>();
 
@@ -2659,7 +2890,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const tradeBlueprints = useMemo(() => {
     return generateTradeBlueprints(
       selectedModel,
-      64,
+      BACKTEST_TARGET_TRADES,
       floorToTimeframe(referenceNowMs, "1m")
     );
   }, [referenceNowMs, selectedModel]);
@@ -2773,7 +3004,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     for (const blueprint of tradeBlueprints) {
       const key = symbolTimeframeKey(blueprint.symbol, selectedTimeframe);
-      const list = seriesMap[key] ?? [];
+      const list = backtestSeriesMap[key] ?? seriesMap[key] ?? [];
 
       if (list.length < 16) {
         continue;
@@ -2870,8 +3101,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       });
     }
 
-    return rows.sort((a, b) => Number(b.exitTime) - Number(a.exitTime)).slice(0, 60);
-  }, [selectedModel.name, selectedTimeframe, seriesMap, tradeBlueprints]);
+    return rows
+      .sort((a, b) => Number(b.exitTime) - Number(a.exitTime))
+      .slice(0, BACKTEST_TARGET_TRADES);
+  }, [backtestSeriesMap, selectedModel.name, selectedTimeframe, seriesMap, tradeBlueprints]);
 
   const selectedHistoryTrade = useMemo(() => {
     if (!selectedHistoryId) {
@@ -3900,10 +4133,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [backtestTimeFilteredTrades, statsDateEnd, statsDateStart]);
 
   const backtestRange = useMemo(() => {
-    if (selectedCandles.length > 0) {
+    if (selectedBacktestCandles.length > 0) {
       return {
-        startMs: selectedCandles[0].time,
-        endMs: selectedCandles[selectedCandles.length - 1].time
+        startMs: selectedBacktestCandles[0].time,
+        endMs: selectedBacktestCandles[selectedBacktestCandles.length - 1].time
       };
     }
 
@@ -3926,7 +4159,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       startMs: Number.isFinite(startMs) ? startMs : null,
       endMs: Number.isFinite(endMs) ? endMs : null
     };
-  }, [backtestSourceTrades, selectedCandles]);
+  }, [backtestSourceTrades, selectedBacktestCandles]);
 
   const backtestSummary = useMemo(() => {
     return summarizeBacktestTrades(backtestTrades);
@@ -4554,6 +4787,61 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
   }, [backtestHistoryQuery, backtestTrades, selectedModel.name]);
 
+  const aiZipClusterCandles = useMemo(() => {
+    return selectedCandles.map((candle) => ({
+      ...candle,
+      time: Number(candle.time)
+    }));
+  }, [selectedCandles]);
+
+  const aiZipClusterTrades = useMemo(() => {
+    const maxIndex = Math.max(0, selectedCandles.length - 1);
+
+    return backtestTrades.map((trade, index) => {
+      const fallbackIndex =
+        maxIndex > 0
+          ? Math.round((index / Math.max(1, backtestTrades.length - 1)) * maxIndex)
+          : 0;
+      const entryIndex = clamp(candleIndexByUnix.get(Number(trade.entryTime)) ?? fallbackIndex, 0, maxIndex);
+      const exitIndex = clamp(
+        candleIndexByUnix.get(Number(trade.exitTime)) ??
+          Math.min(maxIndex, entryIndex + Math.max(1, Math.floor((Number(trade.exitTime) - Number(trade.entryTime)) / 60))),
+        0,
+        maxIndex
+      );
+
+      return {
+        id: trade.id,
+        uid: trade.id,
+        kind: "trade",
+        dir: trade.side === "Long" ? 1 : -1,
+        direction: trade.side === "Long" ? 1 : -1,
+        result: trade.result === "Win" ? "TP" : "SL",
+        pnl: trade.pnlUsd,
+        unrealizedPnl: null,
+        isOpen: false,
+        win: trade.result === "Win",
+        entryTime: Number(trade.entryTime),
+        exitTime: Number(trade.exitTime),
+        signalIndex: entryIndex,
+        entryIndex,
+        exitIndex,
+        entryModel: selectedModel.name,
+        chunkType: selectedModel.name,
+        model: selectedModel.name,
+        exitReason: getBacktestExitLabel(trade),
+        entryPrice: trade.entryPrice,
+        exitPrice: trade.outcomePrice,
+        margin: getTradeConfidenceScore(trade),
+        side: trade.side
+      };
+    });
+  }, [backtestTrades, candleIndexByUnix, selectedCandles.length, selectedModel.name]);
+
+  useEffect(() => {
+    setAiZipClusterTimelineIdx(Math.max(0, aiZipClusterCandles.length - 1));
+  }, [aiZipClusterCandles.length]);
+
   const backtestTemporalStats = useMemo(() => {
     const weekdayRows = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label) => ({
       label,
@@ -5150,7 +5438,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const outcomes: number[] = [];
 
     for (const trade of evaluationTrades) {
-      const candles = seriesMap[symbolTimeframeKey(trade.symbol, selectedTimeframe)] ?? EMPTY_CANDLES;
+      const candles =
+        backtestSeriesMap[symbolTimeframeKey(trade.symbol, selectedTimeframe)] ??
+        seriesMap[symbolTimeframeKey(trade.symbol, selectedTimeframe)] ??
+        EMPTY_CANDLES;
 
       if (candles.length === 0) {
         continue;
@@ -5323,6 +5614,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [
     antiCheatEnabled,
+    backtestSeriesMap,
     backtestTrades,
     chunkBars,
     compressionMethod,
@@ -6877,87 +7169,151 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ) : null}
 
               {selectedBacktestTab === "mainSettings" ? (
-                <div className="backtest-grid two-up">
-                  <div className="backtest-card">
+                <div className="backtest-grid main-settings-layout">
+                  <div className="backtest-card main-settings-overview span-2">
                     <div className="backtest-card-head">
                       <div>
-                        <h3>Settings</h3>
-                        <p>AI.zip-style controls copied into the main settings tab.</p>
+                        <h3>Main Settings</h3>
+                        <p>
+                          AI.zip controls are grouped into a cleaner flow so you can tune method, risk,
+                          and validation with less scanning.
+                        </p>
                       </div>
                     </div>
 
-                    <div className="ai-zip-section">
-                      <div className="ai-zip-section-title">AI</div>
+                    <div className="main-settings-kpi-grid">
+                      <div className="main-settings-kpi-card">
+                        <span>AI Method</span>
+                        <strong>{aiMode === "off" ? "OFF" : aiMode.toUpperCase()}</strong>
+                      </div>
+                      <div className="main-settings-kpi-card">
+                        <span>Confidence Gate</span>
+                        <strong>{confidenceThreshold}%</strong>
+                      </div>
+                      <div className="main-settings-kpi-card">
+                        <span>Avg Confidence</span>
+                        <strong>{backtestSummary.averageConfidence.toFixed(1)}%</strong>
+                      </div>
+                      <div className="main-settings-kpi-card">
+                        <span>Visible Trades</span>
+                        <strong>{backtestTrades.length}</strong>
+                      </div>
+                      <div className="main-settings-kpi-card">
+                        <span>Anti-Cheat</span>
+                        <strong>{antiCheatEnabled ? "ON" : "OFF"}</strong>
+                      </div>
+                      <div className="main-settings-kpi-card">
+                        <span>Libraries</span>
+                        <strong>{staticLibrariesClusters ? "ON" : "OFF"}</strong>
+                      </div>
+                    </div>
 
-                      <button
-                        type="button"
-                        className={`ai-zip-button feature ${aiMode !== "off" ? "active" : ""}`}
-                        onClick={() => {
-                          setAiMode((current) => {
-                            const next =
-                              current === "off" ? "knn" : current === "knn" ? "hdbscan" : "off";
+                    <div className="main-settings-core-grid">
+                      <div className="ai-zip-section main-settings-panel">
+                        <div className="main-settings-panel-title">Core AI Controls</div>
 
-                            if (next === "off") {
-                              setAiModelEnabled(false);
-                              setAiFilterEnabled(false);
-                            } else if (!aiModelEnabled && !aiFilterEnabled) {
-                              setAiFilterEnabled(true);
-                            }
+                        <button
+                          type="button"
+                          className={`ai-zip-button feature ${aiMode !== "off" ? "active" : ""}`}
+                          onClick={() => {
+                            setAiMode((current) => {
+                              const next =
+                                current === "off" ? "knn" : current === "knn" ? "hdbscan" : "off";
 
-                            return next;
-                          });
-                        }}
-                      >
-                        Artificial Intelligence - {aiMode === "off" ? "OFF" : aiMode.toUpperCase()}
-                      </button>
+                              if (next === "off") {
+                                setAiModelEnabled(false);
+                                setAiFilterEnabled(false);
+                              } else if (!aiModelEnabled && !aiFilterEnabled) {
+                                setAiFilterEnabled(true);
+                              }
 
-                      <button
-                        type="button"
-                        className={`ai-zip-button toggle ${aiMode !== "off" && aiModelEnabled ? "active" : ""}`}
-                        disabled={aiMode === "off"}
-                        onClick={() => setAiModelEnabled((value) => !value)}
-                      >
-                        AI Model {aiModelEnabled ? "· ON" : "· OFF"}
-                      </button>
-
-                      <button
-                        type="button"
-                        className={`ai-zip-button toggle ${aiMode !== "off" && aiFilterEnabled ? "active" : ""}`}
-                        disabled={aiMode === "off"}
-                        onClick={() => setAiFilterEnabled((value) => !value)}
-                      >
-                        AI Filter {aiFilterEnabled ? "· ON" : "· OFF"}
-                      </button>
-
-                      <button
-                        type="button"
-                        className={`ai-zip-button toggle ${staticLibrariesClusters ? "active success" : ""}`}
-                        disabled={aiMode === "off"}
-                        onClick={() => setStaticLibrariesClusters((value) => !value)}
-                      >
-                        Static Libraries &amp; Clusters {staticLibrariesClusters ? "· ON" : "· OFF"}
-                      </button>
-
-                      <div className={`ai-zip-control ${aiMode === "off" ? "disabled" : ""}`}>
-                        <div className="ai-zip-label">AI Confidence Threshold</div>
-                        <input
-                          type="range"
-                          min={0}
-                          max={100}
-                          step={1}
-                          value={confidenceThreshold}
-                          disabled={aiMode === "off"}
-                          onChange={(event) => {
-                            setConfidenceThreshold(clamp(Number(event.target.value) || 0, 0, 100));
+                              return next;
+                            });
                           }}
-                          className="backtest-slider"
-                        />
-                        <div className="ai-zip-note">{confidenceThreshold}</div>
+                        >
+                          Artificial Intelligence - {aiMode === "off" ? "OFF" : aiMode.toUpperCase()}
+                        </button>
+
+                        <button
+                          type="button"
+                          className={`ai-zip-button toggle ${
+                            aiMode !== "off" && aiModelEnabled ? "active" : ""
+                          }`}
+                          disabled={aiMode === "off"}
+                          onClick={() => setAiModelEnabled((value) => !value)}
+                        >
+                          AI Model {aiModelEnabled ? "· ON" : "· OFF"}
+                        </button>
+
+                        <button
+                          type="button"
+                          className={`ai-zip-button toggle ${
+                            aiMode !== "off" && aiFilterEnabled ? "active" : ""
+                          }`}
+                          disabled={aiMode === "off"}
+                          onClick={() => setAiFilterEnabled((value) => !value)}
+                        >
+                          AI Filter {aiFilterEnabled ? "· ON" : "· OFF"}
+                        </button>
+
+                        <button
+                          type="button"
+                          className={`ai-zip-button toggle ${
+                            staticLibrariesClusters ? "active success" : ""
+                          }`}
+                          disabled={aiMode === "off"}
+                          onClick={() => setStaticLibrariesClusters((value) => !value)}
+                        >
+                          Static Libraries &amp; Clusters {staticLibrariesClusters ? "· ON" : "· OFF"}
+                        </button>
+
+                        <div className={`ai-zip-control ${aiMode === "off" ? "disabled" : ""}`}>
+                          <div className="ai-zip-label">AI Confidence Threshold</div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={confidenceThreshold}
+                            disabled={aiMode === "off"}
+                            onChange={(event) => {
+                              setConfidenceThreshold(clamp(Number(event.target.value) || 0, 0, 100));
+                            }}
+                            className="backtest-slider"
+                          />
+                          <div className="ai-zip-note">{confidenceThreshold}</div>
+                        </div>
+                      </div>
+
+                      <div className="ai-zip-section main-settings-panel">
+                        <div className="main-settings-panel-title">Current Gate Snapshot</div>
+                        <div className="ai-zip-note">
+                          Average confidence {backtestSummary.averageConfidence.toFixed(1)}% ·{" "}
+                          {backtestTrades.length} trades visible after filters
+                        </div>
+                        <div className="backtest-stat-list">
+                          <div className="backtest-stat-row">
+                            <span>AI Method</span>
+                            <strong>{aiMode === "off" ? "OFF" : aiMode.toUpperCase()}</strong>
+                          </div>
+                          <div className="backtest-stat-row">
+                            <span>AI Model</span>
+                            <strong>{aiModelEnabled ? "ON" : "OFF"}</strong>
+                          </div>
+                          <div className="backtest-stat-row">
+                            <span>AI Filter</span>
+                            <strong>{aiFilterEnabled ? "ON" : "OFF"}</strong>
+                          </div>
+                          <div className="backtest-stat-row">
+                            <span>Static Libraries</span>
+                            <strong>{staticLibrariesClusters ? "ON" : "OFF"}</strong>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
 
-                  <div className="backtest-stack">
+                  <div className="backtest-stack main-settings-stack">
                     <div className="backtest-card">
                       <div className="ai-zip-section">
                         <div className="ai-zip-section-title">Advanced AI Settings</div>
@@ -7236,45 +7592,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         </div>
                       </div>
                     </div>
+                  </div>
 
-                    <div className="backtest-card">
-                      <div className="ai-zip-section">
-                        <div className="ai-zip-section-title">Anti-Cheat</div>
-
-                        <button
-                          type="button"
-                          className={`ai-zip-button ${antiCheatEnabled ? "active" : ""}`}
-                          onClick={() => setAntiCheatEnabled((value) => !value)}
-                        >
-                          Anti-Cheat {antiCheatEnabled ? "· ON" : "· OFF"}
-                        </button>
-
-                        <button
-                          type="button"
-                          className={`ai-zip-button ${antiCheatEnabled ? "active" : ""}`}
-                          disabled={!antiCheatEnabled}
-                          onClick={cycleValidationMode}
-                        >
-                          Validation · {AI_VALIDATION_LABELS[validationMode]}
-                        </button>
-
-                        <button
-                          type="button"
-                          className={`ai-zip-button ${antiCheatEnabled ? "active" : ""}`}
-                          disabled={!antiCheatEnabled}
-                          onClick={() => {
-                            setRealismLevel((value) => (value + 1) % AI_REALISM_LABELS.length);
-                          }}
-                        >
-                          Realism · {AI_REALISM_LABELS[clamp(realismLevel, 0, 4)]}
-                        </button>
-
-                        <div className={`ai-zip-note ${antiCheatEnabled ? "" : "ai-zip-control disabled"}`}>
-                          When enabled, the validation controls mirror the AI.zip anti-cheat panel.
-                        </div>
-                      </div>
-                    </div>
-
+                  <div className="backtest-stack main-settings-stack">
                     <div className="backtest-card">
                       <div className="ai-zip-section">
                         <div className="ai-zip-section-title">Risk Management</div>
@@ -7337,32 +7657,40 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       </div>
                     </div>
 
-                    <div className="backtest-card compact">
-                      <div className="backtest-card-head">
-                        <div>
-                          <h3>Current Gate</h3>
-                          <p>
-                            Average confidence {backtestSummary.averageConfidence.toFixed(1)}% ·{" "}
-                            {backtestTrades.length} trades visible after filters
-                          </p>
-                        </div>
-                      </div>
-                      <div className="backtest-stat-list">
-                        <div className="backtest-stat-row">
-                          <span>AI Method</span>
-                          <strong>{aiMode === "off" ? "OFF" : aiMode.toUpperCase()}</strong>
-                        </div>
-                        <div className="backtest-stat-row">
-                          <span>AI Model</span>
-                          <strong>{aiModelEnabled ? "ON" : "OFF"}</strong>
-                        </div>
-                        <div className="backtest-stat-row">
-                          <span>AI Filter</span>
-                          <strong>{aiFilterEnabled ? "ON" : "OFF"}</strong>
-                        </div>
-                        <div className="backtest-stat-row">
-                          <span>Static Libraries</span>
-                          <strong>{staticLibrariesClusters ? "ON" : "OFF"}</strong>
+                    <div className="backtest-card">
+                      <div className="ai-zip-section">
+                        <div className="ai-zip-section-title">Anti-Cheat</div>
+
+                        <button
+                          type="button"
+                          className={`ai-zip-button ${antiCheatEnabled ? "active" : ""}`}
+                          onClick={() => setAntiCheatEnabled((value) => !value)}
+                        >
+                          Anti-Cheat {antiCheatEnabled ? "· ON" : "· OFF"}
+                        </button>
+
+                        <button
+                          type="button"
+                          className={`ai-zip-button ${antiCheatEnabled ? "active" : ""}`}
+                          disabled={!antiCheatEnabled}
+                          onClick={cycleValidationMode}
+                        >
+                          Validation · {AI_VALIDATION_LABELS[validationMode]}
+                        </button>
+
+                        <button
+                          type="button"
+                          className={`ai-zip-button ${antiCheatEnabled ? "active" : ""}`}
+                          disabled={!antiCheatEnabled}
+                          onClick={() => {
+                            setRealismLevel((value) => (value + 1) % AI_REALISM_LABELS.length);
+                          }}
+                        >
+                          Realism · {AI_REALISM_LABELS[clamp(realismLevel, 0, 4)]}
+                        </button>
+
+                        <div className={`ai-zip-note ${antiCheatEnabled ? "" : "ai-zip-control disabled"}`}>
+                          When enabled, the validation controls mirror the AI.zip anti-cheat panel.
                         </div>
                       </div>
                     </div>
@@ -7992,16 +8320,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="backtest-calendar-detail">
                       <div className="backtest-card-head">
                         <div>
-                          <h3>
-                            {selectedBacktestDateKey
-                              ? getCalendarDateLabel(selectedBacktestDateKey)
-                              : "Select a date"}
-                          </h3>
-                          <p>
-                            {selectedBacktestDateKey
-                              ? `${getWeekdayLabel(selectedBacktestDateKey)} session breakdown`
-                              : "Pick any active day to inspect fills."}
-                          </p>
+                          <h3>{selectedBacktestDateKey || "Select a day"}</h3>
                         </div>
                       </div>
 
@@ -8014,7 +8333,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             Math.round(durationMinutes / timeframeMinutes[selectedTimeframe])
                           );
                           const tradeCandles =
-                            seriesMap[symbolTimeframeKey(trade.symbol, selectedTimeframe)] ?? EMPTY_CANDLES;
+                            backtestSeriesMap[symbolTimeframeKey(trade.symbol, selectedTimeframe)] ??
+                            seriesMap[symbolTimeframeKey(trade.symbol, selectedTimeframe)] ??
+                            EMPTY_CANDLES;
 
                           return (
                             <div
@@ -8040,18 +8361,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   </span>
                                   <div className="backtest-calendar-trade-copy">
                                     <strong>
-                                      Entry ({selectedTimeframe}) {trade.entryAt}
+                                      Entry ({selectedTimeframe}): {trade.entryAt} @{" "}
+                                      {formatPrice(trade.entryPrice)}
                                     </strong>
                                     <span>
-                                      Exit ({selectedTimeframe}) {trade.exitAt}
+                                      Exit ({selectedTimeframe}): {trade.exitAt} @{" "}
+                                      {formatPrice(trade.outcomePrice)}
                                     </span>
                                     <span>
-                                      {estimatedBars} bars · {formatMinutesCompact(durationMinutes)}
+                                      Duration: {estimatedBars} bars · {formatMinutesCompact(durationMinutes)}
                                     </span>
                                   </div>
                                 </div>
                                 <div className="backtest-calendar-trade-side">
-                                  <span>{getSessionLabel(trade.entryTime)}</span>
+                                  <span>{trade.symbol}</span>
                                   <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
                                     {formatSignedUsd(trade.pnlUsd)}
                                   </strong>
@@ -8079,28 +8402,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
                                   <div className="backtest-calendar-trade-panel">
                                     <div className="backtest-calendar-trade-meta">
-                                      <span>Session: {getSessionLabel(trade.entryTime)}</span>
-                                      <span>Exit: {getBacktestExitLabel(trade)}</span>
-                                      <span>Confidence: {(getTradeConfidenceScore(trade) * 100).toFixed(0)}%</span>
-                                      <span>Units: {formatUnits(trade.units)}</span>
-                                    </div>
-                                    <div className="backtest-calendar-trade-prices">
-                                      <span>
-                                        Entry {formatPrice(trade.entryPrice)} to Exit{" "}
-                                        {formatPrice(trade.outcomePrice)}
-                                      </span>
-                                      <span className={trade.pnlPct >= 0 ? "up" : "down"}>
-                                        {formatSignedPercent(trade.pnlPct)}
-                                      </span>
+                                      <div>Session: {getSessionLabel(trade.entryTime)}</div>
+                                      <div>Entry Model: {trade.entrySource}</div>
+                                      <div>Exit Reason: {trade.exitReason || "-"}</div>
+                                      <div>Confidence: {(getTradeConfidenceScore(trade) * 100).toFixed(0)}%</div>
                                     </div>
                                   </div>
 
                                   <div className="backtest-calendar-trade-panel">
                                     <div className="backtest-calendar-trade-chart-copy">
                                       <strong>Price movement</strong>
-                                      <span>Entry, target, stop, and realized exit plotted from the loaded series.</span>
                                     </div>
-                                    <BacktestTradeMiniChart trade={trade} candles={tradeCandles} />
+                                    <BacktestTradeMiniChart
+                                      trade={trade}
+                                      candles={tradeCandles}
+                                      minutesPerBar={timeframeMinutes[selectedTimeframe]}
+                                      isOpen={isExpanded}
+                                    />
                                   </div>
                                 </div>
                               ) : null}
@@ -8118,466 +8436,73 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
               {selectedBacktestTab === "cluster" ? (
                 <div className="backtest-grid">
-                  <div className="backtest-card backtest-cluster-surface">
-                    <div className="backtest-cluster-head">
-                      <div>
-                        <div className="backtest-cluster-title">Cluster Map</div>
-                        <div className="backtest-cluster-subtitle">
-                          UMAP-style cluster surface with AI.zip-aligned controls, legend toggles, and
-                          group diagnostics.
-                        </div>
-                        <div className="backtest-cluster-pill-row">
-                          <span className="backtest-cluster-pill">
-                            Visible <strong>{backtestClusterCounts.visible}</strong> /{" "}
-                            {backtestClusterCounts.total}
-                          </span>
-                          <span className="backtest-cluster-pill">
-                            Win Rate <strong>{backtestClusterCounts.winRate.toFixed(1)}%</strong>
-                          </span>
-                          <span className="backtest-cluster-pill">
-                            Buy/Sell <strong>{backtestClusterCounts.buyRate.toFixed(1)}%</strong> /{" "}
-                            {(100 - backtestClusterCounts.buyRate).toFixed(1)}%
-                          </span>
-                          <span className="backtest-cluster-pill">
-                            Avg Confidence{" "}
-                            <strong>{backtestClusterCounts.avgConfidence.toFixed(0)}%</strong>
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="backtest-cluster-head-actions">
-                        <button
-                          type="button"
-                          className="backtest-action-btn compact"
-                          onClick={resetBacktestClusterView}
-                        >
-                          Reset
-                        </button>
-                        <div className="backtest-cluster-search-wrap">
-                          <input
-                            type="text"
-                            className="backtest-search"
-                            value={clusterSearchId}
-                            onChange={(event) => {
-                              setClusterSearchId(event.target.value);
-                              setClusterSearchStatus(null);
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                runBacktestClusterSearch();
-                              }
-                            }}
-                            placeholder="Search trade ID…"
-                          />
-                          <button
-                            type="button"
-                            className="backtest-action-btn compact"
-                            onClick={() => runBacktestClusterSearch()}
-                          >
-                            Go
-                          </button>
-                          {clusterSearchStatus === "miss" ? (
-                            <span className="backtest-cluster-search-miss">Not found</span>
-                          ) : null}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="backtest-cluster-filter-row">
-                      <label>
-                        <span>Direction</span>
-                        <select
-                          className="backtest-cluster-select"
-                          value={clusterViewDir}
-                          onChange={(event) =>
-                            setClusterViewDir(event.target.value as "All" | "Buy" | "Sell")
-                          }
-                        >
-                          <option value="All">All</option>
-                          <option value="Buy">Buy</option>
-                          <option value="Sell">Sell</option>
-                        </select>
-                      </label>
-
-                      <label>
-                        <span>Model</span>
-                        <select
-                          className="backtest-cluster-select"
-                          value={selectedModelId}
-                          onChange={(event) => setSelectedModelId(event.target.value)}
-                        >
-                          {modelProfiles.map((model) => (
-                            <option key={model.id} value={model.id}>
-                              {model.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label>
-                        <span>Session</span>
-                        <select
-                          className="backtest-cluster-select"
-                          value={clusterViewSession}
-                          onChange={(event) => setClusterViewSession(event.target.value)}
-                        >
-                          <option value="All">All</option>
-                          {backtestClusterViewOptions.sessions.map((session) => (
-                            <option key={session} value={session}>
-                              {session}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label>
-                        <span>Month</span>
-                        <select
-                          className="backtest-cluster-select"
-                          value={clusterViewMonth}
-                          onChange={(event) => setClusterViewMonth(event.target.value)}
-                        >
-                          <option value="All">All</option>
-                          {backtestClusterViewOptions.months.map((month) => (
-                            <option key={month} value={String(month)}>
-                              {backtestMonthLabels[month]}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label>
-                        <span>Weekday</span>
-                        <select
-                          className="backtest-cluster-select"
-                          value={clusterViewWeekday}
-                          onChange={(event) => setClusterViewWeekday(event.target.value)}
-                        >
-                          <option value="All">All</option>
-                          {backtestClusterViewOptions.weekdays.map((weekday) => (
-                            <option key={weekday} value={String(weekday)}>
-                              {backtestWeekdayLabels[weekday]}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label>
-                        <span>Hour</span>
-                        <select
-                          className="backtest-cluster-select"
-                          value={clusterViewHour}
-                          onChange={(event) => setClusterViewHour(event.target.value)}
-                        >
-                          <option value="All">All</option>
-                          {backtestClusterViewOptions.hours.map((hour) => (
-                            <option key={hour} value={String(hour)}>
-                              {String(hour).padStart(2, "0")}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-
-                    <div className="backtest-cluster-hint">Drag to inspect, click nodes or rows to pin details.</div>
-
-                    <div className="backtest-cluster-map">
-                      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="cluster map">
-                        {visibleBacktestClusterGroups.map((group) => (
-                          <ellipse
-                            key={`${group.id}-halo`}
-                            cx={group.centerX}
-                            cy={group.centerY}
-                            rx={group.radiusX}
-                            ry={group.radiusY}
-                            className="backtest-cluster-halo"
-                            style={{
-                              fill: group.fill,
-                              stroke: group.border,
-                              opacity: clusterOverlayOpacity * 0.8
-                            }}
-                          />
-                        ))}
-                        {visibleBacktestClusterNodes.map((node) => {
-                          const meta = BACKTEST_CLUSTER_META[node.clusterId];
-                          const radius = Math.max(1.8, node.r * clusterNodeSizeScale);
-
-                          return (
-                            <circle
-                              key={node.id}
-                              cx={node.x}
-                              cy={node.y}
-                              r={radius}
-                              className={`backtest-cluster-node ${node.tone} ${
-                                selectedHistoryId === node.id ? "selected" : ""
-                              }`}
-                              style={{
-                                fill:
-                                  node.trade.result === "Win"
-                                    ? "rgba(60, 220, 120, 0.18)"
-                                    : "rgba(230, 80, 80, 0.18)",
-                                stroke: meta.accent
-                              }}
-                              onClick={() => {
-                                setSelectedBacktestClusterGroupId(null);
-                                setSelectedHistoryId(node.id);
-                              }}
-                            >
-                              <title>
-                                {node.id} · {meta.label} · {node.sideLabel} ·{" "}
-                                {formatSignedUsd(node.trade.pnlUsd)}
-                              </title>
-                            </circle>
-                          );
-                        })}
-                      </svg>
-
-                      {visibleBacktestClusterNodes.length === 0 ? (
-                        <div className="backtest-cluster-empty-overlay">
-                          No nodes match the active filters or legend toggles.
-                        </div>
-                      ) : null}
-
-                      {selectedBacktestClusterNode ? (
-                        <div
-                          className="backtest-cluster-overlay-card"
-                          style={{
-                            borderColor: BACKTEST_CLUSTER_META[selectedBacktestClusterNode.clusterId].border,
-                            boxShadow: `0 18px 38px rgba(0,0,0,0.56), 0 0 0 1px ${
-                              BACKTEST_CLUSTER_META[selectedBacktestClusterNode.clusterId].glow
-                            }`
-                          }}
-                        >
-                          <div className="backtest-cluster-overlay-head">
-                            <strong>Selected</strong>
-                            <button type="button" onClick={() => setSelectedHistoryId(null)}>
-                              Clear
-                            </button>
-                          </div>
-                          <div className="backtest-cluster-overlay-grid">
-                            <span>ID</span>
-                            <strong>{selectedBacktestClusterNode.id}</strong>
-                            <span>Cluster</span>
-                            <strong>{BACKTEST_CLUSTER_META[selectedBacktestClusterNode.clusterId].label}</strong>
-                            <span>Direction</span>
-                            <strong>{selectedBacktestClusterNode.sideLabel}</strong>
-                            <span>Session</span>
-                            <strong>{selectedBacktestClusterNode.session}</strong>
-                            <span>Entry Date</span>
-                            <strong>{formatDateTime(Number(selectedBacktestClusterNode.trade.entryTime) * 1000)}</strong>
-                            <span>Exit Date</span>
-                            <strong>{formatDateTime(Number(selectedBacktestClusterNode.trade.exitTime) * 1000)}</strong>
-                            <span>Duration</span>
-                            <strong>{formatMinutesCompact(selectedBacktestClusterNode.holdMinutes)}</strong>
-                            <span>Confidence</span>
-                            <strong>{selectedBacktestClusterNode.confidence.toFixed(0)}%</strong>
-                            <span>Exit Method</span>
-                            <strong>{getBacktestExitLabel(selectedBacktestClusterNode.trade)}</strong>
-                            <span>PnL</span>
-                            <strong
-                              className={selectedBacktestClusterNode.trade.pnlUsd >= 0 ? "up" : "down"}
-                            >
-                              {formatSignedUsd(selectedBacktestClusterNode.trade.pnlUsd)}
-                            </strong>
-                          </div>
-                        </div>
-                      ) : selectedBacktestClusterGroup ? (
-                        <div
-                          className="backtest-cluster-overlay-card"
-                          style={{
-                            borderColor: selectedBacktestClusterGroup.border,
-                            boxShadow: `0 18px 38px rgba(0,0,0,0.56), 0 0 0 1px ${selectedBacktestClusterGroup.glow}`
-                          }}
-                        >
-                          <div className="backtest-cluster-overlay-head">
-                            <strong>{selectedBacktestClusterGroup.label}</strong>
-                            <button type="button" onClick={() => setSelectedBacktestClusterGroupId(null)}>
-                              Clear
-                            </button>
-                          </div>
-                          <div className="backtest-cluster-overlay-grid">
-                            <span>Description</span>
-                            <strong>{selectedBacktestClusterGroup.description}</strong>
-                            <span>Trades</span>
-                            <strong>{selectedBacktestClusterGroup.count}</strong>
-                            <span>Win Rate</span>
-                            <strong>{selectedBacktestClusterGroup.winRate.toFixed(1)}%</strong>
-                            <span>Buy / Sell</span>
-                            <strong>
-                              {selectedBacktestClusterGroup.buyCount} / {selectedBacktestClusterGroup.sellCount}
-                            </strong>
-                            <span>Total PnL</span>
-                            <strong className={selectedBacktestClusterGroup.pnl >= 0 ? "up" : "down"}>
-                              {formatSignedUsd(selectedBacktestClusterGroup.pnl)}
-                            </strong>
-                            <span>Average PnL</span>
-                            <strong className={selectedBacktestClusterGroup.avgPnl >= 0 ? "up" : "down"}>
-                              {formatSignedUsd(selectedBacktestClusterGroup.avgPnl)}
-                            </strong>
-                            <span>Average Hold</span>
-                            <strong>{formatMinutesCompact(selectedBacktestClusterGroup.avgHoldMinutes)}</strong>
-                            <span>Average Confidence</span>
-                            <strong>{selectedBacktestClusterGroup.avgConfidence.toFixed(0)}%</strong>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-
                   <div className="backtest-card">
-                    <div className="backtest-card-head">
-                      <div>
-                        <h3>Legend &amp; Map Info</h3>
-                        <p>
-                          Similar setups remain close together. Node size scales by trade units and
-                          grouping opacity controls the cluster overlays.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="backtest-cluster-slider-grid">
-                      <label>
-                        <span>Node Size</span>
-                        <strong>{clusterNodeSizeScale.toFixed(2)}x</strong>
-                        <input
-                          type="range"
-                          min={0.4}
-                          max={2.6}
-                          step={0.05}
-                          value={clusterNodeSizeScale}
-                          onChange={(event) => setClusterNodeSizeScale(Number(event.target.value))}
-                        />
-                      </label>
-                      <label>
-                        <span>Grouping Opacity</span>
-                        <strong>{Math.round(clusterOverlayOpacity * 100)}%</strong>
-                        <input
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.05}
-                          value={clusterOverlayOpacity}
-                          onChange={(event) => setClusterOverlayOpacity(Number(event.target.value))}
-                        />
-                      </label>
-                    </div>
-
-                    <div className="backtest-cluster-legend-grid">
-                      <button
-                        type="button"
-                        className={`backtest-cluster-legend-card ${
-                          clusterLegendToggles.closedWin ? "active" : ""
-                        }`}
-                        onClick={() => toggleBacktestClusterLegend("closedWin")}
-                      >
-                        <span className="dot" style={{ background: "rgba(60, 220, 120, 0.96)" }} />
-                        <div>
-                          <strong>Closed Win</strong>
-                          <small>{backtestClusterCounts.wins.toLocaleString()} visible points</small>
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        className={`backtest-cluster-legend-card ${
-                          clusterLegendToggles.closedLoss ? "active" : ""
-                        }`}
-                        onClick={() => toggleBacktestClusterLegend("closedLoss")}
-                      >
-                        <span className="dot" style={{ background: "rgba(230, 80, 80, 0.96)" }} />
-                        <div>
-                          <strong>Closed Loss</strong>
-                          <small>{backtestClusterCounts.losses.toLocaleString()} visible points</small>
-                        </div>
-                      </button>
-                      {BACKTEST_CLUSTER_ORDER.map((clusterId) => {
-                        const meta = BACKTEST_CLUSTER_META[clusterId];
-                        const group = visibleBacktestClusterGroups.find((item) => item.id === clusterId);
-
-                        return (
-                          <button
-                            key={clusterId}
-                            type="button"
-                            className={`backtest-cluster-legend-card ${
-                              clusterLegendToggles[clusterId] ? "active" : ""
-                            }`}
-                            onClick={() => toggleBacktestClusterLegend(clusterId)}
-                          >
-                            <span className="dot" style={{ background: meta.accent }} />
-                            <div>
-                              <strong>{meta.label}</strong>
-                              <small>{(group?.count ?? 0).toLocaleString()} points</small>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div className="backtest-card">
-                    <div className="backtest-card-head">
-                      <div>
-                        <h3>Cluster Groups Table</h3>
-                        <p>
-                          Click a row to pin the group panel. Table values update from the same active
-                          filters and legend toggles as the map.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="backtest-cluster-table-wrap">
-                      <table className="backtest-cluster-table">
-                        <thead>
-                          <tr>
-                            <th>Group</th>
-                            <th>Win Rate</th>
-                            <th>Count</th>
-                            <th>Wins</th>
-                            <th>Losses</th>
-                            <th>Buy Trades</th>
-                            <th>Sell Trades</th>
-                            <th>Total PnL</th>
-                            <th>Average PnL</th>
-                            <th>Average Hold</th>
-                            <th>Average Confidence</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {backtestClusterTableRows.map((group) => (
-                            <tr
-                              key={group.id}
-                              className={selectedBacktestClusterGroupId === group.id ? "selected" : ""}
-                              onClick={() => {
-                                setSelectedHistoryId(null);
-                                setSelectedBacktestClusterGroupId(group.id);
-                              }}
-                            >
-                              <td>
-                                <span className="backtest-cluster-group-label">{group.label}</span>
-                              </td>
-                              <td>{group.winRate.toFixed(1)}%</td>
-                              <td>{group.count}</td>
-                              <td>{group.wins}</td>
-                              <td>{group.losses}</td>
-                              <td>{group.buyCount}</td>
-                              <td>{group.sellCount}</td>
-                              <td className={group.pnl >= 0 ? "up" : "down"}>{formatSignedUsd(group.pnl)}</td>
-                              <td className={group.avgPnl >= 0 ? "up" : "down"}>
-                                {formatSignedUsd(group.avgPnl)}
-                              </td>
-                              <td>{formatMinutesCompact(group.avgHoldMinutes)}</td>
-                              <td>{group.avgConfidence.toFixed(0)}%</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      {backtestClusterTableRows.length === 0 ? (
-                        <div className="backtest-cluster-table-empty">No active groups under the current filters.</div>
-                      ) : null}
-                    </div>
+                    {aiZipClusterMapView === "2d" ? (
+                      <AIZipClusterMap
+                        candles={aiZipClusterCandles}
+                        trades={aiZipClusterTrades}
+                        ghostEntries={[]}
+                        libraryPoints={[]}
+                        activeLibraries={selectedAiLibraries}
+                        libraryCounts={{}}
+                        chunkBars={chunkBars}
+                        potential={null}
+                        parseMode="utc"
+                        showPotential={false}
+                        resetKey={aiZipClusterResetKey}
+                        sliderValue={aiZipClusterTimelineIdx}
+                        setSliderValue={setAiZipClusterTimelineIdx}
+                        onResetClusterMap={() => setAiZipClusterResetKey((current) => current + 1)}
+                        clusterMapView={aiZipClusterMapView}
+                        onToggleClusterMapView={() =>
+                          setAiZipClusterMapView((current) => (current === "3d" ? "2d" : "3d"))
+                        }
+                        onPostHocTrades={() => {}}
+                        onPostHocProgress={() => {}}
+                        onMitMap={() => {}}
+                        aiMethod={aiMode}
+                        aiModalities={selectedAiModalities}
+                        hdbModalityDistinction="conceptual"
+                        hdbMinClusterSize={hdbMinClusterSize}
+                        hdbMinSamples={hdbMinSamples}
+                        hdbEpsQuantile={hdbEpsQuantile}
+                        staticLibrariesClusters={staticLibrariesClusters}
+                        confidenceThreshold={confidenceThreshold}
+                        statsDateStart={statsDateStart}
+                        statsDateEnd={statsDateEnd}
+                      />
+                    ) : (
+                      <AIZipClusterMap3D
+                        candles={aiZipClusterCandles}
+                        trades={aiZipClusterTrades}
+                        ghostEntries={[]}
+                        libraryPoints={[]}
+                        chunkBarsDeb={chunkBars}
+                        potential={null}
+                        parseMode="utc"
+                        showPotential={false}
+                        resetKey={aiZipClusterResetKey}
+                        sliderValue={aiZipClusterTimelineIdx}
+                        setSliderValue={setAiZipClusterTimelineIdx}
+                        onResetClusterMap={() => setAiZipClusterResetKey((current) => current + 1)}
+                        clusterMapView={aiZipClusterMapView}
+                        onToggleClusterMapView={() =>
+                          setAiZipClusterMapView((current) => (current === "3d" ? "2d" : "3d"))
+                        }
+                        activeLibraries={selectedAiLibraries}
+                        staticLibrariesClusters={staticLibrariesClusters}
+                        aiMethod={aiMode}
+                        aiModalities={selectedAiModalities}
+                        hdbMinClusterSize={hdbMinClusterSize}
+                        hdbMinSamples={hdbMinSamples}
+                        hdbEpsQuantile={hdbEpsQuantile}
+                        hdbModalityDistinction="conceptual"
+                        clusterGroupStatsMode="All"
+                      />
+                    )}
                   </div>
                 </div>
               ) : null}
-
               {selectedBacktestTab === "timeSettings" ? (
                 <div className="backtest-grid">
                   <div className="backtest-grid two-up">

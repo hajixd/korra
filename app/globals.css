@@ -1177,14 +1177,13 @@ button {
 }
 
 .backtest-calendar-trade-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.24rem 0.65rem;
+  display: grid;
+  gap: 0.2rem;
 }
 
-.backtest-calendar-trade-meta span {
+.backtest-calendar-trade-meta div {
   color: rgba(255, 255, 255, 0.64);
-  font-size: 0.6rem;
+  font-size: 0.62rem;
 }
 
 .backtest-calendar-trade-prices {
@@ -1220,8 +1219,13 @@ button {
 }
 
 .backtest-trade-mini-chart {
-  display: grid;
-  gap: 0.28rem;
+  position: relative;
+  width: 100%;
+  height: 260px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: #050505;
+  overflow: hidden;
 }
 
 .backtest-trade-mini-head {
@@ -1239,7 +1243,7 @@ button {
 
 .backtest-trade-mini-chart svg {
   width: 100%;
-  height: auto;
+  height: 100%;
   display: block;
 }
 
@@ -2107,6 +2111,86 @@ button {
   line-height: 1.35;
 }
 
+.main-settings-layout {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.main-settings-overview {
+  gap: 0.8rem;
+  border-color: rgba(90, 170, 255, 0.24);
+  background:
+    radial-gradient(circle at 100% 0, rgba(90, 170, 255, 0.2), transparent 42%),
+    radial-gradient(circle at 0 100%, rgba(60, 220, 120, 0.12), transparent 44%),
+    linear-gradient(165deg, rgba(14, 22, 36, 0.95), rgba(8, 13, 22, 0.94));
+}
+
+.main-settings-kpi-grid {
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.main-settings-kpi-card {
+  padding: 0.55rem 0.62rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  display: grid;
+  gap: 0.2rem;
+}
+
+.main-settings-kpi-card span {
+  font-size: 0.56rem;
+  color: rgba(255, 255, 255, 0.64);
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.main-settings-kpi-card strong {
+  font-size: 0.84rem;
+  color: rgba(255, 255, 255, 0.95);
+  line-height: 1.1;
+}
+
+.main-settings-core-grid {
+  display: grid;
+  gap: 0.7rem;
+  grid-template-columns: minmax(0, 1.25fr) minmax(230px, 0.75fr);
+  align-items: start;
+}
+
+.main-settings-panel {
+  gap: 0.55rem;
+  padding: 0.72rem;
+  border-radius: 12px;
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.main-settings-panel-title {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 0.58rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.main-settings-layout .ai-zip-button {
+  text-align: left;
+}
+
+.main-settings-layout .ai-zip-note {
+  font-size: 0.62rem;
+}
+
+.main-settings-stack {
+  align-content: start;
+}
+
 .ai-zip-modal-overlay {
   position: fixed;
   inset: 0;
@@ -2972,6 +3056,18 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .main-settings-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .main-settings-kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .main-settings-core-grid {
+    grid-template-columns: 1fr;
+  }
+
   .backtest-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -3145,6 +3241,10 @@ button {
     grid-column: span 1;
   }
 
+  .main-settings-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .backtest-card-head {
     flex-direction: column;
     align-items: stretch;
@@ -3201,6 +3301,10 @@ button {
     gap: 0.25rem;
   }
 
+  .backtest-trade-mini-chart {
+    height: 220px;
+  }
+
   .active-metrics-grid {
     grid-template-columns: 1fr;
   }
@@ -3231,5 +3335,11 @@ button {
 
   .timeframe-row::-webkit-scrollbar {
     display: none;
+  }
+}
+
+@media (max-width: 460px) {
+  .main-settings-kpi-grid {
+    grid-template-columns: 1fr;
   }
 }
