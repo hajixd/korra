@@ -9253,27 +9253,35 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="main-settings-kpi-grid">
                       <div className="main-settings-kpi-card">
                         <span>AI Method</span>
-                        <strong>{aiMode === "off" ? "OFF" : aiMode.toUpperCase()}</strong>
+                        <strong className={aiMode === "off" ? "down" : "neutral"}>
+                          {aiMode === "off" ? "OFF" : aiMode.toUpperCase()}
+                        </strong>
                       </div>
                       <div className="main-settings-kpi-card">
                         <span>Confidence Gate</span>
-                        <strong>{confidenceThreshold}%</strong>
+                        <strong className="neutral">{confidenceThreshold}%</strong>
                       </div>
                       <div className="main-settings-kpi-card">
                         <span>Avg Confidence</span>
-                        <strong>{backtestSummary.averageConfidence.toFixed(1)}%</strong>
+                        <strong className={backtestSummary.averageConfidence >= 60 ? "up" : "neutral"}>
+                          {backtestSummary.averageConfidence.toFixed(1)}%
+                        </strong>
                       </div>
                       <div className="main-settings-kpi-card">
                         <span>Visible Trades</span>
-                        <strong>{backtestTrades.length}</strong>
+                        <strong className="neutral">{backtestTrades.length}</strong>
                       </div>
                       <div className="main-settings-kpi-card">
                         <span>Anti-Cheat</span>
-                        <strong>{antiCheatEnabled ? "ON" : "OFF"}</strong>
+                        <strong className={antiCheatEnabled ? "up" : "down"}>
+                          {antiCheatEnabled ? "ON" : "OFF"}
+                        </strong>
                       </div>
                       <div className="main-settings-kpi-card">
                         <span>Libraries</span>
-                        <strong>{staticLibrariesClusters ? "ON" : "OFF"}</strong>
+                        <strong className={staticLibrariesClusters ? "up" : "down"}>
+                          {staticLibrariesClusters ? "ON" : "OFF"}
+                        </strong>
                       </div>
                     </div>
 
@@ -12035,7 +12043,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         </div>
                       ) : (
                         <div
-                          className="h-64"
+                          className="h-56"
                           style={{
                             background: "var(--bg-elev)",
                             border: "1px solid rgba(255,255,255,0.10)",
@@ -12114,15 +12122,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               aria-label="scatter plot"
                               style={{ width: "100%", height: "100%" }}
                             >
-                              <defs>
-                                <filter id="scatterGlow" x="-50%" y="-50%" width="200%" height="200%">
-                                  <feGaussianBlur stdDeviation="0.6" result="blur" />
-                                  <feMerge>
-                                    <feMergeNode in="blur" />
-                                    <feMergeNode in="SourceGraphic" />
-                                  </feMerge>
-                                </filter>
-                              </defs>
                               <line x1="10" y1="88" x2="92" y2="88" stroke="#4b5563" strokeWidth="0.5" />
                               <line x1="10" y1="10" x2="10" y2="88" stroke="#4b5563" strokeWidth="0.5" />
                               {backtestScatterPlot.xZero != null ? (
@@ -12203,7 +12202,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     fill={active ? stroke : "transparent"}
                                     stroke={active ? "#ffffff" : stroke}
                                     strokeWidth={active ? 0.55 : 0.42}
-                                    filter="url(#scatterGlow)"
                                     style={{ cursor: "pointer" }}
                                     onMouseEnter={() => setHoveredScatterPointId(point.id)}
                                   />
@@ -12356,22 +12354,26 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               <div className="backtest-stat-list">
                                 <div className="backtest-stat-row">
                                   <span>Avg trades to pass</span>
-                                  <strong>{propStats.avgTradesPass.toFixed(1)}</strong>
+                                  <strong className="neutral">{propStats.avgTradesPass.toFixed(1)}</strong>
                                 </div>
                                 {propProjectionMethod !== "montecarlo" ? (
                                   <div className="backtest-stat-row">
                                     <span>Avg time to pass</span>
-                                    <strong>{formatPropFirmDuration(propStats.avgTimePass)}</strong>
+                                    <strong className="neutral">
+                                      {formatPropFirmDuration(propStats.avgTimePass)}
+                                    </strong>
                                   </div>
                                 ) : null}
                                 <div className="backtest-stat-row">
                                   <span>Avg trades to fail</span>
-                                  <strong>{propStats.avgTradesFail.toFixed(1)}</strong>
+                                  <strong className="down">{propStats.avgTradesFail.toFixed(1)}</strong>
                                 </div>
                                 {propProjectionMethod !== "montecarlo" ? (
                                   <div className="backtest-stat-row">
                                     <span>Avg time to fail</span>
-                                    <strong>{formatPropFirmDuration(propStats.avgTimeFail)}</strong>
+                                    <strong className="down">
+                                      {formatPropFirmDuration(propStats.avgTimeFail)}
+                                    </strong>
                                   </div>
                                 ) : null}
                                 <div className="backtest-stat-row">
@@ -12384,15 +12386,25 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 </div>
                                 <div className="backtest-stat-row">
                                   <span>Incomplete simulations</span>
-                                  <strong>{propStats.incompleteCount.toLocaleString()}</strong>
+                                  <strong className="neutral">
+                                    {propStats.incompleteCount.toLocaleString()}
+                                  </strong>
                                 </div>
                                 <div className="backtest-stat-row">
                                   <span>Total simulations</span>
-                                  <strong>{propStats.totalSimulations.toLocaleString()}</strong>
+                                  <strong className="neutral">
+                                    {propStats.totalSimulations.toLocaleString()}
+                                  </strong>
                                 </div>
                                 <div className="backtest-stat-row">
                                   <span>Incomplete %</span>
-                                  <strong>
+                                  <strong
+                                    className={
+                                      propStats.incompleteCount / Math.max(propStats.totalSimulations, 1) > 0.25
+                                        ? "down"
+                                        : "neutral"
+                                    }
+                                  >
                                     {(
                                       (propStats.incompleteCount /
                                         Math.max(propStats.totalSimulations, 1)) *
