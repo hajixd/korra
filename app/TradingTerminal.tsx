@@ -16,9 +16,20 @@ import {
   type UTCTimestamp
 } from "lightweight-charts";
 import {
+  Bar,
+  BarChart,
+  Cell,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from "recharts";
+import {
   AIZipTradeDetailsModal,
   ClusterMap as AIZipClusterMap,
-  ClusterMap3D as AIZipClusterMap3D
+  ClusterMap3D as AIZipClusterMap3D,
+  displayIdForNode
 } from "./AIZipClusterModule";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
@@ -36,6 +47,7 @@ type BacktestTab =
   | "graphs"
   | "propFirm";
 type EntryExitChartMode = "Entry" | "Exit";
+type PerformanceStatsRange = "Years" | "Months" | "Days of the Week" | "Hours";
 const BACKTEST_SCATTER_KEYS = [
   "duration",
   "pnl",
@@ -56,6 +68,13 @@ type BacktestScatterAxisDef = {
   tooltipFormatter?: (value: number) => string;
 };
 type PanelTab = "active" | "assets" | "models" | "mt5" | "history" | "actions" | "ai";
+type MainStatisticsCard = {
+  label: string;
+  value: ReactNode;
+  tone: "up" | "down" | "neutral";
+  span: 1 | 2 | 4;
+  valueClassName?: string;
+};
 
 type FutureAsset = {
   symbol: string;
@@ -314,6 +333,30 @@ type AiCatalogItem = {
   note?: string;
 };
 
+type AiLibraryFieldType = "boolean" | "number" | "select" | "text";
+
+type AiLibraryField = {
+  key: string;
+  label: string;
+  type: AiLibraryFieldType;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: { value: string; label: string }[];
+  help?: string;
+};
+
+type AiLibrarySettingValue = boolean | number | string;
+type AiLibrarySettings = Record<string, Record<string, AiLibrarySettingValue>>;
+
+type AiLibraryDef = {
+  id: string;
+  name: string;
+  description: string;
+  defaults: Record<string, AiLibrarySettingValue>;
+  fields: AiLibraryField[];
+};
+
 type AiSettingsModalProps = {
   title: string;
   subtitle?: string;
@@ -388,15 +431,393 @@ const AI_FEATURE_OPTIONS: AiCatalogItem[] = [
   }
 ];
 
-const AI_LIBRARY_OPTIONS: AiCatalogItem[] = [
-  { id: "core", label: "Online Learning", note: "Primary rolling trade memory." },
-  { id: "suppressed", label: "Suppressed", note: "Rejected trades kept for training only." },
-  { id: "recent", label: "Recent Window", note: "Bias the nearest, freshest examples." },
-  { id: "base", label: "Base Seeding", note: "Seed a starter library before live trades." },
-  { id: "wins", label: "Wins Only", note: "Seed only winning examples." },
-  { id: "terrific", label: "Terrific Trades", note: "Hand-picked high quality trades." },
-  { id: "terrible", label: "Terrible Trades", note: "Counterexamples for contrast." }
+const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
+  {
+    id: "core",
+    name: "Online Learning",
+    description: "Primary rolling trade memory.",
+    defaults: { weight: 100, maxSamples: 10000, stride: 0 },
+    fields: [
+      {
+        key: "weight",
+        label: "Weight (%)",
+        type: "number",
+        min: 0,
+        max: 500,
+        step: 5,
+        help: "200% means 2x influence on neighbor votes."
+      },
+      {
+        key: "stride",
+        label: "Stride",
+        type: "number",
+        min: 0,
+        max: 5000,
+        step: 1
+      },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100,
+        help: "Soft cap on the number of examples kept for this library."
+      }
+    ]
+  },
+  {
+    id: "suppressed",
+    name: "Suppressed",
+    description:
+      "Trades rejected because AI confidence is below the entry threshold (training-only neighbors).",
+    defaults: { weight: 100, maxSamples: 10000, stride: 0 },
+    fields: [
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100
+      }
+    ]
+  },
+  {
+    id: "recent",
+    name: "Recent Window",
+    description: "Bias the nearest, freshest examples.",
+    defaults: { weight: 100, windowTrades: 1500, maxSamples: 10000, stride: 0 },
+    fields: [
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      {
+        key: "windowTrades",
+        label: "Window (trades)",
+        type: "number",
+        min: 50,
+        max: 200000,
+        step: 50,
+        help: "How many most-recent trades are eligible."
+      },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100
+      }
+    ]
+  },
+  {
+    id: "base",
+    name: "Base Seeding",
+    description: "Seed a starter library before live trades.",
+    defaults: {
+      weight: 100,
+      maxSamples: 10000,
+      stride: 0,
+      tpDollars: 250,
+      slDollars: 250,
+      jumpToResolution: true
+    },
+    fields: [
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      {
+        key: "tpDollars",
+        label: "TP ($)",
+        type: "number",
+        min: 1,
+        max: 20000,
+        step: 25,
+        help: "Take-profit size in dollars for seeded trades."
+      },
+      {
+        key: "slDollars",
+        label: "SL ($)",
+        type: "number",
+        min: 1,
+        max: 20000,
+        step: 25,
+        help: "Stop-loss size in dollars for seeded trades."
+      },
+      {
+        key: "jumpToResolution",
+        label: "Jump to resolution",
+        type: "boolean",
+        help: "If ON, the seeder places the next pair of trades when the prior trade resolves."
+      },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100
+      }
+    ]
+  },
+  {
+    id: "wins",
+    name: "Wins Only",
+    description: "Base-seeded trades that hit TP (winners) only.",
+    defaults: {
+      weight: 100,
+      maxSamples: 10000,
+      stride: 0,
+      tpDollars: 250,
+      slDollars: 250,
+      jumpToResolution: true
+    },
+    fields: [
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100
+      }
+    ]
+  },
+  {
+    id: "wins_tokyo",
+    name: "Tokyo Wins",
+    description: "Wins-only base seeding restricted to the Tokyo session.",
+    defaults: {
+      weight: 100,
+      maxSamples: 8000,
+      stride: 0,
+      tpDollars: 250,
+      slDollars: 250,
+      jumpToResolution: true
+    },
+    fields: [
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100
+      }
+    ]
+  },
+  {
+    id: "wins_sydney",
+    name: "Sydney Wins",
+    description: "Wins-only base seeding restricted to the Sydney session.",
+    defaults: {
+      weight: 100,
+      maxSamples: 8000,
+      stride: 0,
+      tpDollars: 250,
+      slDollars: 250,
+      jumpToResolution: true
+    },
+    fields: [
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100
+      }
+    ]
+  },
+  {
+    id: "wins_london",
+    name: "London Wins",
+    description: "Wins-only base seeding restricted to the London session.",
+    defaults: {
+      weight: 100,
+      maxSamples: 8000,
+      stride: 0,
+      tpDollars: 250,
+      slDollars: 250,
+      jumpToResolution: true
+    },
+    fields: [
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100
+      }
+    ]
+  },
+  {
+    id: "wins_newyork",
+    name: "New York Wins",
+    description: "Wins-only base seeding restricted to the New York session.",
+    defaults: {
+      weight: 100,
+      maxSamples: 8000,
+      stride: 0,
+      tpDollars: 250,
+      slDollars: 250,
+      jumpToResolution: true
+    },
+    fields: [
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100
+      }
+    ]
+  },
+  {
+    id: "terrific",
+    name: "Terrific Trades",
+    description: "Hand-picked high quality trades.",
+    defaults: {
+      weight: 100,
+      maxSamples: 10000,
+      count: 500,
+      stride: 0,
+      pivotSpan: 4
+    },
+    fields: [
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      { key: "count", label: "Count", type: "number", min: 0, max: 200000, step: 10 },
+      { key: "pivotSpan", label: "Pivot Bars", type: "number", min: 2, max: 50, step: 1 },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100
+      }
+    ]
+  },
+  {
+    id: "terrible",
+    name: "Terrible Trades",
+    description: "Counterexamples for contrast.",
+    defaults: {
+      weight: 100,
+      maxSamples: 10000,
+      count: 500,
+      stride: 0,
+      pivotSpan: 4
+    },
+    fields: [
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      { key: "count", label: "Count", type: "number", min: 0, max: 200000, step: 10 },
+      { key: "pivotSpan", label: "Pivot Bars", type: "number", min: 2, max: 50, step: 1 },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100
+      }
+    ]
+  }
 ];
+
+const slugAiLibraryId = (value: string): string => {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+};
+
+const buildModelAiLibraryDefs = (modelNames: readonly string[]): AiLibraryDef[] => {
+  return modelNames.map((model) => ({
+    id: slugAiLibraryId(model),
+    name: model,
+    description: `Similarity pool for ${model}.`,
+    defaults: {
+      weight: 100,
+      maxSamples: 10000,
+      stride: 0,
+      model,
+      kind: "model_sim"
+    },
+    fields: [
+      {
+        key: "weight",
+        label: "Weight (%)",
+        type: "number",
+        min: 0,
+        max: 500,
+        step: 5,
+        help: "200% means 2x influence on neighbor votes."
+      },
+      {
+        key: "stride",
+        label: "Stride",
+        type: "number",
+        min: 0,
+        max: 5000,
+        step: 1
+      },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100,
+        help: "Caps how many examples are pulled from this library."
+      }
+    ]
+  }));
+};
+
+const buildAiLibraryDefs = (modelNames: readonly string[]): AiLibraryDef[] => {
+  return [...BASE_AI_LIBRARY_DEFS, ...buildModelAiLibraryDefs(modelNames)];
+};
+
+const buildDefaultAiLibrarySettings = (libraryDefs: readonly AiLibraryDef[]): AiLibrarySettings => {
+  const next: AiLibrarySettings = {};
+
+  for (const definition of libraryDefs) {
+    next[definition.id] = { ...definition.defaults };
+  }
+
+  return next;
+};
 
 const AI_MODALITY_OPTIONS = [
   "Direction",
@@ -764,7 +1185,7 @@ const BACKTEST_CLUSTER_LEGEND_DEFAULTS: Record<BacktestClusterLegendKey, boolean
 };
 
 const chartHistoryCountByTimeframe: Record<Timeframe, number> = {
-  "1m": 25000,
+  "1m": 40000,
   "5m": 12000,
   "15m": 8000,
   "1H": 3000,
@@ -773,6 +1194,9 @@ const chartHistoryCountByTimeframe: Record<Timeframe, number> = {
   "1W": 180
 };
 
+const RECENT_ONE_MINUTE_LOOKBACK_DAYS = 31;
+const RECENT_ONE_MINUTE_WINDOW_MS = RECENT_ONE_MINUTE_LOOKBACK_DAYS * 24 * 60 * 60_000;
+const RECENT_ONE_MINUTE_FETCH_COUNT = 40_000;
 const BACKTEST_LOOKBACK_YEARS = 10;
 const BACKTEST_MAX_HISTORY_CANDLES = 400_000;
 const BACKTEST_TARGET_TRADES = 1200;
@@ -969,6 +1393,85 @@ const mergeRecentCandles = (
   return deduped.slice(-maxBars);
 };
 
+const aggregateCandlesToTimeframe = (candles: Candle[], timeframe: Timeframe): Candle[] => {
+  if (candles.length === 0) {
+    return [];
+  }
+
+  if (timeframe === "1m") {
+    return candles.slice();
+  }
+
+  const aggregated: Candle[] = [];
+  let activeBucket: Candle | null = null;
+
+  for (const candle of candles) {
+    const bucketTime = floorToTimeframe(candle.time, timeframe);
+
+    if (!isXauTradingTime(bucketTime)) {
+      continue;
+    }
+
+    if (!activeBucket || activeBucket.time !== bucketTime) {
+      if (activeBucket) {
+        aggregated.push(activeBucket);
+      }
+
+      activeBucket = {
+        time: bucketTime,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close
+      };
+      continue;
+    }
+
+    activeBucket.high = Math.max(activeBucket.high, candle.high);
+    activeBucket.low = Math.min(activeBucket.low, candle.low);
+    activeBucket.close = candle.close;
+  }
+
+  if (activeBucket) {
+    aggregated.push(activeBucket);
+  }
+
+  return aggregated;
+};
+
+const trimRecentOneMinuteCandles = (candles: Candle[]): Candle[] => {
+  const lastCandle = candles[candles.length - 1];
+
+  if (!lastCandle) {
+    return [];
+  }
+
+  const cutoffTime = lastCandle.time - RECENT_ONE_MINUTE_WINDOW_MS;
+  let startIndex = 0;
+
+  while (startIndex < candles.length && candles[startIndex]!.time < cutoffTime) {
+    startIndex += 1;
+  }
+
+  return candles.slice(startIndex);
+};
+
+const mergeHistoricalAndRecentCandles = (
+  historical: Candle[],
+  recent: Candle[],
+  maxBars: number
+): Candle[] => {
+  if (historical.length === 0) {
+    return recent.slice(-maxBars);
+  }
+
+  if (recent.length === 0) {
+    return historical.slice(-maxBars);
+  }
+
+  return mergeRecentCandles(historical, recent, maxBars);
+};
+
 const fetchMarketCandles = async (timeframe: Timeframe, limit: number): Promise<Candle[]> => {
   const params = new URLSearchParams({
     pair: XAUUSD_PAIR,
@@ -1040,47 +1543,40 @@ const historyBarsForLookback = (
   return Math.min(maxBars, Math.max(MIN_SEED_CANDLES, bars));
 };
 
-const fetchHistoryCandles = async (timeframe: Timeframe): Promise<Candle[]> => {
-  const targetBars = chartHistoryCountByTimeframe[timeframe];
-
-  try {
-    const clickhouseCandles = await fetchClickhouseCandles(timeframe, targetBars);
-
-    if (clickhouseCandles.length >= MIN_SEED_CANDLES) {
-      return clickhouseCandles.slice(-targetBars);
+const fetchRecentOneMinuteCandles = async (
+  recentOneMinutePromise?: Promise<Candle[]>
+): Promise<Candle[]> => {
+  if (recentOneMinutePromise) {
+    try {
+      return await recentOneMinutePromise;
+    } catch {
+      return [];
     }
-  } catch {
-    // Fall through to secondary history source.
   }
 
   try {
-    const historyCandles = await fetchHistoryApiCandles(
-      timeframe,
-      Math.min(targetBars, MARKET_MAX_HISTORY_CANDLES)
-    );
-
-    if (historyCandles.length >= MIN_SEED_CANDLES) {
-      return historyCandles.slice(-targetBars);
-    }
+    const recentCandles = await fetchHistoryApiCandles("1m", RECENT_ONE_MINUTE_FETCH_COUNT);
+    return trimRecentOneMinuteCandles(recentCandles);
   } catch {
-    // Leave the chart empty until a real history or live refresh arrives.
+    return [];
   }
-
-  return [];
 };
 
-const fetchBacktestHistoryCandles = async (timeframe: Timeframe): Promise<Candle[]> => {
-  const targetBars = historyBarsForLookback(
-    timeframe,
-    BACKTEST_LOOKBACK_YEARS,
-    BACKTEST_MAX_HISTORY_CANDLES
+const fetchHybridHistoryCandles = async (
+  timeframe: Timeframe,
+  targetBars: number,
+  recentOneMinutePromise?: Promise<Candle[]>
+): Promise<Candle[]> => {
+  const recentTimeframeCandlesPromise = fetchRecentOneMinuteCandles(recentOneMinutePromise).then(
+    (candles) => aggregateCandlesToTimeframe(candles, timeframe)
   );
 
   try {
     const clickhouseCandles = await fetchClickhouseCandles(timeframe, targetBars);
 
     if (clickhouseCandles.length >= MIN_SEED_CANDLES) {
-      return clickhouseCandles.slice(-targetBars);
+      const recentTimeframeCandles = await recentTimeframeCandlesPromise;
+      return mergeHistoricalAndRecentCandles(clickhouseCandles, recentTimeframeCandles, targetBars);
     }
   } catch {
     // Fall through to secondary history source.
@@ -1093,13 +1589,36 @@ const fetchBacktestHistoryCandles = async (timeframe: Timeframe): Promise<Candle
     );
 
     if (historyCandles.length >= MIN_SEED_CANDLES) {
-      return historyCandles.slice(-targetBars);
+      const recentTimeframeCandles = await recentTimeframeCandlesPromise;
+      return mergeHistoricalAndRecentCandles(historyCandles, recentTimeframeCandles, targetBars);
     }
   } catch {
-    // Leave backtest to use chart history when deep history is unavailable.
+    // Leave chart and backtest to use the recent 1m window when deeper history is unavailable.
   }
 
-  return [];
+  const recentTimeframeCandles = await recentTimeframeCandlesPromise;
+  return recentTimeframeCandles.slice(-targetBars);
+};
+
+const fetchHistoryCandles = async (
+  timeframe: Timeframe,
+  recentOneMinutePromise?: Promise<Candle[]>
+): Promise<Candle[]> => {
+  const targetBars = chartHistoryCountByTimeframe[timeframe];
+  return fetchHybridHistoryCandles(timeframe, targetBars, recentOneMinutePromise);
+};
+
+const fetchBacktestHistoryCandles = async (
+  timeframe: Timeframe,
+  recentOneMinutePromise?: Promise<Candle[]>
+): Promise<Candle[]> => {
+  const targetBars = historyBarsForLookback(
+    timeframe,
+    BACKTEST_LOOKBACK_YEARS,
+    BACKTEST_MAX_HISTORY_CANDLES
+  );
+
+  return fetchHybridHistoryCandles(timeframe, targetBars, recentOneMinutePromise);
 };
 
 const XAUUSD_PAIR = "XAU_USD";
@@ -1220,6 +1739,10 @@ const formatUsd = (value: number): string => {
 
 const formatSignedUsd = (value: number): string => {
   return `${value >= 0 ? "+" : "-"}$${formatUsd(Math.abs(value))}`;
+};
+
+const formatChartUsd = (value: number): string => {
+  return `${value < 0 ? "-" : ""}$${formatUsd(Math.abs(value))}`;
 };
 
 const formatSignedPercent = (value: number): string => {
@@ -1665,6 +2188,14 @@ const formatClock = (timestampMs: number): string => {
 
 const clamp = (value: number, min: number, max: number): number => {
   return Math.min(max, Math.max(min, value));
+};
+
+const wrapIndex = (value: number, length: number): number => {
+  if (length <= 0) {
+    return 0;
+  }
+
+  return ((value % length) + length) % length;
 };
 
 const getExitMarkerPosition = (
@@ -2557,6 +3088,13 @@ const TabIcon = ({ tab }: { tab: PanelTab }) => {
   );
 };
 
+const getAiZipTradeDisplayId = (trade: Pick<HistoryItem, "id" | "entryTime">) =>
+  displayIdForNode({
+    uid: trade.id,
+    kind: "trade",
+    entryTime: Number(trade.entryTime)
+  });
+
 export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProps) {
   const modelProfiles = useMemo(() => {
     return buildModelProfiles(aiZipModelNames);
@@ -2571,6 +3109,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return names.length > 0 ? names : [...AI_MODEL_FALLBACK_NAMES];
   }, [aiZipModelNames]);
+  const aiLibraryDefs = useMemo(() => {
+    return buildAiLibraryDefs(availableAiModelNames);
+  }, [availableAiModelNames]);
+  const aiLibraryDefById = useMemo(() => {
+    return aiLibraryDefs.reduce<Record<string, AiLibraryDef>>((accumulator, definition) => {
+      accumulator[definition.id] = definition;
+      return accumulator;
+    }, {});
+  }, [aiLibraryDefs]);
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
   const [selectedModelId, setSelectedModelId] = useState(modelProfiles[0]?.id ?? "");
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
@@ -2594,6 +3141,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   >(null);
   const [statsDateStart, setStatsDateStart] = useState("");
   const [statsDateEnd, setStatsDateEnd] = useState("");
+  const [performanceStatsCollapsed, setPerformanceStatsCollapsed] = useState(false);
+  const [performanceStatsRange, setPerformanceStatsRange] =
+    useState<PerformanceStatsRange>("Months");
+  const [performanceStatsModel, setPerformanceStatsModel] = useState("All");
+  const [mainStatsModelPnlIndex, setMainStatsModelPnlIndex] = useState(0);
+  const [mainStatsSessionPnlIndex, setMainStatsSessionPnlIndex] = useState(0);
+  const [mainStatsMonthPnlIndex, setMainStatsMonthPnlIndex] = useState(-1);
   const [selectedBacktestMonthKey, setSelectedBacktestMonthKey] = useState("");
   const [selectedBacktestDateKey, setSelectedBacktestDateKey] = useState("");
   const [expandedBacktestTradeId, setExpandedBacktestTradeId] = useState<string | null>(null);
@@ -2657,6 +3211,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     "base"
   ]);
   const [selectedAiLibraryId, setSelectedAiLibraryId] = useState("core");
+  const [selectedAiLibrarySettings, setSelectedAiLibrarySettings] = useState<AiLibrarySettings>(() => {
+    return buildDefaultAiLibrarySettings(aiLibraryDefs);
+  });
+  const [aiBulkScope, setAiBulkScope] = useState<"active" | "all">("active");
+  const [aiBulkWeight, setAiBulkWeight] = useState(100);
+  const [aiBulkStride, setAiBulkStride] = useState(0);
+  const [aiBulkMaxSamples, setAiBulkMaxSamples] = useState(10000);
   const [chunkBars, setChunkBars] = useState(24);
   const [distanceMetric, setDistanceMetric] = useState<AiDistanceMetric>("euclidean");
   const [selectedAiModalities, setSelectedAiModalities] = useState<string[]>([
@@ -2726,11 +3287,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const selectedAiFeatureCount = selectedAiFeatures.length;
   const selectedAiLibraryCount = selectedAiLibraries.length;
   const availableAiLibraries = useMemo(() => {
-    return AI_LIBRARY_OPTIONS.filter((library) => !selectedAiLibraries.includes(library.id));
-  }, [selectedAiLibraries]);
+    return aiLibraryDefs.filter((library) => !selectedAiLibraries.includes(library.id));
+  }, [aiLibraryDefs, selectedAiLibraries]);
   const selectedAiLibrary = useMemo(() => {
-    return AI_LIBRARY_OPTIONS.find((library) => library.id === selectedAiLibraryId) ?? null;
-  }, [selectedAiLibraryId]);
+    return selectedAiLibraryId ? aiLibraryDefById[selectedAiLibraryId] ?? null : null;
+  }, [aiLibraryDefById, selectedAiLibraryId]);
 
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
 
@@ -2747,7 +3308,79 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     selectedSurfaceTabRef.current = selectedSurfaceTab;
   }, [selectedSurfaceTab]);
 
+  useEffect(() => {
+    setSelectedAiLibraries((current) => {
+      const next = current.filter((libraryId) => !!aiLibraryDefById[libraryId]);
+      return next.length === current.length ? current : next;
+    });
+    setSelectedAiLibrarySettings((current) => {
+      let changed = false;
+      const next: AiLibrarySettings = { ...(current ?? {}) };
+
+      for (const definition of aiLibraryDefs) {
+        if (!next[definition.id]) {
+          next[definition.id] = { ...definition.defaults };
+          changed = true;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [aiLibraryDefById, aiLibraryDefs]);
+
+  const applyAiBulkLibrarySettings = () => {
+    const scopeIds =
+      aiBulkScope === "active" ? selectedAiLibraries : aiLibraryDefs.map((definition) => definition.id);
+
+    setSelectedAiLibrarySettings((current) => {
+      const next: AiLibrarySettings = { ...(current ?? {}) };
+
+      for (const libraryId of scopeIds) {
+        const definition = aiLibraryDefById[libraryId];
+
+        if (!definition) {
+          continue;
+        }
+
+        const fieldKeys = new Set(definition.fields.map((field) => field.key));
+        const currentSettings = { ...((next[libraryId] ?? definition.defaults) as Record<string, AiLibrarySettingValue>) };
+
+        if (fieldKeys.has("weight")) {
+          currentSettings.weight = aiBulkWeight;
+        }
+
+        if (fieldKeys.has("stride")) {
+          currentSettings.stride = aiBulkStride;
+        }
+
+        if (fieldKeys.has("maxSamples")) {
+          currentSettings.maxSamples = aiBulkMaxSamples;
+        }
+
+        next[libraryId] = currentSettings;
+      }
+
+      return next;
+    });
+  };
+
   const addAiLibrary = (libraryId: string) => {
+    const definition = aiLibraryDefById[libraryId];
+
+    if (!definition) {
+      return;
+    }
+
+    setSelectedAiLibrarySettings((current) => {
+      if (current[libraryId]) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [libraryId]: { ...definition.defaults }
+      };
+    });
     setSelectedAiLibraries((current) => {
       if (current.includes(libraryId)) {
         return current;
@@ -2759,7 +3392,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   };
 
   const removeAiLibrary = (libraryId: string) => {
-    setSelectedAiLibraries((current) => current.filter((id) => id !== libraryId));
+    setSelectedAiLibraries((current) => {
+      const next = current.filter((id) => id !== libraryId);
+      setSelectedAiLibraryId((selectedId) => (selectedId !== libraryId ? selectedId : next[0] ?? ""));
+      return next;
+    });
   };
 
   const moveAiLibrary = (libraryId: string, direction: -1 | 1) => {
@@ -2784,6 +3421,40 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       next.splice(nextIndex, 0, moved);
+      return next;
+    });
+  };
+
+  const updateAiLibrarySetting = (
+    libraryId: string,
+    key: string,
+    value: AiLibrarySettingValue
+  ) => {
+    const definition = aiLibraryDefById[libraryId];
+
+    if (!definition) {
+      return;
+    }
+
+    const shouldSyncPivotSpan = key === "pivotSpan" && (libraryId === "terrific" || libraryId === "terrible");
+    const syncedLibraryId = libraryId === "terrific" ? "terrible" : "terrific";
+
+    setSelectedAiLibrarySettings((current) => {
+      const next: AiLibrarySettings = { ...(current ?? {}) };
+
+      next[libraryId] = {
+        ...((next[libraryId] ?? definition.defaults) as Record<string, AiLibrarySettingValue>),
+        [key]: value
+      };
+
+      if (shouldSyncPivotSpan && aiLibraryDefById[syncedLibraryId]) {
+        next[syncedLibraryId] = {
+          ...((next[syncedLibraryId] ??
+            aiLibraryDefById[syncedLibraryId].defaults) as Record<string, AiLibrarySettingValue>),
+          [key]: value
+        };
+      }
+
       return next;
     });
   };
@@ -2830,11 +3501,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     let liveSyncInterval = 0;
     const key = selectedKey;
     const historyLimit = chartHistoryCountByTimeframe[selectedTimeframe];
+    const recentOneMinutePromise = fetchRecentOneMinuteCandles();
 
     const connect = async () => {
       void (async () => {
         try {
-          const deepHistoryCandles = await fetchBacktestHistoryCandles(selectedTimeframe);
+          const deepHistoryCandles = await fetchBacktestHistoryCandles(
+            selectedTimeframe,
+            recentOneMinutePromise
+          );
 
           if (!cancelled && deepHistoryCandles.length >= MIN_SEED_CANDLES) {
             setBacktestSeriesMap((prev) => ({
@@ -2848,7 +3523,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       })();
 
       try {
-        const historicalCandles = await fetchHistoryCandles(selectedTimeframe);
+        const historicalCandles = await fetchHistoryCandles(selectedTimeframe, recentOneMinutePromise);
 
         if (!cancelled && historicalCandles.length > 0) {
           setSeriesMap((prev) => ({
@@ -3244,6 +3919,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setActiveBacktestTradeDetails({
       id: trade.id,
       uid: trade.id,
+      kind: "trade",
       symbol: trade.symbol,
       direction: trade.side === "Long" ? 1 : -1,
       side: trade.side,
@@ -4147,6 +4823,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           ? trade.exitTime
           : ((trade.entryTime + timeframeMinutes[selectedTimeframe] * 60) as UTCTimestamp);
       const entryAction = trade.side === "Long" ? "Buy" : "Sell";
+      const exitAction = trade.side === "Long" ? "Sell" : "Buy";
       const tradeZoneData = [
         { time: startTime, value: trade.targetPrice },
         { time: endTime, value: trade.targetPrice }
@@ -4167,14 +4844,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           position: trade.side === "Long" ? "belowBar" : "aboveBar",
           shape: trade.side === "Long" ? "arrowUp" : "arrowDown",
           color: trade.side === "Long" ? "#30b76f" : "#f0455a",
-          text: entryAction
+          text: `Entry ${entryAction}`
         },
         {
           time: endTime,
           position: exitPosition,
           shape: "square",
           color: derivedResult === "Win" ? "#35c971" : "#f0455a",
-          text: `${exitPrefix} ${formatSignedUsd(trade.pnlUsd)}`
+          text: `Exit ${exitAction} · ${exitPrefix} ${formatSignedUsd(trade.pnlUsd)}`
         }
       ]);
 
@@ -4217,6 +4894,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       for (const trade of currentSymbolHistoryRows) {
         const tradeResult: TradeResult = trade.result;
+        const entryAction = trade.side === "Long" ? "Buy" : "Sell";
+        const exitAction = trade.side === "Long" ? "Sell" : "Buy";
         const endTime =
           trade.exitTime > trade.entryTime
             ? trade.exitTime
@@ -4264,14 +4943,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           position: trade.side === "Long" ? "belowBar" : "aboveBar",
           shape: trade.side === "Long" ? "arrowUp" : "arrowDown",
           color: trade.side === "Long" ? "#35c971" : "#f0455a",
-          text: trade.side === "Long" ? "Buy" : "Sell"
+          text: `Entry ${entryAction}`
         });
         allMarkers.push({
           time: endTime,
           position: getExitMarkerPosition(trade.side, tradeResult),
           shape: "square",
           color: tradeResult === "Win" ? "#35c971" : "#f0455a",
-          text: `${tradeResult === "Win" ? "✓" : "x"} ${formatSignedUsd(trade.pnlUsd)}`
+          text: `Exit ${exitAction} · ${tradeResult === "Win" ? "✓" : "x"} ${formatSignedUsd(
+            trade.pnlUsd
+          )}`
         });
       }
 
@@ -4434,6 +5115,88 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return summarizeBacktestTrades(backtestTrades);
   }, [backtestTrades]);
 
+  const aiLibraryCounts = useMemo(() => {
+    const sessionWins: Record<string, number> = {
+      Tokyo: 0,
+      Sydney: 0,
+      London: 0,
+      "New York": 0
+    };
+    let winsOnlyCount = 0;
+
+    for (const trade of backtestTrades) {
+      if (trade.result !== "Win") {
+        continue;
+      }
+
+      winsOnlyCount += 1;
+      const session = getSessionLabel(trade.entryTime);
+
+      if (sessionWins[session] !== undefined) {
+        sessionWins[session] += 1;
+      }
+    }
+
+    const totalVisibleTrades = backtestTrades.length;
+    const suppressedTrades = Math.max(0, backtestTimeFilteredTrades.length - backtestTrades.length);
+    const perModelEstimate = Math.floor(totalVisibleTrades / Math.max(availableAiModelNames.length, 1));
+
+    return aiLibraryDefs.reduce<Record<string, number>>((accumulator, definition) => {
+      const settings = selectedAiLibrarySettings[definition.id] ?? definition.defaults;
+      const maxSamplesValue = Number(settings.maxSamples ?? totalVisibleTrades);
+      const maxSamples = Number.isFinite(maxSamplesValue)
+        ? Math.max(0, Math.round(maxSamplesValue))
+        : totalVisibleTrades;
+      let sourceCount = totalVisibleTrades;
+
+      switch (definition.id) {
+        case "suppressed":
+          sourceCount = suppressedTrades;
+          break;
+        case "recent":
+          sourceCount = Math.min(totalVisibleTrades, Math.max(0, Number(settings.windowTrades ?? totalVisibleTrades)));
+          break;
+        case "wins":
+          sourceCount = winsOnlyCount;
+          break;
+        case "wins_tokyo":
+          sourceCount = sessionWins.Tokyo;
+          break;
+        case "wins_sydney":
+          sourceCount = sessionWins.Sydney;
+          break;
+        case "wins_london":
+          sourceCount = sessionWins.London;
+          break;
+        case "wins_newyork":
+          sourceCount = sessionWins["New York"];
+          break;
+        case "terrific":
+        case "terrible":
+          sourceCount = Math.min(totalVisibleTrades, Math.max(0, Number(settings.count ?? 0)));
+          break;
+        default:
+          if (settings.kind === "model_sim") {
+            sourceCount = perModelEstimate;
+          }
+          break;
+      }
+
+      accumulator[definition.id] = Math.min(Math.max(0, Math.round(sourceCount)), maxSamples);
+      return accumulator;
+    }, {});
+  }, [
+    aiLibraryDefs,
+    availableAiModelNames.length,
+    backtestTimeFilteredTrades.length,
+    backtestTrades,
+    selectedAiLibrarySettings
+  ]);
+  const selectedAiLibraryConfig = selectedAiLibrary
+    ? selectedAiLibrarySettings[selectedAiLibrary.id] ?? selectedAiLibrary.defaults
+    : null;
+  const selectedAiLibraryLoadedCount = selectedAiLibrary ? aiLibraryCounts[selectedAiLibrary.id] ?? 0 : 0;
+
   const baselineMainStatsSummary = useMemo(() => {
     return summarizeBacktestTrades(baselineMainStatsTrades);
   }, [baselineMainStatsTrades]);
@@ -4463,7 +5226,38 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       map.set(label, current);
     }
 
-    return Array.from(map.values()).sort((left, right) => right.total - left.total);
+    return Array.from(map.values()).sort((left, right) => {
+      const leftIndex = backtestSessionLabels.indexOf(left.label as (typeof backtestSessionLabels)[number]);
+      const rightIndex = backtestSessionLabels.indexOf(right.label as (typeof backtestSessionLabels)[number]);
+
+      if (leftIndex !== -1 || rightIndex !== -1) {
+        if (leftIndex === -1) {
+          return 1;
+        }
+
+        if (rightIndex === -1) {
+          return -1;
+        }
+
+        return leftIndex - rightIndex;
+      }
+
+      return left.label.localeCompare(right.label);
+    });
+  }, [mainStatsTrades]);
+
+  const mainStatsModelRows = useMemo(() => {
+    const map = new Map<string, { label: string; total: number; trades: number }>();
+
+    for (const trade of mainStatsTrades) {
+      const label = trade.entrySource || "Unknown";
+      const current = map.get(label) ?? { label, total: 0, trades: 0 };
+      current.total += trade.pnlUsd;
+      current.trades += 1;
+      map.set(label, current);
+    }
+
+    return Array.from(map.values()).sort((left, right) => left.label.localeCompare(right.label));
   }, [mainStatsTrades]);
 
   const mainStatsMonthRows = useMemo(() => {
@@ -4570,38 +5364,173 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     mainStatsTrades.length
   ]);
 
-  const mainStatisticsCards = useMemo(() => {
+  const activeMainStatsModelPnlIndex =
+    mainStatsModelRows.length > 0 ? wrapIndex(mainStatsModelPnlIndex, mainStatsModelRows.length) : 0;
+  const mainStatsModelPnlFocusRow =
+    mainStatsModelRows.length > 0 ? mainStatsModelRows[activeMainStatsModelPnlIndex] : null;
+  const activeMainStatsSessionPnlIndex =
+    mainStatsSessionRows.length > 0 ? wrapIndex(mainStatsSessionPnlIndex, mainStatsSessionRows.length) : 0;
+  const mainStatsSessionPnlFocusRow =
+    mainStatsSessionRows.length > 0 ? mainStatsSessionRows[activeMainStatsSessionPnlIndex] : null;
+  const activeMainStatsMonthPnlIndex =
+    mainStatsMonthRows.length === 0
+      ? -1
+      : mainStatsMonthPnlIndex < 0
+        ? mainStatsMonthRows.length - 1
+        : wrapIndex(mainStatsMonthPnlIndex, mainStatsMonthRows.length);
+  const mainStatsMonthPnlFocusRow =
+    activeMainStatsMonthPnlIndex >= 0 ? mainStatsMonthRows[activeMainStatsMonthPnlIndex] : null;
+
+  const mainStatisticsCards = useMemo<MainStatisticsCard[]>(() => {
+    const buildPnlNavigator = (
+      label: string,
+      primaryText: string,
+      secondaryText: string,
+      itemCount: number,
+      onPrevious: () => void,
+      onNext: () => void
+    ): ReactNode => (
+      <>
+        <button
+          type="button"
+          className="backtest-stat-nav-button"
+          onClick={onPrevious}
+          disabled={itemCount <= 1}
+          aria-label={`${label} previous`}
+        >
+          ←
+        </button>
+        <span className="backtest-stat-nav-copy">
+          <span className="backtest-stat-nav-title" title={primaryText}>
+            {primaryText}
+          </span>
+          <span className="backtest-stat-nav-meta" title={secondaryText}>
+            {secondaryText}
+          </span>
+        </span>
+        <button
+          type="button"
+          className="backtest-stat-nav-button"
+          onClick={onNext}
+          disabled={itemCount <= 1}
+          aria-label={`${label} next`}
+        >
+          →
+        </button>
+      </>
+    );
+
     const hasTrades = mainStatsSummary.tradeCount > 0;
     const totalPnlTone =
       !hasTrades ? "neutral" : mainStatsSummary.totalPnl >= 0 ? "up" : "down";
-    const modelSummaryValue = hasTrades
-      ? `${selectedModel.name} · ${formatSignedUsd(mainStatsSummary.totalPnl)} · ${
-          mainStatsSummary.tradeCount
-        } trades`
-      : "—";
-    const modelPnlValue = hasTrades
-      ? `${selectedModel.name} · ${formatSignedUsd(mainStatsSummary.totalPnl)} · avg ${formatSignedUsd(
-          mainStatsSummary.avgPnl
-        )}`
-      : "—";
-    const bestSessionRow = mainStatsSessionRows[0] ?? null;
+    const modelRowsByPnl = [...mainStatsModelRows].sort((left, right) => right.total - left.total);
+    const bestModelRow = modelRowsByPnl[0] ?? null;
+    const worstModelRow =
+      modelRowsByPnl.length > 0 ? modelRowsByPnl[modelRowsByPnl.length - 1] : null;
+    const modelPnlValue = buildPnlNavigator(
+      "Model PnL",
+      mainStatsModelPnlFocusRow?.label ?? "—",
+      mainStatsModelPnlFocusRow
+        ? `${formatSignedUsd(mainStatsModelPnlFocusRow.total)} · ${
+            mainStatsModelPnlFocusRow.trades
+          } trades · avg ${formatSignedUsd(
+            mainStatsModelPnlFocusRow.total / Math.max(1, mainStatsModelPnlFocusRow.trades)
+          )}`
+        : "No model data",
+      mainStatsModelRows.length,
+      () => {
+        if (mainStatsModelRows.length <= 1) {
+          setMainStatsModelPnlIndex(0);
+          return;
+        }
+
+        setMainStatsModelPnlIndex((current) => wrapIndex(current - 1, mainStatsModelRows.length));
+      },
+      () => {
+        if (mainStatsModelRows.length <= 1) {
+          setMainStatsModelPnlIndex(0);
+          return;
+        }
+
+        setMainStatsModelPnlIndex((current) => wrapIndex(current + 1, mainStatsModelRows.length));
+      }
+    );
+    const sessionRowsByPnl = [...mainStatsSessionRows].sort((left, right) => right.total - left.total);
+    const bestSessionRow = sessionRowsByPnl[0] ?? null;
     const worstSessionRow =
-      mainStatsSessionRows.length > 0 ? mainStatsSessionRows[mainStatsSessionRows.length - 1] : null;
-    const sessionPnlValue = bestSessionRow
-      ? `${bestSessionRow.label} · ${formatSignedUsd(bestSessionRow.total)} · ${
-          bestSessionRow.trades
-        } trades · avg ${formatSignedUsd(bestSessionRow.total / Math.max(1, bestSessionRow.trades))}`
-      : "—";
+      sessionRowsByPnl.length > 0 ? sessionRowsByPnl[sessionRowsByPnl.length - 1] : null;
+    const sessionPnlValue = buildPnlNavigator(
+      "Session PnL",
+      mainStatsSessionPnlFocusRow?.label ?? "—",
+      mainStatsSessionPnlFocusRow
+        ? `${formatSignedUsd(mainStatsSessionPnlFocusRow.total)} · ${
+            mainStatsSessionPnlFocusRow.trades
+          } trades · avg ${formatSignedUsd(
+            mainStatsSessionPnlFocusRow.total / Math.max(1, mainStatsSessionPnlFocusRow.trades)
+          )}`
+        : "No session data",
+      mainStatsSessionRows.length,
+      () => {
+        if (mainStatsSessionRows.length <= 1) {
+          setMainStatsSessionPnlIndex(0);
+          return;
+        }
+
+        setMainStatsSessionPnlIndex((current) =>
+          wrapIndex(current - 1, mainStatsSessionRows.length)
+        );
+      },
+      () => {
+        if (mainStatsSessionRows.length <= 1) {
+          setMainStatsSessionPnlIndex(0);
+          return;
+        }
+
+        setMainStatsSessionPnlIndex((current) =>
+          wrapIndex(current + 1, mainStatsSessionRows.length)
+        );
+      }
+    );
     const monthRowsByPnl = [...mainStatsMonthRows].sort((left, right) => right.total - left.total);
     const bestMonthRow = monthRowsByPnl[0] ?? null;
     const worstMonthRow =
       monthRowsByPnl.length > 0 ? monthRowsByPnl[monthRowsByPnl.length - 1] : null;
-    const monthFocusRow = mainStatsMonthRows.length > 0 ? mainStatsMonthRows[mainStatsMonthRows.length - 1] : null;
-    const monthPnlValue = monthFocusRow
-      ? `${getMonthLabel(monthFocusRow.key)} · ${formatSignedUsd(monthFocusRow.total)} · ${
-          monthFocusRow.trades
-        } trades · avg ${formatSignedUsd(monthFocusRow.total / Math.max(1, monthFocusRow.trades))}`
-      : "—";
+    const monthPnlValue = buildPnlNavigator(
+      "Month PnL",
+      mainStatsMonthPnlFocusRow ? getMonthLabel(mainStatsMonthPnlFocusRow.key) : "—",
+      mainStatsMonthPnlFocusRow
+        ? `${formatSignedUsd(mainStatsMonthPnlFocusRow.total)} · ${
+            mainStatsMonthPnlFocusRow.trades
+          } trades · avg ${formatSignedUsd(
+            mainStatsMonthPnlFocusRow.total / Math.max(1, mainStatsMonthPnlFocusRow.trades)
+          )}`
+        : "No month data",
+      mainStatsMonthRows.length,
+      () => {
+        if (mainStatsMonthRows.length <= 1) {
+          setMainStatsMonthPnlIndex(mainStatsMonthRows.length === 0 ? -1 : 0);
+          return;
+        }
+
+        setMainStatsMonthPnlIndex((current) => {
+          const startIndex =
+            current < 0 ? mainStatsMonthRows.length - 1 : wrapIndex(current, mainStatsMonthRows.length);
+          return wrapIndex(startIndex - 1, mainStatsMonthRows.length);
+        });
+      },
+      () => {
+        if (mainStatsMonthRows.length <= 1) {
+          setMainStatsMonthPnlIndex(mainStatsMonthRows.length === 0 ? -1 : 0);
+          return;
+        }
+
+        setMainStatsMonthPnlIndex((current) => {
+          const startIndex =
+            current < 0 ? mainStatsMonthRows.length - 1 : wrapIndex(current, mainStatsMonthRows.length);
+          return wrapIndex(startIndex + 1, mainStatsMonthRows.length);
+        });
+      }
+    );
 
     return [
       {
@@ -4845,20 +5774,30 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       },
       {
         label: "Best Model",
-        value: modelSummaryValue,
-        tone: totalPnlTone,
+        value: bestModelRow
+          ? `${bestModelRow.label} · ${formatSignedUsd(bestModelRow.total)} · ${bestModelRow.trades} trades`
+          : "—",
+        tone: bestModelRow === null ? "neutral" : bestModelRow.total >= 0 ? "up" : "down",
         span: 2
       },
       {
         label: "Worst Model",
-        value: modelSummaryValue,
-        tone: totalPnlTone,
+        value: worstModelRow
+          ? `${worstModelRow.label} · ${formatSignedUsd(worstModelRow.total)} · ${worstModelRow.trades} trades`
+          : "—",
+        tone: worstModelRow === null ? "neutral" : worstModelRow.total >= 0 ? "up" : "down",
         span: 2
       },
       {
         label: "Model PnL",
         value: modelPnlValue,
-        tone: totalPnlTone,
+        tone:
+          mainStatsModelPnlFocusRow === null
+            ? "neutral"
+            : mainStatsModelPnlFocusRow.total >= 0
+              ? "up"
+              : "down",
+        valueClassName: "with-nav",
         span: 4
       },
       {
@@ -4883,7 +5822,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         label: "Session PnL",
         value: sessionPnlValue,
         tone:
-          bestSessionRow === null ? "neutral" : bestSessionRow.total >= 0 ? "up" : "down",
+          mainStatsSessionPnlFocusRow === null
+            ? "neutral"
+            : mainStatsSessionPnlFocusRow.total >= 0
+              ? "up"
+              : "down",
+        valueClassName: "with-nav",
         span: 4
       },
       {
@@ -4908,7 +5852,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         label: "Month PnL",
         value: monthPnlValue,
         tone:
-          monthFocusRow === null ? "neutral" : monthFocusRow.total >= 0 ? "up" : "down",
+          mainStatsMonthPnlFocusRow === null
+            ? "neutral"
+            : mainStatsMonthPnlFocusRow.total >= 0
+              ? "up"
+              : "down",
+        valueClassName: "with-nav",
         span: 4
       },
       {
@@ -4930,10 +5879,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     mainStatsAiEfficacyPct,
     mainStatsAiEffectivenessPct,
     mainStatsAiEfficiency,
+    mainStatsModelPnlFocusRow,
+    mainStatsModelRows,
+    mainStatsMonthPnlFocusRow,
     mainStatsMonthRows,
+    mainStatsSessionPnlFocusRow,
     mainStatsSessionRows,
-    mainStatsSummary,
-    selectedModel.name
+    mainStatsSummary
   ]);
 
   const availableBacktestMonths = useMemo(() => {
@@ -5036,6 +5988,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       .filter((trade) => {
         const haystack = [
           trade.id,
+          getAiZipTradeDisplayId(trade),
           selectedModel.name,
           trade.symbol,
           trade.side,
@@ -5111,77 +6064,88 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setAiZipClusterTimelineIdx(Math.max(0, aiZipClusterCandles.length - 1));
   }, [aiZipClusterCandles.length]);
 
-  const backtestTemporalStats = useMemo(() => {
-    const weekdayRows = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label) => ({
-      label,
-      count: 0,
-      wins: 0,
-      pnl: 0
-    }));
-    const monthRows = backtestMonthLabels.map((label) => ({
-      label,
-      count: 0,
-      wins: 0,
-      pnl: 0
-    }));
-    const hourRows = backtestHourLabels.map((label, hour) => ({
-      label,
-      hour,
-      count: 0,
-      wins: 0,
-      pnl: 0
-    }));
-    const sessionMap = new Map<string, { label: string; count: number; wins: number; pnl: number }>();
+  const performanceStatsModelOptions = useMemo(() => {
+    const models = Array.from(
+      new Set(
+        backtestSourceTrades
+          .map((trade) => trade.entrySource.trim())
+          .filter((name) => name.length > 0)
+      )
+    );
 
-    for (const label of backtestSessionLabels) {
-      sessionMap.set(label, { label, count: 0, wins: 0, pnl: 0 });
+    if (models.length === 0 && selectedModel.name.trim().length > 0) {
+      models.push(selectedModel.name);
     }
 
-    for (const trade of backtestTrades) {
-      const date = new Date(Number(trade.exitTime) * 1000);
-      const weekday = weekdayRows[date.getUTCDay()];
-      const monthRow = monthRows[date.getUTCMonth()];
-      const hourRow = hourRows[getTradeHour(trade.entryTime)];
-      weekday.count += 1;
-      weekday.wins += trade.result === "Win" ? 1 : 0;
-      weekday.pnl += trade.pnlUsd;
-      monthRow.count += 1;
-      monthRow.wins += trade.result === "Win" ? 1 : 0;
-      monthRow.pnl += trade.pnlUsd;
-      hourRow.count += 1;
-      hourRow.wins += trade.result === "Win" ? 1 : 0;
-      hourRow.pnl += trade.pnlUsd;
+    return ["All", ...models];
+  }, [backtestSourceTrades, selectedModel.name]);
 
-      const session = sessionMap.get(getSessionLabel(trade.entryTime));
+  useEffect(() => {
+    if (!performanceStatsModelOptions.includes(performanceStatsModel)) {
+      setPerformanceStatsModel("All");
+    }
+  }, [performanceStatsModel, performanceStatsModelOptions]);
 
-      if (session) {
-        session.count += 1;
-        session.wins += trade.result === "Win" ? 1 : 0;
-        session.pnl += trade.pnlUsd;
+  const performanceStatsTemporalData = useMemo(() => {
+    const filteredTrades =
+      performanceStatsModel === "All"
+        ? mainStatsTrades
+        : mainStatsTrades.filter((trade) => trade.entrySource === performanceStatsModel);
+    const buckets = new Map<string, { pnl: number; count: number }>();
+
+    for (const trade of filteredTrades) {
+      const timestampSeconds = Number(trade.entryTime ?? trade.exitTime);
+
+      if (!Number.isFinite(timestampSeconds)) {
+        continue;
       }
+
+      const date = new Date(timestampSeconds * 1000);
+      let key = "";
+
+      if (performanceStatsRange === "Years") {
+        key = String(date.getUTCFullYear());
+      } else if (performanceStatsRange === "Months") {
+        key = backtestMonthLabels[date.getUTCMonth()] ?? String(date.getUTCMonth() + 1);
+      } else if (performanceStatsRange === "Days of the Week") {
+        key = backtestWeekdayLabels[date.getUTCDay()] ?? String(date.getUTCDay());
+      } else {
+        key = backtestHourLabels[date.getUTCHours()] ?? String(date.getUTCHours());
+      }
+
+      const current = buckets.get(key) ?? { pnl: 0, count: 0 };
+      buckets.set(key, {
+        pnl: current.pnl + trade.pnlUsd,
+        count: current.count + 1
+      });
     }
 
-    const sessions = Array.from(sessionMap.values());
+    let orderedBuckets: string[] = [];
 
-    return {
-      weekdays: weekdayRows.map((row) => ({
-        ...row,
-        winRate: row.count > 0 ? (row.wins / row.count) * 100 : 0
-      })),
-      months: monthRows.map((row) => ({
-        ...row,
-        winRate: row.count > 0 ? (row.wins / row.count) * 100 : 0
-      })),
-      hours: hourRows.map((row) => ({
-        ...row,
-        winRate: row.count > 0 ? (row.wins / row.count) * 100 : 0
-      })),
-      sessions: sessions.map((row) => ({
-        ...row,
-        winRate: row.count > 0 ? (row.wins / row.count) * 100 : 0
-      }))
-    };
-  }, [backtestTrades]);
+    if (performanceStatsRange === "Years") {
+      orderedBuckets = Array.from(buckets.keys())
+        .map((bucket) => Number(bucket))
+        .filter((value) => Number.isFinite(value))
+        .sort((left, right) => left - right)
+        .map((value) => String(value));
+    } else if (performanceStatsRange === "Months") {
+      orderedBuckets = [...backtestMonthLabels];
+    } else if (performanceStatsRange === "Days of the Week") {
+      orderedBuckets = [...backtestWeekdayLabels];
+    } else {
+      orderedBuckets = [...backtestHourLabels];
+    }
+
+    return orderedBuckets.map((bucket) => {
+      const record = buckets.get(bucket) ?? { pnl: 0, count: 0 };
+
+      return {
+        bucket,
+        pnl: Number(record.pnl.toFixed(2)),
+        count: record.count
+      };
+    });
+  }, [mainStatsTrades, performanceStatsModel, performanceStatsRange]);
 
   const backtestEntryExitStats = useMemo(() => {
     const sideMap = new Map<TradeSide, { side: TradeSide; count: number; wins: number; pnl: number }>();
@@ -7426,7 +8390,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           }`}
                         >
                           <span>{item.label}</span>
-                          <strong className={item.tone === "neutral" ? "" : item.tone}>
+                          <strong
+                            className={[
+                              item.tone === "neutral" ? "" : item.tone,
+                              item.valueClassName ?? ""
+                            ]
+                              .filter(Boolean)
+                              .join(" ")}
+                          >
                             {item.value}
                           </strong>
                         </div>
@@ -7476,7 +8447,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       </div>
                     </div>
 
-                    <div className="main-settings-core-grid">
+                    <div className="main-settings-core-grid single">
                       <div className="ai-zip-section main-settings-panel">
                         <div className="main-settings-panel-title">Core AI Controls</div>
 
@@ -7550,32 +8521,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             className="backtest-slider"
                           />
                           <div className="ai-zip-note">{confidenceThreshold}</div>
-                        </div>
-                      </div>
-
-                      <div className="ai-zip-section main-settings-panel">
-                        <div className="main-settings-panel-title">Current Gate Snapshot</div>
-                        <div className="ai-zip-note">
-                          Average confidence {backtestSummary.averageConfidence.toFixed(1)}% ·{" "}
-                          {backtestTrades.length} trades visible after filters
-                        </div>
-                        <div className="backtest-stat-list">
-                          <div className="backtest-stat-row">
-                            <span>AI Method</span>
-                            <strong>{aiMode === "off" ? "OFF" : aiMode.toUpperCase()}</strong>
-                          </div>
-                          <div className="backtest-stat-row">
-                            <span>AI Model</span>
-                            <strong>{aiModelEnabled ? "ON" : "OFF"}</strong>
-                          </div>
-                          <div className="backtest-stat-row">
-                            <span>AI Filter</span>
-                            <strong>{aiFilterEnabled ? "ON" : "OFF"}</strong>
-                          </div>
-                          <div className="backtest-stat-row">
-                            <span>Static Libraries</span>
-                            <strong>{staticLibrariesClusters ? "ON" : "OFF"}</strong>
-                          </div>
                         </div>
                       </div>
                     </div>
@@ -8160,7 +9105,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
               <AiSettingsModal
                 title="LIBRARY"
-                subtitle="Available, active, and quick controls"
+                subtitle="Available, active, and full AI.zip controls"
                 size="xwide"
                 bodyClassName="ai-zip-library-modal-body"
                 open={librariesModalOpen}
@@ -8170,7 +9115,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <section className="ai-zip-library-column">
                     <header>
                       <strong>Available Libraries</strong>
-                      <span>Click Add to activate</span>
+                      <span>Click Add to activate.</span>
                     </header>
                     <div className="ai-zip-library-scroll">
                       {availableAiLibraries.length === 0 ? (
@@ -8179,8 +9124,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         availableAiLibraries.map((library) => (
                           <article key={library.id} className="ai-zip-library-card">
                             <div>
-                              <h4>{library.label}</h4>
-                              <p>{library.note ?? "Library option."}</p>
+                              <h4>{library.name}</h4>
+                              <p>{library.description || "Library option."}</p>
                             </div>
                             <button
                               type="button"
@@ -8198,15 +9143,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <section className="ai-zip-library-column">
                     <header>
                       <strong>Active Libraries</strong>
-                      <span>Order controls influence priority</span>
+                      <span>Select one to edit settings.</span>
                     </header>
                     <div className="ai-zip-library-scroll">
                       {selectedAiLibraries.length === 0 ? (
                         <p className="ai-zip-library-empty">No active libraries selected.</p>
                       ) : (
                         selectedAiLibraries.map((libraryId, index) => {
-                          const library =
-                            AI_LIBRARY_OPTIONS.find((option) => option.id === libraryId) ?? null;
+                          const library = aiLibraryDefById[libraryId] ?? null;
 
                           if (!library) {
                             return null;
@@ -8221,8 +9165,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               onClick={() => setSelectedAiLibraryId(libraryId)}
                             >
                               <div>
-                                <h4>{library.label}</h4>
-                                <p>{library.note ?? "Active library option."}</p>
+                                <h4>{library.name}</h4>
+                                <p>{library.description || "Active library option."}</p>
                               </div>
                               <div className="ai-zip-library-actions">
                                 <button
@@ -8270,48 +9214,236 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
                   <section className="ai-zip-library-column settings">
                     <header>
-                      <strong>Details</strong>
-                      <span>{selectedAiLibrary ? selectedAiLibrary.label : "Select a library"}</span>
+                      <strong>Settings</strong>
+                      <span>{selectedAiLibrary ? selectedAiLibrary.name : "Select an active library"}</span>
+                      {selectedAiLibrary ? (
+                        <div className="ai-zip-library-settings-meta">
+                          <span
+                            className={`ai-zip-library-status-badge ${
+                              selectedAiLibraryLoadedCount > 0 ? "loaded" : ""
+                            }`}
+                          >
+                            {selectedAiLibraryLoadedCount > 0 ? "Loaded" : "Not Loaded"}
+                          </span>
+                          <span className="ai-zip-library-neighbor-count">
+                            {selectedAiLibraryLoadedCount.toLocaleString()} neighbors
+                          </span>
+                        </div>
+                      ) : null}
                     </header>
                     <div className="ai-zip-library-scroll">
-                      {selectedAiLibrary ? (
+                      {selectedAiLibrary && selectedAiLibraryConfig ? (
                         <div className="ai-zip-library-detail">
-                          <h4>{selectedAiLibrary.label}</h4>
-                          <p>{selectedAiLibrary.note ?? "AI.zip library configuration."}</p>
-                          <div className="ai-zip-library-metrics">
-                            <div>
-                              <span>Status</span>
-                              <strong>
-                                {selectedAiLibraries.includes(selectedAiLibrary.id)
-                                  ? "Active"
-                                  : "Inactive"}
-                              </strong>
+                          <div className="ai-zip-library-settings-panel">
+                            <div className="ai-zip-library-settings-title">
+                              Bulk settings (apply to many libraries)
                             </div>
-                            <div>
-                              <span>Total Active</span>
-                              <strong>{selectedAiLibraryCount}</strong>
+                            <div className="ai-zip-library-settings-grid">
+                              <label className="ai-zip-library-field">
+                                <span>Scope</span>
+                                <select
+                                  value={aiBulkScope}
+                                  onChange={(event) => {
+                                    setAiBulkScope((event.target.value as "active" | "all") || "active");
+                                  }}
+                                  className="ai-zip-library-input"
+                                >
+                                  <option value="active">Active libraries only</option>
+                                  <option value="all">All libraries</option>
+                                </select>
+                              </label>
+                              <label className="ai-zip-library-field">
+                                <span>Weight (%)</span>
+                                <input
+                                  type="number"
+                                  value={aiBulkWeight}
+                                  onChange={(event) => {
+                                    setAiBulkWeight(Math.max(0, Number(event.target.value) || 0));
+                                  }}
+                                  className="ai-zip-library-input"
+                                />
+                              </label>
+                              <label className="ai-zip-library-field">
+                                <span>Stride</span>
+                                <input
+                                  type="number"
+                                  value={aiBulkStride}
+                                  onChange={(event) => {
+                                    setAiBulkStride(Math.max(0, Number(event.target.value) || 0));
+                                  }}
+                                  className="ai-zip-library-input"
+                                />
+                              </label>
+                              <label className="ai-zip-library-field">
+                                <span>Amount of Samples</span>
+                                <input
+                                  type="number"
+                                  value={aiBulkMaxSamples}
+                                  onChange={(event) => {
+                                    setAiBulkMaxSamples(Math.max(0, Number(event.target.value) || 0));
+                                  }}
+                                  className="ai-zip-library-input"
+                                />
+                              </label>
                             </div>
+                            <button
+                              type="button"
+                              className="ai-zip-library-action primary wide"
+                              onClick={applyAiBulkLibrarySettings}
+                            >
+                              Apply to {aiBulkScope === "active" ? "active" : "all"} libraries
+                            </button>
                           </div>
-                          {selectedAiLibraries.includes(selectedAiLibrary.id) ? (
-                            <button
-                              type="button"
-                              className="ai-zip-library-action danger wide"
-                              onClick={() => removeAiLibrary(selectedAiLibrary.id)}
-                            >
-                              Remove from Active
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              className="ai-zip-library-action add wide"
-                              onClick={() => addAiLibrary(selectedAiLibrary.id)}
-                            >
-                              Add to Active
-                            </button>
-                          )}
+
+                          {selectedAiLibrary.fields.map((field) => {
+                            const fieldValue = selectedAiLibraryConfig[field.key];
+
+                            if (field.type === "boolean") {
+                              const isEnabled = Boolean(fieldValue);
+
+                              return (
+                                <div key={field.key} className="ai-zip-library-field-block">
+                                  <div className="ai-zip-library-field-inline">
+                                    <div>
+                                      <div className="ai-zip-library-field-label">{field.label}</div>
+                                      {field.help ? (
+                                        <p className="ai-zip-library-field-help">{field.help}</p>
+                                      ) : null}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className={`ai-zip-library-action ${isEnabled ? "add" : ""}`}
+                                      onClick={() => {
+                                        updateAiLibrarySetting(
+                                          selectedAiLibrary.id,
+                                          field.key,
+                                          !isEnabled
+                                        );
+                                      }}
+                                    >
+                                      {isEnabled ? "ON" : "OFF"}
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            if (field.type === "select") {
+                              return (
+                                <label key={field.key} className="ai-zip-library-field-block">
+                                  <span className="ai-zip-library-field-label">{field.label}</span>
+                                  <select
+                                    value={String(fieldValue ?? "")}
+                                    onChange={(event) => {
+                                      updateAiLibrarySetting(
+                                        selectedAiLibrary.id,
+                                        field.key,
+                                        event.target.value
+                                      );
+                                    }}
+                                    className="ai-zip-library-input"
+                                  >
+                                    {(field.options ?? []).map((option) => (
+                                      <option key={option.value} value={option.value}>
+                                        {option.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {field.help ? (
+                                    <p className="ai-zip-library-field-help">{field.help}</p>
+                                  ) : null}
+                                </label>
+                              );
+                            }
+
+                            if (field.type === "text") {
+                              return (
+                                <label key={field.key} className="ai-zip-library-field-block">
+                                  <span className="ai-zip-library-field-label">{field.label}</span>
+                                  <input
+                                    type="text"
+                                    value={String(fieldValue ?? "")}
+                                    onChange={(event) => {
+                                      updateAiLibrarySetting(
+                                        selectedAiLibrary.id,
+                                        field.key,
+                                        event.target.value
+                                      );
+                                    }}
+                                    className="ai-zip-library-input"
+                                  />
+                                  {field.help ? (
+                                    <p className="ai-zip-library-field-help">{field.help}</p>
+                                  ) : null}
+                                </label>
+                              );
+                            }
+
+                            const min = typeof field.min === "number" ? field.min : undefined;
+                            const max = typeof field.max === "number" ? field.max : undefined;
+                            const step = typeof field.step === "number" ? field.step : 1;
+                            const parsedValue = Number(fieldValue ?? 0);
+                            const numericValue = Number.isFinite(parsedValue) ? parsedValue : 0;
+                            const canRange =
+                              min != null &&
+                              max != null &&
+                              (field.key === "maxSamples" || max - min <= 50000);
+
+                            return (
+                              <label key={field.key} className="ai-zip-library-field-block">
+                                <span className="ai-zip-library-field-label">{field.label}</span>
+                                <input
+                                  type="number"
+                                  value={numericValue}
+                                  min={min}
+                                  max={max}
+                                  step={step}
+                                  onChange={(event) => {
+                                    const raw = Number(event.target.value);
+                                    const nextValue = Number.isFinite(raw) ? raw : 0;
+                                    const clampedValue =
+                                      min != null && max != null
+                                        ? clamp(nextValue, min, max)
+                                        : min != null
+                                          ? Math.max(min, nextValue)
+                                          : max != null
+                                            ? Math.min(max, nextValue)
+                                            : nextValue;
+
+                                    updateAiLibrarySetting(
+                                      selectedAiLibrary.id,
+                                      field.key,
+                                      clampedValue
+                                    );
+                                  }}
+                                  className="ai-zip-library-input"
+                                />
+                                {canRange ? (
+                                  <input
+                                    type="range"
+                                    min={min}
+                                    max={max}
+                                    step={step}
+                                    value={numericValue}
+                                    onChange={(event) => {
+                                      updateAiLibrarySetting(
+                                        selectedAiLibrary.id,
+                                        field.key,
+                                        Number(event.target.value)
+                                      );
+                                    }}
+                                    className="backtest-slider"
+                                  />
+                                ) : null}
+                                {field.help ? (
+                                  <p className="ai-zip-library-field-help">{field.help}</p>
+                                ) : null}
+                              </label>
+                            );
+                          })}
                         </div>
                       ) : (
-                        <p className="ai-zip-library-empty">Choose a library to view details.</p>
+                        <p className="ai-zip-library-empty">No library selected.</p>
                       )}
                     </div>
                   </section>
@@ -8550,7 +9682,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                             color: "rgba(255,255,255,0.82)"
                                           })}
                                         >
-                                          {trade.id}
+                                          {getAiZipTradeDisplayId(trade)}
                                         </span>
                                       </td>
                                       <td style={cell(2, { whiteSpace: "normal" })}>
@@ -8657,34 +9789,46 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       </div>
                     </div>
 
-                    <div className="backtest-calendar-nav compact">
-                      <button
-                        type="button"
-                        className="backtest-action-btn"
-                        onClick={() => setSelectedBacktestMonthKey(shiftTradeMonthKey(activeBacktestMonthKey, -1))}
-                      >
-                        {"<"}
-                      </button>
-                      <span className="backtest-calendar-label">{calendarMonthLabel}</span>
-                      <button
-                        type="button"
-                        className="backtest-action-btn"
-                        onClick={() => setSelectedBacktestMonthKey(shiftTradeMonthKey(activeBacktestMonthKey, 1))}
-                      >
-                        {">"}
-                      </button>
-                    </div>
+                    <div className="backtest-calendar-shell">
+                      <div className="backtest-calendar-toolbar">
+                        <div className="backtest-calendar-nav compact">
+                          <button
+                            type="button"
+                            className="backtest-action-btn backtest-calendar-nav-btn"
+                            onClick={() =>
+                              setSelectedBacktestMonthKey(
+                                shiftTradeMonthKey(activeBacktestMonthKey, -1)
+                              )
+                            }
+                          >
+                            {"<"}
+                          </button>
+                          <span className="backtest-calendar-label">{calendarMonthLabel}</span>
+                          <button
+                            type="button"
+                            className="backtest-action-btn backtest-calendar-nav-btn"
+                            onClick={() =>
+                              setSelectedBacktestMonthKey(shiftTradeMonthKey(activeBacktestMonthKey, 1))
+                            }
+                          >
+                            {">"}
+                          </button>
+                        </div>
+                      </div>
 
-                    <div
-                      className={`backtest-month-pill ${
-                        selectedBacktestMonthPnl > 0
-                          ? "up"
-                          : selectedBacktestMonthPnl < 0
-                            ? "down"
-                            : "neutral"
-                      }`}
-                    >
-                      {calendarMonthLabel} PnL: {formatSignedUsd(selectedBacktestMonthPnl)}
+                      <div className="backtest-calendar-summary">
+                        <div
+                          className={`backtest-month-pill ${
+                            selectedBacktestMonthPnl > 0
+                              ? "up"
+                              : selectedBacktestMonthPnl < 0
+                                ? "down"
+                                : "neutral"
+                          }`}
+                        >
+                          {calendarMonthLabel} PnL: {formatSignedUsd(selectedBacktestMonthPnl)}
+                        </div>
+                      </div>
                     </div>
 
                     <div className="backtest-calendar-weekdays">
@@ -8725,9 +9869,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     </div>
 
                     <div className="backtest-calendar-detail">
-                      <div className="backtest-card-head">
+                      <div className="backtest-card-head backtest-calendar-detail-head">
                         <div>
                           <h3>{selectedBacktestDateKey || "Select a day"}</h3>
+                          <p>
+                            {selectedBacktestDateKey
+                              ? `${getWeekdayLabel(selectedBacktestDateKey)}, ${getCalendarDateLabel(
+                                  selectedBacktestDateKey
+                                )} · ${selectedBacktestDayTrades.length} trade${
+                                  selectedBacktestDayTrades.length === 1 ? "" : "s"
+                                }`
+                              : "Select a day in the grid to inspect the matching trade set."}
+                          </p>
                         </div>
                       </div>
 
@@ -8767,21 +9920,35 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     {trade.side === "Long" ? "BUY" : "SELL"}
                                   </span>
                                   <div className="backtest-calendar-trade-copy">
-                                    <strong>
-                                      Entry ({selectedTimeframe}): {trade.entryAt} @{" "}
-                                      {formatPrice(trade.entryPrice)}
-                                    </strong>
-                                    <span>
-                                      Exit ({selectedTimeframe}): {trade.exitAt} @{" "}
-                                      {formatPrice(trade.outcomePrice)}
-                                    </span>
-                                    <span>
+                                    <div className="backtest-calendar-trade-inline">
+                                      <span className="backtest-calendar-trade-inline-label">
+                                        Entry ({selectedTimeframe}):
+                                      </span>
+                                      <span className="backtest-calendar-trade-inline-value">
+                                        {trade.entryAt}
+                                      </span>
+                                      <span className="backtest-calendar-trade-inline-price">
+                                        @ {formatPrice(trade.entryPrice)}
+                                      </span>
+                                    </div>
+                                    <div className="backtest-calendar-trade-inline optional">
+                                      <span className="backtest-calendar-trade-inline-label">
+                                        Exit ({selectedTimeframe}):
+                                      </span>
+                                      <span className="backtest-calendar-trade-inline-value">
+                                        {trade.exitAt}
+                                      </span>
+                                      <span className="backtest-calendar-trade-inline-price">
+                                        @ {formatPrice(trade.outcomePrice)}
+                                      </span>
+                                    </div>
+                                    <div className="backtest-calendar-trade-duration">
                                       Duration: {estimatedBars} bars · {formatMinutesCompact(durationMinutes)}
-                                    </span>
+                                    </div>
                                   </div>
                                 </div>
                                 <div className="backtest-calendar-trade-side">
-                                  <span>{trade.symbol}</span>
+                                  <span className="backtest-calendar-trade-symbol">{trade.symbol}</span>
                                   <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
                                     {formatSignedUsd(trade.pnlUsd)}
                                   </strong>
@@ -9065,160 +10232,303 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ) : null}
 
               {selectedBacktestTab === "performanceStats" ? (
-                <div className="backtest-grid">
-                  <div className="backtest-grid two-up">
-                    <div className="backtest-card">
-                      <div className="backtest-card-head">
-                        <div>
-                          <h3>Month Performance</h3>
-                          <p>Performance by month after the active time and confidence filters.</p>
-                        </div>
-                      </div>
-                      <div className="backtest-bar-list">
-                        {backtestTemporalStats.months.map((row) => {
-                          const maxCount = Math.max(
-                            1,
-                            ...backtestTemporalStats.months.map((item) => item.count)
-                          );
-
-                          return (
-                            <div key={row.label} className="backtest-bar-row">
-                              <div className="backtest-bar-copy">
-                                <strong>{row.label}</strong>
-                                <span>{row.count} trades</span>
-                              </div>
-                              <div className="backtest-bar-track">
-                                <div
-                                  className={`backtest-bar-fill ${row.pnl >= 0 ? "up" : "down"}`}
-                                  style={{ width: `${(row.count / maxCount) * 100}%` }}
-                                />
-                              </div>
-                              <div className="backtest-bar-values">
-                                <span>{row.winRate.toFixed(0)}%</span>
-                                <strong className={row.pnl >= 0 ? "up" : "down"}>
-                                  {formatSignedUsd(row.pnl)}
-                                </strong>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                <div
+                  style={{
+                    marginTop: 14,
+                    background: "#0b0b0b",
+                    borderRadius: 16,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    boxShadow: "0 18px 45px rgba(0,0,0,0.75)",
+                    padding: 16
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setPerformanceStatsCollapsed((current) => !current)}
+                    style={{
+                      width: "100%",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      marginBottom: performanceStatsCollapsed ? 0 : 10,
+                      padding: 0,
+                      border: 0,
+                      background: "transparent",
+                      color: "inherit",
+                      cursor: "pointer",
+                      textAlign: "left"
+                    }}
+                  >
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <h2
+                        style={{
+                          margin: 0,
+                          fontSize: "1.125rem",
+                          fontWeight: 600,
+                          color: "rgba(245,245,245,0.98)"
+                        }}
+                      >
+                        Temporal Stats
+                      </h2>
                     </div>
+                    <span
+                      style={{
+                        fontSize: "0.78rem",
+                        fontWeight: 700,
+                        letterSpacing: "0.08em",
+                        color: "rgba(255,255,255,0.62)"
+                      }}
+                    >
+                      {performanceStatsCollapsed ? "OPEN" : "HIDE"}
+                    </span>
+                  </button>
 
-                    <div className="backtest-card">
-                      <div className="backtest-card-head">
-                        <div>
-                          <h3>Weekday Performance</h3>
-                          <p>Performance by weekday after the active time and confidence filters.</p>
-                        </div>
-                      </div>
-                      <div className="backtest-bar-list">
-                        {backtestTemporalStats.weekdays.map((row) => {
-                          const maxCount = Math.max(
-                            1,
-                            ...backtestTemporalStats.weekdays.map((item) => item.count)
-                          );
-
-                          return (
-                            <div key={row.label} className="backtest-bar-row">
-                              <div className="backtest-bar-copy">
-                                <strong>{row.label}</strong>
-                                <span>{row.count} trades</span>
-                              </div>
-                              <div className="backtest-bar-track">
-                                <div
-                                  className={`backtest-bar-fill ${row.pnl >= 0 ? "up" : "down"}`}
-                                  style={{ width: `${(row.count / maxCount) * 100}%` }}
-                                />
-                              </div>
-                              <div className="backtest-bar-values">
-                                <span>{row.winRate.toFixed(0)}%</span>
-                                <strong className={row.pnl >= 0 ? "up" : "down"}>
-                                  {formatSignedUsd(row.pnl)}
-                                </strong>
-                              </div>
+                  {!performanceStatsCollapsed ? (
+                    <div style={{ marginTop: 12, display: "grid", gap: 16 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: 10,
+                          alignItems: "center",
+                          justifyContent: "space-between"
+                        }}
+                      >
+                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <div
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 900,
+                                opacity: 0.8,
+                                letterSpacing: "0.04em"
+                              }}
+                            >
+                              Range
                             </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+                            <select
+                              value={performanceStatsRange}
+                              onChange={(event) =>
+                                setPerformanceStatsRange(event.target.value as PerformanceStatsRange)
+                              }
+                              style={{
+                                height: 34,
+                                padding: "0 10px",
+                                borderRadius: 12,
+                                border: "1px solid rgba(255,255,255,0.14)",
+                                background: "rgba(255,255,255,0.04)",
+                                color: "rgba(255,255,255,0.92)",
+                                fontWeight: 800,
+                                cursor: "pointer",
+                                outline: "none",
+                                appearance: "none"
+                              }}
+                            >
+                              <option value="Years">Years</option>
+                              <option value="Months">Months</option>
+                              <option value="Days of the Week">Days of the Week</option>
+                              <option value="Hours">Hours</option>
+                            </select>
+                          </div>
 
-                    <div className="backtest-card">
-                      <div className="backtest-card-head">
-                        <div>
-                          <h3>Session Performance</h3>
-                          <p>Session breakdown after the active time and confidence filters.</p>
-                        </div>
-                      </div>
-                      <div className="backtest-bar-list">
-                        {backtestTemporalStats.sessions.map((row) => {
-                          const maxCount = Math.max(
-                            1,
-                            ...backtestTemporalStats.sessions.map((item) => item.count)
-                          );
-
-                          return (
-                            <div key={row.label} className="backtest-bar-row">
-                              <div className="backtest-bar-copy">
-                                <strong>{row.label}</strong>
-                                <span>{row.count} trades</span>
-                              </div>
-                              <div className="backtest-bar-track">
-                                <div
-                                  className={`backtest-bar-fill ${row.pnl >= 0 ? "up" : "down"}`}
-                                  style={{ width: `${(row.count / maxCount) * 100}%` }}
-                                />
-                              </div>
-                              <div className="backtest-bar-values">
-                                <span>{row.winRate.toFixed(0)}%</span>
-                                <strong className={row.pnl >= 0 ? "up" : "down"}>
-                                  {formatSignedUsd(row.pnl)}
-                                </strong>
-                              </div>
+                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <div
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 900,
+                                opacity: 0.8,
+                                letterSpacing: "0.04em"
+                              }}
+                            >
+                              Model
                             </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div className="backtest-card">
-                      <div className="backtest-card-head">
-                        <div>
-                          <h3>Hour Performance</h3>
-                          <p>Most active hours after the current filters.</p>
+                            <select
+                              value={performanceStatsModel}
+                              onChange={(event) => setPerformanceStatsModel(event.target.value)}
+                              style={{
+                                height: 34,
+                                padding: "0 10px",
+                                borderRadius: 12,
+                                border: "1px solid rgba(255,255,255,0.14)",
+                                background: "rgba(255,255,255,0.04)",
+                                color: "rgba(255,255,255,0.92)",
+                                fontWeight: 800,
+                                cursor: "pointer",
+                                outline: "none",
+                                appearance: "none",
+                                minWidth: 170
+                              }}
+                            >
+                              {performanceStatsModelOptions.map((modelName) => (
+                                <option key={modelName} value={modelName}>
+                                  {modelName}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
                       </div>
-                      <div className="backtest-bar-list">
-                        {[...backtestTemporalStats.hours]
-                          .sort((left, right) => right.count - left.count || left.hour - right.hour)
-                          .slice(0, 12)
-                          .map((row, _, list) => {
-                            const maxCount = Math.max(1, ...list.map((item) => item.count));
 
-                            return (
-                              <div key={row.label} className="backtest-bar-row">
-                                <div className="backtest-bar-copy">
-                                  <strong>{row.label}</strong>
-                                  <span>{row.count} trades</span>
-                                </div>
-                                <div className="backtest-bar-track">
-                                  <div
-                                    className={`backtest-bar-fill ${row.pnl >= 0 ? "up" : "down"}`}
-                                    style={{ width: `${(row.count / maxCount) * 100}%` }}
+                      <div
+                        style={{
+                          height: 290,
+                          borderRadius: 18,
+                          border: "1px solid rgba(255,255,255,0.10)",
+                          background:
+                            "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.15))",
+                          padding: 12
+                        }}
+                      >
+                        {!performanceStatsTemporalData || performanceStatsTemporalData.length === 0 ? (
+                          <div
+                            style={{
+                              height: "100%",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: 12,
+                              opacity: 0.75
+                            }}
+                          >
+                            No trades in the selected range.
+                          </div>
+                        ) : (
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                              data={performanceStatsTemporalData}
+                              margin={{ top: 8, right: 10, left: 0, bottom: 6 }}
+                            >
+                              <XAxis
+                                dataKey="bucket"
+                                tick={{
+                                  fontSize: 11,
+                                  fill: "rgba(255,255,255,0.70)"
+                                }}
+                                axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                              />
+                              <YAxis
+                                tick={{
+                                  fontSize: 11,
+                                  fill: "rgba(255,255,255,0.70)"
+                                }}
+                                axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                tickFormatter={(value) => formatChartUsd(Number(value)).replace("$", "")}
+                              />
+                              <ReferenceLine
+                                y={0}
+                                stroke="rgba(255,255,255,0.78)"
+                                strokeWidth={1}
+                              />
+                              <Tooltip
+                                content={(props: any) => {
+                                  const { active, payload, label } = props;
+
+                                  if (!active || !Array.isArray(payload) || payload.length === 0) {
+                                    return null;
+                                  }
+
+                                  const value = Number(payload[0]?.value ?? 0);
+                                  const count = Number(payload[0]?.payload?.count ?? 0);
+                                  const positive = value >= 0;
+
+                                  return (
+                                    <div
+                                      style={{
+                                        background: "rgba(255,255,255,0.96)",
+                                        border: "1px solid rgba(15,23,42,0.12)",
+                                        borderRadius: 12,
+                                        padding: "8px 10px",
+                                        boxShadow: "0 10px 30px rgba(0,0,0,0.28)",
+                                        color: "rgba(15,23,42,0.95)",
+                                        fontSize: 12,
+                                        minWidth: 140
+                                      }}
+                                    >
+                                      <div style={{ fontWeight: 900, marginBottom: 6 }}>
+                                        {String(label ?? "")}
+                                      </div>
+                                      <div
+                                        style={{
+                                          display: "flex",
+                                          justifyContent: "space-between",
+                                          gap: 12
+                                        }}
+                                      >
+                                        <span style={{ opacity: 0.7 }}>PnL</span>
+                                        <span
+                                          style={{
+                                            fontWeight: 900,
+                                            color: positive
+                                              ? "rgba(34,197,94,1)"
+                                              : "rgba(239,68,68,1)"
+                                          }}
+                                        >
+                                          {formatChartUsd(value)}
+                                        </span>
+                                      </div>
+                                      <div
+                                        style={{
+                                          display: "flex",
+                                          justifyContent: "space-between",
+                                          gap: 12,
+                                          marginTop: 4
+                                        }}
+                                      >
+                                        <span style={{ opacity: 0.7 }}>Avg</span>
+                                        <span
+                                          style={{
+                                            fontWeight: 900,
+                                            color: positive
+                                              ? "rgba(34,197,94,1)"
+                                              : "rgba(239,68,68,1)"
+                                          }}
+                                        >
+                                          {formatChartUsd(count > 0 ? value / count : 0)}
+                                        </span>
+                                      </div>
+                                      <div
+                                        style={{
+                                          display: "flex",
+                                          justifyContent: "space-between",
+                                          gap: 12,
+                                          marginTop: 4
+                                        }}
+                                      >
+                                        <span style={{ opacity: 0.7 }}>Trades</span>
+                                        <span
+                                          style={{
+                                            fontWeight: 900,
+                                            color: "rgba(15,23,42,0.92)"
+                                          }}
+                                        >
+                                          {count}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                }}
+                              />
+                              <Bar dataKey="pnl" radius={0} isAnimationActive={false}>
+                                {performanceStatsTemporalData.map((row, index) => (
+                                  <Cell
+                                    key={`${row.bucket}-${index}`}
+                                    fill={
+                                      row.pnl >= 0
+                                        ? "rgba(34,197,94,0.88)"
+                                        : "rgba(239,68,68,0.88)"
+                                    }
                                   />
-                                </div>
-                                <div className="backtest-bar-values">
-                                  <span>{row.winRate.toFixed(0)}%</span>
-                                  <strong className={row.pnl >= 0 ? "up" : "down"}>
-                                    {formatSignedUsd(row.pnl)}
-                                  </strong>
-                                </div>
-                              </div>
-                            );
-                          })}
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
+                        )}
                       </div>
                     </div>
-                  </div>
+                  ) : null}
                 </div>
               ) : null}
 

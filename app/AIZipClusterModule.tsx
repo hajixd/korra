@@ -10216,7 +10216,7 @@ function prettyIdForNode(n: any): { short: string; raw: string } {
 
 // User-facing ID helper: always return a clean, readable ID.
 // (Keeps underlying stable IDs for internal logic/selection.)
-function displayIdForNode(n: any): string {
+export function displayIdForNode(n: any): string {
   const p = prettyIdForNode(n);
   return p.short || p.raw || "—";
 }
