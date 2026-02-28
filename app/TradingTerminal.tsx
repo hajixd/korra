@@ -6489,6 +6489,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         </button>
       </>
     );
+    const buildStatRow = (label: string, children: MainStatisticsCard[]): MainStatisticsCard => ({
+      label,
+      value: "",
+      tone: "neutral",
+      span: 6,
+      children
+    });
 
     const hasTrades = mainStatsSummary.tradeCount > 0;
     const totalPnlTone =
@@ -6611,279 +6618,284 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         tone: totalPnlTone,
         span: 6
       },
+      buildStatRow("win-rate-row", [
+        {
+          label: "Win Rate",
+          value: `${mainStatsSummary.winRate.toFixed(2)}%`,
+          tone:
+            mainStatsSummary.winRate >= 55
+              ? "up"
+              : mainStatsSummary.winRate >= 45
+                ? "neutral"
+                : "down",
+          span: 1
+        },
+        {
+          label: "Profit Factor",
+          value: mainStatsSummary.profitFactor.toFixed(2),
+          tone:
+            mainStatsSummary.profitFactor > 1.5
+              ? "up"
+              : mainStatsSummary.profitFactor >= 1
+                ? "neutral"
+                : "down",
+          span: 1
+        }
+      ]),
       {
         label: "Total Trades",
         value: mainStatsSummary.tradeCount.toLocaleString("en-US"),
         tone: "neutral",
-        span: 2
+        span: 6
       },
-      {
-        label: "Win Rate",
-        value: `${mainStatsSummary.winRate.toFixed(2)}%`,
-        tone: mainStatsSummary.winRate >= 55 ? "up" : mainStatsSummary.winRate >= 45 ? "neutral" : "down",
-        span: 2
-      },
-      {
-        label: "Profit Factor",
-        value: mainStatsSummary.profitFactor.toFixed(2),
-        tone:
-          mainStatsSummary.profitFactor > 1.5
-            ? "up"
-            : mainStatsSummary.profitFactor >= 1
-              ? "neutral"
-              : "down",
-        span: 2
-      },
-      {
-        label: "Expected Value",
-        value: formatSignedUsd(mainStatsSummary.avgPnl),
-        tone: mainStatsSummary.avgPnl >= 0 ? "up" : "down",
-        span: 2
-      },
-      {
-        label: "Risk to Reward",
-        value: mainStatsSummary.avgR.toFixed(2),
-        tone: mainStatsSummary.avgR >= 1 ? "up" : "down",
-        span: 2
-      },
-      {
-        label: "Avg PnL / Month",
-        value: formatSignedUsd(mainStatsSummary.avgPnlPerMonth),
-        tone: mainStatsSummary.avgPnlPerMonth >= 0 ? "up" : "down",
-        span: 1
-      },
-      {
-        label: "Avg PnL / Week",
-        value: formatSignedUsd(mainStatsSummary.avgPnlPerWeek),
-        tone: mainStatsSummary.avgPnlPerWeek >= 0 ? "up" : "down",
-        span: 1
-      },
-      {
-        label: "Avg PnL / Day",
-        value: formatSignedUsd(mainStatsSummary.avgPnlPerDay),
-        tone: mainStatsSummary.avgPnlPerDay >= 0 ? "up" : "down",
-        span: 1
-      },
-      {
-        label: "Sharpe",
-        value: mainStatsSummary.sharpe.toFixed(2),
-        tone: mainStatsSummary.sharpe >= 1 ? "up" : mainStatsSummary.sharpe >= 0 ? "neutral" : "down",
-        span: 1
-      },
-      {
-        label: "Sortino",
-        value: mainStatsSummary.sortino.toFixed(2),
-        tone:
-          mainStatsSummary.sortino >= 1 ? "up" : mainStatsSummary.sortino >= 0 ? "neutral" : "down",
-        span: 1
-      },
-      {
-        label: "Max Drawdown",
-        value: formatSignedUsd(mainStatsSummary.maxDrawdown),
-        tone: mainStatsSummary.maxDrawdown >= 0 ? "neutral" : "down",
-        span: 2
-      },
-      {
-        label: "Trades / Month",
-        value: mainStatsSummary.tradesPerMonth.toFixed(2),
-        tone: "neutral",
-        span: 1
-      },
-      {
-        label: "Trades / Week",
-        value: mainStatsSummary.tradesPerWeek.toFixed(2),
-        tone: "neutral",
-        span: 1
-      },
-      {
-        label: "Trades / Day",
-        value: mainStatsSummary.tradesPerDay.toFixed(2),
-        tone: "neutral",
-        span: 1
-      },
-      {
-        label: "Consistency / Month",
-        value: `${mainStatsSummary.consistencyPerMonth.toFixed(1)}%`,
-        tone:
-          mainStatsSummary.consistencyPerMonth >= 70
-            ? "up"
-            : mainStatsSummary.consistencyPerMonth >= 50
-              ? "neutral"
-              : "down",
-        span: 1
-      },
-      {
-        label: "Consistency / Week",
-        value: `${mainStatsSummary.consistencyPerWeek.toFixed(1)}%`,
-        tone:
-          mainStatsSummary.consistencyPerWeek >= 70
-            ? "up"
-            : mainStatsSummary.consistencyPerWeek >= 50
-              ? "neutral"
-              : "down",
-        span: 1
-      },
-      {
-        label: "Consistency / Day",
-        value: `${mainStatsSummary.consistencyPerDay.toFixed(1)}%`,
-        tone:
-          mainStatsSummary.consistencyPerDay >= 70
-            ? "up"
-            : mainStatsSummary.consistencyPerDay >= 50
-              ? "neutral"
-              : "down",
-        span: 1
-      },
-      {
-        label: "Consistency / Trade",
-        value: `${mainStatsSummary.consistencyPerTrade.toFixed(1)}%`,
-        tone:
-          mainStatsSummary.consistencyPerTrade >= 70
-            ? "up"
-            : mainStatsSummary.consistencyPerTrade >= 50
-              ? "neutral"
-              : "down",
-        span: 1
-      },
-      {
-        label: "Biggest Win",
-        value: `$${formatUsd(mainStatsSummary.maxWin)}`,
-        tone: "up",
-        span: 1
-      },
-      {
-        label: "Biggest Loss",
-        value: `-$${formatUsd(Math.abs(mainStatsSummary.maxLoss))}`,
-        tone: "down",
-        span: 1
-      },
-      {
-        label: "Average Win",
-        value: `$${formatUsd(mainStatsSummary.avgWin)}`,
-        tone: "up",
-        span: 1
-      },
-      {
-        label: "Average Loss",
-        value: `-$${formatUsd(Math.abs(mainStatsSummary.avgLoss))}`,
-        tone: "down",
-        span: 1
-      },
-      {
-        label: "Average Peak / Trade",
-        value: `$${formatUsd(mainStatsSummary.avgPeakPerTrade)}`,
-        tone: "up",
-        span: 1
-      },
-      {
-        label: "Avg Max Drawdown / Trade",
-        value: `-$${formatUsd(mainStatsSummary.avgMaxDrawdownPerTrade)}`,
-        tone: "down",
-        span: 1
-      },
-      {
-        label: "Average Win Duration",
-        value: formatMinutesCompact(mainStatsSummary.avgWinDurationMin),
-        tone: "up",
-        span: 1
-      },
-      {
-        label: "Average Loss Duration",
-        value: formatMinutesCompact(mainStatsSummary.avgLossDurationMin),
-        tone: "down",
-        span: 1
-      },
-      {
-        label: "Average Time in Profit",
-        value: formatMinutesCompact(mainStatsSummary.avgTimeInProfitMin),
-        tone: "up",
-        span: 1
-      },
-      {
-        label: "Average Time in Deficit",
-        value: formatMinutesCompact(mainStatsSummary.avgTimeInDeficitMin),
-        tone: "down",
-        span: 1
-      },
-      {
-        label: "AI Efficiency",
-        value: mainStatsAiEfficiency === null ? "—" : `${Math.round(mainStatsAiEfficiency * 100)}%`,
-        tone:
-          mainStatsAiEfficiency === null
-            ? "neutral"
-            : mainStatsAiEfficiency >= 0.55
+      buildStatRow("trade-frequency-row", [
+        {
+          label: "Trades per Month",
+          value: mainStatsSummary.tradesPerMonth.toFixed(2),
+          tone: "neutral",
+          span: 1
+        },
+        {
+          label: "Trades per Week",
+          value: mainStatsSummary.tradesPerWeek.toFixed(2),
+          tone: "neutral",
+          span: 1
+        },
+        {
+          label: "Trades per Day",
+          value: mainStatsSummary.tradesPerDay.toFixed(2),
+          tone: "neutral",
+          span: 1
+        }
+      ]),
+      buildStatRow("consistency-row", [
+        {
+          label: "Consistency / Month",
+          value: `${mainStatsSummary.consistencyPerMonth.toFixed(1)}%`,
+          tone:
+            mainStatsSummary.consistencyPerMonth >= 70
               ? "up"
-              : mainStatsAiEfficiency <= 0.45
-                ? "down"
-                : "neutral",
-        span: 1
-      },
-      {
-        label: "AI Efficacy",
-        value:
-          mainStatsAiEfficacyPct === null
-            ? "—"
-            : `${mainStatsAiEfficacyPct >= 0 ? "+" : ""}${mainStatsAiEfficacyPct.toFixed(1)}%`,
-        tone:
-          mainStatsAiEfficacyPct === null
-            ? "neutral"
-            : mainStatsAiEfficacyPct >= 0
+              : mainStatsSummary.consistencyPerMonth >= 50
+                ? "neutral"
+                : "down",
+          span: 1
+        },
+        {
+          label: "Consistency / Week",
+          value: `${mainStatsSummary.consistencyPerWeek.toFixed(1)}%`,
+          tone:
+            mainStatsSummary.consistencyPerWeek >= 70
               ? "up"
-              : "down",
-        span: 1
-      },
-      {
-        label: "AI Effectiveness",
-        value:
-          mainStatsAiEffectivenessPct === null
-            ? "—"
-            : `${mainStatsAiEffectivenessPct >= 0 ? "+" : ""}${mainStatsAiEffectivenessPct.toFixed(1)}%`,
-        tone:
-          mainStatsAiEffectivenessPct === null
-            ? "neutral"
-            : mainStatsAiEffectivenessPct >= 0
+              : mainStatsSummary.consistencyPerWeek >= 50
+                ? "neutral"
+                : "down",
+          span: 1
+        },
+        {
+          label: "Consistency / Day",
+          value: `${mainStatsSummary.consistencyPerDay.toFixed(1)}%`,
+          tone:
+            mainStatsSummary.consistencyPerDay >= 70
               ? "up"
-              : "down",
-        span: 1
-      },
-      {
-        label: "Best Model",
-        value: bestModelRow ? `${bestModelRow.label} · ${formatSignedUsd(bestModelRow.total)}` : "—",
-        tone: bestModelRow === null ? "neutral" : bestModelRow.total >= 0 ? "up" : "down",
-        span: 1
-      },
-      {
-        label: "Worst Model",
-        value: worstModelRow ? `${worstModelRow.label} · ${formatSignedUsd(worstModelRow.total)}` : "—",
-        tone: worstModelRow === null ? "neutral" : worstModelRow.total >= 0 ? "up" : "down",
-        span: 1
-      },
-      {
-        label: "Best Session",
-        value: bestSessionRow ? `${bestSessionRow.label} · ${formatSignedUsd(bestSessionRow.total)}` : "—",
-        tone: bestSessionRow === null ? "neutral" : bestSessionRow.total >= 0 ? "up" : "down",
-        span: 1
-      },
-      {
-        label: "Worst Session",
-        value:
-          worstSessionRow ? `${worstSessionRow.label} · ${formatSignedUsd(worstSessionRow.total)}` : "—",
-        tone: worstSessionRow === null ? "neutral" : worstSessionRow.total >= 0 ? "up" : "down",
-        span: 1
-      },
-      {
-        label: "Best Month",
-        value: bestMonthRow ? `${getMonthLabel(bestMonthRow.key)} · ${formatSignedUsd(bestMonthRow.total)}` : "—",
-        tone: bestMonthRow === null ? "neutral" : bestMonthRow.total >= 0 ? "up" : "down",
-        span: 1
-      },
-      {
-        label: "Worst Month",
-        value:
-          worstMonthRow ? `${getMonthLabel(worstMonthRow.key)} · ${formatSignedUsd(worstMonthRow.total)}` : "—",
-        tone: worstMonthRow === null ? "neutral" : worstMonthRow.total >= 0 ? "up" : "down",
-        span: 1
-      },
+              : mainStatsSummary.consistencyPerDay >= 50
+                ? "neutral"
+                : "down",
+          span: 1
+        },
+        {
+          label: "Consistency / Trade",
+          value: `${mainStatsSummary.consistencyPerTrade.toFixed(1)}%`,
+          tone:
+            mainStatsSummary.consistencyPerTrade >= 70
+              ? "up"
+              : mainStatsSummary.consistencyPerTrade >= 50
+                ? "neutral"
+                : "down",
+          span: 1
+        }
+      ]),
+      buildStatRow("average-pnl-row", [
+        {
+          label: "Avg PnL / Month",
+          value: formatSignedUsd(mainStatsSummary.avgPnlPerMonth),
+          tone: mainStatsSummary.avgPnlPerMonth >= 0 ? "up" : "down",
+          span: 1
+        },
+        {
+          label: "Avg PnL / Week",
+          value: formatSignedUsd(mainStatsSummary.avgPnlPerWeek),
+          tone: mainStatsSummary.avgPnlPerWeek >= 0 ? "up" : "down",
+          span: 1
+        },
+        {
+          label: "Avg PnL / Day",
+          value: formatSignedUsd(mainStatsSummary.avgPnlPerDay),
+          tone: mainStatsSummary.avgPnlPerDay >= 0 ? "up" : "down",
+          span: 1
+        },
+        {
+          label: "Expected Value",
+          value: formatSignedUsd(mainStatsSummary.avgPnl),
+          tone: mainStatsSummary.avgPnl >= 0 ? "up" : "down",
+          span: 1
+        }
+      ]),
+      buildStatRow("risk-row", [
+        {
+          label: "Sharpe",
+          value: mainStatsSummary.sharpe.toFixed(2),
+          tone:
+            mainStatsSummary.sharpe >= 1
+              ? "up"
+              : mainStatsSummary.sharpe >= 0
+                ? "neutral"
+                : "down",
+          span: 1
+        },
+        {
+          label: "Sortino",
+          value: mainStatsSummary.sortino.toFixed(2),
+          tone:
+            mainStatsSummary.sortino >= 1
+              ? "up"
+              : mainStatsSummary.sortino >= 0
+                ? "neutral"
+                : "down",
+          span: 1
+        },
+        {
+          label: "Risk to Reward",
+          value: mainStatsSummary.avgR.toFixed(2),
+          tone: mainStatsSummary.avgR >= 1 ? "up" : "down",
+          span: 1
+        }
+      ]),
+      buildStatRow("trade-extremes-row", [
+        {
+          label: "Biggest Win",
+          value: `$${formatUsd(mainStatsSummary.maxWin)}`,
+          tone: "up",
+          span: 1
+        },
+        {
+          label: "Biggest Loss",
+          value: `-$${formatUsd(Math.abs(mainStatsSummary.maxLoss))}`,
+          tone: "down",
+          span: 1
+        },
+        {
+          label: "Average Peak / trade",
+          value: `$${formatUsd(mainStatsSummary.avgPeakPerTrade)}`,
+          tone: "up",
+          span: 1
+        },
+        {
+          label: "Avg Max Drawdown / trade",
+          value: `-$${formatUsd(mainStatsSummary.avgMaxDrawdownPerTrade)}`,
+          tone: "down",
+          span: 1
+        }
+      ]),
+      buildStatRow("average-trade-row", [
+        {
+          label: "Average Win",
+          value: `$${formatUsd(mainStatsSummary.avgWin)}`,
+          tone: "up",
+          span: 1
+        },
+        {
+          label: "Average Loss",
+          value: `-$${formatUsd(Math.abs(mainStatsSummary.avgLoss))}`,
+          tone: "down",
+          span: 1
+        }
+      ]),
+      buildStatRow("duration-row", [
+        {
+          label: "Average Win Duration",
+          value: formatMinutesCompact(mainStatsSummary.avgWinDurationMin),
+          tone: "up",
+          span: 1
+        },
+        {
+          label: "Average Loss Duration",
+          value: formatMinutesCompact(mainStatsSummary.avgLossDurationMin),
+          tone: "down",
+          span: 1
+        },
+        {
+          label: "Average Time in Profit",
+          value: formatMinutesCompact(mainStatsSummary.avgTimeInProfitMin),
+          tone: "up",
+          span: 1
+        },
+        {
+          label: "Average Time in Deficit",
+          value: formatMinutesCompact(mainStatsSummary.avgTimeInDeficitMin),
+          tone: "down",
+          span: 1
+        }
+      ]),
+      buildStatRow("ai-row", [
+        {
+          label: "AI Efficiency",
+          value:
+            mainStatsAiEfficiency === null ? "—" : `${Math.round(mainStatsAiEfficiency * 100)}%`,
+          tone:
+            mainStatsAiEfficiency === null
+              ? "neutral"
+              : mainStatsAiEfficiency >= 0.55
+                ? "up"
+                : mainStatsAiEfficiency <= 0.45
+                  ? "down"
+                  : "neutral",
+          span: 1
+        },
+        {
+          label: "AI Efficacy",
+          value:
+            mainStatsAiEfficacyPct === null
+              ? "—"
+              : `${mainStatsAiEfficacyPct >= 0 ? "+" : ""}${mainStatsAiEfficacyPct.toFixed(1)}%`,
+          tone:
+            mainStatsAiEfficacyPct === null
+              ? "neutral"
+              : mainStatsAiEfficacyPct >= 0
+                ? "up"
+                : "down",
+          span: 1
+        },
+        {
+          label: "AI Effectiveness",
+          value:
+            mainStatsAiEffectivenessPct === null
+              ? "—"
+              : `${mainStatsAiEffectivenessPct >= 0 ? "+" : ""}${mainStatsAiEffectivenessPct.toFixed(1)}%`,
+          tone:
+            mainStatsAiEffectivenessPct === null
+              ? "neutral"
+              : mainStatsAiEffectivenessPct >= 0
+                ? "up"
+                : "down",
+          span: 1
+        }
+      ]),
+      buildStatRow("model-summary-row", [
+        {
+          label: "Best Model",
+          value:
+            bestModelRow ? `${bestModelRow.label} · ${formatSignedUsd(bestModelRow.total)}` : "—",
+          tone: bestModelRow === null ? "neutral" : bestModelRow.total >= 0 ? "up" : "down",
+          span: 1
+        },
+        {
+          label: "Worst Model",
+          value:
+            worstModelRow ? `${worstModelRow.label} · ${formatSignedUsd(worstModelRow.total)}` : "—",
+          tone: worstModelRow === null ? "neutral" : worstModelRow.total >= 0 ? "up" : "down",
+          span: 1
+        }
+      ]),
       {
         label: "Model PnL",
         value: modelPnlValue,
@@ -6894,8 +6906,26 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ? "up"
               : "down",
         valueClassName: "with-nav",
-        span: 2
+        span: 6
       },
+      buildStatRow("session-summary-row", [
+        {
+          label: "Best Session",
+          value:
+            bestSessionRow ? `${bestSessionRow.label} · ${formatSignedUsd(bestSessionRow.total)}` : "—",
+          tone: bestSessionRow === null ? "neutral" : bestSessionRow.total >= 0 ? "up" : "down",
+          span: 1
+        },
+        {
+          label: "Worst Session",
+          value:
+            worstSessionRow
+              ? `${worstSessionRow.label} · ${formatSignedUsd(worstSessionRow.total)}`
+              : "—",
+          tone: worstSessionRow === null ? "neutral" : worstSessionRow.total >= 0 ? "up" : "down",
+          span: 1
+        }
+      ]),
       {
         label: "Session PnL",
         value: sessionPnlValue,
@@ -6906,8 +6936,26 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ? "up"
               : "down",
         valueClassName: "with-nav",
-        span: 2
+        span: 6
       },
+      buildStatRow("month-summary-row", [
+        {
+          label: "Best Month",
+          value:
+            bestMonthRow ? `${getMonthLabel(bestMonthRow.key)} · ${formatSignedUsd(bestMonthRow.total)}` : "—",
+          tone: bestMonthRow === null ? "neutral" : bestMonthRow.total >= 0 ? "up" : "down",
+          span: 1
+        },
+        {
+          label: "Worst Month",
+          value:
+            worstMonthRow
+              ? `${getMonthLabel(worstMonthRow.key)} · ${formatSignedUsd(worstMonthRow.total)}`
+              : "—",
+          tone: worstMonthRow === null ? "neutral" : worstMonthRow.total >= 0 ? "up" : "down",
+          span: 1
+        }
+      ]),
       {
         label: "Month PnL",
         value: monthPnlValue,
@@ -6918,20 +6966,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ? "up"
               : "down",
         valueClassName: "with-nav",
-        span: 2
+        span: 6
       },
-      {
-        label: "Start Date",
-        value: backtestRange.startMs === null ? "—" : formatDateTime(backtestRange.startMs),
-        tone: "neutral",
-        span: 2
-      },
-      {
-        label: "End Date",
-        value: backtestRange.endMs === null ? "—" : formatDateTime(backtestRange.endMs),
-        tone: "neutral",
-        span: 2
-      }
+      buildStatRow("date-range-row", [
+        {
+          label: "Start Date",
+          value: backtestRange.startMs === null ? "—" : formatDateTime(backtestRange.startMs),
+          tone: "neutral",
+          span: 1
+        },
+        {
+          label: "End Date",
+          value: backtestRange.endMs === null ? "—" : formatDateTime(backtestRange.endMs),
+          tone: "neutral",
+          span: 1
+        }
+      ])
     ];
   }, [
     backtestRange.endMs,
@@ -9445,44 +9495,44 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     </div>
 
                     <div className="backtest-stats-grid">
-                      {mainStatisticsCards.map((item) =>
-                        item.children ? (
-                          <div
-                            key={item.label}
-                            className="stat-span-4"
-                            style={{ display: "flex", gap: "0.6rem" }}
-                          >
-                            {item.children.map((child) => (
-                              <div
-                                key={child.label}
-                                className={`backtest-stat-card ${
-                                  child.tone === "neutral" ? "tone-neutral" : `tone-${child.tone}`
-                                }`}
-                                style={{ flex: 1, minWidth: 0 }}
-                              >
-                                <span>{child.label}</span>
-                                <strong
-                                  className={child.tone === "neutral" ? "" : child.tone}
+                      {mainStatisticsCards.map((item) => {
+                        const spanClassName =
+                          item.span === 6
+                            ? "stat-span-6"
+                            : item.span === 4
+                              ? "stat-span-4"
+                              : item.span === 2
+                                ? "stat-span-2"
+                                : "";
+
+                        if (item.children) {
+                          return (
+                            <div key={item.label} className="backtest-stat-group">
+                              {item.children.map((child) => (
+                                <div
+                                  key={child.label}
+                                  className={`backtest-stat-card ${
+                                    child.tone === "neutral" ? "tone-neutral" : `tone-${child.tone}`
+                                  }`}
                                 >
-                                  {child.value}
-                                </strong>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
+                                  <span>{child.label}</span>
+                                  <strong
+                                    className={child.tone === "neutral" ? "" : child.tone}
+                                  >
+                                    {child.value}
+                                  </strong>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        }
+
+                        return (
                           <div
                             key={item.label}
                             className={`backtest-stat-card ${
                               item.tone === "neutral" ? "tone-neutral" : `tone-${item.tone}`
-                            } ${
-                              item.span === 6
-                                ? "stat-span-6"
-                                : item.span === 4
-                                  ? "stat-span-4"
-                                  : item.span === 2
-                                    ? "stat-span-2"
-                                    : ""
-                            }`}
+                            } ${spanClassName}`}
                           >
                             <span>{item.label}</span>
                             <strong
@@ -9496,8 +9546,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               {item.value}
                             </strong>
                           </div>
-                        )
-                      )}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>

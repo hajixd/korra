@@ -2081,6 +2081,16 @@ button {
   gap: 0.6rem;
 }
 
+.backtest-stat-group {
+  grid-column: span 6;
+  display: flex;
+  gap: 0.6rem;
+}
+
+.backtest-stat-group > .backtest-stat-card {
+  flex: 1 1 0;
+}
+
 .backtest-stat-card {
   min-width: 0;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -3677,6 +3687,10 @@ button {
     grid-column: span 2;
   }
 
+  .backtest-stat-group {
+    grid-column: span 2;
+  }
+
   .backtest-cluster-head {
     flex-direction: column;
   }
@@ -3860,6 +3874,11 @@ button {
   .backtest-stat-card.stat-span-6,
   .backtest-stat-card.stat-span-4 {
     grid-column: span 1;
+  }
+
+  .backtest-stat-group {
+    grid-column: span 1;
+    flex-direction: column;
   }
 
   .main-settings-kpi-grid {
