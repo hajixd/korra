@@ -34,6 +34,8 @@ type Candle = {
   time: number;
 };
 
+const EMPTY_CANDLES: Candle[] = [];
+
 type TradeResult = "Win" | "Loss";
 type TradeSide = "Long" | "Short";
 
@@ -193,16 +195,6 @@ const timeframeMinutes: Record<Timeframe, number> = {
   "4H": 240,
   "1D": 1440,
   "1W": 10080
-};
-
-const timeframeVolatility: Record<Timeframe, number> = {
-  "1m": 0.0018,
-  "5m": 0.0026,
-  "15m": 0.0038,
-  "1H": 0.006,
-  "4H": 0.009,
-  "1D": 0.015,
-  "1W": 0.025
 };
 
 const timeframeVisibleCount: Record<Timeframe, number> = {
@@ -457,8 +449,7 @@ const fetchMarketCandles = async (timeframe: Timeframe, limit: number): Promise<
   const params = new URLSearchParams({
     pair: XAUUSD_PAIR,
     timeframe: marketTimeframeMap[timeframe],
-    limit: String(Math.min(limit, MARKET_MAX_HISTORY_CANDLES)),
-    api_key: MARKET_API_KEY
+    limit: String(Math.min(limit, MAX_REMOTE_HISTORY_CANDLES))
   });
 
   const response = await fetch(`/api/market/candles?${params.toString()}`, {
@@ -474,7 +465,7 @@ const fetchMarketCandles = async (timeframe: Timeframe, limit: number): Promise<
   return normalizeMarketCandles(payload.candles || []);
 };
 
-const fetchClickHouseCandles = async (timeframe: Timeframe, count: number): Promise<Candle[]> => {
+const fetchHistoryApiCandles = async (timeframe: Timeframe, count: number): Promise<Candle[]> => {
   const params = new URLSearchParams({
     pair: XAUUSD_PAIR,
     timeframe: marketTimeframeMap[timeframe],
@@ -495,26 +486,16 @@ const fetchClickHouseCandles = async (timeframe: Timeframe, count: number): Prom
 };
 
 const fetchHistoryCandles = async (timeframe: Timeframe): Promise<Candle[]> => {
-  const targetBars = candleHistoryCountByTimeframe[timeframe];
+  const targetBars = Math.min(candleHistoryCountByTimeframe[timeframe], MAX_REMOTE_HISTORY_CANDLES);
 
   try {
-    const clickhouseCandles = await fetchClickHouseCandles(timeframe, targetBars);
+    const historyCandles = await fetchHistoryApiCandles(timeframe, targetBars);
 
-    if (clickhouseCandles.length >= MIN_SEED_CANDLES) {
-      return clickhouseCandles.slice(-targetBars);
+    if (historyCandles.length >= MIN_SEED_CANDLES) {
+      return historyCandles.slice(-targetBars);
     }
   } catch {
-    // Fall through to the market history fallback.
-  }
-
-  try {
-    const marketCandles = await fetchMarketCandles(timeframe, targetBars);
-
-    if (marketCandles.length >= MIN_SEED_CANDLES) {
-      return marketCandles.slice(-targetBars);
-    }
-  } catch {
-    // Keep the synthetic fallback already seeded in state.
+    // Leave the chart empty until a real history or live refresh arrives.
   }
 
   return [];
@@ -522,7 +503,7 @@ const fetchHistoryCandles = async (timeframe: Timeframe): Promise<Candle[]> => {
 
 const XAUUSD_PAIR = "XAU_USD";
 const MIN_SEED_CANDLES = 40;
-const MARKET_MAX_HISTORY_CANDLES = 10_000;
+const MAX_REMOTE_HISTORY_CANDLES = 2_000;
 const LIVE_MARKET_SYNC_LIMIT = 160;
 const MARKET_API_KEY =
   process.env.NEXT_PUBLIC_PRICE_STREAM_API_KEY ||
@@ -729,66 +710,6 @@ const parseTimeFromCrosshair = (time: Time): number | null => {
   return null;
 };
 
-const generateFakeCandles = (
-  basePrice: number,
-  symbol: string,
-  timeframe: Timeframe,
-  count = candleHistoryCountByTimeframe[timeframe],
-  referenceNowMs = Date.now()
-): Candle[] => {
-  const series: Candle[] = [];
-  const timeframeMs = getTimeframeMs(timeframe);
-  const baseVolatility = timeframeVolatility[timeframe];
-  const seed = hashString(`${symbol}-${timeframe}`);
-  const rand = createSeededRng(seed);
-  const latestAlignedTime = floorToTimeframe(referenceNowMs, timeframe);
-  const startTime = latestAlignedTime - (count - 1) * timeframeMs;
-  let close = basePrice * (0.9 + rand() * 0.22);
-  let regimeBarsLeft = 0;
-  let driftBias = 0;
-  let volMultiplier = 1;
-  let momentumCarry = 0;
-
-  for (let i = 0; i < count; i += 1) {
-    if (regimeBarsLeft <= 0) {
-      regimeBarsLeft = 35 + Math.floor(rand() * 150);
-      driftBias = (rand() - 0.5) * baseVolatility * (0.9 + rand() * 1.5);
-      volMultiplier = 0.65 + rand() * 2.2;
-    } else {
-      regimeBarsLeft -= 1;
-    }
-
-    const open = close;
-    const shock =
-      rand() < 0.008
-        ? (rand() > 0.5 ? 1 : -1) * baseVolatility * (4 + rand() * 7)
-        : 0;
-    const microNoise = (rand() - 0.5) * baseVolatility * 2.4 * volMultiplier;
-    const trendNoise = Math.sin(i / (15 + rand() * 14)) * baseVolatility * 0.32;
-    const returnMove = driftBias + microNoise + trendNoise + momentumCarry + shock;
-
-    close = Math.max(0.000001, open * (1 + returnMove));
-    momentumCarry = returnMove * 0.22;
-
-    const wickVol = baseVolatility * (0.45 + rand() * 2.2) * volMultiplier;
-    const high = Math.max(open, close) * (1 + wickVol * (0.35 + rand() * 0.8));
-    const low = Math.max(
-      0.000001,
-      Math.min(open, close) * (1 - wickVol * (0.35 + rand() * 0.8))
-    );
-
-    series.push({
-      open,
-      close,
-      high,
-      low,
-      time: startTime + i * timeframeMs
-    });
-  }
-
-  return series;
-};
-
 const getAssetBySymbol = (symbol: string): FutureAsset => {
   return futuresAssets.find((asset) => asset.symbol === symbol) ?? futuresAssets[0];
 };
@@ -947,17 +868,7 @@ export default function TradingTerminal() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [seenNotificationIds, setSeenNotificationIds] = useState<string[]>([]);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
-  const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>(() => {
-    const initial: Record<string, Candle[]> = {};
-    const defaultNow = Date.now();
-
-    for (const asset of futuresAssets) {
-      const key = symbolTimeframeKey(asset.symbol, "15m");
-      initial[key] = generateFakeCandles(asset.basePrice, asset.symbol, "15m", undefined, defaultNow);
-    }
-
-    return initial;
-  });
+  const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>({});
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -984,36 +895,8 @@ export default function TradingTerminal() {
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
 
   useEffect(() => {
-    setSeriesMap((prev) => {
-      let changed = false;
-      const next = { ...prev };
-
-      for (const asset of futuresAssets) {
-        const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
-
-        if (next[key]) {
-          continue;
-        }
-
-        next[key] = generateFakeCandles(
-          asset.basePrice,
-          asset.symbol,
-          selectedTimeframe,
-          undefined,
-          referenceNowMs
-        );
-        changed = true;
-      }
-
-      if (!changed) {
-        return prev;
-      }
-
-      return next;
-    });
-
     setHoveredTime(null);
-  }, [referenceNowMs, selectedTimeframe]);
+  }, [selectedTimeframe]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1033,7 +916,7 @@ export default function TradingTerminal() {
           }));
         }
       } catch {
-        // Keep the synthetic fallback if historical loading is unavailable.
+        // Keep the last real candle state if historical loading is unavailable.
       }
 
       const syncLiveCandlesFromMarket = async () => {
@@ -1114,17 +997,9 @@ export default function TradingTerminal() {
     };
   }, [selectedKey, selectedTimeframe]);
 
-  const fallbackCandles = useMemo(() => {
-    return generateFakeCandles(
-      selectedAsset.basePrice,
-      selectedSymbol,
-      selectedTimeframe,
-      undefined,
-      referenceNowMs
-    );
-  }, [referenceNowMs, selectedAsset.basePrice, selectedSymbol, selectedTimeframe]);
-
-  const selectedCandles = seriesMap[selectedKey] ?? fallbackCandles;
+  const selectedCandles = useMemo(() => {
+    return seriesMap[selectedKey] ?? EMPTY_CANDLES;
+  }, [selectedKey, seriesMap]);
 
   const candleByUnix = useMemo(() => {
     const map = new Map<number, Candle>();
@@ -1136,44 +1011,39 @@ export default function TradingTerminal() {
     return map;
   }, [selectedCandles]);
 
-  const latestCandle = selectedCandles[selectedCandles.length - 1];
-  const previousCandle = selectedCandles[selectedCandles.length - 2] ?? latestCandle;
+  const latestCandle = selectedCandles[selectedCandles.length - 1] ?? null;
+  const previousCandle =
+    selectedCandles.length > 1 ? selectedCandles[selectedCandles.length - 2] : latestCandle;
 
   const quoteChange =
-    previousCandle.close > 0
+    latestCandle && previousCandle && previousCandle.close > 0
       ? ((latestCandle.close - previousCandle.close) / previousCandle.close) * 100
       : 0;
 
-  const hoveredCandle = hoveredTime ? candleByUnix.get(hoveredTime) ?? latestCandle : latestCandle;
+  const hoveredCandle =
+    latestCandle && hoveredTime ? candleByUnix.get(hoveredTime) ?? latestCandle : latestCandle;
 
   const hoveredChange =
-    hoveredCandle.open > 0
+    hoveredCandle && hoveredCandle.open > 0
       ? ((hoveredCandle.close - hoveredCandle.open) / hoveredCandle.open) * 100
       : 0;
 
   const watchlistRows = useMemo(() => {
     return futuresAssets.map((asset) => {
       const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
-      const list =
-        seriesMap[key] ??
-        generateFakeCandles(
-          asset.basePrice,
-          asset.symbol,
-          selectedTimeframe,
-          undefined,
-          referenceNowMs
-        );
+      const list = seriesMap[key] ?? [];
       const last = list[list.length - 1];
       const prev = list[list.length - 2] ?? last;
-      const change = prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : 0;
+      const change =
+        last && prev && prev.close > 0 ? ((last.close - prev.close) / prev.close) * 100 : null;
 
       return {
         ...asset,
-        lastPrice: last.close,
+        lastPrice: last?.close ?? null,
         change
       };
     });
-  }, [referenceNowMs, selectedTimeframe, seriesMap]);
+  }, [selectedTimeframe, seriesMap]);
 
   const tradeBlueprints = useMemo(() => {
     return generateTradeBlueprints(
@@ -1291,17 +1161,8 @@ export default function TradingTerminal() {
     const rows: HistoryItem[] = [];
 
     for (const blueprint of tradeBlueprints) {
-      const asset = getAssetBySymbol(blueprint.symbol);
       const key = symbolTimeframeKey(blueprint.symbol, selectedTimeframe);
-      const list =
-        seriesMap[key] ??
-        generateFakeCandles(
-          asset.basePrice,
-          blueprint.symbol,
-          selectedTimeframe,
-          undefined,
-          referenceNowMs
-        );
+      const list = seriesMap[key] ?? [];
 
       if (list.length < 16) {
         continue;
@@ -1396,7 +1257,7 @@ export default function TradingTerminal() {
     }
 
     return rows.sort((a, b) => Number(b.exitTime) - Number(a.exitTime)).slice(0, 60);
-  }, [referenceNowMs, tradeBlueprints, selectedTimeframe, seriesMap]);
+  }, [tradeBlueprints, selectedTimeframe, seriesMap]);
 
   const selectedHistoryTrade = useMemo(() => {
     if (!selectedHistoryId) {
@@ -1849,7 +1710,12 @@ export default function TradingTerminal() {
     const chart = chartRef.current;
     const candleSeries = candleSeriesRef.current;
 
-    if (!chart || !candleSeries || selectedCandles.length === 0) {
+    if (!chart || !candleSeries) {
+      return;
+    }
+
+    if (selectedCandles.length === 0) {
+      candleSeries.setData([]);
       return;
     }
 
@@ -2350,11 +2216,17 @@ export default function TradingTerminal() {
             <p>{selectedAsset.name}</p>
           </div>
           <div className="live-quote">
-            <span>${formatPrice(latestCandle.close)}</span>
-            <span className={quoteChange >= 0 ? "up" : "down"}>
-              {quoteChange >= 0 ? "+" : ""}
-              {quoteChange.toFixed(2)}%
-            </span>
+            {latestCandle ? (
+              <>
+                <span>${formatPrice(latestCandle.close)}</span>
+                <span className={quoteChange >= 0 ? "up" : "down"}>
+                  {quoteChange >= 0 ? "+" : ""}
+                  {quoteChange.toFixed(2)}%
+                </span>
+              </>
+            ) : (
+              <span>No market data</span>
+            )}
           </div>
         </div>
 
@@ -2430,22 +2302,28 @@ export default function TradingTerminal() {
       <section className={`workspace ${panelExpanded ? "" : "panel-collapsed"}`}>
         <section className="chart-wrap">
           <div className="chart-toolbar">
-            <span>
-              O <strong>{formatPrice(hoveredCandle.open)}</strong>
-            </span>
-            <span>
-              H <strong>{formatPrice(hoveredCandle.high)}</strong>
-            </span>
-            <span>
-              L <strong>{formatPrice(hoveredCandle.low)}</strong>
-            </span>
-            <span>
-              C <strong>{formatPrice(hoveredCandle.close)}</strong>
-            </span>
-            <span className={hoveredChange >= 0 ? "up" : "down"}>
-              {hoveredChange >= 0 ? "+" : ""}
-              {hoveredChange.toFixed(2)}%
-            </span>
+            {hoveredCandle ? (
+              <>
+                <span>
+                  O <strong>{formatPrice(hoveredCandle.open)}</strong>
+                </span>
+                <span>
+                  H <strong>{formatPrice(hoveredCandle.high)}</strong>
+                </span>
+                <span>
+                  L <strong>{formatPrice(hoveredCandle.low)}</strong>
+                </span>
+                <span>
+                  C <strong>{formatPrice(hoveredCandle.close)}</strong>
+                </span>
+                <span className={hoveredChange >= 0 ? "up" : "down"}>
+                  {hoveredChange >= 0 ? "+" : ""}
+                  {hoveredChange.toFixed(2)}%
+                </span>
+              </>
+            ) : (
+              <span>No market data loaded</span>
+            )}
             <span>
               Type <strong>{selectedAsset.funding}</strong>
             </span>
@@ -2600,7 +2478,7 @@ export default function TradingTerminal() {
                   <div className="watchlist-head">
                     <div>
                       <h2>XAUUSD</h2>
-                      <p>ClickHouse history + live feed</p>
+                      <p>Market history + live feed</p>
                     </div>
                   </div>
 
@@ -2624,10 +2502,15 @@ export default function TradingTerminal() {
                             <small>{row.name}</small>
                           </span>
 
-                          <span className="num-col">{formatPrice(row.lastPrice)}</span>
-                          <span className={`num-col ${row.change >= 0 ? "up" : "down"}`}>
-                            {row.change >= 0 ? "+" : ""}
-                            {row.change.toFixed(2)}
+                          <span className="num-col">
+                            {row.lastPrice === null ? "N/A" : formatPrice(row.lastPrice)}
+                          </span>
+                          <span
+                            className={`num-col ${
+                              row.change === null ? "" : row.change >= 0 ? "up" : "down"
+                            }`}
+                          >
+                            {row.change === null ? "N/A" : `${row.change >= 0 ? "+" : ""}${row.change.toFixed(2)}`}
                           </span>
                         </button>
                       </li>

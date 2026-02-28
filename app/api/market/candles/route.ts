@@ -15,13 +15,14 @@ const ALLOWED_PAIRS = new Set([
   "SPX500_USD",
   "BTC_USD"
 ]);
+const MAX_UPSTREAM_LIMIT = 2000;
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const pair = (searchParams.get("pair") || "XAU_USD").toUpperCase();
   const timeframe = (searchParams.get("timeframe") || "M15").toUpperCase();
   const limitRaw = searchParams.get("limit") || "500";
-  const limit = Math.min(Math.max(parseInt(limitRaw, 10) || 500, 10), 10000);
+  const limit = Math.min(Math.max(parseInt(limitRaw, 10) || 500, 10), MAX_UPSTREAM_LIMIT);
 
   if (!ALLOWED_PAIRS.has(pair)) {
     return NextResponse.json({ error: "Unsupported pair" }, { status: 400 });
@@ -31,7 +32,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unsupported timeframe" }, { status: 400 });
   }
 
-  const apiKey = process.env.MARKET_API_KEY || searchParams.get("api_key") || "";
+  const apiKey =
+    process.env.MARKET_API_KEY ||
+    process.env.NEXT_PUBLIC_MARKET_API_KEY ||
+    searchParams.get("api_key") ||
+    "trd_PCv-kkjDo-4t4QMDNxz3JRCGIyBCKHNq";
 
   if (!apiKey) {
     return NextResponse.json(

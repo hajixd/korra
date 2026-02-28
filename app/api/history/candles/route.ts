@@ -19,7 +19,7 @@ const DEFAULT_PAIR = "XAU_USD";
 const DEFAULT_TIMEFRAME = "M15";
 const DEFAULT_COUNT = 2500;
 const MIN_COUNT = 10;
-const MAX_COUNT = 10000;
+const MAX_COUNT = 2000;
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
