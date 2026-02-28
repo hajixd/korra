@@ -503,7 +503,7 @@ const fetchHistoryCandles = async (timeframe: Timeframe): Promise<Candle[]> => {
 
 const XAUUSD_PAIR = "XAU_USD";
 const MIN_SEED_CANDLES = 40;
-const MAX_REMOTE_HISTORY_CANDLES = 2_000;
+const MAX_REMOTE_HISTORY_CANDLES = 10_000;
 const LIVE_MARKET_SYNC_LIMIT = 160;
 const MARKET_API_KEY =
   process.env.NEXT_PUBLIC_PRICE_STREAM_API_KEY ||
@@ -2478,7 +2478,7 @@ export default function TradingTerminal() {
                   <div className="watchlist-head">
                     <div>
                       <h2>XAUUSD</h2>
-                      <p>Market history + live feed</p>
+                      <p>OANDA history + market live feed</p>
                     </div>
                   </div>
 
