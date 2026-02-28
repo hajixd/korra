@@ -6361,7 +6361,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       {
         label: "Win Rate",
         value: `${mainStatsSummary.winRate.toFixed(2)}%`,
-        tone: mainStatsSummary.winRate >= 55 ? "up" : mainStatsSummary.winRate >= 45 ? "yellow" : "down",
+        tone: mainStatsSummary.winRate >= 55 ? "up" : mainStatsSummary.winRate >= 45 ? "neutral" : "down",
         span: 2
       },
       {
@@ -6371,32 +6371,32 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           mainStatsSummary.profitFactor > 1.5
             ? "up"
             : mainStatsSummary.profitFactor >= 1
-              ? "yellow"
+              ? "neutral"
               : "down",
         span: 2
       },
       {
         label: "Total Trades",
         value: mainStatsSummary.tradeCount.toLocaleString("en-US"),
-        tone: "blue",
+        tone: "neutral",
         span: 4
       },
       {
         label: "Trades per Month",
         value: mainStatsSummary.tradesPerMonth.toFixed(2),
-        tone: "blue",
+        tone: "neutral",
         span: 1
       },
       {
         label: "Trades per Week",
         value: mainStatsSummary.tradesPerWeek.toFixed(2),
-        tone: "blue",
+        tone: "neutral",
         span: 1
       },
       {
         label: "Trades per Day",
         value: mainStatsSummary.tradesPerDay.toFixed(2),
-        tone: "blue",
+        tone: "neutral",
         span: 1
       },
       {
@@ -6406,7 +6406,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           mainStatsSummary.consistencyPerMonth >= 70
             ? "up"
             : mainStatsSummary.consistencyPerMonth >= 50
-              ? "yellow"
+              ? "neutral"
               : "down",
         span: 1
       },
@@ -6417,7 +6417,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           mainStatsSummary.consistencyPerWeek >= 70
             ? "up"
             : mainStatsSummary.consistencyPerWeek >= 50
-              ? "yellow"
+              ? "neutral"
               : "down",
         span: 1
       },
@@ -6428,7 +6428,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           mainStatsSummary.consistencyPerDay >= 70
             ? "up"
             : mainStatsSummary.consistencyPerDay >= 50
-              ? "yellow"
+              ? "neutral"
               : "down",
         span: 1
       },
@@ -9120,12 +9120,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 </article>
                 <article className="backtest-summary-card">
                   <span>Win Rate</span>
-                  <strong>{backtestSummary.winRate.toFixed(1)}%</strong>
+                  <strong style={{ color: backtestSummary.winRate >= 55 ? "#34d399" : backtestSummary.winRate >= 45 ? "#facc15" : "#f87171" }}>{backtestSummary.winRate.toFixed(1)}%</strong>
                   <small>{backtestSummary.avgR.toFixed(2)}R average reward profile</small>
                 </article>
                 <article className="backtest-summary-card">
                   <span>Profit Factor</span>
-                  <strong>{backtestSummary.profitFactor.toFixed(2)}</strong>
+                  <strong style={{ color: backtestSummary.profitFactor > 1.5 ? "#34d399" : backtestSummary.profitFactor >= 1 ? "#60a5fa" : "#f87171" }}>{backtestSummary.profitFactor.toFixed(2)}</strong>
                   <small>{Math.round(backtestSummary.avgHoldMinutes)}m average hold</small>
                 </article>
                 <article className="backtest-summary-card">
@@ -9238,46 +9238,36 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ) : null}
 
               {selectedBacktestTab === "mainSettings" ? (
-                <div className="backtest-grid main-settings-layout">
-                  <div className="backtest-card main-settings-overview span-2">
-                    <div className="backtest-card-head">
-                      <div>
-                        <h3>Main Settings</h3>
-                        <p>
-                          AI.zip controls are grouped into a cleaner flow so you can tune method, risk,
-                          and validation with less scanning.
-                        </p>
-                      </div>
+                <div className="backtest-grid" style={{ gap: "0.75rem" }}>
+                  <div className="main-settings-kpi-grid" style={{ gridTemplateColumns: "repeat(6, 1fr)", gap: "0.6rem" }}>
+                    <div className="main-settings-kpi-card">
+                      <span>AI Method</span>
+                      <strong style={{ color: aiMode !== "off" ? "#60a5fa" : "rgba(255,255,255,0.4)" }}>{aiMode === "off" ? "OFF" : aiMode.toUpperCase()}</strong>
                     </div>
-
-                    <div className="main-settings-kpi-grid">
-                      <div className="main-settings-kpi-card">
-                        <span>AI Method</span>
-                        <strong className="blue">{aiMode === "off" ? "OFF" : aiMode.toUpperCase()}</strong>
-                      </div>
-                      <div className="main-settings-kpi-card">
-                        <span>Confidence Gate</span>
-                        <strong className="blue">{confidenceThreshold}%</strong>
-                      </div>
-                      <div className="main-settings-kpi-card">
-                        <span>Avg Confidence</span>
-                        <strong className={backtestSummary.averageConfidence >= 60 ? "up" : backtestSummary.averageConfidence >= 40 ? "yellow" : "down"}>{backtestSummary.averageConfidence.toFixed(1)}%</strong>
-                      </div>
-                      <div className="main-settings-kpi-card">
-                        <span>Visible Trades</span>
-                        <strong className="blue">{backtestTrades.length}</strong>
-                      </div>
-                      <div className="main-settings-kpi-card">
-                        <span>Anti-Cheat</span>
-                        <strong className={antiCheatEnabled ? "up" : "down"}>{antiCheatEnabled ? "ON" : "OFF"}</strong>
-                      </div>
-                      <div className="main-settings-kpi-card">
-                        <span>Libraries</span>
-                        <strong className={staticLibrariesClusters ? "up" : "down"}>{staticLibrariesClusters ? "ON" : "OFF"}</strong>
-                      </div>
+                    <div className="main-settings-kpi-card">
+                      <span>Confidence Gate</span>
+                      <strong style={{ color: "#facc15" }}>{confidenceThreshold}%</strong>
                     </div>
+                    <div className="main-settings-kpi-card">
+                      <span>Avg Confidence</span>
+                      <strong style={{ color: backtestSummary.averageConfidence >= 60 ? "#34d399" : backtestSummary.averageConfidence >= 40 ? "#facc15" : "#f87171" }}>{backtestSummary.averageConfidence.toFixed(1)}%</strong>
+                    </div>
+                    <div className="main-settings-kpi-card">
+                      <span>Visible Trades</span>
+                      <strong style={{ color: "#60a5fa" }}>{backtestTrades.length}</strong>
+                    </div>
+                    <div className="main-settings-kpi-card">
+                      <span>Anti-Cheat</span>
+                      <strong style={{ color: antiCheatEnabled ? "#34d399" : "#f87171" }}>{antiCheatEnabled ? "ON" : "OFF"}</strong>
+                    </div>
+                    <div className="main-settings-kpi-card">
+                      <span>Libraries</span>
+                      <strong style={{ color: staticLibrariesClusters ? "#34d399" : "rgba(255,255,255,0.4)" }}>{staticLibrariesClusters ? "ON" : "OFF"}</strong>
+                    </div>
+                  </div>
 
-                    <div className="main-settings-core-grid single">
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+                    <div className="backtest-card" style={{ padding: "0.85rem" }}>
                       <div className="ai-zip-section main-settings-panel">
                         <div className="main-settings-panel-title">Core AI Controls</div>
 
@@ -9354,10 +9344,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="main-settings-masonry span-2">
-                    <div className="backtest-card">
+                    <div className="backtest-card" style={{ padding: "0.85rem" }}>
                       <div className="ai-zip-section">
                         <div className="ai-zip-section-title">Advanced AI Settings</div>
 
@@ -9482,7 +9470,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       </div>
                     </div>
 
-                    <div className="backtest-card">
+                    <div className="backtest-card" style={{ gridColumn: "1 / -1", padding: "0.85rem" }}>
                       <div className="ai-zip-section">
                         <div className="ai-zip-section-title">Advanced AI</div>
                         <div className="ai-zip-toggle-grid">
@@ -9643,7 +9631,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         </div>
                       </div>
                     </div>
-                    <div className="backtest-card">
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+                    <div className="backtest-card" style={{ padding: "0.85rem" }}>
                       <div className="ai-zip-section">
                         <div className="ai-zip-section-title">Risk Management</div>
                         <div className="ai-zip-input-grid">
@@ -11109,7 +11100,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ) : null}
 
               {selectedBacktestTab === "performanceStats" ? (
-                <div className="backtest-card" style={{ marginTop: 14 }}>
+                <div
+                  style={{
+                    marginTop: 14,
+                    background: "#0b0b0b",
+                    borderRadius: 16,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    boxShadow: "0 18px 45px rgba(0,0,0,0.75)",
+                    padding: 16
+                  }}
+                >
                   <button
                     type="button"
                     onClick={() => setPerformanceStatsCollapsed((current) => !current)}
@@ -12023,7 +12023,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         </div>
                       ) : (
                         <div
-                          className="h-40"
+                          className="h-64"
                           style={{
                             background: "var(--bg-elev)",
                             border: "1px solid rgba(255,255,255,0.10)",
@@ -12344,22 +12344,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               <div className="backtest-stat-list">
                                 <div className="backtest-stat-row">
                                   <span>Avg trades to pass</span>
-                                  <strong className="blue">{propStats.avgTradesPass.toFixed(1)}</strong>
+                                  <strong className="up">{propStats.avgTradesPass.toFixed(1)}</strong>
                                 </div>
                                 {propProjectionMethod !== "montecarlo" ? (
                                   <div className="backtest-stat-row">
                                     <span>Avg time to pass</span>
-                                    <strong className="blue">{formatPropFirmDuration(propStats.avgTimePass)}</strong>
+                                    <strong className="up">{formatPropFirmDuration(propStats.avgTimePass)}</strong>
                                   </div>
                                 ) : null}
                                 <div className="backtest-stat-row">
                                   <span>Avg trades to fail</span>
-                                  <strong className="yellow">{propStats.avgTradesFail.toFixed(1)}</strong>
+                                  <strong className="down">{propStats.avgTradesFail.toFixed(1)}</strong>
                                 </div>
                                 {propProjectionMethod !== "montecarlo" ? (
                                   <div className="backtest-stat-row">
                                     <span>Avg time to fail</span>
-                                    <strong className="yellow">{formatPropFirmDuration(propStats.avgTimeFail)}</strong>
+                                    <strong className="down">{formatPropFirmDuration(propStats.avgTimeFail)}</strong>
                                   </div>
                                 ) : null}
                                 <div className="backtest-stat-row">
@@ -12372,15 +12372,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 </div>
                                 <div className="backtest-stat-row">
                                   <span>Incomplete simulations</span>
-                                  <strong className="yellow">{propStats.incompleteCount.toLocaleString()}</strong>
+                                  <strong style={{ color: "#facc15" }}>{propStats.incompleteCount.toLocaleString()}</strong>
                                 </div>
                                 <div className="backtest-stat-row">
                                   <span>Total simulations</span>
-                                  <strong className="blue">{propStats.totalSimulations.toLocaleString()}</strong>
+                                  <strong style={{ color: "#60a5fa" }}>{propStats.totalSimulations.toLocaleString()}</strong>
                                 </div>
                                 <div className="backtest-stat-row">
                                   <span>Incomplete %</span>
-                                  <strong className={propStats.incompleteCount > 0 ? "yellow" : "blue"}>
+                                  <strong style={{ color: "#facc15" }}>
                                     {(
                                       (propStats.incompleteCount /
                                         Math.max(propStats.totalSimulations, 1)) *
