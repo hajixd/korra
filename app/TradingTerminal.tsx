@@ -17,6 +17,15 @@ import {
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type SurfaceTab = "chart" | "backtest";
+type BacktestTab =
+  | "history"
+  | "calendar"
+  | "cluster"
+  | "temporal"
+  | "entryExit"
+  | "dimensions"
+  | "graphs"
+  | "propFirm";
 type PanelTab = "active" | "assets" | "models" | "history" | "actions" | "ai";
 
 type FutureAsset = {
@@ -281,6 +290,17 @@ const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
   { id: "backtest", label: "Backtest" }
 ];
 
+const backtestTabs: Array<{ id: BacktestTab; label: string }> = [
+  { id: "history", label: "Trading History" },
+  { id: "calendar", label: "Calendar" },
+  { id: "cluster", label: "Cluster Map" },
+  { id: "temporal", label: "Temporal Stats" },
+  { id: "entryExit", label: "Entry / Exit Stats" },
+  { id: "dimensions", label: "Dimension Statistics" },
+  { id: "graphs", label: "Statistical Graphs" },
+  { id: "propFirm", label: "Prop Firm Tool" }
+];
+
 const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
   "1m": 25000,
   "5m": 12000,
@@ -302,6 +322,30 @@ const getTimeframeMs = (timeframe: Timeframe): number => {
 const floorToTimeframe = (timestampMs: number, timeframe: Timeframe): number => {
   const step = getTimeframeMs(timeframe);
   return Math.floor(timestampMs / step) * step;
+};
+
+const isXauTradingTime = (timestampMs: number): boolean => {
+  const date = new Date(timestampMs);
+  const day = date.getUTCDay();
+  const hour = date.getUTCHours();
+
+  if (day === 6) {
+    return false;
+  }
+
+  if (day === 5 && hour >= 22) {
+    return false;
+  }
+
+  if (day === 0 && hour < 23) {
+    return false;
+  }
+
+  if (day >= 1 && day <= 4 && hour === 22) {
+    return false;
+  }
+
+  return true;
 };
 
 const normalizeMarketCandles = (candles: MarketApiCandle[]): Candle[] => {
@@ -329,7 +373,8 @@ const normalizeMarketCandles = (candles: MarketApiCandle[]): Candle[] => {
         !Number.isFinite(open) ||
         !Number.isFinite(high) ||
         !Number.isFinite(low) ||
-        !Number.isFinite(close)
+        !Number.isFinite(close) ||
+        !isXauTradingTime(time)
       ) {
         return null;
       }
@@ -369,6 +414,10 @@ const mergeLivePriceIntoCandles = (
 ): Candle[] => {
   const bucketTime = floorToTimeframe(timestampMs, timeframe);
 
+  if (!isXauTradingTime(bucketTime)) {
+    return candles;
+  }
+
   if (candles.length === 0) {
     return [
       {
@@ -401,13 +450,16 @@ const mergeLivePriceIntoCandles = (
     let time = last.time + step;
 
     while (time < bucketTime) {
-      next.push({
-        time,
-        open: previousClose,
-        high: previousClose,
-        low: previousClose,
-        close: previousClose
-      });
+      if (isXauTradingTime(time)) {
+        next.push({
+          time,
+          open: previousClose,
+          high: previousClose,
+          low: previousClose,
+          close: previousClose
+        });
+      }
+
       time += step;
     }
 
@@ -597,6 +649,85 @@ const formatUsd = (value: number): string => {
 
 const formatSignedUsd = (value: number): string => {
   return `${value >= 0 ? "+" : "-"}$${formatUsd(Math.abs(value))}`;
+};
+
+const formatSignedPercent = (value: number): string => {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+};
+
+const getTradeDayKey = (timestampSeconds: UTCTimestamp): string => {
+  return new Date(Number(timestampSeconds) * 1000).toISOString().slice(0, 10);
+};
+
+const getTradeMonthKey = (timestampSeconds: UTCTimestamp): string => {
+  return getTradeDayKey(timestampSeconds).slice(0, 7);
+};
+
+const getMonthLabel = (monthKey: string): string => {
+  const [year, month] = monthKey.split("-").map((value) => Number(value));
+
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    return monthKey;
+  }
+
+  return new Date(Date.UTC(year, month - 1, 1)).toLocaleString("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC"
+  });
+};
+
+const getCalendarDateLabel = (dateKey: string): string => {
+  return new Date(`${dateKey}T00:00:00Z`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC"
+  });
+};
+
+const getWeekdayLabel = (dateKey: string): string => {
+  return new Date(`${dateKey}T00:00:00Z`).toLocaleDateString("en-US", {
+    weekday: "short",
+    timeZone: "UTC"
+  });
+};
+
+const getSessionLabel = (timestampSeconds: UTCTimestamp): string => {
+  const hour = new Date(Number(timestampSeconds) * 1000).getUTCHours();
+
+  if (hour < 7) {
+    return "Asia";
+  }
+
+  if (hour < 12) {
+    return "London";
+  }
+
+  if (hour < 17) {
+    return "New York";
+  }
+
+  return "Late";
+};
+
+const buildSparklinePath = (values: number[], width: number, height: number): string => {
+  if (values.length === 0) {
+    return "";
+  }
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = Math.max(0.000001, max - min);
+
+  return values
+    .map((value, index) => {
+      const x = values.length === 1 ? width / 2 : (index / (values.length - 1)) * width;
+      const y = height - ((value - min) / range) * height;
+
+      return `${index === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(" ");
 };
 
 const formatElapsed = (
@@ -867,6 +998,7 @@ export default function TradingTerminal() {
   const [selectedModelId, setSelectedModelId] = useState(modelProfiles[0].id);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
   const [selectedSurfaceTab, setSelectedSurfaceTab] = useState<SurfaceTab>("chart");
+  const [selectedBacktestTab, setSelectedBacktestTab] = useState<BacktestTab>("history");
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("active");
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
@@ -876,6 +1008,13 @@ export default function TradingTerminal() {
   const [seenNotificationIds, setSeenNotificationIds] = useState<string[]>([]);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>({});
+  const [backtestHistoryQuery, setBacktestHistoryQuery] = useState("");
+  const [selectedBacktestMonthKey, setSelectedBacktestMonthKey] = useState("");
+  const [selectedBacktestDateKey, setSelectedBacktestDateKey] = useState("");
+  const [propInitialBalance, setPropInitialBalance] = useState(10_000);
+  const [propDailyMaxLoss, setPropDailyMaxLoss] = useState(350);
+  const [propTotalMaxLoss, setPropTotalMaxLoss] = useState(900);
+  const [propProfitTarget, setPropProfitTarget] = useState(800);
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -2214,6 +2353,575 @@ export default function TradingTerminal() {
     showAllTradesOnChart
   ]);
 
+  const backtestTrades = useMemo(() => {
+    return [...historyRows].sort((a, b) => Number(a.exitTime) - Number(b.exitTime));
+  }, [historyRows]);
+
+  const backtestSummary = useMemo(() => {
+    let netPnl = 0;
+    let grossWins = 0;
+    let grossLosses = 0;
+    let wins = 0;
+    let totalHoldMinutes = 0;
+    let maxWin = 0;
+    let maxLoss = 0;
+    let totalR = 0;
+    let runningPnl = 0;
+    let peakPnl = 0;
+    let maxDrawdown = 0;
+    const dayMap = new Map<string, { key: string; count: number; pnl: number }>();
+
+    for (const trade of backtestTrades) {
+      netPnl += trade.pnlUsd;
+      runningPnl += trade.pnlUsd;
+      peakPnl = Math.max(peakPnl, runningPnl);
+      maxDrawdown = Math.min(maxDrawdown, runningPnl - peakPnl);
+      maxWin = Math.max(maxWin, trade.pnlUsd);
+      maxLoss = Math.min(maxLoss, trade.pnlUsd);
+
+      if (trade.pnlUsd >= 0) {
+        grossWins += trade.pnlUsd;
+      } else {
+        grossLosses += trade.pnlUsd;
+      }
+
+      if (trade.result === "Win") {
+        wins += 1;
+      }
+
+      totalHoldMinutes += Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
+
+      const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
+      const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
+      totalR += rewardDistance / riskDistance;
+
+      const dayKey = getTradeDayKey(trade.exitTime);
+      const currentDay = dayMap.get(dayKey) ?? { key: dayKey, count: 0, pnl: 0 };
+      currentDay.count += 1;
+      currentDay.pnl += trade.pnlUsd;
+      dayMap.set(dayKey, currentDay);
+    }
+
+    const dayRows = Array.from(dayMap.values()).sort((a, b) => a.key.localeCompare(b.key));
+    const bestDay = [...dayRows].sort((a, b) => b.pnl - a.pnl)[0] ?? null;
+    const worstDay = [...dayRows].sort((a, b) => a.pnl - b.pnl)[0] ?? null;
+    const tradeCount = backtestTrades.length;
+
+    return {
+      tradeCount,
+      netPnl,
+      winRate: tradeCount > 0 ? (wins / tradeCount) * 100 : 0,
+      profitFactor:
+        grossLosses === 0 ? (grossWins > 0 ? grossWins : 0) : grossWins / Math.abs(grossLosses),
+      avgHoldMinutes: tradeCount > 0 ? totalHoldMinutes / tradeCount : 0,
+      avgR: tradeCount > 0 ? totalR / tradeCount : 0,
+      grossWins,
+      grossLosses,
+      maxWin,
+      maxLoss,
+      maxDrawdown,
+      bestDay,
+      worstDay
+    };
+  }, [backtestTrades]);
+
+  const availableBacktestMonths = useMemo(() => {
+    const monthKeys = new Set<string>();
+
+    for (const trade of backtestTrades) {
+      monthKeys.add(getTradeMonthKey(trade.exitTime));
+    }
+
+    return Array.from(monthKeys).sort((a, b) => b.localeCompare(a));
+  }, [backtestTrades]);
+
+  const backtestCalendarAgg = useMemo(() => {
+    const map = new Map<string, { count: number; wins: number; pnl: number; items: HistoryItem[] }>();
+
+    for (const trade of backtestTrades) {
+      const dateKey = getTradeDayKey(trade.exitTime);
+      const bucket = map.get(dateKey) ?? { count: 0, wins: 0, pnl: 0, items: [] };
+      bucket.count += 1;
+      bucket.wins += trade.result === "Win" ? 1 : 0;
+      bucket.pnl += trade.pnlUsd;
+      bucket.items.push(trade);
+      map.set(dateKey, bucket);
+    }
+
+    return map;
+  }, [backtestTrades]);
+
+  const selectedBacktestMonthIndex = selectedBacktestMonthKey
+    ? availableBacktestMonths.indexOf(selectedBacktestMonthKey)
+    : -1;
+
+  const calendarMonthLabel = selectedBacktestMonthKey
+    ? getMonthLabel(selectedBacktestMonthKey)
+    : "No trades loaded";
+
+  const backtestCalendarGrid = useMemo(() => {
+    if (!selectedBacktestMonthKey) {
+      return [] as Array<{
+        dateKey: string;
+        day: number;
+        inMonth: boolean;
+        activity: { count: number; wins: number; pnl: number; items: HistoryItem[] } | null;
+      }>;
+    }
+
+    const [year, month] = selectedBacktestMonthKey.split("-").map((value) => Number(value));
+
+    if (!Number.isFinite(year) || !Number.isFinite(month)) {
+      return [];
+    }
+
+    const monthStart = new Date(Date.UTC(year, month - 1, 1));
+    const offset = monthStart.getUTCDay();
+    const gridStart = new Date(Date.UTC(year, month - 1, 1 - offset));
+
+    return Array.from({ length: 42 }, (_, index) => {
+      const current = new Date(gridStart.getTime() + index * 86_400_000);
+      const dateKey = current.toISOString().slice(0, 10);
+
+      return {
+        dateKey,
+        day: current.getUTCDate(),
+        inMonth: current.getUTCMonth() === monthStart.getUTCMonth(),
+        activity: backtestCalendarAgg.get(dateKey) ?? null
+      };
+    });
+  }, [backtestCalendarAgg, selectedBacktestMonthKey]);
+
+  const visibleBacktestDateKeys = useMemo(() => {
+    return backtestCalendarGrid
+      .filter((cell) => cell.inMonth && cell.activity)
+      .map((cell) => cell.dateKey);
+  }, [backtestCalendarGrid]);
+
+  const selectedBacktestDayTrades = useMemo(() => {
+    const bucket = backtestCalendarAgg.get(selectedBacktestDateKey);
+
+    if (!bucket) {
+      return [];
+    }
+
+    return [...bucket.items].sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
+  }, [backtestCalendarAgg, selectedBacktestDateKey]);
+
+  const filteredBacktestHistory = useMemo(() => {
+    const query = backtestHistoryQuery.trim().toLowerCase();
+
+    if (!query) {
+      return [...backtestTrades].sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
+    }
+
+    return [...backtestTrades]
+      .filter((trade) => {
+        const haystack = [
+          trade.symbol,
+          trade.side,
+          trade.result,
+          trade.entryAt,
+          trade.exitAt,
+          formatSignedUsd(trade.pnlUsd),
+          formatSignedPercent(trade.pnlPct)
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(query);
+      })
+      .sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
+  }, [backtestHistoryQuery, backtestTrades]);
+
+  const backtestTemporalStats = useMemo(() => {
+    const weekdayRows = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label) => ({
+      label,
+      count: 0,
+      wins: 0,
+      pnl: 0
+    }));
+    const sessionLabels = ["Asia", "London", "New York", "Late"];
+    const sessionMap = new Map<string, { label: string; count: number; wins: number; pnl: number }>();
+
+    for (const label of sessionLabels) {
+      sessionMap.set(label, { label, count: 0, wins: 0, pnl: 0 });
+    }
+
+    for (const trade of backtestTrades) {
+      const date = new Date(Number(trade.exitTime) * 1000);
+      const weekday = weekdayRows[date.getUTCDay()];
+      weekday.count += 1;
+      weekday.wins += trade.result === "Win" ? 1 : 0;
+      weekday.pnl += trade.pnlUsd;
+
+      const session = sessionMap.get(getSessionLabel(trade.entryTime));
+
+      if (session) {
+        session.count += 1;
+        session.wins += trade.result === "Win" ? 1 : 0;
+        session.pnl += trade.pnlUsd;
+      }
+    }
+
+    const sessions = Array.from(sessionMap.values());
+
+    return {
+      weekdays: weekdayRows.map((row) => ({
+        ...row,
+        winRate: row.count > 0 ? (row.wins / row.count) * 100 : 0
+      })),
+      sessions: sessions.map((row) => ({
+        ...row,
+        winRate: row.count > 0 ? (row.wins / row.count) * 100 : 0
+      }))
+    };
+  }, [backtestTrades]);
+
+  const backtestEntryExitStats = useMemo(() => {
+    const sideMap = new Map<TradeSide, { side: TradeSide; count: number; wins: number; pnl: number }>();
+    const exitMap = new Map<string, number>([
+      ["Target Hit", 0],
+      ["Protective Stop", 0],
+      ["Managed Exit", 0]
+    ]);
+    let totalEntry = 0;
+    let totalExit = 0;
+    let totalStopDistance = 0;
+    let totalTargetDistance = 0;
+    let totalUnits = 0;
+    let totalHoldMinutes = 0;
+
+    sideMap.set("Long", { side: "Long", count: 0, wins: 0, pnl: 0 });
+    sideMap.set("Short", { side: "Short", count: 0, wins: 0, pnl: 0 });
+
+    for (const trade of backtestTrades) {
+      totalEntry += trade.entryPrice;
+      totalExit += trade.outcomePrice;
+      totalStopDistance += Math.abs(trade.entryPrice - trade.stopPrice);
+      totalTargetDistance += Math.abs(trade.targetPrice - trade.entryPrice);
+      totalUnits += trade.units;
+      totalHoldMinutes += Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
+
+      const side = sideMap.get(trade.side);
+
+      if (side) {
+        side.count += 1;
+        side.wins += trade.result === "Win" ? 1 : 0;
+        side.pnl += trade.pnlUsd;
+      }
+
+      const targetGap = Math.abs(trade.targetPrice - trade.entryPrice);
+      const stopGap = Math.abs(trade.entryPrice - trade.stopPrice);
+      const realizedGap = Math.abs(trade.outcomePrice - trade.entryPrice);
+      const exitLabel =
+        trade.result === "Win" && realizedGap >= targetGap * 0.84
+          ? "Target Hit"
+          : trade.result === "Loss" && realizedGap >= stopGap * 0.84
+            ? "Protective Stop"
+            : "Managed Exit";
+
+      exitMap.set(exitLabel, (exitMap.get(exitLabel) ?? 0) + 1);
+    }
+
+    const count = backtestTrades.length;
+
+    return {
+      avgEntry: count > 0 ? totalEntry / count : 0,
+      avgExit: count > 0 ? totalExit / count : 0,
+      avgStopDistance: count > 0 ? totalStopDistance / count : 0,
+      avgTargetDistance: count > 0 ? totalTargetDistance / count : 0,
+      avgUnits: count > 0 ? totalUnits / count : 0,
+      avgHoldMinutes: count > 0 ? totalHoldMinutes / count : 0,
+      sides: Array.from(sideMap.values()).map((row) => ({
+        ...row,
+        winRate: row.count > 0 ? (row.wins / row.count) * 100 : 0
+      })),
+      exits: Array.from(exitMap.entries()).map(([label, value]) => ({
+        label,
+        value,
+        pct: count > 0 ? (value / count) * 100 : 0
+      }))
+    };
+  }, [backtestTrades]);
+
+  const backtestClusterData = useMemo(() => {
+    const holds = backtestTrades.map((trade) =>
+      Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60)
+    );
+    const sortedHolds = [...holds].sort((a, b) => a - b);
+    const medianHold =
+      sortedHolds.length > 0 ? sortedHolds[Math.floor(sortedHolds.length / 2)] : 0;
+    const maxHold = Math.max(1, ...holds);
+    const maxUnits = Math.max(1, ...backtestTrades.map((trade) => trade.units));
+    const maxAbsPnl = Math.max(1, ...backtestTrades.map((trade) => Math.abs(trade.pnlPct)));
+    const clusterMeta = {
+      momentum: {
+        label: "Momentum",
+        description: "Fast winners that resolve quickly with clean follow-through."
+      },
+      trend: {
+        label: "Trend Hold",
+        description: "Winners that need more time but keep directional conviction."
+      },
+      trap: {
+        label: "Trap",
+        description: "Losses that extend before the move fully invalidates."
+      },
+      chop: {
+        label: "Chop",
+        description: "Short-lived noise trades with shallow edge."
+      }
+    } as const;
+    const groupMap = new Map<
+      keyof typeof clusterMeta,
+      {
+        id: keyof typeof clusterMeta;
+        label: string;
+        description: string;
+        count: number;
+        wins: number;
+        pnl: number;
+      }
+    >();
+
+    const nodes = backtestTrades.map((trade) => {
+      const holdMinutes = Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
+      const clusterId: keyof typeof clusterMeta =
+        trade.result === "Win"
+          ? holdMinutes <= medianHold
+            ? "momentum"
+            : "trend"
+          : Math.abs(trade.pnlPct) >= 0.22
+            ? "trap"
+            : "chop";
+      const group =
+        groupMap.get(clusterId) ??
+        (() => {
+          const meta = clusterMeta[clusterId];
+          const next = {
+            id: clusterId,
+            label: meta.label,
+            description: meta.description,
+            count: 0,
+            wins: 0,
+            pnl: 0
+          };
+          groupMap.set(clusterId, next);
+          return next;
+        })();
+
+      group.count += 1;
+      group.wins += trade.result === "Win" ? 1 : 0;
+      group.pnl += trade.pnlUsd;
+
+      return {
+        id: trade.id,
+        clusterId,
+        x: 11 + ((trade.pnlPct + maxAbsPnl) / (maxAbsPnl * 2)) * 78,
+        y: 88 - (holdMinutes / maxHold) * 72,
+        r: 3 + (trade.units / maxUnits) * 3.5,
+        tone: trade.pnlUsd >= 0 ? "up" : "down"
+      };
+    });
+
+    const groups = Array.from(groupMap.values())
+      .map((group) => ({
+        ...group,
+        winRate: group.count > 0 ? (group.wins / group.count) * 100 : 0,
+        avgPnl: group.count > 0 ? group.pnl / group.count : 0
+      }))
+      .sort((a, b) => b.avgPnl - a.avgPnl);
+
+    return { nodes, groups };
+  }, [backtestTrades]);
+
+  const backtestGraphData = useMemo(() => {
+    const curve: number[] = [];
+    const monthMap = new Map<string, number>();
+    const buckets = [
+      { label: "< -$80", min: Number.NEGATIVE_INFINITY, max: -80, count: 0 },
+      { label: "-$80 to -$20", min: -80, max: -20, count: 0 },
+      { label: "-$20 to +$20", min: -20, max: 20, count: 0 },
+      { label: "+$20 to +$80", min: 20, max: 80, count: 0 },
+      { label: "> +$80", min: 80, max: Number.POSITIVE_INFINITY, count: 0 }
+    ];
+    let running = 0;
+
+    for (const trade of backtestTrades) {
+      running += trade.pnlUsd;
+      curve.push(running);
+      const monthKey = getTradeMonthKey(trade.exitTime);
+      monthMap.set(monthKey, (monthMap.get(monthKey) ?? 0) + trade.pnlUsd);
+
+      const bucket = buckets.find((item) => trade.pnlUsd >= item.min && trade.pnlUsd < item.max);
+
+      if (bucket) {
+        bucket.count += 1;
+      }
+    }
+
+    const monthBars = Array.from(monthMap.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .slice(-6)
+      .map(([key, value]) => ({
+        key,
+        label: key.slice(5),
+        value
+      }));
+
+    return {
+      curve,
+      curvePath: buildSparklinePath(curve, 100, 28),
+      monthBars,
+      buckets
+    };
+  }, [backtestTrades]);
+
+  const backtestDimensionRows = useMemo(() => {
+    if (backtestTrades.length === 0) {
+      return [] as Array<{ name: string; reading: string; note: string; score: number }>;
+    }
+
+    const bestSession =
+      [...backtestTemporalStats.sessions].sort((a, b) => b.winRate - a.winRate)[0] ?? null;
+    const longRow = backtestEntryExitStats.sides.find((row) => row.side === "Long");
+    const longShare =
+      longRow && backtestSummary.tradeCount > 0 ? longRow.count / backtestSummary.tradeCount : 0.5;
+    const smoothness =
+      1 -
+      clamp(
+        Math.abs(backtestSummary.maxDrawdown) /
+          Math.max(Math.abs(backtestSummary.netPnl), Math.abs(backtestSummary.maxDrawdown), 1),
+        0,
+        1
+      );
+
+    return [
+      {
+        name: "Payoff Quality",
+        reading: `${backtestSummary.avgR.toFixed(2)}R avg`,
+        note: "Target distance versus stop distance",
+        score: clamp(backtestSummary.avgR / 2.3, 0, 1)
+      },
+      {
+        name: "Hit Rate Stability",
+        reading: `${backtestSummary.winRate.toFixed(1)}% win rate`,
+        note: "Win/loss balance on the current model and timeframe",
+        score: clamp(backtestSummary.winRate / 100, 0, 1)
+      },
+      {
+        name: "Execution Pace",
+        reading: `${Math.round(backtestEntryExitStats.avgHoldMinutes)}m avg hold`,
+        note: "How long the system stays in market before closing",
+        score: 1 - clamp(backtestEntryExitStats.avgHoldMinutes / 480, 0, 1)
+      },
+      {
+        name: "Directional Balance",
+        reading: `${Math.round(longShare * 100)}% long exposure`,
+        note: "Bias control between long and short simulations",
+        score: 1 - Math.abs(longShare - 0.5) * 1.8
+      },
+      {
+        name: "Session Alignment",
+        reading: bestSession ? `${bestSession.label} leads` : "No session data",
+        note: "Highest-conviction session in the current sample",
+        score: bestSession ? clamp(bestSession.winRate / 100, 0, 1) : 0
+      },
+      {
+        name: "Equity Smoothness",
+        reading: `${formatSignedUsd(backtestSummary.maxDrawdown)} max pullback`,
+        note: "How choppy the cumulative curve gets before recovering",
+        score: clamp(smoothness, 0, 1)
+      }
+    ];
+  }, [backtestEntryExitStats, backtestSummary, backtestTemporalStats.sessions, backtestTrades]);
+
+  const propFirmProjection = useMemo(() => {
+    let balance = propInitialBalance;
+    let peakBalance = propInitialBalance;
+    let worstDrawdown = 0;
+    let passedAtTrade = 0;
+    let failedBy = "";
+    const dayPnlMap = new Map<string, number>();
+    const balanceCurve = [propInitialBalance];
+
+    for (let index = 0; index < backtestTrades.length; index += 1) {
+      const trade = backtestTrades[index];
+      balance += trade.pnlUsd;
+      balanceCurve.push(balance);
+      peakBalance = Math.max(peakBalance, balance);
+      worstDrawdown = Math.min(worstDrawdown, balance - peakBalance);
+
+      const dayKey = getTradeDayKey(trade.exitTime);
+      const dayPnl = (dayPnlMap.get(dayKey) ?? 0) + trade.pnlUsd;
+      dayPnlMap.set(dayKey, dayPnl);
+
+      if (!failedBy && dayPnl <= -Math.abs(propDailyMaxLoss)) {
+        failedBy = `Daily loss breached on ${getCalendarDateLabel(dayKey)}`;
+      }
+
+      if (!failedBy && balance <= propInitialBalance - Math.abs(propTotalMaxLoss)) {
+        failedBy = "Total drawdown limit breached";
+      }
+
+      if (
+        !failedBy &&
+        passedAtTrade === 0 &&
+        balance >= propInitialBalance + Math.abs(propProfitTarget)
+      ) {
+        passedAtTrade = index + 1;
+      }
+    }
+
+    const finalBalance = balance;
+    const targetBalance = propInitialBalance + Math.abs(propProfitTarget);
+    const status = failedBy ? "Failed" : passedAtTrade > 0 ? "Passed" : "In Progress";
+    const remaining = Math.max(0, targetBalance - finalBalance);
+
+    return {
+      status,
+      reason: failedBy || (passedAtTrade > 0 ? `Passed after ${passedAtTrade} trades` : "Target not reached yet"),
+      finalBalance,
+      targetBalance,
+      remaining,
+      progressPct:
+        propProfitTarget === 0
+          ? 100
+          : clamp(((finalBalance - propInitialBalance) / Math.abs(propProfitTarget)) * 100, 0, 100),
+      worstDrawdown,
+      balanceCurve,
+      balancePath: buildSparklinePath(balanceCurve, 100, 28),
+      tradingDays: dayPnlMap.size
+    };
+  }, [
+    backtestTrades,
+    propDailyMaxLoss,
+    propInitialBalance,
+    propProfitTarget,
+    propTotalMaxLoss
+  ]);
+
+  useEffect(() => {
+    setSelectedBacktestMonthKey((current) => {
+      if (availableBacktestMonths.length === 0) {
+        return "";
+      }
+
+      return availableBacktestMonths.includes(current) ? current : availableBacktestMonths[0];
+    });
+  }, [availableBacktestMonths]);
+
+  useEffect(() => {
+    setSelectedBacktestDateKey((current) => {
+      if (visibleBacktestDateKeys.length === 0) {
+        return "";
+      }
+
+      return visibleBacktestDateKeys.includes(current) ? current : visibleBacktestDateKeys[0];
+    });
+  }, [visibleBacktestDateKeys]);
+
   return (
     <main className="terminal">
       <nav className="surface-strip" aria-label="primary views">
@@ -2719,7 +3427,819 @@ export default function TradingTerminal() {
         <section
           className={`backtest-surface ${selectedSurfaceTab === "backtest" ? "" : "hidden"}`}
           aria-label="backtest workspace"
-        />
+        >
+          <div className="backtest-shell">
+            <section className="backtest-hero">
+              <div className="backtest-hero-copy">
+                <span className="backtest-kicker">Backtest Workspace</span>
+                <h2>
+                  {selectedModel.name} on {selectedTimeframe}
+                </h2>
+                <p>
+                  AI.zip concepts are reorganized into focused modules that fit the current terminal:
+                  history, calendar, clustering, diagnostics, and prop evaluation.
+                </p>
+              </div>
+
+              <div className="backtest-summary-grid">
+                <article className="backtest-summary-card">
+                  <span>Net PnL</span>
+                  <strong className={backtestSummary.netPnl >= 0 ? "up" : "down"}>
+                    {formatSignedUsd(backtestSummary.netPnl)}
+                  </strong>
+                  <small>{backtestSummary.tradeCount} simulated trades</small>
+                </article>
+                <article className="backtest-summary-card">
+                  <span>Win Rate</span>
+                  <strong>{backtestSummary.winRate.toFixed(1)}%</strong>
+                  <small>{backtestSummary.avgR.toFixed(2)}R average reward profile</small>
+                </article>
+                <article className="backtest-summary-card">
+                  <span>Profit Factor</span>
+                  <strong>{backtestSummary.profitFactor.toFixed(2)}</strong>
+                  <small>{Math.round(backtestSummary.avgHoldMinutes)}m average hold</small>
+                </article>
+                <article className="backtest-summary-card">
+                  <span>Worst Pullback</span>
+                  <strong className={backtestSummary.maxDrawdown >= 0 ? "up" : "down"}>
+                    {formatSignedUsd(backtestSummary.maxDrawdown)}
+                  </strong>
+                  <small>
+                    {backtestSummary.bestDay
+                      ? `Best day ${formatSignedUsd(backtestSummary.bestDay.pnl)}`
+                      : "Waiting for trade history"}
+                  </small>
+                </article>
+              </div>
+            </section>
+
+            <nav className="backtest-tabs" aria-label="backtest modules">
+              {backtestTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`backtest-tab ${selectedBacktestTab === tab.id ? "active" : ""}`}
+                  onClick={() => setSelectedBacktestTab(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+
+            <section className="backtest-panel">
+              {backtestSummary.tradeCount === 0 ? (
+                <div className="backtest-empty">
+                  <h3>Backtest data is still loading</h3>
+                  <p>
+                    The Backtest modules populate from the simulated history feed. Once candles load,
+                    these tabs will fill in automatically.
+                  </p>
+                </div>
+              ) : null}
+
+              {backtestSummary.tradeCount > 0 && selectedBacktestTab === "history" ? (
+                <div className="backtest-grid two-up">
+                  <div className="backtest-card">
+                    <div className="backtest-card-head">
+                      <div>
+                        <h3>Trading History</h3>
+                        <p>Search, scan, and send any closed trade straight back to the chart.</p>
+                      </div>
+                      <input
+                        type="search"
+                        value={backtestHistoryQuery}
+                        onChange={(event) => setBacktestHistoryQuery(event.target.value)}
+                        className="backtest-search"
+                        placeholder="Search symbol, side, result, or PnL"
+                        aria-label="search trading history"
+                      />
+                    </div>
+
+                    <div className="backtest-history-list">
+                      {filteredBacktestHistory.map((trade) => (
+                        <article key={trade.id} className="backtest-history-row">
+                          <div className="backtest-history-main">
+                            <span className={`backtest-pill ${trade.side === "Long" ? "up" : "down"}`}>
+                              {trade.side}
+                            </span>
+                            <div className="backtest-history-copy">
+                              <strong>
+                                {trade.symbol} · {trade.result}
+                              </strong>
+                              <span>
+                                {trade.entryAt} to {trade.exitAt}
+                              </span>
+                              <small>
+                                Entry {formatPrice(trade.entryPrice)} · Exit {formatPrice(trade.outcomePrice)}
+                              </small>
+                            </div>
+                          </div>
+
+                          <div className="backtest-history-side">
+                            <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
+                              {formatSignedUsd(trade.pnlUsd)}
+                            </strong>
+                            <span className={trade.pnlPct >= 0 ? "up" : "down"}>
+                              {formatSignedPercent(trade.pnlPct)}
+                            </span>
+                            <button
+                              type="button"
+                              className="backtest-action-btn"
+                              onClick={() => {
+                                focusTradeIdRef.current = trade.id;
+                                setSelectedHistoryId(trade.id);
+                                setSelectedSymbol(trade.symbol);
+                                setShowAllTradesOnChart(false);
+                                setShowActiveTradeOnChart(false);
+                                setSelectedSurfaceTab("chart");
+                              }}
+                            >
+                              View Chart
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="backtest-stack">
+                    <div className="backtest-card compact">
+                      <div className="backtest-card-head">
+                        <div>
+                          <h3>Trade Tape</h3>
+                          <p>Quick quality checks from the active history slice.</p>
+                        </div>
+                      </div>
+                      <div className="backtest-stat-list">
+                        <div className="backtest-stat-row">
+                          <span>Largest win</span>
+                          <strong className="up">{formatSignedUsd(backtestSummary.maxWin)}</strong>
+                        </div>
+                        <div className="backtest-stat-row">
+                          <span>Largest loss</span>
+                          <strong className="down">{formatSignedUsd(backtestSummary.maxLoss)}</strong>
+                        </div>
+                        <div className="backtest-stat-row">
+                          <span>Gross wins</span>
+                          <strong className="up">${formatUsd(backtestSummary.grossWins)}</strong>
+                        </div>
+                        <div className="backtest-stat-row">
+                          <span>Gross losses</span>
+                          <strong className="down">{formatSignedUsd(backtestSummary.grossLosses)}</strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="backtest-card compact">
+                      <div className="backtest-card-head">
+                        <div>
+                          <h3>Recent Sequence</h3>
+                          <p>Latest closes, newest first.</p>
+                        </div>
+                      </div>
+                      <div className="backtest-mini-list">
+                        {filteredBacktestHistory.slice(0, 6).map((trade) => (
+                          <div key={`${trade.id}-mini`} className="backtest-mini-row">
+                            <span>{trade.symbol}</span>
+                            <span>{getSessionLabel(trade.entryTime)}</span>
+                            <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
+                              {formatSignedUsd(trade.pnlUsd)}
+                            </strong>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {backtestSummary.tradeCount > 0 && selectedBacktestTab === "calendar" ? (
+                <div className="backtest-grid two-up">
+                  <div className="backtest-card">
+                    <div className="backtest-card-head">
+                      <div>
+                        <h3>Calendar</h3>
+                        <p>Daily trade clustering adapted from the AI.zip calendar module.</p>
+                      </div>
+                      <div className="backtest-calendar-nav">
+                        <button
+                          type="button"
+                          className="backtest-action-btn"
+                          disabled={selectedBacktestMonthIndex >= availableBacktestMonths.length - 1}
+                          onClick={() => {
+                            if (selectedBacktestMonthIndex < 0) {
+                              return;
+                            }
+
+                            const nextIndex = Math.min(
+                              availableBacktestMonths.length - 1,
+                              selectedBacktestMonthIndex + 1
+                            );
+                            setSelectedBacktestMonthKey(availableBacktestMonths[nextIndex] ?? "");
+                          }}
+                        >
+                          Older
+                        </button>
+                        <span className="backtest-calendar-label">{calendarMonthLabel}</span>
+                        <button
+                          type="button"
+                          className="backtest-action-btn"
+                          disabled={selectedBacktestMonthIndex <= 0}
+                          onClick={() => {
+                            if (selectedBacktestMonthIndex <= 0) {
+                              return;
+                            }
+
+                            const nextIndex = Math.max(0, selectedBacktestMonthIndex - 1);
+                            setSelectedBacktestMonthKey(availableBacktestMonths[nextIndex] ?? "");
+                          }}
+                        >
+                          Newer
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="backtest-calendar-weekdays">
+                      {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label) => (
+                        <span key={label}>{label}</span>
+                      ))}
+                    </div>
+
+                    <div className="backtest-calendar-grid">
+                      {backtestCalendarGrid.map((cell) => (
+                        <button
+                          key={cell.dateKey}
+                          type="button"
+                          className={`backtest-calendar-cell ${
+                            cell.dateKey === selectedBacktestDateKey ? "selected" : ""
+                          } ${cell.inMonth ? "" : "muted"}`}
+                          onClick={() => setSelectedBacktestDateKey(cell.dateKey)}
+                        >
+                          <span>{cell.day}</span>
+                          {cell.activity ? (
+                            <>
+                              <strong>{cell.activity.count}T</strong>
+                              <small className={cell.activity.pnl >= 0 ? "up" : "down"}>
+                                {formatSignedUsd(cell.activity.pnl)}
+                              </small>
+                            </>
+                          ) : (
+                            <small>No trades</small>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="backtest-card">
+                    <div className="backtest-card-head">
+                      <div>
+                        <h3>
+                          {selectedBacktestDateKey
+                            ? getCalendarDateLabel(selectedBacktestDateKey)
+                            : "Select a date"}
+                        </h3>
+                        <p>
+                          {selectedBacktestDateKey
+                            ? `${getWeekdayLabel(selectedBacktestDateKey)} session breakdown`
+                            : "Pick any active day to inspect fills."}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="backtest-mini-list">
+                      {selectedBacktestDayTrades.map((trade) => (
+                        <div key={`${trade.id}-calendar`} className="backtest-day-row">
+                          <div>
+                            <strong>
+                              {trade.symbol} · {trade.side}
+                            </strong>
+                            <span>
+                              {formatPrice(trade.entryPrice)} to {formatPrice(trade.outcomePrice)}
+                            </span>
+                          </div>
+                          <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
+                            {formatSignedUsd(trade.pnlUsd)}
+                          </strong>
+                        </div>
+                      ))}
+                      {selectedBacktestDayTrades.length === 0 ? (
+                        <div className="backtest-empty-inline">No trades closed on the selected day.</div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {backtestSummary.tradeCount > 0 && selectedBacktestTab === "cluster" ? (
+                <div className="backtest-grid two-up">
+                  <div className="backtest-card">
+                    <div className="backtest-card-head">
+                      <div>
+                        <h3>Cluster Map</h3>
+                        <p>
+                          A lighter, terminal-native version of the AI.zip cluster concept. X maps PnL
+                          %, Y maps hold time, size maps position size.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="backtest-cluster-map">
+                      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="cluster map">
+                        <line x1="10" y1="88" x2="90" y2="88" className="backtest-axis-line" />
+                        <line x1="10" y1="12" x2="10" y2="88" className="backtest-axis-line" />
+                        <line x1="50" y1="12" x2="50" y2="88" className="backtest-grid-line" />
+                        <line x1="10" y1="50" x2="90" y2="50" className="backtest-grid-line" />
+                        {backtestClusterData.nodes.map((node) => (
+                          <circle
+                            key={node.id}
+                            cx={node.x}
+                            cy={node.y}
+                            r={node.r}
+                            className={`backtest-cluster-node ${node.tone}`}
+                          />
+                        ))}
+                      </svg>
+                    </div>
+
+                    <div className="backtest-map-legend">
+                      <span>Left: weaker outcome</span>
+                      <span>Right: stronger outcome</span>
+                      <span>Higher: faster exit</span>
+                      <span>Lower: longer hold</span>
+                    </div>
+                  </div>
+
+                  <div className="backtest-stack">
+                    {backtestClusterData.groups.map((group) => (
+                      <div key={group.id} className="backtest-card compact">
+                        <div className="backtest-card-head">
+                          <div>
+                            <h3>{group.label}</h3>
+                            <p>{group.description}</p>
+                          </div>
+                        </div>
+                        <div className="backtest-stat-list">
+                          <div className="backtest-stat-row">
+                            <span>Trades</span>
+                            <strong>{group.count}</strong>
+                          </div>
+                          <div className="backtest-stat-row">
+                            <span>Win rate</span>
+                            <strong>{group.winRate.toFixed(1)}%</strong>
+                          </div>
+                          <div className="backtest-stat-row">
+                            <span>Avg PnL</span>
+                            <strong className={group.avgPnl >= 0 ? "up" : "down"}>
+                              {formatSignedUsd(group.avgPnl)}
+                            </strong>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {backtestSummary.tradeCount > 0 && selectedBacktestTab === "temporal" ? (
+                <div className="backtest-grid two-up">
+                  <div className="backtest-card">
+                    <div className="backtest-card-head">
+                      <div>
+                        <h3>Weekday Performance</h3>
+                        <p>Which days convert best for the current model profile.</p>
+                      </div>
+                    </div>
+                    <div className="backtest-bar-list">
+                      {backtestTemporalStats.weekdays.map((row) => {
+                        const maxCount = Math.max(
+                          1,
+                          ...backtestTemporalStats.weekdays.map((item) => item.count)
+                        );
+
+                        return (
+                          <div key={row.label} className="backtest-bar-row">
+                            <div className="backtest-bar-copy">
+                              <strong>{row.label}</strong>
+                              <span>{row.count} trades</span>
+                            </div>
+                            <div className="backtest-bar-track">
+                              <div
+                                className={`backtest-bar-fill ${row.pnl >= 0 ? "up" : "down"}`}
+                                style={{ width: `${(row.count / maxCount) * 100}%` }}
+                              />
+                            </div>
+                            <div className="backtest-bar-values">
+                              <span>{row.winRate.toFixed(0)}%</span>
+                              <strong className={row.pnl >= 0 ? "up" : "down"}>
+                                {formatSignedUsd(row.pnl)}
+                              </strong>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="backtest-card">
+                    <div className="backtest-card-head">
+                      <div>
+                        <h3>Session Performance</h3>
+                        <p>Session bins mirror the AI.zip temporal split, but with this terminal theme.</p>
+                      </div>
+                    </div>
+                    <div className="backtest-bar-list">
+                      {backtestTemporalStats.sessions.map((row) => {
+                        const maxCount = Math.max(
+                          1,
+                          ...backtestTemporalStats.sessions.map((item) => item.count)
+                        );
+
+                        return (
+                          <div key={row.label} className="backtest-bar-row">
+                            <div className="backtest-bar-copy">
+                              <strong>{row.label}</strong>
+                              <span>{row.count} trades</span>
+                            </div>
+                            <div className="backtest-bar-track">
+                              <div
+                                className={`backtest-bar-fill ${row.pnl >= 0 ? "up" : "down"}`}
+                                style={{ width: `${(row.count / maxCount) * 100}%` }}
+                              />
+                            </div>
+                            <div className="backtest-bar-values">
+                              <span>{row.winRate.toFixed(0)}%</span>
+                              <strong className={row.pnl >= 0 ? "up" : "down"}>
+                                {formatSignedUsd(row.pnl)}
+                              </strong>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {backtestSummary.tradeCount > 0 && selectedBacktestTab === "entryExit" ? (
+                <div className="backtest-grid two-up">
+                  <div className="backtest-card">
+                    <div className="backtest-card-head">
+                      <div>
+                        <h3>Entry / Exit Stats</h3>
+                        <p>Average execution geometry across the current test run.</p>
+                      </div>
+                    </div>
+
+                    <div className="backtest-metric-grid">
+                      <div className="backtest-metric-card">
+                        <span>Avg Entry</span>
+                        <strong>{formatPrice(backtestEntryExitStats.avgEntry)}</strong>
+                      </div>
+                      <div className="backtest-metric-card">
+                        <span>Avg Exit</span>
+                        <strong>{formatPrice(backtestEntryExitStats.avgExit)}</strong>
+                      </div>
+                      <div className="backtest-metric-card">
+                        <span>Avg TP Gap</span>
+                        <strong>{formatPrice(backtestEntryExitStats.avgTargetDistance)}</strong>
+                      </div>
+                      <div className="backtest-metric-card">
+                        <span>Avg SL Gap</span>
+                        <strong>{formatPrice(backtestEntryExitStats.avgStopDistance)}</strong>
+                      </div>
+                      <div className="backtest-metric-card">
+                        <span>Avg Size</span>
+                        <strong>{formatUnits(backtestEntryExitStats.avgUnits)} u</strong>
+                      </div>
+                      <div className="backtest-metric-card">
+                        <span>Avg Hold</span>
+                        <strong>{Math.round(backtestEntryExitStats.avgHoldMinutes)}m</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="backtest-stack">
+                    <div className="backtest-card compact">
+                      <div className="backtest-card-head">
+                        <div>
+                          <h3>Directional Split</h3>
+                          <p>Long and short behavior side by side.</p>
+                        </div>
+                      </div>
+                      <div className="backtest-stat-list">
+                        {backtestEntryExitStats.sides.map((row) => (
+                          <div key={row.side} className="backtest-stat-row">
+                            <span>{row.side}</span>
+                            <strong>{row.winRate.toFixed(1)}%</strong>
+                            <small className={row.pnl >= 0 ? "up" : "down"}>
+                              {formatSignedUsd(row.pnl)}
+                            </small>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="backtest-card compact">
+                      <div className="backtest-card-head">
+                        <div>
+                          <h3>Exit Mix</h3>
+                          <p>How trades are actually resolving.</p>
+                        </div>
+                      </div>
+                      <div className="backtest-bar-list">
+                        {backtestEntryExitStats.exits.map((row) => (
+                          <div key={row.label} className="backtest-bar-row compact">
+                            <div className="backtest-bar-copy">
+                              <strong>{row.label}</strong>
+                              <span>{row.value}</span>
+                            </div>
+                            <div className="backtest-bar-track">
+                              <div
+                                className="backtest-bar-fill neutral"
+                                style={{ width: `${row.pct}%` }}
+                              />
+                            </div>
+                            <div className="backtest-bar-values">
+                              <span>{row.pct.toFixed(0)}%</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {backtestSummary.tradeCount > 0 && selectedBacktestTab === "dimensions" ? (
+                <div className="backtest-card">
+                  <div className="backtest-card-head">
+                    <div>
+                      <h3>Dimension Statistics</h3>
+                      <p>
+                        The AI.zip feature-importance idea is distilled into a cleaner scorecard for this
+                        terminal.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="backtest-dimension-list">
+                    {backtestDimensionRows.map((row) => (
+                      <div key={row.name} className="backtest-dimension-row">
+                        <div className="backtest-dimension-copy">
+                          <strong>{row.name}</strong>
+                          <span>{row.note}</span>
+                        </div>
+                        <div className="backtest-dimension-meter">
+                          <div
+                            className={`backtest-dimension-fill ${
+                              row.score >= 0.62 ? "up" : row.score <= 0.42 ? "down" : "neutral"
+                            }`}
+                            style={{ width: `${clamp(row.score * 100, 0, 100)}%` }}
+                          />
+                        </div>
+                        <div className="backtest-dimension-reading">
+                          <strong>{row.reading}</strong>
+                          <span>{Math.round(clamp(row.score * 100, 0, 100))}/100</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {backtestSummary.tradeCount > 0 && selectedBacktestTab === "graphs" ? (
+                <div className="backtest-grid two-up">
+                  <div className="backtest-card">
+                    <div className="backtest-card-head">
+                      <div>
+                        <h3>Equity Curve</h3>
+                        <p>Cumulative result path across the current backtest sample.</p>
+                      </div>
+                    </div>
+                    <div className="backtest-graph-wrap">
+                      <svg viewBox="0 0 100 32" preserveAspectRatio="none" aria-label="equity curve">
+                        <line x1="0" y1="31" x2="100" y2="31" className="backtest-grid-line" />
+                        <path
+                          d={backtestGraphData.curvePath}
+                          className={`backtest-line-path ${
+                            backtestSummary.netPnl >= 0 ? "up" : "down"
+                          }`}
+                        />
+                      </svg>
+                    </div>
+                    <div className="backtest-stat-row">
+                      <span>Net curve close</span>
+                      <strong className={backtestSummary.netPnl >= 0 ? "up" : "down"}>
+                        {formatSignedUsd(backtestSummary.netPnl)}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="backtest-card">
+                    <div className="backtest-card-head">
+                      <div>
+                        <h3>Monthly PnL</h3>
+                        <p>Last six active months from the current data set.</p>
+                      </div>
+                    </div>
+                    <div className="backtest-bar-list">
+                      {backtestGraphData.monthBars.map((bar) => {
+                        const maxValue = Math.max(
+                          1,
+                          ...backtestGraphData.monthBars.map((item) => Math.abs(item.value))
+                        );
+
+                        return (
+                          <div key={bar.key} className="backtest-bar-row">
+                            <div className="backtest-bar-copy">
+                              <strong>{bar.label}</strong>
+                              <span>{getMonthLabel(bar.key)}</span>
+                            </div>
+                            <div className="backtest-bar-track">
+                              <div
+                                className={`backtest-bar-fill ${bar.value >= 0 ? "up" : "down"}`}
+                                style={{ width: `${(Math.abs(bar.value) / maxValue) * 100}%` }}
+                              />
+                            </div>
+                            <div className="backtest-bar-values">
+                              <strong className={bar.value >= 0 ? "up" : "down"}>
+                                {formatSignedUsd(bar.value)}
+                              </strong>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="backtest-card span-2">
+                    <div className="backtest-card-head">
+                      <div>
+                        <h3>PnL Distribution</h3>
+                        <p>Bucketed outcomes for quick tail-risk inspection.</p>
+                      </div>
+                    </div>
+                    <div className="backtest-bar-list">
+                      {backtestGraphData.buckets.map((bucket) => (
+                        <div key={bucket.label} className="backtest-bar-row compact">
+                          <div className="backtest-bar-copy">
+                            <strong>{bucket.label}</strong>
+                          </div>
+                          <div className="backtest-bar-track">
+                            <div
+                              className="backtest-bar-fill neutral"
+                              style={{
+                                width: `${
+                                  backtestSummary.tradeCount > 0
+                                    ? (bucket.count / backtestSummary.tradeCount) * 100
+                                    : 0
+                                }%`
+                              }}
+                            />
+                          </div>
+                          <div className="backtest-bar-values">
+                            <span>
+                              {bucket.count} / {backtestSummary.tradeCount}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {backtestSummary.tradeCount > 0 && selectedBacktestTab === "propFirm" ? (
+                <div className="backtest-grid two-up">
+                  <div className="backtest-card">
+                    <div className="backtest-card-head">
+                      <div>
+                        <h3>Prop Firm Tool</h3>
+                        <p>Replay the current sample against simple challenge limits.</p>
+                      </div>
+                    </div>
+
+                    <div className="backtest-input-grid">
+                      <label className="backtest-input-field">
+                        <span>Initial Balance</span>
+                        <input
+                          type="number"
+                          value={propInitialBalance}
+                          onChange={(event) => setPropInitialBalance(Number(event.target.value) || 0)}
+                        />
+                      </label>
+                      <label className="backtest-input-field">
+                        <span>Daily Max Loss</span>
+                        <input
+                          type="number"
+                          value={propDailyMaxLoss}
+                          onChange={(event) => setPropDailyMaxLoss(Number(event.target.value) || 0)}
+                        />
+                      </label>
+                      <label className="backtest-input-field">
+                        <span>Total Max Loss</span>
+                        <input
+                          type="number"
+                          value={propTotalMaxLoss}
+                          onChange={(event) => setPropTotalMaxLoss(Number(event.target.value) || 0)}
+                        />
+                      </label>
+                      <label className="backtest-input-field">
+                        <span>Profit Target</span>
+                        <input
+                          type="number"
+                          value={propProfitTarget}
+                          onChange={(event) => setPropProfitTarget(Number(event.target.value) || 0)}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="backtest-progress-block">
+                      <div className="backtest-progress-head">
+                        <span>Challenge progress</span>
+                        <strong>{propFirmProjection.progressPct.toFixed(1)}%</strong>
+                      </div>
+                      <div className="backtest-progress-track">
+                        <div
+                          className={`backtest-progress-fill ${
+                            propFirmProjection.status === "Failed"
+                              ? "down"
+                              : propFirmProjection.status === "Passed"
+                                ? "up"
+                                : "neutral"
+                          }`}
+                          style={{ width: `${propFirmProjection.progressPct}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="backtest-stack">
+                    <div className="backtest-card compact">
+                      <div className="backtest-card-head">
+                        <div>
+                          <h3>{propFirmProjection.status}</h3>
+                          <p>{propFirmProjection.reason}</p>
+                        </div>
+                      </div>
+                      <div className="backtest-stat-list">
+                        <div className="backtest-stat-row">
+                          <span>Final balance</span>
+                          <strong
+                            className={
+                              propFirmProjection.finalBalance >= propInitialBalance ? "up" : "down"
+                            }
+                          >
+                            ${formatUsd(propFirmProjection.finalBalance)}
+                          </strong>
+                        </div>
+                        <div className="backtest-stat-row">
+                          <span>Target balance</span>
+                          <strong>${formatUsd(propFirmProjection.targetBalance)}</strong>
+                        </div>
+                        <div className="backtest-stat-row">
+                          <span>Remaining</span>
+                          <strong>${formatUsd(propFirmProjection.remaining)}</strong>
+                        </div>
+                        <div className="backtest-stat-row">
+                          <span>Worst drawdown</span>
+                          <strong className={propFirmProjection.worstDrawdown >= 0 ? "up" : "down"}>
+                            {formatSignedUsd(propFirmProjection.worstDrawdown)}
+                          </strong>
+                        </div>
+                        <div className="backtest-stat-row">
+                          <span>Trading days</span>
+                          <strong>{propFirmProjection.tradingDays}</strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="backtest-card compact">
+                      <div className="backtest-card-head">
+                        <div>
+                          <h3>Balance Path</h3>
+                          <p>Historical sequence under the current limits.</p>
+                        </div>
+                      </div>
+                      <div className="backtest-graph-wrap short">
+                        <svg viewBox="0 0 100 32" preserveAspectRatio="none" aria-label="balance path">
+                          <line x1="0" y1="31" x2="100" y2="31" className="backtest-grid-line" />
+                          <path
+                            d={propFirmProjection.balancePath}
+                            className={`backtest-line-path ${
+                              propFirmProjection.finalBalance >= propInitialBalance ? "up" : "down"
+                            }`}
+                          />
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </section>
+          </div>
+        </section>
       </section>
 
       <footer className="statusbar">

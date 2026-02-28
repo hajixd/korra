@@ -36,6 +36,67 @@ const parseTimestamp = (input) => {
   return Date.parse(input);
 };
 
+const isXauTradingTime = (timestamp) => {
+  const date = new Date(timestamp);
+  const day = date.getUTCDay();
+  const hour = date.getUTCHours();
+
+  if (day === 6) {
+    return false;
+  }
+
+  if (day === 5 && hour >= 22) {
+    return false;
+  }
+
+  if (day === 0 && hour < 23) {
+    return false;
+  }
+
+  if (day >= 1 && day <= 4 && hour === 22) {
+    return false;
+  }
+
+  return true;
+};
+
+const readLastNonEmptyLine = (filePath) => {
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+
+  const stats = fs.statSync(filePath);
+
+  if (stats.size === 0) {
+    return null;
+  }
+
+  const fd = fs.openSync(filePath, "r");
+  let position = stats.size;
+  let buffer = "";
+
+  try {
+    while (position > 0) {
+      const chunkSize = Math.min(64 * 1024, position);
+      const chunk = Buffer.alloc(chunkSize);
+
+      position -= chunkSize;
+      fs.readSync(fd, chunk, 0, chunkSize, position);
+      buffer = chunk.toString("utf8") + buffer;
+
+      const lines = buffer.split(/\r?\n/).filter(Boolean);
+
+      if (lines.length > 1 || position === 0) {
+        return lines[lines.length - 1] || null;
+      }
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  return null;
+};
+
 const loadApiKey = () => {
   if (process.env.TWELVE_DATA_API_KEY) {
     return process.env.TWELVE_DATA_API_KEY;
@@ -131,18 +192,38 @@ const run = async () => {
   }
 
   const earliest = await fetchEarliest(apiKey);
-  const stream = fs.createWriteStream(OUTPUT_PATH, { encoding: "utf8" });
-  let endDate = null;
+  const lastLine = readLastNonEmptyLine(OUTPUT_PATH);
+  const [lastTimestampRaw] = lastLine ? lastLine.split(",") : [];
+  const lastTimestamp = Number(lastTimestampRaw);
+  const isResumeFile =
+    lastLine !== null &&
+    lastLine !== "timestamp,datetime,open,high,low,close" &&
+    Number.isFinite(lastTimestamp);
+  const stream = fs.createWriteStream(OUTPUT_PATH, {
+    encoding: "utf8",
+    flags: isResumeFile ? "a" : "w"
+  });
+  let endDate = isResumeFile ? toTwelveDateTime(new Date(lastTimestamp - 60_000)) : null;
   let totalRows = 0;
   let page = 0;
 
-  stream.write("timestamp,datetime,open,high,low,close\n");
+  if (!isResumeFile) {
+    stream.write("timestamp,datetime,open,high,low,close\n");
+  }
 
   console.log(`Writing ${OUTPUT_PATH}`);
   console.log(`Earliest available 1-minute bar: ${earliest.datetime} UTC`);
 
+  if (isResumeFile) {
+    console.log(`Resuming from ${new Date(lastTimestamp).toISOString()}`);
+  }
+
   try {
     while (true) {
+      if (isResumeFile && Number.isFinite(lastTimestamp) && lastTimestamp <= earliest.timestamp) {
+        break;
+      }
+
       const payload = await requestJson("/time_series", {
         symbol: SYMBOL,
         interval: INTERVAL,
@@ -161,7 +242,7 @@ const run = async () => {
       for (const value of values) {
         const timestamp = parseTimestamp(value.datetime);
 
-        if (!Number.isFinite(timestamp)) {
+        if (!Number.isFinite(timestamp) || !isXauTradingTime(timestamp)) {
           continue;
         }
 

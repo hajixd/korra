@@ -198,6 +198,30 @@ const shiftBackOneBar = (timestamp: number, timeframe: string) => {
   }
 };
 
+const isXauTradingTime = (timestamp: number) => {
+  const date = new Date(timestamp);
+  const day = date.getUTCDay();
+  const hour = date.getUTCHours();
+
+  if (day === 6) {
+    return false;
+  }
+
+  if (day === 5 && hour >= 22) {
+    return false;
+  }
+
+  if (day === 0 && hour < 23) {
+    return false;
+  }
+
+  if (day >= 1 && day <= 4 && hour === 22) {
+    return false;
+  }
+
+  return true;
+};
+
 const estimateLocalSourceBarsNeeded = (timeframe: string, count: number) => {
   const multiplier = LOCAL_SOURCE_BARS_PER_CANDLE[timeframe] || 1;
   return Math.min(count * multiplier + multiplier, 3_000_000);
@@ -281,7 +305,8 @@ const normalizeTwelveCandles = (values: TwelveDataValue[], pair: string, timefra
       !Number.isFinite(open) ||
       !Number.isFinite(high) ||
       !Number.isFinite(low) ||
-      !Number.isFinite(close)
+      !Number.isFinite(close) ||
+      (pair === LOCAL_XAU_PAIR && !isXauTradingTime(timestamp))
     ) {
       continue;
     }
@@ -318,7 +343,8 @@ const normalizeOandaCandles = (candles: OandaCandle[], pair: string, timeframe: 
         !Number.isFinite(open) ||
         !Number.isFinite(high) ||
         !Number.isFinite(low) ||
-        !Number.isFinite(close)
+        !Number.isFinite(close) ||
+        (pair === LOCAL_XAU_PAIR && !isXauTradingTime(timestamp))
       ) {
         return null;
       }
@@ -380,7 +406,7 @@ const readLocalOneMinuteRows = async ({
       const [timestampRaw, , openRaw, highRaw, lowRaw, closeRaw] = line.split(",");
       const timestamp = Number(timestampRaw);
 
-      if (!Number.isFinite(timestamp) || timestamp >= beforeMs) {
+      if (!Number.isFinite(timestamp) || timestamp >= beforeMs || !isXauTradingTime(timestamp)) {
         continue;
       }
 
