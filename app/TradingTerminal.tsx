@@ -46,7 +46,6 @@ type BacktestTab =
   | "cluster"
   | "entryExit"
   | "dimensions"
-  | "graphs"
   | "propFirm";
 type EntryExitChartMode = "Entry" | "Exit";
 type PerformanceStatsRange = "Years" | "Months" | "Days of the Week" | "Hours";
@@ -76,6 +75,7 @@ type MainStatisticsCard = {
   tone: "up" | "down" | "neutral";
   span: 1 | 2 | 4;
   valueClassName?: string;
+  children?: MainStatisticsCard[];
 };
 
 type FutureAsset = {
@@ -1397,15 +1397,14 @@ const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
 
 const backtestTabs: Array<{ id: BacktestTab; label: string }> = [
   { id: "mainSettings", label: "Main Settings" },
-  { id: "mainStats", label: "Main Statistics" },
   { id: "timeSettings", label: "Time Settings" },
+  { id: "mainStats", label: "Main Statistics" },
   { id: "performanceStats", label: "Performance Statistics" },
   { id: "history", label: "Trading History" },
   { id: "calendar", label: "Calendar" },
   { id: "cluster", label: "Cluster Map" },
   { id: "entryExit", label: "Entry / Exit Stats" },
   { id: "dimensions", label: "Dimension Statistics" },
-  { id: "graphs", label: "Statistical Graphs" },
   { id: "propFirm", label: "Prop Firm Tool" }
 ];
 
@@ -6382,137 +6381,82 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         span: 4
       },
       {
-        label: "Trades per Month",
-        value: mainStatsSummary.tradesPerMonth.toFixed(2),
+        label: "Trade Frequency",
+        value: "",
         tone: "neutral",
-        span: 1
+        span: 4,
+        children: [
+          { label: "Trades per Month", value: mainStatsSummary.tradesPerMonth.toFixed(2), tone: "neutral", span: 1 },
+          { label: "Trades per Week", value: mainStatsSummary.tradesPerWeek.toFixed(2), tone: "neutral", span: 1 },
+          { label: "Trades per Day", value: mainStatsSummary.tradesPerDay.toFixed(2), tone: "neutral", span: 1 }
+        ]
       },
       {
-        label: "Trades per Week",
-        value: mainStatsSummary.tradesPerWeek.toFixed(2),
+        label: "Consistency",
+        value: "",
         tone: "neutral",
-        span: 1
+        span: 4,
+        children: [
+          {
+            label: "Consistency / Month",
+            value: `${mainStatsSummary.consistencyPerMonth.toFixed(1)}%`,
+            tone: mainStatsSummary.consistencyPerMonth >= 70 ? "up" : mainStatsSummary.consistencyPerMonth >= 50 ? "neutral" : "down",
+            span: 1
+          },
+          {
+            label: "Consistency / Week",
+            value: `${mainStatsSummary.consistencyPerWeek.toFixed(1)}%`,
+            tone: mainStatsSummary.consistencyPerWeek >= 70 ? "up" : mainStatsSummary.consistencyPerWeek >= 50 ? "neutral" : "down",
+            span: 1
+          },
+          {
+            label: "Consistency / Day",
+            value: `${mainStatsSummary.consistencyPerDay.toFixed(1)}%`,
+            tone: mainStatsSummary.consistencyPerDay >= 70 ? "up" : mainStatsSummary.consistencyPerDay >= 50 ? "neutral" : "down",
+            span: 1
+          },
+          {
+            label: "Consistency / Trade",
+            value: `${mainStatsSummary.consistencyPerTrade.toFixed(1)}%`,
+            tone: mainStatsSummary.consistencyPerTrade >= 70 ? "up" : mainStatsSummary.consistencyPerTrade >= 50 ? "neutral" : "down",
+            span: 1
+          }
+        ]
       },
       {
-        label: "Trades per Day",
-        value: mainStatsSummary.tradesPerDay.toFixed(2),
+        label: "Avg PnL",
+        value: "",
         tone: "neutral",
-        span: 1
+        span: 4,
+        children: [
+          { label: "Avg PnL / Month", value: formatSignedUsd(mainStatsSummary.avgPnlPerMonth), tone: mainStatsSummary.avgPnlPerMonth >= 0 ? "up" : "down", span: 1 },
+          { label: "Avg PnL / Week", value: formatSignedUsd(mainStatsSummary.avgPnlPerWeek), tone: mainStatsSummary.avgPnlPerWeek >= 0 ? "up" : "down", span: 1 },
+          { label: "Avg PnL / Day", value: formatSignedUsd(mainStatsSummary.avgPnlPerDay), tone: mainStatsSummary.avgPnlPerDay >= 0 ? "up" : "down", span: 1 },
+          { label: "Expected Value", value: formatSignedUsd(mainStatsSummary.avgPnl), tone: mainStatsSummary.avgPnl >= 0 ? "up" : "down", span: 1 }
+        ]
       },
       {
-        label: "Consistency / Month",
-        value: `${mainStatsSummary.consistencyPerMonth.toFixed(1)}%`,
-        tone:
-          mainStatsSummary.consistencyPerMonth >= 70
-            ? "up"
-            : mainStatsSummary.consistencyPerMonth >= 50
-              ? "neutral"
-              : "down",
-        span: 1
+        label: "Risk Metrics",
+        value: "",
+        tone: "neutral",
+        span: 4,
+        children: [
+          { label: "Sharpe", value: mainStatsSummary.sharpe.toFixed(2), tone: mainStatsSummary.sharpe >= 1 ? "up" : mainStatsSummary.sharpe >= 0 ? "neutral" : "down", span: 1 },
+          { label: "Sortino", value: mainStatsSummary.sortino.toFixed(2), tone: mainStatsSummary.sortino >= 1 ? "up" : mainStatsSummary.sortino >= 0 ? "neutral" : "down", span: 1 },
+          { label: "Risk to Reward", value: mainStatsSummary.avgR.toFixed(2), tone: mainStatsSummary.avgR >= 1 ? "up" : "down", span: 1 }
+        ]
       },
       {
-        label: "Consistency / Week",
-        value: `${mainStatsSummary.consistencyPerWeek.toFixed(1)}%`,
-        tone:
-          mainStatsSummary.consistencyPerWeek >= 70
-            ? "up"
-            : mainStatsSummary.consistencyPerWeek >= 50
-              ? "neutral"
-              : "down",
-        span: 1
-      },
-      {
-        label: "Consistency / Day",
-        value: `${mainStatsSummary.consistencyPerDay.toFixed(1)}%`,
-        tone:
-          mainStatsSummary.consistencyPerDay >= 70
-            ? "up"
-            : mainStatsSummary.consistencyPerDay >= 50
-              ? "neutral"
-              : "down",
-        span: 1
-      },
-      {
-        label: "Consistency / Trade",
-        value: `${mainStatsSummary.consistencyPerTrade.toFixed(1)}%`,
-        tone:
-          mainStatsSummary.consistencyPerTrade >= 70
-            ? "up"
-            : mainStatsSummary.consistencyPerTrade >= 50
-              ? "neutral"
-              : "down",
-        span: 1
-      },
-      {
-        label: "Avg PnL / Month",
-        value: formatSignedUsd(mainStatsSummary.avgPnlPerMonth),
-        tone: mainStatsSummary.avgPnlPerMonth >= 0 ? "up" : "down",
-        span: 1
-      },
-      {
-        label: "Avg PnL / Week",
-        value: formatSignedUsd(mainStatsSummary.avgPnlPerWeek),
-        tone: mainStatsSummary.avgPnlPerWeek >= 0 ? "up" : "down",
-        span: 1
-      },
-      {
-        label: "Avg PnL / Day",
-        value: formatSignedUsd(mainStatsSummary.avgPnlPerDay),
-        tone: mainStatsSummary.avgPnlPerDay >= 0 ? "up" : "down",
-        span: 1
-      },
-      {
-        label: "Expected Value",
-        value: formatSignedUsd(mainStatsSummary.avgPnl),
-        tone: mainStatsSummary.avgPnl >= 0 ? "up" : "down",
-        span: 1
-      },
-      {
-        label: "Sharpe",
-        value: mainStatsSummary.sharpe.toFixed(2),
-        tone: mainStatsSummary.sharpe >= 1 ? "up" : mainStatsSummary.sharpe >= 0 ? "neutral" : "down",
-        span: 1
-      },
-      {
-        label: "Sortino",
-        value: mainStatsSummary.sortino.toFixed(2),
-        tone:
-          mainStatsSummary.sortino >= 1
-            ? "up"
-            : mainStatsSummary.sortino >= 0
-              ? "neutral"
-              : "down",
-        span: 1
-      },
-      {
-        label: "Risk to Reward",
-        value: mainStatsSummary.avgR.toFixed(2),
-        tone: mainStatsSummary.avgR >= 1 ? "up" : "down",
-        span: 1
-      },
-      {
-        label: "Biggest Win",
-        value: `$${formatUsd(mainStatsSummary.maxWin)}`,
-        tone: "up",
-        span: 1
-      },
-      {
-        label: "Biggest Loss",
-        value: `-$${formatUsd(Math.abs(mainStatsSummary.maxLoss))}`,
-        tone: "down",
-        span: 1
-      },
-      {
-        label: "Average Peak / trade",
-        value: `$${formatUsd(mainStatsSummary.avgPeakPerTrade)}`,
-        tone: "up",
-        span: 1
-      },
-      {
-        label: "Avg Max Drawdown / trade",
-        value: `-$${formatUsd(mainStatsSummary.avgMaxDrawdownPerTrade)}`,
-        tone: "down",
-        span: 1
+        label: "Extremes",
+        value: "",
+        tone: "neutral",
+        span: 4,
+        children: [
+          { label: "Biggest Win", value: `$${formatUsd(mainStatsSummary.maxWin)}`, tone: "up" as const, span: 1 },
+          { label: "Biggest Loss", value: `-$${formatUsd(Math.abs(mainStatsSummary.maxLoss))}`, tone: "down" as const, span: 1 },
+          { label: "Average Peak / trade", value: `$${formatUsd(mainStatsSummary.avgPeakPerTrade)}`, tone: "up" as const, span: 1 },
+          { label: "Avg Max Drawdown / trade", value: `-$${formatUsd(mainStatsSummary.avgMaxDrawdownPerTrade)}`, tone: "down" as const, span: 1 }
+        ]
       },
       {
         label: "Average Win",
@@ -6527,69 +6471,42 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         span: 2
       },
       {
-        label: "Average Win Duration",
-        value: formatMinutesCompact(mainStatsSummary.avgWinDurationMin),
-        tone: "up",
-        span: 1
+        label: "Durations",
+        value: "",
+        tone: "neutral",
+        span: 4,
+        children: [
+          { label: "Average Win Duration", value: formatMinutesCompact(mainStatsSummary.avgWinDurationMin), tone: "up" as const, span: 1 },
+          { label: "Average Loss Duration", value: formatMinutesCompact(mainStatsSummary.avgLossDurationMin), tone: "down" as const, span: 1 },
+          { label: "Average Time in Profit", value: formatMinutesCompact(mainStatsSummary.avgTimeInProfitMin), tone: "up" as const, span: 1 },
+          { label: "Average Time in Deficit", value: formatMinutesCompact(mainStatsSummary.avgTimeInDeficitMin), tone: "down" as const, span: 1 }
+        ]
       },
       {
-        label: "Average Loss Duration",
-        value: formatMinutesCompact(mainStatsSummary.avgLossDurationMin),
-        tone: "down",
-        span: 1
-      },
-      {
-        label: "Average Time in Profit",
-        value: formatMinutesCompact(mainStatsSummary.avgTimeInProfitMin),
-        tone: "up",
-        span: 1
-      },
-      {
-        label: "Average Time in Deficit",
-        value: formatMinutesCompact(mainStatsSummary.avgTimeInDeficitMin),
-        tone: "down",
-        span: 1
-      },
-      {
-        label: "AI Efficiency",
-        value: mainStatsAiEfficiency === null ? "—" : `${Math.round(mainStatsAiEfficiency * 100)}%`,
-        tone:
-          mainStatsAiEfficiency === null
-            ? "neutral"
-            : mainStatsAiEfficiency >= 0.55
-              ? "up"
-              : mainStatsAiEfficiency <= 0.45
-                ? "down"
-                : "neutral",
-        span: 1
-      },
-      {
-        label: "AI Efficacy",
-        value:
-          mainStatsAiEfficacyPct === null
-            ? "—"
-            : `${mainStatsAiEfficacyPct >= 0 ? "+" : ""}${mainStatsAiEfficacyPct.toFixed(1)}%`,
-        tone:
-          mainStatsAiEfficacyPct === null
-            ? "neutral"
-            : mainStatsAiEfficacyPct >= 0
-              ? "up"
-              : "down",
-        span: 1
-      },
-      {
-        label: "AI Effectiveness",
-        value:
-          mainStatsAiEffectivenessPct === null
-            ? "—"
-            : `${mainStatsAiEffectivenessPct >= 0 ? "+" : ""}${mainStatsAiEffectivenessPct.toFixed(1)}%`,
-        tone:
-          mainStatsAiEffectivenessPct === null
-            ? "neutral"
-            : mainStatsAiEffectivenessPct >= 0
-              ? "up"
-              : "down",
-        span: 1
+        label: "AI Metrics",
+        value: "",
+        tone: "neutral",
+        span: 4,
+        children: [
+          {
+            label: "AI Efficiency",
+            value: mainStatsAiEfficiency === null ? "—" : `${Math.round(mainStatsAiEfficiency * 100)}%`,
+            tone: mainStatsAiEfficiency === null ? "neutral" : mainStatsAiEfficiency >= 0.55 ? "up" : mainStatsAiEfficiency <= 0.45 ? "down" : "neutral",
+            span: 1
+          },
+          {
+            label: "AI Efficacy",
+            value: mainStatsAiEfficacyPct === null ? "—" : `${mainStatsAiEfficacyPct >= 0 ? "+" : ""}${mainStatsAiEfficacyPct.toFixed(1)}%`,
+            tone: mainStatsAiEfficacyPct === null ? "neutral" : mainStatsAiEfficacyPct >= 0 ? "up" : "down",
+            span: 1
+          },
+          {
+            label: "AI Effectiveness",
+            value: mainStatsAiEffectivenessPct === null ? "—" : `${mainStatsAiEffectivenessPct >= 0 ? "+" : ""}${mainStatsAiEffectivenessPct.toFixed(1)}%`,
+            tone: mainStatsAiEffectivenessPct === null ? "neutral" : mainStatsAiEffectivenessPct >= 0 ? "up" : "down",
+            span: 1
+          }
+        ]
       },
       {
         label: "Best Model",
@@ -9210,28 +9127,53 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     </div>
 
                     <div className="backtest-stats-grid">
-                      {mainStatisticsCards.map((item) => (
-                        <div
-                          key={item.label}
-                          className={`backtest-stat-card ${
-                            item.tone === "neutral" ? "tone-neutral" : `tone-${item.tone}`
-                          } ${
-                            item.span === 4 ? "stat-span-4" : item.span === 2 ? "stat-span-2" : ""
-                          }`}
-                        >
-                          <span>{item.label}</span>
-                          <strong
-                            className={[
-                              item.tone === "neutral" ? "" : item.tone,
-                              item.valueClassName ?? ""
-                            ]
-                              .filter(Boolean)
-                              .join(" ")}
+                      {mainStatisticsCards.map((item) =>
+                        item.children ? (
+                          <div
+                            key={item.label}
+                            className="stat-span-4"
+                            style={{ display: "flex", gap: "0.6rem" }}
                           >
-                            {item.value}
-                          </strong>
-                        </div>
-                      ))}
+                            {item.children.map((child) => (
+                              <div
+                                key={child.label}
+                                className={`backtest-stat-card ${
+                                  child.tone === "neutral" ? "tone-neutral" : `tone-${child.tone}`
+                                }`}
+                                style={{ flex: 1, minWidth: 0 }}
+                              >
+                                <span>{child.label}</span>
+                                <strong
+                                  className={child.tone === "neutral" ? "" : child.tone}
+                                >
+                                  {child.value}
+                                </strong>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div
+                            key={item.label}
+                            className={`backtest-stat-card ${
+                              item.tone === "neutral" ? "tone-neutral" : `tone-${item.tone}`
+                            } ${
+                              item.span === 4 ? "stat-span-4" : item.span === 2 ? "stat-span-2" : ""
+                            }`}
+                          >
+                            <span>{item.label}</span>
+                            <strong
+                              className={[
+                                item.tone === "neutral" ? "" : item.tone,
+                                item.valueClassName ?? ""
+                              ]
+                                .filter(Boolean)
+                                .join(" ")}
+                            >
+                              {item.value}
+                            </strong>
+                          </div>
+                        )
+                      )}
                     </div>
                   </div>
                 </div>
@@ -9339,6 +9281,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               setConfidenceThreshold(clamp(Number(event.target.value) || 0, 0, 100));
                             }}
                             className="backtest-slider"
+                            style={{ "--p": `${confidenceThreshold}%` } as React.CSSProperties}
                           />
                           <div className="ai-zip-note">{confidenceThreshold}</div>
                         </div>
@@ -9362,6 +9305,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               setAiExitStrictness(clamp(Number(event.target.value) || 0, 0, 100));
                             }}
                             className="backtest-slider"
+                            style={{ "--p": `${aiExitStrictness}%` } as React.CSSProperties}
                           />
                           <div className="ai-zip-note">
                             {aiExitStrictness === 0
@@ -9387,6 +9331,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               );
                             }}
                             className="backtest-slider"
+                            style={{ "--p": `${((aiExitLossTolerance + 100) / 200) * 100}%` } as React.CSSProperties}
                           />
                           <div className="ai-zip-note">
                             {aiExitStrictness === 0
@@ -9412,6 +9357,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               );
                             }}
                             className="backtest-slider"
+                            style={{ "--p": `${((aiExitWinTolerance + 100) / 200) * 100}%` } as React.CSSProperties}
                           />
                           <div className="ai-zip-note">
                             {aiExitStrictness === 0
@@ -9441,6 +9387,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               setComplexity(clamp(Number(event.target.value) || 1, 1, 100));
                             }}
                             className="backtest-slider"
+                            style={{ "--p": `${((complexity - 1) / 99) * 100}%` } as React.CSSProperties}
                           />
                           <div className="ai-zip-note">{complexity}</div>
                         </div>
@@ -9460,6 +9407,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               );
                             }}
                             className="backtest-slider"
+                            style={{ "--p": `${(volatilityPercentile / 99) * 100}%` } as React.CSSProperties}
                           />
                           <div className="ai-zip-note">
                             {volatilityPercentile === 0
@@ -9556,6 +9504,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 );
                               }}
                               className="backtest-slider"
+                              style={{ "--p": `${embeddingCompression}%` } as React.CSSProperties}
                             />
                             <span className="ai-zip-note">{embeddingCompression}%</span>
                           </label>
@@ -10301,6 +10250,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                       );
                                     }}
                                     className="backtest-slider"
+                                    style={{ "--p": `${min != null && max != null && max > min ? ((numericValue - min) / (max - min)) * 100 : 50}%` } as React.CSSProperties}
                                   />
                                 ) : null}
                                 {field.help ? (
@@ -11986,259 +11936,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 </div>
               ) : null}
 
-              {selectedBacktestTab === "graphs" ? (
-                <div style={{ marginTop: 14 }}>
-                  <div className="backtest-card">
-                    <button
-                      type="button"
-                      onClick={() => setIsGraphsCollapsed((current) => !current)}
-                      style={{
-                        width: "100%",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        border: "none",
-                        background: "transparent",
-                        cursor: "pointer",
-                        marginBottom: 12,
-                        padding: 0
-                      }}
-                    >
-                      <h2
-                        style={{
-                          margin: 0,
-                          fontSize: 18,
-                          fontWeight: 600,
-                          color: "#f5f5f5"
-                        }}
-                      >
-                        Statistical Graphs
-                      </h2>
-                    </button>
-
-                    {!isGraphsCollapsed ? (
-                      !backtestScatterPlot.points.length ? (
-                        <div style={{ padding: "0 12px 24px", fontSize: 13, color: "#9ca3af" }}>
-                          No trades to display.
-                        </div>
-                      ) : (
-                        <div
-                          className="h-64"
-                          style={{
-                            background: "var(--bg-elev)",
-                            border: "1px solid rgba(255,255,255,0.10)",
-                            borderRadius: 16
-                          }}
-                        >
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 10,
-                              marginBottom: 8,
-                              padding: "10px 12px 0",
-                              fontSize: 12,
-                              color: "#9ca3af",
-                              flexWrap: "wrap"
-                            }}
-                          >
-                            <span>X:</span>
-                            <select
-                              value={scatterXKey}
-                              onChange={(event) =>
-                                setScatterXKey(event.target.value as BacktestScatterKey)
-                              }
-                              style={{
-                                background: "rgba(90,170,255,0.15)",
-                                border: "1px solid rgba(90,170,255,0.40)",
-                                color: "rgba(90,170,255,0.90)",
-                                padding: "4px 8px",
-                                borderRadius: 8,
-                                fontSize: 11,
-                                fontWeight: 600,
-                                cursor: "pointer",
-                                appearance: "none"
-                              }}
-                            >
-                              {BACKTEST_SCATTER_KEYS.map((key) => (
-                                <option key={key} value={key}>
-                                  {backtestScatterVarDefs[key].label}
-                                </option>
-                              ))}
-                            </select>
-                            <span>Y:</span>
-                            <select
-                              value={scatterYKey}
-                              onChange={(event) =>
-                                setScatterYKey(event.target.value as BacktestScatterKey)
-                              }
-                              style={{
-                                background: "rgba(90,170,255,0.15)",
-                                border: "1px solid rgba(90,170,255,0.40)",
-                                color: "rgba(90,170,255,0.90)",
-                                padding: "4px 8px",
-                                borderRadius: 8,
-                                fontSize: 11,
-                                fontWeight: 600,
-                                cursor: "pointer",
-                                appearance: "none"
-                              }}
-                            >
-                              {BACKTEST_SCATTER_KEYS.map((key) => (
-                                <option key={key} value={key}>
-                                  {backtestScatterVarDefs[key].label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <div
-                            style={{ position: "relative", height: "calc(100% - 40px)", padding: "0 8px 10px" }}
-                            onMouseLeave={() => setHoveredScatterPointId(null)}
-                          >
-                            <svg
-                              viewBox="0 0 100 100"
-                              preserveAspectRatio="none"
-                              aria-label="scatter plot"
-                              style={{ width: "100%", height: "100%" }}
-                            >
-                              <defs>
-                                <filter id="scatterGlow" x="-50%" y="-50%" width="200%" height="200%">
-                                  <feGaussianBlur stdDeviation="0.6" result="blur" />
-                                  <feMerge>
-                                    <feMergeNode in="blur" />
-                                    <feMergeNode in="SourceGraphic" />
-                                  </feMerge>
-                                </filter>
-                              </defs>
-                              <line x1="10" y1="88" x2="92" y2="88" stroke="#4b5563" strokeWidth="0.5" />
-                              <line x1="10" y1="10" x2="10" y2="88" stroke="#4b5563" strokeWidth="0.5" />
-                              {backtestScatterPlot.xZero != null ? (
-                                <line
-                                  x1={backtestScatterPlot.xZero}
-                                  y1="10"
-                                  x2={backtestScatterPlot.xZero}
-                                  y2="88"
-                                  stroke="#6b7280"
-                                  strokeOpacity="0.35"
-                                  strokeWidth="0.45"
-                                />
-                              ) : null}
-                              {backtestScatterPlot.yZero != null ? (
-                                <line
-                                  x1="10"
-                                  y1={backtestScatterPlot.yZero}
-                                  x2="92"
-                                  y2={backtestScatterPlot.yZero}
-                                  stroke="#6b7280"
-                                  strokeOpacity="0.35"
-                                  strokeWidth="0.45"
-                                />
-                              ) : null}
-                              {backtestScatterPlot.xTicks.map((tick) => (
-                                <text
-                                  key={`x-${tick.value}`}
-                                  x={tick.position}
-                                  y="95"
-                                  fill="#9ca3af"
-                                  fontSize="2.7"
-                                  textAnchor="middle"
-                                >
-                                  {tick.label}
-                                </text>
-                              ))}
-                              {backtestScatterPlot.yTicks.map((tick) => (
-                                <text
-                                  key={`y-${tick.value}`}
-                                  x="2"
-                                  y={tick.position}
-                                  fill="#9ca3af"
-                                  fontSize="2.7"
-                                  alignmentBaseline="middle"
-                                  textAnchor="start"
-                                >
-                                  {tick.label}
-                                </text>
-                              ))}
-                              <text
-                                x="92"
-                                y="99"
-                                fill="#9ca3af"
-                                fontSize="2.8"
-                                textAnchor="end"
-                              >
-                                {backtestScatterVarDefs[scatterXKey].label}
-                              </text>
-                              <text
-                                x="1"
-                                y="6"
-                                fill="#9ca3af"
-                                fontSize="2.8"
-                                textAnchor="start"
-                              >
-                                {backtestScatterVarDefs[scatterYKey].label}
-                              </text>
-                              {backtestScatterPlot.points.map((point) => {
-                                const active = hoveredScatterPointId === point.id;
-                                const stroke = point.isWin ? "#34d399" : "#f87171";
-
-                                return (
-                                  <circle
-                                    key={point.id}
-                                    cx={point.cx}
-                                    cy={point.cy}
-                                    r={active ? 2.25 : 1.8}
-                                    fill={active ? stroke : "transparent"}
-                                    stroke={active ? "#ffffff" : stroke}
-                                    strokeWidth={active ? 0.55 : 0.42}
-                                    filter="url(#scatterGlow)"
-                                    style={{ cursor: "pointer" }}
-                                    onMouseEnter={() => setHoveredScatterPointId(point.id)}
-                                  />
-                                );
-                              })}
-                            </svg>
-
-                            {hoveredScatterPoint ? (
-                              <div
-                                style={{
-                                  position: "absolute",
-                                  left: `${clamp(hoveredScatterPoint.cx, 24, 84)}%`,
-                                  top: `${clamp(hoveredScatterPoint.cy - 5, 12, 80)}%`,
-                                  transform: "translate(-50%, -100%)",
-                                  background: "#000000",
-                                  border: "1px solid #262626",
-                                  borderRadius: 11,
-                                  padding: "8px 10px",
-                                  color: "#e5e7eb",
-                                  fontSize: 12,
-                                  minWidth: 180,
-                                  pointerEvents: "none"
-                                }}
-                              >
-                                <div style={{ fontWeight: 900, marginBottom: 6 }}>Trade</div>
-                                <div>
-                                  {backtestScatterVarDefs[scatterYKey].label}:{" "}
-                                  <b>{formatScatterTooltipValue(scatterYKey, hoveredScatterPoint.y)}</b>
-                                </div>
-                                <div>
-                                  {backtestScatterVarDefs[scatterXKey].label}:{" "}
-                                  <b>{formatScatterTooltipValue(scatterXKey, hoveredScatterPoint.x)}</b>
-                                </div>
-                                <div style={{ marginTop: 6, opacity: 0.9 }}>
-                                  {hoveredScatterPoint.trade.symbol} · {hoveredScatterPoint.trade.side}
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                      )
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
-
               {selectedBacktestTab === "propFirm" ? (
+                <div style={{ display: "grid", gap: "0.9rem" }}>
                 <div className="backtest-grid two-up">
                   <div className="backtest-card">
                     <div className="backtest-card-head">
@@ -12454,78 +12153,166 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         </div>
                       </div>
                     ) : null}
-
-                    {propLineChart && propLineChart.paths.length > 0 ? (
-                      <div className="backtest-card compact">
-                        <div className="backtest-card-head">
-                          <div>
-                            <h3>Random Progress Runs</h3>
-                            <p>
-                              {propProjectionMethod === "montecarlo"
-                                ? "Monte Carlo sample paths."
-                                : "Historical start-date sample path."}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="backtest-graph-wrap short">
-                          <svg
-                            viewBox="0 0 100 40"
-                            preserveAspectRatio="none"
-                            aria-label="Prop firm simulation progress"
-                          >
-                            <line x1="4" y1="36" x2="96" y2="36" className="backtest-grid-line" />
-                            <line
-                              x1="4"
-                              y1={propLineChart.targetLineY}
-                              x2="96"
-                              y2={propLineChart.targetLineY}
-                              style={{
-                                stroke: "rgba(52, 211, 153, 0.92)",
-                                strokeDasharray: "1.8 1.4",
-                                strokeWidth: 0.8
-                              }}
-                            />
-                            <line
-                              x1="4"
-                              y1={propLineChart.totalLossLineY}
-                              x2="96"
-                              y2={propLineChart.totalLossLineY}
-                              style={{
-                                stroke: "rgba(248, 113, 113, 0.92)",
-                                strokeDasharray: "1.8 1.4",
-                                strokeWidth: 0.8
-                              }}
-                            />
-                            {propLineChart.dailyLossPath ? (
-                              <path
-                                d={propLineChart.dailyLossPath}
-                                style={{
-                                  fill: "none",
-                                  stroke: "rgba(248, 113, 113, 0.86)",
-                                  strokeDasharray: "1.1 1.1",
-                                  strokeWidth: 0.9
-                                }}
-                              />
-                            ) : null}
-                            {propLineChart.paths.map((line, index) => (
-                              <path
-                                key={`prop-line-${index}`}
-                                d={line.path}
-                                style={{
-                                  fill: "none",
-                                  stroke: line.color,
-                                  strokeWidth: index === 0 ? 1.45 : 0.95,
-                                  opacity: index === 0 ? 1 : 0.8,
-                                  strokeLinecap: "round",
-                                  strokeLinejoin: "round"
-                                }}
-                              />
-                            ))}
-                          </svg>
-                        </div>
-                      </div>
-                    ) : null}
                   </div>
+                </div>
+
+                {propStats && propStats.randomProgressRuns.length > 0 ? (
+                  <div className="backtest-card compact" style={{ marginTop: "0.9rem" }}>
+                    <div className="backtest-card-head">
+                      <div>
+                        <h3>Random Progress Runs</h3>
+                        <p>
+                          {propProjectionMethod === "montecarlo"
+                            ? "Monte Carlo sample paths."
+                            : "Historical start-date sample path."}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="h-64" style={{ background: "rgba(255,255,255,0.02)", borderRadius: 16, border: "1px solid rgba(255,255,255,0.08)" }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart
+                          data={propStats.randomProgressRuns[0]}
+                          margin={{ top: 10, right: 24, left: 12, bottom: 20 }}
+                        >
+                          <XAxis
+                            dataKey="x"
+                            type="number"
+                            domain={[propStats.minX, propStats.maxX]}
+                            tickFormatter={(v: number) => {
+                              if (propProjectionMethod === "montecarlo") {
+                                return Math.round(v).toString();
+                              }
+                              const d = new Date(v);
+                              if (!isNaN(d.getTime())) {
+                                return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                              }
+                              return "";
+                            }}
+                            stroke="#9ca3af"
+                            fontSize={11}
+                            axisLine={false}
+                            tickLine={false}
+                            label={{
+                              value: propProjectionMethod === "montecarlo" ? "Trades" : "Date",
+                              position: "insideBottomRight",
+                              offset: -4,
+                              fill: "#9ca3af",
+                              fontSize: 10
+                            }}
+                          />
+                          <YAxis
+                            dataKey="y"
+                            tickFormatter={(v: number) => formatUsd(v).replace("$", "")}
+                            domain={[
+                              propProjectionMethod === "montecarlo"
+                                ? propInitialBalance - propTotalMaxLoss
+                                : propInitialBalance - propTotalMaxLoss - propDailyMaxLoss,
+                              propInitialBalance + propProfitTarget
+                            ]}
+                            stroke="#9ca3af"
+                            fontSize={11}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <ReferenceLine
+                            y={propInitialBalance + propProfitTarget}
+                            stroke="#34d399"
+                            strokeDasharray="4 4"
+                          />
+                          <ReferenceLine
+                            y={propInitialBalance - propTotalMaxLoss}
+                            stroke="#f87171"
+                            strokeDasharray="4 4"
+                          />
+                          {propProjectionMethod !== "montecarlo" && propDailyMaxLoss > 0 && propStats.dailyLossRun ? (
+                            <Line
+                              isAnimationActive={false}
+                              data={propStats.dailyLossRun}
+                              type="monotone"
+                              dataKey="y"
+                              name="Daily Loss"
+                              stroke="#f87171"
+                              strokeDasharray="2 2"
+                              dot={false}
+                            />
+                          ) : null}
+                          <Line
+                            isAnimationActive={false}
+                            type="monotone"
+                            dataKey="y"
+                            stroke="#3b82f6"
+                            dot={false}
+                          />
+                          {propStats.randomProgressRuns.slice(1).map((run, idx) => {
+                            const colors = ["#10b981", "#f97316", "#8b5cf6", "#ef4444", "#14b8a6", "#facc15", "#a855f7", "#ec4899", "#22c55e"];
+                            const color = colors[idx % colors.length];
+                            return (
+                              <Line
+                                isAnimationActive={false}
+                                key={`rand-run-${idx}`}
+                                data={run}
+                                type="monotone"
+                                dataKey="y"
+                                stroke={color}
+                                dot={false}
+                              />
+                            );
+                          })}
+                          <Tooltip
+                            content={({ active, payload }) => {
+                              if (!active || !payload || payload.length === 0) return null;
+                              const isMonteCarlo = propProjectionMethod === "montecarlo";
+                              const wrapperStyle: CSSProperties = {
+                                background: "#000000",
+                                border: "1px solid #262626",
+                                borderRadius: 11,
+                                padding: "8px 10px",
+                                color: "#e5e7eb",
+                                fontSize: 12
+                              };
+                              if (isMonteCarlo) {
+                                const tradeIndex = Math.round((payload[0]?.payload as { x: number })?.x ?? 0);
+                                return (
+                                  <div style={wrapperStyle}>
+                                    <div style={{ marginBottom: 4 }}>Trade: <b>{tradeIndex}</b></div>
+                                    {payload.map((row, i) => {
+                                      const clr = (row as { color?: string; stroke?: string }).color || (row as { stroke?: string }).stroke || "#3b82f6";
+                                      const bal = (row.payload as { y: number }).y;
+                                      return (
+                                        <div key={`mc-tt-${i}`} style={{ color: clr }}>
+                                          Sim {i + 1}: <b>{formatSignedUsd(bal)}</b>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                );
+                              }
+                              const ms = (payload[0]?.payload as { x: number })?.x ?? 0;
+                              const dt = new Date(ms);
+                              const dateLabel = !isNaN(dt.getTime())
+                                ? dt.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
+                                : "-";
+                              return (
+                                <div style={wrapperStyle}>
+                                  <div style={{ marginBottom: 4 }}>{dateLabel}</div>
+                                  {payload.map((row, i) => {
+                                    const clr = (row as { color?: string; stroke?: string }).color || (row as { stroke?: string }).stroke || "#3b82f6";
+                                    const bal = (row.payload as { y: number }).y;
+                                    return (
+                                      <div key={`hist-tt-${i}`} style={{ color: clr }}>
+                                        Balance: <b>{formatSignedUsd(bal)}</b>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            }}
+                          />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                ) : null}
                 </div>
               ) : null}
             </section>
