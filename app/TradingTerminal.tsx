@@ -15,14 +15,19 @@ import {
   type Time,
   type UTCTimestamp
 } from "lightweight-charts";
-import { ClusterMap as AIZipClusterMap, ClusterMap3D as AIZipClusterMap3D } from "./AIZipClusterModule";
+import {
+  AIZipTradeDetailsModal,
+  ClusterMap as AIZipClusterMap,
+  ClusterMap3D as AIZipClusterMap3D
+} from "./AIZipClusterModule";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type SurfaceTab = "chart" | "backtest";
 type BacktestTab =
-  | "mainStats"
   | "mainSettings"
+  | "mainStats"
   | "timeSettings"
+  | "performanceStats"
   | "history"
   | "calendar"
   | "cluster"
@@ -311,6 +316,9 @@ type AiCatalogItem = {
 
 type AiSettingsModalProps = {
   title: string;
+  subtitle?: string;
+  size?: "default" | "wide" | "xwide";
+  bodyClassName?: string;
   open: boolean;
   onClose: () => void;
   children: ReactNode;
@@ -482,7 +490,15 @@ const toggleListValue = (values: string[], value: string): string[] => {
   return [...values, value];
 };
 
-const AiSettingsModal = ({ title, open, onClose, children }: AiSettingsModalProps) => {
+const AiSettingsModal = ({
+  title,
+  subtitle,
+  size = "default",
+  bodyClassName,
+  open,
+  onClose,
+  children
+}: AiSettingsModalProps) => {
   if (!open) {
     return null;
   }
@@ -496,14 +512,17 @@ const AiSettingsModal = ({ title, open, onClose, children }: AiSettingsModalProp
         }
       }}
     >
-      <div className="ai-zip-modal-card">
+      <div className={`ai-zip-modal-card ${size !== "default" ? `size-${size}` : ""}`}>
         <div className="ai-zip-modal-head">
-          <strong>{title}</strong>
+          <div className="ai-zip-modal-title-wrap">
+            <strong>{title}</strong>
+            {subtitle ? <span>{subtitle}</span> : null}
+          </div>
           <button type="button" className="ai-zip-button pill" onClick={onClose}>
             Close
           </button>
         </div>
-        <div className="ai-zip-modal-body">{children}</div>
+        <div className={`ai-zip-modal-body ${bodyClassName ?? ""}`.trim()}>{children}</div>
       </div>
     </div>
   );
@@ -649,9 +668,10 @@ const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
 ];
 
 const backtestTabs: Array<{ id: BacktestTab; label: string }> = [
-  { id: "mainStats", label: "Main Statistics" },
   { id: "mainSettings", label: "Main Settings" },
+  { id: "mainStats", label: "Main Statistics" },
   { id: "timeSettings", label: "Time Settings" },
+  { id: "performanceStats", label: "Performance Statistics" },
   { id: "history", label: "Trading History" },
   { id: "calendar", label: "Calendar" },
   { id: "cluster", label: "Cluster Map" },
@@ -662,7 +682,7 @@ const backtestTabs: Array<{ id: BacktestTab; label: string }> = [
 ];
 
 const backtestWeekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
-const backtestSessionLabels = ["Asia", "London", "New York", "Late"] as const;
+const backtestSessionLabels = ["Tokyo", "London", "New York", "Sydney"] as const;
 const backtestMonthLabels = [
   "Jan",
   "Feb",
@@ -1277,21 +1297,31 @@ const getWeekdayLabel = (dateKey: string): string => {
 };
 
 const getSessionLabel = (timestampSeconds: UTCTimestamp): string => {
-  const hour = getTradeHour(timestampSeconds);
+  const date = new Date(Number(timestampSeconds) * 1000);
 
-  if (hour < 7) {
-    return "Asia";
+  if (Number.isNaN(date.getTime())) {
+    return "Sydney";
   }
 
-  if (hour < 12) {
+  const hour = date.getUTCHours() + date.getUTCMinutes() / 60;
+
+  if (hour >= 16 || hour < 1) {
+    return "Tokyo";
+  }
+
+  if (hour >= 12 && hour < 21) {
+    return "Sydney";
+  }
+
+  if (hour >= 0 && hour < 9) {
     return "London";
   }
 
-  if (hour < 17) {
+  if (hour >= 5 && hour < 14) {
     return "New York";
   }
 
-  return "Late";
+  return "London";
 };
 
 const formatMinutesCompact = (minutes: number): string => {
@@ -2545,7 +2575,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [selectedModelId, setSelectedModelId] = useState(modelProfiles[0]?.id ?? "");
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
   const [selectedSurfaceTab, setSelectedSurfaceTab] = useState<SurfaceTab>("chart");
-  const [selectedBacktestTab, setSelectedBacktestTab] = useState<BacktestTab>("mainStats");
+  const [selectedBacktestTab, setSelectedBacktestTab] = useState<BacktestTab>("mainSettings");
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("active");
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
@@ -2559,6 +2589,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [backtestHistoryQuery, setBacktestHistoryQuery] = useState("");
   const [backtestHistoryCollapsed, setBacktestHistoryCollapsed] = useState(false);
   const [hoveredBacktestHistoryId, setHoveredBacktestHistoryId] = useState<string | null>(null);
+  const [activeBacktestTradeDetails, setActiveBacktestTradeDetails] = useState<
+    Record<string, unknown> | null
+  >(null);
   const [statsDateStart, setStatsDateStart] = useState("");
   const [statsDateEnd, setStatsDateEnd] = useState("");
   const [selectedBacktestMonthKey, setSelectedBacktestMonthKey] = useState("");
@@ -2623,6 +2656,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     "recent",
     "base"
   ]);
+  const [selectedAiLibraryId, setSelectedAiLibraryId] = useState("core");
   const [chunkBars, setChunkBars] = useState(24);
   const [distanceMetric, setDistanceMetric] = useState<AiDistanceMetric>("euclidean");
   const [selectedAiModalities, setSelectedAiModalities] = useState<string[]>([
@@ -2676,6 +2710,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const focusTradeIdRef = useRef<string | null>(null);
   const notificationRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<EventSource | null>(null);
+  const selectedSurfaceTabRef = useRef<SurfaceTab>(selectedSurfaceTab);
+  const chartSizeRef = useRef({ width: 0, height: 0 });
+  const chartDataLengthRef = useRef(0);
+  const chartSyncedLastTimeRef = useRef<UTCTimestamp | null>(null);
 
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
@@ -2687,6 +2725,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const selectedAiModelCount = selectedAiModels.length;
   const selectedAiFeatureCount = selectedAiFeatures.length;
   const selectedAiLibraryCount = selectedAiLibraries.length;
+  const availableAiLibraries = useMemo(() => {
+    return AI_LIBRARY_OPTIONS.filter((library) => !selectedAiLibraries.includes(library.id));
+  }, [selectedAiLibraries]);
+  const selectedAiLibrary = useMemo(() => {
+    return AI_LIBRARY_OPTIONS.find((library) => library.id === selectedAiLibraryId) ?? null;
+  }, [selectedAiLibraryId]);
 
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
 
@@ -2696,6 +2740,51 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % AI_VALIDATION_ORDER.length;
 
       return AI_VALIDATION_ORDER[nextIndex]!;
+    });
+  };
+
+  useEffect(() => {
+    selectedSurfaceTabRef.current = selectedSurfaceTab;
+  }, [selectedSurfaceTab]);
+
+  const addAiLibrary = (libraryId: string) => {
+    setSelectedAiLibraries((current) => {
+      if (current.includes(libraryId)) {
+        return current;
+      }
+
+      return [...current, libraryId];
+    });
+    setSelectedAiLibraryId(libraryId);
+  };
+
+  const removeAiLibrary = (libraryId: string) => {
+    setSelectedAiLibraries((current) => current.filter((id) => id !== libraryId));
+  };
+
+  const moveAiLibrary = (libraryId: string, direction: -1 | 1) => {
+    setSelectedAiLibraries((current) => {
+      const index = current.indexOf(libraryId);
+
+      if (index < 0) {
+        return current;
+      }
+
+      const nextIndex = index + direction;
+
+      if (nextIndex < 0 || nextIndex >= current.length) {
+        return current;
+      }
+
+      const next = [...current];
+      const [moved] = next.splice(index, 1);
+
+      if (!moved) {
+        return current;
+      }
+
+      next.splice(nextIndex, 0, moved);
+      return next;
     });
   };
 
@@ -2716,6 +2805,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return availableAiModelNames.slice(0, Math.min(availableAiModelNames.length, 3));
     });
   }, [availableAiModelNames]);
+
+  useEffect(() => {
+    if (selectedAiLibraries.length === 0) {
+      if (selectedAiLibraryId !== "") {
+        setSelectedAiLibraryId("");
+      }
+
+      return;
+    }
+
+    if (!selectedAiLibraries.includes(selectedAiLibraryId)) {
+      setSelectedAiLibraryId(selectedAiLibraries[0] ?? "");
+    }
+  }, [selectedAiLibraryId, selectedAiLibraries]);
 
   useEffect(() => {
     setHoveredTime(null);
@@ -2843,15 +2946,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return backtestSeriesMap[selectedKey] ?? seriesMap[selectedKey] ?? EMPTY_CANDLES;
   }, [backtestSeriesMap, selectedKey, seriesMap]);
 
+  const deepChartCandles = backtestSeriesMap[selectedKey] ?? null;
+  const usesDeepChartHistory = (deepChartCandles?.length ?? 0) > 0;
+  const selectedChartCandles = useMemo(() => {
+    return usesDeepChartHistory ? deepChartCandles ?? EMPTY_CANDLES : selectedCandles;
+  }, [deepChartCandles, selectedCandles, usesDeepChartHistory]);
+
   const candleByUnix = useMemo(() => {
     const map = new Map<number, Candle>();
 
-    for (const candle of selectedCandles) {
+    for (const candle of selectedChartCandles) {
       map.set(toUtcTimestamp(candle.time), candle);
     }
 
     return map;
-  }, [selectedCandles]);
+  }, [selectedChartCandles]);
 
   const latestCandle = selectedCandles[selectedCandles.length - 1] ?? null;
   const previousCandle =
@@ -3121,12 +3230,41 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const candleIndexByUnix = useMemo(() => {
     const map = new Map<number, number>();
 
-    for (let i = 0; i < selectedCandles.length; i += 1) {
-      map.set(toUtcTimestamp(selectedCandles[i].time), i);
+    for (let i = 0; i < selectedChartCandles.length; i += 1) {
+      map.set(toUtcTimestamp(selectedChartCandles[i].time), i);
     }
 
     return map;
-  }, [selectedCandles]);
+  }, [selectedChartCandles]);
+
+  const openBacktestTradeDetails = (trade: HistoryItem) => {
+    const entryIndex = candleIndexByUnix.get(Number(trade.entryTime));
+    const exitIndex = candleIndexByUnix.get(Number(trade.exitTime));
+
+    setActiveBacktestTradeDetails({
+      id: trade.id,
+      uid: trade.id,
+      symbol: trade.symbol,
+      direction: trade.side === "Long" ? 1 : -1,
+      side: trade.side,
+      session: getSessionLabel(trade.entryTime),
+      entryTime: Number(trade.entryTime),
+      exitTime: Number(trade.exitTime),
+      entryPrice: trade.entryPrice,
+      exitPrice: trade.outcomePrice,
+      tpPrice: trade.targetPrice,
+      slPrice: trade.stopPrice,
+      pnl: trade.pnlUsd,
+      entryModel: trade.entrySource,
+      model: trade.entrySource,
+      chunkType: trade.entrySource,
+      entryReason: trade.entrySource,
+      exitReason: getBacktestExitLabel(trade),
+      confidence: getTradeConfidenceScore(trade),
+      entryIndex: typeof entryIndex === "number" ? entryIndex : undefined,
+      exitIndex: typeof exitIndex === "number" ? exitIndex : undefined
+    });
+  };
 
   const activeChartTrade = useMemo<OverlayTrade | null>(() => {
     if (!activeTrade || selectedCandles.length === 0) {
@@ -3297,6 +3435,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setSelectedHistoryId(null);
     setShowAllTradesOnChart(false);
     setShowActiveTradeOnChart(false);
+    setActiveBacktestTradeDetails(null);
     focusTradeIdRef.current = null;
   }, [selectedModelId]);
 
@@ -3417,6 +3556,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         pinch: true
       }
     });
+    chartSizeRef.current = { width: initialWidth, height: initialHeight };
 
     const candleSeries = chart.addCandlestickSeries({
       upColor: "#1bae8a",
@@ -3496,6 +3636,49 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
 
     chart.subscribeCrosshairMove(onCrosshairMove);
+    let resizeRaf = 0;
+
+    const applyChartSize = (rawWidth: number, rawHeight: number, force = false) => {
+      if (!Number.isFinite(rawWidth) || !Number.isFinite(rawHeight)) {
+        return;
+      }
+
+      const width = Math.max(1, Math.floor(rawWidth));
+      const height = Math.max(1, Math.floor(rawHeight));
+
+      if (
+        !force &&
+        chartSizeRef.current.width === width &&
+        chartSizeRef.current.height === height
+      ) {
+        return;
+      }
+
+      chartSizeRef.current = { width, height };
+      chart.applyOptions({ width, height });
+    };
+
+    const queueResizeFromContainer = () => {
+      if (selectedSurfaceTabRef.current !== "chart") {
+        return;
+      }
+
+      const rawWidth = container.clientWidth;
+      const rawHeight = container.clientHeight;
+
+      if (rawWidth <= 0 || rawHeight <= 0) {
+        return;
+      }
+
+      if (resizeRaf) {
+        window.cancelAnimationFrame(resizeRaf);
+      }
+
+      resizeRaf = window.requestAnimationFrame(() => {
+        resizeRaf = 0;
+        applyChartSize(rawWidth, rawHeight);
+      });
+    };
 
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -3504,22 +3687,33 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         return;
       }
 
-      const width = Math.max(1, Math.floor(entry.contentRect.width));
-      const height = Math.max(1, Math.floor(entry.contentRect.height));
+      if (selectedSurfaceTabRef.current !== "chart") {
+        return;
+      }
 
-      chart.applyOptions({
-        width,
-        height
+      const width = entry.contentRect.width;
+      const height = entry.contentRect.height;
+
+      if (width <= 0 || height <= 0) {
+        return;
+      }
+
+      if (resizeRaf) {
+        window.cancelAnimationFrame(resizeRaf);
+      }
+
+      resizeRaf = window.requestAnimationFrame(() => {
+        resizeRaf = 0;
+        applyChartSize(width, height);
       });
     });
 
     resizeObserver.observe(container);
+    window.addEventListener("resize", queueResizeFromContainer);
+    document.addEventListener("fullscreenchange", queueResizeFromContainer);
 
     const settleResize = () => {
-      chart.applyOptions({
-        width: Math.max(1, Math.floor(container.clientWidth)),
-        height: Math.max(1, Math.floor(container.clientHeight))
-      });
+      queueResizeFromContainer();
     };
     const resizeFrameA = window.requestAnimationFrame(settleResize);
     const resizeFrameB = window.requestAnimationFrame(() => {
@@ -3538,6 +3732,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return () => {
       window.cancelAnimationFrame(resizeFrameA);
       window.cancelAnimationFrame(resizeFrameB);
+      if (resizeRaf) {
+        window.cancelAnimationFrame(resizeRaf);
+      }
+      window.removeEventListener("resize", queueResizeFromContainer);
+      document.removeEventListener("fullscreenchange", queueResizeFromContainer);
       resizeObserver.disconnect();
       chart.unsubscribeCrosshairMove(onCrosshairMove);
       chart.remove();
@@ -3549,7 +3748,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       tradeTargetLineRef.current = null;
       tradeStopLineRef.current = null;
       tradePathLineRef.current = null;
+      chartSizeRef.current = { width: 0, height: 0 };
       multiTradeSeriesRef.current = [];
+      chartDataLengthRef.current = 0;
+      chartSyncedLastTimeRef.current = null;
     };
   }, []);
 
@@ -3561,12 +3763,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return;
     }
 
-    if (selectedCandles.length === 0) {
+    if (selectedChartCandles.length === 0) {
       candleSeries.setData([]);
+      chartDataLengthRef.current = 0;
+      chartSyncedLastTimeRef.current = null;
       return;
     }
 
-    const candleData: CandlestickData[] = selectedCandles.map((candle) => ({
+    const candleData: CandlestickData[] = selectedChartCandles.map((candle) => ({
       time: toUtcTimestamp(candle.time),
       open: candle.open,
       high: candle.high,
@@ -3575,6 +3779,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }));
 
     candleSeries.setData(candleData);
+    chartDataLengthRef.current = candleData.length;
+    chartSyncedLastTimeRef.current = candleData[candleData.length - 1]?.time ?? null;
 
     const selection = `${selectedSymbol}-${selectedTimeframe}`;
 
@@ -3590,7 +3796,53 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       chart.timeScale().setVisibleLogicalRange({ from, to });
       selectionRef.current = selection;
     }
-  }, [selectedCandles, selectedSymbol, selectedTimeframe]);
+  }, [selectedChartCandles, selectedSymbol, selectedTimeframe]);
+
+  useEffect(() => {
+    const candleSeries = candleSeriesRef.current;
+    const syncedTime = chartSyncedLastTimeRef.current;
+
+    if (!candleSeries || !usesDeepChartHistory || selectedCandles.length === 0 || syncedTime === null) {
+      return;
+    }
+
+    const toDataPoint = (candle: Candle): CandlestickData => ({
+      time: toUtcTimestamp(candle.time),
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close
+    });
+
+    let startIndex = selectedCandles.length - 1;
+
+    while (startIndex >= 0 && toUtcTimestamp(selectedCandles[startIndex]!.time) > syncedTime) {
+      startIndex -= 1;
+    }
+
+    if (startIndex >= 0 && toUtcTimestamp(selectedCandles[startIndex]!.time) === syncedTime) {
+      candleSeries.update(toDataPoint(selectedCandles[startIndex]!));
+      startIndex += 1;
+    } else {
+      startIndex += 1;
+    }
+
+    if (startIndex >= selectedCandles.length) {
+      return;
+    }
+
+    let appended = 0;
+
+    for (let i = startIndex; i < selectedCandles.length; i += 1) {
+      candleSeries.update(toDataPoint(selectedCandles[i]!));
+      appended += 1;
+    }
+
+    if (appended > 0) {
+      chartDataLengthRef.current += appended;
+      chartSyncedLastTimeRef.current = toUtcTimestamp(selectedCandles[selectedCandles.length - 1]!.time);
+    }
+  }, [selectedCandles, usesDeepChartHistory]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -3616,11 +3868,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       const chart = chartRef.current;
 
-      if (!chart || selectedCandles.length === 0) {
+      const chartLength = chartDataLengthRef.current;
+
+      if (!chart || chartLength === 0) {
         return;
       }
 
-      const to = selectedCandles.length - 1;
+      const to = chartLength - 1;
       const from = Math.max(0, to - timeframeVisibleCount[selectedTimeframe]);
       chart.timeScale().setVisibleLogicalRange({ from, to });
       focusTradeIdRef.current = null;
@@ -3631,7 +3885,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [selectedCandles, selectedTimeframe]);
+  }, [selectedTimeframe]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -3659,10 +3913,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const rightBound = Math.max(entryIndex, exitIndex);
     const span = Math.max(32, Math.round(timeframeVisibleCount[selectedTimeframe] * 0.72));
     const from = Math.max(0, leftBound - Math.round(span * 0.4));
-    const to = Math.min(selectedCandles.length - 1, rightBound + Math.round(span * 0.6));
+    const to = Math.min(selectedChartCandles.length - 1, rightBound + Math.round(span * 0.6));
     chart.timeScale().setVisibleLogicalRange({ from, to });
     focusTradeIdRef.current = null;
-  }, [candleIndexByUnix, selectedCandles, selectedHistoryTrade, selectedSymbol, selectedTimeframe]);
+  }, [
+    candleIndexByUnix,
+    selectedChartCandles.length,
+    selectedHistoryTrade,
+    selectedSymbol,
+    selectedTimeframe
+  ]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -3673,10 +3933,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     const frame = window.requestAnimationFrame(() => {
-      chart.applyOptions({
-        width: Math.floor(container.clientWidth),
-        height: Math.floor(container.clientHeight)
-      });
+      const width = Math.floor(container.clientWidth);
+      const height = Math.floor(container.clientHeight);
+
+      if (width <= 0 || height <= 0) {
+        return;
+      }
+
+      if (chartSizeRef.current.width === width && chartSizeRef.current.height === height) {
+        return;
+      }
+
+      chartSizeRef.current = { width, height };
+      chart.applyOptions({ width, height });
     });
 
     return () => {
@@ -4788,14 +5057,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [backtestHistoryQuery, backtestTrades, selectedModel.name]);
 
   const aiZipClusterCandles = useMemo(() => {
-    return selectedCandles.map((candle) => ({
+    return selectedChartCandles.map((candle) => ({
       ...candle,
       time: Number(candle.time)
     }));
-  }, [selectedCandles]);
+  }, [selectedChartCandles]);
 
   const aiZipClusterTrades = useMemo(() => {
-    const maxIndex = Math.max(0, selectedCandles.length - 1);
+    const maxIndex = Math.max(0, selectedChartCandles.length - 1);
 
     return backtestTrades.map((trade, index) => {
       const fallbackIndex =
@@ -4836,7 +5105,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         side: trade.side
       };
     });
-  }, [backtestTrades, candleIndexByUnix, selectedCandles.length, selectedModel.name]);
+  }, [backtestTrades, candleIndexByUnix, selectedChartCandles.length, selectedModel.name]);
 
   useEffect(() => {
     setAiZipClusterTimelineIdx(Math.max(0, aiZipClusterCandles.length - 1));
@@ -4862,10 +5131,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       wins: 0,
       pnl: 0
     }));
-    const sessionLabels = ["Asia", "London", "New York", "Late"];
     const sessionMap = new Map<string, { label: string; count: number; wins: number; pnl: number }>();
 
-    for (const label of sessionLabels) {
+    for (const label of backtestSessionLabels) {
       sessionMap.set(label, { label, count: 0, wins: 0, pnl: 0 });
     }
 
@@ -7835,39 +8103,46 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               </AiSettingsModal>
 
               <AiSettingsModal
-                title="Models"
+                title="MODELS"
+                subtitle="Left click: toggle ENTRY"
+                size="wide"
+                bodyClassName="ai-zip-models-modal-body"
                 open={modelsModalOpen}
                 onClose={() => setModelsModalOpen(false)}
               >
-                <div className="ai-zip-toggle-grid tiles compact">
+                <div className="ai-zip-model-grid">
                   {availableAiModelNames.map((modelName) => (
                     <button
                       key={modelName}
                       type="button"
-                      className={`ai-zip-button pill ${
+                      className={`ai-zip-select-tile model ${
                         selectedAiModels.includes(modelName) ? "active" : ""
                       }`}
                       onClick={() => {
                         setSelectedAiModels((current) => toggleListValue(current, modelName));
                       }}
                     >
-                      {modelName}
+                      <strong>{modelName}</strong>
+                      <span>{selectedAiModels.includes(modelName) ? "ENTRY" : "OFF"}</span>
                     </button>
                   ))}
                 </div>
               </AiSettingsModal>
 
               <AiSettingsModal
-                title="Features"
+                title="FEATURES"
+                subtitle="AI.zip feature tiles with per-feature context"
+                size="xwide"
+                bodyClassName="ai-zip-features-modal-body"
                 open={featuresModalOpen}
                 onClose={() => setFeaturesModalOpen(false)}
               >
-                <div className="ai-zip-toggle-grid tiles compact">
+                <div className="ai-zip-feature-grid">
                   {AI_FEATURE_OPTIONS.map((feature) => (
                     <button
                       key={feature.id}
                       type="button"
-                      className={`ai-zip-button pill ${
+                      className={`ai-zip-select-tile feature ${
                         selectedAiFeatures.includes(feature.id) ? "active" : ""
                       }`}
                       onClick={() => {
@@ -7875,33 +8150,171 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       }}
                       title={feature.note}
                     >
-                      {feature.label}
+                      <strong>{feature.label}</strong>
+                      <span>{feature.note ?? "Feature context for AI.zip embeddings."}</span>
+                      <em>{selectedAiFeatures.includes(feature.id) ? "ENABLED" : "DISABLED"}</em>
                     </button>
                   ))}
                 </div>
               </AiSettingsModal>
 
               <AiSettingsModal
-                title="Libraries"
+                title="LIBRARY"
+                subtitle="Available, active, and quick controls"
+                size="xwide"
+                bodyClassName="ai-zip-library-modal-body"
                 open={librariesModalOpen}
                 onClose={() => setLibrariesModalOpen(false)}
               >
-                <div className="ai-zip-toggle-grid tiles compact">
-                  {AI_LIBRARY_OPTIONS.map((library) => (
-                    <button
-                      key={library.id}
-                      type="button"
-                      className={`ai-zip-button pill ${
-                        selectedAiLibraries.includes(library.id) ? "active" : ""
-                      }`}
-                      onClick={() => {
-                        setSelectedAiLibraries((current) => toggleListValue(current, library.id));
-                      }}
-                      title={library.note}
-                    >
-                      {library.label}
-                    </button>
-                  ))}
+                <div className="ai-zip-library-layout">
+                  <section className="ai-zip-library-column">
+                    <header>
+                      <strong>Available Libraries</strong>
+                      <span>Click Add to activate</span>
+                    </header>
+                    <div className="ai-zip-library-scroll">
+                      {availableAiLibraries.length === 0 ? (
+                        <p className="ai-zip-library-empty">No more libraries available.</p>
+                      ) : (
+                        availableAiLibraries.map((library) => (
+                          <article key={library.id} className="ai-zip-library-card">
+                            <div>
+                              <h4>{library.label}</h4>
+                              <p>{library.note ?? "Library option."}</p>
+                            </div>
+                            <button
+                              type="button"
+                              className="ai-zip-library-action add"
+                              onClick={() => addAiLibrary(library.id)}
+                            >
+                              Add
+                            </button>
+                          </article>
+                        ))
+                      )}
+                    </div>
+                  </section>
+
+                  <section className="ai-zip-library-column">
+                    <header>
+                      <strong>Active Libraries</strong>
+                      <span>Order controls influence priority</span>
+                    </header>
+                    <div className="ai-zip-library-scroll">
+                      {selectedAiLibraries.length === 0 ? (
+                        <p className="ai-zip-library-empty">No active libraries selected.</p>
+                      ) : (
+                        selectedAiLibraries.map((libraryId, index) => {
+                          const library =
+                            AI_LIBRARY_OPTIONS.find((option) => option.id === libraryId) ?? null;
+
+                          if (!library) {
+                            return null;
+                          }
+
+                          const isSelected = selectedAiLibraryId === libraryId;
+
+                          return (
+                            <article
+                              key={libraryId}
+                              className={`ai-zip-library-card active ${isSelected ? "selected" : ""}`}
+                              onClick={() => setSelectedAiLibraryId(libraryId)}
+                            >
+                              <div>
+                                <h4>{library.label}</h4>
+                                <p>{library.note ?? "Active library option."}</p>
+                              </div>
+                              <div className="ai-zip-library-actions">
+                                <button
+                                  type="button"
+                                  className="ai-zip-library-action"
+                                  disabled={index === 0}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    moveAiLibrary(libraryId, -1);
+                                  }}
+                                  title="Move up"
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  type="button"
+                                  className="ai-zip-library-action"
+                                  disabled={index === selectedAiLibraries.length - 1}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    moveAiLibrary(libraryId, 1);
+                                  }}
+                                  title="Move down"
+                                >
+                                  ↓
+                                </button>
+                                <button
+                                  type="button"
+                                  className="ai-zip-library-action danger"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    removeAiLibrary(libraryId);
+                                  }}
+                                  title="Remove"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </article>
+                          );
+                        })
+                      )}
+                    </div>
+                  </section>
+
+                  <section className="ai-zip-library-column settings">
+                    <header>
+                      <strong>Details</strong>
+                      <span>{selectedAiLibrary ? selectedAiLibrary.label : "Select a library"}</span>
+                    </header>
+                    <div className="ai-zip-library-scroll">
+                      {selectedAiLibrary ? (
+                        <div className="ai-zip-library-detail">
+                          <h4>{selectedAiLibrary.label}</h4>
+                          <p>{selectedAiLibrary.note ?? "AI.zip library configuration."}</p>
+                          <div className="ai-zip-library-metrics">
+                            <div>
+                              <span>Status</span>
+                              <strong>
+                                {selectedAiLibraries.includes(selectedAiLibrary.id)
+                                  ? "Active"
+                                  : "Inactive"}
+                              </strong>
+                            </div>
+                            <div>
+                              <span>Total Active</span>
+                              <strong>{selectedAiLibraryCount}</strong>
+                            </div>
+                          </div>
+                          {selectedAiLibraries.includes(selectedAiLibrary.id) ? (
+                            <button
+                              type="button"
+                              className="ai-zip-library-action danger wide"
+                              onClick={() => removeAiLibrary(selectedAiLibrary.id)}
+                            >
+                              Remove from Active
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="ai-zip-library-action add wide"
+                              onClick={() => addAiLibrary(selectedAiLibrary.id)}
+                            >
+                              Add to Active
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="ai-zip-library-empty">Choose a library to view details.</p>
+                      )}
+                    </div>
+                  </section>
                 </div>
               </AiSettingsModal>
 
@@ -8115,14 +8528,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                           value === trade.id ? null : value
                                         )
                                       }
-                                      onClick={() => {
-                                        focusTradeIdRef.current = trade.id;
-                                        setSelectedHistoryId(trade.id);
-                                        setSelectedSymbol(trade.symbol);
-                                        setShowAllTradesOnChart(false);
-                                        setShowActiveTradeOnChart(false);
-                                        setSelectedSurfaceTab("chart");
-                                      }}
+                                      onClick={() => openBacktestTradeDetails(trade)}
+                                      title="Click to view trade details"
                                       style={{
                                         background: rowBackground,
                                         cursor: "pointer",
@@ -8654,6 +9061,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     </div>
                   </div>
 
+                </div>
+              ) : null}
+
+              {selectedBacktestTab === "performanceStats" ? (
+                <div className="backtest-grid">
                   <div className="backtest-grid two-up">
                     <div className="backtest-card">
                       <div className="backtest-card-head">
@@ -9950,6 +10362,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         <span>Feed: simulated</span>
         <span>UTC</span>
       </footer>
+
+      {activeBacktestTradeDetails ? (
+        <AIZipTradeDetailsModal
+          trade={activeBacktestTradeDetails}
+          candles={selectedChartCandles}
+          dollarsPerMove={dollarsPerMove}
+          interval={selectedTimeframe}
+          parseMode="utc"
+          tpDist={0}
+          slDist={0}
+          onClose={() => setActiveBacktestTradeDetails(null)}
+        />
+      ) : null}
     </main>
   );
 }

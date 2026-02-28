@@ -647,6 +647,8 @@ function TradeDetailsModalImpl({
 }
 // --- End Trade Details Modal ---
 
+export const AIZipTradeDetailsModal = TradeDetailsModalImpl;
+
 // --- Trade Candlestick Chart (SVG, pro interactions) ---
 function TradeCandlestickChartSVG({
   trade,
