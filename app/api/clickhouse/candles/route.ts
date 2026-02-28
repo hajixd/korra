@@ -57,25 +57,6 @@ const toBoolean = (value: unknown) => {
   return false;
 };
 
-const degradedResponse = (
-  pair: string,
-  timeframe: string,
-  start: string | null,
-  end: string | null,
-  error: string
-) => {
-  return NextResponse.json({
-    pair,
-    timeframe,
-    start,
-    end,
-    count: 0,
-    candles: [],
-    degraded: true,
-    error
-  });
-};
-
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const pair = (searchParams.get("pair") || DEFAULT_PAIR).toUpperCase();
@@ -104,21 +85,24 @@ export async function GET(request: Request) {
   const timezone = process.env.CLICKHOUSE_TIMEZONE || DEFAULT_TIMEZONE;
 
   if (!host || !user || !password) {
-    return degradedResponse(pair, timeframe, start, end, "Missing ClickHouse connection env vars.");
+    return NextResponse.json(
+      { error: "Missing ClickHouse connection env vars." },
+      { status: 500 }
+    );
   }
 
   if (!IDENTIFIER_RE.test(database) || !IDENTIFIER_RE.test(table)) {
-    return degradedResponse(
-      pair,
-      timeframe,
-      start,
-      end,
-      "Invalid ClickHouse database/table name in env vars."
+    return NextResponse.json(
+      { error: "Invalid ClickHouse database/table name in env vars." },
+      { status: 500 }
     );
   }
 
   if (!TIMEZONE_RE.test(timezone)) {
-    return degradedResponse(pair, timeframe, start, end, "Invalid ClickHouse timezone in env vars.");
+    return NextResponse.json(
+      { error: "Invalid ClickHouse timezone in env vars." },
+      { status: 500 }
+    );
   }
 
   const startFilter = start ? `\n      AND time >= toDateTime('${start}', '${timezone}')` : "";
@@ -165,7 +149,10 @@ ${startFilter}${endFilter}
     if (!response.ok) {
       const text = await response.text();
 
-      return degradedResponse(pair, timeframe, start, end, `ClickHouse error ${response.status}: ${text}`);
+      return NextResponse.json(
+        { error: `ClickHouse error ${response.status}: ${text}` },
+        { status: response.status }
+      );
     }
 
     const payload = await response.json();
@@ -206,6 +193,9 @@ ${startFilter}${endFilter}
       candles
     });
   } catch (error) {
-    return degradedResponse(pair, timeframe, start, end, (error as Error).message || "Unknown error");
+    return NextResponse.json(
+      { error: (error as Error).message || "Unknown error" },
+      { status: 500 }
+    );
   }
 }
