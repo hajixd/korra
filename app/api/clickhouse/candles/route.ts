@@ -7,6 +7,13 @@ const DEFAULT_TABLE = "candles";
 const DEFAULT_LIMIT = 2500;
 const MIN_LIMIT = 10;
 const MAX_LIMIT = 300000;
+const MARKET_FALLBACK_MAX_LIMIT = 10000;
+const MARKET_FALLBACK_API_BASE =
+  "https://trading-system-delta.vercel.app/api/public/candles";
+const MARKET_FALLBACK_API_KEY =
+  process.env.MARKET_API_KEY ||
+  process.env.NEXT_PUBLIC_MARKET_API_KEY ||
+  "trd_PCv-kkjDo-4t4QMDNxz3JRCGIyBCKHNq";
 const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const PAIR_RE = /^[A-Z0-9]{2,20}_[A-Z0-9]{2,20}$/;
 const TIMEZONE_RE = /^[A-Za-z0-9_/\-+]+$/;
@@ -57,6 +64,54 @@ const toBoolean = (value: unknown) => {
   return false;
 };
 
+const loadMarketFallback = async ({
+  pair,
+  timeframe,
+  count,
+  start,
+  end
+}: {
+  pair: string;
+  timeframe: string;
+  count: number;
+  start: string | null;
+  end: string | null;
+}) => {
+  if (start || end) {
+    return null;
+  }
+
+  const fallbackUrl = new URL(MARKET_FALLBACK_API_BASE);
+  fallbackUrl.searchParams.set("pair", pair);
+  fallbackUrl.searchParams.set("timeframe", timeframe);
+  fallbackUrl.searchParams.set(
+    "limit",
+    String(Math.min(Math.max(count, MIN_LIMIT), MARKET_FALLBACK_MAX_LIMIT))
+  );
+
+  const response = await fetch(fallbackUrl.toString(), {
+    headers: {
+      "X-API-Key": MARKET_FALLBACK_API_KEY,
+      Accept: "application/json"
+    },
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const text = await response.text();
+
+  return new NextResponse(text, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Korra-Data-Source": "market-fallback"
+    }
+  });
+};
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const pair = (searchParams.get("pair") || DEFAULT_PAIR).toUpperCase();
@@ -85,6 +140,18 @@ export async function GET(request: Request) {
   const timezone = process.env.CLICKHOUSE_TIMEZONE || DEFAULT_TIMEZONE;
 
   if (!host || !user || !password) {
+    const fallbackResponse = await loadMarketFallback({
+      pair,
+      timeframe,
+      count,
+      start,
+      end
+    });
+
+    if (fallbackResponse) {
+      return fallbackResponse;
+    }
+
     return NextResponse.json(
       { error: "Missing ClickHouse connection env vars." },
       { status: 500 }
@@ -92,6 +159,18 @@ export async function GET(request: Request) {
   }
 
   if (!IDENTIFIER_RE.test(database) || !IDENTIFIER_RE.test(table)) {
+    const fallbackResponse = await loadMarketFallback({
+      pair,
+      timeframe,
+      count,
+      start,
+      end
+    });
+
+    if (fallbackResponse) {
+      return fallbackResponse;
+    }
+
     return NextResponse.json(
       { error: "Invalid ClickHouse database/table name in env vars." },
       { status: 500 }
@@ -99,6 +178,18 @@ export async function GET(request: Request) {
   }
 
   if (!TIMEZONE_RE.test(timezone)) {
+    const fallbackResponse = await loadMarketFallback({
+      pair,
+      timeframe,
+      count,
+      start,
+      end
+    });
+
+    if (fallbackResponse) {
+      return fallbackResponse;
+    }
+
     return NextResponse.json(
       { error: "Invalid ClickHouse timezone in env vars." },
       { status: 500 }
@@ -148,6 +239,17 @@ ${startFilter}${endFilter}
 
     if (!response.ok) {
       const text = await response.text();
+      const fallbackResponse = await loadMarketFallback({
+        pair,
+        timeframe,
+        count,
+        start,
+        end
+      });
+
+      if (fallbackResponse) {
+        return fallbackResponse;
+      }
 
       return NextResponse.json(
         { error: `ClickHouse error ${response.status}: ${text}` },
@@ -193,6 +295,22 @@ ${startFilter}${endFilter}
       candles
     });
   } catch (error) {
+    try {
+      const fallbackResponse = await loadMarketFallback({
+        pair,
+        timeframe,
+        count,
+        start,
+        end
+      });
+
+      if (fallbackResponse) {
+        return fallbackResponse;
+      }
+    } catch {
+      // Preserve the original ClickHouse error if the fallback also fails.
+    }
+
     return NextResponse.json(
       { error: (error as Error).message || "Unknown error" },
       { status: 500 }
