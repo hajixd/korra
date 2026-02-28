@@ -12035,10 +12035,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         </div>
                       ) : (
                         <div
-                          className="h-80"
+                          className="h-64"
                           style={{
-                            background: "rgba(7, 12, 20, 0.72)",
-                            border: "1px solid rgba(67, 86, 124, 0.4)",
+                            background: "var(--bg-elev)",
+                            border: "1px solid rgba(255,255,255,0.10)",
                             borderRadius: 16
                           }}
                         >
