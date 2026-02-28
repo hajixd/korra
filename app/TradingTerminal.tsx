@@ -4065,6 +4065,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
   }, [selectedSymbol]);
+  const modelProfileById = useMemo(() => {
+    return modelProfiles.reduce<Record<string, ModelProfile>>((accumulator, model) => {
+      accumulator[model.id] = model;
+      return accumulator;
+    }, {});
+  }, [modelProfiles]);
   const selectedModel = useMemo(() => {
     return modelProfiles.find((model) => model.id === selectedModelId) ?? modelProfiles[0]!;
   }, [modelProfiles, selectedModelId]);
@@ -4085,6 +4091,29 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const selectedAiLibrary = useMemo(() => {
     return selectedAiLibraryId ? aiLibraryDefById[selectedAiLibraryId] ?? null : null;
   }, [aiLibraryDefById, selectedAiLibraryId]);
+  const selectedBacktestModelNames = useMemo(() => {
+    return availableAiModelNames.filter((modelName) => (aiModelStates[modelName] ?? 0) > 0);
+  }, [aiModelStates, availableAiModelNames]);
+  const backtestModelProfiles = useMemo(() => {
+    return selectedBacktestModelNames
+      .map((modelName) => modelProfileById[createModelId(modelName)] ?? null)
+      .filter((model): model is ModelProfile => model !== null);
+  }, [modelProfileById, selectedBacktestModelNames]);
+  const backtestModelSelectionSummary = useMemo(() => {
+    if (backtestModelProfiles.length === 0) {
+      return "No Main Settings models selected";
+    }
+
+    if (backtestModelProfiles.length === 1) {
+      return backtestModelProfiles[0]!.name;
+    }
+
+    if (backtestModelProfiles.length === 2) {
+      return `${backtestModelProfiles[0]!.name} + ${backtestModelProfiles[1]!.name}`;
+    }
+
+    return `${backtestModelProfiles.length} Main Settings models`;
+  }, [backtestModelProfiles]);
 
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
 
@@ -4453,12 +4482,29 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [selectedTimeframe, seriesMap]);
 
   const tradeBlueprints = useMemo(() => {
-    return generateTradeBlueprints(
-      selectedModel,
-      BACKTEST_TARGET_TRADES,
-      floorToTimeframe(referenceNowMs, "1m")
-    );
-  }, [referenceNowMs, selectedModel]);
+    if (backtestModelProfiles.length === 0) {
+      return [];
+    }
+
+    const nowMs = floorToTimeframe(referenceNowMs, "1m");
+    const perModelBase = Math.floor(BACKTEST_TARGET_TRADES / backtestModelProfiles.length);
+    const remainder = BACKTEST_TARGET_TRADES % backtestModelProfiles.length;
+    const blueprints: TradeBlueprint[] = [];
+
+    backtestModelProfiles.forEach((model, index) => {
+      const count = perModelBase + (index < remainder ? 1 : 0);
+
+      if (count <= 0) {
+        return;
+      }
+
+      blueprints.push(...generateTradeBlueprints(model, count, nowMs));
+    });
+
+    return blueprints
+      .sort((left, right) => right.exitMs - left.exitMs)
+      .slice(0, BACKTEST_TARGET_TRADES);
+  }, [backtestModelProfiles, referenceNowMs]);
 
   const activeTrade = useMemo<ActiveTrade | null>(() => {
     if (selectedCandles.length < 70) {
@@ -4568,6 +4614,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const rows: HistoryItem[] = [];
 
     for (const blueprint of tradeBlueprints) {
+      const entryModel = modelProfileById[blueprint.modelId]?.name ?? "Main Settings";
       const key = symbolTimeframeKey(blueprint.symbol, selectedTimeframe);
       const list = backtestSeriesMap[key] ?? seriesMap[key] ?? [];
 
@@ -4653,7 +4700,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         symbol: blueprint.symbol,
         side: blueprint.side,
         result,
-        entrySource: selectedModel.name,
+        entrySource: entryModel,
         exitReason,
         pnlPct,
         pnlUsd,
@@ -4673,7 +4720,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return rows
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime))
       .slice(0, BACKTEST_TARGET_TRADES);
-  }, [backtestSeriesMap, selectedModel.name, selectedTimeframe, seriesMap, tradeBlueprints]);
+  }, [backtestSeriesMap, modelProfileById, selectedTimeframe, seriesMap, tradeBlueprints]);
 
   const selectedHistoryTrade = useMemo(() => {
     if (!selectedHistoryId) {
@@ -6355,13 +6402,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         label: "Total PnL",
         value: formatSignedUsd(mainStatsSummary.totalPnl),
         tone: totalPnlTone,
-        span: 4
+        span: 1
+      },
+      {
+        label: "Total Trades",
+        value: mainStatsSummary.tradeCount.toLocaleString("en-US"),
+        tone: "neutral",
+        span: 1
       },
       {
         label: "Win Rate",
         value: `${mainStatsSummary.winRate.toFixed(2)}%`,
         tone: mainStatsSummary.winRate >= 55 ? "up" : mainStatsSummary.winRate >= 45 ? "neutral" : "down",
-        span: 2
+        span: 1
       },
       {
         label: "Profit Factor",
@@ -6372,157 +6425,257 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             : mainStatsSummary.profitFactor >= 1
               ? "neutral"
               : "down",
-        span: 2
+        span: 1
       },
       {
-        label: "Total Trades",
-        value: mainStatsSummary.tradeCount.toLocaleString("en-US"),
-        tone: "neutral",
-        span: 4
+        label: "Expected Value",
+        value: formatSignedUsd(mainStatsSummary.avgPnl),
+        tone: mainStatsSummary.avgPnl >= 0 ? "up" : "down",
+        span: 1
       },
       {
-        label: "Trade Frequency",
-        value: "",
-        tone: "neutral",
-        span: 4,
-        children: [
-          { label: "Trades per Month", value: mainStatsSummary.tradesPerMonth.toFixed(2), tone: "neutral", span: 1 },
-          { label: "Trades per Week", value: mainStatsSummary.tradesPerWeek.toFixed(2), tone: "neutral", span: 1 },
-          { label: "Trades per Day", value: mainStatsSummary.tradesPerDay.toFixed(2), tone: "neutral", span: 1 }
-        ]
+        label: "Risk to Reward",
+        value: mainStatsSummary.avgR.toFixed(2),
+        tone: mainStatsSummary.avgR >= 1 ? "up" : "down",
+        span: 1
       },
       {
-        label: "Consistency",
-        value: "",
-        tone: "neutral",
-        span: 4,
-        children: [
-          {
-            label: "Consistency / Month",
-            value: `${mainStatsSummary.consistencyPerMonth.toFixed(1)}%`,
-            tone: mainStatsSummary.consistencyPerMonth >= 70 ? "up" : mainStatsSummary.consistencyPerMonth >= 50 ? "neutral" : "down",
-            span: 1
-          },
-          {
-            label: "Consistency / Week",
-            value: `${mainStatsSummary.consistencyPerWeek.toFixed(1)}%`,
-            tone: mainStatsSummary.consistencyPerWeek >= 70 ? "up" : mainStatsSummary.consistencyPerWeek >= 50 ? "neutral" : "down",
-            span: 1
-          },
-          {
-            label: "Consistency / Day",
-            value: `${mainStatsSummary.consistencyPerDay.toFixed(1)}%`,
-            tone: mainStatsSummary.consistencyPerDay >= 70 ? "up" : mainStatsSummary.consistencyPerDay >= 50 ? "neutral" : "down",
-            span: 1
-          },
-          {
-            label: "Consistency / Trade",
-            value: `${mainStatsSummary.consistencyPerTrade.toFixed(1)}%`,
-            tone: mainStatsSummary.consistencyPerTrade >= 70 ? "up" : mainStatsSummary.consistencyPerTrade >= 50 ? "neutral" : "down",
-            span: 1
-          }
-        ]
+        label: "Avg PnL / Month",
+        value: formatSignedUsd(mainStatsSummary.avgPnlPerMonth),
+        tone: mainStatsSummary.avgPnlPerMonth >= 0 ? "up" : "down",
+        span: 1
       },
       {
-        label: "Avg PnL",
-        value: "",
-        tone: "neutral",
-        span: 4,
-        children: [
-          { label: "Avg PnL / Month", value: formatSignedUsd(mainStatsSummary.avgPnlPerMonth), tone: mainStatsSummary.avgPnlPerMonth >= 0 ? "up" : "down", span: 1 },
-          { label: "Avg PnL / Week", value: formatSignedUsd(mainStatsSummary.avgPnlPerWeek), tone: mainStatsSummary.avgPnlPerWeek >= 0 ? "up" : "down", span: 1 },
-          { label: "Avg PnL / Day", value: formatSignedUsd(mainStatsSummary.avgPnlPerDay), tone: mainStatsSummary.avgPnlPerDay >= 0 ? "up" : "down", span: 1 },
-          { label: "Expected Value", value: formatSignedUsd(mainStatsSummary.avgPnl), tone: mainStatsSummary.avgPnl >= 0 ? "up" : "down", span: 1 }
-        ]
+        label: "Avg PnL / Week",
+        value: formatSignedUsd(mainStatsSummary.avgPnlPerWeek),
+        tone: mainStatsSummary.avgPnlPerWeek >= 0 ? "up" : "down",
+        span: 1
       },
       {
-        label: "Risk Metrics",
-        value: "",
-        tone: "neutral",
-        span: 4,
-        children: [
-          { label: "Sharpe", value: mainStatsSummary.sharpe.toFixed(2), tone: mainStatsSummary.sharpe >= 1 ? "up" : mainStatsSummary.sharpe >= 0 ? "neutral" : "down", span: 1 },
-          { label: "Sortino", value: mainStatsSummary.sortino.toFixed(2), tone: mainStatsSummary.sortino >= 1 ? "up" : mainStatsSummary.sortino >= 0 ? "neutral" : "down", span: 1 },
-          { label: "Risk to Reward", value: mainStatsSummary.avgR.toFixed(2), tone: mainStatsSummary.avgR >= 1 ? "up" : "down", span: 1 }
-        ]
+        label: "Avg PnL / Day",
+        value: formatSignedUsd(mainStatsSummary.avgPnlPerDay),
+        tone: mainStatsSummary.avgPnlPerDay >= 0 ? "up" : "down",
+        span: 1
       },
       {
-        label: "Extremes",
-        value: "",
+        label: "Sharpe",
+        value: mainStatsSummary.sharpe.toFixed(2),
+        tone: mainStatsSummary.sharpe >= 1 ? "up" : mainStatsSummary.sharpe >= 0 ? "neutral" : "down",
+        span: 1
+      },
+      {
+        label: "Sortino",
+        value: mainStatsSummary.sortino.toFixed(2),
+        tone:
+          mainStatsSummary.sortino >= 1 ? "up" : mainStatsSummary.sortino >= 0 ? "neutral" : "down",
+        span: 1
+      },
+      {
+        label: "Max Drawdown",
+        value: formatSignedUsd(mainStatsSummary.maxDrawdown),
+        tone: mainStatsSummary.maxDrawdown >= 0 ? "neutral" : "down",
+        span: 1
+      },
+      {
+        label: "Trades / Month",
+        value: mainStatsSummary.tradesPerMonth.toFixed(2),
         tone: "neutral",
-        span: 4,
-        children: [
-          { label: "Biggest Win", value: `$${formatUsd(mainStatsSummary.maxWin)}`, tone: "up" as const, span: 1 },
-          { label: "Biggest Loss", value: `-$${formatUsd(Math.abs(mainStatsSummary.maxLoss))}`, tone: "down" as const, span: 1 },
-          { label: "Average Peak / trade", value: `$${formatUsd(mainStatsSummary.avgPeakPerTrade)}`, tone: "up" as const, span: 1 },
-          { label: "Avg Max Drawdown / trade", value: `-$${formatUsd(mainStatsSummary.avgMaxDrawdownPerTrade)}`, tone: "down" as const, span: 1 }
-        ]
+        span: 1
+      },
+      {
+        label: "Trades / Week",
+        value: mainStatsSummary.tradesPerWeek.toFixed(2),
+        tone: "neutral",
+        span: 1
+      },
+      {
+        label: "Trades / Day",
+        value: mainStatsSummary.tradesPerDay.toFixed(2),
+        tone: "neutral",
+        span: 1
+      },
+      {
+        label: "Consistency / Month",
+        value: `${mainStatsSummary.consistencyPerMonth.toFixed(1)}%`,
+        tone:
+          mainStatsSummary.consistencyPerMonth >= 70
+            ? "up"
+            : mainStatsSummary.consistencyPerMonth >= 50
+              ? "neutral"
+              : "down",
+        span: 1
+      },
+      {
+        label: "Consistency / Week",
+        value: `${mainStatsSummary.consistencyPerWeek.toFixed(1)}%`,
+        tone:
+          mainStatsSummary.consistencyPerWeek >= 70
+            ? "up"
+            : mainStatsSummary.consistencyPerWeek >= 50
+              ? "neutral"
+              : "down",
+        span: 1
+      },
+      {
+        label: "Consistency / Day",
+        value: `${mainStatsSummary.consistencyPerDay.toFixed(1)}%`,
+        tone:
+          mainStatsSummary.consistencyPerDay >= 70
+            ? "up"
+            : mainStatsSummary.consistencyPerDay >= 50
+              ? "neutral"
+              : "down",
+        span: 1
+      },
+      {
+        label: "Consistency / Trade",
+        value: `${mainStatsSummary.consistencyPerTrade.toFixed(1)}%`,
+        tone:
+          mainStatsSummary.consistencyPerTrade >= 70
+            ? "up"
+            : mainStatsSummary.consistencyPerTrade >= 50
+              ? "neutral"
+              : "down",
+        span: 1
+      },
+      {
+        label: "Biggest Win",
+        value: `$${formatUsd(mainStatsSummary.maxWin)}`,
+        tone: "up",
+        span: 1
+      },
+      {
+        label: "Biggest Loss",
+        value: `-$${formatUsd(Math.abs(mainStatsSummary.maxLoss))}`,
+        tone: "down",
+        span: 1
       },
       {
         label: "Average Win",
         value: `$${formatUsd(mainStatsSummary.avgWin)}`,
         tone: "up",
-        span: 2
+        span: 1
       },
       {
         label: "Average Loss",
         value: `-$${formatUsd(Math.abs(mainStatsSummary.avgLoss))}`,
         tone: "down",
-        span: 2
+        span: 1
       },
       {
-        label: "Durations",
-        value: "",
-        tone: "neutral",
-        span: 4,
-        children: [
-          { label: "Average Win Duration", value: formatMinutesCompact(mainStatsSummary.avgWinDurationMin), tone: "up" as const, span: 1 },
-          { label: "Average Loss Duration", value: formatMinutesCompact(mainStatsSummary.avgLossDurationMin), tone: "down" as const, span: 1 },
-          { label: "Average Time in Profit", value: formatMinutesCompact(mainStatsSummary.avgTimeInProfitMin), tone: "up" as const, span: 1 },
-          { label: "Average Time in Deficit", value: formatMinutesCompact(mainStatsSummary.avgTimeInDeficitMin), tone: "down" as const, span: 1 }
-        ]
+        label: "Average Peak / Trade",
+        value: `$${formatUsd(mainStatsSummary.avgPeakPerTrade)}`,
+        tone: "up",
+        span: 1
       },
       {
-        label: "AI Metrics",
-        value: "",
-        tone: "neutral",
-        span: 4,
-        children: [
-          {
-            label: "AI Efficiency",
-            value: mainStatsAiEfficiency === null ? "—" : `${Math.round(mainStatsAiEfficiency * 100)}%`,
-            tone: mainStatsAiEfficiency === null ? "neutral" : mainStatsAiEfficiency >= 0.55 ? "up" : mainStatsAiEfficiency <= 0.45 ? "down" : "neutral",
-            span: 1
-          },
-          {
-            label: "AI Efficacy",
-            value: mainStatsAiEfficacyPct === null ? "—" : `${mainStatsAiEfficacyPct >= 0 ? "+" : ""}${mainStatsAiEfficacyPct.toFixed(1)}%`,
-            tone: mainStatsAiEfficacyPct === null ? "neutral" : mainStatsAiEfficacyPct >= 0 ? "up" : "down",
-            span: 1
-          },
-          {
-            label: "AI Effectiveness",
-            value: mainStatsAiEffectivenessPct === null ? "—" : `${mainStatsAiEffectivenessPct >= 0 ? "+" : ""}${mainStatsAiEffectivenessPct.toFixed(1)}%`,
-            tone: mainStatsAiEffectivenessPct === null ? "neutral" : mainStatsAiEffectivenessPct >= 0 ? "up" : "down",
-            span: 1
-          }
-        ]
+        label: "Avg Max Drawdown / Trade",
+        value: `-$${formatUsd(mainStatsSummary.avgMaxDrawdownPerTrade)}`,
+        tone: "down",
+        span: 1
+      },
+      {
+        label: "Average Win Duration",
+        value: formatMinutesCompact(mainStatsSummary.avgWinDurationMin),
+        tone: "up",
+        span: 1
+      },
+      {
+        label: "Average Loss Duration",
+        value: formatMinutesCompact(mainStatsSummary.avgLossDurationMin),
+        tone: "down",
+        span: 1
+      },
+      {
+        label: "Average Time in Profit",
+        value: formatMinutesCompact(mainStatsSummary.avgTimeInProfitMin),
+        tone: "up",
+        span: 1
+      },
+      {
+        label: "Average Time in Deficit",
+        value: formatMinutesCompact(mainStatsSummary.avgTimeInDeficitMin),
+        tone: "down",
+        span: 1
+      },
+      {
+        label: "AI Efficiency",
+        value: mainStatsAiEfficiency === null ? "—" : `${Math.round(mainStatsAiEfficiency * 100)}%`,
+        tone:
+          mainStatsAiEfficiency === null
+            ? "neutral"
+            : mainStatsAiEfficiency >= 0.55
+              ? "up"
+              : mainStatsAiEfficiency <= 0.45
+                ? "down"
+                : "neutral",
+        span: 1
+      },
+      {
+        label: "AI Efficacy",
+        value:
+          mainStatsAiEfficacyPct === null
+            ? "—"
+            : `${mainStatsAiEfficacyPct >= 0 ? "+" : ""}${mainStatsAiEfficacyPct.toFixed(1)}%`,
+        tone:
+          mainStatsAiEfficacyPct === null
+            ? "neutral"
+            : mainStatsAiEfficacyPct >= 0
+              ? "up"
+              : "down",
+        span: 1
+      },
+      {
+        label: "AI Effectiveness",
+        value:
+          mainStatsAiEffectivenessPct === null
+            ? "—"
+            : `${mainStatsAiEffectivenessPct >= 0 ? "+" : ""}${mainStatsAiEffectivenessPct.toFixed(1)}%`,
+        tone:
+          mainStatsAiEffectivenessPct === null
+            ? "neutral"
+            : mainStatsAiEffectivenessPct >= 0
+              ? "up"
+              : "down",
+        span: 1
       },
       {
         label: "Best Model",
-        value: bestModelRow
-          ? `${bestModelRow.label} · ${formatSignedUsd(bestModelRow.total)} · ${bestModelRow.trades} trades`
-          : "—",
+        value: bestModelRow ? `${bestModelRow.label} · ${formatSignedUsd(bestModelRow.total)}` : "—",
         tone: bestModelRow === null ? "neutral" : bestModelRow.total >= 0 ? "up" : "down",
-        span: 2
+        span: 1
       },
       {
         label: "Worst Model",
-        value: worstModelRow
-          ? `${worstModelRow.label} · ${formatSignedUsd(worstModelRow.total)} · ${worstModelRow.trades} trades`
-          : "—",
+        value: worstModelRow ? `${worstModelRow.label} · ${formatSignedUsd(worstModelRow.total)}` : "—",
         tone: worstModelRow === null ? "neutral" : worstModelRow.total >= 0 ? "up" : "down",
-        span: 2
+        span: 1
+      },
+      {
+        label: "Best Session",
+        value: bestSessionRow ? `${bestSessionRow.label} · ${formatSignedUsd(bestSessionRow.total)}` : "—",
+        tone: bestSessionRow === null ? "neutral" : bestSessionRow.total >= 0 ? "up" : "down",
+        span: 1
+      },
+      {
+        label: "Worst Session",
+        value:
+          worstSessionRow ? `${worstSessionRow.label} · ${formatSignedUsd(worstSessionRow.total)}` : "—",
+        tone: worstSessionRow === null ? "neutral" : worstSessionRow.total >= 0 ? "up" : "down",
+        span: 1
+      },
+      {
+        label: "Best Month",
+        value: bestMonthRow ? `${getMonthLabel(bestMonthRow.key)} · ${formatSignedUsd(bestMonthRow.total)}` : "—",
+        tone: bestMonthRow === null ? "neutral" : bestMonthRow.total >= 0 ? "up" : "down",
+        span: 1
+      },
+      {
+        label: "Worst Month",
+        value:
+          worstMonthRow ? `${getMonthLabel(worstMonthRow.key)} · ${formatSignedUsd(worstMonthRow.total)}` : "—",
+        tone: worstMonthRow === null ? "neutral" : worstMonthRow.total >= 0 ? "up" : "down",
+        span: 1
       },
       {
         label: "Model PnL",
@@ -6534,24 +6687,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ? "up"
               : "down",
         valueClassName: "with-nav",
-        span: 4
-      },
-      {
-        label: "Best Session",
-        value: bestSessionRow
-          ? `${bestSessionRow.label} · ${formatSignedUsd(bestSessionRow.total)} · ${bestSessionRow.trades} trades`
-          : "—",
-        tone:
-          bestSessionRow === null ? "neutral" : bestSessionRow.total >= 0 ? "up" : "down",
-        span: 2
-      },
-      {
-        label: "Worst Session",
-        value: worstSessionRow
-          ? `${worstSessionRow.label} · ${formatSignedUsd(worstSessionRow.total)} · ${worstSessionRow.trades} trades`
-          : "—",
-        tone:
-          worstSessionRow === null ? "neutral" : worstSessionRow.total >= 0 ? "up" : "down",
         span: 2
       },
       {
@@ -6564,24 +6699,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ? "up"
               : "down",
         valueClassName: "with-nav",
-        span: 4
-      },
-      {
-        label: "Best Month",
-        value: bestMonthRow
-          ? `${getMonthLabel(bestMonthRow.key)} · ${formatSignedUsd(bestMonthRow.total)} avg · ${bestMonthRow.months} months`
-          : "—",
-        tone:
-          bestMonthRow === null ? "neutral" : bestMonthRow.total >= 0 ? "up" : "down",
-        span: 2
-      },
-      {
-        label: "Worst Month",
-        value: worstMonthRow
-          ? `${getMonthLabel(worstMonthRow.key)} · ${formatSignedUsd(worstMonthRow.total)} avg · ${worstMonthRow.months} months`
-          : "—",
-        tone:
-          worstMonthRow === null ? "neutral" : worstMonthRow.total >= 0 ? "up" : "down",
         span: 2
       },
       {
@@ -6594,7 +6711,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ? "up"
               : "down",
         valueClassName: "with-nav",
-        span: 4
+        span: 2
       },
       {
         label: "Start Date",
@@ -6726,7 +6843,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         const haystack = [
           trade.id,
           getAiZipTradeDisplayId(trade),
-          selectedModel.name,
+          trade.entrySource,
           trade.symbol,
           trade.side,
           trade.side === "Long" ? "Buy" : "Sell",
@@ -6744,7 +6861,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         return haystack.includes(query);
       })
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
-  }, [backtestHistoryQuery, backtestTrades, selectedModel.name]);
+  }, [backtestHistoryQuery, backtestTrades]);
 
   const aiZipClusterCandles = useMemo(() => {
     return selectedChartCandles.map((candle) => ({
@@ -6785,9 +6902,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         signalIndex: entryIndex,
         entryIndex,
         exitIndex,
-        entryModel: selectedModel.name,
-        chunkType: selectedModel.name,
-        model: selectedModel.name,
+        entryModel: trade.entrySource,
+        chunkType: trade.entrySource,
+        model: trade.entrySource,
         exitReason: getBacktestExitLabel(trade),
         entryPrice: trade.entryPrice,
         exitPrice: trade.outcomePrice,
@@ -6795,7 +6912,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         side: trade.side
       };
     });
-  }, [backtestTrades, candleIndexByUnix, selectedChartCandles.length, selectedModel.name]);
+  }, [backtestTrades, candleIndexByUnix, selectedChartCandles.length]);
 
   useEffect(() => {
     setAiZipClusterTimelineIdx(Math.max(0, aiZipClusterCandles.length - 1));
@@ -6810,12 +6927,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       )
     );
 
-    if (models.length === 0 && selectedModel.name.trim().length > 0) {
-      models.push(selectedModel.name);
+    for (const modelName of selectedBacktestModelNames) {
+      if (!models.includes(modelName)) {
+        models.push(modelName);
+      }
     }
 
     return ["All", ...models];
-  }, [backtestSourceTrades, selectedModel.name]);
+  }, [backtestSourceTrades, selectedBacktestModelNames]);
 
   useEffect(() => {
     if (!performanceStatsModelOptions.includes(performanceStatsModel)) {
@@ -7233,7 +7352,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const revSession: Record<number, string> = {};
 
     const points = backtestTrades.map((trade, index) => {
-      const modelKey = selectedModel.name;
+      const modelKey = trade.entrySource || "Unknown";
       const sessionKey = getSessionLabel(trade.entryTime);
       const modelIndex = modelIndexMap.get(modelKey) ?? modelIndexMap.size;
       const sessionIndex = sessionIndexMap.get(sessionKey) ?? sessionIndexMap.size;
@@ -7273,7 +7392,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     });
 
     return { points, revModel, revSession };
-  }, [backtestTrades, selectedModel.name, selectedTimeframe]);
+  }, [backtestTrades, selectedTimeframe]);
 
   const backtestScatterVarDefs = useMemo<Record<BacktestScatterKey, BacktestScatterAxisDef>>(() => {
     const formatPercent = (value: number) => `${Math.round(clamp(value, 0, 1) * 100)}%`;
@@ -8318,67 +8437,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     });
   };
 
-  const propHistogram = useMemo(() => {
-    if (!propResult || propResult.data.length === 0) {
-      return [];
-    }
-
-    let min = propResult.data[0]!;
-    let max = propResult.data[0]!;
-
-    for (const value of propResult.data) {
-      if (value < min) {
-        min = value;
-      }
-
-      if (value > max) {
-        max = value;
-      }
-    }
-
-    if (min === max) {
-      return [{ bin: min, count: propResult.data.length }];
-    }
-
-    const binCount = 20;
-    const binSize = (max - min) / binCount;
-    const counts = Array.from({ length: binCount }, () => 0);
-
-    for (const value of propResult.data) {
-      let index = Math.floor((value - min) / binSize);
-      index = clamp(index, 0, binCount - 1);
-      counts[index] += 1;
-    }
-
-    const scaleFactor =
-      propStats && propResult.data.length > 0 ? propStats.totalSimulations / propResult.data.length : 1;
-
-    return counts.map((count, index) => ({
-      bin: min + binSize * index + binSize / 2,
-      count: count * scaleFactor
-    }));
-  }, [propResult, propStats]);
-
-  const propHistogramBars = useMemo(() => {
-    if (propHistogram.length === 0) {
-      return [];
-    }
-
-    const maxCount = Math.max(1, ...propHistogram.map((item) => item.count));
-    const slotWidth = 92 / propHistogram.length;
-
-    return propHistogram.map((item, index) => {
-      const height = (item.count / maxCount) * 28;
-      return {
-        ...item,
-        x: 4 + index * slotWidth,
-        y: 32 - height,
-        width: Math.max(2.5, slotWidth - 0.8),
-        height
-      };
-    });
-  }, [propHistogram]);
-
   const propLineChart = useMemo(() => {
     if (!propStats || propStats.randomProgressRuns.length === 0) {
       return null;
@@ -9019,11 +9077,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               <div className="backtest-hero-copy">
                 <span className="backtest-kicker">Backtest Workspace</span>
                 <h2>
-                  {selectedModel.name} on {selectedTimeframe}
+                  {backtestModelSelectionSummary} on {selectedTimeframe}
                 </h2>
                 <p>
                   AI.zip modules stay grouped here with the same core workflow: settings,
                   statistics, trade review, calendar, clustering, graphs, and prop evaluation.
+                  Backtest now follows the Main Settings model selection instead of the Chart tab.
                 </p>
               </div>
 
@@ -9075,11 +9134,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             <section className="backtest-panel">
               {backtestSourceTrades.length === 0 ? (
                 <div className="backtest-empty">
-                  <h3>Backtest data is still loading</h3>
-                  <p>
-                    The Backtest modules populate from the simulated history feed. Once candles load,
-                    these tabs will fill in automatically.
-                  </p>
+                  {backtestModelProfiles.length === 0 ? (
+                    <>
+                      <h3>No Main Settings models selected</h3>
+                      <p>
+                        Open Main Settings and enable at least one model in the MODELS panel.
+                        Backtest now uses that selection instead of Models / People in the Chart tab.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <h3>Backtest data is still loading</h3>
+                      <p>
+                        The Backtest modules populate from the simulated history feed. Once candles
+                        load, these tabs will fill in automatically.
+                      </p>
+                    </>
+                  )}
                 </div>
               ) : null}
 
@@ -9090,8 +9161,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <div>
                         <h3>{mainStatsTitle}</h3>
                         <p>
-                          Core AI.zip performance metrics for the active trade slice on{" "}
-                          {selectedModel.name} {selectedTimeframe}.
+                          Core AI.zip performance metrics for the active Main Settings trade slice
+                          on {backtestModelSelectionSummary} {selectedTimeframe}.
                         </p>
                       </div>
 
@@ -10505,7 +10576,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                       </td>
                                       <td style={cell(2, { whiteSpace: "normal" })}>
                                         <div style={{ lineHeight: 1.1 }}>
-                                          <span style={{ fontWeight: 700 }}>{selectedModel.name}</span>
+                                          <span style={{ fontWeight: 700 }}>{trade.entrySource}</span>
                                           <br />
                                           <span style={{ fontSize: 9, opacity: 0.8 }}>
                                             {trade.symbol} · {trade.result}
@@ -11938,223 +12009,200 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
               {selectedBacktestTab === "propFirm" ? (
                 <div style={{ display: "grid", gap: "0.9rem" }}>
-                <div className="backtest-grid two-up">
-                  <div className="backtest-card">
-                    <div className="backtest-card-head">
-                      <div>
-                        <h3>Prop Firm Tool</h3>
-                        <p>Replay the current sample against prop-style challenge limits.</p>
+                  <div className="backtest-grid">
+                    <div className="backtest-card">
+                      <div className="backtest-card-head">
+                        <div>
+                          <h3>Prop Firm Tool</h3>
+                          <p>Replay the current sample against prop-style challenge limits.</p>
+                        </div>
                       </div>
-                    </div>
 
-                    {!backtestTrades.length ? (
-                      <div className="backtest-empty-inline">No trades to display.</div>
-                    ) : (
-                      <>
-                        <div className="backtest-input-grid">
-                          <label className="backtest-input-field">
-                            <span>Initial Balance</span>
-                            <input
-                              type="number"
-                              value={propInitialBalance}
-                              onChange={(event) =>
-                                setPropInitialBalance(Number(event.target.value) || 0)
-                              }
-                            />
-                          </label>
-                          <label className="backtest-input-field">
-                            <span>Daily Max Loss</span>
-                            <input
-                              type="number"
-                              value={propDailyMaxLoss}
-                              onChange={(event) =>
-                                setPropDailyMaxLoss(Number(event.target.value) || 0)
-                              }
-                            />
-                          </label>
-                          <label className="backtest-input-field">
-                            <span>Total Max Loss</span>
-                            <input
-                              type="number"
-                              value={propTotalMaxLoss}
-                              onChange={(event) =>
-                                setPropTotalMaxLoss(Number(event.target.value) || 0)
-                              }
-                            />
-                          </label>
-                          <label className="backtest-input-field">
-                            <span>Profit Target</span>
-                            <input
-                              type="number"
-                              value={propProfitTarget}
-                              onChange={(event) =>
-                                setPropProfitTarget(Number(event.target.value) || 0)
-                              }
-                            />
-                          </label>
-                        </div>
-
-                        <div className="backtest-toolbar-row">
-                          <button
-                            type="button"
-                            className={`ai-zip-button pill ${
-                              propProjectionMethod === "montecarlo" ? "active" : ""
-                            }`}
-                            onClick={() => setPropProjectionMethod("montecarlo")}
-                          >
-                            Monte Carlo
-                          </button>
-                          <button
-                            type="button"
-                            className={`ai-zip-button pill ${
-                              propProjectionMethod === "historical" ? "active" : ""
-                            }`}
-                            onClick={() => setPropProjectionMethod("historical")}
-                          >
-                            Historical
-                          </button>
-                          <button type="button" className="ai-zip-button pill" onClick={runPropFirm}>
-                            Run
-                          </button>
-                        </div>
-
-                        {propResult ? (
-                          <>
-                            <div className="backtest-progress-block">
-                              <div className="backtest-progress-head">
-                                <span>Probability of passing</span>
-                                <strong className={propResult.probability >= 0.5 ? "up" : "down"}>
-                                  {(propResult.probability * 100).toFixed(1)}%
-                                </strong>
-                              </div>
-                              <div className="backtest-progress-track">
-                                <div
-                                  className={`backtest-progress-fill ${
-                                    propResult.probability >= 0.5 ? "up" : "down"
-                                  }`}
-                                  style={{
-                                    width: `${clamp(propResult.probability * 100, 0, 100)}%`
-                                  }}
-                                />
-                              </div>
-                            </div>
-
-                            {propStats ? (
-                              <div className="backtest-stat-list">
-                                <div className="backtest-stat-row">
-                                  <span>Avg trades to pass</span>
-                                  <strong className="up">{propStats.avgTradesPass.toFixed(1)}</strong>
-                                </div>
-                                {propProjectionMethod !== "montecarlo" ? (
-                                  <div className="backtest-stat-row">
-                                    <span>Avg time to pass</span>
-                                    <strong className="up">{formatPropFirmDuration(propStats.avgTimePass)}</strong>
-                                  </div>
-                                ) : null}
-                                <div className="backtest-stat-row">
-                                  <span>Avg trades to fail</span>
-                                  <strong className="down">{propStats.avgTradesFail.toFixed(1)}</strong>
-                                </div>
-                                {propProjectionMethod !== "montecarlo" ? (
-                                  <div className="backtest-stat-row">
-                                    <span>Avg time to fail</span>
-                                    <strong className="down">{formatPropFirmDuration(propStats.avgTimeFail)}</strong>
-                                  </div>
-                                ) : null}
-                                <div className="backtest-stat-row">
-                                  <span>Pass simulations</span>
-                                  <strong className="up">{propStats.passCount.toLocaleString()}</strong>
-                                </div>
-                                <div className="backtest-stat-row">
-                                  <span>Fail simulations</span>
-                                  <strong className="down">{propStats.failCount.toLocaleString()}</strong>
-                                </div>
-                                <div className="backtest-stat-row">
-                                  <span>Incomplete simulations</span>
-                                  <strong style={{ color: "#facc15" }}>{propStats.incompleteCount.toLocaleString()}</strong>
-                                </div>
-                                <div className="backtest-stat-row">
-                                  <span>Total simulations</span>
-                                  <strong style={{ color: "#60a5fa" }}>{propStats.totalSimulations.toLocaleString()}</strong>
-                                </div>
-                                <div className="backtest-stat-row">
-                                  <span>Incomplete %</span>
-                                  <strong style={{ color: "#facc15" }}>
-                                    {(
-                                      (propStats.incompleteCount /
-                                        Math.max(propStats.totalSimulations, 1)) *
-                                      100
-                                    ).toFixed(1)}
-                                    %
-                                  </strong>
-                                </div>
-                                <div className="backtest-stat-row">
-                                  <span>Avg win rate (passes)</span>
-                                  <strong
-                                    className={propStats.avgWinRatePass >= 0.5 ? "up" : "down"}
-                                  >
-                                    {(propStats.avgWinRatePass * 100).toFixed(1)}%
-                                  </strong>
-                                </div>
-                                <div className="backtest-stat-row">
-                                  <span>Avg win rate (fails)</span>
-                                  <strong
-                                    className={propStats.avgWinRateFail >= 0.5 ? "up" : "down"}
-                                  >
-                                    {(propStats.avgWinRateFail * 100).toFixed(1)}%
-                                  </strong>
-                                </div>
-                                <div className="backtest-stat-row">
-                                  <span>Avg win rate (overall)</span>
-                                  <strong
-                                    className={propStats.avgWinRateOverall >= 0.5 ? "up" : "down"}
-                                  >
-                                    {(propStats.avgWinRateOverall * 100).toFixed(1)}%
-                                  </strong>
-                                </div>
-                              </div>
-                            ) : null}
-                          </>
-                        ) : null}
-                      </>
-                    )}
-                  </div>
-
-                  <div className="backtest-stack">
-                    {propResult && propHistogramBars.length > 0 ? (
-                      <div className="backtest-card compact">
-                        <div className="backtest-card-head">
-                          <div>
-                            <h3>Outcome Distribution</h3>
-                            <p>Simulated ending P/L distribution under current limits.</p>
-                          </div>
-                        </div>
-                        <div className="backtest-graph-wrap short">
-                          <svg
-                            viewBox="0 0 100 34"
-                            preserveAspectRatio="none"
-                            aria-label="Prop firm distribution histogram"
-                          >
-                            <line x1="4" y1="32" x2="96" y2="32" className="backtest-grid-line" />
-                            {propHistogramBars.map((bar, index) => (
-                              <rect
-                                key={`prop-hist-${index}`}
-                                x={bar.x}
-                                y={bar.y}
-                                width={bar.width}
-                                height={bar.height}
-                                rx="0.6"
-                                fill={
-                                  bar.bin >= 0 ? "rgba(52, 211, 153, 0.88)" : "rgba(248, 113, 113, 0.88)"
+                      {!backtestTrades.length ? (
+                        <div className="backtest-empty-inline">No trades to display.</div>
+                      ) : (
+                        <>
+                          <div className="backtest-input-grid">
+                            <label className="backtest-input-field">
+                              <span>Initial Balance</span>
+                              <input
+                                type="number"
+                                value={propInitialBalance}
+                                onChange={(event) =>
+                                  setPropInitialBalance(Number(event.target.value) || 0)
                                 }
                               />
-                            ))}
-                          </svg>
-                        </div>
-                      </div>
-                    ) : null}
+                            </label>
+                            <label className="backtest-input-field">
+                              <span>Daily Max Loss</span>
+                              <input
+                                type="number"
+                                value={propDailyMaxLoss}
+                                onChange={(event) =>
+                                  setPropDailyMaxLoss(Number(event.target.value) || 0)
+                                }
+                              />
+                            </label>
+                            <label className="backtest-input-field">
+                              <span>Total Max Loss</span>
+                              <input
+                                type="number"
+                                value={propTotalMaxLoss}
+                                onChange={(event) =>
+                                  setPropTotalMaxLoss(Number(event.target.value) || 0)
+                                }
+                              />
+                            </label>
+                            <label className="backtest-input-field">
+                              <span>Profit Target</span>
+                              <input
+                                type="number"
+                                value={propProfitTarget}
+                                onChange={(event) =>
+                                  setPropProfitTarget(Number(event.target.value) || 0)
+                                }
+                              />
+                            </label>
+                          </div>
+
+                          <div className="backtest-toolbar-row">
+                            <button
+                              type="button"
+                              className={`ai-zip-button pill ${
+                                propProjectionMethod === "montecarlo" ? "active" : ""
+                              }`}
+                              onClick={() => setPropProjectionMethod("montecarlo")}
+                            >
+                              Monte Carlo
+                            </button>
+                            <button
+                              type="button"
+                              className={`ai-zip-button pill ${
+                                propProjectionMethod === "historical" ? "active" : ""
+                              }`}
+                              onClick={() => setPropProjectionMethod("historical")}
+                            >
+                              Historical
+                            </button>
+                            <button
+                              type="button"
+                              className="ai-zip-button pill"
+                              onClick={runPropFirm}
+                            >
+                              Run
+                            </button>
+                          </div>
+
+                          {propResult ? (
+                            <>
+                              <div className="backtest-progress-block">
+                                <div className="backtest-progress-head">
+                                  <span>Probability of passing</span>
+                                  <strong className={propResult.probability >= 0.5 ? "up" : "down"}>
+                                    {(propResult.probability * 100).toFixed(1)}%
+                                  </strong>
+                                </div>
+                                <div className="backtest-progress-track">
+                                  <div
+                                    className={`backtest-progress-fill ${
+                                      propResult.probability >= 0.5 ? "up" : "down"
+                                    }`}
+                                    style={{
+                                      width: `${clamp(propResult.probability * 100, 0, 100)}%`
+                                    }}
+                                  />
+                                </div>
+                              </div>
+
+                              {propStats ? (
+                                <div className="backtest-stat-list">
+                                  <div className="backtest-stat-row">
+                                    <span>Avg trades to pass</span>
+                                    <strong className="up">{propStats.avgTradesPass.toFixed(1)}</strong>
+                                  </div>
+                                  {propProjectionMethod !== "montecarlo" ? (
+                                    <div className="backtest-stat-row">
+                                      <span>Avg time to pass</span>
+                                      <strong className="up">
+                                        {formatPropFirmDuration(propStats.avgTimePass)}
+                                      </strong>
+                                    </div>
+                                  ) : null}
+                                  <div className="backtest-stat-row">
+                                    <span>Avg trades to fail</span>
+                                    <strong className="down">{propStats.avgTradesFail.toFixed(1)}</strong>
+                                  </div>
+                                  {propProjectionMethod !== "montecarlo" ? (
+                                    <div className="backtest-stat-row">
+                                      <span>Avg time to fail</span>
+                                      <strong className="down">
+                                        {formatPropFirmDuration(propStats.avgTimeFail)}
+                                      </strong>
+                                    </div>
+                                  ) : null}
+                                  <div className="backtest-stat-row">
+                                    <span>Pass simulations</span>
+                                    <strong className="up">{propStats.passCount.toLocaleString()}</strong>
+                                  </div>
+                                  <div className="backtest-stat-row">
+                                    <span>Fail simulations</span>
+                                    <strong className="down">{propStats.failCount.toLocaleString()}</strong>
+                                  </div>
+                                  <div className="backtest-stat-row">
+                                    <span>Incomplete simulations</span>
+                                    <strong style={{ color: "#facc15" }}>
+                                      {propStats.incompleteCount.toLocaleString()}
+                                    </strong>
+                                  </div>
+                                  <div className="backtest-stat-row">
+                                    <span>Total simulations</span>
+                                    <strong style={{ color: "#60a5fa" }}>
+                                      {propStats.totalSimulations.toLocaleString()}
+                                    </strong>
+                                  </div>
+                                  <div className="backtest-stat-row">
+                                    <span>Incomplete %</span>
+                                    <strong style={{ color: "#facc15" }}>
+                                      {(
+                                        (propStats.incompleteCount /
+                                          Math.max(propStats.totalSimulations, 1)) *
+                                        100
+                                      ).toFixed(1)}
+                                      %
+                                    </strong>
+                                  </div>
+                                  <div className="backtest-stat-row">
+                                    <span>Avg win rate (passes)</span>
+                                    <strong
+                                      className={propStats.avgWinRatePass >= 0.5 ? "up" : "down"}
+                                    >
+                                      {(propStats.avgWinRatePass * 100).toFixed(1)}%
+                                    </strong>
+                                  </div>
+                                  <div className="backtest-stat-row">
+                                    <span>Avg win rate (fails)</span>
+                                    <strong
+                                      className={propStats.avgWinRateFail >= 0.5 ? "up" : "down"}
+                                    >
+                                      {(propStats.avgWinRateFail * 100).toFixed(1)}%
+                                    </strong>
+                                  </div>
+                                  <div className="backtest-stat-row">
+                                    <span>Avg win rate (overall)</span>
+                                    <strong
+                                      className={propStats.avgWinRateOverall >= 0.5 ? "up" : "down"}
+                                    >
+                                      {(propStats.avgWinRateOverall * 100).toFixed(1)}%
+                                    </strong>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </>
+                          ) : null}
+                        </>
+                      )}
+                    </div>
                   </div>
-                </div>
 
                 {propStats && propStats.randomProgressRuns.length > 0 ? (
                   <div className="backtest-card compact" style={{ marginTop: "0.9rem" }}>
