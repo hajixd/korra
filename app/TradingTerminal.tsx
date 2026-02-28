@@ -3770,7 +3770,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return;
     }
 
-    const candleData: CandlestickData[] = selectedChartCandles.map((candle) => ({
+    const candleData: CandlestickData<UTCTimestamp>[] = selectedChartCandles.map((candle) => ({
       time: toUtcTimestamp(candle.time),
       open: candle.open,
       high: candle.high,
@@ -3806,7 +3806,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return;
     }
 
-    const toDataPoint = (candle: Candle): CandlestickData => ({
+    const toDataPoint = (candle: Candle): CandlestickData<UTCTimestamp> => ({
       time: toUtcTimestamp(candle.time),
       open: candle.open,
       high: candle.high,
