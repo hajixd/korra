@@ -27267,47 +27267,73 @@ export default function App() {
         worstTrades: 0,
         months: 0,
       };
-    const monthMap = new Map();
-    const monthCountMap = new Map();
+    const monthBucketMap = new Map();
     for (const t of closed) {
       const raw = t.exitTime ?? t.entryTime;
       const d = parseDateFromString(raw, parseMode);
       if (!d) continue;
       const y = parseMode === "utc" ? d.getUTCFullYear() : d.getFullYear();
       const mo = (parseMode === "utc" ? d.getUTCMonth() : d.getMonth()) + 1;
-      const key = `${y}-${String(mo).padStart(2, "0")}`;
+      const monthKey = String(mo).padStart(2, "0");
+      const bucketKey = `${y}-${monthKey}`;
       const pnlNum = typeof t.pnl === "number" ? t.pnl : Number(t.pnl);
       if (!Number.isFinite(pnlNum)) continue;
-      monthMap.set(key, (monthMap.get(key) || 0) + pnlNum);
-      monthCountMap.set(key, (monthCountMap.get(key) || 0) + 1);
+      const bucket = monthBucketMap.get(bucketKey) || {
+        key: monthKey,
+        pnl: 0,
+        trades: 0,
+      };
+      bucket.pnl += pnlNum;
+      bucket.trades += 1;
+      monthBucketMap.set(bucketKey, bucket);
     }
-    const entries = Array.from(monthMap.entries());
+    const monthMap = new Map();
+    for (const bucket of monthBucketMap.values()) {
+      const current = monthMap.get(bucket.key) || {
+        total: 0,
+        trades: 0,
+        months: 0,
+      };
+      current.total += bucket.pnl;
+      current.trades += bucket.trades;
+      current.months += 1;
+      monthMap.set(bucket.key, current);
+    }
+    const entries = Array.from(monthMap.entries()).map(([k, v]) => [
+      k,
+      {
+        avg: v.months > 0 ? v.total / v.months : 0,
+        trades: v.trades,
+      },
+    ]);
     if (!entries.length)
       return {
         avg: 0,
         best: 0,
         bestKey: null,
+        bestTrades: 0,
         worst: 0,
         worstKey: null,
+        worstTrades: 0,
         months: 0,
       };
-    const sum = entries.reduce((a, [, v]) => a + v, 0);
+    const sum = entries.reduce((a, [, v]) => a + v.avg, 0);
     let bestKey = null;
     let worstKey = null;
     let best = -Infinity;
     let worst = Infinity;
     for (const [k, v] of entries) {
-      if (v > best) {
-        best = v;
+      if (v.avg > best) {
+        best = v.avg;
         bestKey = k;
       }
-      if (v < worst) {
-        worst = v;
+      if (v.avg < worst) {
+        worst = v.avg;
         worstKey = k;
       }
     }
-    const bestTrades = bestKey ? monthCountMap.get(bestKey) || 0 : 0;
-    const worstTrades = worstKey ? monthCountMap.get(worstKey) || 0 : 0;
+    const bestTrades = bestKey ? monthMap.get(bestKey)?.trades || 0 : 0;
+    const worstTrades = worstKey ? monthMap.get(worstKey)?.trades || 0 : 0;
     return {
       avg: sum / entries.length,
       best: Number.isFinite(best) ? best : 0,
@@ -29419,6 +29445,12 @@ export default function App() {
   const formatMonthKey = (k) => {
     if (!k) return "—";
     const parts = k.split("-");
+    if (parts.length === 1) {
+      const m = Number(parts[0]) - 1;
+      if (!Number.isFinite(m)) return k;
+      const d = new Date(2000, m, 1);
+      return d.toLocaleString(undefined, { month: "short" });
+    }
     if (parts.length < 2) return k;
     const y = Number(parts[0]);
     const m = Number(parts[1]) - 1;
@@ -36432,7 +36464,7 @@ export default function App() {
                               opacity: 0.95,
                             }}
                           >
-                            ${formatNumber(monthlyPnLStats.best, 2)} ·{" "}
+                            ${formatNumber(monthlyPnLStats.best, 2)} / mo ·{" "}
                             {monthlyPnLStats.bestTrades} trades
                           </span>
                         </span>
@@ -36471,7 +36503,7 @@ export default function App() {
                               opacity: 0.95,
                             }}
                           >
-                            ${formatNumber(monthlyPnLStats.worst, 2)} ·{" "}
+                            ${formatNumber(monthlyPnLStats.worst, 2)} / mo ·{" "}
                             {monthlyPnLStats.worstTrades} trades
                           </span>
                         </span>
@@ -36547,21 +36579,23 @@ export default function App() {
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                             }}
-                            title={`Total ${fmtUSD(
+                            title={`Avg/Month ${fmtUSD(
+                              monthPnlFocusStats.avgMonthlyPnl ?? 0
+                            )} · ${formatNumber(
+                              monthPnlFocusStats.monthCount,
+                              0
+                            )} months · Total ${fmtUSD(
                               monthPnlFocusStats.totalPnl ?? 0
                             )} · ${formatNumber(
                               monthPnlFocusStats.tradeCount,
                               0
-                            )} trades · Avg/Month ${fmtUSD(
-                              monthPnlFocusStats.avgMonthlyPnl ?? 0
-                            )} · Avg/Trade ${fmtUSD(
+                            )} trades · Avg/Trade ${fmtUSD(
                               monthPnlFocusStats.avgPerTrade ?? 0
                             )}`}
                           >
-                            {fmtUSD(monthPnlFocusStats.totalPnl ?? 0)} ·{" "}
-                            {monthPnlFocusStats.tradeCount} trades ·{" "}
                             {fmtUSD(monthPnlFocusStats.avgMonthlyPnl ?? 0)} /
-                            month
+                            month · {monthPnlFocusStats.monthCount} months ·{" "}
+                            {monthPnlFocusStats.tradeCount} trades
                           </div>
                         </div>
 

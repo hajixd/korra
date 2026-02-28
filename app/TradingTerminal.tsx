@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ColorType,
   CrosshairMode,
@@ -19,6 +19,8 @@ import {
   Bar,
   BarChart,
   Cell,
+  ComposedChart,
+  Line,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -327,10 +329,15 @@ type AiDistanceMetric = "euclidean" | "cosine" | "manhattan" | "chebyshev";
 type AiCompressionMethod = "pca" | "jl" | "hash" | "variance" | "subsample";
 type KnnVoteMode = "distance" | "majority";
 
-type AiCatalogItem = {
+type AiModelState = 0 | 1 | 2;
+type AiFeatureLevel = 0 | 1 | 2 | 3 | 4;
+type AiFeatureMode = "individual" | "ensemble";
+
+type AiFeatureDef = {
   id: string;
   label: string;
   note?: string;
+  model?: string;
 };
 
 type AiLibraryFieldType = "boolean" | "number" | "select" | "text";
@@ -417,19 +424,181 @@ const AI_MODEL_FALLBACK_NAMES = [
   "Support / Resistance"
 ] as const;
 
-const AI_FEATURE_OPTIONS: AiCatalogItem[] = [
-  { id: "pricePath", label: "Price Path", note: "OHLC and return shape in the current window." },
-  { id: "rangeTrend", label: "Range / Trend", note: "Range expansion and directional drift." },
-  { id: "wicks", label: "Wicks", note: "Upper and lower wick behavior." },
-  { id: "time", label: "Time", note: "Intraday and seasonal timing cycles." },
-  { id: "temporal", label: "Temporal", note: "Explicit month, weekday, and hour context." },
-  { id: "position", label: "Position", note: "Fib and level position context." },
+const BASE_AI_FEATURE_OPTIONS: AiFeatureDef[] = [
+  { id: "pricePath", label: "Price Path", note: "OHLC and return shape inside the current window." },
+  { id: "rangeTrend", label: "Range / Trend", note: "Window range plus directional drift." },
+  { id: "wicks", label: "Wicks", note: "Wick versus body structure." },
+  { id: "time", label: "Time", note: "Time-of-day and intraday cycle context." },
+  { id: "temporal", label: "Temporal", note: "Explicit year, month, weekday, and hour context." },
+  { id: "position", label: "Position", note: "Position inside the local range and level proximity." },
   {
     id: "topography",
     label: "Topography",
-    note: "Pivot density, curvature, and choppiness context."
+    note: "Terrain roughness: pivots, curvature, and choppiness."
   }
 ];
+
+const MODEL_AI_FEATURE_OPTIONS_BY_MODEL: Record<string, AiFeatureDef[]> = {
+  Momentum: [
+    {
+      id: "mf__momentum__core",
+      label: "Momentum Feature",
+      note: "Trend, persistence, acceleration, and drift context.",
+      model: "Momentum"
+    }
+  ],
+  "Mean Reversion": [
+    {
+      id: "mf__mean_reversion__core",
+      label: "Mean Reversion Feature",
+      note: "Z-score, crossings, overshoot, and snapback context.",
+      model: "Mean Reversion"
+    }
+  ],
+  Seasons: [
+    {
+      id: "mf__seasons__core",
+      label: "Seasonality Feature",
+      note: "Day-of-year and time-of-day phase with seasonal volatility context.",
+      model: "Seasons"
+    }
+  ],
+  "Time of Day": [
+    {
+      id: "mf__time_of_day__core",
+      label: "Time-of-Day Feature",
+      note: "Hour phase plus intraday drift and volatility context.",
+      model: "Time of Day"
+    }
+  ],
+  Fibonacci: [
+    {
+      id: "mf__fibonacci__core",
+      label: "Fibonacci Feature",
+      note: "Distances to key fib levels plus swing context.",
+      model: "Fibonacci"
+    }
+  ],
+  "Support / Resistance": [
+    {
+      id: "mf__support_resistance__core",
+      label: "S/R Feature",
+      note: "Support and resistance proximity with touch density context.",
+      model: "Support / Resistance"
+    }
+  ]
+};
+
+const MODEL_AI_FEATURE_OPTIONS = Object.values(MODEL_AI_FEATURE_OPTIONS_BY_MODEL).flat();
+const AI_FEATURE_OPTIONS: AiFeatureDef[] = [...BASE_AI_FEATURE_OPTIONS, ...MODEL_AI_FEATURE_OPTIONS];
+
+const FEATURE_LEVEL_LABEL: Record<AiFeatureLevel, string> = {
+  0: "None",
+  1: "Very Light",
+  2: "Light",
+  3: "Heavy",
+  4: "Very Heavy"
+};
+
+const FEATURE_LEVEL_TAKES: Record<string, number[]> = {
+  pricePath: [0, 6, 14, 28, 60],
+  rangeTrend: [0, 2, 4, 6, 10],
+  wicks: [0, 1, 2, 4, 6],
+  time: [0, 2, 4, 6, 8],
+  temporal: [0, 4, 8, 12, 16],
+  position: [0, 2, 4, 6, 10],
+  topography: [0, 3, 6, 9, 12],
+  mf__momentum__core: [0, 4, 8, 12, 16],
+  mf__mean_reversion__core: [0, 4, 8, 12, 16],
+  mf__seasons__core: [0, 4, 8, 12, 16],
+  mf__time_of_day__core: [0, 4, 8, 12, 16],
+  mf__fibonacci__core: [0, 4, 8, 12, 16],
+  mf__support_resistance__core: [0, 4, 8, 12, 16]
+};
+
+const getAiFeatureWindowBars = (windowBars: number): number => {
+  return Math.max(1, clamp(Math.round(windowBars), 2, 120));
+};
+
+const buildInitialAiModelStates = (modelNames: readonly string[]): Record<string, AiModelState> => {
+  const next: Record<string, AiModelState> = {};
+
+  modelNames.forEach((modelName, index) => {
+    next[modelName] = index < 3 ? 1 : 0;
+  });
+
+  return next;
+};
+
+const syncAiModelStates = (
+  current: Record<string, AiModelState>,
+  modelNames: readonly string[]
+): Record<string, AiModelState> => {
+  const defaults = buildInitialAiModelStates(modelNames);
+  const next: Record<string, AiModelState> = {};
+
+  for (const modelName of modelNames) {
+    next[modelName] = current[modelName] ?? defaults[modelName] ?? 0;
+  }
+
+  const currentKeys = Object.keys(current);
+
+  if (currentKeys.length !== modelNames.length) {
+    return next;
+  }
+
+  for (const modelName of modelNames) {
+    if ((current[modelName] ?? 0) !== next[modelName]) {
+      return next;
+    }
+  }
+
+  return current;
+};
+
+const buildInitialAiFeatureLevels = (): Record<string, AiFeatureLevel> => {
+  const next: Record<string, AiFeatureLevel> = {};
+
+  for (const feature of AI_FEATURE_OPTIONS) {
+    next[feature.id] = feature.id.startsWith("mf__") ? 0 : 2;
+  }
+
+  return next;
+};
+
+const buildInitialAiFeatureModes = (): Record<string, AiFeatureMode> => {
+  const next: Record<string, AiFeatureMode> = {};
+
+  for (const feature of AI_FEATURE_OPTIONS) {
+    next[feature.id] = "individual";
+  }
+
+  return next;
+};
+
+const getAiModelStateLabel = (state: AiModelState): "OFF" | "ENTRY" | "BOTH" => {
+  if (state === 2) {
+    return "BOTH";
+  }
+
+  if (state === 1) {
+    return "ENTRY";
+  }
+
+  return "OFF";
+};
+
+const getNextAiModelState = (state: AiModelState, mouseButton: number): AiModelState => {
+  if (mouseButton === 2) {
+    return state === 2 ? 0 : 2;
+  }
+
+  return state === 1 ? 0 : 1;
+};
+
+const getNextAiFeatureLevel = (level: AiFeatureLevel): AiFeatureLevel => {
+  return ((level + 1) % 5) as AiFeatureLevel;
+};
 
 const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
   {
@@ -900,7 +1069,145 @@ const DIMENSION_FEATURE_NAME_BANK: Record<string, string[]> = {
     "Chop ratio",
     "Wick/body ratio",
     "Body mean"
+  ],
+  mf__momentum__core: [
+    "Return mean",
+    "Return std",
+    "Return max",
+    "Return min",
+    "Abs return sum",
+    "Trend (net return)",
+    "Range",
+    "Bull fraction",
+    "Bear fraction",
+    "Persistence",
+    "Reversal rate",
+    "Chop ratio",
+    "Last return",
+    "First return",
+    "Acceleration",
+    "Skew proxy"
+  ],
+  mf__mean_reversion__core: [
+    "Z mean",
+    "Z std",
+    "Z max",
+    "Z min",
+    "Abs Z mean",
+    "Crossings rate",
+    "Last Z",
+    "Mid Z",
+    "Last-Mid Z",
+    "Overshoot high",
+    "Overshoot low",
+    "Snapback proxy",
+    "Wick score",
+    "Chop ratio",
+    "Range",
+    "Trend"
+  ],
+  mf__seasons__core: [
+    "sin(TOD)",
+    "cos(TOD)",
+    "sin(DOY)",
+    "cos(DOY)",
+    "DOY",
+    "TOD",
+    "Range",
+    "Trend",
+    "Abs return mean",
+    "Abs return std",
+    "Chop ratio",
+    "Wick/body",
+    "Bull fraction",
+    "Bear fraction",
+    "Reversal rate",
+    "Position"
+  ],
+  mf__time_of_day__core: [
+    "sin(TOD)",
+    "cos(TOD)",
+    "TOD",
+    "Range",
+    "Trend",
+    "Abs return mean",
+    "Abs return std",
+    "Chop ratio",
+    "Wick/body",
+    "Bull fraction",
+    "Bear fraction",
+    "Reversal rate",
+    "Position",
+    "Last return",
+    "Accel",
+    "Vol burst"
+  ],
+  mf__fibonacci__core: [
+    "p0-0.236",
+    "p0-0.382",
+    "p0-0.5",
+    "p0-0.618",
+    "p0-0.786",
+    "Nearest level dist",
+    "Signed nearest dist",
+    "Range",
+    "Trend",
+    "Position",
+    "Abs return mean",
+    "Abs return std",
+    "Chop ratio",
+    "Bull fraction",
+    "Bear fraction",
+    "Reversal rate"
+  ],
+  mf__support_resistance__core: [
+    "Dist to support",
+    "Dist to resistance",
+    "Support touches",
+    "Resistance touches",
+    "Near-support flag",
+    "Near-resistance flag",
+    "Range",
+    "Trend",
+    "Position",
+    "Abs return mean",
+    "Abs return std",
+    "Chop ratio",
+    "Wick/body",
+    "Bull fraction",
+    "Bear fraction",
+    "Reversal rate"
   ]
+};
+
+const featureTakeCount = (featureId: string, level: number): number => {
+  const normalizedLevel = clamp(Math.round(level) || 0, 0, 4);
+  const steps = FEATURE_LEVEL_TAKES[featureId] ?? [0, 2, 4, 6, 8];
+  const take = Number(steps[normalizedLevel] ?? 0) || 0;
+  const names = DIMENSION_FEATURE_NAME_BANK[featureId];
+
+  return names && names.length > 0 ? Math.min(take, names.length) : take;
+};
+
+const countConfiguredAiFeatureDimensions = (
+  featureLevels: Record<string, AiFeatureLevel>,
+  featureModes: Record<string, AiFeatureMode>,
+  chunkBars: number
+): number => {
+  const parts = getAiFeatureWindowBars(chunkBars);
+  let total = 0;
+
+  for (const feature of AI_FEATURE_OPTIONS) {
+    const take = featureTakeCount(feature.id, featureLevels[feature.id] ?? 0);
+
+    if (take <= 0) {
+      continue;
+    }
+
+    total += take * ((featureModes[feature.id] ?? "individual") === "individual" ? parts : 1);
+  }
+
+  return total;
 };
 
 const toggleListValue = (values: string[], value: string): string[] => {
@@ -1761,6 +2068,10 @@ const getTradeMonthIndex = (timestampSeconds: UTCTimestamp): number => {
   return new Date(Number(timestampSeconds) * 1000).getUTCMonth();
 };
 
+const getTradeCalendarMonthKey = (timestampSeconds: UTCTimestamp): string => {
+  return String(getTradeMonthIndex(timestampSeconds) + 1).padStart(2, "0");
+};
+
 const getTradeHour = (timestampSeconds: UTCTimestamp): number => {
   return new Date(Number(timestampSeconds) * 1000).getUTCHours();
 };
@@ -1776,7 +2087,22 @@ const getTradeWeekKey = (timestampSeconds: UTCTimestamp): string => {
 };
 
 const getMonthLabel = (monthKey: string): string => {
-  const [year, month] = monthKey.split("-").map((value) => Number(value));
+  const parts = monthKey.split("-");
+
+  if (parts.length === 1) {
+    const month = Number(parts[0]);
+
+    if (!Number.isFinite(month)) {
+      return monthKey;
+    }
+
+    return new Date(Date.UTC(2000, month - 1, 1)).toLocaleString("en-US", {
+      month: "long",
+      timeZone: "UTC"
+    });
+  }
+
+  const [year, month] = parts.map((value) => Number(value));
 
   if (!Number.isFinite(year) || !Number.isFinite(month)) {
     return monthKey;
@@ -1791,6 +2117,10 @@ const getMonthLabel = (monthKey: string): string => {
 
 const getCurrentTradeMonthKey = (): string => {
   return new Date().toISOString().slice(0, 7);
+};
+
+const getCurrentTradeCalendarMonthKey = (): string => {
+  return getCurrentTradeMonthKey().slice(5, 7);
 };
 
 const shiftTradeMonthKey = (monthKey: string, delta: number): string => {
@@ -1873,20 +2203,75 @@ const getHistoryTradeDurationMinutes = (trade: HistoryItem): number => {
   return Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
 };
 
+const normalizeBacktestExitReason = (reason?: string | null): string => {
+  if (!reason) {
+    return "";
+  }
+
+  const raw = String(reason).trim();
+
+  if (!raw || raw === "-") {
+    return "";
+  }
+
+  const upper = raw.toUpperCase();
+
+  if (upper === "TP" || upper.includes("TAKE")) {
+    return "Take Profit";
+  }
+
+  if (upper === "SL" || upper.includes("STOP")) {
+    return "Stop Loss";
+  }
+
+  if (
+    upper === "BE" ||
+    upper === "BREAKEVEN" ||
+    upper === "BREAK-EVEN" ||
+    upper.includes("BREAK")
+  ) {
+    return "Break Even";
+  }
+
+  if (upper === "TSL" || upper.includes("TRAIL")) {
+    return "Trailing Stop";
+  }
+
+  if (upper.includes("MIM") || upper.includes("MIT")) {
+    return "MIT";
+  }
+
+  if (upper.includes("AI")) {
+    return "AI";
+  }
+
+  if (upper.includes("MODEL")) {
+    return "Model Exit";
+  }
+
+  return raw;
+};
+
 const getBacktestExitLabel = (trade: HistoryItem): string => {
+  const normalized = normalizeBacktestExitReason(trade.exitReason);
+
+  if (normalized) {
+    return normalized;
+  }
+
   const targetGap = Math.abs(trade.targetPrice - trade.entryPrice);
   const stopGap = Math.abs(trade.entryPrice - trade.stopPrice);
   const realizedGap = Math.abs(trade.outcomePrice - trade.entryPrice);
 
   if (trade.result === "Win" && realizedGap >= targetGap * 0.84) {
-    return "Target Hit";
+    return "Take Profit";
   }
 
   if (trade.result === "Loss" && realizedGap >= stopGap * 0.84) {
-    return "Protective Stop";
+    return "Stop Loss";
   }
 
-  return "Managed Exit";
+  return "Model Exit";
 };
 
 const getEntryExitBarFill = (bucket: string): string => {
@@ -2317,6 +2702,279 @@ const findCandleIndexAtOrBefore = (candles: Candle[], targetMs: number): number 
   return Math.max(0, right);
 };
 
+const humanizeDurationMinutes = (totalMin: number): string => {
+  const minutes = Math.max(0, Math.round(totalMin));
+  const parts: string[] = [];
+  const days = Math.floor(minutes / 1440);
+  const remAfterDays = minutes % 1440;
+  const hours = Math.floor(remAfterDays / 60);
+  const mins = remAfterDays % 60;
+
+  const push = (value: number, word: string) => {
+    if (value > 0) {
+      parts.push(`${value} ${word}${value === 1 ? "" : "s"}`);
+    }
+  };
+
+  push(days, "Day");
+  push(hours, "Hour");
+  push(mins, "Minute");
+
+  if (parts.length === 0) {
+    return "0 Minutes";
+  }
+
+  if (parts.length === 1) {
+    return parts[0]!;
+  }
+
+  if (parts.length === 2) {
+    return `${parts[0]} and ${parts[1]}`;
+  }
+
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+};
+
+const BacktestPerTradeMiniChart = ({
+  data,
+  yDomain,
+  entryPrice,
+  tpPrice,
+  slPrice,
+  side,
+  usdPerUnit,
+  isOpen
+}: {
+  data: Array<{
+    bar: number;
+    price: number;
+    high: number;
+    low: number;
+    up: number | null;
+    down: number | null;
+    flat: number | null;
+    ts?: number;
+    candIdx?: number;
+    relCand?: number;
+  }>;
+  yDomain: [number | "auto", number | "auto"];
+  entryPrice: number;
+  tpPrice: number | null;
+  slPrice: number | null;
+  side: "BUY" | "SELL";
+  usdPerUnit: number;
+  isOpen: boolean;
+}) => {
+  const [reveal, setReveal] = useState(0);
+
+  useEffect(() => {
+    let raf = 0;
+
+    if (!isOpen) {
+      setReveal(0);
+      return () => cancelAnimationFrame(raf);
+    }
+
+    const durationMs = 1600;
+    const startedAt = performance.now();
+
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / durationMs);
+      setReveal(progress);
+
+      if (progress < 1) {
+        raf = requestAnimationFrame(tick);
+      }
+    };
+
+    raf = requestAnimationFrame(tick);
+
+    return () => cancelAnimationFrame(raf);
+  }, [isOpen]);
+
+  const clipId = useId();
+  const glowId = useId();
+  const direction = side === "BUY" ? 1 : -1;
+  const formatChartPrice = (value: number) =>
+    Number.isFinite(value)
+      ? value.toLocaleString(undefined, { maximumFractionDigits: 3 })
+      : "–";
+  const formatChartPnl = (value: number) => `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(3)}`;
+  const toPnl = (price: number) => (price - entryPrice) * direction * usdPerUnit;
+
+  return (
+    <div className="backtest-trade-mini-chart">
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={data} margin={{ top: 10, right: 24, left: 12, bottom: 10 }}>
+          <defs>
+            <filter id={glowId} x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="2" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+            <clipPath id={clipId} clipPathUnits="objectBoundingBox">
+              <rect x="0" y="0" width={reveal} height="1" />
+            </clipPath>
+          </defs>
+
+          <XAxis
+            dataKey="bar"
+            type="number"
+            domain={[-1, "dataMax"]}
+            tickFormatter={(value: number) => (value === -1 ? "-1" : String(value))}
+            label={{
+              value: "Minutes since entry",
+              position: "insideBottomRight",
+              offset: -4,
+              fill: "#9ca3af",
+              fontSize: 11
+            }}
+            tick={{ fontSize: 11, fill: "#9ca3af" }}
+            axisLine={false}
+            tickLine={false}
+          />
+
+          <YAxis
+            type="number"
+            domain={yDomain as [number | "auto", number | "auto"]}
+            tickFormatter={(value: number) =>
+              Number.isFinite(value)
+                ? value.toLocaleString(undefined, { maximumFractionDigits: 3 })
+                : ""
+            }
+            tick={{ fontSize: 11, fill: "#9ca3af" }}
+            axisLine={false}
+            tickLine={false}
+          />
+
+          <ReferenceLine y={entryPrice} stroke="#a3a3a3" strokeDasharray="4 6" />
+          {Number.isFinite(tpPrice as number) ? (
+            <ReferenceLine y={tpPrice as number} stroke="#34d399" strokeDasharray="4 6" />
+          ) : null}
+          {Number.isFinite(slPrice as number) ? (
+            <ReferenceLine y={slPrice as number} stroke="#f87171" strokeDasharray="4 6" />
+          ) : null}
+
+          <Tooltip
+            content={({ active, payload }) => {
+              if (!active || !payload?.length) {
+                return null;
+              }
+
+              const row = payload[0].payload as {
+                bar: number;
+                price: number;
+                high: number;
+                low: number;
+                ts?: number;
+                relCand?: number;
+              };
+              const timestamp = typeof row.ts === "number" ? row.ts : Date.now();
+              const date = new Date(timestamp);
+              const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+              const day = String(date.getUTCDate()).padStart(2, "0");
+              const year = date.getUTCFullYear();
+              const hour24 = date.getUTCHours();
+              const minute = String(date.getUTCMinutes()).padStart(2, "0");
+              const meridiem = hour24 >= 12 ? "PM" : "AM";
+              const hour12 = hour24 % 12 || 12;
+              const candleCount =
+                typeof row.relCand === "number" && row.relCand >= 0 ? row.relCand + 1 : 0;
+              const minutesIn = typeof row.bar === "number" && row.bar >= 0 ? Math.round(row.bar) : 0;
+              const minutesLabel = humanizeDurationMinutes(minutesIn);
+              const pluralize = (value: number, word: string) =>
+                `${value} ${word}${value === 1 ? "" : "s"}`;
+              const closePnl = toPnl(row.price);
+              const highPnl = toPnl(row.high);
+              const lowPnl = toPnl(row.low);
+              const getPnlColor = (value: number) =>
+                value > 0 ? "#34d399" : value < 0 ? "#f87171" : "#e5e7eb";
+
+              return (
+                <div
+                  style={{
+                    background: "#000",
+                    border: "1px solid #262626",
+                    borderRadius: 12,
+                    padding: "8px 10px",
+                    color: "#e5e7eb",
+                    fontSize: 12
+                  }}
+                >
+                  <div style={{ opacity: 0.9, marginBottom: 4, fontWeight: 600 }}>
+                    {month}/{day}/{year} | {hour12}:{minute}
+                    {meridiem}
+                  </div>
+                  <div style={{ opacity: 0.8, marginBottom: 8 }}>
+                    {pluralize(candleCount, "Candle")} | {minutesLabel} In
+                  </div>
+                  <div>
+                    Close: <b>{formatChartPrice(row.price)}</b>
+                  </div>
+                  <div>
+                    High: <b>{formatChartPrice(row.high)}</b>
+                  </div>
+                  <div>
+                    Low: <b>{formatChartPrice(row.low)}</b>
+                  </div>
+                  <hr style={{ borderColor: "#262626", margin: "6px 0" }} />
+                  <div>
+                    Close PnL: <b style={{ color: getPnlColor(closePnl) }}>{formatChartPnl(closePnl)}</b>
+                  </div>
+                  <div>
+                    High&nbsp; PnL: <b style={{ color: getPnlColor(highPnl) }}>{formatChartPnl(highPnl)}</b>
+                  </div>
+                  <div>
+                    Low&nbsp;&nbsp; PnL: <b style={{ color: getPnlColor(lowPnl) }}>{formatChartPnl(lowPnl)}</b>
+                  </div>
+                </div>
+              );
+            }}
+          />
+
+          <g clipPath={`url(#${clipId})`}>
+            <Line
+              type="monotone"
+              dataKey="up"
+              stroke="#34d399"
+              strokeWidth={3}
+              dot={false}
+              activeDot={{ r: 6 }}
+              style={{ filter: `url(#${glowId})` }}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
+            <Line
+              type="monotone"
+              dataKey="down"
+              stroke="#f87171"
+              strokeWidth={3}
+              dot={false}
+              activeDot={{ r: 6 }}
+              style={{ filter: `url(#${glowId})` }}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
+            <Line
+              type="monotone"
+              dataKey="flat"
+              stroke="#ffffff"
+              strokeWidth={3}
+              dot={false}
+              activeDot={{ r: 6 }}
+              style={{ filter: `url(#${glowId})` }}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
+          </g>
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
+
 const meanOf = (values: number[]): number => {
   if (values.length === 0) {
     return 0;
@@ -2395,21 +3053,12 @@ const getBinaryCorrelation = (values: number[], outcomes: number[]): number => {
   return clamp(numerator / denominator, -1, 1);
 };
 
-const buildDimensionFeatureBuckets = (
-  candles: Candle[],
-  endExclusiveIndex: number,
-  windowBars: number
-): Record<string, number[]> | null => {
-  const bars = clamp(Math.round(windowBars), 8, 120);
-
-  if (candles.length < bars + 1 || endExclusiveIndex <= bars || endExclusiveIndex > candles.length) {
-    return null;
-  }
-
-  const window = candles.slice(endExclusiveIndex - bars, endExclusiveIndex);
-
-  if (window.length < bars) {
-    return null;
+const buildAiFeatureVector = (
+  window: Candle[],
+  allCandles: Candle[]
+): Record<string, number[]> => {
+  if (window.length === 0 || allCandles.length === 0) {
+    return {};
   }
 
   const epsilon = 0.000000001;
@@ -2476,7 +3125,8 @@ const buildDimensionFeatureBuckets = (
   const bullishShare = bullish / window.length;
   const bearishShare = bearish / window.length;
   const reversalRate = flips / Math.max(1, window.length - 1);
-  const chopRatio = absoluteReturns.reduce((total, value) => total + value, 0) / (Math.abs(netReturn) + epsilon);
+  const absReturnSum = absoluteReturns.reduce((total, value) => total + value, 0);
+  const chopRatio = absReturnSum / (Math.abs(netReturn) + epsilon);
   const wickBodyRatio = (upperWickMean + lowerWickMean) / Math.max(epsilon, bodyMean);
   const lastReturn = normalizedReturns[normalizedReturns.length - 1] ?? 0;
   const firstReturn = normalizedReturns[0] ?? 0;
@@ -2487,8 +3137,8 @@ const buildDimensionFeatureBuckets = (
   const distanceToLow = clamp((lastClose - minimumLow) / range, 0, 1);
   const finalTime = lastCandle.time;
   const finalDate = new Date(finalTime);
-  const minYear = new Date(candles[0]!.time).getUTCFullYear();
-  const maxYear = new Date(candles[candles.length - 1]!.time).getUTCFullYear();
+  const minYear = new Date(allCandles[0]!.time).getUTCFullYear();
+  const maxYear = new Date(allCandles[allCandles.length - 1]!.time).getUTCFullYear();
   const yearSpan = Math.max(1, maxYear - minYear);
   const year = finalDate.getUTCFullYear();
   const month = finalDate.getUTCMonth();
@@ -2498,6 +3148,7 @@ const buildDimensionFeatureBuckets = (
   const startOfYear = Date.UTC(year, 0, 0);
   const dayOfYear = Math.max(1, Math.floor((finalTime - startOfYear) / 86_400_000));
   const weekNorm = clamp(Math.ceil(dayOfYear / 7) / 53, 0, 1);
+  const dayOfYearUnit = clamp(dayOfYear / 366, 0, 1);
   const hourUnit = clamp((hours + minutes / 60) / 24, 0, 1);
   const minuteUnit = clamp(minutes / 60, 0, 1);
   const yearNorm = clamp((year - minYear) / yearSpan, 0, 1);
@@ -2505,7 +3156,67 @@ const buildDimensionFeatureBuckets = (
   const minuteAngle = Math.PI * 2 * minuteUnit;
   const monthAngle = Math.PI * 2 * (month / 12);
   const dayAngle = Math.PI * 2 * (dayOfWeek / 7);
-  const dayOfYearAngle = Math.PI * 2 * clamp(dayOfYear / 366, 0, 1);
+  const dayOfYearAngle = Math.PI * 2 * dayOfYearUnit;
+  const closeMean = meanOf(closes);
+  const closeStd = stdDevOf(closes);
+  const zScores = closes.map((close) => (close - closeMean) / Math.max(epsilon, closeStd));
+  const zMean = meanOf(zScores);
+  const zStd = stdDevOf(zScores);
+  const zMax = zScores.length > 0 ? Math.max(...zScores) : 0;
+  const zMin = zScores.length > 0 ? Math.min(...zScores) : 0;
+  const absZMean = meanOf(zScores.map((value) => Math.abs(value)));
+  const zLast = zScores[zScores.length - 1] ?? 0;
+  const zMid = zScores[Math.floor(zScores.length / 2)] ?? zLast;
+  const zDelta = zLast - zMid;
+  let zCrossings = 0;
+  let previousZSign = 0;
+
+  for (const zScore of zScores) {
+    const sign = zScore > epsilon ? 1 : zScore < -epsilon ? -1 : 0;
+
+    if (previousZSign !== 0 && sign !== 0 && sign !== previousZSign) {
+      zCrossings += 1;
+    }
+
+    if (sign !== 0) {
+      previousZSign = sign;
+    }
+  }
+
+  const accel = lastReturn - meanReturn;
+  const volBurst = Math.abs(lastReturn) / Math.max(epsilon, stdReturn);
+  const skewProxy =
+    normalizedReturns.length > 0
+      ? meanOf(normalizedReturns.map((value) => Math.pow(value - meanReturn, 3)))
+      : 0;
+  const touchBand = 0.08;
+  let supportTouches = 0;
+  let resistanceTouches = 0;
+
+  for (const close of closes) {
+    const relativePosition = clamp((close - minimumLow) / range, 0, 1);
+
+    if (relativePosition <= touchBand) {
+      supportTouches += 1;
+    }
+
+    if (relativePosition >= 1 - touchBand) {
+      resistanceTouches += 1;
+    }
+  }
+
+  const fibDeltas = [0.236, 0.382, 0.5, 0.618, 0.786].map((level) => closePosition - level);
+  let nearestAbs = Infinity;
+  let nearestSigned = 0;
+
+  for (const delta of fibDeltas) {
+    const absoluteDelta = Math.abs(delta);
+
+    if (absoluteDelta < nearestAbs) {
+      nearestAbs = absoluteDelta;
+      nearestSigned = delta;
+    }
+  }
 
   return {
     pricePath: [
@@ -2513,7 +3224,7 @@ const buildDimensionFeatureBuckets = (
       stdReturn,
       Math.max(...normalizedReturns),
       Math.min(...normalizedReturns),
-      absoluteReturns.reduce((total, value) => total + value, 0),
+      absReturnSum,
       closePosition,
       netReturn,
       range,
@@ -2570,8 +3281,149 @@ const buildDimensionFeatureBuckets = (
       chopRatio,
       wickBodyRatio,
       bodyMean
+    ],
+    mf__momentum__core: [
+      meanReturn,
+      stdReturn,
+      Math.max(...normalizedReturns),
+      Math.min(...normalizedReturns),
+      absReturnSum,
+      netReturn,
+      range,
+      bullishShare,
+      bearishShare,
+      Math.max(0, 1 - reversalRate),
+      reversalRate,
+      chopRatio,
+      lastReturn,
+      firstReturn,
+      accel,
+      skewProxy
+    ],
+    mf__mean_reversion__core: [
+      zMean,
+      zStd,
+      zMax,
+      zMin,
+      absZMean,
+      zCrossings / Math.max(1, zScores.length - 1),
+      zLast,
+      zMid,
+      zDelta,
+      Math.max(0, zMax),
+      Math.max(0, Math.abs(Math.min(0, zMin))),
+      -zDelta,
+      wickBodyRatio,
+      chopRatio,
+      range,
+      netReturn
+    ],
+    mf__seasons__core: [
+      Math.sin(hourAngle),
+      Math.cos(hourAngle),
+      Math.sin(dayOfYearAngle),
+      Math.cos(dayOfYearAngle),
+      dayOfYearUnit,
+      hourUnit,
+      range,
+      netReturn,
+      absoluteMeanReturn,
+      absoluteStdReturn,
+      chopRatio,
+      wickBodyRatio,
+      bullishShare,
+      bearishShare,
+      reversalRate,
+      closePosition
+    ],
+    mf__time_of_day__core: [
+      Math.sin(hourAngle),
+      Math.cos(hourAngle),
+      hourUnit,
+      range,
+      netReturn,
+      absoluteMeanReturn,
+      absoluteStdReturn,
+      chopRatio,
+      wickBodyRatio,
+      bullishShare,
+      bearishShare,
+      reversalRate,
+      closePosition,
+      lastReturn,
+      accel,
+      volBurst
+    ],
+    mf__fibonacci__core: [
+      fibDeltas[0] ?? 0,
+      fibDeltas[1] ?? 0,
+      fibDeltas[2] ?? 0,
+      fibDeltas[3] ?? 0,
+      fibDeltas[4] ?? 0,
+      Number.isFinite(nearestAbs) ? nearestAbs : 0,
+      nearestSigned,
+      range,
+      netReturn,
+      closePosition,
+      absoluteMeanReturn,
+      absoluteStdReturn,
+      chopRatio,
+      bullishShare,
+      bearishShare,
+      reversalRate
+    ],
+    mf__support_resistance__core: [
+      closePosition,
+      1 - closePosition,
+      supportTouches / window.length,
+      resistanceTouches / window.length,
+      closePosition <= touchBand ? 1 : 0,
+      1 - closePosition <= touchBand ? 1 : 0,
+      range,
+      netReturn,
+      closePosition,
+      absoluteMeanReturn,
+      absoluteStdReturn,
+      chopRatio,
+      wickBodyRatio,
+      bullishShare,
+      bearishShare,
+      reversalRate
     ]
   };
+};
+
+const buildDimensionFeatureLagBuckets = (
+  candles: Candle[],
+  endExclusiveIndex: number,
+  windowBars: number
+): Record<string, number[][]> | null => {
+  const bars = getAiFeatureWindowBars(windowBars);
+
+  if (candles.length < bars + 1 || endExclusiveIndex < bars || endExclusiveIndex > candles.length) {
+    return null;
+  }
+
+  const window = candles.slice(endExclusiveIndex - bars, endExclusiveIndex);
+
+  if (window.length < bars) {
+    return null;
+  }
+
+  const buckets: Record<string, number[][]> = {};
+
+  for (let lag = 0; lag < window.length; lag += 1) {
+    const prefix = window.slice(0, window.length - lag);
+    const vectors = buildAiFeatureVector(prefix, candles);
+
+    for (const [featureId, values] of Object.entries(vectors)) {
+      const perLag = buckets[featureId] ?? [];
+      perLag[lag] = values;
+      buckets[featureId] = perLag;
+    }
+  }
+
+  return buckets;
 };
 
 const BacktestTradeMiniChart = ({
@@ -2587,54 +3439,41 @@ const BacktestTradeMiniChart = ({
 }) => {
   const entryIndex = findCandleIndexAtOrBefore(candles, Number(trade.entryTime) * 1000);
   const exitIndex = findCandleIndexAtOrBefore(candles, Number(trade.exitTime) * 1000);
-  const hasValidIndices = entryIndex >= 0 && exitIndex >= entryIndex;
-  const startIndex = hasValidIndices ? Math.max(0, entryIndex - 1) : 0;
-  const endIndex = hasValidIndices ? Math.min(candles.length - 1, Math.max(entryIndex, exitIndex)) : -1;
   const safeMinutesPerBar = Math.max(1, Number.isFinite(minutesPerBar) ? minutesPerBar : 1);
-  const clipIdSeed = trade.id.replace(/[^a-z0-9_-]/gi, "") || "trade";
-  const clipId = useMemo(() => `backtest-mini-clip-${clipIdSeed}`, [clipIdSeed]);
-  const [reveal, setReveal] = useState(isOpen ? 1 : 0);
-
-  useEffect(() => {
-    let raf = 0;
-
-    if (!isOpen) {
-      setReveal(0);
-      return () => cancelAnimationFrame(raf);
-    }
-
-    const durationMs = 1600;
-    const startedAt = performance.now();
-
-    const tick = (now: number) => {
-      const progress = Math.min(1, (now - startedAt) / durationMs);
-      setReveal(progress);
-
-      if (progress < 1) {
-        raf = requestAnimationFrame(tick);
-      }
-    };
-
-    raf = requestAnimationFrame(tick);
-
-    return () => cancelAnimationFrame(raf);
-  }, [isOpen, trade.id]);
 
   const data = useMemo(() => {
-    if (!hasValidIndices || candles.length === 0) {
+    if (entryIndex < 0 || exitIndex < entryIndex || candles.length === 0) {
       return [];
     }
 
-    const rows: Array<{ bar: number; price: number; high: number; low: number; time: number }> = [];
+    const startIndex = Math.max(0, entryIndex - 1);
+    const endIndex = Math.min(candles.length - 1, Math.max(entryIndex, exitIndex));
+    const rows: Array<{
+      bar: number;
+      price: number;
+      high: number;
+      low: number;
+      up: number | null;
+      down: number | null;
+      flat: number | null;
+      relCand: number;
+      candIdx?: number;
+      ts?: number;
+    }> = [];
     const preCandle = candles[startIndex];
     const prePrice = startIndex < entryIndex ? preCandle?.close ?? trade.entryPrice : trade.entryPrice;
     const preTime = preCandle?.time ?? candles[entryIndex]?.time ?? Number(trade.entryTime) * 1000;
+
     rows.push({
       bar: -1,
       price: prePrice,
       high: prePrice,
       low: prePrice,
-      time: preTime
+      up: prePrice,
+      down: null,
+      flat: null,
+      relCand: -1,
+      ts: preTime
     });
 
     let previousPrice = prePrice;
@@ -2650,163 +3489,104 @@ const BacktestTradeMiniChart = ({
         price: close,
         high,
         low,
-        time: candle?.time ?? preTime
+        up: close > previousPrice ? close : null,
+        down: close < previousPrice ? close : null,
+        flat: close === previousPrice ? close : null,
+        relCand: index - entryIndex,
+        candIdx: index,
+        ts: candle?.time ?? preTime
       });
 
       previousPrice = close;
     }
 
+    for (let index = 1; index < rows.length; index += 1) {
+      const current = rows[index]!;
+      const previous = rows[index - 1]!;
+
+      if (current.up != null) {
+        previous.up = previous.price;
+      }
+
+      if (current.down != null) {
+        previous.down = previous.price;
+      }
+
+      if (current.flat != null) {
+        previous.flat = previous.price;
+      }
+    }
+
     if (rows.length > 0) {
       const last = rows[rows.length - 1]!;
-      last.price = trade.outcomePrice;
-      last.high = Math.max(last.high, trade.outcomePrice);
-      last.low = Math.min(last.low, trade.outcomePrice);
+      const exitPrice = trade.outcomePrice;
+      last.price = exitPrice;
+      last.high = Math.max(last.high, exitPrice);
+      last.low = Math.min(last.low, exitPrice);
+
+      if (rows.length >= 2) {
+        const previous = rows[rows.length - 2]!;
+        last.up = exitPrice > previous.price ? exitPrice : null;
+        last.down = exitPrice < previous.price ? exitPrice : null;
+        last.flat = exitPrice === previous.price ? exitPrice : null;
+      }
     }
 
     return rows;
   }, [
     candles,
-    endIndex,
     entryIndex,
-    hasValidIndices,
+    exitIndex,
     safeMinutesPerBar,
-    startIndex,
     trade.entryPrice,
     trade.entryTime,
     trade.outcomePrice
   ]);
 
+  const yDomain = useMemo<[number | "auto", number | "auto"]>(() => {
+    if (data.length === 0) {
+      return ["auto", "auto"];
+    }
+
+    const lows = data.map((point) => point.low).filter(Number.isFinite) as number[];
+    const highs = data.map((point) => point.high).filter(Number.isFinite) as number[];
+
+    if (lows.length === 0 || highs.length === 0) {
+      return ["auto", "auto"];
+    }
+
+    let low = Math.min(...lows);
+    let high = Math.max(...highs);
+
+    if (Number.isFinite(trade.targetPrice)) {
+      high = Math.max(high, trade.targetPrice);
+    }
+
+    if (Number.isFinite(trade.stopPrice)) {
+      low = Math.min(low, trade.stopPrice);
+    }
+
+    const span = Math.max(0.000000001, high - low);
+    const pad = Math.max(span * 0.12, Math.abs(trade.entryPrice) * 0.002, 1);
+    return [low - pad, high + pad];
+  }, [data, trade.entryPrice, trade.stopPrice, trade.targetPrice]);
+
   if (data.length < 2) {
     return <div className="backtest-trade-mini-empty">Price movement unavailable.</div>;
   }
 
-  const domain = [
-    ...data.flatMap((point) => [point.high, point.low]),
-    trade.entryPrice,
-    trade.targetPrice,
-    trade.stopPrice,
-    trade.outcomePrice
-  ];
-  const min = Math.min(...domain);
-  const max = Math.max(...domain);
-  const span = Math.max(0.000001, max - min);
-  const pad = Math.max(span * 0.12, Math.abs(trade.entryPrice) * 0.002, 1);
-  const minY = min - pad;
-  const maxY = max + pad;
-
-  const width = 760;
-  const height = 260;
-  const padX = 22;
-  const padY = 16;
-  const minBar = -1;
-  const maxBar = Math.max(0, data[data.length - 1]?.bar ?? 0);
-  const barSpan = Math.max(1, maxBar - minBar);
-  const toneByDelta = (delta: number): "up" | "down" | "flat" => {
-    if (delta > 0) {
-      return "up";
-    }
-
-    if (delta < 0) {
-      return "down";
-    }
-
-    return "flat";
-  };
-  const colorByTone = (tone: "up" | "down" | "flat"): string => {
-    if (tone === "up") {
-      return "#34d399";
-    }
-
-    if (tone === "down") {
-      return "#f87171";
-    }
-
-    return "#f8fafc";
-  };
-  const normalizeX = (bar: number): number => {
-    return padX + ((bar - minBar) / barSpan) * (width - padX * 2);
-  };
-  const normalizeY = (value: number): number => {
-    return padY + ((maxY - value) / Math.max(0.000001, maxY - minY)) * (height - padY * 2);
-  };
-
-  const segments = data.slice(1).map((point, index) => {
-    const previous = data[index]!;
-    const tone = toneByDelta(point.price - previous.price);
-
-    return {
-      x1: normalizeX(previous.bar),
-      y1: normalizeY(previous.price),
-      x2: normalizeX(point.bar),
-      y2: normalizeY(point.price),
-      tone
-    };
-  });
-
-  const entryPoint = data.find((point) => point.bar === 0) ?? data[0]!;
-  const exitPoint = data[data.length - 1]!;
-  const entryX = normalizeX(entryPoint.bar);
-  const exitX = normalizeX(exitPoint.bar);
-  const entryY = normalizeY(trade.entryPrice);
-  const exitY = normalizeY(trade.outcomePrice);
-  const targetY = normalizeY(trade.targetPrice);
-  const stopY = normalizeY(trade.stopPrice);
-  const revealWidth = width * reveal;
-
   return (
-    <div className="backtest-trade-mini-chart">
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Trade price movement">
-        <defs>
-          <clipPath id={clipId}>
-            <rect x="0" y="0" width={revealWidth} height={height} />
-          </clipPath>
-        </defs>
-        <rect
-          x="0.5"
-          y="0.5"
-          width={width - 1}
-          height={height - 1}
-          rx="14"
-          fill="rgba(0,0,0,0.88)"
-          stroke="rgba(255,255,255,0.08)"
-        />
-        <line x1={padX} x2={width - padX} y1={targetY} y2={targetY} stroke="#34d399" strokeDasharray="4 6" />
-        <line
-          x1={padX}
-          x2={width - padX}
-          y1={entryY}
-          y2={entryY}
-          stroke="rgba(163,163,163,0.9)"
-          strokeDasharray="4 6"
-        />
-        <line x1={padX} x2={width - padX} y1={stopY} y2={stopY} stroke="#f87171" strokeDasharray="4 6" />
-        <g clipPath={`url(#${clipId})`}>
-          {segments.map((segment, index) => (
-            <line
-              key={`${trade.id}-segment-${index}`}
-              x1={segment.x1}
-              y1={segment.y1}
-              x2={segment.x2}
-              y2={segment.y2}
-              stroke={colorByTone(segment.tone)}
-              strokeWidth="3"
-              strokeLinecap="round"
-            />
-          ))}
-          <circle cx={entryX} cy={entryY} r="4" fill="#f8fafc" />
-          <circle cx={exitX} cy={exitY} r="4" fill={trade.pnlUsd >= 0 ? "#34d399" : "#f87171"} />
-        </g>
-        <text
-          x={width - padX}
-          y={height - 9}
-          fill="rgba(156,163,175,0.92)"
-          fontSize="11"
-          textAnchor="end"
-          fontFamily={AI_ZIP_MONO_FONT}
-        >
-          Minutes since entry
-        </text>
-      </svg>
+    <div style={{ height: 260 }}>
+      <BacktestPerTradeMiniChart
+        data={data}
+        yDomain={yDomain}
+        entryPrice={trade.entryPrice}
+        tpPrice={trade.targetPrice}
+        slPrice={trade.stopPrice}
+        side={trade.side === "Long" ? "BUY" : "SELL"}
+        usdPerUnit={Math.abs(trade.units) || 1}
+        isOpen={isOpen}
+      />
     </div>
   );
 };
@@ -3199,11 +3979,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [modelsModalOpen, setModelsModalOpen] = useState(false);
   const [featuresModalOpen, setFeaturesModalOpen] = useState(false);
   const [librariesModalOpen, setLibrariesModalOpen] = useState(false);
-  const [selectedAiModels, setSelectedAiModels] = useState<string[]>(() => {
-    return availableAiModelNames.slice(0, Math.min(availableAiModelNames.length, 3));
+  const [aiModelStates, setAiModelStates] = useState<Record<string, AiModelState>>(() => {
+    return buildInitialAiModelStates(availableAiModelNames);
   });
-  const [selectedAiFeatures, setSelectedAiFeatures] = useState<string[]>(() => {
-    return AI_FEATURE_OPTIONS.map((feature) => feature.id);
+  const [aiFeatureLevels, setAiFeatureLevels] = useState<Record<string, AiFeatureLevel>>(() => {
+    return buildInitialAiFeatureLevels();
+  });
+  const [aiFeatureModes, setAiFeatureModes] = useState<Record<string, AiFeatureMode>>(() => {
+    return buildInitialAiFeatureModes();
   });
   const [selectedAiLibraries, setSelectedAiLibraries] = useState<string[]>([
     "core",
@@ -3257,6 +4040,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [propResult, setPropResult] = useState<PropFirmResult | null>(null);
   const [propStats, setPropStats] = useState<PropFirmStats | null>(null);
 
+  useEffect(() => {
+    setAiModelStates((current) => syncAiModelStates(current, availableAiModelNames));
+  }, [availableAiModelNames]);
+
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -3283,8 +4070,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return modelProfiles.find((model) => model.id === selectedModelId) ?? modelProfiles[0]!;
   }, [modelProfiles, selectedModelId]);
   const aiDisabled = aiMode === "off";
-  const selectedAiModelCount = selectedAiModels.length;
-  const selectedAiFeatureCount = selectedAiFeatures.length;
+  const selectedAiModelCount = useMemo(() => {
+    return Object.values(aiModelStates).filter((state) => state > 0).length;
+  }, [aiModelStates]);
+  const selectedAiFeatureCount = useMemo(() => {
+    return AI_FEATURE_OPTIONS.filter((feature) => (aiFeatureLevels[feature.id] ?? 0) > 0).length;
+  }, [aiFeatureLevels]);
+  const configuredAiFeatureDimensionCount = useMemo(() => {
+    return countConfiguredAiFeatureDimensions(aiFeatureLevels, aiFeatureModes, chunkBars);
+  }, [aiFeatureLevels, aiFeatureModes, chunkBars]);
   const selectedAiLibraryCount = selectedAiLibraries.length;
   const availableAiLibraries = useMemo(() => {
     return aiLibraryDefs.filter((library) => !selectedAiLibraries.includes(library.id));
@@ -3464,18 +4258,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       setSelectedModelId(modelProfiles[0]?.id ?? "");
     }
   }, [modelProfiles, selectedModelId]);
-
-  useEffect(() => {
-    setSelectedAiModels((current) => {
-      const next = current.filter((name) => availableAiModelNames.includes(name));
-
-      if (next.length > 0) {
-        return next;
-      }
-
-      return availableAiModelNames.slice(0, Math.min(availableAiModelNames.length, 3));
-    });
-  }, [availableAiModelNames]);
 
   useEffect(() => {
     if (selectedAiLibraries.length === 0) {
@@ -3844,7 +4626,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const resolvedExitIndex = path.hit ? path.hitIndex : exitIndex;
       const rawOutcomePrice = path.hit ? path.outcomePrice : list[resolvedExitIndex].close;
       const outcomePrice = Math.max(0.000001, rawOutcomePrice);
-      const exitReason = path.hit ? (path.result === "Loss" ? "SL" : "TP") : "Model Exit";
+      const exitReason = path.hit
+        ? path.result === "Loss"
+          ? "Stop Loss"
+          : "Take Profit"
+        : "Model Exit";
       const result: TradeResult = path.hit
         ? (path.result ?? "Loss")
         : blueprint.side === "Long"
@@ -5261,17 +6047,43 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [mainStatsTrades]);
 
   const mainStatsMonthRows = useMemo(() => {
-    const map = new Map<string, { key: string; total: number; trades: number }>();
+    const monthBuckets = new Map<string, { key: string; pnl: number; trades: number }>();
 
     for (const trade of mainStatsTrades) {
       const key = getTradeMonthKey(trade.exitTime);
-      const current = map.get(key) ?? { key, total: 0, trades: 0 };
-      current.total += trade.pnlUsd;
+      const monthKey = getTradeCalendarMonthKey(trade.exitTime);
+      const current = monthBuckets.get(key) ?? { key: monthKey, pnl: 0, trades: 0 };
+      current.pnl += trade.pnlUsd;
       current.trades += 1;
-      map.set(key, current);
+      monthBuckets.set(key, current);
     }
 
-    return Array.from(map.values()).sort((left, right) => left.key.localeCompare(right.key));
+    const map = new Map<
+      string,
+      { key: string; total: number; trades: number; months: number; avgPerTrade: number }
+    >();
+
+    for (const bucket of monthBuckets.values()) {
+      const current = map.get(bucket.key) ?? {
+        key: bucket.key,
+        total: 0,
+        trades: 0,
+        months: 0,
+        avgPerTrade: 0
+      };
+      current.total += bucket.pnl;
+      current.trades += bucket.trades;
+      current.months += 1;
+      map.set(bucket.key, current);
+    }
+
+    return Array.from(map.values())
+      .map((row) => ({
+        ...row,
+        avgPerTrade: row.trades > 0 ? row.total / row.trades : 0,
+        total: row.months > 0 ? row.total / row.months : 0
+      }))
+      .sort((left, right) => Number(left.key) - Number(right.key));
   }, [mainStatsTrades]);
 
   const mainStatsAiEfficiency = useMemo(() => {
@@ -5372,11 +6184,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     mainStatsSessionRows.length > 0 ? wrapIndex(mainStatsSessionPnlIndex, mainStatsSessionRows.length) : 0;
   const mainStatsSessionPnlFocusRow =
     mainStatsSessionRows.length > 0 ? mainStatsSessionRows[activeMainStatsSessionPnlIndex] : null;
+  const defaultMainStatsMonthPnlIndex = mainStatsMonthRows.findIndex(
+    (row) => row.key === getCurrentTradeCalendarMonthKey()
+  );
+  const resolvedMainStatsMonthPnlIndex =
+    defaultMainStatsMonthPnlIndex >= 0 ? defaultMainStatsMonthPnlIndex : mainStatsMonthRows.length - 1;
   const activeMainStatsMonthPnlIndex =
     mainStatsMonthRows.length === 0
       ? -1
       : mainStatsMonthPnlIndex < 0
-        ? mainStatsMonthRows.length - 1
+        ? resolvedMainStatsMonthPnlIndex
         : wrapIndex(mainStatsMonthPnlIndex, mainStatsMonthRows.length);
   const mainStatsMonthPnlFocusRow =
     activeMainStatsMonthPnlIndex >= 0 ? mainStatsMonthRows[activeMainStatsMonthPnlIndex] : null;
@@ -5499,11 +6316,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       "Month PnL",
       mainStatsMonthPnlFocusRow ? getMonthLabel(mainStatsMonthPnlFocusRow.key) : "—",
       mainStatsMonthPnlFocusRow
-        ? `${formatSignedUsd(mainStatsMonthPnlFocusRow.total)} · ${
+        ? `${formatSignedUsd(mainStatsMonthPnlFocusRow.total)} / month · ${
+            mainStatsMonthPnlFocusRow.months
+          } months · ${
             mainStatsMonthPnlFocusRow.trades
           } trades · avg ${formatSignedUsd(
-            mainStatsMonthPnlFocusRow.total / Math.max(1, mainStatsMonthPnlFocusRow.trades)
-          )}`
+            mainStatsMonthPnlFocusRow.avgPerTrade
+          )} / trade`
         : "No month data",
       mainStatsMonthRows.length,
       () => {
@@ -5514,7 +6333,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
         setMainStatsMonthPnlIndex((current) => {
           const startIndex =
-            current < 0 ? mainStatsMonthRows.length - 1 : wrapIndex(current, mainStatsMonthRows.length);
+            current < 0 ? resolvedMainStatsMonthPnlIndex : wrapIndex(current, mainStatsMonthRows.length);
           return wrapIndex(startIndex - 1, mainStatsMonthRows.length);
         });
       },
@@ -5526,7 +6345,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
         setMainStatsMonthPnlIndex((current) => {
           const startIndex =
-            current < 0 ? mainStatsMonthRows.length - 1 : wrapIndex(current, mainStatsMonthRows.length);
+            current < 0 ? resolvedMainStatsMonthPnlIndex : wrapIndex(current, mainStatsMonthRows.length);
           return wrapIndex(startIndex + 1, mainStatsMonthRows.length);
         });
       }
@@ -5833,7 +6652,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       {
         label: "Best Month",
         value: bestMonthRow
-          ? `${getMonthLabel(bestMonthRow.key)} · ${formatSignedUsd(bestMonthRow.total)} · ${bestMonthRow.trades} trades`
+          ? `${getMonthLabel(bestMonthRow.key)} · ${formatSignedUsd(bestMonthRow.total)} avg · ${bestMonthRow.months} months`
           : "—",
         tone:
           bestMonthRow === null ? "neutral" : bestMonthRow.total >= 0 ? "up" : "down",
@@ -5842,7 +6661,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       {
         label: "Worst Month",
         value: worstMonthRow
-          ? `${getMonthLabel(worstMonthRow.key)} · ${formatSignedUsd(worstMonthRow.total)} · ${worstMonthRow.trades} trades`
+          ? `${getMonthLabel(worstMonthRow.key)} · ${formatSignedUsd(worstMonthRow.total)} avg · ${worstMonthRow.months} months`
           : "—",
         tone:
           worstMonthRow === null ? "neutral" : worstMonthRow.total >= 0 ? "up" : "down",
@@ -5883,6 +6702,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     mainStatsModelRows,
     mainStatsMonthPnlFocusRow,
     mainStatsMonthRows,
+    resolvedMainStatsMonthPnlIndex,
     mainStatsSessionPnlFocusRow,
     mainStatsSessionRows,
     mainStatsSummary
@@ -6150,9 +6970,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const backtestEntryExitStats = useMemo(() => {
     const sideMap = new Map<TradeSide, { side: TradeSide; count: number; wins: number; pnl: number }>();
     const exitMap = new Map<string, number>([
-      ["Target Hit", 0],
-      ["Protective Stop", 0],
-      ["Managed Exit", 0]
+      ["Take Profit", 0],
+      ["Stop Loss", 0],
+      ["Model Exit", 0]
     ]);
     let totalEntry = 0;
     let totalExit = 0;
@@ -6180,15 +7000,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         side.pnl += trade.pnlUsd;
       }
 
-      const targetGap = Math.abs(trade.targetPrice - trade.entryPrice);
-      const stopGap = Math.abs(trade.entryPrice - trade.stopPrice);
-      const realizedGap = Math.abs(trade.outcomePrice - trade.entryPrice);
-      const exitLabel =
-        trade.result === "Win" && realizedGap >= targetGap * 0.84
-          ? "Target Hit"
-          : trade.result === "Loss" && realizedGap >= stopGap * 0.84
-            ? "Protective Stop"
-            : "Managed Exit";
+      const exitLabel = getBacktestExitLabel(trade);
 
       exitMap.set(exitLabel, (exitMap.get(exitLabel) ?? 0) + 1);
     }
@@ -6624,27 +7436,43 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const splitAllowed = antiCheatEnabled && validationMode === "split";
     const splitIndex = Math.floor(sortedTrades.length * (DIMENSION_STATS_SPLIT_PCT / 100));
     const evaluationTrades = splitAllowed ? sortedTrades.slice(splitIndex) : sortedTrades;
-    const featureLabelById = new Map(AI_FEATURE_OPTIONS.map((option) => [option.id, option.label]));
+    const effectiveBars = getAiFeatureWindowBars(chunkBars);
+    const dimensionDefs: Array<{
+      key: string;
+      featureId: string;
+      featureIndex: number;
+      lag: number;
+      name: string;
+    }> = [];
 
-    const dimensionDefs: Array<{ key: string; featureId: string; featureIndex: number; name: string }> = [];
+    for (const feature of AI_FEATURE_OPTIONS) {
+      const level = aiFeatureLevels[feature.id] ?? 0;
+      const take = featureTakeCount(feature.id, level);
 
-    for (const featureId of selectedAiFeatures) {
-      const names = DIMENSION_FEATURE_NAME_BANK[featureId] ?? [];
-
-      if (names.length === 0) {
+      if (take <= 0) {
         continue;
       }
 
-      const featureLabel = featureLabelById.get(featureId) ?? featureId;
+      const names = DIMENSION_FEATURE_NAME_BANK[feature.id] ?? [];
+      const mode = aiFeatureModes[feature.id] ?? "individual";
+      const parts = mode === "individual" ? effectiveBars : 1;
 
-      names.forEach((subName, featureIndex) => {
-        dimensionDefs.push({
-          key: `${featureId}__${featureIndex}`,
-          featureId,
-          featureIndex,
-          name: `${featureLabel} - ${subName}`
-        });
-      });
+      for (let featureIndex = 0; featureIndex < take; featureIndex += 1) {
+        const subName = names[featureIndex] ?? `Dim ${featureIndex + 1}`;
+
+        for (let lag = 0; lag < parts; lag += 1) {
+          dimensionDefs.push({
+            key: `${feature.id}__${featureIndex}__t${lag}`,
+            featureId: feature.id,
+            featureIndex,
+            lag,
+            name:
+              mode === "individual"
+                ? `${feature.label} - ${subName} · t-${lag}`
+                : `${feature.label} - ${subName}`
+          });
+        }
+      }
     }
 
     if (dimensionDefs.length === 0 || evaluationTrades.length === 0) {
@@ -6685,7 +7513,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         continue;
       }
 
-      const featureBuckets = buildDimensionFeatureBuckets(candles, entryIndex, chunkBars);
+      const featureBuckets = buildDimensionFeatureLagBuckets(candles, entryIndex, chunkBars);
 
       if (!featureBuckets) {
         continue;
@@ -6694,7 +7522,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       outcomes.push(trade.result === "Win" ? 1 : 0);
 
       for (const dimension of dimensionDefs) {
-        const values = featureBuckets[dimension.featureId] ?? [];
+        const perLagValues = featureBuckets[dimension.featureId] ?? [];
+        const values = perLagValues[dimension.lag] ?? perLagValues[0] ?? [];
         const value = Number(values[dimension.featureIndex] ?? 0);
         const list = valuesByDimension.get(dimension.key);
 
@@ -6851,7 +7680,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     chunkBars,
     compressionMethod,
     dimensionAmount,
-    selectedAiFeatures,
+    aiFeatureLevels,
+    aiFeatureModes,
     selectedBacktestTab,
     selectedTimeframe,
     seriesMap,
@@ -8772,17 +9602,25 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             <input
                               type="number"
                               min={2}
-                              max={512}
+                              max={Math.max(2, configuredAiFeatureDimensionCount)}
                               step={1}
                               value={dimensionAmount}
                               disabled={aiDisabled}
                               onChange={(event) => {
                                 setDimensionAmount(
-                                  clamp(Math.floor(Number(event.target.value) || 2), 2, 512)
+                                  clamp(
+                                    Math.floor(Number(event.target.value) || 2),
+                                    2,
+                                    Math.max(2, configuredAiFeatureDimensionCount)
+                                  )
                                 );
                               }}
                               className="ai-zip-input"
                             />
+                            <span className="ai-zip-note">
+                              {configuredAiFeatureDimensionCount.toLocaleString("en-US")} raw dims active before
+                              compression
+                            </span>
                           </label>
 
                           <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
@@ -9049,57 +9887,99 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
               <AiSettingsModal
                 title="MODELS"
-                subtitle="Left click: toggle ENTRY"
+                subtitle="Left click: toggle ENTRY. Right click: toggle BOTH."
                 size="wide"
                 bodyClassName="ai-zip-models-modal-body"
                 open={modelsModalOpen}
                 onClose={() => setModelsModalOpen(false)}
               >
                 <div className="ai-zip-model-grid">
-                  {availableAiModelNames.map((modelName) => (
-                    <button
-                      key={modelName}
-                      type="button"
-                      className={`ai-zip-select-tile model ${
-                        selectedAiModels.includes(modelName) ? "active" : ""
-                      }`}
-                      onClick={() => {
-                        setSelectedAiModels((current) => toggleListValue(current, modelName));
-                      }}
-                    >
-                      <strong>{modelName}</strong>
-                      <span>{selectedAiModels.includes(modelName) ? "ENTRY" : "OFF"}</span>
-                    </button>
-                  ))}
+                  {availableAiModelNames.map((modelName) => {
+                    const state = aiModelStates[modelName] ?? 0;
+
+                    return (
+                      <button
+                        key={modelName}
+                        type="button"
+                        className={`ai-zip-select-tile model ${state > 0 ? "active" : ""}`}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          setAiModelStates((current) => ({
+                            ...current,
+                            [modelName]: getNextAiModelState(current[modelName] ?? 0, event.button)
+                          }));
+                        }}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                        }}
+                        title={`Left click: toggle ENTRY for ${modelName}. Right click: toggle BOTH for ${modelName}.`}
+                      >
+                        <strong>{modelName}</strong>
+                        <span>{getAiModelStateLabel(state)}</span>
+                        <em>
+                          {state === 2 ? "Entry + Exit" : state === 1 ? "Entry only" : "Disabled"}
+                        </em>
+                      </button>
+                    );
+                  })}
                 </div>
               </AiSettingsModal>
 
               <AiSettingsModal
                 title="FEATURES"
-                subtitle="AI.zip feature tiles with per-feature context"
+                subtitle="Left click: cycle intensity. Right click: toggle Ensemble vs Individualization."
                 size="xwide"
                 bodyClassName="ai-zip-features-modal-body"
                 open={featuresModalOpen}
                 onClose={() => setFeaturesModalOpen(false)}
               >
                 <div className="ai-zip-feature-grid">
-                  {AI_FEATURE_OPTIONS.map((feature) => (
-                    <button
-                      key={feature.id}
-                      type="button"
-                      className={`ai-zip-select-tile feature ${
-                        selectedAiFeatures.includes(feature.id) ? "active" : ""
-                      }`}
-                      onClick={() => {
-                        setSelectedAiFeatures((current) => toggleListValue(current, feature.id));
-                      }}
-                      title={feature.note}
-                    >
-                      <strong>{feature.label}</strong>
-                      <span>{feature.note ?? "Feature context for AI.zip embeddings."}</span>
-                      <em>{selectedAiFeatures.includes(feature.id) ? "ENABLED" : "DISABLED"}</em>
-                    </button>
-                  ))}
+                  {AI_FEATURE_OPTIONS.map((feature) => {
+                    const level = aiFeatureLevels[feature.id] ?? 0;
+                    const mode = aiFeatureModes[feature.id] ?? "individual";
+                    const dimsAdded =
+                      featureTakeCount(feature.id, level) *
+                      (mode === "individual" ? getAiFeatureWindowBars(chunkBars) : 1);
+
+                    return (
+                      <button
+                        key={feature.id}
+                        type="button"
+                        className={`ai-zip-select-tile feature ${level > 0 ? "active" : ""}`}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+
+                          if (event.button === 2) {
+                            setAiFeatureModes((current) => ({
+                              ...current,
+                              [feature.id]:
+                                (current[feature.id] ?? "individual") === "individual"
+                                  ? "ensemble"
+                                  : "individual"
+                            }));
+                            return;
+                          }
+
+                          setAiFeatureLevels((current) => ({
+                            ...current,
+                            [feature.id]: getNextAiFeatureLevel(current[feature.id] ?? 0)
+                          }));
+                        }}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                        }}
+                        title={`${feature.label}: Left click cycles intensity. Right click toggles Ensemble vs Individualization.`}
+                      >
+                        <strong>{feature.label}</strong>
+                        <span>{feature.note ?? "Feature context for AI.zip embeddings."}</span>
+                        <em>
+                          {FEATURE_LEVEL_LABEL[level as AiFeatureLevel]} ·{" "}
+                          {mode === "ensemble" ? "Ensemble" : "Individualization"} · +
+                          {dimsAdded.toLocaleString("en-US")} dims
+                        </em>
+                      </button>
+                    );
+                  })}
                 </div>
               </AiSettingsModal>
 
@@ -9978,7 +10858,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     <div className="backtest-calendar-trade-meta">
                                       <div>Session: {getSessionLabel(trade.entryTime)}</div>
                                       <div>Entry Model: {trade.entrySource}</div>
-                                      <div>Exit Reason: {trade.exitReason || "-"}</div>
+                                      <div>Exit Reason: {getBacktestExitLabel(trade)}</div>
                                       <div>Confidence: {(getTradeConfidenceScore(trade) * 100).toFixed(0)}%</div>
                                     </div>
                                   </div>
