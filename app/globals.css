@@ -2155,14 +2155,36 @@ button {
 
 .backtest-stat-card strong.up,
 .backtest-stat-row strong.up,
-.backtest-bar-values strong.up {
-  color: rgba(110, 231, 183, 0.98);
+.backtest-bar-values strong.up,
+strong.up,
+span.up {
+  color: rgba(110, 231, 183, 0.98) !important;
 }
 
 .backtest-stat-card strong.down,
 .backtest-stat-row strong.down,
-.backtest-bar-values strong.down {
-  color: rgba(252, 165, 165, 0.98);
+.backtest-bar-values strong.down,
+strong.down,
+span.down {
+  color: rgba(252, 165, 165, 0.98) !important;
+}
+
+.backtest-stat-card strong.blue,
+.backtest-stat-row strong.blue,
+.backtest-bar-values strong.blue,
+.main-settings-kpi-card strong.blue,
+strong.blue,
+span.blue {
+  color: rgba(90, 170, 255, 0.98) !important;
+}
+
+.backtest-stat-card strong.yellow,
+.backtest-stat-row strong.yellow,
+.backtest-bar-values strong.yellow,
+.main-settings-kpi-card strong.yellow,
+strong.yellow,
+span.yellow {
+  color: rgba(255, 215, 0, 0.98) !important;
 }
 
 .backtest-stat-card.stat-span-2 {
@@ -3897,179 +3919,448 @@ button {
 }
 
 /* =========================================
-   BACKTEST UI POLISH OVERRIDES
+   STUNNING BACKTEST UI OVERRIDES
    ========================================= */
 
-/* Keep tabs exactly like original style */
-.backtest-tabs {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  overflow-x: auto;
-  padding-bottom: 0.1rem;
-  scrollbar-width: none;
+/* Main Surface */
+.backtest-surface {
+  background: #090d13; /* Match chart exactly */
+  padding: 1.2rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
 }
 
-.backtest-tab {
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.78);
-  border-radius: 11px;
-  padding: 0.46rem 0.72rem;
-  font-size: 0.64rem;
-  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-  letter-spacing: 0.04em;
-  font-weight: 900;
-  white-space: nowrap;
-  cursor: pointer;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
-}
 
-.backtest-tab:hover {
-  color: rgba(255, 255, 255, 0.92);
-}
-
-.backtest-tab.active {
-  color: rgba(255, 255, 255, 0.96);
-  border-color: rgba(255, 255, 255, 0.2);
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.06));
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.58);
-}
-
-/* Use available space on every sub-page */
-.backtest-panel {
-  min-height: 0;
-  display: grid;
-  gap: 0.9rem;
-  grid-auto-flow: row dense;
-}
-
-.backtest-panel > .backtest-grid {
-  min-height: 0;
-}
-
-.backtest-grid.two-up {
-  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr);
-}
-
-.main-settings-layout {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  align-items: stretch;
-}
-
-.main-settings-overview.span-2 {
-  display: grid;
-  align-content: start;
-  gap: 0.8rem;
-}
-
-.main-settings-kpi-grid {
-  grid-template-columns: repeat(6, minmax(120px, 1fr));
-}
-
-.main-settings-stack {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-content: start;
-}
-
-/* Statistical Graphs: compact and dense */
-.backtest-graph-wrap.short {
-  min-height: 180px;
-  max-height: 220px;
-}
-
-/* Remove harsh blue focus glows globally in backtest */
-.backtest-date-input:focus,
-.backtest-search:focus,
-.backtest-input-field input:focus,
-.ai-zip-input:focus,
-.backtest-inline-select select:focus,
-.backtest-cluster-select:focus {
-  box-shadow: none !important;
-  border-color: rgba(255, 255, 255, 0.24) !important;
-}
-
-/* Meaningful stat colors everywhere */
-.backtest-summary-card strong,
-.backtest-stat-card strong,
-.backtest-stat-row strong,
-.backtest-history-side strong,
-.main-settings-kpi-card strong,
-.backtest-metric-card strong,
-.backtest-dimension-reading strong {
-  color: #6fb4ff;
-}
-
-.backtest-stat-card strong.up,
-.backtest-summary-card strong.up,
-.backtest-history-side strong.up,
-.backtest-bar-values strong.up {
-  color: #6ee7b7 !important;
-}
-
-.backtest-stat-card strong.down,
-.backtest-summary-card strong.down,
-.backtest-history-side strong.down,
-.backtest-bar-values strong.down {
-  color: #fca5a5 !important;
-}
-
-.backtest-stat-card.tone-neutral strong,
-.backtest-stat-row strong.neutral,
-.main-settings-kpi-card strong.neutral,
-.backtest-month-pill.neutral,
-.backtest-pill {
-  color: #fcd34d !important;
-}
-
-/* AI.zip-style card vibe, keep rich depth */
+/* Cards & Containers - Flat, Clean, Thin Borders */
+.backtest-hero-copy,
 .backtest-card,
 .backtest-summary-card,
-.backtest-hero-copy,
 .backtest-empty,
 .backtest-empty-inline,
 .backtest-history-list,
 .backtest-history-table-wrap,
-.backtest-dimension-table,
 .backtest-bar-list.framed,
+.backtest-dimension-table,
+.backtest-cluster-overlay-card,
+.backtest-metric-card,
+.backtest-stat-card,
 .main-settings-kpi-card,
-.ai-zip-section {
-  background: #0b0b0b;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.75);
+.ai-zip-section,
+.backtest-calendar-detail {
+  background: #0b0b0b !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.75) !important;
+  transition: transform 0.2s ease, box-shadow 0.2s ease !important;
 }
 
-/* Keep inline-styled sections aligned with same vibe */
+.backtest-hero-copy:hover,
+.backtest-card:hover,
+.main-settings-kpi-card:hover {
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.8) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Main Settings Masonry Layout */
+.main-settings-masonry {
+  column-count: 2;
+  column-gap: 0.9rem;
+  width: 100%;
+}
+.main-settings-masonry > div {
+  break-inside: avoid;
+  margin-bottom: 0.9rem;
+}
+@media (max-width: 800px) {
+  .main-settings-masonry {
+    column-count: 1;
+  }
+}
+.backtest-history-row,
+.backtest-day-row,
+.backtest-stat-row,
+.backtest-mini-row {
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+  border-radius: 0 !important;
+  padding: 0.6rem 0.2rem !important;
+}
+.backtest-history-row:last-child,
+.backtest-day-row:last-child,
+.backtest-stat-row:last-child,
+.backtest-mini-row:last-child {
+  border-bottom: none !important;
+}
+
+/* Tables */
+.backtest-history-table thead th {
+  background: #0b0b0b !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10) !important;
+  color: var(--text-faint) !important;
+  font-weight: 500 !important;
+  padding: 0.75rem 0.5rem !important;
+}
+.backtest-history-table tbody td {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+  color: var(--text) !important;
+  padding: 0.65rem 0.5rem !important;
+}
+.backtest-history-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02) !important;
+}
+.backtest-history-table tbody tr.up-row {
+  background: rgba(27, 174, 138, 0.04) !important;
+}
+.backtest-history-table tbody tr.up-row:hover {
+  background: rgba(27, 174, 138, 0.08) !important;
+}
+.backtest-history-table tbody tr.down-row {
+  background: rgba(240, 69, 90, 0.04) !important;
+}
+.backtest-history-table tbody tr.down-row:hover {
+  background: rgba(240, 69, 90, 0.08) !important;
+}
+
+/* Calendar */
+.backtest-calendar-cell {
+  background: #0b0b0b !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 12px !important;
+  transition: all 0.2s ease !important;
+}
+.backtest-calendar-cell:hover {
+  border-color: rgba(255, 255, 255, 0.20) !important;
+  background: #0b0b0b !important;
+  transform: translateY(-1px) !important;
+  box-shadow: none !important;
+}
+.backtest-calendar-cell.selected {
+  border-color: rgba(255, 255, 255, 0.3) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  box-shadow: none !important;
+}
+
+.backtest-calendar-trade {
+  background: #0b0b0b !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 14px !important;
+}
+.backtest-calendar-trade:hover {
+  border-color: rgba(255, 255, 255, 0.20) !important;
+}
+.backtest-calendar-trade.expanded {
+  border-color: rgba(255, 255, 255, 0.30) !important;
+  background: #111111 !important;
+}
+.backtest-calendar-trade-expand {
+  background: rgba(0, 0, 0, 0.34) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+.backtest-calendar-trade-panel,
+.backtest-calendar-trade-stat {
+  background: #000 !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Inputs & Actions */
+.backtest-action-btn,
+.ai-zip-button,
+.backtest-range-clear {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  color: var(--text) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45) !important;
+  transition: all 0.2s ease !important;
+}
+.backtest-action-btn:hover:not(:disabled),
+.ai-zip-button:hover:not(:disabled),
+.backtest-range-clear:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(255, 255, 255, 0.25) !important;
+  transform: translateY(-1px) !important;
+}
+.backtest-action-btn:active:not(:disabled),
+.ai-zip-button:active:not(:disabled),
+.backtest-range-clear:active {
+  transform: translateY(0) !important;
+}
+
+.ai-zip-button.active {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.4) !important;
+  color: #fff !important;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.58) !important;
+}
+
+.backtest-date-input,
+.backtest-search,
+.backtest-input-field input,
+.ai-zip-input {
+  background: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  color: var(--text) !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+  transition: all 0.2s ease !important;
+}
+.backtest-date-input:focus,
+.backtest-search:focus,
+.backtest-input-field input:focus,
+.ai-zip-input:focus {
+  border-color: rgba(255, 255, 255, 0.3) !important;
+  box-shadow: none !important;
+}
+
+/* Specific UI Enhancements */
+.main-settings-kpi-card {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  align-items: flex-start;
+}
+.main-settings-kpi-card span {
+  font-size: 0.65rem;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+}
+.main-settings-kpi-card strong {
+  font-size: 1.1rem;
+  color: var(--text);
+  font-weight: 800;
+}
+
+/* Filter Tiles (Time Settings) */
+.backtest-filter-tile {
+  background: #0b0b0b !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 12px !important;
+  padding: 0.6rem;
+  color: var(--text-dim);
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.75) !important;
+}
+.backtest-filter-tile:hover {
+  background: rgba(255, 255, 255, 0.03) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  transform: translateY(-2px);
+}
+.backtest-filter-tile.active {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.4) !important;
+  color: #fff !important;
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.8) !important;
+}
+.backtest-filter-tile strong {
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+
+/* Range Slider */
+.backtest-slider {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 6px;
+  background: var(--line);
+  border-radius: 3px;
+  outline: none;
+  margin: 10px 0;
+}
+.backtest-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  box-shadow: 0 0 10px rgba(45, 108, 255, 0.5);
+  transition: transform 0.1s ease;
+}
+.backtest-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+/* Progress Bars (Prop Firm Tool) */
+.backtest-progress-block {
+  background: var(--bg-top);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1rem;
+}
+.backtest-progress-track {
+  height: 8px;
+  background: var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+.backtest-progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+.backtest-progress-fill.up {
+  background: var(--up);
+  box-shadow: 0 0 10px rgba(27, 174, 138, 0.4);
+}
+.backtest-progress-fill.down {
+  background: var(--down);
+  box-shadow: 0 0 10px rgba(240, 69, 90, 0.4);
+}
+
+/* Graphs */
+.backtest-graph-wrap {
+  border: 1px solid var(--line);
+  background: var(--bg-top);
+  border-radius: 10px;
+  overflow: hidden;
+  padding: 1rem;
+}
+.backtest-grid-line {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+/* Cluster Map / Special Cards */
+.backtest-cluster-legend-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+}
+
+.backtest-calendar-nav-btn {
+  background: var(--bg-top);
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+.backtest-calendar-nav-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* Typography refinements */
+.backtest-hero-copy h2,
+.backtest-card-head h3,
+.backtest-calendar-detail-head h3,
+.backtest-cluster-title {
+  color: var(--text);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.backtest-hero-copy p,
+.backtest-card-head p,
+.backtest-calendar-detail-head p,
+.backtest-cluster-subtitle {
+  color: var(--text-dim);
+}
+
+/* Stats */
+.backtest-stat-card strong,
+.backtest-history-copy strong,
+.backtest-metric-card strong,
+.backtest-summary-card strong {
+  color: var(--text);
+  font-weight: 700;
+}
+.backtest-stat-card span,
+.backtest-history-copy span,
+.backtest-metric-card span,
+.backtest-summary-card span {
+  color: var(--text-faint);
+}
+
+.backtest-month-pill.up {
+  border-color: rgba(27, 174, 138, 0.3);
+  color: var(--up);
+  background: rgba(27, 174, 138, 0.1);
+}
+.backtest-month-pill.down {
+  border-color: rgba(240, 69, 90, 0.3);
+  color: var(--down);
+  background: rgba(240, 69, 90, 0.1);
+}
+.backtest-month-pill.neutral {
+  border-color: var(--line);
+  color: var(--text-dim);
+  background: transparent;
+}
+
+.backtest-calendar-side-pill.up {
+  color: var(--up);
+  background: rgba(27, 174, 138, 0.1);
+  border-color: rgba(27, 174, 138, 0.3);
+}
+.backtest-calendar-side-pill.down {
+  color: var(--down);
+  background: rgba(240, 69, 90, 0.1);
+  border-color: rgba(240, 69, 90, 0.3);
+}
+
+/* Inline Component Overrides */
 div[style*="background: #0b0b0b"],
 div[style*="background: rgba(7, 12, 20, 0.72)"],
+div[style*="background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.15))"],
 div[style*="background: rgba(255,255,255,0.05)"] {
-  background: #0b0b0b !important;
-  border-color: rgba(255, 255, 255, 0.1) !important;
+  background: #0d121b !important;
+  border-color: rgba(255, 255, 255, 0.06) !important;
 }
 
+select[style*="background: rgba(255,255,255,0.04)"],
 select[style*="background: rgba(90,170,255,0.15)"] {
-  background: rgba(255, 255, 255, 0.06) !important;
-  border-color: rgba(255, 255, 255, 0.14) !important;
-  color: rgba(255, 255, 255, 0.92) !important;
+  background: rgba(0, 0, 0, 0.2) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  color: var(--text) !important;
+}
+select[style*="background: rgba(255,255,255,0.04)"]:hover,
+select[style*="background: rgba(90,170,255,0.15)"]:hover {
+  border-color: rgba(255, 255, 255, 0.25) !important;
 }
 
-/* Responsive cleanup */
-@media (max-width: 1200px) {
-  .backtest-grid.two-up,
-  .main-settings-layout,
-  .main-settings-stack {
-    grid-template-columns: 1fr;
-  }
-
-  .main-settings-kpi-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
+input[type="search"][style*="background: rgba(0,0,0,0.25)"] {
+  background: rgba(0, 0, 0, 0.2) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  color: var(--text) !important;
+}
+input[type="search"][style*="background: rgba(0,0,0,0.25)"]:focus {
+  border-color: rgba(255, 255, 255, 0.25) !important;
+  box-shadow: none !important;
 }
 
-@media (max-width: 760px) {
-  .main-settings-kpi-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+/* Dimension & Performance Stats Specifics */
+div[style*="border-bottom: 1px solid rgba(255,255,255,0.10)"] {
+  border-bottom-color: rgba(255, 255, 255, 0.06) !important;
+}
+div[style*="borderTop: 1px solid rgba(60,220,120,0.95)"] {
+  border-top-color: var(--up) !important;
+}
+div[style*="borderBottom: 1px solid rgba(60,220,120,0.95)"] {
+  border-bottom-color: var(--up) !important;
+}
+div[style*="borderTop: 1px solid rgba(230,80,80,0.95)"] {
+  border-top-color: var(--down) !important;
+}
+div[style*="borderBottom: 1px solid rgba(230,80,80,0.95)"] {
+  border-bottom-color: var(--down) !important;
+}
+
+/* Make grid layouts expand and fill space nicely */
+.backtest-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.backtest-grid {
+  flex: 1;
+}
+.backtest-grid.two-up {
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)) !important;
 }
 
