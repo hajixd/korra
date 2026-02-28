@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { startTransition, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ColorType,
   CrosshairMode,
@@ -96,7 +96,6 @@ type Candle = {
 
 const EMPTY_CANDLES: Candle[] = [];
 const STATS_REFRESH_HOLD_MS = 3000;
-const BACKTEST_HISTORY_WORKER_MAX_COUNT = 4;
 
 const AI_ZIP_MONO_FONT =
   "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace";
@@ -259,19 +258,6 @@ type TradeBlueprint = {
   symbol: string;
   side: TradeSide;
   result: TradeResult;
-  entryMs: number;
-  exitMs: number;
-  riskPct: number;
-  rr: number;
-  units: number;
-};
-
-type BacktestHistoryWorkerBlueprint = {
-  id: string;
-  seriesKey: string;
-  symbol: string;
-  side: TradeSide;
-  entrySource: string;
   entryMs: number;
   exitMs: number;
   riskPct: number;
@@ -2700,379 +2686,6 @@ const findCandleIndexAtOrBefore = (candles: Candle[], targetMs: number): number 
   return Math.max(0, right);
 };
 
-const materializeBacktestHistoryRows = (
-  blueprints: BacktestHistoryWorkerBlueprint[],
-  seriesByKey: Record<string, Candle[]>
-): HistoryItem[] => {
-  const rows: HistoryItem[] = [];
-
-  for (const blueprint of blueprints) {
-    const list = seriesByKey[blueprint.seriesKey] ?? EMPTY_CANDLES;
-
-    if (list.length < 16) {
-      continue;
-    }
-
-    const entryIndex = findCandleIndexAtOrBefore(list, blueprint.entryMs);
-    const rawExitIndex = findCandleIndexAtOrBefore(list, blueprint.exitMs);
-
-    if (entryIndex < 0 || rawExitIndex < 0) {
-      continue;
-    }
-
-    const exitIndex = Math.min(list.length - 1, Math.max(entryIndex + 1, rawExitIndex));
-
-    if (exitIndex <= entryIndex) {
-      continue;
-    }
-
-    const entryPrice = list[entryIndex].close;
-    const rand = createSeededRng(hashString(`mapped-${blueprint.id}`));
-    let atr = 0;
-    let atrCount = 0;
-
-    for (let i = Math.max(1, entryIndex - 20); i <= entryIndex; i += 1) {
-      atr += list[i].high - list[i].low;
-      atrCount += 1;
-    }
-
-    atr /= Math.max(1, atrCount);
-
-    const riskPerUnit = Math.max(
-      entryPrice * blueprint.riskPct,
-      atr * (0.6 + rand() * 0.6),
-      entryPrice * 0.0009
-    );
-    const stopPrice =
-      blueprint.side === "Long"
-        ? Math.max(0.000001, entryPrice - riskPerUnit)
-        : entryPrice + riskPerUnit;
-    const targetPrice =
-      blueprint.side === "Long"
-        ? entryPrice + riskPerUnit * blueprint.rr
-        : Math.max(0.000001, entryPrice - riskPerUnit * blueprint.rr);
-    const path = evaluateTpSlPath(
-      list,
-      blueprint.side,
-      entryIndex,
-      targetPrice,
-      stopPrice,
-      exitIndex
-    );
-
-    const resolvedExitIndex = path.hit ? path.hitIndex : exitIndex;
-    const rawOutcomePrice = path.hit ? path.outcomePrice : list[resolvedExitIndex].close;
-    const outcomePrice = Math.max(0.000001, rawOutcomePrice);
-    const exitReason = path.hit
-      ? path.result === "Loss"
-        ? "Stop Loss"
-        : "Take Profit"
-      : "Model Exit";
-    const result: TradeResult = path.hit
-      ? (path.result ?? "Loss")
-      : blueprint.side === "Long"
-        ? outcomePrice >= entryPrice
-          ? "Win"
-          : "Loss"
-        : outcomePrice <= entryPrice
-          ? "Win"
-          : "Loss";
-    const pnlPct =
-      blueprint.side === "Long"
-        ? ((outcomePrice - entryPrice) / entryPrice) * 100
-        : ((entryPrice - outcomePrice) / entryPrice) * 100;
-    const pnlUsd =
-      blueprint.side === "Long"
-        ? (outcomePrice - entryPrice) * blueprint.units
-        : (entryPrice - outcomePrice) * blueprint.units;
-    const entryTime = toUtcTimestamp(list[entryIndex].time);
-    const exitTime = toUtcTimestamp(list[resolvedExitIndex].time);
-
-    rows.push({
-      id: blueprint.id,
-      symbol: blueprint.symbol,
-      side: blueprint.side,
-      result,
-      entrySource: blueprint.entrySource,
-      exitReason,
-      pnlPct,
-      pnlUsd,
-      entryTime,
-      exitTime,
-      entryPrice,
-      targetPrice,
-      stopPrice,
-      outcomePrice,
-      units: blueprint.units,
-      entryAt: formatDateTime(list[entryIndex].time),
-      exitAt: formatDateTime(list[resolvedExitIndex].time),
-      time: formatDateTime(list[resolvedExitIndex].time)
-    });
-  }
-
-  return rows;
-};
-
-const getBacktestHistoryWorkerCount = (partitionCount: number): number => {
-  if (partitionCount <= 1) {
-    return 1;
-  }
-
-  const cpuCount =
-    typeof navigator !== "undefined" && Number.isFinite(navigator.hardwareConcurrency)
-      ? Math.max(1, navigator.hardwareConcurrency)
-      : 4;
-  const target = Math.max(2, Math.min(BACKTEST_HISTORY_WORKER_MAX_COUNT, Math.floor(cpuCount / 2)));
-
-  return Math.max(1, Math.min(partitionCount, target));
-};
-
-function createBacktestHistoryWorker() {
-  const workerCode = `
-    function hashString(value) {
-      value = String(value || "");
-      let hash = 0;
-      for (let i = 0; i < value.length; i += 1) {
-        hash = (hash * 31 + value.charCodeAt(i)) | 0;
-      }
-      return Math.abs(hash) + 1;
-    }
-
-    function createSeededRng(seed) {
-      let state = seed % 2147483647;
-      if (state <= 0) {
-        state += 2147483646;
-      }
-      return function () {
-        state = (state * 16807) % 2147483647;
-        return (state - 1) / 2147483646;
-      };
-    }
-
-    function formatDateTime(timestampMs) {
-      return new Date(timestampMs).toLocaleString("en-US", {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-        timeZone: "UTC"
-      });
-    }
-
-    function findCandleIndexAtOrBefore(candles, targetMs) {
-      if (!candles || candles.length === 0) {
-        return -1;
-      }
-      if (targetMs < candles[0].time) {
-        return -1;
-      }
-      if (targetMs >= candles[candles.length - 1].time) {
-        return candles.length - 1;
-      }
-
-      let left = 0;
-      let right = candles.length - 1;
-
-      while (left <= right) {
-        const mid = Math.floor((left + right) / 2);
-        const time = candles[mid].time;
-        if (time === targetMs) {
-          return mid;
-        }
-        if (time < targetMs) {
-          left = mid + 1;
-        } else {
-          right = mid - 1;
-        }
-      }
-
-      return Math.max(0, right);
-    }
-
-    function evaluateTpSlPath(candles, side, entryIndex, targetPrice, stopPrice, toIndex) {
-      const safeEndIndex = Math.min(Math.max(entryIndex + 1, toIndex), candles.length - 1);
-      let hitIndex = -1;
-      let outcomePrice = (candles[safeEndIndex] && candles[safeEndIndex].close) || (candles[entryIndex] && candles[entryIndex].close) || 0;
-      let result = null;
-
-      for (let i = entryIndex + 1; i <= safeEndIndex; i += 1) {
-        const candle = candles[i];
-        if (!candle) {
-          break;
-        }
-
-        const hitTarget = side === "Long" ? candle.high >= targetPrice : candle.low <= targetPrice;
-        const hitStop = side === "Long" ? candle.low <= stopPrice : candle.high >= stopPrice;
-
-        if (!hitTarget && !hitStop) {
-          continue;
-        }
-
-        hitIndex = i;
-
-        if (hitTarget && hitStop) {
-          const targetFirst = Math.abs(candle.open - targetPrice) <= Math.abs(candle.open - stopPrice);
-          result = targetFirst ? "Win" : "Loss";
-          outcomePrice = targetFirst ? targetPrice : stopPrice;
-        } else if (hitTarget) {
-          result = "Win";
-          outcomePrice = targetPrice;
-        } else {
-          result = "Loss";
-          outcomePrice = stopPrice;
-        }
-
-        break;
-      }
-
-      return { hit: hitIndex >= 0, hitIndex, outcomePrice, result };
-    }
-
-    function toUtcTimestamp(ms) {
-      return Math.floor(ms / 1000);
-    }
-
-    function materializeRows(blueprints, seriesByKey) {
-      const rows = [];
-
-      for (const blueprint of blueprints || []) {
-        const list = (seriesByKey && seriesByKey[blueprint.seriesKey]) || [];
-
-        if (!list || list.length < 16) {
-          continue;
-        }
-
-        const entryIndex = findCandleIndexAtOrBefore(list, blueprint.entryMs);
-        const rawExitIndex = findCandleIndexAtOrBefore(list, blueprint.exitMs);
-
-        if (entryIndex < 0 || rawExitIndex < 0) {
-          continue;
-        }
-
-        const exitIndex = Math.min(list.length - 1, Math.max(entryIndex + 1, rawExitIndex));
-
-        if (exitIndex <= entryIndex) {
-          continue;
-        }
-
-        const entryPrice = list[entryIndex].close;
-        const rand = createSeededRng(hashString("mapped-" + blueprint.id));
-        let atr = 0;
-        let atrCount = 0;
-
-        for (let i = Math.max(1, entryIndex - 20); i <= entryIndex; i += 1) {
-          atr += list[i].high - list[i].low;
-          atrCount += 1;
-        }
-
-        atr /= Math.max(1, atrCount);
-
-        const riskPerUnit = Math.max(
-          entryPrice * blueprint.riskPct,
-          atr * (0.6 + rand() * 0.6),
-          entryPrice * 0.0009
-        );
-        const stopPrice =
-          blueprint.side === "Long"
-            ? Math.max(0.000001, entryPrice - riskPerUnit)
-            : entryPrice + riskPerUnit;
-        const targetPrice =
-          blueprint.side === "Long"
-            ? entryPrice + riskPerUnit * blueprint.rr
-            : Math.max(0.000001, entryPrice - riskPerUnit * blueprint.rr);
-        const path = evaluateTpSlPath(
-          list,
-          blueprint.side,
-          entryIndex,
-          targetPrice,
-          stopPrice,
-          exitIndex
-        );
-
-        const resolvedExitIndex = path.hit ? path.hitIndex : exitIndex;
-        const rawOutcomePrice = path.hit ? path.outcomePrice : list[resolvedExitIndex].close;
-        const outcomePrice = Math.max(0.000001, rawOutcomePrice);
-        const exitReason = path.hit
-          ? path.result === "Loss"
-            ? "Stop Loss"
-            : "Take Profit"
-          : "Model Exit";
-        const result = path.hit
-          ? path.result || "Loss"
-          : blueprint.side === "Long"
-            ? outcomePrice >= entryPrice
-              ? "Win"
-              : "Loss"
-            : outcomePrice <= entryPrice
-              ? "Win"
-              : "Loss";
-        const pnlPct =
-          blueprint.side === "Long"
-            ? ((outcomePrice - entryPrice) / entryPrice) * 100
-            : ((entryPrice - outcomePrice) / entryPrice) * 100;
-        const pnlUsd =
-          blueprint.side === "Long"
-            ? (outcomePrice - entryPrice) * blueprint.units
-            : (entryPrice - outcomePrice) * blueprint.units;
-        const entryTime = toUtcTimestamp(list[entryIndex].time);
-        const exitTime = toUtcTimestamp(list[resolvedExitIndex].time);
-
-        rows.push({
-          id: blueprint.id,
-          symbol: blueprint.symbol,
-          side: blueprint.side,
-          result,
-          entrySource: blueprint.entrySource,
-          exitReason,
-          pnlPct,
-          pnlUsd,
-          entryTime,
-          exitTime,
-          entryPrice,
-          targetPrice,
-          stopPrice,
-          outcomePrice,
-          units: blueprint.units,
-          entryAt: formatDateTime(list[entryIndex].time),
-          exitAt: formatDateTime(list[resolvedExitIndex].time),
-          time: formatDateTime(list[resolvedExitIndex].time)
-        });
-      }
-
-      return rows;
-    }
-
-    onmessage = function (event) {
-      const message = event.data || {};
-
-      if (message.type !== "compute") {
-        return;
-      }
-
-      try {
-        postMessage({
-          type: "result",
-          rows: materializeRows(message.blueprints || [], message.seriesByKey || {})
-        });
-      } catch (error) {
-        postMessage({
-          type: "error",
-          message: error && error.message ? error.message : String(error)
-        });
-      }
-    };
-  `;
-  const blob = new Blob([workerCode], { type: "application/javascript" });
-  const url = URL.createObjectURL(blob);
-  const worker = new Worker(url);
-
-  setTimeout(() => URL.revokeObjectURL(url), 30_000);
-
-  return worker;
-}
-
 const humanizeDurationMinutes = (totalMin: number): string => {
   const minutes = Math.max(0, Math.round(totalMin));
   const parts: string[] = [];
@@ -4442,7 +4055,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   );
   const [statsRefreshOverlayVisible, setStatsRefreshOverlayVisible] = useState(false);
   const [statsRefreshProgress, setStatsRefreshProgress] = useState(0);
-  const [historyRows, setHistoryRows] = useState<HistoryItem[]>([]);
 
   useEffect(() => {
     setAiModelStates((current) => syncAiModelStates(current, availableAiModelNames));
@@ -4466,7 +4078,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const chartSizeRef = useRef({ width: 0, height: 0 });
   const chartDataLengthRef = useRef(0);
   const chartSyncedLastTimeRef = useRef<UTCTimestamp | null>(null);
-  const backtestHistoryWorkerJobRef = useRef(0);
 
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
@@ -5070,213 +4681,124 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [referenceNowMs, selectedCandles, selectedModel, selectedSymbol]);
 
-  const backtestHistoryBlueprints = useMemo<BacktestHistoryWorkerBlueprint[]>(() => {
-    return tradeBlueprints.map((blueprint) => ({
-      id: blueprint.id,
-      seriesKey: symbolTimeframeKey(blueprint.symbol, selectedTimeframe),
-      symbol: blueprint.symbol,
-      side: blueprint.side,
-      entrySource: modelProfileById[blueprint.modelId]?.name ?? "Main Settings",
-      entryMs: blueprint.entryMs,
-      exitMs: blueprint.exitMs,
-      riskPct: blueprint.riskPct,
-      rr: blueprint.rr,
-      units: blueprint.units
-    }));
-  }, [modelProfileById, selectedTimeframe, tradeBlueprints]);
+  const historyRows = useMemo(() => {
+    const rows: HistoryItem[] = [];
 
-  const backtestHistorySeriesByKey = useMemo(() => {
-    const next: Record<string, Candle[]> = {};
+    for (const blueprint of tradeBlueprints) {
+      const entryModel = modelProfileById[blueprint.modelId]?.name ?? "Main Settings";
+      const key = symbolTimeframeKey(blueprint.symbol, selectedTimeframe);
+      const list = backtestSeriesMap[key] ?? seriesMap[key] ?? [];
 
-    for (const blueprint of backtestHistoryBlueprints) {
-      if (blueprint.seriesKey in next) {
+      if (list.length < 16) {
         continue;
       }
 
-      next[blueprint.seriesKey] =
-        backtestSeriesMap[blueprint.seriesKey] ?? seriesMap[blueprint.seriesKey] ?? EMPTY_CANDLES;
-    }
+      const entryIndex = findCandleIndexAtOrBefore(list, blueprint.entryMs);
+      const rawExitIndex = findCandleIndexAtOrBefore(list, blueprint.exitMs);
 
-    return next;
-  }, [backtestHistoryBlueprints, backtestSeriesMap, seriesMap]);
-
-  useEffect(() => {
-    const requestId = backtestHistoryWorkerJobRef.current + 1;
-    backtestHistoryWorkerJobRef.current = requestId;
-    let cancelled = false;
-    const workers: Worker[] = [];
-
-    const finalize = (rows: HistoryItem[]) => {
-      if (cancelled || requestId !== backtestHistoryWorkerJobRef.current) {
-        return;
+      if (entryIndex < 0 || rawExitIndex < 0) {
+        continue;
       }
 
-      const nextRows = [...rows]
-        .sort((a, b) => Number(b.exitTime) - Number(a.exitTime))
-        .slice(0, backtestTargetTrades);
+      const exitIndex = Math.min(list.length - 1, Math.max(entryIndex + 1, rawExitIndex));
 
-      startTransition(() => {
-        setHistoryRows(nextRows);
-      });
-    };
-
-    const terminateWorkers = () => {
-      while (workers.length > 0) {
-        const worker = workers.pop();
-
-        try {
-          worker?.terminate();
-        } catch {
-          // Ignore worker termination errors during rapid refreshes.
-        }
+      if (exitIndex <= entryIndex) {
+        continue;
       }
-    };
 
-    if (backtestHistoryBlueprints.length === 0 || backtestTargetTrades <= 0) {
-      startTransition(() => {
-        setHistoryRows([]);
-      });
+      const entryPrice = list[entryIndex].close;
+      const rand = createSeededRng(hashString(`mapped-${blueprint.id}`));
+      let atr = 0;
+      let atrCount = 0;
 
-      return () => {
-        cancelled = true;
-      };
-    }
+      for (let i = Math.max(1, entryIndex - 20); i <= entryIndex; i += 1) {
+        atr += list[i].high - list[i].low;
+        atrCount += 1;
+      }
 
-    const partitions = Array.from(
-      backtestHistoryBlueprints.reduce<
-        Map<string, { blueprints: BacktestHistoryWorkerBlueprint[]; candles: Candle[] }>
-      >((accumulator, blueprint) => {
-        const existing = accumulator.get(blueprint.seriesKey);
+      atr /= Math.max(1, atrCount);
 
-        if (existing) {
-          existing.blueprints.push(blueprint);
-          return accumulator;
-        }
-
-        accumulator.set(blueprint.seriesKey, {
-          blueprints: [blueprint],
-          candles: backtestHistorySeriesByKey[blueprint.seriesKey] ?? EMPTY_CANDLES
-        });
-        return accumulator;
-      }, new Map()).values()
-    ).filter((partition) => partition.candles.length >= 16);
-
-    if (partitions.length === 0) {
-      startTransition(() => {
-        setHistoryRows([]);
-      });
-
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    const workerCount = getBacktestHistoryWorkerCount(partitions.length);
-    const assignments = Array.from({ length: workerCount }, () => ({
-      load: 0,
-      blueprints: [] as BacktestHistoryWorkerBlueprint[],
-      seriesByKey: {} as Record<string, Candle[]>
-    }));
-
-    partitions
-      .sort((left, right) => right.blueprints.length - left.blueprints.length)
-      .forEach((partition) => {
-        const targetAssignment = assignments.reduce((best, current) =>
-          current.load < best.load ? current : best
-        );
-
-        targetAssignment.load += partition.blueprints.length;
-        targetAssignment.blueprints.push(...partition.blueprints);
-
-        const firstBlueprint = partition.blueprints[0];
-
-        if (firstBlueprint) {
-          targetAssignment.seriesByKey[firstBlueprint.seriesKey] = partition.candles;
-        }
-      });
-
-    const activeAssignments = assignments.filter((assignment) => assignment.blueprints.length > 0);
-
-    const runMainThreadFallback = () => {
-      finalize(
-        activeAssignments.flatMap((assignment) =>
-          materializeBacktestHistoryRows(assignment.blueprints, assignment.seriesByKey)
-        )
+      const riskPerUnit = Math.max(
+        entryPrice * blueprint.riskPct,
+        atr * (0.6 + rand() * 0.6),
+        entryPrice * 0.0009
       );
-    };
+      const stopPrice =
+        blueprint.side === "Long"
+          ? Math.max(0.000001, entryPrice - riskPerUnit)
+          : entryPrice + riskPerUnit;
+      const targetPrice =
+        blueprint.side === "Long"
+          ? entryPrice + riskPerUnit * blueprint.rr
+          : Math.max(0.000001, entryPrice - riskPerUnit * blueprint.rr);
+      const path = evaluateTpSlPath(
+        list,
+        blueprint.side,
+        entryIndex,
+        targetPrice,
+        stopPrice,
+        exitIndex
+      );
 
-    if (typeof Worker === "undefined") {
-      runMainThreadFallback();
+      const resolvedExitIndex = path.hit ? path.hitIndex : exitIndex;
+      const rawOutcomePrice = path.hit ? path.outcomePrice : list[resolvedExitIndex].close;
+      const outcomePrice = Math.max(0.000001, rawOutcomePrice);
+      const exitReason = path.hit
+        ? path.result === "Loss"
+          ? "Stop Loss"
+          : "Take Profit"
+        : "Model Exit";
+      const result: TradeResult = path.hit
+        ? (path.result ?? "Loss")
+        : blueprint.side === "Long"
+          ? outcomePrice >= entryPrice
+            ? "Win"
+            : "Loss"
+          : outcomePrice <= entryPrice
+            ? "Win"
+            : "Loss";
+      const pnlPct =
+        blueprint.side === "Long"
+          ? ((outcomePrice - entryPrice) / entryPrice) * 100
+          : ((entryPrice - outcomePrice) / entryPrice) * 100;
+      const pnlUsd =
+        blueprint.side === "Long"
+          ? (outcomePrice - entryPrice) * blueprint.units
+          : (entryPrice - outcomePrice) * blueprint.units;
 
-      return () => {
-        cancelled = true;
-      };
+      rows.push({
+        id: blueprint.id,
+        symbol: blueprint.symbol,
+        side: blueprint.side,
+        result,
+        entrySource: entryModel,
+        exitReason,
+        pnlPct,
+        pnlUsd,
+        entryTime: toUtcTimestamp(list[entryIndex].time),
+        exitTime: toUtcTimestamp(list[resolvedExitIndex].time),
+        entryPrice,
+        targetPrice,
+        stopPrice,
+        outcomePrice,
+        units: blueprint.units,
+        entryAt: formatDateTime(list[entryIndex].time),
+        exitAt: formatDateTime(list[resolvedExitIndex].time),
+        time: formatDateTime(list[resolvedExitIndex].time)
+      });
     }
 
-    void Promise.all(
-      activeAssignments.map(
-        (assignment) =>
-          new Promise<HistoryItem[]>((resolve, reject) => {
-            let worker: Worker;
-
-            try {
-              worker = createBacktestHistoryWorker();
-            } catch {
-              reject(new Error("Unable to create backtest worker"));
-              return;
-            }
-
-            workers.push(worker);
-
-            worker.onmessage = (event: MessageEvent) => {
-              const message = event.data ?? {};
-
-              if (message.type === "result") {
-                resolve(Array.isArray(message.rows) ? (message.rows as HistoryItem[]) : []);
-                return;
-              }
-
-              if (message.type === "error") {
-                reject(new Error(message.message || "Backtest worker failed"));
-              }
-            };
-
-            worker.onerror = () => {
-              reject(new Error("Backtest worker crashed"));
-            };
-
-            worker.postMessage({
-              type: "compute",
-              blueprints: assignment.blueprints,
-              seriesByKey: assignment.seriesByKey
-            });
-          })
-      )
-    )
-      .then((chunks) => {
-        terminateWorkers();
-
-        if (cancelled) {
-          return;
-        }
-
-        finalize(chunks.flat());
-      })
-      .catch(() => {
-        terminateWorkers();
-
-        if (cancelled) {
-          return;
-        }
-
-        runMainThreadFallback();
-      });
-
-    return () => {
-      cancelled = true;
-      terminateWorkers();
-    };
-  }, [backtestHistoryBlueprints, backtestHistorySeriesByKey, backtestTargetTrades]);
+    return rows
+      .sort((a, b) => Number(b.exitTime) - Number(a.exitTime))
+      .slice(0, backtestTargetTrades);
+  }, [
+    backtestSeriesMap,
+    backtestTargetTrades,
+    modelProfileById,
+    selectedTimeframe,
+    seriesMap,
+    tradeBlueprints
+  ]);
 
   const selectedHistoryTrade = useMemo(() => {
     if (!selectedHistoryId) {
