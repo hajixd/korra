@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   ColorType,
   CrosshairMode,
@@ -28,8 +28,21 @@ type BacktestTab =
   | "dimensions"
   | "graphs"
   | "propFirm";
-type EntryExitChartMode = "entry" | "exit";
-type BacktestScatterKey = "pnlUsd" | "pnlPct" | "holdMinutes" | "units" | "confidence";
+type EntryExitChartMode = "Entry" | "Exit";
+const BACKTEST_SCATTER_KEYS = [
+  "pnlUsd",
+  "pnlPct",
+  "holdMinutes",
+  "units",
+  "confidence"
+] as const;
+type BacktestScatterKey = (typeof BACKTEST_SCATTER_KEYS)[number];
+type BacktestScatterAxisDef = {
+  label: string;
+  numeric: boolean;
+  tickFormatter?: (value: number) => string;
+  tooltipFormatter?: (value: number) => string;
+};
 type PanelTab = "active" | "assets" | "models" | "mt5" | "history" | "actions" | "ai";
 
 type FutureAsset = {
@@ -50,6 +63,34 @@ type Candle = {
 
 const EMPTY_CANDLES: Candle[] = [];
 
+const AI_ZIP_MONO_FONT =
+  "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace";
+
+const aiZipBacktestHistoryHeadCell: CSSProperties = {
+  padding: "0.6rem 0.5rem",
+  background: "#111111",
+  borderBottom: "1px solid rgba(255,255,255,0.10)",
+  color: "rgba(255,255,255,0.58)",
+  fontSize: "0.58rem",
+  fontFamily: AI_ZIP_MONO_FONT,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  textAlign: "left"
+};
+
+const aiZipBacktestHistoryBodyCell: CSSProperties = {
+  padding: "0.58rem 0.5rem",
+  borderBottom: "1px solid rgba(255,255,255,0.06)",
+  color: "rgba(255,255,255,0.84)",
+  verticalAlign: "top",
+  whiteSpace: "nowrap"
+};
+
+const aiZipBacktestHistoryMono = (extra?: CSSProperties): CSSProperties => ({
+  fontFamily: AI_ZIP_MONO_FONT,
+  ...(extra ?? {})
+});
+
 type TradeResult = "Win" | "Loss";
 type TradeSide = "Long" | "Short";
 
@@ -58,6 +99,8 @@ type HistoryItem = {
   symbol: string;
   side: TradeSide;
   result: TradeResult;
+  entrySource: string;
+  exitReason: string;
   pnlPct: number;
   pnlUsd: number;
   time: string;
@@ -70,6 +113,53 @@ type HistoryItem = {
   stopPrice: number;
   outcomePrice: number;
   units: number;
+};
+
+type BacktestClusterGroupId = "momentum" | "trend" | "trap" | "chop";
+type BacktestClusterLegendKey = "closedWin" | "closedLoss" | BacktestClusterGroupId;
+
+type BacktestClusterNode = {
+  id: string;
+  trade: HistoryItem;
+  clusterId: BacktestClusterGroupId;
+  x: number;
+  y: number;
+  r: number;
+  tone: "up" | "down";
+  holdMinutes: number;
+  confidence: number;
+  session: string;
+  monthIndex: number;
+  weekdayIndex: number;
+  hour: number;
+  sideLabel: "Buy" | "Sell";
+};
+
+type BacktestClusterGroup = {
+  id: BacktestClusterGroupId;
+  label: string;
+  description: string;
+  count: number;
+  wins: number;
+  losses: number;
+  buyCount: number;
+  sellCount: number;
+  pnl: number;
+  maxWin: number;
+  maxLoss: number;
+  avgPnl: number;
+  avgHoldMinutes: number;
+  avgConfidence: number;
+  winRate: number;
+  centerX: number;
+  centerY: number;
+  radiusX: number;
+  radiusY: number;
+  accent: string;
+  fill: string;
+  border: string;
+  glow: string;
+  members: string[];
 };
 
 type ActionItem = {
@@ -171,6 +261,245 @@ type MarketApiCandle = {
   high: number | string;
   low: number | string;
   close: number | string;
+};
+
+type PropFirmResult = {
+  probability: number;
+  data: number[];
+};
+
+type PropFirmChartPoint = {
+  x: number;
+  y: number;
+};
+
+type PropFirmStats = {
+  avgTradesPass: number;
+  avgTradesFail: number;
+  avgTimePass: number;
+  avgTimeFail: number;
+  avgWinRatePass: number;
+  avgWinRateFail: number;
+  avgWinRateOverall: number;
+  passCount: number;
+  failCount: number;
+  incompleteCount: number;
+  totalSimulations: number;
+  randomProgressRuns: PropFirmChartPoint[][];
+  dailyLossRun?: PropFirmChartPoint[];
+  minX: number;
+  maxX: number;
+};
+
+type AiValidationMode = "off" | "split" | "online" | "synthetic";
+type AiDistanceMetric = "euclidean" | "cosine" | "manhattan" | "chebyshev";
+type AiCompressionMethod = "pca" | "jl" | "hash" | "variance" | "subsample";
+type KnnVoteMode = "distance" | "majority";
+
+type AiCatalogItem = {
+  id: string;
+  label: string;
+  note?: string;
+};
+
+type AiSettingsModalProps = {
+  title: string;
+  open: boolean;
+  onClose: () => void;
+  children: ReactNode;
+};
+
+type DimensionSortColumn =
+  | "name"
+  | "corr"
+  | "winLow"
+  | "winHigh"
+  | "lift"
+  | "optimal"
+  | "min"
+  | "max";
+
+type DimensionScope = "active" | "all";
+
+type DimensionStatRow = {
+  key: string;
+  featureId: string;
+  name: string;
+  corr: number;
+  absCorr: number;
+  min: number;
+  max: number;
+  qLow: number;
+  qHigh: number;
+  winLow: number | null;
+  winHigh: number | null;
+  lift: number | null;
+  optimal: string;
+  n: number;
+};
+
+type DimensionStatsSummary = {
+  mode: "all" | "split";
+  split: number;
+  count: number;
+  baselineWin: number | null;
+  dimKeyOrder: string[];
+  dims: DimensionStatRow[];
+  keptKeys: string[];
+  inDim: number;
+  outDim: number;
+};
+
+const AI_MODEL_FALLBACK_NAMES = [
+  "Momentum",
+  "Mean Reversion",
+  "Seasons",
+  "Time of Day",
+  "Fibonacci",
+  "Support / Resistance"
+] as const;
+
+const AI_FEATURE_OPTIONS: AiCatalogItem[] = [
+  { id: "pricePath", label: "Price Path", note: "OHLC and return shape in the current window." },
+  { id: "rangeTrend", label: "Range / Trend", note: "Range expansion and directional drift." },
+  { id: "wicks", label: "Wicks", note: "Upper and lower wick behavior." },
+  { id: "time", label: "Time", note: "Intraday and seasonal timing cycles." },
+  { id: "temporal", label: "Temporal", note: "Explicit month, weekday, and hour context." },
+  { id: "position", label: "Position", note: "Fib and level position context." },
+  {
+    id: "topography",
+    label: "Topography",
+    note: "Pivot density, curvature, and choppiness context."
+  }
+];
+
+const AI_LIBRARY_OPTIONS: AiCatalogItem[] = [
+  { id: "core", label: "Online Learning", note: "Primary rolling trade memory." },
+  { id: "suppressed", label: "Suppressed", note: "Rejected trades kept for training only." },
+  { id: "recent", label: "Recent Window", note: "Bias the nearest, freshest examples." },
+  { id: "base", label: "Base Seeding", note: "Seed a starter library before live trades." },
+  { id: "wins", label: "Wins Only", note: "Seed only winning examples." },
+  { id: "terrific", label: "Terrific Trades", note: "Hand-picked high quality trades." },
+  { id: "terrible", label: "Terrible Trades", note: "Counterexamples for contrast." }
+];
+
+const AI_MODALITY_OPTIONS = [
+  "Direction",
+  "Model",
+  "Session",
+  "Month",
+  "Weekday",
+  "Hour"
+] as const;
+
+const AI_VALIDATION_ORDER: AiValidationMode[] = ["off", "split", "online", "synthetic"];
+const AI_VALIDATION_LABELS: Record<AiValidationMode, string> = {
+  off: "Off",
+  split: "Test/Split",
+  online: "Online",
+  synthetic: "Synthetic"
+};
+const AI_REALISM_LABELS = ["Off", "Low", "Medium", "High", "Max"] as const;
+const DIMENSION_STATS_SPLIT_PCT = 50;
+const DIMENSION_FEATURE_NAME_BANK: Record<string, string[]> = {
+  pricePath: [
+    "Return mean",
+    "Return std",
+    "Return max",
+    "Return min",
+    "Abs return sum",
+    "Close position in range",
+    "Trend (net return)",
+    "Range (high-low)",
+    "Body mean",
+    "Upper wick mean",
+    "Lower wick mean",
+    "Bull candle fraction",
+    "Bear candle fraction",
+    "Reversal rate",
+    "Chop ratio",
+    "Last return",
+    "First return",
+    "Return p25",
+    "Return p50",
+    "Return p75"
+  ],
+  rangeTrend: [
+    "Range (high-low)",
+    "Trend (net return)",
+    "Range/|Trend|",
+    "Chop ratio",
+    "Bull-Bear imbalance",
+    "Abs return mean"
+  ],
+  wicks: ["Wick/body ratio", "Upper wick mean", "Lower wick mean", "Wick asymmetry", "Doji rate"],
+  time: ["Hour sin", "Hour cos", "Minute sin", "Minute cos"],
+  temporal: [
+    "Year (normalized)",
+    "Month sin",
+    "Month cos",
+    "Day-of-week sin",
+    "Day-of-week cos",
+    "Hour sin",
+    "Hour cos",
+    "Day-of-year sin",
+    "Day-of-year cos",
+    "Week-of-year (normalized)"
+  ],
+  position: [
+    "Close position in range",
+    "Distance to high (norm)",
+    "Distance to low (norm)",
+    "Proximity to high",
+    "Proximity to low",
+    "Range percentile (proxy)"
+  ],
+  topography: [
+    "Bull candle fraction",
+    "Bear candle fraction",
+    "Bull-Bear imbalance",
+    "Abs return mean",
+    "Abs return std",
+    "Reversal rate",
+    "Chop ratio",
+    "Wick/body ratio",
+    "Body mean"
+  ]
+};
+
+const toggleListValue = (values: string[], value: string): string[] => {
+  if (values.includes(value)) {
+    return values.filter((entry) => entry !== value);
+  }
+
+  return [...values, value];
+};
+
+const AiSettingsModal = ({ title, open, onClose, children }: AiSettingsModalProps) => {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div
+      className="ai-zip-modal-overlay"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div className="ai-zip-modal-card">
+        <div className="ai-zip-modal-head">
+          <strong>{title}</strong>
+          <button type="button" className="ai-zip-button pill" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="ai-zip-modal-body">{children}</div>
+      </div>
+    </div>
+  );
 };
 
 const hashSeedFromText = (seedText: string): number => {
@@ -345,6 +674,67 @@ const backtestHourLabels = Array.from(
   { length: 24 },
   (_, hour) => `${String(hour).padStart(2, "0")}:00`
 );
+
+const BACKTEST_CLUSTER_META: Record<
+  BacktestClusterGroupId,
+  {
+    label: string;
+    description: string;
+    accent: string;
+    fill: string;
+    border: string;
+    glow: string;
+  }
+> = {
+  momentum: {
+    label: "Momentum",
+    description: "Fast winners that resolve quickly with clean follow-through.",
+    accent: "rgba(60, 220, 120, 0.96)",
+    fill: "rgba(60, 220, 120, 0.14)",
+    border: "rgba(60, 220, 120, 0.46)",
+    glow: "rgba(60, 220, 120, 0.24)"
+  },
+  trend: {
+    label: "Trend Hold",
+    description: "Winners that need more time but keep directional conviction.",
+    accent: "rgba(0, 210, 255, 0.96)",
+    fill: "rgba(0, 210, 255, 0.14)",
+    border: "rgba(0, 210, 255, 0.46)",
+    glow: "rgba(0, 210, 255, 0.24)"
+  },
+  trap: {
+    label: "Trap",
+    description: "Losses that extend before the move fully invalidates.",
+    accent: "rgba(230, 80, 80, 0.96)",
+    fill: "rgba(230, 80, 80, 0.14)",
+    border: "rgba(230, 80, 80, 0.46)",
+    glow: "rgba(230, 80, 80, 0.24)"
+  },
+  chop: {
+    label: "Chop",
+    description: "Short-lived noise trades with shallow edge.",
+    accent: "rgba(255, 140, 0, 0.96)",
+    fill: "rgba(255, 140, 0, 0.14)",
+    border: "rgba(255, 140, 0, 0.46)",
+    glow: "rgba(255, 140, 0, 0.24)"
+  }
+};
+
+const BACKTEST_CLUSTER_ORDER: BacktestClusterGroupId[] = [
+  "momentum",
+  "trend",
+  "trap",
+  "chop"
+];
+
+const BACKTEST_CLUSTER_LEGEND_DEFAULTS: Record<BacktestClusterLegendKey, boolean> = {
+  closedWin: true,
+  closedLoss: true,
+  momentum: true,
+  trend: true,
+  trap: true,
+  chop: true
+};
 
 const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
   "1m": 25000,
@@ -673,6 +1063,34 @@ const formatDateTime = (timestampMs: number): string => {
   });
 };
 
+const formatStatsDateLabel = (ymd: string): string => {
+  return new Date(`${ymd}T00:00:00Z`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC"
+  });
+};
+
+const getUtcDayStartMs = (ymd: string): number | null => {
+  if (!ymd) {
+    return null;
+  }
+
+  const value = Date.parse(`${ymd}T00:00:00Z`);
+  return Number.isFinite(value) ? value : null;
+};
+
+const getUtcDayEndExclusiveMs = (ymd: string): number | null => {
+  const startMs = getUtcDayStartMs(ymd);
+
+  if (startMs === null) {
+    return null;
+  }
+
+  return startMs + 86_400_000;
+};
+
 const formatUnits = (value: number): string => {
   if (value >= 100) {
     return value.toFixed(0);
@@ -740,6 +1158,20 @@ const getMonthLabel = (monthKey: string): string => {
   });
 };
 
+const getCurrentTradeMonthKey = (): string => {
+  return new Date().toISOString().slice(0, 7);
+};
+
+const shiftTradeMonthKey = (monthKey: string, delta: number): string => {
+  const [year, month] = monthKey.split("-").map((value) => Number(value));
+
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    return getCurrentTradeMonthKey();
+  }
+
+  return new Date(Date.UTC(year, month - 1 + delta, 1)).toISOString().slice(0, 7);
+};
+
 const getCalendarDateLabel = (dateKey: string): string => {
   return new Date(`${dateKey}T00:00:00Z`).toLocaleDateString("en-US", {
     month: "short",
@@ -796,6 +1228,38 @@ const formatMinutesCompact = (minutes: number): string => {
   return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
 };
 
+const getTimeframeMinutes = (timeframe: Timeframe): number => {
+  if (timeframe === "1m") {
+    return 1;
+  }
+
+  if (timeframe === "5m") {
+    return 5;
+  }
+
+  if (timeframe === "15m") {
+    return 15;
+  }
+
+  if (timeframe === "1H") {
+    return 60;
+  }
+
+  if (timeframe === "4H") {
+    return 240;
+  }
+
+  if (timeframe === "1D") {
+    return 1_440;
+  }
+
+  return 10_080;
+};
+
+const getHistoryTradeDurationMinutes = (trade: HistoryItem): number => {
+  return Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
+};
+
 const getBacktestExitLabel = (trade: HistoryItem): string => {
   const targetGap = Math.abs(trade.targetPrice - trade.entryPrice);
   const stopGap = Math.abs(trade.entryPrice - trade.stopPrice);
@@ -812,64 +1276,173 @@ const getBacktestExitLabel = (trade: HistoryItem): string => {
   return "Managed Exit";
 };
 
+const getEntryExitBarFill = (bucket: string): string => {
+  const normalized = bucket.trim().toLowerCase();
+
+  if (normalized === "tp" || normalized.includes("take profit")) {
+    return "rgba(34,197,94,0.88)";
+  }
+
+  if (normalized === "sl" || normalized.includes("stop loss") || normalized === "stoploss") {
+    return "rgba(239,68,68,0.88)";
+  }
+
+  if (normalized === "be" || normalized.includes("break even") || normalized.includes("breakeven")) {
+    return "rgba(234,179,8,0.88)";
+  }
+
+  if (normalized.includes("trail")) {
+    return "rgba(251,146,60,0.88)";
+  }
+
+  if (normalized.includes("mim") || normalized.includes("model exit")) {
+    return "rgba(99,102,241,0.88)";
+  }
+
+  if (normalized.includes("ai")) {
+    return "rgba(56,189,248,0.88)";
+  }
+
+  if (normalized === "none" || normalized === "manual") {
+    return "rgba(148,163,184,0.88)";
+  }
+
+  if (normalized.includes("momentum")) {
+    return "rgba(56,189,248,0.88)";
+  }
+
+  if (normalized.includes("mean reversion")) {
+    return "rgba(168,85,247,0.88)";
+  }
+
+  if (normalized.includes("season")) {
+    return "rgba(34,197,94,0.88)";
+  }
+
+  if (normalized.includes("time")) {
+    return "rgba(251,191,36,0.88)";
+  }
+
+  if (normalized.includes("fibo")) {
+    return "rgba(99,102,241,0.88)";
+  }
+
+  if (normalized.includes("support") || normalized.includes("resistance")) {
+    return "rgba(244,114,182,0.88)";
+  }
+
+  return "rgba(90,170,255,0.88)";
+};
+
 const getBacktestScatterValue = (trade: HistoryItem, key: BacktestScatterKey): number => {
-  if (key === "pnlUsd") {
-    return trade.pnlUsd;
-  }
-
-  if (key === "pnlPct") {
-    return trade.pnlPct;
-  }
-
-  if (key === "holdMinutes") {
+  if (key === "duration") {
     return Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
   }
 
-  if (key === "units") {
-    return trade.units;
+  if (key === "pnl") {
+    return trade.pnlUsd;
   }
 
-  return getTradeConfidenceScore(trade) * 100;
+  if (key === "margin") {
+    return Math.abs(trade.entryPrice - trade.stopPrice) * Math.max(1, trade.units);
+  }
+
+  if (key === "aiMargin") {
+    return getTradeConfidenceScore(trade) * 100;
+  }
+
+  if (key === "drawdown") {
+    return -Math.abs(Math.min(trade.pnlUsd, 0));
+  }
+
+  if (key === "rr") {
+    const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
+    return Math.abs(trade.targetPrice - trade.entryPrice) / riskDistance;
+  }
+
+  if (key === "entryPrice") {
+    return trade.entryPrice;
+  }
+
+  if (key === "exitPrice") {
+    return trade.outcomePrice;
+  }
+
+  if (key === "model") {
+    return 0;
+  }
+
+  const sessionIndex = backtestSessionLabels.indexOf(getSessionLabel(trade.entryTime));
+  return sessionIndex >= 0 ? sessionIndex : 0;
 };
 
 const getBacktestScatterLabel = (key: BacktestScatterKey): string => {
-  if (key === "pnlUsd") {
+  if (key === "duration") {
+    return "Duration";
+  }
+
+  if (key === "pnl") {
     return "PnL ($)";
   }
 
-  if (key === "pnlPct") {
-    return "PnL (%)";
+  if (key === "margin") {
+    return "Margin ($)";
   }
 
-  if (key === "holdMinutes") {
-    return "Hold Time";
+  if (key === "aiMargin") {
+    return "AI Margin";
   }
 
-  if (key === "units") {
-    return "Position Size";
+  if (key === "drawdown") {
+    return "Drawdown ($)";
   }
 
-  return "Confidence";
+  if (key === "rr") {
+    return "Risk / Reward";
+  }
+
+  if (key === "entryPrice") {
+    return "Entry Price";
+  }
+
+  if (key === "exitPrice") {
+    return "Exit Price";
+  }
+
+  if (key === "model") {
+    return "Model";
+  }
+
+  return "Session";
 };
 
 const formatBacktestScatterValue = (key: BacktestScatterKey, value: number): string => {
-  if (key === "pnlUsd") {
-    return formatSignedUsd(value);
-  }
-
-  if (key === "pnlPct") {
-    return formatSignedPercent(value);
-  }
-
-  if (key === "holdMinutes") {
+  if (key === "duration") {
     return formatMinutesCompact(value);
   }
 
-  if (key === "units") {
-    return `${formatUnits(value)} u`;
+  if (key === "pnl" || key === "margin" || key === "drawdown") {
+    return formatSignedUsd(value);
   }
 
-  return `${value.toFixed(1)}%`;
+  if (key === "aiMargin") {
+    return `${value.toFixed(1)}%`;
+  }
+
+  if (key === "rr") {
+    return value.toFixed(2);
+  }
+
+  if (key === "entryPrice" || key === "exitPrice") {
+    return formatPrice(value);
+  }
+
+  if (key === "model") {
+    return "Current Model";
+  }
+
+  const rounded = Math.round(value);
+  return backtestSessionLabels[rounded] ?? "Session";
 };
 
 const getTradeConfidenceScore = (trade: HistoryItem): number => {
@@ -883,6 +1456,110 @@ const getTradeConfidenceScore = (trade: HistoryItem): number => {
   const sideBias = trade.side === "Long" ? 0.04 : 0.02;
 
   return clamp(base + rrScore + pnlScore + durationScore + sideBias, 0.05, 0.96);
+};
+
+const buildBacktestClusterGroups = (nodes: BacktestClusterNode[]): BacktestClusterGroup[] => {
+  const groupMap = new Map<
+    BacktestClusterGroupId,
+    {
+      count: number;
+      wins: number;
+      buyCount: number;
+      sellCount: number;
+      pnl: number;
+      maxWin: number;
+      maxLoss: number;
+      totalHoldMinutes: number;
+      totalConfidence: number;
+      minX: number;
+      maxX: number;
+      minY: number;
+      maxY: number;
+      members: string[];
+    }
+  >();
+
+  for (const node of nodes) {
+    const current =
+      groupMap.get(node.clusterId) ??
+      (() => {
+        const next = {
+          count: 0,
+          wins: 0,
+          buyCount: 0,
+          sellCount: 0,
+          pnl: 0,
+          maxWin: Number.NEGATIVE_INFINITY,
+          maxLoss: Number.POSITIVE_INFINITY,
+          totalHoldMinutes: 0,
+          totalConfidence: 0,
+          minX: Number.POSITIVE_INFINITY,
+          maxX: Number.NEGATIVE_INFINITY,
+          minY: Number.POSITIVE_INFINITY,
+          maxY: Number.NEGATIVE_INFINITY,
+          members: [] as string[]
+        };
+        groupMap.set(node.clusterId, next);
+        return next;
+      })();
+
+    current.count += 1;
+    current.wins += node.trade.result === "Win" ? 1 : 0;
+    current.buyCount += node.trade.side === "Long" ? 1 : 0;
+    current.sellCount += node.trade.side === "Short" ? 1 : 0;
+    current.pnl += node.trade.pnlUsd;
+    current.maxWin = Math.max(current.maxWin, node.trade.pnlUsd);
+    current.maxLoss = Math.min(current.maxLoss, node.trade.pnlUsd);
+    current.totalHoldMinutes += node.holdMinutes;
+    current.totalConfidence += node.confidence;
+    current.minX = Math.min(current.minX, node.x);
+    current.maxX = Math.max(current.maxX, node.x);
+    current.minY = Math.min(current.minY, node.y);
+    current.maxY = Math.max(current.maxY, node.y);
+    current.members.push(node.id);
+  }
+
+  return BACKTEST_CLUSTER_ORDER.flatMap((groupId) => {
+    const current = groupMap.get(groupId);
+
+    if (!current) {
+      return [];
+    }
+
+    const meta = BACKTEST_CLUSTER_META[groupId];
+    const losses = Math.max(0, current.count - current.wins);
+    const centerX = (current.minX + current.maxX) / 2;
+    const centerY = (current.minY + current.maxY) / 2;
+
+    return [
+      {
+        id: groupId,
+        label: meta.label,
+        description: meta.description,
+        count: current.count,
+        wins: current.wins,
+        losses,
+        buyCount: current.buyCount,
+        sellCount: current.sellCount,
+        pnl: current.pnl,
+        maxWin: Number.isFinite(current.maxWin) ? current.maxWin : 0,
+        maxLoss: Number.isFinite(current.maxLoss) ? current.maxLoss : 0,
+        avgPnl: current.count > 0 ? current.pnl / current.count : 0,
+        avgHoldMinutes: current.count > 0 ? current.totalHoldMinutes / current.count : 0,
+        avgConfidence: current.count > 0 ? current.totalConfidence / current.count : 0,
+        winRate: current.count > 0 ? (current.wins / current.count) * 100 : 0,
+        centerX,
+        centerY,
+        radiusX: clamp((current.maxX - current.minX) * 0.5 + 6, 10, 23),
+        radiusY: clamp((current.maxY - current.minY) * 0.5 + 6, 10, 23),
+        accent: meta.accent,
+        fill: meta.fill,
+        border: meta.border,
+        glow: meta.glow,
+        members: [...current.members]
+      }
+    ];
+  });
 };
 
 const buildSparklinePath = (values: number[], width: number, height: number): string => {
@@ -1059,6 +1736,379 @@ const findCandleIndexAtOrBefore = (candles: Candle[], targetMs: number): number 
   return Math.max(0, right);
 };
 
+const meanOf = (values: number[]): number => {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  let total = 0;
+
+  for (const value of values) {
+    total += value;
+  }
+
+  return total / values.length;
+};
+
+const stdDevOf = (values: number[]): number => {
+  if (values.length < 2) {
+    return 0;
+  }
+
+  const mean = meanOf(values);
+  let total = 0;
+
+  for (const value of values) {
+    const delta = value - mean;
+    total += delta * delta;
+  }
+
+  return Math.sqrt(total / values.length);
+};
+
+const quantileOf = (values: number[], quantile: number): number => {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = clamp(quantile, 0, 1) * (sorted.length - 1);
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+
+  if (lower === upper) {
+    return sorted[lower] ?? 0;
+  }
+
+  const weight = index - lower;
+  const lowerValue = sorted[lower] ?? 0;
+  const upperValue = sorted[upper] ?? lowerValue;
+  return lowerValue * (1 - weight) + upperValue * weight;
+};
+
+const getBinaryCorrelation = (values: number[], outcomes: number[]): number => {
+  if (values.length !== outcomes.length || values.length < 3) {
+    return 0;
+  }
+
+  const meanX = meanOf(values);
+  const meanY = meanOf(outcomes);
+  let numerator = 0;
+  let varianceX = 0;
+  let varianceY = 0;
+
+  for (let index = 0; index < values.length; index += 1) {
+    const deltaX = values[index] - meanX;
+    const deltaY = outcomes[index] - meanY;
+    numerator += deltaX * deltaY;
+    varianceX += deltaX * deltaX;
+    varianceY += deltaY * deltaY;
+  }
+
+  const denominator = Math.sqrt(varianceX * varianceY);
+
+  if (!Number.isFinite(denominator) || denominator <= 0.000000001) {
+    return 0;
+  }
+
+  return clamp(numerator / denominator, -1, 1);
+};
+
+const buildDimensionFeatureBuckets = (
+  candles: Candle[],
+  endExclusiveIndex: number,
+  windowBars: number
+): Record<string, number[]> | null => {
+  const bars = clamp(Math.round(windowBars), 8, 120);
+
+  if (candles.length < bars + 1 || endExclusiveIndex <= bars || endExclusiveIndex > candles.length) {
+    return null;
+  }
+
+  const window = candles.slice(endExclusiveIndex - bars, endExclusiveIndex);
+
+  if (window.length < bars) {
+    return null;
+  }
+
+  const epsilon = 0.000000001;
+  const closes = window.map((candle) => candle.close);
+  const highs = window.map((candle) => candle.high);
+  const lows = window.map((candle) => candle.low);
+  const lastCandle = window[window.length - 1]!;
+  const range = Math.max(epsilon, Math.max(...highs) - Math.min(...lows));
+  const firstClose = closes[0] ?? lastCandle.close;
+  const lastClose = closes[closes.length - 1] ?? lastCandle.close;
+  const returns: number[] = [];
+  const absoluteReturns: number[] = [];
+  let bodyTotal = 0;
+  let upperWickTotal = 0;
+  let lowerWickTotal = 0;
+  let bullish = 0;
+  let bearish = 0;
+  let flips = 0;
+  let dojis = 0;
+  let previousDirection = 0;
+
+  for (let index = 0; index < window.length; index += 1) {
+    const candle = window[index]!;
+    const body = Math.abs(candle.close - candle.open);
+    const upperWick = candle.high - Math.max(candle.open, candle.close);
+    const lowerWick = Math.min(candle.open, candle.close) - candle.low;
+    const candleRange = Math.max(epsilon, candle.high - candle.low);
+    const direction = candle.close > candle.open ? 1 : candle.close < candle.open ? -1 : 0;
+
+    bodyTotal += body / range;
+    upperWickTotal += upperWick / range;
+    lowerWickTotal += lowerWick / range;
+    bullish += direction > 0 ? 1 : 0;
+    bearish += direction < 0 ? 1 : 0;
+    dojis += body <= candleRange * 0.1 ? 1 : 0;
+
+    if (previousDirection !== 0 && direction !== 0 && previousDirection !== direction) {
+      flips += 1;
+    }
+
+    if (direction !== 0) {
+      previousDirection = direction;
+    }
+
+    if (index === 0) {
+      continue;
+    }
+
+    const previousClose = closes[index - 1] ?? closes[index] ?? 0;
+    const change = (candle.close - previousClose) / Math.max(epsilon, Math.abs(previousClose));
+    returns.push(change);
+    absoluteReturns.push(Math.abs(change));
+  }
+
+  const normalizedReturns = returns.length > 0 ? returns : [0];
+  const meanReturn = meanOf(normalizedReturns);
+  const stdReturn = stdDevOf(normalizedReturns);
+  const absoluteMeanReturn = meanOf(absoluteReturns);
+  const absoluteStdReturn = stdDevOf(absoluteReturns);
+  const netReturn = (lastClose - firstClose) / Math.max(epsilon, Math.abs(firstClose));
+  const bodyMean = bodyTotal / window.length;
+  const upperWickMean = upperWickTotal / window.length;
+  const lowerWickMean = lowerWickTotal / window.length;
+  const bullishShare = bullish / window.length;
+  const bearishShare = bearish / window.length;
+  const reversalRate = flips / Math.max(1, window.length - 1);
+  const chopRatio = absoluteReturns.reduce((total, value) => total + value, 0) / (Math.abs(netReturn) + epsilon);
+  const wickBodyRatio = (upperWickMean + lowerWickMean) / Math.max(epsilon, bodyMean);
+  const lastReturn = normalizedReturns[normalizedReturns.length - 1] ?? 0;
+  const firstReturn = normalizedReturns[0] ?? 0;
+  const minimumLow = Math.min(...lows);
+  const maximumHigh = Math.max(...highs);
+  const closePosition = clamp((lastClose - minimumLow) / range, 0, 1);
+  const distanceToHigh = clamp((maximumHigh - lastClose) / range, 0, 1);
+  const distanceToLow = clamp((lastClose - minimumLow) / range, 0, 1);
+  const finalTime = lastCandle.time;
+  const finalDate = new Date(finalTime);
+  const minYear = new Date(candles[0]!.time).getUTCFullYear();
+  const maxYear = new Date(candles[candles.length - 1]!.time).getUTCFullYear();
+  const yearSpan = Math.max(1, maxYear - minYear);
+  const year = finalDate.getUTCFullYear();
+  const month = finalDate.getUTCMonth();
+  const dayOfWeek = finalDate.getUTCDay();
+  const hours = finalDate.getUTCHours();
+  const minutes = finalDate.getUTCMinutes();
+  const startOfYear = Date.UTC(year, 0, 0);
+  const dayOfYear = Math.max(1, Math.floor((finalTime - startOfYear) / 86_400_000));
+  const weekNorm = clamp(Math.ceil(dayOfYear / 7) / 53, 0, 1);
+  const hourUnit = clamp((hours + minutes / 60) / 24, 0, 1);
+  const minuteUnit = clamp(minutes / 60, 0, 1);
+  const yearNorm = clamp((year - minYear) / yearSpan, 0, 1);
+  const hourAngle = Math.PI * 2 * hourUnit;
+  const minuteAngle = Math.PI * 2 * minuteUnit;
+  const monthAngle = Math.PI * 2 * (month / 12);
+  const dayAngle = Math.PI * 2 * (dayOfWeek / 7);
+  const dayOfYearAngle = Math.PI * 2 * clamp(dayOfYear / 366, 0, 1);
+
+  return {
+    pricePath: [
+      meanReturn,
+      stdReturn,
+      Math.max(...normalizedReturns),
+      Math.min(...normalizedReturns),
+      absoluteReturns.reduce((total, value) => total + value, 0),
+      closePosition,
+      netReturn,
+      range,
+      bodyMean,
+      upperWickMean,
+      lowerWickMean,
+      bullishShare,
+      bearishShare,
+      reversalRate,
+      chopRatio,
+      lastReturn,
+      firstReturn,
+      quantileOf(normalizedReturns, 0.25),
+      quantileOf(normalizedReturns, 0.5),
+      quantileOf(normalizedReturns, 0.75)
+    ],
+    rangeTrend: [
+      range,
+      netReturn,
+      range / Math.max(epsilon, Math.abs(netReturn)),
+      chopRatio,
+      bullishShare - bearishShare,
+      absoluteMeanReturn
+    ],
+    wicks: [wickBodyRatio, upperWickMean, lowerWickMean, upperWickMean - lowerWickMean, dojis / window.length],
+    time: [Math.sin(hourAngle), Math.cos(hourAngle), Math.sin(minuteAngle), Math.cos(minuteAngle)],
+    temporal: [
+      yearNorm,
+      Math.sin(monthAngle),
+      Math.cos(monthAngle),
+      Math.sin(dayAngle),
+      Math.cos(dayAngle),
+      Math.sin(hourAngle),
+      Math.cos(hourAngle),
+      Math.sin(dayOfYearAngle),
+      Math.cos(dayOfYearAngle),
+      weekNorm
+    ],
+    position: [
+      closePosition,
+      distanceToHigh,
+      distanceToLow,
+      clamp(1 - distanceToHigh, 0, 1),
+      clamp(1 - distanceToLow, 0, 1),
+      closePosition
+    ],
+    topography: [
+      bullishShare,
+      bearishShare,
+      bullishShare - bearishShare,
+      absoluteMeanReturn,
+      absoluteStdReturn,
+      reversalRate,
+      chopRatio,
+      wickBodyRatio,
+      bodyMean
+    ]
+  };
+};
+
+const BacktestTradeMiniChart = ({
+  trade,
+  candles
+}: {
+  trade: HistoryItem;
+  candles: Candle[];
+}) => {
+  const entryIndex = findCandleIndexAtOrBefore(candles, Number(trade.entryTime) * 1000);
+  const exitIndex = findCandleIndexAtOrBefore(candles, Number(trade.exitTime) * 1000);
+
+  if (entryIndex < 0 || exitIndex < entryIndex) {
+    return <div className="backtest-trade-mini-empty">Price movement unavailable.</div>;
+  }
+
+  const startIndex = Math.max(0, entryIndex - 4);
+  const endIndex = Math.min(candles.length - 1, Math.max(entryIndex + 1, exitIndex + 4));
+  const segment = candles.slice(startIndex, endIndex + 1);
+
+  if (segment.length < 2) {
+    return <div className="backtest-trade-mini-empty">Price movement unavailable.</div>;
+  }
+
+  const width = 248;
+  const height = 110;
+  const padX = 8;
+  const padY = 8;
+  const innerWidth = width - padX * 2;
+  const innerHeight = height - padY * 2;
+  const values = segment.map((candle) => candle.close);
+  const domain = [
+    ...segment.flatMap((candle) => [candle.high, candle.low]),
+    trade.entryPrice,
+    trade.targetPrice,
+    trade.stopPrice,
+    trade.outcomePrice
+  ];
+  const min = Math.min(...domain);
+  const max = Math.max(...domain);
+  const range = Math.max(0.000001, max - min);
+  const stepCount = Math.max(1, segment.length - 1);
+  const normalizeY = (value: number): number => {
+    return padY + innerHeight - ((value - min) / range) * innerHeight;
+  };
+  const normalizeX = (absoluteIndex: number): number => {
+    return padX + ((absoluteIndex - startIndex) / Math.max(1, endIndex - startIndex)) * innerWidth;
+  };
+  const path = values
+    .map((value, index) => {
+      const x = padX + (index / stepCount) * innerWidth;
+      const y = normalizeY(value);
+      return `${index === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(" ");
+  const entryX = normalizeX(entryIndex);
+  const exitX = normalizeX(exitIndex);
+  const entryY = normalizeY(trade.entryPrice);
+  const exitY = normalizeY(trade.outcomePrice);
+  const targetY = normalizeY(trade.targetPrice);
+  const stopY = normalizeY(trade.stopPrice);
+  const lineTone = trade.pnlUsd >= 0 ? "#34d399" : "#fb7185";
+
+  return (
+    <div className="backtest-trade-mini-chart">
+      <div className="backtest-trade-mini-head">
+        <span>Entry {formatPrice(trade.entryPrice)}</span>
+        <span className={trade.pnlUsd >= 0 ? "up" : "down"}>{formatSignedUsd(trade.pnlUsd)}</span>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Trade price movement">
+        <rect
+          x="0.5"
+          y="0.5"
+          width={width - 1}
+          height={height - 1}
+          rx="14"
+          fill="rgba(0,0,0,0.88)"
+          stroke="rgba(255,255,255,0.08)"
+        />
+        <line
+          x1={padX}
+          x2={width - padX}
+          y1={targetY}
+          y2={targetY}
+          stroke="rgba(52,211,153,0.55)"
+          strokeDasharray="4 4"
+        />
+        <line
+          x1={padX}
+          x2={width - padX}
+          y1={entryY}
+          y2={entryY}
+          stroke="rgba(255,255,255,0.2)"
+          strokeDasharray="3 5"
+        />
+        <line
+          x1={padX}
+          x2={width - padX}
+          y1={stopY}
+          y2={stopY}
+          stroke="rgba(248,113,113,0.55)"
+          strokeDasharray="4 4"
+        />
+        <path
+          d={path}
+          fill="none"
+          stroke={lineTone}
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <circle cx={entryX} cy={entryY} r="3.5" fill="#f8fafc" />
+        <circle cx={exitX} cy={exitY} r="3.5" fill={lineTone} />
+      </svg>
+    </div>
+  );
+};
+
 const generateTradeBlueprints = (
   model: ModelProfile,
   total = 64,
@@ -1097,6 +2147,156 @@ const generateTradeBlueprints = (
   }
 
   return blueprints.sort((a, b) => b.exitMs - a.exitMs);
+};
+
+const summarizeBacktestTrades = (trades: HistoryItem[]) => {
+  let netPnl = 0;
+  let grossWins = 0;
+  let grossLosses = 0;
+  let wins = 0;
+  let losses = 0;
+  let totalHoldMinutes = 0;
+  let totalWinHoldMinutes = 0;
+  let totalLossHoldMinutes = 0;
+  let maxWin = 0;
+  let maxLoss = 0;
+  let totalR = 0;
+  let totalConfidence = 0;
+  let estimatedPeakTotal = 0;
+  let estimatedDrawdownTotal = 0;
+  let estimatedProfitMinutes = 0;
+  let estimatedDeficitMinutes = 0;
+  let runningPnl = 0;
+  let peakPnl = 0;
+  let maxDrawdown = 0;
+  const dayMap = new Map<string, { key: string; count: number; pnl: number }>();
+  const weekMap = new Map<string, { key: string; count: number; pnl: number }>();
+  const monthMap = new Map<string, { key: string; count: number; pnl: number }>();
+  const pnlSeries: number[] = [];
+
+  for (const trade of trades) {
+    const holdMinutes = Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
+    const targetPotentialUsd = Math.abs(trade.targetPrice - trade.entryPrice) * Math.max(1, trade.units);
+    const stopPotentialUsd = Math.abs(trade.entryPrice - trade.stopPrice) * Math.max(1, trade.units);
+    const favorableShare = trade.result === "Win" ? 0.68 : 0.32;
+    netPnl += trade.pnlUsd;
+    runningPnl += trade.pnlUsd;
+    peakPnl = Math.max(peakPnl, runningPnl);
+    maxDrawdown = Math.min(maxDrawdown, runningPnl - peakPnl);
+    maxWin = Math.max(maxWin, trade.pnlUsd);
+    maxLoss = Math.min(maxLoss, trade.pnlUsd);
+    totalHoldMinutes += holdMinutes;
+    totalConfidence += getTradeConfidenceScore(trade) * 100;
+    estimatedPeakTotal += Math.max(Math.max(trade.pnlUsd, 0), targetPotentialUsd);
+    estimatedDrawdownTotal += Math.max(Math.abs(Math.min(trade.pnlUsd, 0)), stopPotentialUsd);
+    estimatedProfitMinutes += holdMinutes * favorableShare;
+    estimatedDeficitMinutes += holdMinutes * (1 - favorableShare);
+    pnlSeries.push(trade.pnlUsd);
+
+    if (trade.pnlUsd >= 0) {
+      grossWins += trade.pnlUsd;
+      totalWinHoldMinutes += holdMinutes;
+    } else {
+      grossLosses += trade.pnlUsd;
+      losses += 1;
+      totalLossHoldMinutes += holdMinutes;
+    }
+
+    if (trade.result === "Win") {
+      wins += 1;
+    }
+
+    const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
+    const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
+    totalR += rewardDistance / riskDistance;
+
+    const dayKey = getTradeDayKey(trade.exitTime);
+    const currentDay = dayMap.get(dayKey) ?? { key: dayKey, count: 0, pnl: 0 };
+    currentDay.count += 1;
+    currentDay.pnl += trade.pnlUsd;
+    dayMap.set(dayKey, currentDay);
+
+    const weekKey = getTradeWeekKey(trade.exitTime);
+    const currentWeek = weekMap.get(weekKey) ?? { key: weekKey, count: 0, pnl: 0 };
+    currentWeek.count += 1;
+    currentWeek.pnl += trade.pnlUsd;
+    weekMap.set(weekKey, currentWeek);
+
+    const monthKey = getTradeMonthKey(trade.exitTime);
+    const currentMonth = monthMap.get(monthKey) ?? { key: monthKey, count: 0, pnl: 0 };
+    currentMonth.count += 1;
+    currentMonth.pnl += trade.pnlUsd;
+    monthMap.set(monthKey, currentMonth);
+  }
+
+  const dayRows = Array.from(dayMap.values()).sort((a, b) => a.key.localeCompare(b.key));
+  const weekRows = Array.from(weekMap.values()).sort((a, b) => a.key.localeCompare(b.key));
+  const monthRows = Array.from(monthMap.values()).sort((a, b) => a.key.localeCompare(b.key));
+  const bestDay = [...dayRows].sort((a, b) => b.pnl - a.pnl)[0] ?? null;
+  const worstDay = [...dayRows].sort((a, b) => a.pnl - b.pnl)[0] ?? null;
+  const tradeCount = trades.length;
+  const avgPnl = tradeCount > 0 ? netPnl / tradeCount : 0;
+  const avgWin = wins > 0 ? grossWins / wins : 0;
+  const avgLoss = losses > 0 ? grossLosses / losses : 0;
+  const mean = avgPnl;
+  const variance =
+    tradeCount > 0
+      ? pnlSeries.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(1, tradeCount)
+      : 0;
+  const stdDev = Math.sqrt(variance);
+  const downsideValues = pnlSeries.filter((value) => value < 0);
+  const downsideVariance =
+    downsideValues.length > 0
+      ? downsideValues.reduce((sum, value) => sum + value ** 2, 0) / downsideValues.length
+      : 0;
+  const downsideDeviation = Math.sqrt(downsideVariance);
+  const positiveDays = dayRows.filter((row) => row.pnl >= 0).length;
+  const positiveWeeks = weekRows.filter((row) => row.pnl >= 0).length;
+  const positiveMonths = monthRows.filter((row) => row.pnl >= 0).length;
+  const sharpe = stdDev > 0 ? mean / stdDev : 0;
+  const sortino = downsideDeviation > 0 ? mean / downsideDeviation : 0;
+
+  return {
+    tradeCount,
+    netPnl,
+    totalPnl: netPnl,
+    winRate: tradeCount > 0 ? (wins / tradeCount) * 100 : 0,
+    profitFactor:
+      grossLosses === 0 ? (grossWins > 0 ? grossWins : 0) : grossWins / Math.abs(grossLosses),
+    avgPnl,
+    avgHoldMinutes: tradeCount > 0 ? totalHoldMinutes / tradeCount : 0,
+    avgWinDurationMin: wins > 0 ? totalWinHoldMinutes / wins : 0,
+    avgLossDurationMin: losses > 0 ? totalLossHoldMinutes / losses : 0,
+    avgR: tradeCount > 0 ? totalR / tradeCount : 0,
+    avgWin,
+    avgLoss,
+    averageConfidence: tradeCount > 0 ? totalConfidence / tradeCount : 0,
+    tradesPerDay: dayRows.length > 0 ? tradeCount / dayRows.length : 0,
+    tradesPerWeek: weekRows.length > 0 ? tradeCount / weekRows.length : 0,
+    tradesPerMonth: monthRows.length > 0 ? tradeCount / monthRows.length : 0,
+    consistencyPerDay: dayRows.length > 0 ? (positiveDays / dayRows.length) * 100 : 0,
+    consistencyPerWeek: weekRows.length > 0 ? (positiveWeeks / weekRows.length) * 100 : 0,
+    consistencyPerMonth: monthRows.length > 0 ? (positiveMonths / monthRows.length) * 100 : 0,
+    consistencyPerTrade: tradeCount > 0 ? (wins / tradeCount) * 100 : 0,
+    avgPnlPerDay: dayRows.length > 0 ? netPnl / dayRows.length : 0,
+    avgPnlPerWeek: weekRows.length > 0 ? netPnl / weekRows.length : 0,
+    avgPnlPerMonth: monthRows.length > 0 ? netPnl / monthRows.length : 0,
+    avgPeakPerTrade: tradeCount > 0 ? estimatedPeakTotal / tradeCount : 0,
+    avgMaxDrawdownPerTrade: tradeCount > 0 ? estimatedDrawdownTotal / tradeCount : 0,
+    avgTimeInProfitMin: tradeCount > 0 ? estimatedProfitMinutes / tradeCount : 0,
+    avgTimeInDeficitMin: tradeCount > 0 ? estimatedDeficitMinutes / tradeCount : 0,
+    sharpe,
+    sortino,
+    wins,
+    losses,
+    grossWins,
+    grossLosses,
+    maxWin,
+    maxLoss,
+    maxDrawdown,
+    bestDay,
+    worstDay
+  };
 };
 
 const TabIcon = ({ tab }: { tab: PanelTab }) => {
@@ -1188,6 +2388,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const referenceNowMs = useMemo(() => {
     return floorToTimeframe(Date.now(), "1m");
   }, []);
+  const availableAiModelNames = useMemo(() => {
+    const names = aiZipModelNames
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0);
+
+    return names.length > 0 ? names : [...AI_MODEL_FALLBACK_NAMES];
+  }, [aiZipModelNames]);
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
   const [selectedModelId, setSelectedModelId] = useState(modelProfiles[0]?.id ?? "");
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
@@ -1203,8 +2410,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>({});
   const [backtestHistoryQuery, setBacktestHistoryQuery] = useState("");
+  const [backtestHistoryCollapsed, setBacktestHistoryCollapsed] = useState(false);
+  const [hoveredBacktestHistoryId, setHoveredBacktestHistoryId] = useState<string | null>(null);
+  const [statsDateStart, setStatsDateStart] = useState("");
+  const [statsDateEnd, setStatsDateEnd] = useState("");
   const [selectedBacktestMonthKey, setSelectedBacktestMonthKey] = useState("");
   const [selectedBacktestDateKey, setSelectedBacktestDateKey] = useState("");
+  const [expandedBacktestTradeId, setExpandedBacktestTradeId] = useState<string | null>(null);
   const [enabledBacktestWeekdays, setEnabledBacktestWeekdays] = useState<string[]>([
     ...backtestWeekdayLabels
   ]);
@@ -1232,14 +2444,54 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [slDollars, setSlDollars] = useState(120);
   const [dollarsPerMove, setDollarsPerMove] = useState(100);
   const [maxBarsInTrade, setMaxBarsInTrade] = useState(32);
+  const [methodSettingsOpen, setMethodSettingsOpen] = useState(false);
+  const [modelsModalOpen, setModelsModalOpen] = useState(false);
+  const [featuresModalOpen, setFeaturesModalOpen] = useState(false);
+  const [librariesModalOpen, setLibrariesModalOpen] = useState(false);
+  const [selectedAiModels, setSelectedAiModels] = useState<string[]>(() => {
+    return availableAiModelNames.slice(0, Math.min(availableAiModelNames.length, 3));
+  });
+  const [selectedAiFeatures, setSelectedAiFeatures] = useState<string[]>(() => {
+    return AI_FEATURE_OPTIONS.map((feature) => feature.id);
+  });
+  const [selectedAiLibraries, setSelectedAiLibraries] = useState<string[]>([
+    "core",
+    "recent",
+    "base"
+  ]);
+  const [chunkBars, setChunkBars] = useState(24);
+  const [distanceMetric, setDistanceMetric] = useState<AiDistanceMetric>("euclidean");
+  const [selectedAiModalities, setSelectedAiModalities] = useState<string[]>([
+    "Direction",
+    "Model"
+  ]);
+  const [embeddingCompression, setEmbeddingCompression] = useState(35);
+  const [dimensionAmount, setDimensionAmount] = useState(32);
+  const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>("jl");
+  const [kEntry, setKEntry] = useState(12);
+  const [kExit, setKExit] = useState(9);
+  const [knnVoteMode, setKnnVoteMode] = useState<KnnVoteMode>("distance");
+  const [hdbMinClusterSize, setHdbMinClusterSize] = useState(35);
+  const [hdbMinSamples, setHdbMinSamples] = useState(12);
+  const [hdbEpsQuantile, setHdbEpsQuantile] = useState(0.85);
+  const [hdbSampleCap, setHdbSampleCap] = useState(5000);
+  const [antiCheatEnabled, setAntiCheatEnabled] = useState(false);
+  const [validationMode, setValidationMode] = useState<AiValidationMode>("off");
+  const [realismLevel, setRealismLevel] = useState(1);
   const [propInitialBalance, setPropInitialBalance] = useState(10_000);
   const [propDailyMaxLoss, setPropDailyMaxLoss] = useState(350);
   const [propTotalMaxLoss, setPropTotalMaxLoss] = useState(900);
   const [propProfitTarget, setPropProfitTarget] = useState(800);
-  const [entryExitChartMode, setEntryExitChartMode] = useState<EntryExitChartMode>("entry");
-  const [backtestDimensionQuery, setBacktestDimensionQuery] = useState("");
-  const [scatterXKey, setScatterXKey] = useState<BacktestScatterKey>("pnlUsd");
-  const [scatterYKey, setScatterYKey] = useState<BacktestScatterKey>("holdMinutes");
+  const [entryExitChartMode, setEntryExitChartMode] = useState<EntryExitChartMode>("Entry");
+  const [hoveredEntryExitBucket, setHoveredEntryExitBucket] = useState<string | null>(null);
+  const [dimSearch, setDimSearch] = useState("");
+  const [dimScope, setDimScope] = useState<DimensionScope>("active");
+  const [dimSortCol, setDimSortCol] = useState<DimensionSortColumn>("corr");
+  const [dimSortDir, setDimSortDir] = useState<-1 | 1>(-1);
+  const [scatterXKey, setScatterXKey] = useState<BacktestScatterKey>("holdMinutes");
+  const [scatterYKey, setScatterYKey] = useState<BacktestScatterKey>("pnlUsd");
+  const [isGraphsCollapsed, setIsGraphsCollapsed] = useState(false);
+  const [hoveredScatterPointId, setHoveredScatterPointId] = useState<string | null>(null);
   const [propProjectionMethod, setPropProjectionMethod] = useState<"historical" | "montecarlo">(
     "historical"
   );
@@ -1265,14 +2517,39 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const selectedModel = useMemo(() => {
     return modelProfiles.find((model) => model.id === selectedModelId) ?? modelProfiles[0]!;
   }, [modelProfiles, selectedModelId]);
+  const aiDisabled = aiMode === "off";
+  const selectedAiModelCount = selectedAiModels.length;
+  const selectedAiFeatureCount = selectedAiFeatures.length;
+  const selectedAiLibraryCount = selectedAiLibraries.length;
 
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
+
+  const cycleValidationMode = () => {
+    setValidationMode((current) => {
+      const currentIndex = AI_VALIDATION_ORDER.indexOf(current);
+      const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % AI_VALIDATION_ORDER.length;
+
+      return AI_VALIDATION_ORDER[nextIndex]!;
+    });
+  };
 
   useEffect(() => {
     if (!modelProfiles.some((model) => model.id === selectedModelId)) {
       setSelectedModelId(modelProfiles[0]?.id ?? "");
     }
   }, [modelProfiles, selectedModelId]);
+
+  useEffect(() => {
+    setSelectedAiModels((current) => {
+      const next = current.filter((name) => availableAiModelNames.includes(name));
+
+      if (next.length > 0) {
+        return next;
+      }
+
+      return availableAiModelNames.slice(0, Math.min(availableAiModelNames.length, 3));
+    });
+  }, [availableAiModelNames]);
 
   useEffect(() => {
     setHoveredTime(null);
@@ -1598,6 +2875,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const resolvedExitIndex = path.hit ? path.hitIndex : exitIndex;
       const rawOutcomePrice = path.hit ? path.outcomePrice : list[resolvedExitIndex].close;
       const outcomePrice = Math.max(0.000001, rawOutcomePrice);
+      const exitReason = path.hit ? (path.result === "Loss" ? "SL" : "TP") : "Model Exit";
       const result: TradeResult = path.hit
         ? (path.result ?? "Loss")
         : blueprint.side === "Long"
@@ -1621,6 +2899,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         symbol: blueprint.symbol,
         side: blueprint.side,
         result,
+        entrySource: selectedModel.name,
+        exitReason,
         pnlPct,
         pnlUsd,
         entryTime: toUtcTimestamp(list[entryIndex].time),
@@ -1637,7 +2917,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     return rows.sort((a, b) => Number(b.exitTime) - Number(a.exitTime)).slice(0, 60);
-  }, [tradeBlueprints, selectedTimeframe, seriesMap]);
+  }, [selectedModel.name, selectedTimeframe, seriesMap, tradeBlueprints]);
 
   const selectedHistoryTrade = useMemo(() => {
     if (!selectedHistoryId) {
@@ -2591,392 +3871,614 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return [...historyRows].sort((a, b) => Number(a.exitTime) - Number(b.exitTime));
   }, [historyRows]);
 
-  const backtestTrades = useMemo(() => {
+  const backtestTimeFilteredTrades = useMemo(() => {
     return backtestSourceTrades.filter((trade) => {
       const weekday = getWeekdayLabel(getTradeDayKey(trade.exitTime));
       const session = getSessionLabel(trade.entryTime);
       const monthIndex = getTradeMonthIndex(trade.exitTime);
       const entryHour = getTradeHour(trade.entryTime);
-      const passesTime =
+      return (
         enabledBacktestWeekdays.includes(weekday) &&
         enabledBacktestSessions.includes(session) &&
         enabledBacktestMonths.includes(monthIndex) &&
-        enabledBacktestHours.includes(entryHour);
-      const confidence = getTradeConfidenceScore(trade) * 100;
-      const passesConfidence = !aiFilterEnabled || confidence >= confidenceThreshold;
-
-      return passesTime && passesConfidence;
+        enabledBacktestHours.includes(entryHour)
+      );
     });
   }, [
-    aiFilterEnabled,
     backtestSourceTrades,
-    confidenceThreshold,
     enabledBacktestHours,
     enabledBacktestMonths,
     enabledBacktestSessions,
     enabledBacktestWeekdays
   ]);
 
-  const backtestSummary = useMemo(() => {
-    let netPnl = 0;
-    let grossWins = 0;
-    let grossLosses = 0;
-    let wins = 0;
-    let losses = 0;
-    let totalHoldMinutes = 0;
-    let totalWinHoldMinutes = 0;
-    let totalLossHoldMinutes = 0;
-    let maxWin = 0;
-    let maxLoss = 0;
-    let totalR = 0;
-    let totalConfidence = 0;
-    let estimatedPeakTotal = 0;
-    let estimatedDrawdownTotal = 0;
-    let estimatedProfitMinutes = 0;
-    let estimatedDeficitMinutes = 0;
-    let runningPnl = 0;
-    let peakPnl = 0;
-    let maxDrawdown = 0;
-    const dayMap = new Map<string, { key: string; count: number; pnl: number }>();
-    const weekMap = new Map<string, { key: string; count: number; pnl: number }>();
-    const monthMap = new Map<string, { key: string; count: number; pnl: number }>();
-    const pnlSeries: number[] = [];
+  const backtestTrades = useMemo(() => {
+    return backtestTimeFilteredTrades.filter((trade) => {
+      const confidence = getTradeConfidenceScore(trade) * 100;
+      return !aiFilterEnabled || confidence >= confidenceThreshold;
+    });
+  }, [aiFilterEnabled, backtestTimeFilteredTrades, confidenceThreshold]);
 
-    for (const trade of backtestTrades) {
-      const holdMinutes = Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
-      const targetPotentialUsd =
-        Math.abs(trade.targetPrice - trade.entryPrice) * Math.max(1, trade.units);
-      const stopPotentialUsd =
-        Math.abs(trade.entryPrice - trade.stopPrice) * Math.max(1, trade.units);
-      const favorableShare = trade.result === "Win" ? 0.68 : 0.32;
-      netPnl += trade.pnlUsd;
-      runningPnl += trade.pnlUsd;
-      peakPnl = Math.max(peakPnl, runningPnl);
-      maxDrawdown = Math.min(maxDrawdown, runningPnl - peakPnl);
-      maxWin = Math.max(maxWin, trade.pnlUsd);
-      maxLoss = Math.min(maxLoss, trade.pnlUsd);
-      totalHoldMinutes += holdMinutes;
-      totalConfidence += getTradeConfidenceScore(trade) * 100;
-      estimatedPeakTotal += Math.max(Math.max(trade.pnlUsd, 0), targetPotentialUsd);
-      estimatedDrawdownTotal += Math.max(Math.abs(Math.min(trade.pnlUsd, 0)), stopPotentialUsd);
-      estimatedProfitMinutes += holdMinutes * favorableShare;
-      estimatedDeficitMinutes += holdMinutes * (1 - favorableShare);
-      pnlSeries.push(trade.pnlUsd);
+  const mainStatsTrades = useMemo(() => {
+    const startMs = getUtcDayStartMs(statsDateStart);
+    const endExclusiveMs = getUtcDayEndExclusiveMs(statsDateEnd);
 
-      if (trade.pnlUsd >= 0) {
-        grossWins += trade.pnlUsd;
-        totalWinHoldMinutes += holdMinutes;
-      } else {
-        grossLosses += trade.pnlUsd;
-        losses += 1;
-        totalLossHoldMinutes += holdMinutes;
+    return backtestTrades.filter((trade) => {
+      const tradeMs = Number(trade.entryTime) * 1000;
+
+      if (!Number.isFinite(tradeMs)) {
+        return false;
       }
 
-      if (trade.result === "Win") {
-        wins += 1;
+      if (startMs !== null && tradeMs < startMs) {
+        return false;
       }
 
-      const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
-      const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
-      totalR += rewardDistance / riskDistance;
+      if (endExclusiveMs !== null && tradeMs >= endExclusiveMs) {
+        return false;
+      }
 
-      const dayKey = getTradeDayKey(trade.exitTime);
-      const currentDay = dayMap.get(dayKey) ?? { key: dayKey, count: 0, pnl: 0 };
-      currentDay.count += 1;
-      currentDay.pnl += trade.pnlUsd;
-      dayMap.set(dayKey, currentDay);
+      return true;
+    });
+  }, [backtestTrades, statsDateEnd, statsDateStart]);
 
-      const weekKey = getTradeWeekKey(trade.exitTime);
-      const currentWeek = weekMap.get(weekKey) ?? { key: weekKey, count: 0, pnl: 0 };
-      currentWeek.count += 1;
-      currentWeek.pnl += trade.pnlUsd;
-      weekMap.set(weekKey, currentWeek);
+  const baselineMainStatsTrades = useMemo(() => {
+    const startMs = getUtcDayStartMs(statsDateStart);
+    const endExclusiveMs = getUtcDayEndExclusiveMs(statsDateEnd);
 
-      const monthKey = getTradeMonthKey(trade.exitTime);
-      const currentMonth = monthMap.get(monthKey) ?? { key: monthKey, count: 0, pnl: 0 };
-      currentMonth.count += 1;
-      currentMonth.pnl += trade.pnlUsd;
-      monthMap.set(monthKey, currentMonth);
+    return backtestTimeFilteredTrades.filter((trade) => {
+      const tradeMs = Number(trade.entryTime) * 1000;
+
+      if (!Number.isFinite(tradeMs)) {
+        return false;
+      }
+
+      if (startMs !== null && tradeMs < startMs) {
+        return false;
+      }
+
+      if (endExclusiveMs !== null && tradeMs >= endExclusiveMs) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [backtestTimeFilteredTrades, statsDateEnd, statsDateStart]);
+
+  const backtestRange = useMemo(() => {
+    if (selectedCandles.length > 0) {
+      return {
+        startMs: selectedCandles[0].time,
+        endMs: selectedCandles[selectedCandles.length - 1].time
+      };
     }
 
-    const dayRows = Array.from(dayMap.values()).sort((a, b) => a.key.localeCompare(b.key));
-    const weekRows = Array.from(weekMap.values()).sort((a, b) => a.key.localeCompare(b.key));
-    const monthRows = Array.from(monthMap.values()).sort((a, b) => a.key.localeCompare(b.key));
-    const bestDay = [...dayRows].sort((a, b) => b.pnl - a.pnl)[0] ?? null;
-    const worstDay = [...dayRows].sort((a, b) => a.pnl - b.pnl)[0] ?? null;
-    const tradeCount = backtestTrades.length;
-    const avgPnl = tradeCount > 0 ? netPnl / tradeCount : 0;
-    const avgWin = wins > 0 ? grossWins / wins : 0;
-    const avgLoss = losses > 0 ? grossLosses / losses : 0;
-    const mean = avgPnl;
-    const variance =
-      tradeCount > 0
-        ? pnlSeries.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(1, tradeCount)
-        : 0;
-    const stdDev = Math.sqrt(variance);
-    const downsideValues = pnlSeries.filter((value) => value < 0);
-    const downsideVariance =
-      downsideValues.length > 0
-        ? downsideValues.reduce((sum, value) => sum + value ** 2, 0) / downsideValues.length
-        : 0;
-    const downsideDeviation = Math.sqrt(downsideVariance);
-    const positiveDays = dayRows.filter((row) => row.pnl >= 0).length;
-    const positiveWeeks = weekRows.filter((row) => row.pnl >= 0).length;
-    const positiveMonths = monthRows.filter((row) => row.pnl >= 0).length;
-    const sharpe = stdDev > 0 ? mean / stdDev : 0;
-    const sortino = downsideDeviation > 0 ? mean / downsideDeviation : 0;
+    if (backtestSourceTrades.length === 0) {
+      return {
+        startMs: null as number | null,
+        endMs: null as number | null
+      };
+    }
+
+    let startMs = Number.POSITIVE_INFINITY;
+    let endMs = Number.NEGATIVE_INFINITY;
+
+    for (const trade of backtestSourceTrades) {
+      startMs = Math.min(startMs, Number(trade.entryTime) * 1000);
+      endMs = Math.max(endMs, Number(trade.exitTime) * 1000);
+    }
 
     return {
-      tradeCount,
-      netPnl,
-      totalPnl: netPnl,
-      winRate: tradeCount > 0 ? (wins / tradeCount) * 100 : 0,
-      profitFactor:
-        grossLosses === 0 ? (grossWins > 0 ? grossWins : 0) : grossWins / Math.abs(grossLosses),
-      avgPnl,
-      avgHoldMinutes: tradeCount > 0 ? totalHoldMinutes / tradeCount : 0,
-      avgWinDurationMin: wins > 0 ? totalWinHoldMinutes / wins : 0,
-      avgLossDurationMin: losses > 0 ? totalLossHoldMinutes / losses : 0,
-      avgR: tradeCount > 0 ? totalR / tradeCount : 0,
-      avgWin,
-      avgLoss,
-      averageConfidence: tradeCount > 0 ? totalConfidence / tradeCount : 0,
-      tradesPerDay: dayRows.length > 0 ? tradeCount / dayRows.length : 0,
-      tradesPerWeek: weekRows.length > 0 ? tradeCount / weekRows.length : 0,
-      tradesPerMonth: monthRows.length > 0 ? tradeCount / monthRows.length : 0,
-      consistencyPerDay: dayRows.length > 0 ? (positiveDays / dayRows.length) * 100 : 0,
-      consistencyPerWeek: weekRows.length > 0 ? (positiveWeeks / weekRows.length) * 100 : 0,
-      consistencyPerMonth: monthRows.length > 0 ? (positiveMonths / monthRows.length) * 100 : 0,
-      consistencyPerTrade: tradeCount > 0 ? (wins / tradeCount) * 100 : 0,
-      avgPnlPerDay: dayRows.length > 0 ? netPnl / dayRows.length : 0,
-      avgPnlPerWeek: weekRows.length > 0 ? netPnl / weekRows.length : 0,
-      avgPnlPerMonth: monthRows.length > 0 ? netPnl / monthRows.length : 0,
-      avgPeakPerTrade: tradeCount > 0 ? estimatedPeakTotal / tradeCount : 0,
-      avgMaxDrawdownPerTrade: tradeCount > 0 ? estimatedDrawdownTotal / tradeCount : 0,
-      avgTimeInProfitMin: tradeCount > 0 ? estimatedProfitMinutes / tradeCount : 0,
-      avgTimeInDeficitMin: tradeCount > 0 ? estimatedDeficitMinutes / tradeCount : 0,
-      sharpe,
-      sortino,
-      wins,
-      losses,
-      grossWins,
-      grossLosses,
-      maxWin,
-      maxLoss,
-      maxDrawdown,
-      bestDay,
-      worstDay
+      startMs: Number.isFinite(startMs) ? startMs : null,
+      endMs: Number.isFinite(endMs) ? endMs : null
     };
+  }, [backtestSourceTrades, selectedCandles]);
+
+  const backtestSummary = useMemo(() => {
+    return summarizeBacktestTrades(backtestTrades);
   }, [backtestTrades]);
 
+  const baselineMainStatsSummary = useMemo(() => {
+    return summarizeBacktestTrades(baselineMainStatsTrades);
+  }, [baselineMainStatsTrades]);
+
+  const mainStatsSummary = useMemo(() => {
+    return summarizeBacktestTrades(mainStatsTrades);
+  }, [mainStatsTrades]);
+
+  const mainStatsTitle = useMemo(() => {
+    if (!statsDateStart && !statsDateEnd) {
+      return "Stats (All Trades)";
+    }
+
+    const startLabel = statsDateStart ? formatStatsDateLabel(statsDateStart) : "Start";
+    const endLabel = statsDateEnd ? formatStatsDateLabel(statsDateEnd) : "End";
+    return `Stats (${startLabel} -> ${endLabel})`;
+  }, [statsDateEnd, statsDateStart]);
+
+  const mainStatsSessionRows = useMemo(() => {
+    const map = new Map<string, { label: string; total: number; trades: number }>();
+
+    for (const trade of mainStatsTrades) {
+      const label = getSessionLabel(trade.entryTime);
+      const current = map.get(label) ?? { label, total: 0, trades: 0 };
+      current.total += trade.pnlUsd;
+      current.trades += 1;
+      map.set(label, current);
+    }
+
+    return Array.from(map.values()).sort((left, right) => right.total - left.total);
+  }, [mainStatsTrades]);
+
+  const mainStatsMonthRows = useMemo(() => {
+    const map = new Map<string, { key: string; total: number; trades: number }>();
+
+    for (const trade of mainStatsTrades) {
+      const key = getTradeMonthKey(trade.exitTime);
+      const current = map.get(key) ?? { key, total: 0, trades: 0 };
+      current.total += trade.pnlUsd;
+      current.trades += 1;
+      map.set(key, current);
+    }
+
+    return Array.from(map.values()).sort((left, right) => left.key.localeCompare(right.key));
+  }, [mainStatsTrades]);
+
+  const mainStatsAiEfficiency = useMemo(() => {
+    if (aiMode === "off" || mainStatsTrades.length < 10) {
+      return null;
+    }
+
+    const points = mainStatsTrades.map((trade) => ({
+      score: getTradeConfidenceScore(trade),
+      outcome: trade.pnlUsd >= 0 ? 1 : 0
+    }));
+    const positives = points.filter((point) => point.outcome === 1).length;
+    const negatives = points.length - positives;
+
+    if (positives < 2 || negatives < 2) {
+      return null;
+    }
+
+    points.sort((left, right) => left.score - right.score);
+
+    let positiveRankTotal = 0;
+    let index = 0;
+
+    while (index < points.length) {
+      let nextIndex = index + 1;
+
+      while (nextIndex < points.length && points[nextIndex].score === points[index].score) {
+        nextIndex += 1;
+      }
+
+      const averageRank = (index + 1 + nextIndex) / 2;
+
+      for (let offset = index; offset < nextIndex; offset += 1) {
+        if (points[offset].outcome === 1) {
+          positiveRankTotal += averageRank;
+        }
+      }
+
+      index = nextIndex;
+    }
+
+    const auc =
+      (positiveRankTotal - (positives * (positives + 1)) / 2) / (Math.max(1, positives) * Math.max(1, negatives));
+
+    return clamp(auc, 0, 1);
+  }, [aiMode, mainStatsTrades]);
+
+  const mainStatsAiEffectivenessPct = useMemo(() => {
+    if (aiMode === "off" || !aiFilterEnabled) {
+      return null;
+    }
+
+    if (baselineMainStatsTrades.length < 5 || mainStatsTrades.length < 5) {
+      return null;
+    }
+
+    return mainStatsSummary.winRate - baselineMainStatsSummary.winRate;
+  }, [
+    aiFilterEnabled,
+    aiMode,
+    baselineMainStatsSummary.winRate,
+    baselineMainStatsTrades.length,
+    mainStatsSummary.winRate,
+    mainStatsTrades.length
+  ]);
+
+  const mainStatsAiEfficacyPct = useMemo(() => {
+    if (aiMode === "off" || !aiFilterEnabled) {
+      return null;
+    }
+
+    if (baselineMainStatsTrades.length < 5 || mainStatsTrades.length < 5) {
+      return null;
+    }
+
+    const baselinePnl = baselineMainStatsSummary.totalPnl;
+    const currentPnl = mainStatsSummary.totalPnl;
+    const denominator =
+      Math.abs(baselinePnl) > 0.000000001
+        ? Math.abs(baselinePnl)
+        : Math.max(0.000000001, Math.abs(currentPnl));
+
+    return ((currentPnl - baselinePnl) / denominator) * 100;
+  }, [
+    aiFilterEnabled,
+    aiMode,
+    baselineMainStatsSummary.totalPnl,
+    baselineMainStatsTrades.length,
+    mainStatsSummary.totalPnl,
+    mainStatsTrades.length
+  ]);
+
   const mainStatisticsCards = useMemo(() => {
+    const hasTrades = mainStatsSummary.tradeCount > 0;
+    const totalPnlTone =
+      !hasTrades ? "neutral" : mainStatsSummary.totalPnl >= 0 ? "up" : "down";
+    const modelSummaryValue = hasTrades
+      ? `${selectedModel.name} · ${formatSignedUsd(mainStatsSummary.totalPnl)} · ${
+          mainStatsSummary.tradeCount
+        } trades`
+      : "—";
+    const modelPnlValue = hasTrades
+      ? `${selectedModel.name} · ${formatSignedUsd(mainStatsSummary.totalPnl)} · avg ${formatSignedUsd(
+          mainStatsSummary.avgPnl
+        )}`
+      : "—";
+    const bestSessionRow = mainStatsSessionRows[0] ?? null;
+    const worstSessionRow =
+      mainStatsSessionRows.length > 0 ? mainStatsSessionRows[mainStatsSessionRows.length - 1] : null;
+    const sessionPnlValue = bestSessionRow
+      ? `${bestSessionRow.label} · ${formatSignedUsd(bestSessionRow.total)} · ${
+          bestSessionRow.trades
+        } trades · avg ${formatSignedUsd(bestSessionRow.total / Math.max(1, bestSessionRow.trades))}`
+      : "—";
+    const monthRowsByPnl = [...mainStatsMonthRows].sort((left, right) => right.total - left.total);
+    const bestMonthRow = monthRowsByPnl[0] ?? null;
+    const worstMonthRow =
+      monthRowsByPnl.length > 0 ? monthRowsByPnl[monthRowsByPnl.length - 1] : null;
+    const monthFocusRow = mainStatsMonthRows.length > 0 ? mainStatsMonthRows[mainStatsMonthRows.length - 1] : null;
+    const monthPnlValue = monthFocusRow
+      ? `${getMonthLabel(monthFocusRow.key)} · ${formatSignedUsd(monthFocusRow.total)} · ${
+          monthFocusRow.trades
+        } trades · avg ${formatSignedUsd(monthFocusRow.total / Math.max(1, monthFocusRow.trades))}`
+      : "—";
+
     return [
       {
         label: "Total PnL",
-        value: formatSignedUsd(backtestSummary.totalPnl),
-        tone: backtestSummary.totalPnl >= 0 ? "up" : "down",
+        value: formatSignedUsd(mainStatsSummary.totalPnl),
+        tone: totalPnlTone,
         span: 4
       },
       {
         label: "Win Rate",
-        value: `${backtestSummary.winRate.toFixed(2)}%`,
-        tone: backtestSummary.winRate >= 55 ? "up" : backtestSummary.winRate >= 45 ? "neutral" : "down",
+        value: `${mainStatsSummary.winRate.toFixed(2)}%`,
+        tone: mainStatsSummary.winRate >= 55 ? "up" : mainStatsSummary.winRate >= 45 ? "neutral" : "down",
         span: 2
       },
       {
         label: "Profit Factor",
-        value: backtestSummary.profitFactor.toFixed(2),
+        value: mainStatsSummary.profitFactor.toFixed(2),
         tone:
-          backtestSummary.profitFactor > 1.5
+          mainStatsSummary.profitFactor > 1.5
             ? "up"
-            : backtestSummary.profitFactor >= 1
+            : mainStatsSummary.profitFactor >= 1
               ? "neutral"
               : "down",
         span: 2
       },
       {
         label: "Total Trades",
-        value: backtestSummary.tradeCount.toLocaleString("en-US"),
+        value: mainStatsSummary.tradeCount.toLocaleString("en-US"),
         tone: "neutral",
         span: 4
       },
       {
         label: "Trades per Month",
-        value: backtestSummary.tradesPerMonth.toFixed(2),
+        value: mainStatsSummary.tradesPerMonth.toFixed(2),
         tone: "neutral",
         span: 1
       },
       {
         label: "Trades per Week",
-        value: backtestSummary.tradesPerWeek.toFixed(2),
+        value: mainStatsSummary.tradesPerWeek.toFixed(2),
         tone: "neutral",
         span: 1
       },
       {
         label: "Trades per Day",
-        value: backtestSummary.tradesPerDay.toFixed(2),
-        tone: "neutral",
-        span: 1
-      },
-      {
-        label: "Average Confidence",
-        value: `${backtestSummary.averageConfidence.toFixed(1)}%`,
+        value: mainStatsSummary.tradesPerDay.toFixed(2),
         tone: "neutral",
         span: 1
       },
       {
         label: "Consistency / Month",
-        value: `${backtestSummary.consistencyPerMonth.toFixed(1)}%`,
+        value: `${mainStatsSummary.consistencyPerMonth.toFixed(1)}%`,
         tone:
-          backtestSummary.consistencyPerMonth >= 70
+          mainStatsSummary.consistencyPerMonth >= 70
             ? "up"
-            : backtestSummary.consistencyPerMonth >= 50
+            : mainStatsSummary.consistencyPerMonth >= 50
               ? "neutral"
               : "down",
         span: 1
       },
       {
         label: "Consistency / Week",
-        value: `${backtestSummary.consistencyPerWeek.toFixed(1)}%`,
+        value: `${mainStatsSummary.consistencyPerWeek.toFixed(1)}%`,
         tone:
-          backtestSummary.consistencyPerWeek >= 70
+          mainStatsSummary.consistencyPerWeek >= 70
             ? "up"
-            : backtestSummary.consistencyPerWeek >= 50
+            : mainStatsSummary.consistencyPerWeek >= 50
               ? "neutral"
               : "down",
         span: 1
       },
       {
         label: "Consistency / Day",
-        value: `${backtestSummary.consistencyPerDay.toFixed(1)}%`,
+        value: `${mainStatsSummary.consistencyPerDay.toFixed(1)}%`,
         tone:
-          backtestSummary.consistencyPerDay >= 70
+          mainStatsSummary.consistencyPerDay >= 70
             ? "up"
-            : backtestSummary.consistencyPerDay >= 50
+            : mainStatsSummary.consistencyPerDay >= 50
               ? "neutral"
               : "down",
         span: 1
       },
       {
         label: "Consistency / Trade",
-        value: `${backtestSummary.consistencyPerTrade.toFixed(1)}%`,
+        value: `${mainStatsSummary.consistencyPerTrade.toFixed(1)}%`,
         tone:
-          backtestSummary.consistencyPerTrade >= 70
+          mainStatsSummary.consistencyPerTrade >= 70
             ? "up"
-            : backtestSummary.consistencyPerTrade >= 50
+            : mainStatsSummary.consistencyPerTrade >= 50
               ? "neutral"
               : "down",
         span: 1
       },
       {
         label: "Avg PnL / Month",
-        value: formatSignedUsd(backtestSummary.avgPnlPerMonth),
-        tone: backtestSummary.avgPnlPerMonth >= 0 ? "up" : "down",
+        value: formatSignedUsd(mainStatsSummary.avgPnlPerMonth),
+        tone: mainStatsSummary.avgPnlPerMonth >= 0 ? "up" : "down",
         span: 1
       },
       {
         label: "Avg PnL / Week",
-        value: formatSignedUsd(backtestSummary.avgPnlPerWeek),
-        tone: backtestSummary.avgPnlPerWeek >= 0 ? "up" : "down",
+        value: formatSignedUsd(mainStatsSummary.avgPnlPerWeek),
+        tone: mainStatsSummary.avgPnlPerWeek >= 0 ? "up" : "down",
         span: 1
       },
       {
         label: "Avg PnL / Day",
-        value: formatSignedUsd(backtestSummary.avgPnlPerDay),
-        tone: backtestSummary.avgPnlPerDay >= 0 ? "up" : "down",
+        value: formatSignedUsd(mainStatsSummary.avgPnlPerDay),
+        tone: mainStatsSummary.avgPnlPerDay >= 0 ? "up" : "down",
         span: 1
       },
       {
         label: "Expected Value",
-        value: formatSignedUsd(backtestSummary.avgPnl),
-        tone: backtestSummary.avgPnl >= 0 ? "up" : "down",
+        value: formatSignedUsd(mainStatsSummary.avgPnl),
+        tone: mainStatsSummary.avgPnl >= 0 ? "up" : "down",
         span: 1
       },
       {
         label: "Sharpe",
-        value: backtestSummary.sharpe.toFixed(2),
-        tone: backtestSummary.sharpe >= 1 ? "up" : backtestSummary.sharpe >= 0 ? "neutral" : "down",
+        value: mainStatsSummary.sharpe.toFixed(2),
+        tone: mainStatsSummary.sharpe >= 1 ? "up" : mainStatsSummary.sharpe >= 0 ? "neutral" : "down",
         span: 1
       },
       {
         label: "Sortino",
-        value: backtestSummary.sortino.toFixed(2),
+        value: mainStatsSummary.sortino.toFixed(2),
         tone:
-          backtestSummary.sortino >= 1
+          mainStatsSummary.sortino >= 1
             ? "up"
-            : backtestSummary.sortino >= 0
+            : mainStatsSummary.sortino >= 0
               ? "neutral"
               : "down",
         span: 1
       },
       {
         label: "Risk to Reward",
-        value: backtestSummary.avgR.toFixed(2),
-        tone: backtestSummary.avgR >= 1 ? "up" : "down",
+        value: mainStatsSummary.avgR.toFixed(2),
+        tone: mainStatsSummary.avgR >= 1 ? "up" : "down",
         span: 1
       },
       {
         label: "Biggest Win",
-        value: `+$${formatUsd(backtestSummary.maxWin)}`,
+        value: `$${formatUsd(mainStatsSummary.maxWin)}`,
         tone: "up",
         span: 1
       },
       {
         label: "Biggest Loss",
-        value: `-$${formatUsd(Math.abs(backtestSummary.maxLoss))}`,
+        value: `-$${formatUsd(Math.abs(mainStatsSummary.maxLoss))}`,
         tone: "down",
         span: 1
       },
       {
-        label: "Average Peak / Trade",
-        value: `+$${formatUsd(backtestSummary.avgPeakPerTrade)}`,
+        label: "Average Peak / trade",
+        value: `$${formatUsd(mainStatsSummary.avgPeakPerTrade)}`,
         tone: "up",
         span: 1
       },
       {
-        label: "Avg Max Drawdown / Trade",
-        value: `-$${formatUsd(backtestSummary.avgMaxDrawdownPerTrade)}`,
+        label: "Avg Max Drawdown / trade",
+        value: `-$${formatUsd(mainStatsSummary.avgMaxDrawdownPerTrade)}`,
         tone: "down",
         span: 1
       },
       {
         label: "Average Win",
-        value: `+$${formatUsd(backtestSummary.avgWin)}`,
+        value: `$${formatUsd(mainStatsSummary.avgWin)}`,
         tone: "up",
         span: 2
       },
       {
         label: "Average Loss",
-        value: `-$${formatUsd(Math.abs(backtestSummary.avgLoss))}`,
+        value: `-$${formatUsd(Math.abs(mainStatsSummary.avgLoss))}`,
         tone: "down",
         span: 2
       },
       {
         label: "Average Win Duration",
-        value: formatMinutesCompact(backtestSummary.avgWinDurationMin),
+        value: formatMinutesCompact(mainStatsSummary.avgWinDurationMin),
         tone: "up",
         span: 1
       },
       {
         label: "Average Loss Duration",
-        value: formatMinutesCompact(backtestSummary.avgLossDurationMin),
+        value: formatMinutesCompact(mainStatsSummary.avgLossDurationMin),
         tone: "down",
         span: 1
       },
       {
         label: "Average Time in Profit",
-        value: formatMinutesCompact(backtestSummary.avgTimeInProfitMin),
+        value: formatMinutesCompact(mainStatsSummary.avgTimeInProfitMin),
         tone: "up",
         span: 1
       },
       {
         label: "Average Time in Deficit",
-        value: formatMinutesCompact(backtestSummary.avgTimeInDeficitMin),
+        value: formatMinutesCompact(mainStatsSummary.avgTimeInDeficitMin),
         tone: "down",
         span: 1
+      },
+      {
+        label: "AI Efficiency",
+        value: mainStatsAiEfficiency === null ? "—" : `${Math.round(mainStatsAiEfficiency * 100)}%`,
+        tone:
+          mainStatsAiEfficiency === null
+            ? "neutral"
+            : mainStatsAiEfficiency >= 0.55
+              ? "up"
+              : mainStatsAiEfficiency <= 0.45
+                ? "down"
+                : "neutral",
+        span: 1
+      },
+      {
+        label: "AI Efficacy",
+        value:
+          mainStatsAiEfficacyPct === null
+            ? "—"
+            : `${mainStatsAiEfficacyPct >= 0 ? "+" : ""}${mainStatsAiEfficacyPct.toFixed(1)}%`,
+        tone:
+          mainStatsAiEfficacyPct === null
+            ? "neutral"
+            : mainStatsAiEfficacyPct >= 0
+              ? "up"
+              : "down",
+        span: 1
+      },
+      {
+        label: "AI Effectiveness",
+        value:
+          mainStatsAiEffectivenessPct === null
+            ? "—"
+            : `${mainStatsAiEffectivenessPct >= 0 ? "+" : ""}${mainStatsAiEffectivenessPct.toFixed(1)}%`,
+        tone:
+          mainStatsAiEffectivenessPct === null
+            ? "neutral"
+            : mainStatsAiEffectivenessPct >= 0
+              ? "up"
+              : "down",
+        span: 1
+      },
+      {
+        label: "Best Model",
+        value: modelSummaryValue,
+        tone: totalPnlTone,
+        span: 2
+      },
+      {
+        label: "Worst Model",
+        value: modelSummaryValue,
+        tone: totalPnlTone,
+        span: 2
+      },
+      {
+        label: "Model PnL",
+        value: modelPnlValue,
+        tone: totalPnlTone,
+        span: 4
+      },
+      {
+        label: "Best Session",
+        value: bestSessionRow
+          ? `${bestSessionRow.label} · ${formatSignedUsd(bestSessionRow.total)} · ${bestSessionRow.trades} trades`
+          : "—",
+        tone:
+          bestSessionRow === null ? "neutral" : bestSessionRow.total >= 0 ? "up" : "down",
+        span: 2
+      },
+      {
+        label: "Worst Session",
+        value: worstSessionRow
+          ? `${worstSessionRow.label} · ${formatSignedUsd(worstSessionRow.total)} · ${worstSessionRow.trades} trades`
+          : "—",
+        tone:
+          worstSessionRow === null ? "neutral" : worstSessionRow.total >= 0 ? "up" : "down",
+        span: 2
+      },
+      {
+        label: "Session PnL",
+        value: sessionPnlValue,
+        tone:
+          bestSessionRow === null ? "neutral" : bestSessionRow.total >= 0 ? "up" : "down",
+        span: 4
+      },
+      {
+        label: "Best Month",
+        value: bestMonthRow
+          ? `${getMonthLabel(bestMonthRow.key)} · ${formatSignedUsd(bestMonthRow.total)} · ${bestMonthRow.trades} trades`
+          : "—",
+        tone:
+          bestMonthRow === null ? "neutral" : bestMonthRow.total >= 0 ? "up" : "down",
+        span: 2
+      },
+      {
+        label: "Worst Month",
+        value: worstMonthRow
+          ? `${getMonthLabel(worstMonthRow.key)} · ${formatSignedUsd(worstMonthRow.total)} · ${worstMonthRow.trades} trades`
+          : "—",
+        tone:
+          worstMonthRow === null ? "neutral" : worstMonthRow.total >= 0 ? "up" : "down",
+        span: 2
+      },
+      {
+        label: "Month PnL",
+        value: monthPnlValue,
+        tone:
+          monthFocusRow === null ? "neutral" : monthFocusRow.total >= 0 ? "up" : "down",
+        span: 4
+      },
+      {
+        label: "Start Date",
+        value: backtestRange.startMs === null ? "—" : formatDateTime(backtestRange.startMs),
+        tone: "neutral",
+        span: 2
+      },
+      {
+        label: "End Date",
+        value: backtestRange.endMs === null ? "—" : formatDateTime(backtestRange.endMs),
+        tone: "neutral",
+        span: 2
       }
     ];
-  }, [backtestSummary]);
+  }, [
+    backtestRange.endMs,
+    backtestRange.startMs,
+    mainStatsAiEfficacyPct,
+    mainStatsAiEffectivenessPct,
+    mainStatsAiEfficiency,
+    mainStatsMonthRows,
+    mainStatsSessionRows,
+    mainStatsSummary,
+    selectedModel.name
+  ]);
 
   const availableBacktestMonths = useMemo(() => {
     const monthKeys = new Set<string>();
@@ -3004,25 +4506,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return map;
   }, [backtestTrades]);
 
-  const selectedBacktestMonthIndex = selectedBacktestMonthKey
-    ? availableBacktestMonths.indexOf(selectedBacktestMonthKey)
-    : -1;
-
-  const calendarMonthLabel = selectedBacktestMonthKey
-    ? getMonthLabel(selectedBacktestMonthKey)
-    : "No trades loaded";
+  const activeBacktestMonthKey = selectedBacktestMonthKey || getCurrentTradeMonthKey();
+  const calendarMonthLabel = getMonthLabel(activeBacktestMonthKey);
 
   const backtestCalendarGrid = useMemo(() => {
-    if (!selectedBacktestMonthKey) {
-      return [] as Array<{
-        dateKey: string;
-        day: number;
-        inMonth: boolean;
-        activity: { count: number; wins: number; pnl: number; items: HistoryItem[] } | null;
-      }>;
-    }
-
-    const [year, month] = selectedBacktestMonthKey.split("-").map((value) => Number(value));
+    const [year, month] = activeBacktestMonthKey.split("-").map((value) => Number(value));
 
     if (!Number.isFinite(year) || !Number.isFinite(month)) {
       return [];
@@ -3043,7 +4531,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         activity: backtestCalendarAgg.get(dateKey) ?? null
       };
     });
-  }, [backtestCalendarAgg, selectedBacktestMonthKey]);
+  }, [activeBacktestMonthKey, backtestCalendarAgg]);
 
   const selectedBacktestMonthPnl = useMemo(() => {
     return backtestCalendarGrid.reduce((sum, cell) => {
@@ -3071,6 +4559,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return [...bucket.items].sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
   }, [backtestCalendarAgg, selectedBacktestDateKey]);
 
+  useEffect(() => {
+    setExpandedBacktestTradeId((current) => {
+      if (!current) {
+        return null;
+      }
+
+      return selectedBacktestDayTrades.some((trade) => trade.id === current) ? current : null;
+    });
+  }, [selectedBacktestDayTrades]);
+
   const filteredBacktestHistory = useMemo(() => {
     const query = backtestHistoryQuery.trim().toLowerCase();
 
@@ -3081,9 +4579,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return [...backtestTrades]
       .filter((trade) => {
         const haystack = [
+          trade.id,
+          selectedModel.name,
           trade.symbol,
           trade.side,
+          trade.side === "Long" ? "Buy" : "Sell",
           trade.result,
+          getSessionLabel(trade.entryTime),
+          getBacktestExitLabel(trade),
           trade.entryAt,
           trade.exitAt,
           formatSignedUsd(trade.pnlUsd),
@@ -3095,7 +4598,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         return haystack.includes(query);
       })
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
-  }, [backtestHistoryQuery, backtestTrades]);
+  }, [backtestHistoryQuery, backtestTrades, selectedModel.name]);
 
   const backtestTemporalStats = useMemo(() => {
     const weekdayRows = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label) => ({
@@ -3442,27 +4945,50 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     });
   }, [backtestDimensionQuery, backtestDimensionRows]);
 
-  const backtestEntryExitChartRows = useMemo(() => {
-    if (entryExitChartMode === "entry") {
-      return backtestTemporalStats.sessions.map((row) => ({
-        key: row.label,
-        label: row.label,
-        count: row.count,
-        tone: row.pnl >= 0 ? "up" : "down",
-        detail: `${row.winRate.toFixed(0)}% win`,
-        value: row.pnl
-      }));
+  const entryExitStats = useMemo(() => {
+    const entryCounts: Record<string, number> = {};
+    const exitCounts: Record<string, number> = {};
+
+    for (const trade of mainStatsTrades) {
+      const entryKey = trade.entrySource || "Unknown";
+      const exitKey = trade.exitReason || "None";
+      entryCounts[entryKey] = (entryCounts[entryKey] ?? 0) + 1;
+      exitCounts[exitKey] = (exitCounts[exitKey] ?? 0) + 1;
     }
 
-    return backtestEntryExitStats.exits.map((row) => ({
-      key: row.label,
-      label: row.label,
-      count: row.value,
-      tone: "neutral" as const,
-      detail: `${row.pct.toFixed(0)}% share`,
-      value: row.pct
+    const toSorted = (counts: Record<string, number>) => {
+      return Object.entries(counts).sort((left, right) => right[1] - left[1]);
+    };
+
+    return {
+      entry: toSorted(entryCounts),
+      exit: toSorted(exitCounts)
+    };
+  }, [mainStatsTrades]);
+
+  const entryExitChartData = useMemo(() => {
+    const source = entryExitChartMode === "Entry" ? entryExitStats.entry : entryExitStats.exit;
+
+    return source.map(([bucket, count]) => ({
+      bucket,
+      count
     }));
-  }, [backtestEntryExitStats.exits, backtestTemporalStats.sessions, entryExitChartMode]);
+  }, [entryExitChartMode, entryExitStats]);
+
+  const hoveredEntryExitRow = useMemo(() => {
+    if (!hoveredEntryExitBucket) {
+      return null;
+    }
+
+    return entryExitChartData.find((row) => row.bucket === hoveredEntryExitBucket) ?? null;
+  }, [entryExitChartData, hoveredEntryExitBucket]);
+
+  const entryExitChartMetrics = useMemo(() => {
+    return {
+      total: entryExitChartData.reduce((sum, row) => sum + row.count, 0),
+      maxCount: Math.max(1, ...entryExitChartData.map((row) => row.count))
+    };
+  }, [entryExitChartData]);
 
   const backtestScatterPlot = useMemo(() => {
     const points = backtestTrades.map((trade) => {
@@ -3611,11 +5137,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   useEffect(() => {
     setSelectedBacktestMonthKey((current) => {
-      if (availableBacktestMonths.length === 0) {
-        return "";
+      if (current) {
+        return current;
       }
 
-      return availableBacktestMonths.includes(current) ? current : availableBacktestMonths[0];
+      return availableBacktestMonths[0] ?? getCurrentTradeMonthKey();
     });
   }, [availableBacktestMonths]);
 
@@ -4272,13 +5798,43 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               {selectedBacktestTab === "mainStats" ? (
                 <div className="backtest-grid">
                   <div className="backtest-card">
-                    <div className="backtest-card-head">
+                    <div className="backtest-card-head backtest-stats-head">
                       <div>
-                        <h3>Stats (All Trades)</h3>
+                        <h3>{mainStatsTitle}</h3>
                         <p>
                           Core AI.zip performance metrics for the active trade slice on{" "}
                           {selectedModel.name} {selectedTimeframe}.
                         </p>
+                      </div>
+
+                      <div className="backtest-stats-range" aria-label="main statistics date range">
+                        <input
+                          type="date"
+                          value={statsDateStart}
+                          onChange={(event) => setStatsDateStart(event.target.value)}
+                          className="backtest-date-input"
+                          aria-label="main statistics start date"
+                        />
+                        <span className="backtest-stats-range-arrow">-&gt;</span>
+                        <input
+                          type="date"
+                          value={statsDateEnd}
+                          onChange={(event) => setStatsDateEnd(event.target.value)}
+                          className="backtest-date-input"
+                          aria-label="main statistics end date"
+                        />
+                        {(statsDateStart || statsDateEnd) && (
+                          <button
+                            type="button"
+                            className="backtest-range-clear"
+                            onClick={() => {
+                              setStatsDateStart("");
+                              setStatsDateEnd("");
+                            }}
+                          >
+                            Clear
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -4309,7 +5865,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="backtest-card-head">
                       <div>
                         <h3>Settings</h3>
-                        <p>AI.zip-style core controls with the missing advanced section restored.</p>
+                        <p>AI.zip-style controls copied into the main settings tab.</p>
                       </div>
                     </div>
 
@@ -4512,6 +6068,198 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
                     <div className="backtest-card">
                       <div className="ai-zip-section">
+                        <div className="ai-zip-section-title">Advanced AI</div>
+                        <div className="ai-zip-toggle-grid">
+                          <button
+                            type="button"
+                            className="ai-zip-button"
+                            disabled={aiDisabled}
+                            onClick={() => setMethodSettingsOpen(true)}
+                          >
+                            Method Specific Settings
+                          </button>
+                          <button
+                            type="button"
+                            className={`ai-zip-button ${selectedAiModelCount > 0 ? "active" : ""}`}
+                            disabled={aiDisabled}
+                            onClick={() => setModelsModalOpen(true)}
+                          >
+                            Models ({selectedAiModelCount})
+                          </button>
+                          <button
+                            type="button"
+                            className={`ai-zip-button ${selectedAiFeatureCount > 0 ? "active" : ""}`}
+                            disabled={aiDisabled}
+                            onClick={() => setFeaturesModalOpen(true)}
+                          >
+                            Features ({selectedAiFeatureCount})
+                          </button>
+                          <button
+                            type="button"
+                            className={`ai-zip-button ${selectedAiLibraryCount > 0 ? "active" : ""}`}
+                            disabled={aiDisabled}
+                            onClick={() => setLibrariesModalOpen(true)}
+                          >
+                            Libraries ({selectedAiLibraryCount})
+                          </button>
+                        </div>
+
+                        <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
+                          <div className="ai-zip-label">Chunk Size (bars)</div>
+                          <input
+                            type="number"
+                            min={2}
+                            step={1}
+                            value={chunkBars}
+                            disabled={aiDisabled}
+                            onChange={(event) => {
+                              setChunkBars(Math.max(2, Math.floor(Number(event.target.value) || 2)));
+                            }}
+                            className="ai-zip-input"
+                          />
+                        </div>
+
+                        <div className="ai-zip-input-grid">
+                          <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
+                            <span className="ai-zip-label">Distance Metric</span>
+                            <select
+                              value={distanceMetric}
+                              disabled={aiDisabled}
+                              onChange={(event) => {
+                                setDistanceMetric(event.target.value as AiDistanceMetric);
+                              }}
+                              className="ai-zip-input"
+                            >
+                              <option value="euclidean">Euclidean</option>
+                              <option value="cosine">Cosine similarity</option>
+                              <option value="manhattan">Manhattan (L1)</option>
+                              <option value="chebyshev">Chebyshev (L-infinity)</option>
+                            </select>
+                          </label>
+
+                          <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
+                            <span className="ai-zip-label">Compression</span>
+                            <input
+                              type="range"
+                              min={0}
+                              max={100}
+                              step={1}
+                              value={embeddingCompression}
+                              disabled={aiDisabled}
+                              onChange={(event) => {
+                                setEmbeddingCompression(
+                                  clamp(Number(event.target.value) || 0, 0, 100)
+                                );
+                              }}
+                              className="backtest-slider"
+                            />
+                            <span className="ai-zip-note">{embeddingCompression}%</span>
+                          </label>
+                        </div>
+
+                        <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
+                          <div className="ai-zip-label">Modality</div>
+                          <div className="ai-zip-toggle-grid tiles compact">
+                            {AI_MODALITY_OPTIONS.map((modality) => (
+                              <button
+                                key={modality}
+                                type="button"
+                                className={`ai-zip-button pill ${
+                                  selectedAiModalities.includes(modality) ? "active" : ""
+                                }`}
+                                disabled={aiDisabled}
+                                onClick={() => {
+                                  setSelectedAiModalities((current) =>
+                                    toggleListValue(current, modality)
+                                  );
+                                }}
+                              >
+                                {modality}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="ai-zip-input-grid">
+                          <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
+                            <span className="ai-zip-label">Dimension Amount</span>
+                            <input
+                              type="number"
+                              min={2}
+                              max={512}
+                              step={1}
+                              value={dimensionAmount}
+                              disabled={aiDisabled}
+                              onChange={(event) => {
+                                setDimensionAmount(
+                                  clamp(Math.floor(Number(event.target.value) || 2), 2, 512)
+                                );
+                              }}
+                              className="ai-zip-input"
+                            />
+                          </label>
+
+                          <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
+                            <span className="ai-zip-label">Compression Method</span>
+                            <select
+                              value={compressionMethod}
+                              disabled={aiDisabled}
+                              onChange={(event) => {
+                                setCompressionMethod(event.target.value as AiCompressionMethod);
+                              }}
+                              className="ai-zip-input"
+                            >
+                              <option value="pca">PCA</option>
+                              <option value="jl">Random Projection</option>
+                              <option value="hash">Feature Hashing</option>
+                              <option value="variance">Top Variance</option>
+                              <option value="subsample">Uniform Subsample</option>
+                            </select>
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="backtest-card">
+                      <div className="ai-zip-section">
+                        <div className="ai-zip-section-title">Anti-Cheat</div>
+
+                        <button
+                          type="button"
+                          className={`ai-zip-button ${antiCheatEnabled ? "active" : ""}`}
+                          onClick={() => setAntiCheatEnabled((value) => !value)}
+                        >
+                          Anti-Cheat {antiCheatEnabled ? "· ON" : "· OFF"}
+                        </button>
+
+                        <button
+                          type="button"
+                          className={`ai-zip-button ${antiCheatEnabled ? "active" : ""}`}
+                          disabled={!antiCheatEnabled}
+                          onClick={cycleValidationMode}
+                        >
+                          Validation · {AI_VALIDATION_LABELS[validationMode]}
+                        </button>
+
+                        <button
+                          type="button"
+                          className={`ai-zip-button ${antiCheatEnabled ? "active" : ""}`}
+                          disabled={!antiCheatEnabled}
+                          onClick={() => {
+                            setRealismLevel((value) => (value + 1) % AI_REALISM_LABELS.length);
+                          }}
+                        >
+                          Realism · {AI_REALISM_LABELS[clamp(realismLevel, 0, 4)]}
+                        </button>
+
+                        <div className={`ai-zip-note ${antiCheatEnabled ? "" : "ai-zip-control disabled"}`}>
+                          When enabled, the validation controls mirror the AI.zip anti-cheat panel.
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="backtest-card">
+                      <div className="ai-zip-section">
                         <div className="ai-zip-section-title">Risk Management</div>
                         <div className="ai-zip-input-grid">
                           <label className="ai-zip-field">
@@ -4605,161 +6353,498 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 </div>
               ) : null}
 
-              {selectedBacktestTab === "history" ? (
-                <div className="backtest-grid two-up">
-                  <div className="backtest-card">
-                    <div className="backtest-card-head">
-                      <div>
-                        <h3>Trading History</h3>
-                        <p>Search the current trade list and review it in the same dense AI.zip table style.</p>
+              <AiSettingsModal
+                title="Method Specific Settings"
+                open={methodSettingsOpen}
+                onClose={() => setMethodSettingsOpen(false)}
+              >
+                <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
+                  {aiMode === "hdbscan" ? (
+                    <>
+                      <div className="ai-zip-input-grid">
+                        <label className="ai-zip-field">
+                          <span className="ai-zip-label">Min Cluster Size</span>
+                          <input
+                            type="number"
+                            min={5}
+                            max={5000}
+                            step={1}
+                            value={hdbMinClusterSize}
+                            disabled={aiDisabled}
+                            onChange={(event) => {
+                              setHdbMinClusterSize(
+                                clamp(Math.floor(Number(event.target.value) || 5), 5, 5000)
+                              );
+                            }}
+                            className="ai-zip-input"
+                          />
+                        </label>
+                        <label className="ai-zip-field">
+                          <span className="ai-zip-label">Min Samples</span>
+                          <input
+                            type="number"
+                            min={2}
+                            max={200}
+                            step={1}
+                            value={hdbMinSamples}
+                            disabled={aiDisabled}
+                            onChange={(event) => {
+                              setHdbMinSamples(
+                                clamp(Math.floor(Number(event.target.value) || 2), 2, 200)
+                              );
+                            }}
+                            className="ai-zip-input"
+                          />
+                        </label>
+                        <label className="ai-zip-field">
+                          <span className="ai-zip-label">Eps Quantile</span>
+                          <input
+                            type="number"
+                            min={0.5}
+                            max={0.99}
+                            step={0.01}
+                            value={hdbEpsQuantile}
+                            disabled={aiDisabled}
+                            onChange={(event) => {
+                              setHdbEpsQuantile(
+                                clamp(Number(event.target.value) || 0.5, 0.5, 0.99)
+                              );
+                            }}
+                            className="ai-zip-input"
+                          />
+                        </label>
+                        <label className="ai-zip-field">
+                          <span className="ai-zip-label">Sample Cap</span>
+                          <input
+                            type="number"
+                            min={200}
+                            max={200000}
+                            step={100}
+                            value={hdbSampleCap}
+                            disabled={aiDisabled}
+                            onChange={(event) => {
+                              setHdbSampleCap(
+                                clamp(Math.floor(Number(event.target.value) || 200), 200, 200000)
+                              );
+                            }}
+                            className="ai-zip-input"
+                          />
+                        </label>
                       </div>
-                    </div>
-
-                    <div className="backtest-toolbar-row">
-                      <input
-                        type="search"
-                        value={backtestHistoryQuery}
-                        onChange={(event) => setBacktestHistoryQuery(event.target.value)}
-                        className="backtest-search"
-                        placeholder="Search symbol, side, result, or PnL"
-                        aria-label="search trading history"
-                      />
-                      {backtestHistoryQuery.trim() ? (
-                        <button
-                          type="button"
-                          className="backtest-action-btn compact"
-                          onClick={() => setBacktestHistoryQuery("")}
+                      <div className="ai-zip-note">
+                        HDBSCAN groups similar states by density and isolates sparse noise.
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="ai-zip-input-grid">
+                        <label className="ai-zip-field">
+                          <span className="ai-zip-label">K Entry</span>
+                          <input
+                            type="number"
+                            min={3}
+                            step={1}
+                            value={kEntry}
+                            disabled={aiDisabled}
+                            onChange={(event) => {
+                              setKEntry(Math.max(3, Math.floor(Number(event.target.value) || 3)));
+                            }}
+                            className="ai-zip-input"
+                          />
+                        </label>
+                        <label className="ai-zip-field">
+                          <span className="ai-zip-label">K Exit</span>
+                          <input
+                            type="number"
+                            min={3}
+                            step={1}
+                            value={kExit}
+                            disabled={aiDisabled}
+                            onChange={(event) => {
+                              setKExit(Math.max(3, Math.floor(Number(event.target.value) || 3)));
+                            }}
+                            className="ai-zip-input"
+                          />
+                        </label>
+                      </div>
+                      <label className="ai-zip-field">
+                        <span className="ai-zip-label">kNN Voting</span>
+                        <select
+                          value={knnVoteMode}
+                          disabled={aiDisabled}
+                          onChange={(event) => {
+                            setKnnVoteMode(event.target.value as KnnVoteMode);
+                          }}
+                          className="ai-zip-input"
                         >
-                          Clear
-                        </button>
-                      ) : null}
-                    </div>
+                          <option value="distance">Distance-weighted</option>
+                          <option value="majority">Majority vote</option>
+                        </select>
+                      </label>
+                      <div className="ai-zip-note">
+                        These settings control how many neighbors are used and how votes are scored.
+                      </div>
+                    </>
+                  )}
+                </div>
+              </AiSettingsModal>
 
-                    <div className="backtest-toolbar-note">
-                      {filteredBacktestHistory.length > 0 ? (
-                        <>
-                          Showing <strong>{filteredBacktestHistory.length}</strong> of{" "}
-                          <strong>{backtestTrades.length}</strong> trades
-                        </>
-                      ) : (
-                        <>No trades match the current filters.</>
-                      )}
-                    </div>
+              <AiSettingsModal
+                title="Models"
+                open={modelsModalOpen}
+                onClose={() => setModelsModalOpen(false)}
+              >
+                <div className="ai-zip-toggle-grid tiles compact">
+                  {availableAiModelNames.map((modelName) => (
+                    <button
+                      key={modelName}
+                      type="button"
+                      className={`ai-zip-button pill ${
+                        selectedAiModels.includes(modelName) ? "active" : ""
+                      }`}
+                      onClick={() => {
+                        setSelectedAiModels((current) => toggleListValue(current, modelName));
+                      }}
+                    >
+                      {modelName}
+                    </button>
+                  ))}
+                </div>
+              </AiSettingsModal>
 
-                    <div className="backtest-history-table-wrap">
-                      <table className="backtest-history-table">
-                        <thead>
-                          <tr>
-                            <th>#</th>
-                            <th>Trade</th>
-                            <th>Direction</th>
-                            <th>Session</th>
-                            <th>Entry</th>
-                            <th>Exit</th>
-                            <th>Duration</th>
-                            <th>Exit By</th>
-                            <th>PnL</th>
-                            <th>Confidence</th>
-                            <th>Action</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {filteredBacktestHistory.map((trade, index) => {
-                            const durationMinutes = Math.max(
-                              1,
-                              (Number(trade.exitTime) - Number(trade.entryTime)) / 60
-                            );
+              <AiSettingsModal
+                title="Features"
+                open={featuresModalOpen}
+                onClose={() => setFeaturesModalOpen(false)}
+              >
+                <div className="ai-zip-toggle-grid tiles compact">
+                  {AI_FEATURE_OPTIONS.map((feature) => (
+                    <button
+                      key={feature.id}
+                      type="button"
+                      className={`ai-zip-button pill ${
+                        selectedAiFeatures.includes(feature.id) ? "active" : ""
+                      }`}
+                      onClick={() => {
+                        setSelectedAiFeatures((current) => toggleListValue(current, feature.id));
+                      }}
+                      title={feature.note}
+                    >
+                      {feature.label}
+                    </button>
+                  ))}
+                </div>
+              </AiSettingsModal>
 
-                            return (
+              <AiSettingsModal
+                title="Libraries"
+                open={librariesModalOpen}
+                onClose={() => setLibrariesModalOpen(false)}
+              >
+                <div className="ai-zip-toggle-grid tiles compact">
+                  {AI_LIBRARY_OPTIONS.map((library) => (
+                    <button
+                      key={library.id}
+                      type="button"
+                      className={`ai-zip-button pill ${
+                        selectedAiLibraries.includes(library.id) ? "active" : ""
+                      }`}
+                      onClick={() => {
+                        setSelectedAiLibraries((current) => toggleListValue(current, library.id));
+                      }}
+                      title={library.note}
+                    >
+                      {library.label}
+                    </button>
+                  ))}
+                </div>
+              </AiSettingsModal>
+
+              {selectedBacktestTab === "history" ? (
+                <div className="backtest-grid">
+                  <div className="backtest-card">
+                    <button
+                      type="button"
+                      onClick={() => setBacktestHistoryCollapsed((value) => !value)}
+                      aria-expanded={!backtestHistoryCollapsed}
+                      style={{
+                        width: "100%",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "flex-end",
+                        gap: 10,
+                        marginBottom: 10,
+                        padding: 0,
+                        border: "none",
+                        background: "transparent",
+                        color: "inherit",
+                        cursor: "pointer",
+                        textAlign: "left"
+                      }}
+                    >
+                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        <h3
+                          style={{
+                            margin: 0,
+                            fontSize: "1rem",
+                            fontWeight: 700,
+                            color: "rgba(255,255,255,0.96)"
+                          }}
+                        >
+                          Trade History
+                        </h3>
+                      </div>
+                    </button>
+
+                    {!backtestHistoryCollapsed ? (
+                      <>
+                        <div
+                          style={{
+                            fontSize: 10,
+                            opacity: 0.72,
+                            marginTop: -6,
+                            marginBottom: 6
+                          }}
+                        >
+                          {backtestTrades.length > 0 ? (
+                            <>
+                              Showing{" "}
+                              <b>
+                                {filteredBacktestHistory.length > 0
+                                  ? `1-${filteredBacktestHistory.length}`
+                                  : "0"}
+                              </b>{" "}
+                              of <b>{backtestTrades.length}</b> trades
+                            </>
+                          ) : (
+                            <>No trades</>
+                          )}
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop: 10,
+                            display: "flex",
+                            gap: 10,
+                            alignItems: "center"
+                          }}
+                        >
+                          <input
+                            type="search"
+                            value={backtestHistoryQuery}
+                            onChange={(event) => setBacktestHistoryQuery(event.target.value)}
+                            placeholder="Search trades (ID, model, session, direction, dates...)"
+                            aria-label="search trading history"
+                            style={{
+                              flex: 1,
+                              height: 34,
+                              borderRadius: 10,
+                              padding: "0 12px",
+                              border: "1px solid rgba(255,255,255,0.14)",
+                              background: "rgba(0,0,0,0.25)",
+                              color: "rgba(255,255,255,0.92)",
+                              outline: "none",
+                              fontSize: 12,
+                              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)"
+                            }}
+                          />
+                          {backtestHistoryQuery.trim() ? (
+                            <button
+                              type="button"
+                              onClick={() => setBacktestHistoryQuery("")}
+                              style={{
+                                height: 34,
+                                padding: "0 12px",
+                                borderRadius: 10,
+                                border: "1px solid rgba(255,255,255,0.14)",
+                                background: "rgba(255,255,255,0.06)",
+                                color: "rgba(255,255,255,0.85)",
+                                fontSize: 12,
+                                fontWeight: 700,
+                                cursor: "pointer"
+                              }}
+                            >
+                              Clear
+                            </button>
+                          ) : null}
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop: 10,
+                            maxHeight: "calc(100vh - 220px)",
+                            minHeight: "calc(100vh - 220px)",
+                            overflow: "auto",
+                            borderRadius: 11,
+                            border: "1px solid rgba(255,255,255,0.10)"
+                          }}
+                        >
+                          <table
+                            style={{
+                              width: "100%",
+                              borderCollapse: "collapse",
+                              fontSize: 11
+                            }}
+                          >
+                            <thead>
                               <tr
-                                key={trade.id}
-                                className={trade.pnlUsd >= 0 ? "up-row" : "down-row"}
-                                onClick={() => {
-                                  focusTradeIdRef.current = trade.id;
-                                  setSelectedHistoryId(trade.id);
-                                  setSelectedSymbol(trade.symbol);
-                                  setShowAllTradesOnChart(false);
-                                  setShowActiveTradeOnChart(false);
-                                  setSelectedSurfaceTab("chart");
+                                style={{
+                                  position: "sticky",
+                                  top: 0,
+                                  zIndex: 1,
+                                  background: "#111111"
                                 }}
                               >
-                                <td>{index + 1}</td>
-                                <td>
-                                  <div className="backtest-history-id">{trade.id}</div>
-                                  <div className="backtest-history-subcell">
-                                    {trade.symbol} · {trade.result}
-                                  </div>
-                                </td>
-                                <td>
-                                  <span
-                                    className={`backtest-pill ${
-                                      trade.side === "Long" ? "up" : "down"
-                                    }`}
-                                  >
-                                    {trade.side === "Long" ? "Buy" : "Sell"}
-                                  </span>
-                                </td>
-                                <td>{getSessionLabel(trade.entryTime)}</td>
-                                <td>
-                                  <div>{trade.entryAt}</div>
-                                  <div className="backtest-history-subcell">
-                                    {formatPrice(trade.entryPrice)}
-                                  </div>
-                                </td>
-                                <td>
-                                  <div>{trade.exitAt}</div>
-                                  <div className="backtest-history-subcell">
-                                    {formatPrice(trade.outcomePrice)}
-                                  </div>
-                                </td>
-                                <td>{formatMinutesCompact(durationMinutes)}</td>
-                                <td>{getBacktestExitLabel(trade)}</td>
-                                <td>
-                                  <div className={trade.pnlUsd >= 0 ? "up" : "down"}>
-                                    {formatSignedUsd(trade.pnlUsd)}
-                                  </div>
-                                  <div
-                                    className={`backtest-history-subcell ${
-                                      trade.pnlPct >= 0 ? "up" : "down"
-                                    }`}
-                                  >
-                                    {formatSignedPercent(trade.pnlPct)}
-                                  </div>
-                                </td>
-                                <td>{Math.round(getTradeConfidenceScore(trade) * 100)}%</td>
-                                <td>
-                                  <button
-                                    type="button"
-                                    className="backtest-action-btn compact"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      focusTradeIdRef.current = trade.id;
-                                      setSelectedHistoryId(trade.id);
-                                      setSelectedSymbol(trade.symbol);
-                                      setShowAllTradesOnChart(false);
-                                      setShowActiveTradeOnChart(false);
-                                      setSelectedSurfaceTab("chart");
+                                <th style={aiZipBacktestHistoryHeadCell}>#</th>
+                                <th style={aiZipBacktestHistoryHeadCell}>ID</th>
+                                <th style={aiZipBacktestHistoryHeadCell}>Entry Model</th>
+                                <th style={aiZipBacktestHistoryHeadCell}>Direction</th>
+                                <th style={aiZipBacktestHistoryHeadCell}>Session</th>
+                                <th style={aiZipBacktestHistoryHeadCell}>Entry</th>
+                                <th style={aiZipBacktestHistoryHeadCell}>Exit</th>
+                                <th style={aiZipBacktestHistoryHeadCell}>Duration</th>
+                                <th style={aiZipBacktestHistoryHeadCell}>Exit By</th>
+                                <th style={aiZipBacktestHistoryHeadCell}>PnL ($)</th>
+                                <th style={aiZipBacktestHistoryHeadCell}>Confidence</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {filteredBacktestHistory.length === 0 ? (
+                                <tr>
+                                  <td
+                                    colSpan={11}
+                                    style={{
+                                      padding: 10,
+                                      textAlign: "center",
+                                      color: "rgba(255,255,255,0.55)"
                                     }}
                                   >
-                                    View
-                                  </button>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                          {filteredBacktestHistory.length === 0 ? (
-                            <tr>
-                              <td colSpan={11} className="backtest-history-empty">
-                                No trades match the current time filters or AI confidence threshold.
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
+                                    No trades match the current filters.
+                                  </td>
+                                </tr>
+                              ) : (
+                                filteredBacktestHistory.map((trade, index) => {
+                                  const durationMinutes = Math.max(
+                                    1,
+                                    (Number(trade.exitTime) - Number(trade.entryTime)) / 60
+                                  );
+                                  const pnlPositive = trade.pnlUsd >= 0;
+                                  const rowBackground = pnlPositive
+                                    ? "rgba(60,220,120,0.05)"
+                                    : "rgba(230,80,80,0.05)";
+                                  const outlineColor = pnlPositive
+                                    ? "rgba(60,220,120,0.95)"
+                                    : "rgba(230,80,80,0.95)";
+                                  const pnlColor = pnlPositive
+                                    ? "rgba(60,220,120,0.95)"
+                                    : "rgba(230,80,80,0.95)";
+                                  const isHovered = hoveredBacktestHistoryId === trade.id;
+                                  const cell = (
+                                    col: number,
+                                    extra?: CSSProperties
+                                  ): CSSProperties => ({
+                                    ...aiZipBacktestHistoryBodyCell,
+                                    ...(extra ?? {}),
+                                    borderTop: isHovered
+                                      ? `1px solid ${outlineColor}`
+                                      : undefined,
+                                    borderBottom: isHovered
+                                      ? `1px solid ${outlineColor}`
+                                      : aiZipBacktestHistoryBodyCell.borderBottom,
+                                    borderLeft:
+                                      isHovered && col === 0
+                                        ? `1px solid ${outlineColor}`
+                                        : undefined,
+                                    borderRight:
+                                      isHovered && col === 10
+                                        ? `1px solid ${outlineColor}`
+                                        : undefined
+                                  });
+
+                                  return (
+                                    <tr
+                                      key={trade.id}
+                                      onMouseEnter={() => setHoveredBacktestHistoryId(trade.id)}
+                                      onMouseLeave={() =>
+                                        setHoveredBacktestHistoryId((value) =>
+                                          value === trade.id ? null : value
+                                        )
+                                      }
+                                      onClick={() => {
+                                        focusTradeIdRef.current = trade.id;
+                                        setSelectedHistoryId(trade.id);
+                                        setSelectedSymbol(trade.symbol);
+                                        setShowAllTradesOnChart(false);
+                                        setShowActiveTradeOnChart(false);
+                                        setSelectedSurfaceTab("chart");
+                                      }}
+                                      style={{
+                                        background: rowBackground,
+                                        cursor: "pointer",
+                                        transition:
+                                          "box-shadow 120ms ease, background 120ms ease",
+                                        boxShadow: isHovered
+                                          ? `inset 0 0 0 1px ${outlineColor}`
+                                          : undefined,
+                                        borderBottom: "1px solid rgba(255,255,255,0.06)"
+                                      }}
+                                    >
+                                      <td style={cell(0)}>{index + 1}</td>
+                                      <td style={cell(1)}>
+                                        <span
+                                          style={aiZipBacktestHistoryMono({
+                                            fontSize: "0.68rem",
+                                            fontWeight: 900,
+                                            color: "rgba(255,255,255,0.82)"
+                                          })}
+                                        >
+                                          {trade.id}
+                                        </span>
+                                      </td>
+                                      <td style={cell(2, { whiteSpace: "normal" })}>
+                                        <div style={{ lineHeight: 1.1 }}>
+                                          <span style={{ fontWeight: 700 }}>{selectedModel.name}</span>
+                                          <br />
+                                          <span style={{ fontSize: 9, opacity: 0.8 }}>
+                                            {trade.symbol} · {trade.result}
+                                          </span>
+                                        </div>
+                                      </td>
+                                      <td style={cell(3)}>
+                                        {trade.side === "Long" ? "Buy" : "Sell"}
+                                      </td>
+                                      <td style={cell(4)}>{getSessionLabel(trade.entryTime)}</td>
+                                      <td style={cell(5)}>{trade.entryAt}</td>
+                                      <td style={cell(6)}>{trade.exitAt}</td>
+                                      <td style={cell(7)}>
+                                        {formatMinutesCompact(durationMinutes)}
+                                      </td>
+                                      <td style={cell(8)}>{getBacktestExitLabel(trade)}</td>
+                                      <td
+                                        style={cell(9, {
+                                          color: pnlColor,
+                                          fontWeight: 800
+                                        })}
+                                      >
+                                        {`${pnlPositive ? "" : "-"}${formatUsd(
+                                          Math.abs(trade.pnlUsd)
+                                        )}`}
+                                      </td>
+                                      <td style={cell(10)}>
+                                        {`${Math.round(getTradeConfidenceScore(trade) * 100)}%`}
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    ) : null}
                   </div>
 
-                  <div className="backtest-stack">
+                  <div className="backtest-grid two-up">
                     <div className="backtest-card compact">
                       <div className="backtest-card-head">
                         <div>
@@ -4787,7 +6872,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       </div>
                     </div>
 
-                  <div className="backtest-card compact">
+                    <div className="backtest-card compact">
                       <div className="backtest-card-head">
                         <div>
                           <h3>Recent Sequence</h3>
@@ -4816,7 +6901,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="backtest-card-head">
                       <div>
                         <h3>Calendar</h3>
-                        <p>Daily trade clustering with the same compact AI.zip-style month view.</p>
+                        <p>Daily trade clustering with the same AI.zip layout and expandable trade detail.</p>
                       </div>
                     </div>
 
@@ -4824,18 +6909,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <button
                         type="button"
                         className="backtest-action-btn"
-                        disabled={selectedBacktestMonthIndex >= availableBacktestMonths.length - 1}
-                        onClick={() => {
-                          if (selectedBacktestMonthIndex < 0) {
-                            return;
-                          }
-
-                          const nextIndex = Math.min(
-                            availableBacktestMonths.length - 1,
-                            selectedBacktestMonthIndex + 1
-                          );
-                          setSelectedBacktestMonthKey(availableBacktestMonths[nextIndex] ?? "");
-                        }}
+                        onClick={() => setSelectedBacktestMonthKey(shiftTradeMonthKey(activeBacktestMonthKey, -1))}
                       >
                         {"<"}
                       </button>
@@ -4843,33 +6917,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <button
                         type="button"
                         className="backtest-action-btn"
-                        disabled={selectedBacktestMonthIndex <= 0}
-                        onClick={() => {
-                          if (selectedBacktestMonthIndex <= 0) {
-                            return;
-                          }
-
-                          const nextIndex = Math.max(0, selectedBacktestMonthIndex - 1);
-                          setSelectedBacktestMonthKey(availableBacktestMonths[nextIndex] ?? "");
-                        }}
+                        onClick={() => setSelectedBacktestMonthKey(shiftTradeMonthKey(activeBacktestMonthKey, 1))}
                       >
                         {">"}
                       </button>
                     </div>
 
-                    {selectedBacktestMonthKey ? (
-                      <div
-                        className={`backtest-month-pill ${
-                          selectedBacktestMonthPnl > 0
-                            ? "up"
-                            : selectedBacktestMonthPnl < 0
-                              ? "down"
-                              : "neutral"
-                        }`}
-                      >
-                        {calendarMonthLabel} PnL: {formatSignedUsd(selectedBacktestMonthPnl)}
-                      </div>
-                    ) : null}
+                    <div
+                      className={`backtest-month-pill ${
+                        selectedBacktestMonthPnl > 0
+                          ? "up"
+                          : selectedBacktestMonthPnl < 0
+                            ? "down"
+                            : "neutral"
+                      }`}
+                    >
+                      {calendarMonthLabel} PnL: {formatSignedUsd(selectedBacktestMonthPnl)}
+                    </div>
 
                     <div className="backtest-calendar-weekdays">
                       {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label) => (
@@ -4887,16 +6951,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           } ${cell.inMonth ? "" : "muted"}`}
                           onClick={() => setSelectedBacktestDateKey(cell.dateKey)}
                         >
-                          <span>{cell.day}</span>
+                          <div className="backtest-calendar-cell-day">{cell.day}</div>
                           {cell.activity ? (
                             <>
-                              <strong>{cell.activity.count}T</strong>
-                              <small className={cell.activity.pnl >= 0 ? "up" : "down"}>
+                              <div className="backtest-calendar-cell-count">
+                                {cell.activity.count} trade{cell.activity.count === 1 ? "" : "s"}
+                              </div>
+                              <div
+                                className={`backtest-calendar-cell-pnl ${
+                                  cell.activity.pnl >= 0 ? "up" : "down"
+                                }`}
+                              >
                                 {formatSignedUsd(cell.activity.pnl)}
-                              </small>
+                              </div>
                             </>
                           ) : (
-                            <small>No trades</small>
+                            <div className="backtest-calendar-cell-empty">No trades</div>
                           )}
                         </button>
                       ))}
@@ -4918,26 +6988,108 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         </div>
                       </div>
 
-                      <div className="backtest-mini-list">
-                        {selectedBacktestDayTrades.map((trade) => (
-                          <div key={`${trade.id}-calendar`} className="backtest-day-row">
-                            <div>
-                              <strong>
-                                {trade.symbol} · {trade.side}
-                              </strong>
-                              <span>
-                                {trade.entryAt} to {trade.exitAt}
-                              </span>
-                              <span>
-                                {formatPrice(trade.entryPrice)} to {formatPrice(trade.outcomePrice)} ·{" "}
-                                {getSessionLabel(trade.entryTime)}
-                              </span>
+                      <div className="backtest-calendar-day-list">
+                        {selectedBacktestDayTrades.map((trade) => {
+                          const isExpanded = expandedBacktestTradeId === trade.id;
+                          const durationMinutes = getHistoryTradeDurationMinutes(trade);
+                          const estimatedBars = Math.max(
+                            1,
+                            Math.round(durationMinutes / getTimeframeMinutes(selectedTimeframe))
+                          );
+                          const tradeCandles =
+                            seriesMap[symbolTimeframeKey(trade.symbol, selectedTimeframe)] ?? EMPTY_CANDLES;
+
+                          return (
+                            <div
+                              key={`${trade.id}-calendar`}
+                              className={`backtest-calendar-trade ${isExpanded ? "expanded" : ""}`}
+                            >
+                              <button
+                                type="button"
+                                className="backtest-calendar-trade-toggle"
+                                onClick={() =>
+                                  setExpandedBacktestTradeId((current) =>
+                                    current === trade.id ? null : trade.id
+                                  )
+                                }
+                              >
+                                <div className="backtest-calendar-trade-main">
+                                  <span
+                                    className={`backtest-calendar-side-pill ${
+                                      trade.side === "Long" ? "up" : "down"
+                                    }`}
+                                  >
+                                    {trade.side === "Long" ? "BUY" : "SELL"}
+                                  </span>
+                                  <div className="backtest-calendar-trade-copy">
+                                    <strong>
+                                      Entry ({selectedTimeframe}) {trade.entryAt}
+                                    </strong>
+                                    <span>
+                                      Exit ({selectedTimeframe}) {trade.exitAt}
+                                    </span>
+                                    <span>
+                                      {estimatedBars} bars · {formatMinutesCompact(durationMinutes)}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="backtest-calendar-trade-side">
+                                  <span>{getSessionLabel(trade.entryTime)}</span>
+                                  <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
+                                    {formatSignedUsd(trade.pnlUsd)}
+                                  </strong>
+                                </div>
+                              </button>
+
+                              {isExpanded ? (
+                                <div className="backtest-calendar-trade-expand">
+                                  <div className="backtest-calendar-trade-stat-grid">
+                                    <div className="backtest-calendar-trade-stat">
+                                      <span>Duration</span>
+                                      <strong>
+                                        {estimatedBars} bars · {formatMinutesCompact(durationMinutes)}
+                                      </strong>
+                                    </div>
+                                    <div className="backtest-calendar-trade-stat">
+                                      <span>TP Price</span>
+                                      <strong>{formatPrice(trade.targetPrice)}</strong>
+                                    </div>
+                                    <div className="backtest-calendar-trade-stat">
+                                      <span>SL Price</span>
+                                      <strong>{formatPrice(trade.stopPrice)}</strong>
+                                    </div>
+                                  </div>
+
+                                  <div className="backtest-calendar-trade-panel">
+                                    <div className="backtest-calendar-trade-meta">
+                                      <span>Session: {getSessionLabel(trade.entryTime)}</span>
+                                      <span>Exit: {getBacktestExitLabel(trade)}</span>
+                                      <span>Confidence: {(getTradeConfidenceScore(trade) * 100).toFixed(0)}%</span>
+                                      <span>Units: {formatUnits(trade.units)}</span>
+                                    </div>
+                                    <div className="backtest-calendar-trade-prices">
+                                      <span>
+                                        Entry {formatPrice(trade.entryPrice)} to Exit{" "}
+                                        {formatPrice(trade.outcomePrice)}
+                                      </span>
+                                      <span className={trade.pnlPct >= 0 ? "up" : "down"}>
+                                        {formatSignedPercent(trade.pnlPct)}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div className="backtest-calendar-trade-panel">
+                                    <div className="backtest-calendar-trade-chart-copy">
+                                      <strong>Price movement</strong>
+                                      <span>Entry, target, stop, and realized exit plotted from the loaded series.</span>
+                                    </div>
+                                    <BacktestTradeMiniChart trade={trade} candles={tradeCandles} />
+                                  </div>
+                                </div>
+                              ) : null}
                             </div>
-                            <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
-                              {formatSignedUsd(trade.pnlUsd)}
-                            </strong>
-                          </div>
-                        ))}
+                          );
+                        })}
                         {selectedBacktestDayTrades.length === 0 ? (
                           <div className="backtest-empty-inline">No trades closed on the selected day.</div>
                         ) : null}
@@ -5329,121 +7481,229 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ) : null}
 
               {selectedBacktestTab === "entryExit" ? (
-                <div className="backtest-grid two-up">
-                  <div className="backtest-card">
-                    <div className="backtest-card-head">
-                      <div>
-                        <h3>Entry / Exit Stats</h3>
-                        <p>Archive-style distribution view with the same color-coded breakdown.</p>
-                      </div>
-                    </div>
-
-                    <div className="backtest-toolbar-row">
-                      <button
-                        type="button"
-                        className={`ai-zip-button pill ${entryExitChartMode === "entry" ? "active" : ""}`}
-                        onClick={() => setEntryExitChartMode("entry")}
-                      >
-                        Entry Sessions
-                      </button>
-                      <button
-                        type="button"
-                        className={`ai-zip-button pill ${entryExitChartMode === "exit" ? "active" : ""}`}
-                        onClick={() => setEntryExitChartMode("exit")}
-                      >
-                        Exit Outcomes
-                      </button>
-                    </div>
-
-                    <div className="backtest-bar-list framed">
-                      {backtestEntryExitChartRows.map((row) => {
-                        const maxCount = Math.max(
-                          1,
-                          ...backtestEntryExitChartRows.map((item) => item.count)
-                        );
-
-                        return (
-                          <div key={row.key} className="backtest-bar-row">
-                            <div className="backtest-bar-copy">
-                              <strong>{row.label}</strong>
-                              <span>{row.detail}</span>
-                            </div>
-                            <div className="backtest-bar-track">
-                              <div
-                                className={`backtest-bar-fill ${row.tone}`}
-                                style={{ width: `${(row.count / maxCount) * 100}%` }}
-                              />
-                            </div>
-                            <div className="backtest-bar-values">
-                              <span>{row.count}</span>
-                              <strong className={row.tone === "neutral" ? "" : row.tone}>
-                                {entryExitChartMode === "entry"
-                                  ? formatSignedUsd(row.value)
-                                  : `${row.value.toFixed(0)}%`}
-                              </strong>
-                            </div>
-                          </div>
-                        );
-                      })}
+                <div className="backtest-card">
+                  <div className="backtest-card-head">
+                    <div>
+                      <h3>Entry / Exit Stats</h3>
                     </div>
                   </div>
 
-                  <div className="backtest-stack">
-                    <div className="backtest-card">
-                      <div className="backtest-card-head">
-                        <div>
-                          <h3>Execution Geometry</h3>
-                          <p>Average execution geometry across the current test run.</p>
-                        </div>
-                      </div>
-
-                      <div className="backtest-metric-grid">
-                        <div className="backtest-metric-card">
-                          <span>Avg Entry</span>
-                          <strong>{formatPrice(backtestEntryExitStats.avgEntry)}</strong>
-                        </div>
-                        <div className="backtest-metric-card">
-                          <span>Avg Exit</span>
-                          <strong>{formatPrice(backtestEntryExitStats.avgExit)}</strong>
-                        </div>
-                        <div className="backtest-metric-card">
-                          <span>Avg TP Gap</span>
-                          <strong>{formatPrice(backtestEntryExitStats.avgTargetDistance)}</strong>
-                        </div>
-                        <div className="backtest-metric-card">
-                          <span>Avg SL Gap</span>
-                          <strong>{formatPrice(backtestEntryExitStats.avgStopDistance)}</strong>
-                        </div>
-                        <div className="backtest-metric-card">
-                          <span>Avg Size</span>
-                          <strong>{formatUnits(backtestEntryExitStats.avgUnits)} u</strong>
-                        </div>
-                        <div className="backtest-metric-card">
-                          <span>Avg Hold</span>
-                          <strong>{Math.round(backtestEntryExitStats.avgHoldMinutes)}m</strong>
-                        </div>
-                      </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      alignItems: "center",
+                      marginBottom: 10,
+                      flexWrap: "wrap"
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 900,
+                        opacity: 0.8,
+                        letterSpacing: "0.04em"
+                      }}
+                    >
+                      Mode
                     </div>
+                    <select
+                      value={entryExitChartMode}
+                      onChange={(event) => {
+                        setEntryExitChartMode(event.target.value as EntryExitChartMode);
+                        setHoveredEntryExitBucket(null);
+                      }}
+                      style={{
+                        height: 34,
+                        padding: "0 10px",
+                        borderRadius: 12,
+                        border: "1px solid rgba(255,255,255,0.14)",
+                        background: "rgba(255,255,255,0.04)",
+                        color: "rgba(255,255,255,0.92)",
+                        fontWeight: 900,
+                        cursor: "pointer",
+                        outline: "none",
+                        appearance: "none",
+                        minWidth: 140
+                      }}
+                    >
+                      <option value="Entry">Entry</option>
+                      <option value="Exit">Exit</option>
+                    </select>
+                    <div style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>
+                      Hover bars for count &amp; share
+                    </div>
+                  </div>
 
-                    <div className="backtest-card compact">
-                      <div className="backtest-card-head">
-                        <div>
-                          <h3>Directional Split</h3>
-                          <p>Long and short behavior side by side.</p>
+                  <div
+                    onMouseLeave={() => setHoveredEntryExitBucket(null)}
+                    style={{
+                      position: "relative",
+                      height: 260,
+                      borderRadius: 18,
+                      border: "1px solid rgba(255,255,255,0.10)",
+                      background:
+                        "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.15))",
+                      padding: 12
+                    }}
+                  >
+                    {hoveredEntryExitRow ? (
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: 12,
+                          left: 12,
+                          zIndex: 1,
+                          background: "rgba(255,255,255,0.96)",
+                          border: "1px solid rgba(15,23,42,0.12)",
+                          borderRadius: 12,
+                          padding: "8px 10px",
+                          boxShadow: "0 10px 30px rgba(0,0,0,0.28)",
+                          color: "rgba(15,23,42,0.95)",
+                          fontSize: 12,
+                          minWidth: 160
+                        }}
+                      >
+                        <div style={{ fontWeight: 900, marginBottom: 6 }}>{hoveredEntryExitRow.bucket}</div>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 12
+                          }}
+                        >
+                          <span style={{ opacity: 0.7 }}>Count</span>
+                          <span style={{ fontWeight: 900, color: "rgba(15,23,42,0.92)" }}>
+                            {hoveredEntryExitRow.count}
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 12,
+                            marginTop: 4
+                          }}
+                        >
+                          <span style={{ opacity: 0.7 }}>Share</span>
+                          <span style={{ fontWeight: 900, color: "rgba(15,23,42,0.92)" }}>
+                            {entryExitChartMetrics.total > 0
+                              ? ((hoveredEntryExitRow.count / entryExitChartMetrics.total) * 100).toFixed(1)
+                              : "0.0"}
+                            %
+                          </span>
                         </div>
                       </div>
-                      <div className="backtest-stat-list">
-                        {backtestEntryExitStats.sides.map((row) => (
-                          <div key={row.side} className="backtest-stat-row">
-                            <span>{row.side}</span>
-                            <strong>{row.winRate.toFixed(1)}%</strong>
-                            <small className={row.pnl >= 0 ? "up" : "down"}>
-                              {formatSignedUsd(row.pnl)}
-                            </small>
-                          </div>
-                        ))}
+                    ) : null}
+
+                    {entryExitChartData.length === 0 ? (
+                      <div
+                        style={{
+                          height: "100%",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: 12,
+                          opacity: 0.75
+                        }}
+                      >
+                        No trades in the selected range.
                       </div>
-                    </div>
+                    ) : (
+                      <div
+                        style={{
+                          height: "100%",
+                          overflowX: "auto",
+                          paddingTop: hoveredEntryExitRow ? 58 : 20
+                        }}
+                      >
+                        <div
+                          style={{
+                            minWidth: `${Math.max(entryExitChartData.length * 88, 320)}px`,
+                            height: "100%",
+                            display: "flex",
+                            alignItems: "flex-end",
+                            gap: 10,
+                            padding: "0 4px"
+                          }}
+                        >
+                          {entryExitChartData.map((row) => {
+                            const share =
+                              entryExitChartMetrics.total > 0
+                                ? (row.count / entryExitChartMetrics.total) * 100
+                                : 0;
+                            const isActive = hoveredEntryExitBucket === row.bucket;
+
+                            return (
+                              <button
+                                key={row.bucket}
+                                type="button"
+                                onMouseEnter={() => setHoveredEntryExitBucket(row.bucket)}
+                                onFocus={() => setHoveredEntryExitBucket(row.bucket)}
+                                onBlur={() => {
+                                  setHoveredEntryExitBucket((current) =>
+                                    current === row.bucket ? null : current
+                                  );
+                                }}
+                                title={`${row.bucket}: ${row.count} trades (${share.toFixed(1)}%)`}
+                                style={{
+                                  flex: "1 0 0",
+                                  minWidth: 46,
+                                  height: "100%",
+                                  border: "none",
+                                  background: "transparent",
+                                  padding: 0,
+                                  cursor: "pointer",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  justifyContent: "flex-end",
+                                  alignItems: "stretch"
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    flex: 1,
+                                    display: "flex",
+                                    alignItems: "flex-end"
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      width: "100%",
+                                      minHeight: 6,
+                                      height: `${Math.max(
+                                        6,
+                                        (row.count / entryExitChartMetrics.maxCount) * 100
+                                      )}%`,
+                                      borderRadius: "10px 10px 0 0",
+                                      background: getEntryExitBarFill(row.bucket),
+                                      opacity: isActive ? 1 : 0.88,
+                                      boxShadow: isActive
+                                        ? `0 0 0 2px ${getEntryExitBarFill(row.bucket)}`
+                                        : "none",
+                                      transition: "opacity 120ms ease, box-shadow 120ms ease"
+                                    }}
+                                  />
+                                </div>
+                                <div
+                                  style={{
+                                    marginTop: 8,
+                                    fontSize: 11,
+                                    lineHeight: 1.2,
+                                    fontWeight: 700,
+                                    color: "rgba(255,255,255,0.78)",
+                                    textAlign: "center",
+                                    wordBreak: "break-word"
+                                  }}
+                                >
+                                  {row.bucket}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : null}
