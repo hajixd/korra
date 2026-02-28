@@ -4091,6 +4091,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return modelProfiles.find((model) => model.id === selectedModelId) ?? modelProfiles[0]!;
   }, [modelProfiles, selectedModelId]);
   const aiDisabled = aiMode === "off";
+  const confidenceGateDisabled = aiMode === "off" || !aiFilterEnabled;
+  const effectiveConfidenceThreshold = confidenceGateDisabled ? 0 : confidenceThreshold;
   const selectedAiModelCount = useMemo(() => {
     return Object.values(aiModelStates).filter((state) => state > 0).length;
   }, [aiModelStates]);
@@ -4104,6 +4106,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const availableAiLibraries = useMemo(() => {
     return aiLibraryDefs.filter((library) => !selectedAiLibraries.includes(library.id));
   }, [aiLibraryDefs, selectedAiLibraries]);
+
+  useEffect(() => {
+    if (confidenceGateDisabled && confidenceThreshold !== 0) {
+      setConfidenceThreshold(0);
+    }
+  }, [confidenceGateDisabled, confidenceThreshold]);
   const selectedAiLibrary = useMemo(() => {
     return selectedAiLibraryId ? aiLibraryDefById[selectedAiLibraryId] ?? null : null;
   }, [aiLibraryDefById, selectedAiLibraryId]);
@@ -9379,6 +9387,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         The Backtest modules populate from the simulated history feed. Once candles
                         load, these tabs will fill in automatically.
                       </p>
+                      <div
+                        className="backtest-loading-progress-shell"
+                        role="progressbar"
+                        aria-label="Loading backtest data"
+                        aria-valuetext="Waiting for simulated history candles"
+                      >
+                        <div className="backtest-loading-progress-bar" />
+                      </div>
                     </>
                   )}
                 </div>
@@ -9496,7 +9512,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     </div>
                     <div className="main-settings-kpi-card">
                       <span>Confidence Gate</span>
-                      <strong style={{ color: "#facc15" }}>{confidenceThreshold}%</strong>
+                      <strong style={{ color: confidenceGateDisabled ? "rgba(255,255,255,0.4)" : "#facc15" }}>
+                        {effectiveConfidenceThreshold}%
+                      </strong>
                     </div>
                     <div className="main-settings-kpi-card">
                       <span>Avg Confidence</span>
@@ -9560,7 +9578,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             aiMode !== "off" && aiFilterEnabled ? "active" : ""
                           }`}
                           disabled={aiMode === "off"}
-                          onClick={() => setAiFilterEnabled((value) => !value)}
+                          onClick={() =>
+                            setAiFilterEnabled((value) => {
+                              const next = !value;
+
+                              if (!next) {
+                                setConfidenceThreshold(0);
+                              }
+
+                              return next;
+                            })
+                          }
                         >
                           AI Filter {aiFilterEnabled ? "· ON" : "· OFF"}
                         </button>
@@ -9576,22 +9604,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           Static Libraries &amp; Clusters {staticLibrariesClusters ? "· ON" : "· OFF"}
                         </button>
 
-                        <div className={`ai-zip-control ${aiMode === "off" ? "disabled" : ""}`}>
+                        <div className={`ai-zip-control ${confidenceGateDisabled ? "disabled" : ""}`}>
                           <div className="ai-zip-label">AI Confidence Threshold</div>
                           <input
                             type="range"
                             min={0}
                             max={100}
                             step={1}
-                            value={confidenceThreshold}
-                            disabled={aiMode === "off"}
+                            value={effectiveConfidenceThreshold}
+                            disabled={confidenceGateDisabled}
                             onChange={(event) => {
                               setConfidenceThreshold(clamp(Number(event.target.value) || 0, 0, 100));
                             }}
                             className="backtest-slider"
-                            style={{ "--p": `${confidenceThreshold}%` } as React.CSSProperties}
+                            style={{ "--p": `${effectiveConfidenceThreshold}%` } as React.CSSProperties}
                           />
-                          <div className="ai-zip-note">{confidenceThreshold}</div>
+                          <div className="ai-zip-note">{effectiveConfidenceThreshold}</div>
                         </div>
                       </div>
                     </div>
@@ -11250,7 +11278,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         hdbMinSamples={hdbMinSamples}
                         hdbEpsQuantile={hdbEpsQuantile}
                         staticLibrariesClusters={staticLibrariesClusters}
-                        confidenceThreshold={confidenceThreshold}
+                        confidenceThreshold={effectiveConfidenceThreshold}
                         statsDateStart={statsDateStart}
                         statsDateEnd={statsDateEnd}
                       />
