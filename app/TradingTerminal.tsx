@@ -28,6 +28,8 @@ type BacktestTab =
   | "dimensions"
   | "graphs"
   | "propFirm";
+type EntryExitChartMode = "entry" | "exit";
+type BacktestScatterKey = "pnlUsd" | "pnlPct" | "holdMinutes" | "units" | "confidence";
 type PanelTab = "active" | "assets" | "models" | "mt5" | "history" | "actions" | "ai";
 
 type FutureAsset = {
@@ -325,6 +327,24 @@ const backtestTabs: Array<{ id: BacktestTab; label: string }> = [
 
 const backtestWeekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const backtestSessionLabels = ["Asia", "London", "New York", "Late"] as const;
+const backtestMonthLabels = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec"
+] as const;
+const backtestHourLabels = Array.from(
+  { length: 24 },
+  (_, hour) => `${String(hour).padStart(2, "0")}:00`
+);
 
 const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
   "1m": 25000,
@@ -688,6 +708,14 @@ const getTradeMonthKey = (timestampSeconds: UTCTimestamp): string => {
   return getTradeDayKey(timestampSeconds).slice(0, 7);
 };
 
+const getTradeMonthIndex = (timestampSeconds: UTCTimestamp): number => {
+  return new Date(Number(timestampSeconds) * 1000).getUTCMonth();
+};
+
+const getTradeHour = (timestampSeconds: UTCTimestamp): number => {
+  return new Date(Number(timestampSeconds) * 1000).getUTCHours();
+};
+
 const getTradeWeekKey = (timestampSeconds: UTCTimestamp): string => {
   const date = new Date(Number(timestampSeconds) * 1000);
   const day = date.getUTCDay();
@@ -729,7 +757,7 @@ const getWeekdayLabel = (dateKey: string): string => {
 };
 
 const getSessionLabel = (timestampSeconds: UTCTimestamp): string => {
-  const hour = new Date(Number(timestampSeconds) * 1000).getUTCHours();
+  const hour = getTradeHour(timestampSeconds);
 
   if (hour < 7) {
     return "Asia";
@@ -766,6 +794,82 @@ const formatMinutesCompact = (minutes: number): string => {
   const remainingHours = hours % 24;
 
   return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
+};
+
+const getBacktestExitLabel = (trade: HistoryItem): string => {
+  const targetGap = Math.abs(trade.targetPrice - trade.entryPrice);
+  const stopGap = Math.abs(trade.entryPrice - trade.stopPrice);
+  const realizedGap = Math.abs(trade.outcomePrice - trade.entryPrice);
+
+  if (trade.result === "Win" && realizedGap >= targetGap * 0.84) {
+    return "Target Hit";
+  }
+
+  if (trade.result === "Loss" && realizedGap >= stopGap * 0.84) {
+    return "Protective Stop";
+  }
+
+  return "Managed Exit";
+};
+
+const getBacktestScatterValue = (trade: HistoryItem, key: BacktestScatterKey): number => {
+  if (key === "pnlUsd") {
+    return trade.pnlUsd;
+  }
+
+  if (key === "pnlPct") {
+    return trade.pnlPct;
+  }
+
+  if (key === "holdMinutes") {
+    return Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
+  }
+
+  if (key === "units") {
+    return trade.units;
+  }
+
+  return getTradeConfidenceScore(trade) * 100;
+};
+
+const getBacktestScatterLabel = (key: BacktestScatterKey): string => {
+  if (key === "pnlUsd") {
+    return "PnL ($)";
+  }
+
+  if (key === "pnlPct") {
+    return "PnL (%)";
+  }
+
+  if (key === "holdMinutes") {
+    return "Hold Time";
+  }
+
+  if (key === "units") {
+    return "Position Size";
+  }
+
+  return "Confidence";
+};
+
+const formatBacktestScatterValue = (key: BacktestScatterKey, value: number): string => {
+  if (key === "pnlUsd") {
+    return formatSignedUsd(value);
+  }
+
+  if (key === "pnlPct") {
+    return formatSignedPercent(value);
+  }
+
+  if (key === "holdMinutes") {
+    return formatMinutesCompact(value);
+  }
+
+  if (key === "units") {
+    return `${formatUnits(value)} u`;
+  }
+
+  return `${value.toFixed(1)}%`;
 };
 
 const getTradeConfidenceScore = (trade: HistoryItem): number => {
@@ -1107,6 +1211,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [enabledBacktestSessions, setEnabledBacktestSessions] = useState<string[]>([
     ...backtestSessionLabels
   ]);
+  const [enabledBacktestMonths, setEnabledBacktestMonths] = useState<number[]>(
+    Array.from({ length: 12 }, (_, index) => index)
+  );
+  const [enabledBacktestHours, setEnabledBacktestHours] = useState<number[]>(
+    Array.from({ length: 24 }, (_, index) => index)
+  );
   const [aiMode, setAiMode] = useState<"off" | "knn" | "hdbscan">("knn");
   const [aiModelEnabled, setAiModelEnabled] = useState(true);
   const [aiFilterEnabled, setAiFilterEnabled] = useState(true);
@@ -1126,6 +1236,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [propDailyMaxLoss, setPropDailyMaxLoss] = useState(350);
   const [propTotalMaxLoss, setPropTotalMaxLoss] = useState(900);
   const [propProfitTarget, setPropProfitTarget] = useState(800);
+  const [entryExitChartMode, setEntryExitChartMode] = useState<EntryExitChartMode>("entry");
+  const [backtestDimensionQuery, setBacktestDimensionQuery] = useState("");
+  const [scatterXKey, setScatterXKey] = useState<BacktestScatterKey>("pnlUsd");
+  const [scatterYKey, setScatterYKey] = useState<BacktestScatterKey>("holdMinutes");
+  const [propProjectionMethod, setPropProjectionMethod] = useState<"historical" | "montecarlo">(
+    "historical"
+  );
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -2478,8 +2595,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return backtestSourceTrades.filter((trade) => {
       const weekday = getWeekdayLabel(getTradeDayKey(trade.exitTime));
       const session = getSessionLabel(trade.entryTime);
+      const monthIndex = getTradeMonthIndex(trade.exitTime);
+      const entryHour = getTradeHour(trade.entryTime);
       const passesTime =
-        enabledBacktestWeekdays.includes(weekday) && enabledBacktestSessions.includes(session);
+        enabledBacktestWeekdays.includes(weekday) &&
+        enabledBacktestSessions.includes(session) &&
+        enabledBacktestMonths.includes(monthIndex) &&
+        enabledBacktestHours.includes(entryHour);
       const confidence = getTradeConfidenceScore(trade) * 100;
       const passesConfidence = !aiFilterEnabled || confidence >= confidenceThreshold;
 
@@ -2489,6 +2611,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     aiFilterEnabled,
     backtestSourceTrades,
     confidenceThreshold,
+    enabledBacktestHours,
+    enabledBacktestMonths,
     enabledBacktestSessions,
     enabledBacktestWeekdays
   ]);
@@ -2980,6 +3104,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       wins: 0,
       pnl: 0
     }));
+    const monthRows = backtestMonthLabels.map((label) => ({
+      label,
+      count: 0,
+      wins: 0,
+      pnl: 0
+    }));
+    const hourRows = backtestHourLabels.map((label, hour) => ({
+      label,
+      hour,
+      count: 0,
+      wins: 0,
+      pnl: 0
+    }));
     const sessionLabels = ["Asia", "London", "New York", "Late"];
     const sessionMap = new Map<string, { label: string; count: number; wins: number; pnl: number }>();
 
@@ -2990,9 +3127,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     for (const trade of backtestTrades) {
       const date = new Date(Number(trade.exitTime) * 1000);
       const weekday = weekdayRows[date.getUTCDay()];
+      const monthRow = monthRows[date.getUTCMonth()];
+      const hourRow = hourRows[getTradeHour(trade.entryTime)];
       weekday.count += 1;
       weekday.wins += trade.result === "Win" ? 1 : 0;
       weekday.pnl += trade.pnlUsd;
+      monthRow.count += 1;
+      monthRow.wins += trade.result === "Win" ? 1 : 0;
+      monthRow.pnl += trade.pnlUsd;
+      hourRow.count += 1;
+      hourRow.wins += trade.result === "Win" ? 1 : 0;
+      hourRow.pnl += trade.pnlUsd;
 
       const session = sessionMap.get(getSessionLabel(trade.entryTime));
 
@@ -3007,6 +3152,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return {
       weekdays: weekdayRows.map((row) => ({
+        ...row,
+        winRate: row.count > 0 ? (row.wins / row.count) * 100 : 0
+      })),
+      months: monthRows.map((row) => ({
+        ...row,
+        winRate: row.count > 0 ? (row.wins / row.count) * 100 : 0
+      })),
+      hours: hourRows.map((row) => ({
         ...row,
         winRate: row.count > 0 ? (row.wins / row.count) * 100 : 0
       })),
@@ -3276,6 +3429,121 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     ];
   }, [backtestEntryExitStats, backtestSummary, backtestTemporalStats.sessions, backtestTrades]);
 
+  const filteredBacktestDimensionRows = useMemo(() => {
+    const query = backtestDimensionQuery.trim().toLowerCase();
+
+    if (!query) {
+      return backtestDimensionRows;
+    }
+
+    return backtestDimensionRows.filter((row) => {
+      const haystack = `${row.name} ${row.note} ${row.reading}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [backtestDimensionQuery, backtestDimensionRows]);
+
+  const backtestEntryExitChartRows = useMemo(() => {
+    if (entryExitChartMode === "entry") {
+      return backtestTemporalStats.sessions.map((row) => ({
+        key: row.label,
+        label: row.label,
+        count: row.count,
+        tone: row.pnl >= 0 ? "up" : "down",
+        detail: `${row.winRate.toFixed(0)}% win`,
+        value: row.pnl
+      }));
+    }
+
+    return backtestEntryExitStats.exits.map((row) => ({
+      key: row.label,
+      label: row.label,
+      count: row.value,
+      tone: "neutral" as const,
+      detail: `${row.pct.toFixed(0)}% share`,
+      value: row.pct
+    }));
+  }, [backtestEntryExitStats.exits, backtestTemporalStats.sessions, entryExitChartMode]);
+
+  const backtestScatterPlot = useMemo(() => {
+    const points = backtestTrades.map((trade) => {
+      const x = getBacktestScatterValue(trade, scatterXKey);
+      const y = getBacktestScatterValue(trade, scatterYKey);
+
+      return {
+        id: trade.id,
+        trade,
+        x,
+        y
+      };
+    });
+
+    if (points.length === 0) {
+      return {
+        points: [] as Array<{
+          id: string;
+          trade: HistoryItem;
+          x: number;
+          y: number;
+          cx: number;
+          cy: number;
+        }>,
+        xZero: null as number | null,
+        yZero: null as number | null
+      };
+    }
+
+    const xValues = points.map((point) => point.x);
+    const yValues = points.map((point) => point.y);
+    let xMin = Math.min(...xValues);
+    let xMax = Math.max(...xValues);
+    let yMin = Math.min(...yValues);
+    let yMax = Math.max(...yValues);
+
+    if (xMin === xMax) {
+      xMin -= 1;
+      xMax += 1;
+    }
+
+    if (yMin === yMax) {
+      yMin -= 1;
+      yMax += 1;
+    }
+
+    const xPadding = (xMax - xMin) * 0.08;
+    const yPadding = (yMax - yMin) * 0.08;
+    xMin -= xPadding;
+    xMax += xPadding;
+    yMin -= yPadding;
+    yMax += yPadding;
+
+    const projectX = (value: number): number => 8 + ((value - xMin) / (xMax - xMin)) * 84;
+    const projectY = (value: number): number => 92 - ((value - yMin) / (yMax - yMin)) * 84;
+    const xZero = xMin <= 0 && xMax >= 0 ? projectX(0) : null;
+    const yZero = yMin <= 0 && yMax >= 0 ? projectY(0) : null;
+
+    return {
+      points: points.map((point) => ({
+        ...point,
+        cx: projectX(point.x),
+        cy: projectY(point.y)
+      })),
+      xZero,
+      yZero
+    };
+  }, [backtestTrades, scatterXKey, scatterYKey]);
+
+  const propFirmTradeSequence = useMemo(() => {
+    if (propProjectionMethod === "historical") {
+      return backtestTrades;
+    }
+
+    return [...backtestTrades].sort((left, right) => {
+      const leftSeed = hashSeedFromText(`${selectedModelId}:${selectedTimeframe}:${left.id}`);
+      const rightSeed = hashSeedFromText(`${selectedModelId}:${selectedTimeframe}:${right.id}`);
+      return leftSeed - rightSeed;
+    });
+  }, [backtestTrades, propProjectionMethod, selectedModelId, selectedTimeframe]);
+
   const propFirmProjection = useMemo(() => {
     let balance = propInitialBalance;
     let peakBalance = propInitialBalance;
@@ -3285,8 +3553,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const dayPnlMap = new Map<string, number>();
     const balanceCurve = [propInitialBalance];
 
-    for (let index = 0; index < backtestTrades.length; index += 1) {
-      const trade = backtestTrades[index];
+    for (let index = 0; index < propFirmTradeSequence.length; index += 1) {
+      const trade = propFirmTradeSequence[index];
       balance += trade.pnlUsd;
       balanceCurve.push(balance);
       peakBalance = Math.max(peakBalance, balance);
@@ -3334,8 +3602,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       tradingDays: dayPnlMap.size
     };
   }, [
-    backtestTrades,
     propDailyMaxLoss,
+    propFirmTradeSequence,
     propInitialBalance,
     propProfitTarget,
     propTotalMaxLoss
@@ -4019,6 +4287,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         <div
                           key={item.label}
                           className={`backtest-stat-card ${
+                            item.tone === "neutral" ? "tone-neutral" : `tone-${item.tone}`
+                          } ${
                             item.span === 4 ? "stat-span-4" : item.span === 2 ? "stat-span-2" : ""
                           }`}
                         >
@@ -4039,7 +4309,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="backtest-card-head">
                       <div>
                         <h3>Settings</h3>
-                        <p>AI and risk controls styled after the AI.zip settings panel.</p>
+                        <p>AI.zip-style core controls with the missing advanced section restored.</p>
                       </div>
                     </div>
 
@@ -4111,117 +4381,135 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         />
                         <div className="ai-zip-note">{confidenceThreshold}</div>
                       </div>
-
-                      <div className={`ai-zip-control ${aiMode === "off" ? "disabled" : ""}`}>
-                        <div className="ai-zip-label">AI Exit Strictness</div>
-                        <input
-                          type="range"
-                          min={0}
-                          max={100}
-                          step={1}
-                          value={aiExitStrictness}
-                          disabled={aiMode === "off"}
-                          onChange={(event) => {
-                            setAiExitStrictness(clamp(Number(event.target.value) || 0, 0, 100));
-                          }}
-                          className="backtest-slider"
-                        />
-                        <div className="ai-zip-note">
-                          {aiExitStrictness === 0
-                            ? "0 (OFF)"
-                            : `${aiExitStrictness} (1 = lenient · 100 = aggressive)`}
-                        </div>
-                      </div>
-
-                      <div className={`ai-zip-control ${aiExitStrictness === 0 ? "disabled" : ""}`}>
-                        <div className="ai-zip-label">Loss Tolerance</div>
-                        <input
-                          type="range"
-                          min={-100}
-                          max={100}
-                          step={1}
-                          value={aiExitLossTolerance}
-                          disabled={aiExitStrictness === 0}
-                          onChange={(event) => {
-                            setAiExitLossTolerance(
-                              clamp(Number(event.target.value) || 0, -100, 100)
-                            );
-                          }}
-                          className="backtest-slider"
-                        />
-                        <div className="ai-zip-note">{aiExitLossTolerance} (0 = neutral)</div>
-                      </div>
-
-                      <div className={`ai-zip-control ${aiExitStrictness === 0 ? "disabled" : ""}`}>
-                        <div className="ai-zip-label">Win Tolerance</div>
-                        <input
-                          type="range"
-                          min={-100}
-                          max={100}
-                          step={1}
-                          value={aiExitWinTolerance}
-                          disabled={aiExitStrictness === 0}
-                          onChange={(event) => {
-                            setAiExitWinTolerance(
-                              clamp(Number(event.target.value) || 0, -100, 100)
-                            );
-                          }}
-                          className="backtest-slider"
-                        />
-                        <div className="ai-zip-note">{aiExitWinTolerance} (0 = neutral)</div>
-                      </div>
-
-                      <button
-                        type="button"
-                        className={`ai-zip-button toggle ${useMitExit ? "active" : ""}`}
-                        onClick={() => setUseMitExit((value) => !value)}
-                      >
-                        MIT Exit {useMitExit ? "· ON" : "· OFF"}
-                      </button>
-
-                      <div className={`ai-zip-control ${aiMode === "off" ? "disabled" : ""}`}>
-                        <div className="ai-zip-label">Complexity</div>
-                        <input
-                          type="range"
-                          min={1}
-                          max={100}
-                          step={1}
-                          value={complexity}
-                          disabled={aiMode === "off"}
-                          onChange={(event) => {
-                            setComplexity(clamp(Number(event.target.value) || 1, 1, 100));
-                          }}
-                          className="backtest-slider"
-                        />
-                        <div className="ai-zip-note">{complexity}</div>
-                      </div>
-
-                      <div className={`ai-zip-control ${aiMode === "off" ? "disabled" : ""}`}>
-                        <div className="ai-zip-label">Volatility Filter (keep top)</div>
-                        <input
-                          type="range"
-                          min={0}
-                          max={99}
-                          step={1}
-                          value={volatilityPercentile}
-                          disabled={aiMode === "off"}
-                          onChange={(event) => {
-                            setVolatilityPercentile(
-                              clamp(Number(event.target.value) || 0, 0, 99)
-                            );
-                          }}
-                          className="backtest-slider"
-                        />
-                        <div className="ai-zip-note">
-                          {volatilityPercentile === 0
-                            ? "0 (OFF)"
-                            : `Keep top ${volatilityPercentile}%`}
-                        </div>
-                      </div>
                     </div>
                   </div>
 
                   <div className="backtest-stack">
+                    <div className="backtest-card">
+                      <div className="ai-zip-section">
+                        <div className="ai-zip-section-title">Advanced AI Settings</div>
+
+                        <div className={`ai-zip-control ${aiMode === "off" ? "disabled" : ""}`}>
+                          <div className="ai-zip-label">AI Exit Strictness</div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={aiExitStrictness}
+                            disabled={aiMode === "off"}
+                            onChange={(event) => {
+                              setAiExitStrictness(clamp(Number(event.target.value) || 0, 0, 100));
+                            }}
+                            className="backtest-slider"
+                          />
+                          <div className="ai-zip-note">
+                            {aiExitStrictness === 0
+                              ? "0 (OFF)"
+                              : `${aiExitStrictness} (1 = lenient · 100 = aggressive)`}
+                          </div>
+                        </div>
+
+                        <div
+                          className={`ai-zip-control ${aiExitStrictness === 0 ? "disabled" : ""}`}
+                        >
+                          <div className="ai-zip-label">Loss Tolerance</div>
+                          <input
+                            type="range"
+                            min={-100}
+                            max={100}
+                            step={1}
+                            value={aiExitLossTolerance}
+                            disabled={aiExitStrictness === 0}
+                            onChange={(event) => {
+                              setAiExitLossTolerance(
+                                clamp(Number(event.target.value) || 0, -100, 100)
+                              );
+                            }}
+                            className="backtest-slider"
+                          />
+                          <div className="ai-zip-note">
+                            {aiExitStrictness === 0
+                              ? "Set AI Exit Strictness > 0 to enable"
+                              : `${aiExitLossTolerance} (0 = neutral)`}
+                          </div>
+                        </div>
+
+                        <div
+                          className={`ai-zip-control ${aiExitStrictness === 0 ? "disabled" : ""}`}
+                        >
+                          <div className="ai-zip-label">Win Tolerance</div>
+                          <input
+                            type="range"
+                            min={-100}
+                            max={100}
+                            step={1}
+                            value={aiExitWinTolerance}
+                            disabled={aiExitStrictness === 0}
+                            onChange={(event) => {
+                              setAiExitWinTolerance(
+                                clamp(Number(event.target.value) || 0, -100, 100)
+                              );
+                            }}
+                            className="backtest-slider"
+                          />
+                          <div className="ai-zip-note">
+                            {aiExitStrictness === 0
+                              ? "Set AI Exit Strictness > 0 to enable"
+                              : `${aiExitWinTolerance} (0 = neutral)`}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          className={`ai-zip-button toggle ${useMitExit ? "active" : ""}`}
+                          onClick={() => setUseMitExit((value) => !value)}
+                        >
+                          MIT Exit {useMitExit ? "· ON" : "· OFF"}
+                        </button>
+
+                        <div className={`ai-zip-control ${aiMode === "off" ? "disabled" : ""}`}>
+                          <div className="ai-zip-label">Complexity</div>
+                          <input
+                            type="range"
+                            min={1}
+                            max={100}
+                            step={1}
+                            value={complexity}
+                            disabled={aiMode === "off"}
+                            onChange={(event) => {
+                              setComplexity(clamp(Number(event.target.value) || 1, 1, 100));
+                            }}
+                            className="backtest-slider"
+                          />
+                          <div className="ai-zip-note">{complexity}</div>
+                        </div>
+
+                        <div className={`ai-zip-control ${aiMode === "off" ? "disabled" : ""}`}>
+                          <div className="ai-zip-label">Volatility Filter (keep top)</div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={99}
+                            step={1}
+                            value={volatilityPercentile}
+                            disabled={aiMode === "off"}
+                            onChange={(event) => {
+                              setVolatilityPercentile(
+                                clamp(Number(event.target.value) || 0, 0, 99)
+                              );
+                            }}
+                            className="backtest-slider"
+                          />
+                          <div className="ai-zip-note">
+                            {volatilityPercentile === 0
+                              ? "0 (OFF)"
+                              : `Keep top ${volatilityPercentile}%`}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
                     <div className="backtest-card">
                       <div className="ai-zip-section">
                         <div className="ai-zip-section-title">Risk Management</div>
@@ -4323,7 +4611,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="backtest-card-head">
                       <div>
                         <h3>Trading History</h3>
-                        <p>Search the current trade list and jump any closed position back to Chart.</p>
+                        <p>Search the current trade list and review it in the same dense AI.zip table style.</p>
                       </div>
                     </div>
 
@@ -4358,66 +4646,116 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       )}
                     </div>
 
-                    <div className="backtest-history-list">
-                      {filteredBacktestHistory.map((trade) => (
-                        <article key={trade.id} className="backtest-history-row">
-                          <div className="backtest-history-main">
-                            <span className={`backtest-pill ${trade.side === "Long" ? "up" : "down"}`}>
-                              {trade.side}
-                            </span>
-                            <div className="backtest-history-copy">
-                              <strong>
-                                {trade.symbol} · {trade.result}
-                              </strong>
-                              <span>
-                                {trade.entryAt} to {trade.exitAt}
-                              </span>
-                              <small>
-                                {getSessionLabel(trade.entryTime)} ·{" "}
-                                {formatMinutesCompact(
-                                  Math.max(
-                                    1,
-                                    (Number(trade.exitTime) - Number(trade.entryTime)) / 60
-                                  )
-                                )}{" "}
-                                · Confidence {Math.round(getTradeConfidenceScore(trade) * 100)}%
-                              </small>
-                              <small>
-                                Entry {formatPrice(trade.entryPrice)} · Exit{" "}
-                                {formatPrice(trade.outcomePrice)}
-                              </small>
-                            </div>
-                          </div>
+                    <div className="backtest-history-table-wrap">
+                      <table className="backtest-history-table">
+                        <thead>
+                          <tr>
+                            <th>#</th>
+                            <th>Trade</th>
+                            <th>Direction</th>
+                            <th>Session</th>
+                            <th>Entry</th>
+                            <th>Exit</th>
+                            <th>Duration</th>
+                            <th>Exit By</th>
+                            <th>PnL</th>
+                            <th>Confidence</th>
+                            <th>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredBacktestHistory.map((trade, index) => {
+                            const durationMinutes = Math.max(
+                              1,
+                              (Number(trade.exitTime) - Number(trade.entryTime)) / 60
+                            );
 
-                          <div className="backtest-history-side">
-                            <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
-                              {formatSignedUsd(trade.pnlUsd)}
-                            </strong>
-                            <span className={trade.pnlPct >= 0 ? "up" : "down"}>
-                              {formatSignedPercent(trade.pnlPct)}
-                            </span>
-                            <button
-                              type="button"
-                              className="backtest-action-btn"
-                              onClick={() => {
-                                focusTradeIdRef.current = trade.id;
-                                setSelectedHistoryId(trade.id);
-                                setSelectedSymbol(trade.symbol);
-                                setShowAllTradesOnChart(false);
-                                setShowActiveTradeOnChart(false);
-                                setSelectedSurfaceTab("chart");
-                              }}
-                            >
-                              View Chart
-                            </button>
-                          </div>
-                        </article>
-                      ))}
-                      {filteredBacktestHistory.length === 0 ? (
-                        <div className="backtest-empty-inline">
-                          No trades match the current time filters or AI confidence threshold.
-                        </div>
-                      ) : null}
+                            return (
+                              <tr
+                                key={trade.id}
+                                className={trade.pnlUsd >= 0 ? "up-row" : "down-row"}
+                                onClick={() => {
+                                  focusTradeIdRef.current = trade.id;
+                                  setSelectedHistoryId(trade.id);
+                                  setSelectedSymbol(trade.symbol);
+                                  setShowAllTradesOnChart(false);
+                                  setShowActiveTradeOnChart(false);
+                                  setSelectedSurfaceTab("chart");
+                                }}
+                              >
+                                <td>{index + 1}</td>
+                                <td>
+                                  <div className="backtest-history-id">{trade.id}</div>
+                                  <div className="backtest-history-subcell">
+                                    {trade.symbol} · {trade.result}
+                                  </div>
+                                </td>
+                                <td>
+                                  <span
+                                    className={`backtest-pill ${
+                                      trade.side === "Long" ? "up" : "down"
+                                    }`}
+                                  >
+                                    {trade.side === "Long" ? "Buy" : "Sell"}
+                                  </span>
+                                </td>
+                                <td>{getSessionLabel(trade.entryTime)}</td>
+                                <td>
+                                  <div>{trade.entryAt}</div>
+                                  <div className="backtest-history-subcell">
+                                    {formatPrice(trade.entryPrice)}
+                                  </div>
+                                </td>
+                                <td>
+                                  <div>{trade.exitAt}</div>
+                                  <div className="backtest-history-subcell">
+                                    {formatPrice(trade.outcomePrice)}
+                                  </div>
+                                </td>
+                                <td>{formatMinutesCompact(durationMinutes)}</td>
+                                <td>{getBacktestExitLabel(trade)}</td>
+                                <td>
+                                  <div className={trade.pnlUsd >= 0 ? "up" : "down"}>
+                                    {formatSignedUsd(trade.pnlUsd)}
+                                  </div>
+                                  <div
+                                    className={`backtest-history-subcell ${
+                                      trade.pnlPct >= 0 ? "up" : "down"
+                                    }`}
+                                  >
+                                    {formatSignedPercent(trade.pnlPct)}
+                                  </div>
+                                </td>
+                                <td>{Math.round(getTradeConfidenceScore(trade) * 100)}%</td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="backtest-action-btn compact"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      focusTradeIdRef.current = trade.id;
+                                      setSelectedHistoryId(trade.id);
+                                      setSelectedSymbol(trade.symbol);
+                                      setShowAllTradesOnChart(false);
+                                      setShowActiveTradeOnChart(false);
+                                      setSelectedSurfaceTab("chart");
+                                    }}
+                                  >
+                                    View
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {filteredBacktestHistory.length === 0 ? (
+                            <tr>
+                              <td colSpan={11} className="backtest-history-empty">
+                                No trades match the current time filters or AI confidence threshold.
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
 
@@ -4473,49 +4811,50 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ) : null}
 
               {selectedBacktestTab === "calendar" ? (
-                <div className="backtest-grid two-up">
+                <div className="backtest-grid">
                   <div className="backtest-card">
                     <div className="backtest-card-head">
                       <div>
                         <h3>Calendar</h3>
                         <p>Daily trade clustering with the same compact AI.zip-style month view.</p>
                       </div>
-                      <div className="backtest-calendar-nav">
-                        <button
-                          type="button"
-                          className="backtest-action-btn"
-                          disabled={selectedBacktestMonthIndex >= availableBacktestMonths.length - 1}
-                          onClick={() => {
-                            if (selectedBacktestMonthIndex < 0) {
-                              return;
-                            }
+                    </div>
 
-                            const nextIndex = Math.min(
-                              availableBacktestMonths.length - 1,
-                              selectedBacktestMonthIndex + 1
-                            );
-                            setSelectedBacktestMonthKey(availableBacktestMonths[nextIndex] ?? "");
-                          }}
-                        >
-                          {"<"}
-                        </button>
-                        <span className="backtest-calendar-label">{calendarMonthLabel}</span>
-                        <button
-                          type="button"
-                          className="backtest-action-btn"
-                          disabled={selectedBacktestMonthIndex <= 0}
-                          onClick={() => {
-                            if (selectedBacktestMonthIndex <= 0) {
-                              return;
-                            }
+                    <div className="backtest-calendar-nav compact">
+                      <button
+                        type="button"
+                        className="backtest-action-btn"
+                        disabled={selectedBacktestMonthIndex >= availableBacktestMonths.length - 1}
+                        onClick={() => {
+                          if (selectedBacktestMonthIndex < 0) {
+                            return;
+                          }
 
-                            const nextIndex = Math.max(0, selectedBacktestMonthIndex - 1);
-                            setSelectedBacktestMonthKey(availableBacktestMonths[nextIndex] ?? "");
-                          }}
-                        >
-                          {">"}
-                        </button>
-                      </div>
+                          const nextIndex = Math.min(
+                            availableBacktestMonths.length - 1,
+                            selectedBacktestMonthIndex + 1
+                          );
+                          setSelectedBacktestMonthKey(availableBacktestMonths[nextIndex] ?? "");
+                        }}
+                      >
+                        {"<"}
+                      </button>
+                      <span className="backtest-calendar-label">{calendarMonthLabel}</span>
+                      <button
+                        type="button"
+                        className="backtest-action-btn"
+                        disabled={selectedBacktestMonthIndex <= 0}
+                        onClick={() => {
+                          if (selectedBacktestMonthIndex <= 0) {
+                            return;
+                          }
+
+                          const nextIndex = Math.max(0, selectedBacktestMonthIndex - 1);
+                          setSelectedBacktestMonthKey(availableBacktestMonths[nextIndex] ?? "");
+                        }}
+                      >
+                        {">"}
+                      </button>
                     </div>
 
                     {selectedBacktestMonthKey ? (
@@ -4562,47 +4901,47 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         </button>
                       ))}
                     </div>
-                  </div>
 
-                  <div className="backtest-card">
-                    <div className="backtest-card-head">
-                      <div>
-                        <h3>
-                          {selectedBacktestDateKey
-                            ? getCalendarDateLabel(selectedBacktestDateKey)
-                            : "Select a date"}
-                        </h3>
-                        <p>
-                          {selectedBacktestDateKey
-                            ? `${getWeekdayLabel(selectedBacktestDateKey)} session breakdown`
-                            : "Pick any active day to inspect fills."}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="backtest-mini-list">
-                      {selectedBacktestDayTrades.map((trade) => (
-                        <div key={`${trade.id}-calendar`} className="backtest-day-row">
-                          <div>
-                            <strong>
-                              {trade.symbol} · {trade.side}
-                            </strong>
-                            <span>
-                              {trade.entryAt} to {trade.exitAt}
-                            </span>
-                            <span>
-                              {formatPrice(trade.entryPrice)} to {formatPrice(trade.outcomePrice)} ·{" "}
-                              {getSessionLabel(trade.entryTime)}
-                            </span>
-                          </div>
-                          <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
-                            {formatSignedUsd(trade.pnlUsd)}
-                          </strong>
+                    <div className="backtest-calendar-detail">
+                      <div className="backtest-card-head">
+                        <div>
+                          <h3>
+                            {selectedBacktestDateKey
+                              ? getCalendarDateLabel(selectedBacktestDateKey)
+                              : "Select a date"}
+                          </h3>
+                          <p>
+                            {selectedBacktestDateKey
+                              ? `${getWeekdayLabel(selectedBacktestDateKey)} session breakdown`
+                              : "Pick any active day to inspect fills."}
+                          </p>
                         </div>
-                      ))}
-                      {selectedBacktestDayTrades.length === 0 ? (
-                        <div className="backtest-empty-inline">No trades closed on the selected day.</div>
-                      ) : null}
+                      </div>
+
+                      <div className="backtest-mini-list">
+                        {selectedBacktestDayTrades.map((trade) => (
+                          <div key={`${trade.id}-calendar`} className="backtest-day-row">
+                            <div>
+                              <strong>
+                                {trade.symbol} · {trade.side}
+                              </strong>
+                              <span>
+                                {trade.entryAt} to {trade.exitAt}
+                              </span>
+                              <span>
+                                {formatPrice(trade.entryPrice)} to {formatPrice(trade.outcomePrice)} ·{" "}
+                                {getSessionLabel(trade.entryTime)}
+                              </span>
+                            </div>
+                            <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
+                              {formatSignedUsd(trade.pnlUsd)}
+                            </strong>
+                          </div>
+                        ))}
+                        {selectedBacktestDayTrades.length === 0 ? (
+                          <div className="backtest-empty-inline">No trades closed on the selected day.</div>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -4618,6 +4957,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           PnL % sits on X, hold time sits on Y, and node size follows position size.
                         </p>
                       </div>
+                    </div>
+
+                    <div className="backtest-toolbar-note">
+                      Plotting <strong>{backtestClusterData.nodes.length}</strong> trades across{" "}
+                      <strong>{backtestClusterData.groups.length}</strong> active clusters.
                     </div>
 
                     <div className="backtest-cluster-map">
@@ -4683,11 +5027,87 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="backtest-card">
                       <div className="backtest-card-head">
                         <div>
-                          <h3>Days of Week</h3>
-                          <p>Move the old day filter into its own Backtest tab.</p>
+                          <h3>Sessions</h3>
+                          <p>Exact AI.zip-style session tiles, now wired directly into the backtest filters.</p>
                         </div>
                       </div>
-                      <div className="ai-zip-toggle-grid">
+                      <div className="ai-zip-toggle-grid tiles">
+                        {backtestSessionLabels.map((label) => {
+                          const active = enabledBacktestSessions.includes(label);
+
+                          return (
+                            <button
+                              key={label}
+                              type="button"
+                              className={`backtest-filter-tile ${
+                                active ? "active" : ""
+                              } session-${label.toLowerCase().replace(/\s+/g, "-")}`}
+                              onClick={() => {
+                                setEnabledBacktestSessions((current) => {
+                                  if (current.includes(label)) {
+                                    return current.length === 1
+                                      ? current
+                                      : current.filter((value) => value !== label);
+                                  }
+
+                                  return [...current, label];
+                                });
+                              }}
+                            >
+                              <strong>{label}</strong>
+                              <span>{active ? "ON" : "OFF"}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="backtest-card">
+                      <div className="backtest-card-head">
+                        <div>
+                          <h3>Months</h3>
+                          <p>Monthly gating moved into its own filter surface.</p>
+                        </div>
+                      </div>
+                      <div className="ai-zip-toggle-grid tiles compact">
+                        {backtestMonthLabels.map((label, monthIndex) => {
+                          const active = enabledBacktestMonths.includes(monthIndex);
+
+                          return (
+                            <button
+                              key={label}
+                              type="button"
+                              className={`backtest-filter-tile ${active ? "active" : ""}`}
+                              onClick={() => {
+                                setEnabledBacktestMonths((current) => {
+                                  if (current.includes(monthIndex)) {
+                                    return current.length === 1
+                                      ? current
+                                      : current.filter((value) => value !== monthIndex);
+                                  }
+
+                                  return [...current, monthIndex];
+                                });
+                              }}
+                            >
+                              <strong>{label}</strong>
+                              <span>{active ? "ON" : "OFF"}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="backtest-grid two-up">
+                    <div className="backtest-card">
+                      <div className="backtest-card-head">
+                        <div>
+                          <h3>Days of the Week</h3>
+                          <p>The weekday filters now match the AI.zip panel layout.</p>
+                        </div>
+                      </div>
+                      <div className="ai-zip-toggle-grid tiles compact">
                         {backtestWeekdayLabels.map((label) => {
                           const active = enabledBacktestWeekdays.includes(label);
 
@@ -4695,7 +5115,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             <button
                               key={label}
                               type="button"
-                              className={`ai-zip-button pill ${active ? "active" : ""}`}
+                              className={`backtest-filter-tile ${active ? "active" : ""}`}
                               onClick={() => {
                                 setEnabledBacktestWeekdays((current) => {
                                   if (current.includes(label)) {
@@ -4718,32 +5138,33 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="backtest-card">
                       <div className="backtest-card-head">
                         <div>
-                          <h3>Sessions</h3>
-                          <p>The active session filter now lives here instead of the side panel.</p>
+                          <h3>Hours</h3>
+                          <p>Fine-grained hour gating with the same color treatment as AI.zip.</p>
                         </div>
                       </div>
-                      <div className="ai-zip-toggle-grid">
-                        {backtestSessionLabels.map((label) => {
-                          const active = enabledBacktestSessions.includes(label);
+                      <div className="ai-zip-toggle-grid tiles compact hours">
+                        {backtestHourLabels.map((label, hour) => {
+                          const active = enabledBacktestHours.includes(hour);
 
                           return (
                             <button
                               key={label}
                               type="button"
-                              className={`ai-zip-button pill ${active ? "active" : ""}`}
+                              className={`backtest-filter-tile ${active ? "active" : ""}`}
                               onClick={() => {
-                                setEnabledBacktestSessions((current) => {
-                                  if (current.includes(label)) {
+                                setEnabledBacktestHours((current) => {
+                                  if (current.includes(hour)) {
                                     return current.length === 1
                                       ? current
-                                      : current.filter((value) => value !== label);
+                                      : current.filter((value) => value !== hour);
                                   }
 
-                                  return [...current, label];
+                                  return [...current, hour];
                                 });
                               }}
                             >
-                              {label}
+                              <strong>{label}</strong>
+                              <span>{active ? "ON" : "OFF"}</span>
                             </button>
                           );
                         })}
@@ -4752,6 +5173,44 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   </div>
 
                   <div className="backtest-grid two-up">
+                    <div className="backtest-card">
+                      <div className="backtest-card-head">
+                        <div>
+                          <h3>Month Performance</h3>
+                          <p>Performance by month after the active time and confidence filters.</p>
+                        </div>
+                      </div>
+                      <div className="backtest-bar-list">
+                        {backtestTemporalStats.months.map((row) => {
+                          const maxCount = Math.max(
+                            1,
+                            ...backtestTemporalStats.months.map((item) => item.count)
+                          );
+
+                          return (
+                            <div key={row.label} className="backtest-bar-row">
+                              <div className="backtest-bar-copy">
+                                <strong>{row.label}</strong>
+                                <span>{row.count} trades</span>
+                              </div>
+                              <div className="backtest-bar-track">
+                                <div
+                                  className={`backtest-bar-fill ${row.pnl >= 0 ? "up" : "down"}`}
+                                  style={{ width: `${(row.count / maxCount) * 100}%` }}
+                                />
+                              </div>
+                              <div className="backtest-bar-values">
+                                <span>{row.winRate.toFixed(0)}%</span>
+                                <strong className={row.pnl >= 0 ? "up" : "down"}>
+                                  {formatSignedUsd(row.pnl)}
+                                </strong>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
                     <div className="backtest-card">
                       <div className="backtest-card-head">
                         <div>
@@ -4827,6 +5286,44 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         })}
                       </div>
                     </div>
+
+                    <div className="backtest-card">
+                      <div className="backtest-card-head">
+                        <div>
+                          <h3>Hour Performance</h3>
+                          <p>Most active hours after the current filters.</p>
+                        </div>
+                      </div>
+                      <div className="backtest-bar-list">
+                        {[...backtestTemporalStats.hours]
+                          .sort((left, right) => right.count - left.count || left.hour - right.hour)
+                          .slice(0, 12)
+                          .map((row, _, list) => {
+                            const maxCount = Math.max(1, ...list.map((item) => item.count));
+
+                            return (
+                              <div key={row.label} className="backtest-bar-row">
+                                <div className="backtest-bar-copy">
+                                  <strong>{row.label}</strong>
+                                  <span>{row.count} trades</span>
+                                </div>
+                                <div className="backtest-bar-track">
+                                  <div
+                                    className={`backtest-bar-fill ${row.pnl >= 0 ? "up" : "down"}`}
+                                    style={{ width: `${(row.count / maxCount) * 100}%` }}
+                                  />
+                                </div>
+                                <div className="backtest-bar-values">
+                                  <span>{row.winRate.toFixed(0)}%</span>
+                                  <strong className={row.pnl >= 0 ? "up" : "down"}>
+                                    {formatSignedUsd(row.pnl)}
+                                  </strong>
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </div>
                   </div>
                 </div>
               ) : null}
@@ -4837,39 +5334,97 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="backtest-card-head">
                       <div>
                         <h3>Entry / Exit Stats</h3>
-                        <p>Average execution geometry across the current test run.</p>
+                        <p>Archive-style distribution view with the same color-coded breakdown.</p>
                       </div>
                     </div>
 
-                    <div className="backtest-metric-grid">
-                      <div className="backtest-metric-card">
-                        <span>Avg Entry</span>
-                        <strong>{formatPrice(backtestEntryExitStats.avgEntry)}</strong>
-                      </div>
-                      <div className="backtest-metric-card">
-                        <span>Avg Exit</span>
-                        <strong>{formatPrice(backtestEntryExitStats.avgExit)}</strong>
-                      </div>
-                      <div className="backtest-metric-card">
-                        <span>Avg TP Gap</span>
-                        <strong>{formatPrice(backtestEntryExitStats.avgTargetDistance)}</strong>
-                      </div>
-                      <div className="backtest-metric-card">
-                        <span>Avg SL Gap</span>
-                        <strong>{formatPrice(backtestEntryExitStats.avgStopDistance)}</strong>
-                      </div>
-                      <div className="backtest-metric-card">
-                        <span>Avg Size</span>
-                        <strong>{formatUnits(backtestEntryExitStats.avgUnits)} u</strong>
-                      </div>
-                      <div className="backtest-metric-card">
-                        <span>Avg Hold</span>
-                        <strong>{Math.round(backtestEntryExitStats.avgHoldMinutes)}m</strong>
-                      </div>
+                    <div className="backtest-toolbar-row">
+                      <button
+                        type="button"
+                        className={`ai-zip-button pill ${entryExitChartMode === "entry" ? "active" : ""}`}
+                        onClick={() => setEntryExitChartMode("entry")}
+                      >
+                        Entry Sessions
+                      </button>
+                      <button
+                        type="button"
+                        className={`ai-zip-button pill ${entryExitChartMode === "exit" ? "active" : ""}`}
+                        onClick={() => setEntryExitChartMode("exit")}
+                      >
+                        Exit Outcomes
+                      </button>
+                    </div>
+
+                    <div className="backtest-bar-list framed">
+                      {backtestEntryExitChartRows.map((row) => {
+                        const maxCount = Math.max(
+                          1,
+                          ...backtestEntryExitChartRows.map((item) => item.count)
+                        );
+
+                        return (
+                          <div key={row.key} className="backtest-bar-row">
+                            <div className="backtest-bar-copy">
+                              <strong>{row.label}</strong>
+                              <span>{row.detail}</span>
+                            </div>
+                            <div className="backtest-bar-track">
+                              <div
+                                className={`backtest-bar-fill ${row.tone}`}
+                                style={{ width: `${(row.count / maxCount) * 100}%` }}
+                              />
+                            </div>
+                            <div className="backtest-bar-values">
+                              <span>{row.count}</span>
+                              <strong className={row.tone === "neutral" ? "" : row.tone}>
+                                {entryExitChartMode === "entry"
+                                  ? formatSignedUsd(row.value)
+                                  : `${row.value.toFixed(0)}%`}
+                              </strong>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
                   <div className="backtest-stack">
+                    <div className="backtest-card">
+                      <div className="backtest-card-head">
+                        <div>
+                          <h3>Execution Geometry</h3>
+                          <p>Average execution geometry across the current test run.</p>
+                        </div>
+                      </div>
+
+                      <div className="backtest-metric-grid">
+                        <div className="backtest-metric-card">
+                          <span>Avg Entry</span>
+                          <strong>{formatPrice(backtestEntryExitStats.avgEntry)}</strong>
+                        </div>
+                        <div className="backtest-metric-card">
+                          <span>Avg Exit</span>
+                          <strong>{formatPrice(backtestEntryExitStats.avgExit)}</strong>
+                        </div>
+                        <div className="backtest-metric-card">
+                          <span>Avg TP Gap</span>
+                          <strong>{formatPrice(backtestEntryExitStats.avgTargetDistance)}</strong>
+                        </div>
+                        <div className="backtest-metric-card">
+                          <span>Avg SL Gap</span>
+                          <strong>{formatPrice(backtestEntryExitStats.avgStopDistance)}</strong>
+                        </div>
+                        <div className="backtest-metric-card">
+                          <span>Avg Size</span>
+                          <strong>{formatUnits(backtestEntryExitStats.avgUnits)} u</strong>
+                        </div>
+                        <div className="backtest-metric-card">
+                          <span>Avg Hold</span>
+                          <strong>{Math.round(backtestEntryExitStats.avgHoldMinutes)}m</strong>
+                        </div>
+                      </div>
+                    </div>
+
                     <div className="backtest-card compact">
                       <div className="backtest-card-head">
                         <div>
@@ -4889,70 +5444,73 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         ))}
                       </div>
                     </div>
-
-                    <div className="backtest-card compact">
-                      <div className="backtest-card-head">
-                        <div>
-                          <h3>Exit Mix</h3>
-                          <p>How trades are actually resolving.</p>
-                        </div>
-                      </div>
-                      <div className="backtest-bar-list">
-                        {backtestEntryExitStats.exits.map((row) => (
-                          <div key={row.label} className="backtest-bar-row compact">
-                            <div className="backtest-bar-copy">
-                              <strong>{row.label}</strong>
-                              <span>{row.value}</span>
-                            </div>
-                            <div className="backtest-bar-track">
-                              <div
-                                className="backtest-bar-fill neutral"
-                                style={{ width: `${row.pct}%` }}
-                              />
-                            </div>
-                            <div className="backtest-bar-values">
-                              <span>{row.pct.toFixed(0)}%</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
                   </div>
                 </div>
               ) : null}
 
               {selectedBacktestTab === "dimensions" ? (
-                  <div className="backtest-card">
-                    <div className="backtest-card-head">
-                      <div>
-                        <h3>Dimension Statistics</h3>
-                        <p>
-                          The AI.zip feature-importance scorecard, adapted to the current trade feed.
-                        </p>
-                      </div>
+                <div className="backtest-card">
+                  <div className="backtest-card-head">
+                    <div>
+                      <h3>Dimension Statistics</h3>
+                      <p>
+                        The AI.zip feature-importance scorecard, adapted to the current trade feed.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="backtest-dimension-toolbar">
+                    <input
+                      type="search"
+                      value={backtestDimensionQuery}
+                      onChange={(event) => setBacktestDimensionQuery(event.target.value)}
+                      className="backtest-search"
+                      placeholder="Search dimensions"
+                      aria-label="search dimensions"
+                    />
+                    {backtestDimensionQuery.trim() ? (
+                      <button
+                        type="button"
+                        className="backtest-action-btn compact"
+                        onClick={() => setBacktestDimensionQuery("")}
+                      >
+                        Clear
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <div className="backtest-dimension-table">
+                    <div className="backtest-dimension-table-head">
+                      <span>Dimension</span>
+                      <span>Reading</span>
+                      <span>Strength</span>
                     </div>
 
-                  <div className="backtest-dimension-list">
-                    {backtestDimensionRows.map((row) => (
-                      <div key={row.name} className="backtest-dimension-row">
+                    {filteredBacktestDimensionRows.map((row) => (
+                      <div key={row.name} className="backtest-dimension-table-row">
                         <div className="backtest-dimension-copy">
                           <strong>{row.name}</strong>
                           <span>{row.note}</span>
                         </div>
-                        <div className="backtest-dimension-meter">
-                          <div
-                            className={`backtest-dimension-fill ${
-                              row.score >= 0.62 ? "up" : row.score <= 0.42 ? "down" : "neutral"
-                            }`}
-                            style={{ width: `${clamp(row.score * 100, 0, 100)}%` }}
-                          />
-                        </div>
-                        <div className="backtest-dimension-reading">
+                        <div className="backtest-dimension-reading left">
                           <strong>{row.reading}</strong>
                           <span>{Math.round(clamp(row.score * 100, 0, 100))}/100</span>
                         </div>
+                        <div className="backtest-dimension-score">
+                          <div className="backtest-dimension-meter">
+                            <div
+                              className={`backtest-dimension-fill ${
+                                row.score >= 0.62 ? "up" : row.score <= 0.42 ? "down" : "neutral"
+                              }`}
+                              style={{ width: `${clamp(row.score * 100, 0, 100)}%` }}
+                            />
+                          </div>
+                        </div>
                       </div>
                     ))}
+                    {filteredBacktestDimensionRows.length === 0 ? (
+                      <div className="backtest-empty-inline">No dimensions match the current search.</div>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -4962,98 +5520,176 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <div className="backtest-card">
                     <div className="backtest-card-head">
                       <div>
-                        <h3>Equity Curve</h3>
-                        <p>Cumulative result path across the active trade set.</p>
+                        <h3>Statistical Graphs</h3>
+                        <p>Interactive scatter view styled after the AI.zip graph module.</p>
                       </div>
                     </div>
-                    <div className="backtest-graph-wrap">
-                      <svg viewBox="0 0 100 32" preserveAspectRatio="none" aria-label="equity curve">
-                        <line x1="0" y1="31" x2="100" y2="31" className="backtest-grid-line" />
-                        <path
-                          d={backtestGraphData.curvePath}
-                          className={`backtest-line-path ${
-                            backtestSummary.netPnl >= 0 ? "up" : "down"
-                          }`}
-                        />
+
+                    <div className="backtest-toolbar-row">
+                      <label className="backtest-inline-select">
+                        <span>X</span>
+                        <select
+                          value={scatterXKey}
+                          onChange={(event) =>
+                            setScatterXKey(event.target.value as BacktestScatterKey)
+                          }
+                        >
+                          {(["pnlUsd", "pnlPct", "holdMinutes", "units", "confidence"] as const).map(
+                            (key) => (
+                              <option key={key} value={key}>
+                                {getBacktestScatterLabel(key)}
+                              </option>
+                            )
+                          )}
+                        </select>
+                      </label>
+                      <label className="backtest-inline-select">
+                        <span>Y</span>
+                        <select
+                          value={scatterYKey}
+                          onChange={(event) =>
+                            setScatterYKey(event.target.value as BacktestScatterKey)
+                          }
+                        >
+                          {(["pnlUsd", "pnlPct", "holdMinutes", "units", "confidence"] as const).map(
+                            (key) => (
+                              <option key={key} value={key}>
+                                {getBacktestScatterLabel(key)}
+                              </option>
+                            )
+                          )}
+                        </select>
+                      </label>
+                    </div>
+
+                    <div className="backtest-scatter-wrap">
+                      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="scatter plot">
+                        <line x1="8" y1="92" x2="92" y2="92" className="backtest-axis-line" />
+                        <line x1="8" y1="8" x2="8" y2="92" className="backtest-axis-line" />
+                        <line x1="8" y1="50" x2="92" y2="50" className="backtest-grid-line" />
+                        <line x1="50" y1="8" x2="50" y2="92" className="backtest-grid-line" />
+                        {backtestScatterPlot.xZero != null ? (
+                          <line
+                            x1={backtestScatterPlot.xZero}
+                            y1="8"
+                            x2={backtestScatterPlot.xZero}
+                            y2="92"
+                            className="backtest-zero-line"
+                          />
+                        ) : null}
+                        {backtestScatterPlot.yZero != null ? (
+                          <line
+                            x1="8"
+                            y1={backtestScatterPlot.yZero}
+                            x2="92"
+                            y2={backtestScatterPlot.yZero}
+                            className="backtest-zero-line"
+                          />
+                        ) : null}
+                        {backtestScatterPlot.points.map((point) => (
+                          <circle
+                            key={point.id}
+                            cx={point.cx}
+                            cy={point.cy}
+                            r="1.8"
+                            className={`backtest-scatter-dot ${
+                              point.trade.result === "Win" ? "up" : "down"
+                            }`}
+                          >
+                            <title>
+                              {`${point.trade.symbol} · ${getBacktestScatterLabel(
+                                scatterXKey
+                              )}: ${formatBacktestScatterValue(
+                                scatterXKey,
+                                point.x
+                              )} · ${getBacktestScatterLabel(
+                                scatterYKey
+                              )}: ${formatBacktestScatterValue(scatterYKey, point.y)}`}
+                            </title>
+                          </circle>
+                        ))}
                       </svg>
                     </div>
-                    <div className="backtest-stat-row">
-                      <span>Net curve close</span>
-                      <strong className={backtestSummary.netPnl >= 0 ? "up" : "down"}>
-                        {formatSignedUsd(backtestSummary.netPnl)}
-                      </strong>
+
+                    <div className="backtest-map-legend">
+                      <span>X: {getBacktestScatterLabel(scatterXKey)}</span>
+                      <span>Y: {getBacktestScatterLabel(scatterYKey)}</span>
+                      <span>Green: wins</span>
+                      <span>Red: losses</span>
                     </div>
                   </div>
 
-                  <div className="backtest-card">
-                    <div className="backtest-card-head">
-                      <div>
-                        <h3>Monthly PnL</h3>
-                        <p>Last six active months from the current data set.</p>
+                  <div className="backtest-stack">
+                    <div className="backtest-card">
+                      <div className="backtest-card-head">
+                        <div>
+                          <h3>Monthly PnL</h3>
+                          <p>Last six active months from the current data set.</p>
+                        </div>
+                      </div>
+                      <div className="backtest-bar-list">
+                        {backtestGraphData.monthBars.map((bar) => {
+                          const maxValue = Math.max(
+                            1,
+                            ...backtestGraphData.monthBars.map((item) => Math.abs(item.value))
+                          );
+
+                          return (
+                            <div key={bar.key} className="backtest-bar-row">
+                              <div className="backtest-bar-copy">
+                                <strong>{bar.label}</strong>
+                                <span>{getMonthLabel(bar.key)}</span>
+                              </div>
+                              <div className="backtest-bar-track">
+                                <div
+                                  className={`backtest-bar-fill ${bar.value >= 0 ? "up" : "down"}`}
+                                  style={{ width: `${(Math.abs(bar.value) / maxValue) * 100}%` }}
+                                />
+                              </div>
+                              <div className="backtest-bar-values">
+                                <strong className={bar.value >= 0 ? "up" : "down"}>
+                                  {formatSignedUsd(bar.value)}
+                                </strong>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
-                    <div className="backtest-bar-list">
-                      {backtestGraphData.monthBars.map((bar) => {
-                        const maxValue = Math.max(
-                          1,
-                          ...backtestGraphData.monthBars.map((item) => Math.abs(item.value))
-                        );
 
-                        return (
-                          <div key={bar.key} className="backtest-bar-row">
+                    <div className="backtest-card compact">
+                      <div className="backtest-card-head">
+                        <div>
+                          <h3>PnL Distribution</h3>
+                          <p>Bucketed outcomes for quick tail-risk inspection.</p>
+                        </div>
+                      </div>
+                      <div className="backtest-bar-list">
+                        {backtestGraphData.buckets.map((bucket) => (
+                          <div key={bucket.label} className="backtest-bar-row compact">
                             <div className="backtest-bar-copy">
-                              <strong>{bar.label}</strong>
-                              <span>{getMonthLabel(bar.key)}</span>
+                              <strong>{bucket.label}</strong>
                             </div>
                             <div className="backtest-bar-track">
                               <div
-                                className={`backtest-bar-fill ${bar.value >= 0 ? "up" : "down"}`}
-                                style={{ width: `${(Math.abs(bar.value) / maxValue) * 100}%` }}
+                                className="backtest-bar-fill neutral"
+                                style={{
+                                  width: `${
+                                    backtestSummary.tradeCount > 0
+                                      ? (bucket.count / backtestSummary.tradeCount) * 100
+                                      : 0
+                                  }%`
+                                }}
                               />
                             </div>
                             <div className="backtest-bar-values">
-                              <strong className={bar.value >= 0 ? "up" : "down"}>
-                                {formatSignedUsd(bar.value)}
-                              </strong>
+                              <span>
+                                {bucket.count} / {backtestSummary.tradeCount}
+                              </span>
                             </div>
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div className="backtest-card span-2">
-                    <div className="backtest-card-head">
-                      <div>
-                        <h3>PnL Distribution</h3>
-                        <p>Bucketed outcomes for quick tail-risk inspection.</p>
+                        ))}
                       </div>
-                    </div>
-                    <div className="backtest-bar-list">
-                      {backtestGraphData.buckets.map((bucket) => (
-                        <div key={bucket.label} className="backtest-bar-row compact">
-                          <div className="backtest-bar-copy">
-                            <strong>{bucket.label}</strong>
-                          </div>
-                          <div className="backtest-bar-track">
-                            <div
-                              className="backtest-bar-fill neutral"
-                              style={{
-                                width: `${
-                                  backtestSummary.tradeCount > 0
-                                    ? (bucket.count / backtestSummary.tradeCount) * 100
-                                    : 0
-                                }%`
-                              }}
-                            />
-                          </div>
-                          <div className="backtest-bar-values">
-                            <span>
-                              {bucket.count} / {backtestSummary.tradeCount}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
                     </div>
                   </div>
                 </div>
@@ -5067,6 +5703,27 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         <h3>Prop Firm Tool</h3>
                         <p>Replay the current sample against prop-style challenge limits.</p>
                       </div>
+                    </div>
+
+                    <div className="backtest-toolbar-row">
+                      <button
+                        type="button"
+                        className={`ai-zip-button pill ${
+                          propProjectionMethod === "historical" ? "active" : ""
+                        }`}
+                        onClick={() => setPropProjectionMethod("historical")}
+                      >
+                        Historical
+                      </button>
+                      <button
+                        type="button"
+                        className={`ai-zip-button pill ${
+                          propProjectionMethod === "montecarlo" ? "active" : ""
+                        }`}
+                        onClick={() => setPropProjectionMethod("montecarlo")}
+                      >
+                        Monte Carlo
+                      </button>
                     </div>
 
                     <div className="backtest-input-grid">
@@ -5129,7 +5786,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <div className="backtest-card-head">
                         <div>
                           <h3>{propFirmProjection.status}</h3>
-                          <p>{propFirmProjection.reason}</p>
+                          <p>
+                            {propFirmProjection.reason} ·{" "}
+                            {propProjectionMethod === "historical"
+                              ? "Historical order"
+                              : "Deterministic Monte Carlo path"}
+                          </p>
                         </div>
                       </div>
                       <div className="backtest-stat-list">
