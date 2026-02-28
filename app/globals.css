@@ -3899,3 +3899,276 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+/* =========================================
+   STUNNING BACKTEST UI OVERRIDES
+   ========================================= */
+
+/* Main Surface */
+.backtest-surface {
+  background: #090d13; /* Match chart exactly */
+  padding: 1.2rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+/* Tabs Redesign - Clean Pill/Underline Hybrid */
+.backtest-tabs {
+  background: var(--bg-elev);
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  padding: 0.3rem;
+  gap: 0.2rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  margin-bottom: 0.5rem;
+}
+.backtest-tab {
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  border-radius: 6px;
+  padding: 0.55rem 0.85rem;
+  font-size: 0.68rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: none;
+}
+.backtest-tab:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+.backtest-tab.active {
+  color: var(--text);
+  background: rgba(45, 108, 255, 0.1);
+  border: none;
+  box-shadow: inset 0 0 0 1px rgba(45, 108, 255, 0.25);
+}
+
+/* Cards & Containers - Flat, Clean, Thin Borders */
+.backtest-hero-copy,
+.backtest-card,
+.backtest-summary-card,
+.backtest-empty,
+.backtest-empty-inline,
+.backtest-history-list,
+.backtest-history-table-wrap,
+.backtest-bar-list.framed,
+.backtest-dimension-table,
+.backtest-cluster-overlay-card,
+.backtest-metric-card,
+.backtest-stat-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.backtest-hero-copy:hover,
+.backtest-card:hover {
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  border-color: var(--line-soft);
+}
+
+/* Sub-elements / Inner Rows */
+.backtest-history-row,
+.backtest-day-row,
+.backtest-stat-row,
+.backtest-mini-row {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  padding: 0.6rem 0.2rem;
+}
+.backtest-history-row:last-child,
+.backtest-day-row:last-child,
+.backtest-stat-row:last-child,
+.backtest-mini-row:last-child {
+  border-bottom: none;
+}
+
+/* Tables */
+.backtest-history-table thead th {
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--line);
+  color: var(--text-faint);
+  font-weight: 600;
+  padding: 0.75rem 0.5rem;
+}
+.backtest-history-table tbody td {
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  padding: 0.65rem 0.5rem;
+}
+.backtest-history-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+.backtest-history-table tbody tr.up-row {
+  background: rgba(27, 174, 138, 0.04);
+}
+.backtest-history-table tbody tr.up-row:hover {
+  background: rgba(27, 174, 138, 0.08);
+}
+.backtest-history-table tbody tr.down-row {
+  background: rgba(240, 69, 90, 0.04);
+}
+.backtest-history-table tbody tr.down-row:hover {
+  background: rgba(240, 69, 90, 0.08);
+}
+
+/* Calendar */
+.backtest-calendar-cell {
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+.backtest-calendar-cell:hover {
+  border-color: var(--accent);
+  background: var(--bg-top);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(45, 108, 255, 0.1);
+}
+.backtest-calendar-cell.selected {
+  border-color: var(--accent);
+  background: rgba(45, 108, 255, 0.1);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.backtest-calendar-trade {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.backtest-calendar-trade:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+.backtest-calendar-trade.expanded {
+  border-color: var(--accent);
+  background: var(--bg-elev);
+}
+.backtest-calendar-trade-expand {
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+.backtest-calendar-trade-panel,
+.backtest-calendar-trade-stat {
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+}
+
+/* Inputs & Actions */
+.backtest-action-btn {
+  background: var(--bg-top);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  transition: all 0.2s ease;
+}
+.backtest-action-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
+}
+.backtest-action-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.backtest-date-input,
+.backtest-search,
+.backtest-input-field input,
+.ai-zip-input {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+}
+.backtest-date-input:focus,
+.backtest-search:focus,
+.backtest-input-field input:focus,
+.ai-zip-input:focus {
+  border-color: var(--accent);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2), 0 0 0 1px var(--accent);
+}
+
+/* Cluster Map / Special Cards */
+.backtest-cluster-legend-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+}
+
+.backtest-calendar-nav-btn {
+  background: var(--bg-top);
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+.backtest-calendar-nav-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* Typography refinements */
+.backtest-hero-copy h2,
+.backtest-card-head h3,
+.backtest-calendar-detail-head h3,
+.backtest-cluster-title {
+  color: var(--text);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.backtest-hero-copy p,
+.backtest-card-head p,
+.backtest-calendar-detail-head p,
+.backtest-cluster-subtitle {
+  color: var(--text-dim);
+}
+
+/* Stats */
+.backtest-stat-card strong,
+.backtest-history-copy strong,
+.backtest-metric-card strong,
+.backtest-summary-card strong {
+  color: var(--text);
+  font-weight: 700;
+}
+.backtest-stat-card span,
+.backtest-history-copy span,
+.backtest-metric-card span,
+.backtest-summary-card span {
+  color: var(--text-faint);
+}
+
+.backtest-month-pill.up {
+  border-color: rgba(27, 174, 138, 0.3);
+  color: var(--up);
+  background: rgba(27, 174, 138, 0.1);
+}
+.backtest-month-pill.down {
+  border-color: rgba(240, 69, 90, 0.3);
+  color: var(--down);
+  background: rgba(240, 69, 90, 0.1);
+}
+.backtest-month-pill.neutral {
+  border-color: var(--line);
+  color: var(--text-dim);
+  background: transparent;
+}
+
+.backtest-calendar-side-pill.up {
+  color: var(--up);
+  background: rgba(27, 174, 138, 0.1);
+  border-color: rgba(27, 174, 138, 0.3);
+}
+.backtest-calendar-side-pill.down {
+  color: var(--down);
+  background: rgba(240, 69, 90, 0.1);
+  border-color: rgba(240, 69, 90, 0.3);
+}
