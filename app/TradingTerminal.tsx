@@ -1506,7 +1506,8 @@ const RECENT_ONE_MINUTE_WINDOW_MS = RECENT_ONE_MINUTE_LOOKBACK_DAYS * 24 * 60 * 
 const RECENT_ONE_MINUTE_FETCH_COUNT = 40_000;
 const BACKTEST_LOOKBACK_YEARS = 10;
 const BACKTEST_MAX_HISTORY_CANDLES = 400_000;
-const BACKTEST_TARGET_TRADES = 1200;
+const BACKTEST_TARGET_TRADES_PER_DAY = 4;
+const BACKTEST_HISTORY_PAGE_SIZE = 250;
 
 const symbolTimeframeKey = (symbol: string, timeframe: Timeframe) => {
   return `${symbol}__${timeframe}`;
@@ -3576,7 +3577,7 @@ const BacktestTradeMiniChart = ({
 
 const generateTradeBlueprints = (
   model: ModelProfile,
-  total = BACKTEST_TARGET_TRADES,
+  total: number,
   seedMs = floorToTimeframe(Date.now(), "1m"),
   range?: { startMs: number; endMs: number }
 ): TradeBlueprint[] => {
@@ -3923,6 +3924,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>({});
   const [backtestSeriesMap, setBacktestSeriesMap] = useState<Record<string, Candle[]>>({});
   const [backtestHistoryQuery, setBacktestHistoryQuery] = useState("");
+  const [backtestHistoryPage, setBacktestHistoryPage] = useState(1);
   const [backtestHistoryCollapsed, setBacktestHistoryCollapsed] = useState(false);
   const [hoveredBacktestHistoryId, setHoveredBacktestHistoryId] = useState<string | null>(null);
   const [activeBacktestTradeDetails, setActiveBacktestTradeDetails] = useState<
@@ -4474,6 +4476,31 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [backtestRefreshNowMs, selectedBacktestCandles]);
 
+  const backtestTargetTrades = useMemo(() => {
+    if (backtestModelProfiles.length === 0) {
+      return 0;
+    }
+
+    const rangeMs = Math.max(60_000, backtestBlueprintRange.endMs - backtestBlueprintRange.startMs);
+    const estimatedSlots = Math.max(
+      1,
+      Math.floor(rangeMs / Math.max(60_000, getTimeframeMs(selectedTimeframe)))
+    );
+    const availableSlots =
+      selectedBacktestCandles.length > 0
+        ? selectedBacktestCandles.length
+        : Math.min(BACKTEST_MAX_HISTORY_CANDLES, estimatedSlots);
+    const rangeDays = Math.max(1, Math.ceil(rangeMs / (24 * 60 * 60_000)));
+    const densityTarget = rangeDays * BACKTEST_TARGET_TRADES_PER_DAY;
+
+    return Math.max(backtestModelProfiles.length, Math.min(availableSlots, densityTarget));
+  }, [
+    backtestBlueprintRange,
+    backtestModelProfiles.length,
+    selectedBacktestCandles.length,
+    selectedTimeframe
+  ]);
+
   const deepChartCandles = backtestSeriesMap[selectedKey] ?? null;
   const usesDeepChartHistory = (deepChartCandles?.length ?? 0) > 0;
   const selectedChartCandles = useMemo(() => {
@@ -4525,12 +4552,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [selectedTimeframe, seriesMap]);
 
   const tradeBlueprints = useMemo(() => {
-    if (backtestModelProfiles.length === 0) {
+    if (backtestModelProfiles.length === 0 || backtestTargetTrades <= 0) {
       return [];
     }
 
-    const perModelBase = Math.floor(BACKTEST_TARGET_TRADES / backtestModelProfiles.length);
-    const remainder = BACKTEST_TARGET_TRADES % backtestModelProfiles.length;
+    const perModelBase = Math.floor(backtestTargetTrades / backtestModelProfiles.length);
+    const remainder = backtestTargetTrades % backtestModelProfiles.length;
     const blueprints: TradeBlueprint[] = [];
 
     backtestModelProfiles.forEach((model, index) => {
@@ -4547,8 +4574,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return blueprints
       .sort((left, right) => right.exitMs - left.exitMs)
-      .slice(0, BACKTEST_TARGET_TRADES);
-  }, [backtestBlueprintRange, backtestModelProfiles, backtestRefreshNowMs]);
+      .slice(0, backtestTargetTrades);
+  }, [backtestBlueprintRange, backtestModelProfiles, backtestRefreshNowMs, backtestTargetTrades]);
 
   const activeTrade = useMemo<ActiveTrade | null>(() => {
     if (selectedCandles.length < 70) {
@@ -4763,8 +4790,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return rows
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime))
-      .slice(0, BACKTEST_TARGET_TRADES);
-  }, [backtestSeriesMap, modelProfileById, selectedTimeframe, seriesMap, tradeBlueprints]);
+      .slice(0, backtestTargetTrades);
+  }, [
+    backtestSeriesMap,
+    backtestTargetTrades,
+    modelProfileById,
+    selectedTimeframe,
+    seriesMap,
+    tradeBlueprints
+  ]);
 
   const selectedHistoryTrade = useMemo(() => {
     if (!selectedHistoryId) {
@@ -7028,6 +7062,32 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       })
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
   }, [backtestHistoryQuery, backtestTrades]);
+
+  useEffect(() => {
+    setBacktestHistoryPage(1);
+  }, [backtestHistoryQuery, backtestTrades]);
+
+  const backtestHistoryPageCount = Math.max(
+    1,
+    Math.ceil(filteredBacktestHistory.length / BACKTEST_HISTORY_PAGE_SIZE)
+  );
+  const visibleBacktestHistoryPage = Math.min(backtestHistoryPage, backtestHistoryPageCount);
+  const backtestHistoryPageStart =
+    filteredBacktestHistory.length === 0
+      ? 0
+      : (visibleBacktestHistoryPage - 1) * BACKTEST_HISTORY_PAGE_SIZE + 1;
+  const backtestHistoryPageEnd =
+    filteredBacktestHistory.length === 0
+      ? 0
+      : Math.min(filteredBacktestHistory.length, visibleBacktestHistoryPage * BACKTEST_HISTORY_PAGE_SIZE);
+  const pagedBacktestHistory = useMemo(() => {
+    if (filteredBacktestHistory.length === 0) {
+      return [];
+    }
+
+    const startIndex = (visibleBacktestHistoryPage - 1) * BACKTEST_HISTORY_PAGE_SIZE;
+    return filteredBacktestHistory.slice(startIndex, startIndex + BACKTEST_HISTORY_PAGE_SIZE);
+  }, [filteredBacktestHistory, visibleBacktestHistoryPage]);
 
   const aiZipClusterCandles = useMemo(() => {
     return selectedChartCandles.map((candle) => ({
@@ -10561,12 +10621,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           {backtestTrades.length > 0 ? (
                             <>
                               Showing{" "}
-                              <b>
-                                {filteredBacktestHistory.length > 0
-                                  ? `1-${filteredBacktestHistory.length}`
-                                  : "0"}
-                              </b>{" "}
-                              of <b>{backtestTrades.length}</b> trades
+                              <b>{backtestHistoryPageStart > 0 ? `${backtestHistoryPageStart}-${backtestHistoryPageEnd}` : "0"}</b>{" "}
+                              of <b>{filteredBacktestHistory.length}</b> filtered trades
+                              {filteredBacktestHistory.length !== backtestTrades.length ? (
+                                <>
+                                  {" "}
+                                  (<b>{backtestTrades.length}</b> total)
+                                </>
+                              ) : null}
                             </>
                           ) : (
                             <>No trades</>
@@ -10621,6 +10683,87 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           ) : null}
                         </div>
 
+                        {filteredBacktestHistory.length > 0 ? (
+                          <div
+                            style={{
+                              marginTop: 10,
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              gap: 10,
+                              flexWrap: "wrap"
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: 10,
+                                opacity: 0.72
+                              }}
+                            >
+                              Page {visibleBacktestHistoryPage} of {backtestHistoryPageCount}
+                            </div>
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setBacktestHistoryPage((page) => Math.max(1, page - 1))
+                                }
+                                disabled={visibleBacktestHistoryPage <= 1}
+                                style={{
+                                  height: 30,
+                                  padding: "0 12px",
+                                  borderRadius: 9,
+                                  border: "1px solid rgba(255,255,255,0.14)",
+                                  background:
+                                    visibleBacktestHistoryPage <= 1
+                                      ? "rgba(255,255,255,0.03)"
+                                      : "rgba(255,255,255,0.06)",
+                                  color:
+                                    visibleBacktestHistoryPage <= 1
+                                      ? "rgba(255,255,255,0.32)"
+                                      : "rgba(255,255,255,0.85)",
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  cursor: visibleBacktestHistoryPage <= 1 ? "default" : "pointer"
+                                }}
+                              >
+                                Prev
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setBacktestHistoryPage((page) =>
+                                    Math.min(backtestHistoryPageCount, page + 1)
+                                  )
+                                }
+                                disabled={visibleBacktestHistoryPage >= backtestHistoryPageCount}
+                                style={{
+                                  height: 30,
+                                  padding: "0 12px",
+                                  borderRadius: 9,
+                                  border: "1px solid rgba(255,255,255,0.14)",
+                                  background:
+                                    visibleBacktestHistoryPage >= backtestHistoryPageCount
+                                      ? "rgba(255,255,255,0.03)"
+                                      : "rgba(255,255,255,0.06)",
+                                  color:
+                                    visibleBacktestHistoryPage >= backtestHistoryPageCount
+                                      ? "rgba(255,255,255,0.32)"
+                                      : "rgba(255,255,255,0.85)",
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  cursor:
+                                    visibleBacktestHistoryPage >= backtestHistoryPageCount
+                                      ? "default"
+                                      : "pointer"
+                                }}
+                              >
+                                Next
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+
                         <div
                           style={{
                             marginTop: 10,
@@ -10661,7 +10804,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               </tr>
                             </thead>
                             <tbody>
-                              {filteredBacktestHistory.length === 0 ? (
+                              {pagedBacktestHistory.length === 0 ? (
                                 <tr>
                                   <td
                                     colSpan={11}
@@ -10675,7 +10818,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   </td>
                                 </tr>
                               ) : (
-                                filteredBacktestHistory.map((trade, index) => {
+                                pagedBacktestHistory.map((trade, index) => {
                                   const durationMinutes = Math.max(
                                     1,
                                     (Number(trade.exitTime) - Number(trade.entryTime)) / 60
@@ -10735,7 +10878,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                         borderBottom: "1px solid rgba(255,255,255,0.06)"
                                       }}
                                     >
-                                      <td style={cell(0)}>{index + 1}</td>
+                                      <td style={cell(0)}>{backtestHistoryPageStart + index}</td>
                                       <td style={cell(1)}>
                                         <span
                                           style={aiZipBacktestHistoryMono({
