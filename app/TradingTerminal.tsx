@@ -481,7 +481,7 @@ const fetchClickHouseCandles = async (timeframe: Timeframe, count: number): Prom
     count: String(count)
   });
 
-  const response = await fetch(`/api/clickhouse/candles?${params.toString()}`, {
+  const response = await fetch(`/api/history/candles?${params.toString()}`, {
     cache: "no-store"
   });
 
