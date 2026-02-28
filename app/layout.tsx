@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "korra.space | XAUUSD Terminal",
+  title: "Korra's Space",
   description: "XAUUSD live trading UI with ClickHouse history and streaming prices."
 };
 
