@@ -3960,7 +3960,10 @@ button {
 .backtest-dimension-table,
 .backtest-cluster-overlay-card,
 .backtest-metric-card,
-.backtest-stat-card {
+.backtest-stat-card,
+.main-settings-kpi-card,
+.ai-zip-section,
+.backtest-calendar-detail {
   background: var(--bg-elev);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -3969,7 +3972,8 @@ button {
 }
 
 .backtest-hero-copy:hover,
-.backtest-card:hover {
+.backtest-card:hover,
+.main-settings-kpi-card:hover {
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
   border-color: var(--line-soft);
 }
@@ -4063,7 +4067,9 @@ button {
 }
 
 /* Inputs & Actions */
-.backtest-action-btn {
+.backtest-action-btn,
+.ai-zip-button,
+.backtest-range-clear {
   background: var(--bg-top);
   border: 1px solid var(--line);
   color: var(--text);
@@ -4071,13 +4077,24 @@ button {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   transition: all 0.2s ease;
 }
-.backtest-action-btn:hover:not(:disabled) {
+.backtest-action-btn:hover:not(:disabled),
+.ai-zip-button:hover:not(:disabled),
+.backtest-range-clear:hover {
   background: rgba(255, 255, 255, 0.05);
   border-color: rgba(255, 255, 255, 0.15);
   transform: translateY(-1px);
 }
-.backtest-action-btn:active:not(:disabled) {
+.backtest-action-btn:active:not(:disabled),
+.ai-zip-button:active:not(:disabled),
+.backtest-range-clear:active {
   transform: translateY(0);
+}
+
+.ai-zip-button.active {
+  background: rgba(45, 108, 255, 0.1);
+  border-color: var(--accent);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(45, 108, 255, 0.25);
 }
 
 .backtest-date-input,
@@ -4097,6 +4114,122 @@ button {
 .ai-zip-input:focus {
   border-color: var(--accent);
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2), 0 0 0 1px var(--accent);
+}
+
+/* Specific UI Enhancements */
+.main-settings-kpi-card {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  align-items: flex-start;
+}
+.main-settings-kpi-card span {
+  font-size: 0.65rem;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+}
+.main-settings-kpi-card strong {
+  font-size: 1.1rem;
+  color: var(--text);
+  font-weight: 800;
+}
+
+/* Filter Tiles (Time Settings) */
+.backtest-filter-tile {
+  background: var(--bg-top);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.6rem;
+  color: var(--text-dim);
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+}
+.backtest-filter-tile:hover {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.15);
+  transform: translateY(-2px);
+}
+.backtest-filter-tile.active {
+  background: rgba(45, 108, 255, 0.1);
+  border-color: var(--accent);
+  color: var(--text);
+  box-shadow: 0 4px 12px rgba(45, 108, 255, 0.15);
+}
+.backtest-filter-tile strong {
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+
+/* Range Slider */
+.backtest-slider {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 6px;
+  background: var(--line);
+  border-radius: 3px;
+  outline: none;
+  margin: 10px 0;
+}
+.backtest-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  box-shadow: 0 0 10px rgba(45, 108, 255, 0.5);
+  transition: transform 0.1s ease;
+}
+.backtest-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+/* Progress Bars (Prop Firm Tool) */
+.backtest-progress-block {
+  background: var(--bg-top);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1rem;
+}
+.backtest-progress-track {
+  height: 8px;
+  background: var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+.backtest-progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+.backtest-progress-fill.up {
+  background: var(--up);
+  box-shadow: 0 0 10px rgba(27, 174, 138, 0.4);
+}
+.backtest-progress-fill.down {
+  background: var(--down);
+  box-shadow: 0 0 10px rgba(240, 69, 90, 0.4);
+}
+
+/* Graphs */
+.backtest-graph-wrap {
+  border: 1px solid var(--line);
+  background: var(--bg-top);
+  border-radius: 10px;
+  overflow: hidden;
+  padding: 1rem;
+}
+.backtest-grid-line {
+  stroke: var(--line);
+  stroke-width: 1;
 }
 
 /* Cluster Map / Special Cards */
@@ -4172,3 +4305,57 @@ button {
   background: rgba(240, 69, 90, 0.1);
   border-color: rgba(240, 69, 90, 0.3);
 }
+
+/* Inline Component Overrides */
+div[style*="background: #0b0b0b"],
+div[style*="background: rgba(7, 12, 20, 0.72)"],
+div[style*="background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.15))"],
+div[style*="background: rgba(255,255,255,0.05)"] {
+  background: var(--bg-elev) !important;
+  border-color: var(--line) !important;
+}
+
+select[style*="background: rgba(255,255,255,0.04)"],
+select[style*="background: rgba(90,170,255,0.15)"] {
+  background: var(--bg-top) !important;
+  border-color: var(--line) !important;
+  color: var(--text) !important;
+}
+select[style*="background: rgba(255,255,255,0.04)"]:hover,
+select[style*="background: rgba(90,170,255,0.15)"]:hover {
+  border-color: var(--accent) !important;
+}
+
+input[type="search"][style*="background: rgba(0,0,0,0.25)"] {
+  background: var(--bg-top) !important;
+  border-color: var(--line) !important;
+  color: var(--text) !important;
+}
+input[type="search"][style*="background: rgba(0,0,0,0.25)"]:focus {
+  border-color: var(--accent) !important;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.2), 0 0 0 1px var(--accent) !important;
+}
+
+/* Dimension & Performance Stats Specifics */
+div[style*="border-bottom: 1px solid rgba(255,255,255,0.10)"] {
+  border-bottom-color: var(--line) !important;
+}
+div[style*="borderTop: 1px solid rgba(60,220,120,0.95)"] {
+  border-top-color: var(--up) !important;
+}
+div[style*="borderBottom: 1px solid rgba(60,220,120,0.95)"] {
+  border-bottom-color: var(--up) !important;
+}
+div[style*="borderTop: 1px solid rgba(230,80,80,0.95)"] {
+  border-top-color: var(--down) !important;
+}
+div[style*="borderBottom: 1px solid rgba(230,80,80,0.95)"] {
+  border-bottom-color: var(--down) !important;
+}
+
+/* Prop firm Histogram specific line */
+line[stroke="#4b5563"],
+line[stroke="#6b7280"] {
+  stroke: var(--line) !important;
+}
+
