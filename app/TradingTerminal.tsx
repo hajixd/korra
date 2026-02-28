@@ -276,13 +276,13 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
 ];
 
 const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
-  "1m": 9000,
-  "5m": 7800,
-  "15m": 6400,
-  "1H": 4800,
-  "4H": 3400,
-  "1D": 2200,
-  "1W": 900
+  "1m": 25000,
+  "5m": 25000,
+  "15m": 25000,
+  "1H": 25000,
+  "4H": 25000,
+  "1D": 25000,
+  "1W": 5000
 };
 
 const symbolTimeframeKey = (symbol: string, timeframe: Timeframe) => {
@@ -503,7 +503,7 @@ const fetchHistoryCandles = async (timeframe: Timeframe): Promise<Candle[]> => {
 
 const XAUUSD_PAIR = "XAU_USD";
 const MIN_SEED_CANDLES = 40;
-const MAX_REMOTE_HISTORY_CANDLES = 10_000;
+const MAX_REMOTE_HISTORY_CANDLES = 25_000;
 const LIVE_MARKET_SYNC_LIMIT = 160;
 const MARKET_API_KEY =
   process.env.NEXT_PUBLIC_PRICE_STREAM_API_KEY ||
