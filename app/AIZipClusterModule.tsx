@@ -24050,6 +24050,11 @@ export default function App() {
     }
   }, [aiMethod, useAI, checkEveryBar]);
   const [confidenceThreshold, setConfidenceThreshold] = useState(0);
+  useEffect(() => {
+    if ((aiMethod === "off" || !useAI) && confidenceThreshold !== 0) {
+      setConfidenceThreshold(0);
+    }
+  }, [aiMethod, confidenceThreshold, useAI]);
   const [isPropFirmCollapsed, setIsPropFirmCollapsed] = useState(true);
   const [isDimensionStatsCollapsed, setIsDimensionStatsCollapsed] =
     useState(true);
@@ -29319,6 +29324,10 @@ export default function App() {
     return { ["--p"]: `${clamp(pct, 0, 100)}%` };
   };
   const aiAllOff = aiMethod === "off";
+  const confidenceGateDisabled = aiAllOff || !useAI;
+  const effectiveConfidenceThreshold = confidenceGateDisabled
+    ? 0
+    : confidenceThreshold;
 
   const selectedModelCount = useMemo(() => {
     const vals = Object.values(modelStates || {});
@@ -34030,7 +34039,17 @@ export default function App() {
 
               <button
                 disabled={aiAllOff}
-                onClick={() => setUseAI((v) => !v)}
+                onClick={() =>
+                  setUseAI((v) => {
+                    const next = !v;
+
+                    if (!next) {
+                      setConfidenceThreshold(0);
+                    }
+
+                    return next;
+                  })
+                }
                 style={{
                   width: "100%",
                   fontSize: 11,
@@ -34057,7 +34076,7 @@ export default function App() {
                     ? "0 14px 34px rgba(0,0,0,0.58)"
                     : "0 10px 24px rgba(0,0,0,0.45)",
                 }}
-                title="Toggle AI Filter (does not disable or reset strictness)"
+                title="Toggle AI Filter (turning it off resets the confidence gate to 0)"
               >
                 AI Filter {useAI ? "· ON" : "· OFF"}
               </button>
@@ -34099,8 +34118,8 @@ export default function App() {
 
               <div
                 style={{
-                  opacity: aiAllOff ? 0.45 : 1,
-                  pointerEvents: aiAllOff ? "none" : "auto",
+                  opacity: confidenceGateDisabled ? 0.45 : 1,
+                  pointerEvents: confidenceGateDisabled ? "none" : "auto",
                 }}
               >
                 <div>
@@ -34110,16 +34129,16 @@ export default function App() {
                     min={0}
                     max={100}
                     step={1}
-                    value={confidenceThreshold}
+                    value={effectiveConfidenceThreshold}
                     onChange={(e) => {
                       const v = clamp(Number(e.target.value) || 0, 0, 100);
                       setConfidenceThreshold(v);
                     }}
                     className="theme-slider"
-                    style={{ ...sliderVars(confidenceThreshold, 0, 100) }}
+                    style={{ ...sliderVars(effectiveConfidenceThreshold, 0, 100) }}
                   />
                   <div style={{ ...ui.tiny, marginTop: 4 }}>
-                    {confidenceThreshold}
+                    {effectiveConfidenceThreshold}
                   </div>
                 </div>
 
@@ -37442,7 +37461,7 @@ export default function App() {
                 clusterMapView={"2d"}
                 onToggleClusterMapView={() => {}}
                 aiMethod={aiMethod}
-                confidenceThreshold={confidenceThreshold}
+                confidenceThreshold={effectiveConfidenceThreshold}
                 statsDateStart={statsDateStart}
                 statsDateEnd={statsDateEnd}
                 hdbMinClusterSize={hdbMinClusterSize}
@@ -37489,7 +37508,7 @@ export default function App() {
                         setClusterMapView((v) => (v === "3d" ? "2d" : "3d"))
                       }
                       aiMethod={aiMethod}
-                      confidenceThreshold={confidenceThreshold}
+                      confidenceThreshold={effectiveConfidenceThreshold}
                       hdbMinClusterSize={hdbMinClusterSize}
                       hdbMinSamples={hdbMinSamples}
                       hdbEpsQuantile={hdbEpsQuantile}
