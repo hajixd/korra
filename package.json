@@ -6,11 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "render:showcase": "node scripts/render-showcase-video.mjs"
+    "lint": "next lint"
   },
   "dependencies": {
-    "framer-motion": "^12.34.3",
     "lightweight-charts": "^4.2.3",
     "next": "^15.2.0",
     "react": "^19.0.0",

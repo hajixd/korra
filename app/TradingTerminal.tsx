@@ -145,10 +145,6 @@ type MultiTradeOverlaySeries = {
   pathLine: ISeriesApi<"Line">;
 };
 
-type HomeProps = {
-  showcaseMode?: boolean;
-};
-
 type MarketApiCandle = {
   time: number | string;
   open: number | string;
@@ -169,11 +165,11 @@ const createPseudoAccountNumber = (seedText: string): string => {
 
 const futuresAssets: FutureAsset[] = [
   {
-    symbol: "GOLD",
-    name: "Gold Spot",
+    symbol: "XAUUSD",
+    name: "XAU / USD",
     basePrice: 2945.25,
-    openInterest: "OANDA",
-    funding: "Spot"
+    openInterest: "OANDA + CH",
+    funding: "CFD"
   }
 ];
 
@@ -431,8 +427,103 @@ const mergeLivePriceIntoCandles = (
   return next.length > maxBars ? next.slice(next.length - maxBars) : next;
 };
 
-const SHOWCASE_REFERENCE_NOW_MS = Date.UTC(2026, 1, 24, 15, 30, 0);
-const GOLD_PAIR = "XAU_USD";
+const mergeRecentCandles = (
+  historical: Candle[],
+  liveWindow: Candle[],
+  maxBars: number
+): Candle[] => {
+  if (liveWindow.length === 0) {
+    return historical.slice(-maxBars);
+  }
+
+  const firstLiveTime = liveWindow[0].time;
+  const merged = [...historical.filter((row) => row.time < firstLiveTime), ...liveWindow];
+  const deduped: Candle[] = [];
+
+  for (const row of merged) {
+    const previous = deduped[deduped.length - 1];
+
+    if (previous && previous.time === row.time) {
+      deduped[deduped.length - 1] = row;
+    } else {
+      deduped.push(row);
+    }
+  }
+
+  return deduped.slice(-maxBars);
+};
+
+const fetchMarketCandles = async (timeframe: Timeframe, limit: number): Promise<Candle[]> => {
+  const params = new URLSearchParams({
+    pair: XAUUSD_PAIR,
+    timeframe: marketTimeframeMap[timeframe],
+    limit: String(Math.min(limit, MARKET_MAX_HISTORY_CANDLES)),
+    api_key: MARKET_API_KEY
+  });
+
+  const response = await fetch(`/api/market/candles?${params.toString()}`, {
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = await response.json();
+
+  return normalizeMarketCandles(payload.candles || []);
+};
+
+const fetchClickHouseCandles = async (timeframe: Timeframe, count: number): Promise<Candle[]> => {
+  const params = new URLSearchParams({
+    pair: XAUUSD_PAIR,
+    timeframe: marketTimeframeMap[timeframe],
+    count: String(count)
+  });
+
+  const response = await fetch(`/api/clickhouse/candles?${params.toString()}`, {
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = await response.json();
+
+  return normalizeMarketCandles(payload.candles || []);
+};
+
+const fetchHistoryCandles = async (timeframe: Timeframe): Promise<Candle[]> => {
+  const targetBars = candleHistoryCountByTimeframe[timeframe];
+
+  try {
+    const clickhouseCandles = await fetchClickHouseCandles(timeframe, targetBars);
+
+    if (clickhouseCandles.length >= MIN_SEED_CANDLES) {
+      return clickhouseCandles.slice(-targetBars);
+    }
+  } catch {
+    // Fall through to the market history fallback.
+  }
+
+  try {
+    const marketCandles = await fetchMarketCandles(timeframe, targetBars);
+
+    if (marketCandles.length >= MIN_SEED_CANDLES) {
+      return marketCandles.slice(-targetBars);
+    }
+  } catch {
+    // Keep the synthetic fallback already seeded in state.
+  }
+
+  return [];
+};
+
+const XAUUSD_PAIR = "XAU_USD";
+const MIN_SEED_CANDLES = 40;
+const MARKET_MAX_HISTORY_CANDLES = 10_000;
+const LIVE_MARKET_SYNC_LIMIT = 160;
 const MARKET_API_KEY =
   process.env.NEXT_PUBLIC_PRICE_STREAM_API_KEY ||
   process.env.NEXT_PUBLIC_MARKET_API_KEY ||
@@ -736,42 +827,6 @@ const findCandleIndexAtOrBefore = (candles: Candle[], targetMs: number): number 
   return Math.max(0, right);
 };
 
-const generateShowcaseTradeBlueprints = (
-  model: ModelProfile,
-  total = 84,
-  nowMs = floorToTimeframe(SHOWCASE_REFERENCE_NOW_MS, "1m")
-): TradeBlueprint[] => {
-  const curatedSymbols = ["GOLD"] as const;
-  const blueprints: TradeBlueprint[] = [];
-
-  for (let i = 0; i < total; i += 1) {
-    const symbol = curatedSymbols[i % curatedSymbols.length];
-    const side: TradeSide = i % 3 === 0 || i % 3 === 1 ? "Long" : "Short";
-    const rr = model.rrMin + (model.rrMax - model.rrMin) * (0.58 + ((i % 7) / 18));
-    const riskPct = model.riskMin + (model.riskMax - model.riskMin) * (0.44 + ((i % 5) / 16));
-    const holdMinutes = 55 + (i % 6) * 36;
-    const exitOffsetMinutes = 30 + i * 54;
-    const exitMs = nowMs - exitOffsetMinutes * 60_000;
-    const entryMs = exitMs - holdMinutes * 60_000;
-    const units = 0.7 + (i % 9) * 0.29;
-
-    blueprints.push({
-      id: `${model.id}-show-${String(i + 1).padStart(2, "0")}`,
-      modelId: model.id,
-      symbol,
-      side,
-      result: "Win",
-      entryMs,
-      exitMs,
-      riskPct,
-      rr,
-      units
-    });
-  }
-
-  return blueprints;
-};
-
 const generateTradeBlueprints = (
   model: ModelProfile,
   total = 64,
@@ -877,14 +932,10 @@ const TabIcon = ({ tab }: { tab: PanelTab }) => {
   );
 };
 
-export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}) {
+export default function TradingTerminal() {
   const referenceNowMs = useMemo(() => {
-    if (showcaseMode) {
-      return SHOWCASE_REFERENCE_NOW_MS;
-    }
-
     return floorToTimeframe(Date.now(), "1m");
-  }, [showcaseMode]);
+  }, []);
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
   const [selectedModelId, setSelectedModelId] = useState(modelProfiles[0].id);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
@@ -898,7 +949,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>(() => {
     const initial: Record<string, Candle[]> = {};
-    const defaultNow = showcaseMode ? SHOWCASE_REFERENCE_NOW_MS : Date.now();
+    const defaultNow = Date.now();
 
     for (const asset of futuresAssets) {
       const key = symbolTimeframeKey(asset.symbol, "15m");
@@ -965,51 +1016,57 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [referenceNowMs, selectedTimeframe]);
 
   useEffect(() => {
-    if (showcaseMode) {
-      return;
-    }
-
     let cancelled = false;
     let stream: EventSource | null = null;
+    let liveSyncInterval = 0;
     const key = selectedKey;
     const historyLimit = candleHistoryCountByTimeframe[selectedTimeframe];
 
     const connect = async () => {
       try {
-        const params = new URLSearchParams({
-          pair: GOLD_PAIR,
-          timeframe: marketTimeframeMap[selectedTimeframe],
-          limit: String(historyLimit),
-          api_key: MARKET_API_KEY
-        });
+        const historicalCandles = await fetchHistoryCandles(selectedTimeframe);
 
-        const response = await fetch(`/api/market/candles?${params.toString()}`, {
-          cache: "no-store"
-        });
-
-        if (response.ok) {
-          const payload = await response.json();
-          const liveCandles = normalizeMarketCandles(payload.candles || []);
-
-          if (!cancelled && liveCandles.length > 0) {
-            setSeriesMap((prev) => ({
-              ...prev,
-              [key]: liveCandles.slice(-historyLimit)
-            }));
-          }
+        if (!cancelled && historicalCandles.length > 0) {
+          setSeriesMap((prev) => ({
+            ...prev,
+            [key]: historicalCandles
+          }));
         }
       } catch {
-        // Keep the synthetic fallback if the upstream market feed is unavailable.
+        // Keep the synthetic fallback if historical loading is unavailable.
       }
+
+      const syncLiveCandlesFromMarket = async () => {
+        try {
+          const liveCandles = await fetchMarketCandles(selectedTimeframe, LIVE_MARKET_SYNC_LIMIT);
+
+          if (cancelled || liveCandles.length === 0) {
+            return;
+          }
+
+          setSeriesMap((prev) => ({
+            ...prev,
+            [key]: mergeRecentCandles(prev[key] ?? [], liveCandles, historyLimit)
+          }));
+        } catch {
+          // Tick updates can continue even if the live candle window refresh fails.
+        }
+      };
+
+      await syncLiveCandlesFromMarket();
 
       if (cancelled) {
         return;
       }
 
+      liveSyncInterval = window.setInterval(() => {
+        void syncLiveCandlesFromMarket();
+      }, 8000);
+
       stream = new EventSource(
         `${PRICE_STREAM_URL}?${new URLSearchParams({
           api_key: MARKET_API_KEY,
-          pairs: GOLD_PAIR
+          pairs: XAUUSD_PAIR
         }).toString()}`
       );
       streamRef.current = stream;
@@ -1018,7 +1075,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         try {
           const message = JSON.parse(event.data);
 
-          if ((message.pair || "").toUpperCase() !== GOLD_PAIR) {
+          if ((message.pair || "").toUpperCase() !== XAUUSD_PAIR) {
             return;
           }
 
@@ -1049,9 +1106,13 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         streamRef.current = null;
       }
 
+      if (liveSyncInterval) {
+        window.clearInterval(liveSyncInterval);
+      }
+
       stream?.close();
     };
-  }, [selectedKey, selectedTimeframe, showcaseMode]);
+  }, [selectedKey, selectedTimeframe]);
 
   const fallbackCandles = useMemo(() => {
     return generateFakeCandles(
@@ -1115,20 +1176,12 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [referenceNowMs, selectedTimeframe, seriesMap]);
 
   const tradeBlueprints = useMemo(() => {
-    if (showcaseMode) {
-      return generateShowcaseTradeBlueprints(
-        selectedModel,
-        84,
-        floorToTimeframe(referenceNowMs, "1m")
-      );
-    }
-
     return generateTradeBlueprints(
       selectedModel,
       64,
       floorToTimeframe(referenceNowMs, "1m")
     );
-  }, [referenceNowMs, selectedModel, showcaseMode]);
+  }, [referenceNowMs, selectedModel]);
 
   const activeTrade = useMemo<ActiveTrade | null>(() => {
     if (selectedCandles.length < 70) {
@@ -1204,17 +1257,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
         maxNotionalUsd / Math.max(0.000001, entryPrice)
       )
     );
-    const curatedMarkPrice =
-      side === "Long"
-        ? entryPrice + (targetPrice - entryPrice) * 0.86
-        : entryPrice - (entryPrice - targetPrice) * 0.86;
-    const markPrice = showcaseMode
-      ? clamp(
-          curatedMarkPrice,
-          Math.min(targetPrice, stopPrice) + 0.000001,
-          Math.max(targetPrice, stopPrice) - 0.000001
-        )
-      : latest.close;
+    const markPrice = latest.close;
     const pnlPct =
       side === "Long"
         ? ((markPrice - entryPrice) / entryPrice) * 100
@@ -1242,7 +1285,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       progressPct: clamp(progressRaw * 100, 0, 100),
       rr
     };
-  }, [referenceNowMs, selectedCandles, selectedModel, selectedSymbol, showcaseMode]);
+  }, [referenceNowMs, selectedCandles, selectedModel, selectedSymbol]);
 
   const historyRows = useMemo(() => {
     const rows: HistoryItem[] = [];
@@ -1352,41 +1395,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
       });
     }
 
-    const byRecent = rows.sort((a, b) => Number(b.exitTime) - Number(a.exitTime)).slice(0, 90);
-
-    if (!showcaseMode) {
-      return byRecent.slice(0, 60);
-    }
-
-    return byRecent
-      .map((row) => {
-        const outcomePrice = row.targetPrice;
-        const pnlPct =
-          row.side === "Long"
-            ? ((outcomePrice - row.entryPrice) / row.entryPrice) * 100
-            : ((row.entryPrice - outcomePrice) / row.entryPrice) * 100;
-        const pnlUsd =
-          row.side === "Long"
-            ? (outcomePrice - row.entryPrice) * row.units
-            : (row.entryPrice - outcomePrice) * row.units;
-
-        return {
-          ...row,
-          result: "Win" as const,
-          outcomePrice,
-          pnlPct,
-          pnlUsd
-        };
-      })
-      .sort((a, b) => {
-        if (b.pnlPct !== a.pnlPct) {
-          return b.pnlPct - a.pnlPct;
-        }
-
-        return Number(b.exitTime) - Number(a.exitTime);
-      })
-      .slice(0, 48);
-  }, [referenceNowMs, showcaseMode, tradeBlueprints, selectedTimeframe, seriesMap]);
+    return rows.sort((a, b) => Number(b.exitTime) - Number(a.exitTime)).slice(0, 60);
+  }, [referenceNowMs, tradeBlueprints, selectedTimeframe, seriesMap]);
 
   const selectedHistoryTrade = useMemo(() => {
     if (!selectedHistoryId) {
@@ -1491,58 +1501,6 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
   }, [historyRows, selectedTimeframe]);
 
   const notificationItems = useMemo<NotificationItem[]>(() => {
-    if (showcaseMode) {
-      const now = referenceNowMs;
-      const showcaseItems: NotificationItem[] = [
-        {
-          id: "showcase-live-1",
-          title: "Risk Guard active",
-          details: "Exposure balanced across copied positions",
-          time: formatClock(now),
-          timestamp: now,
-          tone: "up" as NotificationTone,
-          live: true
-        },
-        {
-          id: "showcase-live-2",
-          title: "GOLD TP hit",
-          details: "+$432.80 (2.14%) captured on copied trade",
-          time: formatClock(now - 14_000),
-          timestamp: now - 14_000,
-          tone: "up" as NotificationTone,
-          live: true
-        },
-        {
-          id: "showcase-live-3",
-          title: "GOLD entry executed",
-          details: "Buy order synced from selected profile",
-          time: formatClock(now - 34_000),
-          timestamp: now - 34_000,
-          tone: "neutral" as NotificationTone,
-          live: true
-        },
-        ...actionRows.slice(0, 8).map<NotificationItem>((action, index) => {
-          const tone: NotificationTone =
-            action.label === "Win Closed"
-              ? "up"
-              : action.label === "Loss Closed"
-                ? "down"
-                : "neutral";
-
-          return {
-            id: `showcase-action-${action.id}`,
-            title: `${action.symbol} ${action.label}`,
-            details: action.details,
-            time: action.time,
-            timestamp: now - (index + 3) * 55_000,
-            tone
-          };
-        })
-      ];
-
-      return showcaseItems.slice(0, 12);
-    }
-
     const items: NotificationItem[] = [];
     const now = Date.now();
 
@@ -1605,7 +1563,7 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
     }
 
     return items.sort((a, b) => b.timestamp - a.timestamp).slice(0, 12);
-  }, [actionRows, activeTrade, referenceNowMs, showcaseMode]);
+  }, [actionRows, activeTrade]);
 
   const seenNotificationSet = useMemo(() => {
     return new Set(seenNotificationIds);
@@ -2641,8 +2599,8 @@ export default function TradingTerminal({ showcaseMode = false }: HomeProps = {}
                 <div className="tab-view">
                   <div className="watchlist-head">
                     <div>
-                      <h2>Gold</h2>
-                      <p>Live spot feed</p>
+                      <h2>XAUUSD</h2>
+                      <p>ClickHouse history + live feed</p>
                     </div>
                   </div>
 

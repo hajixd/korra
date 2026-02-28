@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "korra.space | Gold Terminal",
-  description: "Gold-focused live trading UI built with Next.js."
+  title: "korra.space | XAUUSD Terminal",
+  description: "XAUUSD live trading UI with ClickHouse history and streaming prices."
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
