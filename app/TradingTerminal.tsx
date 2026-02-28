@@ -1,6 +1,7 @@
 "use client";
 
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ColorType,
   CrosshairMode,
@@ -30,11 +31,16 @@ type BacktestTab =
   | "propFirm";
 type EntryExitChartMode = "Entry" | "Exit";
 const BACKTEST_SCATTER_KEYS = [
-  "pnlUsd",
-  "pnlPct",
-  "holdMinutes",
-  "units",
-  "confidence"
+  "duration",
+  "pnl",
+  "margin",
+  "aiMargin",
+  "drawdown",
+  "rr",
+  "entryPrice",
+  "exitPrice",
+  "model",
+  "session"
 ] as const;
 type BacktestScatterKey = (typeof BACKTEST_SCATTER_KEYS)[number];
 type BacktestScatterAxisDef = {
@@ -1228,34 +1234,6 @@ const formatMinutesCompact = (minutes: number): string => {
   return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
 };
 
-const getTimeframeMinutes = (timeframe: Timeframe): number => {
-  if (timeframe === "1m") {
-    return 1;
-  }
-
-  if (timeframe === "5m") {
-    return 5;
-  }
-
-  if (timeframe === "15m") {
-    return 15;
-  }
-
-  if (timeframe === "1H") {
-    return 60;
-  }
-
-  if (timeframe === "4H") {
-    return 240;
-  }
-
-  if (timeframe === "1D") {
-    return 1_440;
-  }
-
-  return 10_080;
-};
-
 const getHistoryTradeDurationMinutes = (trade: HistoryItem): number => {
   return Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
 };
@@ -1332,117 +1310,6 @@ const getEntryExitBarFill = (bucket: string): string => {
   }
 
   return "rgba(90,170,255,0.88)";
-};
-
-const getBacktestScatterValue = (trade: HistoryItem, key: BacktestScatterKey): number => {
-  if (key === "duration") {
-    return Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
-  }
-
-  if (key === "pnl") {
-    return trade.pnlUsd;
-  }
-
-  if (key === "margin") {
-    return Math.abs(trade.entryPrice - trade.stopPrice) * Math.max(1, trade.units);
-  }
-
-  if (key === "aiMargin") {
-    return getTradeConfidenceScore(trade) * 100;
-  }
-
-  if (key === "drawdown") {
-    return -Math.abs(Math.min(trade.pnlUsd, 0));
-  }
-
-  if (key === "rr") {
-    const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
-    return Math.abs(trade.targetPrice - trade.entryPrice) / riskDistance;
-  }
-
-  if (key === "entryPrice") {
-    return trade.entryPrice;
-  }
-
-  if (key === "exitPrice") {
-    return trade.outcomePrice;
-  }
-
-  if (key === "model") {
-    return 0;
-  }
-
-  const sessionIndex = backtestSessionLabels.indexOf(getSessionLabel(trade.entryTime));
-  return sessionIndex >= 0 ? sessionIndex : 0;
-};
-
-const getBacktestScatterLabel = (key: BacktestScatterKey): string => {
-  if (key === "duration") {
-    return "Duration";
-  }
-
-  if (key === "pnl") {
-    return "PnL ($)";
-  }
-
-  if (key === "margin") {
-    return "Margin ($)";
-  }
-
-  if (key === "aiMargin") {
-    return "AI Margin";
-  }
-
-  if (key === "drawdown") {
-    return "Drawdown ($)";
-  }
-
-  if (key === "rr") {
-    return "Risk / Reward";
-  }
-
-  if (key === "entryPrice") {
-    return "Entry Price";
-  }
-
-  if (key === "exitPrice") {
-    return "Exit Price";
-  }
-
-  if (key === "model") {
-    return "Model";
-  }
-
-  return "Session";
-};
-
-const formatBacktestScatterValue = (key: BacktestScatterKey, value: number): string => {
-  if (key === "duration") {
-    return formatMinutesCompact(value);
-  }
-
-  if (key === "pnl" || key === "margin" || key === "drawdown") {
-    return formatSignedUsd(value);
-  }
-
-  if (key === "aiMargin") {
-    return `${value.toFixed(1)}%`;
-  }
-
-  if (key === "rr") {
-    return value.toFixed(2);
-  }
-
-  if (key === "entryPrice" || key === "exitPrice") {
-    return formatPrice(value);
-  }
-
-  if (key === "model") {
-    return "Current Model";
-  }
-
-  const rounded = Math.round(value);
-  return backtestSessionLabels[rounded] ?? "Session";
 };
 
 const getTradeConfidenceScore = (trade: HistoryItem): number => {
@@ -1579,6 +1446,77 @@ const buildSparklinePath = (values: number[], width: number, height: number): st
       return `${index === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
     })
     .join(" ");
+};
+
+const formatPropFirmDuration = (mins: number): string => {
+  if (!Number.isFinite(mins) || mins <= 0) {
+    return "0 Minutes";
+  }
+
+  const roundedMinutes = Math.round(mins);
+  let remaining = roundedMinutes;
+  const minutesPerDay = 1_440;
+  const minutesPerWeek = minutesPerDay * 7;
+  const weeks = Math.floor(remaining / minutesPerWeek);
+  remaining -= weeks * minutesPerWeek;
+  const days = Math.floor(remaining / minutesPerDay);
+  remaining -= days * minutesPerDay;
+  const hours = Math.floor(remaining / 60);
+  const minutes = remaining % 60;
+  const parts: string[] = [];
+
+  if (weeks) {
+    parts.push(`${weeks} Week${weeks === 1 ? "" : "s"}`);
+  }
+
+  if (days) {
+    parts.push(`${days} Day${days === 1 ? "" : "s"}`);
+  }
+
+  if (hours) {
+    parts.push(`${hours} Hour${hours === 1 ? "" : "s"}`);
+  }
+
+  if (minutes || parts.length === 0) {
+    parts.push(`${minutes} Minute${minutes === 1 ? "" : "s"}`);
+  }
+
+  return parts.join(parts.length > 1 ? ", " : "");
+};
+
+const buildPropFirmLinePath = (
+  points: PropFirmChartPoint[],
+  minX: number,
+  maxX: number,
+  minY: number,
+  maxY: number
+): string => {
+  if (points.length === 0) {
+    return "";
+  }
+
+  const left = 4;
+  const right = 96;
+  const top = 4;
+  const bottom = 36;
+  const xRange = Math.max(1, maxX - minX);
+  const yRange = Math.max(1, maxY - minY);
+
+  return points
+    .map((point, index) => {
+      const x = left + ((point.x - minX) / xRange) * (right - left);
+      const y = bottom - ((point.y - minY) / yRange) * (bottom - top);
+
+      return `${index === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(" ");
+};
+
+const projectPropFirmLineY = (value: number, minY: number, maxY: number): number => {
+  const top = 4;
+  const bottom = 36;
+  const yRange = Math.max(1, maxY - minY);
+  return bottom - ((value - minY) / yRange) * (bottom - top);
 };
 
 const formatElapsed = (
@@ -2417,6 +2355,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [selectedBacktestMonthKey, setSelectedBacktestMonthKey] = useState("");
   const [selectedBacktestDateKey, setSelectedBacktestDateKey] = useState("");
   const [expandedBacktestTradeId, setExpandedBacktestTradeId] = useState<string | null>(null);
+  const [clusterViewDir, setClusterViewDir] = useState<"All" | "Buy" | "Sell">("All");
+  const [clusterViewSession, setClusterViewSession] = useState("All");
+  const [clusterViewMonth, setClusterViewMonth] = useState("All");
+  const [clusterViewWeekday, setClusterViewWeekday] = useState("All");
+  const [clusterViewHour, setClusterViewHour] = useState("All");
+  const [clusterSearchId, setClusterSearchId] = useState("");
+  const [clusterSearchStatus, setClusterSearchStatus] = useState<"miss" | null>(null);
+  const [clusterNodeSizeScale, setClusterNodeSizeScale] = useState(1);
+  const [clusterOverlayOpacity, setClusterOverlayOpacity] = useState(1);
+  const [selectedBacktestClusterGroupId, setSelectedBacktestClusterGroupId] =
+    useState<BacktestClusterGroupId | null>(null);
+  const [clusterLegendToggles, setClusterLegendToggles] = useState(() => ({
+    ...BACKTEST_CLUSTER_LEGEND_DEFAULTS
+  }));
   const [enabledBacktestWeekdays, setEnabledBacktestWeekdays] = useState<string[]>([
     ...backtestWeekdayLabels
   ]);
@@ -2478,23 +2430,25 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [antiCheatEnabled, setAntiCheatEnabled] = useState(false);
   const [validationMode, setValidationMode] = useState<AiValidationMode>("off");
   const [realismLevel, setRealismLevel] = useState(1);
-  const [propInitialBalance, setPropInitialBalance] = useState(10_000);
-  const [propDailyMaxLoss, setPropDailyMaxLoss] = useState(350);
-  const [propTotalMaxLoss, setPropTotalMaxLoss] = useState(900);
-  const [propProfitTarget, setPropProfitTarget] = useState(800);
+  const [propInitialBalance, setPropInitialBalance] = useState(100_000);
+  const [propDailyMaxLoss, setPropDailyMaxLoss] = useState(5_000);
+  const [propTotalMaxLoss, setPropTotalMaxLoss] = useState(10_000);
+  const [propProfitTarget, setPropProfitTarget] = useState(10_000);
   const [entryExitChartMode, setEntryExitChartMode] = useState<EntryExitChartMode>("Entry");
   const [hoveredEntryExitBucket, setHoveredEntryExitBucket] = useState<string | null>(null);
   const [dimSearch, setDimSearch] = useState("");
   const [dimScope, setDimScope] = useState<DimensionScope>("active");
   const [dimSortCol, setDimSortCol] = useState<DimensionSortColumn>("corr");
   const [dimSortDir, setDimSortDir] = useState<-1 | 1>(-1);
-  const [scatterXKey, setScatterXKey] = useState<BacktestScatterKey>("holdMinutes");
-  const [scatterYKey, setScatterYKey] = useState<BacktestScatterKey>("pnlUsd");
+  const [scatterXKey, setScatterXKey] = useState<BacktestScatterKey>("duration");
+  const [scatterYKey, setScatterYKey] = useState<BacktestScatterKey>("pnl");
   const [isGraphsCollapsed, setIsGraphsCollapsed] = useState(false);
   const [hoveredScatterPointId, setHoveredScatterPointId] = useState<string | null>(null);
   const [propProjectionMethod, setPropProjectionMethod] = useState<"historical" | "montecarlo">(
-    "historical"
+    "montecarlo"
   );
+  const [propResult, setPropResult] = useState<PropFirmResult | null>(null);
+  const [propStats, setPropStats] = useState<PropFirmStats | null>(null);
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -4747,42 +4701,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const sortedHolds = [...holds].sort((a, b) => a - b);
     const medianHold =
       sortedHolds.length > 0 ? sortedHolds[Math.floor(sortedHolds.length / 2)] : 0;
-    const maxHold = Math.max(1, ...holds);
-    const maxUnits = Math.max(1, ...backtestTrades.map((trade) => trade.units));
-    const maxAbsPnl = Math.max(1, ...backtestTrades.map((trade) => Math.abs(trade.pnlPct)));
-    const clusterMeta = {
-      momentum: {
-        label: "Momentum",
-        description: "Fast winners that resolve quickly with clean follow-through."
-      },
-      trend: {
-        label: "Trend Hold",
-        description: "Winners that need more time but keep directional conviction."
-      },
-      trap: {
-        label: "Trap",
-        description: "Losses that extend before the move fully invalidates."
-      },
-      chop: {
-        label: "Chop",
-        description: "Short-lived noise trades with shallow edge."
-      }
-    } as const;
-    const groupMap = new Map<
-      keyof typeof clusterMeta,
-      {
-        id: keyof typeof clusterMeta;
-        label: string;
-        description: string;
-        count: number;
-        wins: number;
-        pnl: number;
-      }
-    >();
+    const maxHold = holds.length > 0 ? Math.max(1, ...holds) : 1;
+    const maxUnits =
+      backtestTrades.length > 0 ? Math.max(1, ...backtestTrades.map((trade) => trade.units)) : 1;
+    const maxAbsPnl =
+      backtestTrades.length > 0
+        ? Math.max(1, ...backtestTrades.map((trade) => Math.abs(trade.pnlPct)))
+        : 1;
 
-    const nodes = backtestTrades.map((trade) => {
+    const nodes: BacktestClusterNode[] = backtestTrades.map((trade) => {
       const holdMinutes = Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
-      const clusterId: keyof typeof clusterMeta =
+      const clusterId: BacktestClusterGroupId =
         trade.result === "Win"
           ? holdMinutes <= medianHold
             ? "momentum"
@@ -4790,160 +4719,713 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           : Math.abs(trade.pnlPct) >= 0.22
             ? "trap"
             : "chop";
-      const group =
-        groupMap.get(clusterId) ??
-        (() => {
-          const meta = clusterMeta[clusterId];
-          const next = {
-            id: clusterId,
-            label: meta.label,
-            description: meta.description,
-            count: 0,
-            wins: 0,
-            pnl: 0
-          };
-          groupMap.set(clusterId, next);
-          return next;
-        })();
-
-      group.count += 1;
-      group.wins += trade.result === "Win" ? 1 : 0;
-      group.pnl += trade.pnlUsd;
+      const seed = hashSeedFromText(`cluster-node-${trade.id}`);
+      const jitterX = ((((seed >>> 3) & 255) / 255) * 2 - 1) * 5;
+      const jitterY = ((((seed >>> 11) & 255) / 255) * 2 - 1) * 5;
+      const baseX = 14 + ((trade.pnlPct + maxAbsPnl) / (maxAbsPnl * 2)) * 72;
+      const baseY = 86 - (holdMinutes / maxHold) * 66;
 
       return {
         id: trade.id,
+        trade,
         clusterId,
-        x: 11 + ((trade.pnlPct + maxAbsPnl) / (maxAbsPnl * 2)) * 78,
-        y: 88 - (holdMinutes / maxHold) * 72,
-        r: 3 + (trade.units / maxUnits) * 3.5,
-        tone: trade.pnlUsd >= 0 ? "up" : "down"
+        x: clamp(baseX + jitterX, 8, 92),
+        y: clamp(baseY + jitterY, 10, 90),
+        r: 2.8 + (trade.units / maxUnits) * 3.8,
+        tone: trade.pnlUsd >= 0 ? "up" : "down",
+        holdMinutes,
+        confidence: getTradeConfidenceScore(trade) * 100,
+        session: getSessionLabel(trade.entryTime),
+        monthIndex: getTradeMonthIndex(trade.entryTime),
+        weekdayIndex: new Date(Number(trade.entryTime) * 1000).getUTCDay(),
+        hour: getTradeHour(trade.entryTime),
+        sideLabel: trade.side === "Long" ? "Buy" : "Sell"
       };
     });
 
-    const groups = Array.from(groupMap.values())
-      .map((group) => ({
-        ...group,
-        winRate: group.count > 0 ? (group.wins / group.count) * 100 : 0,
-        avgPnl: group.count > 0 ? group.pnl / group.count : 0
-      }))
-      .sort((a, b) => b.avgPnl - a.avgPnl);
-
-    return { nodes, groups };
-  }, [backtestTrades]);
-
-  const backtestGraphData = useMemo(() => {
-    const curve: number[] = [];
-    const monthMap = new Map<string, number>();
-    const buckets = [
-      { label: "< -$80", min: Number.NEGATIVE_INFINITY, max: -80, count: 0 },
-      { label: "-$80 to -$20", min: -80, max: -20, count: 0 },
-      { label: "-$20 to +$20", min: -20, max: 20, count: 0 },
-      { label: "+$20 to +$80", min: 20, max: 80, count: 0 },
-      { label: "> +$80", min: 80, max: Number.POSITIVE_INFINITY, count: 0 }
-    ];
-    let running = 0;
-
-    for (const trade of backtestTrades) {
-      running += trade.pnlUsd;
-      curve.push(running);
-      const monthKey = getTradeMonthKey(trade.exitTime);
-      monthMap.set(monthKey, (monthMap.get(monthKey) ?? 0) + trade.pnlUsd);
-
-      const bucket = buckets.find((item) => trade.pnlUsd >= item.min && trade.pnlUsd < item.max);
-
-      if (bucket) {
-        bucket.count += 1;
-      }
-    }
-
-    const monthBars = Array.from(monthMap.entries())
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .slice(-6)
-      .map(([key, value]) => ({
-        key,
-        label: key.slice(5),
-        value
-      }));
-
     return {
-      curve,
-      curvePath: buildSparklinePath(curve, 100, 28),
-      monthBars,
-      buckets
+      total: backtestTrades.length,
+      nodes,
+      groups: buildBacktestClusterGroups(nodes)
     };
   }, [backtestTrades]);
 
-  const backtestDimensionRows = useMemo(() => {
-    if (backtestTrades.length === 0) {
-      return [] as Array<{ name: string; reading: string; note: string; score: number }>;
+  const backtestClusterViewOptions = useMemo(() => {
+    const sessions = new Set<string>();
+    const months = new Set<number>();
+    const weekdays = new Set<number>();
+    const hours = new Set<number>();
+
+    for (const node of backtestClusterData.nodes) {
+      sessions.add(node.session);
+      months.add(node.monthIndex);
+      weekdays.add(node.weekdayIndex);
+      hours.add(node.hour);
     }
 
-    const bestSession =
-      [...backtestTemporalStats.sessions].sort((a, b) => b.winRate - a.winRate)[0] ?? null;
-    const longRow = backtestEntryExitStats.sides.find((row) => row.side === "Long");
-    const longShare =
-      longRow && backtestSummary.tradeCount > 0 ? longRow.count / backtestSummary.tradeCount : 0.5;
-    const smoothness =
-      1 -
-      clamp(
-        Math.abs(backtestSummary.maxDrawdown) /
-          Math.max(Math.abs(backtestSummary.netPnl), Math.abs(backtestSummary.maxDrawdown), 1),
-        0,
-        1
-      );
+    return {
+      sessions: backtestSessionLabels.filter((label) => sessions.has(label)),
+      months: Array.from(months).sort((a, b) => a - b),
+      weekdays: Array.from(weekdays).sort((a, b) => a - b),
+      hours: Array.from(hours).sort((a, b) => a - b)
+    };
+  }, [backtestClusterData.nodes]);
 
-    return [
-      {
-        name: "Payoff Quality",
-        reading: `${backtestSummary.avgR.toFixed(2)}R avg`,
-        note: "Target distance versus stop distance",
-        score: clamp(backtestSummary.avgR / 2.3, 0, 1)
-      },
-      {
-        name: "Hit Rate Stability",
-        reading: `${backtestSummary.winRate.toFixed(1)}% win rate`,
-        note: "Win/loss balance on the current model and timeframe",
-        score: clamp(backtestSummary.winRate / 100, 0, 1)
-      },
-      {
-        name: "Execution Pace",
-        reading: `${Math.round(backtestEntryExitStats.avgHoldMinutes)}m avg hold`,
-        note: "How long the system stays in market before closing",
-        score: 1 - clamp(backtestEntryExitStats.avgHoldMinutes / 480, 0, 1)
-      },
-      {
-        name: "Directional Balance",
-        reading: `${Math.round(longShare * 100)}% long exposure`,
-        note: "Bias control between long and short simulations",
-        score: 1 - Math.abs(longShare - 0.5) * 1.8
-      },
-      {
-        name: "Session Alignment",
-        reading: bestSession ? `${bestSession.label} leads` : "No session data",
-        note: "Highest-conviction session in the current sample",
-        score: bestSession ? clamp(bestSession.winRate / 100, 0, 1) : 0
-      },
-      {
-        name: "Equity Smoothness",
-        reading: `${formatSignedUsd(backtestSummary.maxDrawdown)} max pullback`,
-        note: "How choppy the cumulative curve gets before recovering",
-        score: clamp(smoothness, 0, 1)
+  useEffect(() => {
+    if (
+      clusterViewSession !== "All" &&
+      !backtestClusterViewOptions.sessions.some((label) => label === clusterViewSession)
+    ) {
+      setClusterViewSession("All");
+    }
+
+    if (
+      clusterViewMonth !== "All" &&
+      !backtestClusterViewOptions.months.some((value) => String(value) === clusterViewMonth)
+    ) {
+      setClusterViewMonth("All");
+    }
+
+    if (
+      clusterViewWeekday !== "All" &&
+      !backtestClusterViewOptions.weekdays.some((value) => String(value) === clusterViewWeekday)
+    ) {
+      setClusterViewWeekday("All");
+    }
+
+    if (
+      clusterViewHour !== "All" &&
+      !backtestClusterViewOptions.hours.some((value) => String(value) === clusterViewHour)
+    ) {
+      setClusterViewHour("All");
+    }
+  }, [
+    backtestClusterViewOptions,
+    clusterViewHour,
+    clusterViewMonth,
+    clusterViewSession,
+    clusterViewWeekday
+  ]);
+
+  const visibleBacktestClusterNodes = useMemo(() => {
+    return backtestClusterData.nodes.filter((node) => {
+      if (!clusterLegendToggles[node.clusterId]) {
+        return false;
       }
-    ];
-  }, [backtestEntryExitStats, backtestSummary, backtestTemporalStats.sessions, backtestTrades]);
 
-  const filteredBacktestDimensionRows = useMemo(() => {
-    const query = backtestDimensionQuery.trim().toLowerCase();
+      if (node.trade.result === "Win" && !clusterLegendToggles.closedWin) {
+        return false;
+      }
 
-    if (!query) {
-      return backtestDimensionRows;
+      if (node.trade.result === "Loss" && !clusterLegendToggles.closedLoss) {
+        return false;
+      }
+
+      if (clusterViewDir === "Buy" && node.trade.side !== "Long") {
+        return false;
+      }
+
+      if (clusterViewDir === "Sell" && node.trade.side !== "Short") {
+        return false;
+      }
+
+      if (clusterViewSession !== "All" && node.session !== clusterViewSession) {
+        return false;
+      }
+
+      if (clusterViewMonth !== "All" && String(node.monthIndex) !== clusterViewMonth) {
+        return false;
+      }
+
+      if (clusterViewWeekday !== "All" && String(node.weekdayIndex) !== clusterViewWeekday) {
+        return false;
+      }
+
+      if (clusterViewHour !== "All" && String(node.hour) !== clusterViewHour) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [
+    backtestClusterData.nodes,
+    clusterLegendToggles,
+    clusterViewDir,
+    clusterViewHour,
+    clusterViewMonth,
+    clusterViewSession,
+    clusterViewWeekday
+  ]);
+
+  const visibleBacktestClusterGroups = useMemo(() => {
+    return buildBacktestClusterGroups(visibleBacktestClusterNodes);
+  }, [visibleBacktestClusterNodes]);
+
+  const backtestClusterTableRows = useMemo(() => {
+    return [...visibleBacktestClusterGroups].sort((left, right) => {
+      if (right.avgPnl !== left.avgPnl) {
+        return right.avgPnl - left.avgPnl;
+      }
+
+      if (right.count !== left.count) {
+        return right.count - left.count;
+      }
+
+      return right.winRate - left.winRate;
+    });
+  }, [visibleBacktestClusterGroups]);
+
+  const backtestClusterCounts = useMemo(() => {
+    let wins = 0;
+    let losses = 0;
+    let buys = 0;
+    let sells = 0;
+    let confidence = 0;
+
+    for (const node of visibleBacktestClusterNodes) {
+      wins += node.trade.result === "Win" ? 1 : 0;
+      losses += node.trade.result === "Loss" ? 1 : 0;
+      buys += node.trade.side === "Long" ? 1 : 0;
+      sells += node.trade.side === "Short" ? 1 : 0;
+      confidence += node.confidence;
     }
 
-    return backtestDimensionRows.filter((row) => {
-      const haystack = `${row.name} ${row.note} ${row.reading}`.toLowerCase();
-      return haystack.includes(query);
+    const visible = visibleBacktestClusterNodes.length;
+    const total = backtestClusterData.total;
+
+    return {
+      total,
+      visible,
+      wins,
+      losses,
+      buys,
+      sells,
+      visibleRate: total > 0 ? (visible / total) * 100 : 0,
+      winRate: visible > 0 ? (wins / visible) * 100 : 0,
+      buyRate: visible > 0 ? (buys / visible) * 100 : 0,
+      avgConfidence: visible > 0 ? confidence / visible : 0
+    };
+  }, [backtestClusterData.total, visibleBacktestClusterNodes]);
+
+  const selectedBacktestClusterNode = useMemo(() => {
+    if (!selectedHistoryId) {
+      return null;
+    }
+
+    return visibleBacktestClusterNodes.find((node) => node.id === selectedHistoryId) ?? null;
+  }, [selectedHistoryId, visibleBacktestClusterNodes]);
+
+  const selectedBacktestClusterGroup = useMemo(() => {
+    if (!selectedBacktestClusterGroupId) {
+      return null;
+    }
+
+    return visibleBacktestClusterGroups.find((group) => group.id === selectedBacktestClusterGroupId) ?? null;
+  }, [selectedBacktestClusterGroupId, visibleBacktestClusterGroups]);
+
+  useEffect(() => {
+    if (!selectedBacktestClusterGroupId) {
+      return;
+    }
+
+    if (!visibleBacktestClusterGroups.some((group) => group.id === selectedBacktestClusterGroupId)) {
+      setSelectedBacktestClusterGroupId(null);
+    }
+  }, [selectedBacktestClusterGroupId, visibleBacktestClusterGroups]);
+
+  const resetBacktestClusterView = () => {
+    setClusterViewDir("All");
+    setClusterViewSession("All");
+    setClusterViewMonth("All");
+    setClusterViewWeekday("All");
+    setClusterViewHour("All");
+    setClusterSearchId("");
+    setClusterSearchStatus(null);
+    setClusterNodeSizeScale(1);
+    setClusterOverlayOpacity(1);
+    setClusterLegendToggles({ ...BACKTEST_CLUSTER_LEGEND_DEFAULTS });
+    setSelectedBacktestClusterGroupId(null);
+  };
+
+  const toggleBacktestClusterLegend = (key: BacktestClusterLegendKey) => {
+    setClusterLegendToggles((current) => ({
+      ...current,
+      [key]: !current[key]
+    }));
+  };
+
+  const runBacktestClusterSearch = (query = clusterSearchId) => {
+    const normalized = query.trim().toLowerCase();
+
+    if (!normalized) {
+      setClusterSearchStatus(null);
+      return;
+    }
+
+    const match =
+      visibleBacktestClusterNodes.find((node) => node.id.toLowerCase() === normalized) ??
+      visibleBacktestClusterNodes.find((node) => node.id.toLowerCase().includes(normalized));
+
+    if (!match) {
+      setClusterSearchStatus("miss");
+      return;
+    }
+
+    setClusterSearchStatus(null);
+    setClusterSearchId(match.id);
+    setSelectedBacktestClusterGroupId(null);
+    setSelectedHistoryId(match.id);
+  };
+
+  const backtestScatterData = useMemo(() => {
+    const modelIndexMap = new Map<string, number>();
+    const sessionIndexMap = new Map<string, number>();
+    const revModel: Record<number, string> = {};
+    const revSession: Record<number, string> = {};
+
+    const points = backtestTrades.map((trade, index) => {
+      const modelKey = selectedModel.name;
+      const sessionKey = getSessionLabel(trade.entryTime);
+      const modelIndex = modelIndexMap.get(modelKey) ?? modelIndexMap.size;
+      const sessionIndex = sessionIndexMap.get(sessionKey) ?? sessionIndexMap.size;
+      modelIndexMap.set(modelKey, modelIndex);
+      sessionIndexMap.set(sessionKey, sessionIndex);
+      revModel[modelIndex] = modelKey;
+      revSession[sessionIndex] = sessionKey;
+
+      const holdMinutes = Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
+      const durationBars = Math.max(1, holdMinutes / timeframeMinutes[selectedTimeframe]);
+      const confidence = getTradeConfidenceScore(trade);
+      const aiConfidence = clamp(confidence * (trade.result === "Win" ? 1.03 : 0.97), 0, 1);
+      const riskUsd = Math.max(0.01, Math.abs(trade.entryPrice - trade.stopPrice) * trade.units);
+      const rrMultiple = trade.pnlUsd / riskUsd;
+      const drawdown =
+        trade.result === "Loss"
+          ? Math.max(Math.abs(trade.pnlUsd), riskUsd)
+          : Math.max(riskUsd * 0.35, Math.abs(trade.pnlUsd) * 0.45);
+
+      return {
+        id: `${trade.id}-${index}`,
+        trade,
+        isWin: trade.pnlUsd > 0,
+        values: {
+          duration: durationBars,
+          pnl: trade.pnlUsd,
+          margin: confidence,
+          aiMargin: aiConfidence,
+          drawdown,
+          rr: rrMultiple,
+          entryPrice: trade.entryPrice,
+          exitPrice: trade.outcomePrice,
+          model: modelIndex,
+          session: sessionIndex
+        } satisfies Record<BacktestScatterKey, number>
+      };
     });
-  }, [backtestDimensionQuery, backtestDimensionRows]);
+
+    return { points, revModel, revSession };
+  }, [backtestTrades, selectedModel.name, selectedTimeframe]);
+
+  const backtestScatterVarDefs = useMemo<Record<BacktestScatterKey, BacktestScatterAxisDef>>(() => {
+    const formatPercent = (value: number) => `${Math.round(clamp(value, 0, 1) * 100)}%`;
+
+    return {
+      duration: {
+        label: "Duration (bars)",
+        numeric: true,
+        tickFormatter: (value) => (Number.isFinite(value) ? String(Math.round(value)) : ""),
+        tooltipFormatter: (value) => `${Math.round(value)} bars`
+      },
+      pnl: {
+        label: "PnL",
+        numeric: true,
+        tickFormatter: (value) => formatSignedUsd(value).replace("$", ""),
+        tooltipFormatter: (value) => formatSignedUsd(value)
+      },
+      margin: {
+        label: "Confidence",
+        numeric: true,
+        tickFormatter: (value) => formatPercent(value),
+        tooltipFormatter: (value) => formatPercent(value)
+      },
+      aiMargin: {
+        label: "AI Confidence",
+        numeric: true,
+        tickFormatter: (value) => formatPercent(value),
+        tooltipFormatter: (value) => formatPercent(value)
+      },
+      drawdown: {
+        label: "Drawdown",
+        numeric: true,
+        tickFormatter: (value) => formatUsd(value).replace("$", ""),
+        tooltipFormatter: (value) => `$${formatUsd(value)}`
+      },
+      rr: {
+        label: "R Multiple",
+        numeric: true,
+        tickFormatter: (value) => value.toFixed(2),
+        tooltipFormatter: (value) => value.toFixed(2)
+      },
+      entryPrice: {
+        label: "Entry Price",
+        numeric: true,
+        tickFormatter: (value) => formatPrice(value),
+        tooltipFormatter: (value) => formatPrice(value)
+      },
+      exitPrice: {
+        label: "Exit Price",
+        numeric: true,
+        tickFormatter: (value) => formatPrice(value),
+        tooltipFormatter: (value) => formatPrice(value)
+      },
+      model: {
+        label: "Model",
+        numeric: false,
+        tickFormatter: (value) => backtestScatterData.revModel[value] ?? String(value),
+        tooltipFormatter: (value) => backtestScatterData.revModel[value] ?? String(value)
+      },
+      session: {
+        label: "Session",
+        numeric: false,
+        tickFormatter: (value) => backtestScatterData.revSession[value] ?? String(value),
+        tooltipFormatter: (value) => backtestScatterData.revSession[value] ?? String(value)
+      }
+    };
+  }, [backtestScatterData.revModel, backtestScatterData.revSession]);
+
+  const dimensionStats = useMemo<DimensionStatsSummary | null>(() => {
+    if (selectedBacktestTab !== "dimensions") {
+      return null;
+    }
+
+    const sortedTrades = [...backtestTrades].sort(
+      (left, right) => Number(left.entryTime) - Number(right.entryTime)
+    );
+    const splitAllowed = antiCheatEnabled && validationMode === "split";
+    const splitIndex = Math.floor(sortedTrades.length * (DIMENSION_STATS_SPLIT_PCT / 100));
+    const evaluationTrades = splitAllowed ? sortedTrades.slice(splitIndex) : sortedTrades;
+    const featureLabelById = new Map(AI_FEATURE_OPTIONS.map((option) => [option.id, option.label]));
+
+    const dimensionDefs: Array<{ key: string; featureId: string; featureIndex: number; name: string }> = [];
+
+    for (const featureId of selectedAiFeatures) {
+      const names = DIMENSION_FEATURE_NAME_BANK[featureId] ?? [];
+
+      if (names.length === 0) {
+        continue;
+      }
+
+      const featureLabel = featureLabelById.get(featureId) ?? featureId;
+
+      names.forEach((subName, featureIndex) => {
+        dimensionDefs.push({
+          key: `${featureId}__${featureIndex}`,
+          featureId,
+          featureIndex,
+          name: `${featureLabel} - ${subName}`
+        });
+      });
+    }
+
+    if (dimensionDefs.length === 0 || evaluationTrades.length === 0) {
+      return {
+        mode: splitAllowed ? "split" : "all",
+        split: DIMENSION_STATS_SPLIT_PCT,
+        count: 0,
+        baselineWin: null,
+        dimKeyOrder: [],
+        dims: [],
+        keptKeys: [],
+        inDim: 0,
+        outDim: 0
+      };
+    }
+
+    const valuesByDimension = new Map<string, number[]>();
+
+    for (const dimension of dimensionDefs) {
+      valuesByDimension.set(dimension.key, []);
+    }
+
+    const outcomes: number[] = [];
+
+    for (const trade of evaluationTrades) {
+      const candles = seriesMap[symbolTimeframeKey(trade.symbol, selectedTimeframe)] ?? EMPTY_CANDLES;
+
+      if (candles.length === 0) {
+        continue;
+      }
+
+      const entryIndex = findCandleIndexAtOrBefore(candles, Number(trade.entryTime) * 1000);
+
+      if (entryIndex < 0) {
+        continue;
+      }
+
+      const featureBuckets = buildDimensionFeatureBuckets(candles, entryIndex, chunkBars);
+
+      if (!featureBuckets) {
+        continue;
+      }
+
+      outcomes.push(trade.result === "Win" ? 1 : 0);
+
+      for (const dimension of dimensionDefs) {
+        const values = featureBuckets[dimension.featureId] ?? [];
+        const value = Number(values[dimension.featureIndex] ?? 0);
+        const list = valuesByDimension.get(dimension.key);
+
+        if (list) {
+          list.push(Number.isFinite(value) ? value : 0);
+        }
+      }
+    }
+
+    if (outcomes.length === 0) {
+      return {
+        mode: splitAllowed ? "split" : "all",
+        split: DIMENSION_STATS_SPLIT_PCT,
+        count: 0,
+        baselineWin: null,
+        dimKeyOrder: [],
+        dims: [],
+        keptKeys: [],
+        inDim: 0,
+        outDim: 0
+      };
+    }
+
+    const epsilon = 0.000000001;
+    const dimensions: DimensionStatRow[] = [];
+    const varianceByKey = new Map<string, number>();
+
+    for (const dimension of dimensionDefs) {
+      const values = valuesByDimension.get(dimension.key) ?? [];
+
+      if (values.length !== outcomes.length || values.length === 0) {
+        continue;
+      }
+
+      const mean = meanOf(values);
+      let sumSquared = 0;
+
+      for (const value of values) {
+        const delta = value - mean;
+        sumSquared += delta * delta;
+      }
+
+      const variance = sumSquared / Math.max(1, values.length - 1);
+      varianceByKey.set(dimension.key, variance);
+      const std = Math.sqrt(Math.max(epsilon, variance));
+      const normalized = values.map((value) => (value - mean) / std);
+      const correlation = getBinaryCorrelation(normalized, outcomes);
+      const lowThreshold = quantileOf(normalized, 0.1);
+      const highThreshold = quantileOf(normalized, 0.9);
+      let lowTotal = 0;
+      let lowWins = 0;
+      let highTotal = 0;
+      let highWins = 0;
+
+      for (let index = 0; index < normalized.length; index += 1) {
+        const value = normalized[index];
+        const isWin = outcomes[index] === 1;
+
+        if (value <= lowThreshold) {
+          lowTotal += 1;
+          lowWins += isWin ? 1 : 0;
+        }
+
+        if (value >= highThreshold) {
+          highTotal += 1;
+          highWins += isWin ? 1 : 0;
+        }
+      }
+
+      const winLow = lowTotal > 0 ? lowWins / lowTotal : null;
+      const winHigh = highTotal > 0 ? highWins / highTotal : null;
+      const lift = winLow === null || winHigh === null ? null : winHigh - winLow;
+
+      let optimal = "—";
+
+      if (winLow !== null && winHigh !== null) {
+        if (winHigh > winLow) {
+          optimal = `>= ${highThreshold.toFixed(2)}`;
+        } else if (winLow > winHigh) {
+          optimal = `<= ${lowThreshold.toFixed(2)}`;
+        } else {
+          optimal = `<= ${lowThreshold.toFixed(2)} or >= ${highThreshold.toFixed(2)}`;
+        }
+      } else if (winHigh !== null) {
+        optimal = `>= ${highThreshold.toFixed(2)}`;
+      } else if (winLow !== null) {
+        optimal = `<= ${lowThreshold.toFixed(2)}`;
+      }
+
+      dimensions.push({
+        key: dimension.key,
+        featureId: dimension.featureId,
+        name: dimension.name,
+        corr: correlation,
+        absCorr: Math.abs(correlation),
+        min: Math.min(...normalized),
+        max: Math.max(...normalized),
+        qLow: lowThreshold,
+        qHigh: highThreshold,
+        winLow,
+        winHigh,
+        lift,
+        optimal,
+        n: normalized.length
+      });
+    }
+
+    dimensions.sort((left, right) => right.absCorr - left.absCorr);
+
+    const inDim = dimensions.length;
+    const outDim = inDim > 0 ? clamp(Math.round(dimensionAmount), 2, inDim) : 0;
+    const dimKeyOrder = dimensions.map((dimension) => dimension.key);
+    let keptKeys = dimKeyOrder;
+
+    if (outDim < inDim) {
+      if (compressionMethod === "subsample") {
+        if (outDim <= 1) {
+          keptKeys = [dimKeyOrder[0]!];
+        } else {
+          keptKeys = Array.from({ length: outDim }, (_, index) => {
+            const keyIndex = Math.round((index * (inDim - 1)) / Math.max(1, outDim - 1));
+            return dimKeyOrder[keyIndex]!;
+          });
+        }
+      } else if (compressionMethod === "variance") {
+        keptKeys = [...dimensions]
+          .sort(
+            (left, right) =>
+              (varianceByKey.get(right.key) ?? Number.NEGATIVE_INFINITY) -
+              (varianceByKey.get(left.key) ?? Number.NEGATIVE_INFINITY)
+          )
+          .slice(0, outDim)
+          .map((dimension) => dimension.key);
+      } else {
+        keptKeys = dimensions.slice(0, outDim).map((dimension) => dimension.key);
+      }
+    }
+
+    return {
+      mode: splitAllowed ? "split" : "all",
+      split: DIMENSION_STATS_SPLIT_PCT,
+      count: outcomes.length,
+      baselineWin: outcomes.length > 0 ? meanOf(outcomes) : null,
+      dimKeyOrder,
+      dims: dimensions,
+      keptKeys: Array.from(new Set(keptKeys)),
+      inDim,
+      outDim
+    };
+  }, [
+    antiCheatEnabled,
+    backtestTrades,
+    chunkBars,
+    compressionMethod,
+    dimensionAmount,
+    selectedAiFeatures,
+    selectedBacktestTab,
+    selectedTimeframe,
+    seriesMap,
+    validationMode
+  ]);
+
+  const toggleDimSort = (column: DimensionSortColumn) => {
+    if (dimSortCol === column) {
+      setDimSortDir((current) => (current === 1 ? -1 : 1));
+      return;
+    }
+
+    setDimSortCol(column);
+    setDimSortDir(column === "name" || column === "optimal" ? 1 : -1);
+  };
+
+  const dimensionStatsRows = useMemo(() => {
+    const allRows = dimensionStats?.dims ?? [];
+
+    if (allRows.length === 0) {
+      return [] as DimensionStatRow[];
+    }
+
+    const activeSet =
+      dimScope === "active" && (dimensionStats?.keptKeys.length ?? 0) > 0
+        ? new Set(dimensionStats?.keptKeys ?? [])
+        : null;
+    const rows = activeSet ? allRows.filter((row) => activeSet.has(row.key)) : allRows;
+    const query = dimSearch.trim().toLowerCase();
+
+    const filtered = query
+      ? rows.filter((row) => row.name.toLowerCase().includes(query))
+      : [...rows];
+
+    const getSortableNumber = (row: DimensionStatRow): number | null => {
+      if (dimSortCol === "corr") {
+        return Number.isFinite(row.corr) ? row.corr : null;
+      }
+
+      if (dimSortCol === "winLow") {
+        return row.winLow;
+      }
+
+      if (dimSortCol === "winHigh") {
+        return row.winHigh;
+      }
+
+      if (dimSortCol === "lift") {
+        return row.lift;
+      }
+
+      if (dimSortCol === "min") {
+        return Number.isFinite(row.min) ? row.min : null;
+      }
+
+      if (dimSortCol === "max") {
+        return Number.isFinite(row.max) ? row.max : null;
+      }
+
+      return null;
+    };
+
+    filtered.sort((left, right) => {
+      if (dimSortCol === "name" || dimSortCol === "optimal") {
+        const key = dimSortCol === "name" ? "name" : "optimal";
+        const a = left[key].toLowerCase();
+        const b = right[key].toLowerCase();
+        return a.localeCompare(b) * dimSortDir;
+      }
+
+      const a = getSortableNumber(left);
+      const b = getSortableNumber(right);
+
+      if (a === null && b === null) {
+        return 0;
+      }
+
+      if (a === null) {
+        return 1;
+      }
+
+      if (b === null) {
+        return -1;
+      }
+
+      return (a - b) * dimSortDir;
+    });
+
+    return filtered;
+  }, [dimScope, dimSearch, dimSortCol, dimSortDir, dimensionStats]);
+
+  const keptDimKeySet = useMemo(() => {
+    if (!dimensionStats || dimensionStats.keptKeys.length === 0) {
+      return null;
+    }
+
+    return new Set(dimensionStats.keptKeys);
+  }, [dimensionStats]);
 
   const entryExitStats = useMemo(() => {
     const entryCounts: Record<string, number> = {};
@@ -4991,147 +5473,682 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [entryExitChartData]);
 
   const backtestScatterPlot = useMemo(() => {
-    const points = backtestTrades.map((trade) => {
-      const x = getBacktestScatterValue(trade, scatterXKey);
-      const y = getBacktestScatterValue(trade, scatterYKey);
+    const xDef = backtestScatterVarDefs[scatterXKey];
+    const yDef = backtestScatterVarDefs[scatterYKey];
+    const left = 10;
+    const right = 92;
+    const top = 10;
+    const bottom = 88;
+    const width = right - left;
+    const height = bottom - top;
 
-      return {
-        id: trade.id,
-        trade,
-        x,
-        y
-      };
-    });
+    const rawPoints = backtestScatterData.points
+      .map((point) => ({
+        id: point.id,
+        trade: point.trade,
+        isWin: point.isWin,
+        x: point.values[scatterXKey],
+        y: point.values[scatterYKey]
+      }))
+      .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
 
-    if (points.length === 0) {
+    if (rawPoints.length === 0) {
       return {
         points: [] as Array<{
           id: string;
           trade: HistoryItem;
+          isWin: boolean;
           x: number;
           y: number;
           cx: number;
           cy: number;
         }>,
+        xTicks: [] as Array<{ value: number; label: string; position: number }>,
+        yTicks: [] as Array<{ value: number; label: string; position: number }>,
         xZero: null as number | null,
         yZero: null as number | null
       };
     }
 
-    const xValues = points.map((point) => point.x);
-    const yValues = points.map((point) => point.y);
-    let xMin = Math.min(...xValues);
-    let xMax = Math.max(...xValues);
-    let yMin = Math.min(...yValues);
-    let yMax = Math.max(...yValues);
+    const buildNumericAxis = (
+      values: number[],
+      isY = false
+    ): {
+      project: (value: number) => number;
+      ticks: Array<{ value: number; position: number }>;
+      zero: number | null;
+    } => {
+      let min = Math.min(...values);
+      let max = Math.max(...values);
 
-    if (xMin === xMax) {
-      xMin -= 1;
-      xMax += 1;
-    }
+      if (min === max) {
+        min -= 1;
+        max += 1;
+      }
 
-    if (yMin === yMax) {
-      yMin -= 1;
-      yMax += 1;
-    }
+      const padding = (max - min) * 0.08;
+      min -= padding;
+      max += padding;
+      const span = Math.max(0.000001, max - min);
+      const project = (value: number): number => {
+        const ratio = (value - min) / span;
+        return isY ? bottom - ratio * height : left + ratio * width;
+      };
 
-    const xPadding = (xMax - xMin) * 0.08;
-    const yPadding = (yMax - yMin) * 0.08;
-    xMin -= xPadding;
-    xMax += xPadding;
-    yMin -= yPadding;
-    yMax += yPadding;
-
-    const projectX = (value: number): number => 8 + ((value - xMin) / (xMax - xMin)) * 84;
-    const projectY = (value: number): number => 92 - ((value - yMin) / (yMax - yMin)) * 84;
-    const xZero = xMin <= 0 && xMax >= 0 ? projectX(0) : null;
-    const yZero = yMin <= 0 && yMax >= 0 ? projectY(0) : null;
-
-    return {
-      points: points.map((point) => ({
-        ...point,
-        cx: projectX(point.x),
-        cy: projectY(point.y)
-      })),
-      xZero,
-      yZero
+      return {
+        project,
+        ticks: Array.from({ length: 4 }, (_, index) => {
+          const ratio = index / 3;
+          const value = min + span * ratio;
+          return {
+            value,
+            position: isY ? bottom - ratio * height : left + ratio * width
+          };
+        }),
+        zero: min <= 0 && max >= 0 ? project(0) : null
+      };
     };
-  }, [backtestTrades, scatterXKey, scatterYKey]);
 
-  const propFirmTradeSequence = useMemo(() => {
-    if (propProjectionMethod === "historical") {
-      return backtestTrades;
-    }
-
-    return [...backtestTrades].sort((left, right) => {
-      const leftSeed = hashSeedFromText(`${selectedModelId}:${selectedTimeframe}:${left.id}`);
-      const rightSeed = hashSeedFromText(`${selectedModelId}:${selectedTimeframe}:${right.id}`);
-      return leftSeed - rightSeed;
-    });
-  }, [backtestTrades, propProjectionMethod, selectedModelId, selectedTimeframe]);
-
-  const propFirmProjection = useMemo(() => {
-    let balance = propInitialBalance;
-    let peakBalance = propInitialBalance;
-    let worstDrawdown = 0;
-    let passedAtTrade = 0;
-    let failedBy = "";
-    const dayPnlMap = new Map<string, number>();
-    const balanceCurve = [propInitialBalance];
-
-    for (let index = 0; index < propFirmTradeSequence.length; index += 1) {
-      const trade = propFirmTradeSequence[index];
-      balance += trade.pnlUsd;
-      balanceCurve.push(balance);
-      peakBalance = Math.max(peakBalance, balance);
-      worstDrawdown = Math.min(worstDrawdown, balance - peakBalance);
-
-      const dayKey = getTradeDayKey(trade.exitTime);
-      const dayPnl = (dayPnlMap.get(dayKey) ?? 0) + trade.pnlUsd;
-      dayPnlMap.set(dayKey, dayPnl);
-
-      if (!failedBy && dayPnl <= -Math.abs(propDailyMaxLoss)) {
-        failedBy = `Daily loss breached on ${getCalendarDateLabel(dayKey)}`;
+    const buildCategoryAxis = (
+      values: number[],
+      isY = false
+    ): {
+      project: (value: number) => number;
+      ticks: Array<{ value: number; position: number }>;
+      zero: number | null;
+    } => {
+      const domain = Array.from(new Set(values.map((value) => Math.round(value))));
+      const valueToIndex = new Map<number, number>();
+      for (let index = 0; index < domain.length; index += 1) {
+        valueToIndex.set(domain[index]!, index);
       }
 
-      if (!failedBy && balance <= propInitialBalance - Math.abs(propTotalMaxLoss)) {
-        failedBy = "Total drawdown limit breached";
+      const project = (value: number): number => {
+        const index = valueToIndex.get(Math.round(value)) ?? 0;
+        const ratio = domain.length <= 1 ? 0.5 : index / (domain.length - 1);
+        return isY ? bottom - ratio * height : left + ratio * width;
+      };
+
+      return {
+        project,
+        ticks: domain.map((value, index) => {
+          const ratio = domain.length <= 1 ? 0.5 : index / (domain.length - 1);
+          return {
+            value,
+            position: isY ? bottom - ratio * height : left + ratio * width
+          };
+        }),
+        zero: null
+      };
+    };
+
+    const xAxis = xDef.numeric
+      ? buildNumericAxis(rawPoints.map((point) => point.x), false)
+      : buildCategoryAxis(rawPoints.map((point) => point.x), false);
+    const yAxis = yDef.numeric
+      ? buildNumericAxis(rawPoints.map((point) => point.y), true)
+      : buildCategoryAxis(rawPoints.map((point) => point.y), true);
+
+    const step = rawPoints.length > 1600 ? Math.ceil(rawPoints.length / 1600) : 1;
+    const points = rawPoints
+      .filter((_, index) => index % step === 0)
+      .map((point) => ({
+        ...point,
+        cx: xAxis.project(point.x),
+        cy: yAxis.project(point.y)
+      }));
+
+    const formatTick = (def: BacktestScatterAxisDef, value: number): string => {
+      if (def.tickFormatter) {
+        return def.tickFormatter(value);
       }
 
-      if (
-        !failedBy &&
-        passedAtTrade === 0 &&
-        balance >= propInitialBalance + Math.abs(propProfitTarget)
-      ) {
-        passedAtTrade = index + 1;
+      if (!Number.isFinite(value)) {
+        return "";
       }
-    }
 
-    const finalBalance = balance;
-    const targetBalance = propInitialBalance + Math.abs(propProfitTarget);
-    const status = failedBy ? "Failed" : passedAtTrade > 0 ? "Passed" : "In Progress";
-    const remaining = Math.max(0, targetBalance - finalBalance);
+      return Number.isInteger(value) ? String(value) : value.toFixed(2);
+    };
 
     return {
-      status,
-      reason: failedBy || (passedAtTrade > 0 ? `Passed after ${passedAtTrade} trades` : "Target not reached yet"),
-      finalBalance,
-      targetBalance,
-      remaining,
-      progressPct:
-        propProfitTarget === 0
-          ? 100
-          : clamp(((finalBalance - propInitialBalance) / Math.abs(propProfitTarget)) * 100, 0, 100),
-      worstDrawdown,
-      balanceCurve,
-      balancePath: buildSparklinePath(balanceCurve, 100, 28),
-      tradingDays: dayPnlMap.size
+      points,
+      xTicks: xAxis.ticks.map((tick) => ({
+        ...tick,
+        label: formatTick(xDef, tick.value)
+      })),
+      yTicks: yAxis.ticks.map((tick) => ({
+        ...tick,
+        label: formatTick(yDef, tick.value)
+      })),
+      xZero: "zero" in xAxis ? xAxis.zero : null,
+      yZero: "zero" in yAxis ? yAxis.zero : null
+    };
+  }, [backtestScatterData.points, backtestScatterVarDefs, scatterXKey, scatterYKey]);
+
+  const hoveredScatterPoint = useMemo(() => {
+    if (!hoveredScatterPointId) {
+      return null;
+    }
+
+    return backtestScatterPlot.points.find((point) => point.id === hoveredScatterPointId) ?? null;
+  }, [backtestScatterPlot.points, hoveredScatterPointId]);
+
+  const formatScatterTooltipValue = (key: BacktestScatterKey, value: number): string => {
+    const def = backtestScatterVarDefs[key];
+
+    if (def.tooltipFormatter) {
+      return def.tooltipFormatter(value);
+    }
+
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  };
+
+  const runPropFirm = () => {
+    if (backtestTrades.length === 0) {
+      setPropResult(null);
+      setPropStats(null);
+      return;
+    }
+
+    const propInitBalance = Math.max(0, propInitialBalance);
+    const normalizedDailyMaxLoss = Math.max(0, propDailyMaxLoss);
+    const normalizedTotalMaxLoss = Math.max(0, propTotalMaxLoss);
+    const normalizedProfitTarget = Math.max(0, propProfitTarget);
+
+    const computeAvgTradeGap = () => {
+      const timestamps = backtestTrades
+        .map((trade) => Number(trade.entryTime || trade.exitTime) * 1_000)
+        .filter((value) => Number.isFinite(value))
+        .sort((left, right) => left - right);
+
+      if (timestamps.length < 2) {
+        return 1;
+      }
+
+      let totalGap = 0;
+
+      for (let index = 1; index < timestamps.length; index += 1) {
+        totalGap += timestamps[index]! - timestamps[index - 1]!;
+      }
+
+      const avgMinutes = totalGap / (timestamps.length - 1) / 60_000;
+      return avgMinutes > 0 ? avgMinutes : 1;
+    };
+
+    const avgTradeGapMinutes = computeAvgTradeGap();
+    const tradePnls = backtestTrades.map((trade) => trade.pnlUsd);
+
+    if (tradePnls.length === 0) {
+      setPropResult(null);
+      setPropStats(null);
+      return;
+    }
+
+    if (propProjectionMethod === "montecarlo") {
+      const sims = 2_000;
+      const scalingFactor = 500;
+      const sampleRunCount = 10;
+      let passCount = 0;
+      let failCount = 0;
+      let incompleteCount = 0;
+      let sumTradesPass = 0;
+      let sumTradesFail = 0;
+      let sumWinRatePass = 0;
+      let sumWinRateFail = 0;
+      let sumWinRateOverall = 0;
+      const finals: number[] = [];
+      const sampleRuns: number[][] = [];
+
+      for (let simulation = 0; simulation < sims; simulation += 1) {
+        let balance = propInitBalance;
+        let tradeCount = 0;
+        let wins = 0;
+        let achievedTarget = false;
+        let failed = false;
+        const progress = [propInitBalance];
+
+        for (let index = 0; index < tradePnls.length; index += 1) {
+          tradeCount += 1;
+          const pnl = tradePnls[Math.floor(Math.random() * tradePnls.length)] ?? 0;
+
+          if (pnl > 0) {
+            wins += 1;
+          }
+
+          balance += pnl;
+          progress.push(balance);
+
+          if (normalizedTotalMaxLoss > 0 && propInitBalance - balance > normalizedTotalMaxLoss) {
+            failed = true;
+            break;
+          }
+
+          if (balance - propInitBalance >= normalizedProfitTarget) {
+            achievedTarget = true;
+            break;
+          }
+        }
+
+        const winRate = tradeCount > 0 ? wins / tradeCount : 0;
+        sumWinRateOverall += winRate;
+
+        if (achievedTarget) {
+          passCount += 1;
+          sumTradesPass += tradeCount;
+          sumWinRatePass += winRate;
+        } else if (failed) {
+          failCount += 1;
+          sumTradesFail += tradeCount;
+          sumWinRateFail += winRate;
+        } else {
+          incompleteCount += 1;
+        }
+
+        finals.push(balance - propInitBalance);
+
+        if (sampleRuns.length < sampleRunCount) {
+          sampleRuns.push(progress);
+        } else {
+          const replaceIndex = Math.floor(Math.random() * (simulation + 1));
+
+          if (replaceIndex < sampleRunCount) {
+            sampleRuns[replaceIndex] = progress;
+          }
+        }
+      }
+
+      const consideredSims = passCount + failCount;
+      const probability = consideredSims > 0 ? passCount / consideredSims : 0;
+      const maxLength = sampleRuns.reduce((max, run) => Math.max(max, run.length), 0);
+      const randomProgressRuns = sampleRuns.map((run) => {
+        const padded: PropFirmChartPoint[] = [];
+        let lastBalance = run.length > 0 ? run[run.length - 1]! : propInitBalance;
+
+        for (let index = 0; index < maxLength; index += 1) {
+          const balance = run[index] ?? lastBalance;
+          lastBalance = balance;
+          padded.push({ x: index, y: balance });
+        }
+
+        return padded;
+      });
+
+      setPropResult({ probability, data: finals });
+      setPropStats({
+        avgTradesPass: passCount > 0 ? sumTradesPass / passCount : 0,
+        avgTradesFail: failCount > 0 ? sumTradesFail / failCount : 0,
+        avgTimePass: 0,
+        avgTimeFail: 0,
+        avgWinRatePass: passCount > 0 ? sumWinRatePass / passCount : 0,
+        avgWinRateFail: failCount > 0 ? sumWinRateFail / failCount : 0,
+        avgWinRateOverall: sims > 0 ? sumWinRateOverall / sims : 0,
+        passCount: passCount * scalingFactor,
+        failCount: failCount * scalingFactor,
+        incompleteCount: incompleteCount * scalingFactor,
+        totalSimulations: sims * scalingFactor,
+        randomProgressRuns,
+        minX: 0,
+        maxX: maxLength > 0 ? maxLength - 1 : 0
+      });
+      return;
+    }
+
+    const sortedTrades = [...backtestTrades].sort(
+      (left, right) =>
+        Number(left.entryTime || left.exitTime) - Number(right.entryTime || right.exitTime)
+    );
+    const firstTradeDateMs = sortedTrades.reduce<number | null>((earliest, trade) => {
+      const tradeMs = Number(trade.entryTime || trade.exitTime) * 1_000;
+
+      if (!Number.isFinite(tradeMs)) {
+        return earliest;
+      }
+
+      const dayStart = new Date(tradeMs);
+      dayStart.setHours(0, 0, 0, 0);
+      const normalizedMs = dayStart.getTime();
+
+      if (earliest === null || normalizedMs < earliest) {
+        return normalizedMs;
+      }
+
+      return earliest;
+    }, null);
+    const startDayMs = firstTradeDateMs ?? Date.now();
+    const endDay = new Date();
+    endDay.setDate(endDay.getDate() - 1);
+    endDay.setHours(0, 0, 0, 0);
+    const lastStartMs = endDay.getTime();
+    const startTimes: number[] = [];
+
+    for (let cursor = startDayMs; cursor <= lastStartMs; cursor += 86_400_000) {
+      startTimes.push(cursor);
+    }
+
+    let passCount = 0;
+    let failCount = 0;
+    let incompleteCount = 0;
+    let sumTradesPass = 0;
+    let sumTradesFail = 0;
+    let sumTimePass = 0;
+    let sumTimeFail = 0;
+    let sumWinRatePass = 0;
+    let sumWinRateFail = 0;
+    let sumWinRateOverall = 0;
+    const finals: number[] = [];
+    const allProgress: number[][] = [];
+    const allTimeProgress: number[][] = [];
+    const allThresholdTimes: number[][] = [];
+    const allThresholdValues: number[][] = [];
+    const usedStartTimes: number[] = [];
+
+    for (const startMs of startTimes) {
+      let balance = propInitBalance;
+      let dailyPnl = 0;
+      let currentSessionKey: number | null = null;
+      let tradeCount = 0;
+      let wins = 0;
+      let achievedTarget = false;
+      let failed = false;
+      let endTimeMs: number | null = null;
+      let hasValidTime = false;
+      const progress: number[] = [];
+      const timeProgress: number[] = [];
+      const thresholdTimes = [0];
+      const thresholdValues = [propInitBalance - normalizedDailyMaxLoss];
+      let currentThreshold = propInitBalance - normalizedDailyMaxLoss;
+
+      for (const trade of sortedTrades) {
+        const tradeMs = Number(trade.entryTime || trade.exitTime) * 1_000;
+
+        if (!Number.isFinite(tradeMs) || tradeMs < startMs) {
+          continue;
+        }
+
+        const tradeDate = new Date(tradeMs);
+        const sessionStart = new Date(tradeDate);
+        sessionStart.setHours(14, 0, 0, 0);
+
+        if (tradeDate.getTime() < sessionStart.getTime()) {
+          sessionStart.setDate(sessionStart.getDate() - 1);
+        }
+
+        const sessionKey = sessionStart.getTime();
+
+        if (currentSessionKey === null || sessionKey !== currentSessionKey) {
+          currentSessionKey = sessionKey;
+          dailyPnl = 0;
+          const relativeMinutes = (tradeMs - startMs) / 60_000;
+
+          if (relativeMinutes >= 0 && relativeMinutes > thresholdTimes[thresholdTimes.length - 1]!) {
+            currentThreshold = balance - normalizedDailyMaxLoss;
+            thresholdTimes.push(relativeMinutes);
+            thresholdValues.push(currentThreshold);
+          }
+        }
+
+        tradeCount += 1;
+
+        if (trade.pnlUsd > 0) {
+          wins += 1;
+        }
+
+        dailyPnl += trade.pnlUsd;
+        balance += trade.pnlUsd;
+        progress.push(balance);
+        timeProgress.push((tradeMs - startMs) / 60_000);
+        hasValidTime = true;
+        endTimeMs = tradeMs;
+
+        if (normalizedDailyMaxLoss > 0 && dailyPnl < -normalizedDailyMaxLoss) {
+          failed = true;
+          break;
+        }
+
+        if (normalizedTotalMaxLoss > 0 && propInitBalance - balance > normalizedTotalMaxLoss) {
+          failed = true;
+          break;
+        }
+
+        if (balance - propInitBalance >= normalizedProfitTarget) {
+          achievedTarget = true;
+          break;
+        }
+      }
+
+      if (tradeCount === 0) {
+        continue;
+      }
+
+      const timeSpent =
+        hasValidTime && endTimeMs != null
+          ? (endTimeMs - startMs) / 60_000
+          : tradeCount * avgTradeGapMinutes;
+      const winRate = tradeCount > 0 ? wins / tradeCount : 0;
+      sumWinRateOverall += winRate;
+
+      if (achievedTarget) {
+        passCount += 1;
+        sumTradesPass += tradeCount;
+        sumTimePass += timeSpent;
+        sumWinRatePass += winRate;
+      } else if (failed) {
+        failCount += 1;
+        sumTradesFail += tradeCount;
+        sumTimeFail += timeSpent;
+        sumWinRateFail += winRate;
+      } else {
+        incompleteCount += 1;
+      }
+
+      finals.push(balance - propInitBalance);
+      allProgress.push(progress);
+      allTimeProgress.push(timeProgress);
+      allThresholdTimes.push(thresholdTimes);
+      allThresholdValues.push(thresholdValues);
+      usedStartTimes.push(startMs);
+    }
+
+    const consideredSims = passCount + failCount;
+    const probability = consideredSims > 0 ? passCount / consideredSims : 0;
+    const randomProgressRuns: PropFirmChartPoint[][] = [];
+    let dailyLossRun: PropFirmChartPoint[] | undefined;
+    const usedIndexes = new Set<number>();
+
+    while (randomProgressRuns.length < 1 && allProgress.length > 0) {
+      const sampleIndex = Math.floor(Math.random() * allProgress.length);
+
+      if (usedIndexes.has(sampleIndex)) {
+        continue;
+      }
+
+      usedIndexes.add(sampleIndex);
+      const balances = allProgress[sampleIndex] ?? [];
+      const timesMinutes = allTimeProgress[sampleIndex] ?? [];
+
+      if (timesMinutes.length === 0) {
+        continue;
+      }
+
+      const totalHours = Math.ceil((timesMinutes[timesMinutes.length - 1] ?? 0) / 60);
+      const sampledStartMs = usedStartTimes[sampleIndex] ?? Date.now();
+      let tradeIndex = 0;
+      let currentBalance = propInitBalance;
+      const hourlyPoints: PropFirmChartPoint[] = [];
+      const hourlyThresholdPoints: PropFirmChartPoint[] = [];
+      const thresholdTimes = allThresholdTimes[sampleIndex] ?? [];
+      const thresholdValues = allThresholdValues[sampleIndex] ?? [];
+      let thresholdIndex = 0;
+
+      for (let hour = 0; hour <= totalHours; hour += 1) {
+        const hourMinutes = hour * 60;
+
+        while (tradeIndex < timesMinutes.length && (timesMinutes[tradeIndex] ?? Infinity) <= hourMinutes) {
+          currentBalance = balances[tradeIndex] ?? currentBalance;
+          tradeIndex += 1;
+        }
+
+        const x = sampledStartMs + hourMinutes * 60_000;
+        hourlyPoints.push({ x, y: currentBalance });
+
+        while (
+          thresholdIndex + 1 < thresholdTimes.length &&
+          (thresholdTimes[thresholdIndex + 1] ?? Infinity) <= hourMinutes
+        ) {
+          thresholdIndex += 1;
+        }
+
+        const thresholdValue =
+          thresholdValues.length > 0
+            ? thresholdValues[Math.min(thresholdIndex, thresholdValues.length - 1)]!
+            : propInitBalance - normalizedDailyMaxLoss;
+        hourlyThresholdPoints.push({ x, y: thresholdValue });
+      }
+
+      randomProgressRuns.push(hourlyPoints);
+      dailyLossRun = hourlyThresholdPoints;
+    }
+
+    const minX = randomProgressRuns.reduce((currentMin, run) => {
+      if (run.length === 0) {
+        return currentMin;
+      }
+
+      return Math.min(currentMin, run[0]!.x);
+    }, Number.POSITIVE_INFINITY);
+    const maxX = randomProgressRuns.reduce((currentMax, run) => {
+      if (run.length === 0) {
+        return currentMax;
+      }
+
+      return Math.max(currentMax, run[run.length - 1]!.x);
+    }, 0);
+
+    setPropResult({ probability, data: finals });
+    setPropStats({
+      avgTradesPass: passCount > 0 ? sumTradesPass / passCount : 0,
+      avgTradesFail: failCount > 0 ? sumTradesFail / failCount : 0,
+      avgTimePass: passCount > 0 ? sumTimePass / passCount : 0,
+      avgTimeFail: failCount > 0 ? sumTimeFail / failCount : 0,
+      avgWinRatePass: passCount > 0 ? sumWinRatePass / passCount : 0,
+      avgWinRateFail: failCount > 0 ? sumWinRateFail / failCount : 0,
+      avgWinRateOverall:
+        consideredSims + incompleteCount > 0
+          ? sumWinRateOverall / (consideredSims + incompleteCount)
+          : 0,
+      passCount,
+      failCount,
+      incompleteCount,
+      totalSimulations: consideredSims + incompleteCount,
+      randomProgressRuns,
+      dailyLossRun,
+      minX: Number.isFinite(minX) ? minX : 0,
+      maxX
+    });
+  };
+
+  const propHistogram = useMemo(() => {
+    if (!propResult || propResult.data.length === 0) {
+      return [];
+    }
+
+    let min = propResult.data[0]!;
+    let max = propResult.data[0]!;
+
+    for (const value of propResult.data) {
+      if (value < min) {
+        min = value;
+      }
+
+      if (value > max) {
+        max = value;
+      }
+    }
+
+    if (min === max) {
+      return [{ bin: min, count: propResult.data.length }];
+    }
+
+    const binCount = 20;
+    const binSize = (max - min) / binCount;
+    const counts = Array.from({ length: binCount }, () => 0);
+
+    for (const value of propResult.data) {
+      let index = Math.floor((value - min) / binSize);
+      index = clamp(index, 0, binCount - 1);
+      counts[index] += 1;
+    }
+
+    const scaleFactor =
+      propStats && propResult.data.length > 0 ? propStats.totalSimulations / propResult.data.length : 1;
+
+    return counts.map((count, index) => ({
+      bin: min + binSize * index + binSize / 2,
+      count: count * scaleFactor
+    }));
+  }, [propResult, propStats]);
+
+  const propHistogramBars = useMemo(() => {
+    if (propHistogram.length === 0) {
+      return [];
+    }
+
+    const maxCount = Math.max(1, ...propHistogram.map((item) => item.count));
+    const slotWidth = 92 / propHistogram.length;
+
+    return propHistogram.map((item, index) => {
+      const height = (item.count / maxCount) * 28;
+      return {
+        ...item,
+        x: 4 + index * slotWidth,
+        y: 32 - height,
+        width: Math.max(2.5, slotWidth - 0.8),
+        height
+      };
+    });
+  }, [propHistogram]);
+
+  const propLineChart = useMemo(() => {
+    if (!propStats || propStats.randomProgressRuns.length === 0) {
+      return null;
+    }
+
+    const minX = propStats.minX;
+    const maxX = propStats.maxX <= propStats.minX ? propStats.minX + 1 : propStats.maxX;
+    const minY =
+      propProjectionMethod === "montecarlo"
+        ? propInitialBalance - Math.abs(propTotalMaxLoss)
+        : propInitialBalance - Math.abs(propTotalMaxLoss) - Math.abs(propDailyMaxLoss);
+    const maxY = Math.max(minY + 1, propInitialBalance + Math.abs(propProfitTarget));
+    const palette = [
+      "rgba(59, 130, 246, 0.95)",
+      "rgba(16, 185, 129, 0.9)",
+      "rgba(249, 115, 22, 0.9)",
+      "rgba(139, 92, 246, 0.9)",
+      "rgba(239, 68, 68, 0.9)",
+      "rgba(20, 184, 166, 0.9)",
+      "rgba(250, 204, 21, 0.9)",
+      "rgba(236, 72, 153, 0.9)"
+    ];
+
+    return {
+      targetLineY: projectPropFirmLineY(propInitialBalance + Math.abs(propProfitTarget), minY, maxY),
+      totalLossLineY: projectPropFirmLineY(propInitialBalance - Math.abs(propTotalMaxLoss), minY, maxY),
+      dailyLossPath:
+        propProjectionMethod !== "montecarlo" && propStats.dailyLossRun
+          ? buildPropFirmLinePath(propStats.dailyLossRun, minX, maxX, minY, maxY)
+          : "",
+      paths: propStats.randomProgressRuns.map((run, index) => ({
+        color: palette[index % palette.length]!,
+        path: buildPropFirmLinePath(run, minX, maxX, minY, maxY)
+      }))
     };
   }, [
     propDailyMaxLoss,
-    propFirmTradeSequence,
     propInitialBalance,
     propProfitTarget,
+    propProjectionMethod,
+    propStats,
     propTotalMaxLoss
   ]);
 
@@ -6994,7 +8011,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           const durationMinutes = getHistoryTradeDurationMinutes(trade);
                           const estimatedBars = Math.max(
                             1,
-                            Math.round(durationMinutes / getTimeframeMinutes(selectedTimeframe))
+                            Math.round(durationMinutes / timeframeMinutes[selectedTimeframe])
                           );
                           const tradeCandles =
                             seriesMap[symbolTimeframeKey(trade.symbol, selectedTimeframe)] ?? EMPTY_CANDLES;
@@ -7100,75 +8117,463 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ) : null}
 
               {selectedBacktestTab === "cluster" ? (
-                <div className="backtest-grid two-up">
+                <div className="backtest-grid">
+                  <div className="backtest-card backtest-cluster-surface">
+                    <div className="backtest-cluster-head">
+                      <div>
+                        <div className="backtest-cluster-title">Cluster Map</div>
+                        <div className="backtest-cluster-subtitle">
+                          UMAP-style cluster surface with AI.zip-aligned controls, legend toggles, and
+                          group diagnostics.
+                        </div>
+                        <div className="backtest-cluster-pill-row">
+                          <span className="backtest-cluster-pill">
+                            Visible <strong>{backtestClusterCounts.visible}</strong> /{" "}
+                            {backtestClusterCounts.total}
+                          </span>
+                          <span className="backtest-cluster-pill">
+                            Win Rate <strong>{backtestClusterCounts.winRate.toFixed(1)}%</strong>
+                          </span>
+                          <span className="backtest-cluster-pill">
+                            Buy/Sell <strong>{backtestClusterCounts.buyRate.toFixed(1)}%</strong> /{" "}
+                            {(100 - backtestClusterCounts.buyRate).toFixed(1)}%
+                          </span>
+                          <span className="backtest-cluster-pill">
+                            Avg Confidence{" "}
+                            <strong>{backtestClusterCounts.avgConfidence.toFixed(0)}%</strong>
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="backtest-cluster-head-actions">
+                        <button
+                          type="button"
+                          className="backtest-action-btn compact"
+                          onClick={resetBacktestClusterView}
+                        >
+                          Reset
+                        </button>
+                        <div className="backtest-cluster-search-wrap">
+                          <input
+                            type="text"
+                            className="backtest-search"
+                            value={clusterSearchId}
+                            onChange={(event) => {
+                              setClusterSearchId(event.target.value);
+                              setClusterSearchStatus(null);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                runBacktestClusterSearch();
+                              }
+                            }}
+                            placeholder="Search trade ID…"
+                          />
+                          <button
+                            type="button"
+                            className="backtest-action-btn compact"
+                            onClick={() => runBacktestClusterSearch()}
+                          >
+                            Go
+                          </button>
+                          {clusterSearchStatus === "miss" ? (
+                            <span className="backtest-cluster-search-miss">Not found</span>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="backtest-cluster-filter-row">
+                      <label>
+                        <span>Direction</span>
+                        <select
+                          className="backtest-cluster-select"
+                          value={clusterViewDir}
+                          onChange={(event) =>
+                            setClusterViewDir(event.target.value as "All" | "Buy" | "Sell")
+                          }
+                        >
+                          <option value="All">All</option>
+                          <option value="Buy">Buy</option>
+                          <option value="Sell">Sell</option>
+                        </select>
+                      </label>
+
+                      <label>
+                        <span>Model</span>
+                        <select
+                          className="backtest-cluster-select"
+                          value={selectedModelId}
+                          onChange={(event) => setSelectedModelId(event.target.value)}
+                        >
+                          {modelProfiles.map((model) => (
+                            <option key={model.id} value={model.id}>
+                              {model.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label>
+                        <span>Session</span>
+                        <select
+                          className="backtest-cluster-select"
+                          value={clusterViewSession}
+                          onChange={(event) => setClusterViewSession(event.target.value)}
+                        >
+                          <option value="All">All</option>
+                          {backtestClusterViewOptions.sessions.map((session) => (
+                            <option key={session} value={session}>
+                              {session}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label>
+                        <span>Month</span>
+                        <select
+                          className="backtest-cluster-select"
+                          value={clusterViewMonth}
+                          onChange={(event) => setClusterViewMonth(event.target.value)}
+                        >
+                          <option value="All">All</option>
+                          {backtestClusterViewOptions.months.map((month) => (
+                            <option key={month} value={String(month)}>
+                              {backtestMonthLabels[month]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label>
+                        <span>Weekday</span>
+                        <select
+                          className="backtest-cluster-select"
+                          value={clusterViewWeekday}
+                          onChange={(event) => setClusterViewWeekday(event.target.value)}
+                        >
+                          <option value="All">All</option>
+                          {backtestClusterViewOptions.weekdays.map((weekday) => (
+                            <option key={weekday} value={String(weekday)}>
+                              {backtestWeekdayLabels[weekday]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label>
+                        <span>Hour</span>
+                        <select
+                          className="backtest-cluster-select"
+                          value={clusterViewHour}
+                          onChange={(event) => setClusterViewHour(event.target.value)}
+                        >
+                          <option value="All">All</option>
+                          {backtestClusterViewOptions.hours.map((hour) => (
+                            <option key={hour} value={String(hour)}>
+                              {String(hour).padStart(2, "0")}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    <div className="backtest-cluster-hint">Drag to inspect, click nodes or rows to pin details.</div>
+
+                    <div className="backtest-cluster-map">
+                      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="cluster map">
+                        {visibleBacktestClusterGroups.map((group) => (
+                          <ellipse
+                            key={`${group.id}-halo`}
+                            cx={group.centerX}
+                            cy={group.centerY}
+                            rx={group.radiusX}
+                            ry={group.radiusY}
+                            className="backtest-cluster-halo"
+                            style={{
+                              fill: group.fill,
+                              stroke: group.border,
+                              opacity: clusterOverlayOpacity * 0.8
+                            }}
+                          />
+                        ))}
+                        {visibleBacktestClusterNodes.map((node) => {
+                          const meta = BACKTEST_CLUSTER_META[node.clusterId];
+                          const radius = Math.max(1.8, node.r * clusterNodeSizeScale);
+
+                          return (
+                            <circle
+                              key={node.id}
+                              cx={node.x}
+                              cy={node.y}
+                              r={radius}
+                              className={`backtest-cluster-node ${node.tone} ${
+                                selectedHistoryId === node.id ? "selected" : ""
+                              }`}
+                              style={{
+                                fill:
+                                  node.trade.result === "Win"
+                                    ? "rgba(60, 220, 120, 0.18)"
+                                    : "rgba(230, 80, 80, 0.18)",
+                                stroke: meta.accent
+                              }}
+                              onClick={() => {
+                                setSelectedBacktestClusterGroupId(null);
+                                setSelectedHistoryId(node.id);
+                              }}
+                            >
+                              <title>
+                                {node.id} · {meta.label} · {node.sideLabel} ·{" "}
+                                {formatSignedUsd(node.trade.pnlUsd)}
+                              </title>
+                            </circle>
+                          );
+                        })}
+                      </svg>
+
+                      {visibleBacktestClusterNodes.length === 0 ? (
+                        <div className="backtest-cluster-empty-overlay">
+                          No nodes match the active filters or legend toggles.
+                        </div>
+                      ) : null}
+
+                      {selectedBacktestClusterNode ? (
+                        <div
+                          className="backtest-cluster-overlay-card"
+                          style={{
+                            borderColor: BACKTEST_CLUSTER_META[selectedBacktestClusterNode.clusterId].border,
+                            boxShadow: `0 18px 38px rgba(0,0,0,0.56), 0 0 0 1px ${
+                              BACKTEST_CLUSTER_META[selectedBacktestClusterNode.clusterId].glow
+                            }`
+                          }}
+                        >
+                          <div className="backtest-cluster-overlay-head">
+                            <strong>Selected</strong>
+                            <button type="button" onClick={() => setSelectedHistoryId(null)}>
+                              Clear
+                            </button>
+                          </div>
+                          <div className="backtest-cluster-overlay-grid">
+                            <span>ID</span>
+                            <strong>{selectedBacktestClusterNode.id}</strong>
+                            <span>Cluster</span>
+                            <strong>{BACKTEST_CLUSTER_META[selectedBacktestClusterNode.clusterId].label}</strong>
+                            <span>Direction</span>
+                            <strong>{selectedBacktestClusterNode.sideLabel}</strong>
+                            <span>Session</span>
+                            <strong>{selectedBacktestClusterNode.session}</strong>
+                            <span>Entry Date</span>
+                            <strong>{formatDateTime(Number(selectedBacktestClusterNode.trade.entryTime) * 1000)}</strong>
+                            <span>Exit Date</span>
+                            <strong>{formatDateTime(Number(selectedBacktestClusterNode.trade.exitTime) * 1000)}</strong>
+                            <span>Duration</span>
+                            <strong>{formatMinutesCompact(selectedBacktestClusterNode.holdMinutes)}</strong>
+                            <span>Confidence</span>
+                            <strong>{selectedBacktestClusterNode.confidence.toFixed(0)}%</strong>
+                            <span>Exit Method</span>
+                            <strong>{getBacktestExitLabel(selectedBacktestClusterNode.trade)}</strong>
+                            <span>PnL</span>
+                            <strong
+                              className={selectedBacktestClusterNode.trade.pnlUsd >= 0 ? "up" : "down"}
+                            >
+                              {formatSignedUsd(selectedBacktestClusterNode.trade.pnlUsd)}
+                            </strong>
+                          </div>
+                        </div>
+                      ) : selectedBacktestClusterGroup ? (
+                        <div
+                          className="backtest-cluster-overlay-card"
+                          style={{
+                            borderColor: selectedBacktestClusterGroup.border,
+                            boxShadow: `0 18px 38px rgba(0,0,0,0.56), 0 0 0 1px ${selectedBacktestClusterGroup.glow}`
+                          }}
+                        >
+                          <div className="backtest-cluster-overlay-head">
+                            <strong>{selectedBacktestClusterGroup.label}</strong>
+                            <button type="button" onClick={() => setSelectedBacktestClusterGroupId(null)}>
+                              Clear
+                            </button>
+                          </div>
+                          <div className="backtest-cluster-overlay-grid">
+                            <span>Description</span>
+                            <strong>{selectedBacktestClusterGroup.description}</strong>
+                            <span>Trades</span>
+                            <strong>{selectedBacktestClusterGroup.count}</strong>
+                            <span>Win Rate</span>
+                            <strong>{selectedBacktestClusterGroup.winRate.toFixed(1)}%</strong>
+                            <span>Buy / Sell</span>
+                            <strong>
+                              {selectedBacktestClusterGroup.buyCount} / {selectedBacktestClusterGroup.sellCount}
+                            </strong>
+                            <span>Total PnL</span>
+                            <strong className={selectedBacktestClusterGroup.pnl >= 0 ? "up" : "down"}>
+                              {formatSignedUsd(selectedBacktestClusterGroup.pnl)}
+                            </strong>
+                            <span>Average PnL</span>
+                            <strong className={selectedBacktestClusterGroup.avgPnl >= 0 ? "up" : "down"}>
+                              {formatSignedUsd(selectedBacktestClusterGroup.avgPnl)}
+                            </strong>
+                            <span>Average Hold</span>
+                            <strong>{formatMinutesCompact(selectedBacktestClusterGroup.avgHoldMinutes)}</strong>
+                            <span>Average Confidence</span>
+                            <strong>{selectedBacktestClusterGroup.avgConfidence.toFixed(0)}%</strong>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+
                   <div className="backtest-card">
                     <div className="backtest-card-head">
                       <div>
-                        <h3>Cluster Map</h3>
+                        <h3>Legend &amp; Map Info</h3>
                         <p>
-                          PnL % sits on X, hold time sits on Y, and node size follows position size.
+                          Similar setups remain close together. Node size scales by trade units and
+                          grouping opacity controls the cluster overlays.
                         </p>
                       </div>
                     </div>
 
-                    <div className="backtest-toolbar-note">
-                      Plotting <strong>{backtestClusterData.nodes.length}</strong> trades across{" "}
-                      <strong>{backtestClusterData.groups.length}</strong> active clusters.
+                    <div className="backtest-cluster-slider-grid">
+                      <label>
+                        <span>Node Size</span>
+                        <strong>{clusterNodeSizeScale.toFixed(2)}x</strong>
+                        <input
+                          type="range"
+                          min={0.4}
+                          max={2.6}
+                          step={0.05}
+                          value={clusterNodeSizeScale}
+                          onChange={(event) => setClusterNodeSizeScale(Number(event.target.value))}
+                        />
+                      </label>
+                      <label>
+                        <span>Grouping Opacity</span>
+                        <strong>{Math.round(clusterOverlayOpacity * 100)}%</strong>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={clusterOverlayOpacity}
+                          onChange={(event) => setClusterOverlayOpacity(Number(event.target.value))}
+                        />
+                      </label>
                     </div>
 
-                    <div className="backtest-cluster-map">
-                      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="cluster map">
-                        <line x1="10" y1="88" x2="90" y2="88" className="backtest-axis-line" />
-                        <line x1="10" y1="12" x2="10" y2="88" className="backtest-axis-line" />
-                        <line x1="50" y1="12" x2="50" y2="88" className="backtest-grid-line" />
-                        <line x1="10" y1="50" x2="90" y2="50" className="backtest-grid-line" />
-                        {backtestClusterData.nodes.map((node) => (
-                          <circle
-                            key={node.id}
-                            cx={node.x}
-                            cy={node.y}
-                            r={node.r}
-                            className={`backtest-cluster-node ${node.tone}`}
-                          />
-                        ))}
-                      </svg>
-                    </div>
+                    <div className="backtest-cluster-legend-grid">
+                      <button
+                        type="button"
+                        className={`backtest-cluster-legend-card ${
+                          clusterLegendToggles.closedWin ? "active" : ""
+                        }`}
+                        onClick={() => toggleBacktestClusterLegend("closedWin")}
+                      >
+                        <span className="dot" style={{ background: "rgba(60, 220, 120, 0.96)" }} />
+                        <div>
+                          <strong>Closed Win</strong>
+                          <small>{backtestClusterCounts.wins.toLocaleString()} visible points</small>
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        className={`backtest-cluster-legend-card ${
+                          clusterLegendToggles.closedLoss ? "active" : ""
+                        }`}
+                        onClick={() => toggleBacktestClusterLegend("closedLoss")}
+                      >
+                        <span className="dot" style={{ background: "rgba(230, 80, 80, 0.96)" }} />
+                        <div>
+                          <strong>Closed Loss</strong>
+                          <small>{backtestClusterCounts.losses.toLocaleString()} visible points</small>
+                        </div>
+                      </button>
+                      {BACKTEST_CLUSTER_ORDER.map((clusterId) => {
+                        const meta = BACKTEST_CLUSTER_META[clusterId];
+                        const group = visibleBacktestClusterGroups.find((item) => item.id === clusterId);
 
-                    <div className="backtest-map-legend">
-                      <span>Left: weaker outcome</span>
-                      <span>Right: stronger outcome</span>
-                      <span>Higher: faster exit</span>
-                      <span>Lower: longer hold</span>
+                        return (
+                          <button
+                            key={clusterId}
+                            type="button"
+                            className={`backtest-cluster-legend-card ${
+                              clusterLegendToggles[clusterId] ? "active" : ""
+                            }`}
+                            onClick={() => toggleBacktestClusterLegend(clusterId)}
+                          >
+                            <span className="dot" style={{ background: meta.accent }} />
+                            <div>
+                              <strong>{meta.label}</strong>
+                              <small>{(group?.count ?? 0).toLocaleString()} points</small>
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
-                  <div className="backtest-stack">
-                    {backtestClusterData.groups.map((group) => (
-                      <div key={group.id} className="backtest-card compact">
-                        <div className="backtest-card-head">
-                          <div>
-                            <h3>{group.label}</h3>
-                            <p>{group.description}</p>
-                          </div>
-                        </div>
-                        <div className="backtest-stat-list">
-                          <div className="backtest-stat-row">
-                            <span>Trades</span>
-                            <strong>{group.count}</strong>
-                          </div>
-                          <div className="backtest-stat-row">
-                            <span>Win rate</span>
-                            <strong>{group.winRate.toFixed(1)}%</strong>
-                          </div>
-                          <div className="backtest-stat-row">
-                            <span>Avg PnL</span>
-                            <strong className={group.avgPnl >= 0 ? "up" : "down"}>
-                              {formatSignedUsd(group.avgPnl)}
-                            </strong>
-                          </div>
-                        </div>
+                  <div className="backtest-card">
+                    <div className="backtest-card-head">
+                      <div>
+                        <h3>Cluster Groups Table</h3>
+                        <p>
+                          Click a row to pin the group panel. Table values update from the same active
+                          filters and legend toggles as the map.
+                        </p>
                       </div>
-                    ))}
+                    </div>
+
+                    <div className="backtest-cluster-table-wrap">
+                      <table className="backtest-cluster-table">
+                        <thead>
+                          <tr>
+                            <th>Group</th>
+                            <th>Win Rate</th>
+                            <th>Count</th>
+                            <th>Wins</th>
+                            <th>Losses</th>
+                            <th>Buy Trades</th>
+                            <th>Sell Trades</th>
+                            <th>Total PnL</th>
+                            <th>Average PnL</th>
+                            <th>Average Hold</th>
+                            <th>Average Confidence</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {backtestClusterTableRows.map((group) => (
+                            <tr
+                              key={group.id}
+                              className={selectedBacktestClusterGroupId === group.id ? "selected" : ""}
+                              onClick={() => {
+                                setSelectedHistoryId(null);
+                                setSelectedBacktestClusterGroupId(group.id);
+                              }}
+                            >
+                              <td>
+                                <span className="backtest-cluster-group-label">{group.label}</span>
+                              </td>
+                              <td>{group.winRate.toFixed(1)}%</td>
+                              <td>{group.count}</td>
+                              <td>{group.wins}</td>
+                              <td>{group.losses}</td>
+                              <td>{group.buyCount}</td>
+                              <td>{group.sellCount}</td>
+                              <td className={group.pnl >= 0 ? "up" : "down"}>{formatSignedUsd(group.pnl)}</td>
+                              <td className={group.avgPnl >= 0 ? "up" : "down"}>
+                                {formatSignedUsd(group.avgPnl)}
+                              </td>
+                              <td>{formatMinutesCompact(group.avgHoldMinutes)}</td>
+                              <td>{group.avgConfidence.toFixed(0)}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {backtestClusterTableRows.length === 0 ? (
+                        <div className="backtest-cluster-table-empty">No active groups under the current filters.</div>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
               ) : null}
@@ -7713,244 +9118,607 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <div className="backtest-card-head">
                     <div>
                       <h3>Dimension Statistics</h3>
-                      <p>
-                        The AI.zip feature-importance scorecard, adapted to the current trade feed.
-                      </p>
                     </div>
                   </div>
 
-                  <div className="backtest-dimension-toolbar">
-                    <input
-                      type="search"
-                      value={backtestDimensionQuery}
-                      onChange={(event) => setBacktestDimensionQuery(event.target.value)}
-                      className="backtest-search"
-                      placeholder="Search dimensions"
-                      aria-label="search dimensions"
-                    />
-                    {backtestDimensionQuery.trim() ? (
-                      <button
-                        type="button"
-                        className="backtest-action-btn compact"
-                        onClick={() => setBacktestDimensionQuery("")}
+                  {!dimensionStats || dimensionStats.dims.length === 0 ? (
+                    <div className="backtest-empty-inline">
+                      {!aiModelEnabled && !aiFilterEnabled
+                        ? "Turn on AI Model or AI Filter to view dimension statistics."
+                        : "No dimension statistics available yet."}
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 8, display: "grid", gap: 14 }}>
+                      <div
+                        style={{
+                          borderRadius: 16,
+                          border: "1px solid rgba(255,255,255,0.10)",
+                          background: "rgba(255,255,255,0.05)",
+                          padding: "10px 12px"
+                        }}
                       >
-                        Clear
-                      </button>
-                    ) : null}
-                  </div>
-
-                  <div className="backtest-dimension-table">
-                    <div className="backtest-dimension-table-head">
-                      <span>Dimension</span>
-                      <span>Reading</span>
-                      <span>Strength</span>
-                    </div>
-
-                    {filteredBacktestDimensionRows.map((row) => (
-                      <div key={row.name} className="backtest-dimension-table-row">
-                        <div className="backtest-dimension-copy">
-                          <strong>{row.name}</strong>
-                          <span>{row.note}</span>
+                        <div
+                          style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.55)" }}
+                        >
+                          Sample
                         </div>
-                        <div className="backtest-dimension-reading left">
-                          <strong>{row.reading}</strong>
-                          <span>{Math.round(clamp(row.score * 100, 0, 100))}/100</span>
+                        <div
+                          style={{ fontSize: 14, fontWeight: 900, color: "rgba(255,255,255,0.92)" }}
+                        >
+                          {dimensionStats.count.toLocaleString("en-US")} trades - Baseline win:{" "}
+                          {dimensionStats.baselineWin === null
+                            ? "-"
+                            : `${(dimensionStats.baselineWin * 100).toFixed(1)}%`}{" "}
+                          - Dims: {dimensionStats.outDim.toLocaleString("en-US")} active /{" "}
+                          {dimensionStats.inDim.toLocaleString("en-US")} total
                         </div>
-                        <div className="backtest-dimension-score">
-                          <div className="backtest-dimension-meter">
-                            <div
-                              className={`backtest-dimension-fill ${
-                                row.score >= 0.62 ? "up" : row.score <= 0.42 ? "down" : "neutral"
-                              }`}
-                              style={{ width: `${clamp(row.score * 100, 0, 100)}%` }}
-                            />
+                        {dimensionStats.mode === "split" ? (
+                          <div
+                            style={{
+                              marginTop: 4,
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: "rgba(255,255,255,0.55)"
+                            }}
+                          >
+                            Using TEST set (Split: {dimensionStats.split}% train)
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div
+                        style={{
+                          borderRadius: 16,
+                          border: "1px solid rgba(255,255,255,0.10)",
+                          background: "rgba(255,255,255,0.05)",
+                          padding: 12
+                        }}
+                      >
+                        <div
+                          style={{
+                            marginBottom: 8,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: "rgba(255,255,255,0.55)"
+                          }}
+                        >
+                          Dimensions
+                        </div>
+
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 8,
+                            alignItems: "center",
+                            marginBottom: 10
+                          }}
+                        >
+                          <input
+                            value={dimSearch}
+                            onChange={(event) => setDimSearch(event.target.value)}
+                            placeholder="Search dimensions..."
+                            style={{
+                              flex: 1,
+                              background: "rgba(255,255,255,0.06)",
+                              border: "1px solid rgba(255,255,255,0.12)",
+                              color: "rgba(255,255,255,0.88)",
+                              borderRadius: 12,
+                              padding: "8px 10px",
+                              fontSize: 11,
+                              outline: "none"
+                            }}
+                          />
+                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                            <button
+                              type="button"
+                              onClick={() => setDimScope("active")}
+                              style={{
+                                padding: "7px 10px",
+                                borderRadius: 10,
+                                border: "1px solid rgba(255,255,255,0.12)",
+                                background:
+                                  dimScope === "active"
+                                    ? "linear-gradient(135deg, rgba(80,180,255,0.32), rgba(60,140,255,0.18))"
+                                    : "rgba(255,255,255,0.06)",
+                                color: "rgba(255,255,255,0.92)",
+                                fontSize: 11,
+                                fontWeight: 850,
+                                cursor: "pointer",
+                                whiteSpace: "nowrap"
+                              }}
+                              title="Show only active dimensions (post-compression)"
+                            >
+                              Active
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDimScope("all")}
+                              style={{
+                                padding: "7px 10px",
+                                borderRadius: 10,
+                                border: "1px solid rgba(255,255,255,0.12)",
+                                background:
+                                  dimScope === "all"
+                                    ? "linear-gradient(135deg, rgba(255,180,80,0.30), rgba(255,140,60,0.18))"
+                                    : "rgba(255,255,255,0.06)",
+                                color: "rgba(255,255,255,0.92)",
+                                fontSize: 11,
+                                fontWeight: 850,
+                                cursor: "pointer",
+                                whiteSpace: "nowrap"
+                              }}
+                              title="Show all dimensions (pre-compression)"
+                            >
+                              All
+                            </button>
+                          </div>
+                          {dimSearch.trim() ? (
+                            <button
+                              type="button"
+                              onClick={() => setDimSearch("")}
+                              style={{
+                                background: "rgba(255,255,255,0.06)",
+                                border: "1px solid rgba(255,255,255,0.12)",
+                                color: "rgba(255,255,255,0.80)",
+                                borderRadius: 12,
+                                padding: "8px 10px",
+                                fontSize: 11,
+                                fontWeight: 900,
+                                cursor: "pointer",
+                                userSelect: "none"
+                              }}
+                              title="Clear search"
+                            >
+                              Clear
+                            </button>
+                          ) : null}
+                          <div
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 900,
+                              color: "rgba(255,255,255,0.55)",
+                              whiteSpace: "nowrap"
+                            }}
+                            title="Shown / Total"
+                          >
+                            {dimensionStatsRows.length}/{dimensionStats.dims.length}
                           </div>
                         </div>
+
+                        <div style={{ maxHeight: 320, overflowY: "auto", paddingRight: 6 }}>
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns:
+                                "1.35fr 0.65fr 0.65fr 0.65fr 0.65fr 0.85fr 0.55fr 0.55fr",
+                              gap: 10,
+                              fontSize: 10,
+                              fontWeight: 900,
+                              color: "rgba(255,255,255,0.55)",
+                              padding: "0 2px 8px 2px",
+                              borderBottom: "1px solid rgba(255,255,255,0.10)"
+                            }}
+                          >
+                            <div
+                              onClick={() => toggleDimSort("name")}
+                              style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                              title="Sort by dimension name"
+                            >
+                              <span>Dimension</span>
+                              {dimSortCol === "name" ? (
+                                <span style={{ opacity: 0.75 }}>{dimSortDir === 1 ? "▲" : "▼"}</span>
+                              ) : null}
+                            </div>
+                            <div
+                              onClick={() => toggleDimSort("corr")}
+                              style={{
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 6,
+                                justifyContent: "flex-start"
+                              }}
+                              title="Sort by correlation vs wins"
+                            >
+                              <span>Corr</span>
+                              {dimSortCol === "corr" ? (
+                                <span style={{ opacity: 0.75 }}>{dimSortDir === 1 ? "▲" : "▼"}</span>
+                              ) : null}
+                            </div>
+                            <div
+                              onClick={() => toggleDimSort("winLow")}
+                              style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                              title="Sort by win rate at low values"
+                            >
+                              <span>Win@Low</span>
+                              {dimSortCol === "winLow" ? (
+                                <span style={{ opacity: 0.75 }}>{dimSortDir === 1 ? "▲" : "▼"}</span>
+                              ) : null}
+                            </div>
+                            <div
+                              onClick={() => toggleDimSort("winHigh")}
+                              style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                              title="Sort by win rate at high values"
+                            >
+                              <span>Win@High</span>
+                              {dimSortCol === "winHigh" ? (
+                                <span style={{ opacity: 0.75 }}>{dimSortDir === 1 ? "▲" : "▼"}</span>
+                              ) : null}
+                            </div>
+                            <div
+                              onClick={() => toggleDimSort("lift")}
+                              style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                              title="Sort by Win@High - Win@Low"
+                            >
+                              <span>Low to High</span>
+                              {dimSortCol === "lift" ? (
+                                <span style={{ fontSize: 11, opacity: 0.9 }}>
+                                  {dimSortDir === 1 ? "▲" : "▼"}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div
+                              onClick={() => toggleDimSort("optimal")}
+                              style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                              title="Sort by optimal range (z-score thresholds)"
+                            >
+                              <span>Optimal</span>
+                              {dimSortCol === "optimal" ? (
+                                <span style={{ opacity: 0.75 }}>{dimSortDir === 1 ? "▲" : "▼"}</span>
+                              ) : null}
+                            </div>
+                            <div
+                              onClick={() => toggleDimSort("min")}
+                              style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                              title="Sort by minimum value"
+                            >
+                              <span>Min</span>
+                              {dimSortCol === "min" ? (
+                                <span style={{ opacity: 0.75 }}>{dimSortDir === 1 ? "▲" : "▼"}</span>
+                              ) : null}
+                            </div>
+                            <div
+                              onClick={() => toggleDimSort("max")}
+                              style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                              title="Sort by maximum value"
+                            >
+                              <span>Max</span>
+                              {dimSortCol === "max" ? (
+                                <span style={{ opacity: 0.75 }}>{dimSortDir === 1 ? "▲" : "▼"}</span>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          {dimensionStatsRows.map((dimension) => {
+                            const corrPct = Number.isFinite(dimension.corr)
+                              ? dimension.corr * 100
+                              : Number.NaN;
+                            const corrText = Number.isFinite(corrPct)
+                              ? `${corrPct >= 0 ? "+" : ""}${corrPct.toFixed(1)}%`
+                              : "—";
+                            const winLowText =
+                              dimension.winLow === null ? "—" : `${(dimension.winLow * 100).toFixed(1)}%`;
+                            const winHighText =
+                              dimension.winHigh === null
+                                ? "—"
+                                : `${(dimension.winHigh * 100).toFixed(1)}%`;
+                            const liftText =
+                              dimension.lift === null
+                                ? "—"
+                                : `${dimension.lift >= 0 ? "+" : ""}${(dimension.lift * 100).toFixed(1)}pp`;
+                            const minText = Number.isFinite(dimension.min) ? dimension.min.toFixed(4) : "—";
+                            const maxText = Number.isFinite(dimension.max) ? dimension.max.toFixed(4) : "—";
+                            const corrColor =
+                              corrPct >= 0 ? "rgba(60,220,120,0.92)" : "rgba(230,80,80,0.92)";
+                            const liftColor =
+                              dimension.lift === null
+                                ? "rgba(255,255,255,0.72)"
+                                : dimension.lift >= 0
+                                  ? "rgba(60,220,120,0.92)"
+                                  : "rgba(230,80,80,0.92)";
+                            const kept = keptDimKeySet ? keptDimKeySet.has(dimension.key) : false;
+
+                            return (
+                              <div
+                                key={dimension.key}
+                                style={{
+                                  display: "grid",
+                                  gridTemplateColumns:
+                                    "1.35fr 0.65fr 0.65fr 0.65fr 0.65fr 0.85fr 0.55fr 0.55fr",
+                                  gap: 10,
+                                  padding: "8px 2px",
+                                  borderBottom: "1px solid rgba(255,255,255,0.06)",
+                                  alignItems: "center",
+                                  fontSize: 11,
+                                  color: "rgba(255,255,255,0.86)",
+                                  background: kept ? "rgba(255, 215, 0, 0.06)" : "transparent"
+                                }}
+                              >
+                                <div style={{ fontWeight: 900 }}>{dimension.name}</div>
+                                <div style={{ fontWeight: 900, color: corrColor }}>{corrText}</div>
+                                <div style={{ color: "rgba(255,255,255,0.72)" }}>{winLowText}</div>
+                                <div style={{ color: "rgba(255,255,255,0.72)" }}>{winHighText}</div>
+                                <div style={{ fontWeight: 900, color: liftColor }}>{liftText}</div>
+                                <div
+                                  style={{
+                                    fontSize: 10,
+                                    fontWeight: 900,
+                                    color: "rgba(255,255,255,0.72)"
+                                  }}
+                                  title="Optimal range shown in z-score units (bottom/top 10% cutoffs)"
+                                >
+                                  {dimension.optimal}
+                                </div>
+                                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)" }}>
+                                  {minText}
+                                </div>
+                                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)" }}>
+                                  {maxText}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.55)" }}>
+                          Correlation is computed on the selected dataset (TEST set when split).
+                          Win@Low/High uses the bottom/top 10% of values (z-scores). Optimal shows
+                          which side performs better.
+                        </div>
                       </div>
-                    ))}
-                    {filteredBacktestDimensionRows.length === 0 ? (
-                      <div className="backtest-empty-inline">No dimensions match the current search.</div>
-                    ) : null}
-                  </div>
+                    </div>
+                  )}
                 </div>
               ) : null}
 
               {selectedBacktestTab === "graphs" ? (
-                <div className="backtest-grid two-up">
+                <div style={{ marginTop: 14 }}>
                   <div className="backtest-card">
-                    <div className="backtest-card-head">
-                      <div>
-                        <h3>Statistical Graphs</h3>
-                        <p>Interactive scatter view styled after the AI.zip graph module.</p>
-                      </div>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsGraphsCollapsed((current) => !current)}
+                      style={{
+                        width: "100%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        border: "none",
+                        background: "transparent",
+                        cursor: "pointer",
+                        marginBottom: 12,
+                        padding: 0
+                      }}
+                    >
+                      <h2
+                        style={{
+                          margin: 0,
+                          fontSize: 18,
+                          fontWeight: 600,
+                          color: "#f5f5f5"
+                        }}
+                      >
+                        Statistical Graphs
+                      </h2>
+                    </button>
 
-                    <div className="backtest-toolbar-row">
-                      <label className="backtest-inline-select">
-                        <span>X</span>
-                        <select
-                          value={scatterXKey}
-                          onChange={(event) =>
-                            setScatterXKey(event.target.value as BacktestScatterKey)
-                          }
+                    {!isGraphsCollapsed ? (
+                      !backtestScatterPlot.points.length ? (
+                        <div style={{ padding: "0 12px 24px", fontSize: 13, color: "#9ca3af" }}>
+                          No trades to display.
+                        </div>
+                      ) : (
+                        <div
+                          className="h-80"
+                          style={{
+                            background: "rgba(7, 12, 20, 0.72)",
+                            border: "1px solid rgba(67, 86, 124, 0.4)",
+                            borderRadius: 16
+                          }}
                         >
-                          {(["pnlUsd", "pnlPct", "holdMinutes", "units", "confidence"] as const).map(
-                            (key) => (
-                              <option key={key} value={key}>
-                                {getBacktestScatterLabel(key)}
-                              </option>
-                            )
-                          )}
-                        </select>
-                      </label>
-                      <label className="backtest-inline-select">
-                        <span>Y</span>
-                        <select
-                          value={scatterYKey}
-                          onChange={(event) =>
-                            setScatterYKey(event.target.value as BacktestScatterKey)
-                          }
-                        >
-                          {(["pnlUsd", "pnlPct", "holdMinutes", "units", "confidence"] as const).map(
-                            (key) => (
-                              <option key={key} value={key}>
-                                {getBacktestScatterLabel(key)}
-                              </option>
-                            )
-                          )}
-                        </select>
-                      </label>
-                    </div>
-
-                    <div className="backtest-scatter-wrap">
-                      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="scatter plot">
-                        <line x1="8" y1="92" x2="92" y2="92" className="backtest-axis-line" />
-                        <line x1="8" y1="8" x2="8" y2="92" className="backtest-axis-line" />
-                        <line x1="8" y1="50" x2="92" y2="50" className="backtest-grid-line" />
-                        <line x1="50" y1="8" x2="50" y2="92" className="backtest-grid-line" />
-                        {backtestScatterPlot.xZero != null ? (
-                          <line
-                            x1={backtestScatterPlot.xZero}
-                            y1="8"
-                            x2={backtestScatterPlot.xZero}
-                            y2="92"
-                            className="backtest-zero-line"
-                          />
-                        ) : null}
-                        {backtestScatterPlot.yZero != null ? (
-                          <line
-                            x1="8"
-                            y1={backtestScatterPlot.yZero}
-                            x2="92"
-                            y2={backtestScatterPlot.yZero}
-                            className="backtest-zero-line"
-                          />
-                        ) : null}
-                        {backtestScatterPlot.points.map((point) => (
-                          <circle
-                            key={point.id}
-                            cx={point.cx}
-                            cy={point.cy}
-                            r="1.8"
-                            className={`backtest-scatter-dot ${
-                              point.trade.result === "Win" ? "up" : "down"
-                            }`}
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                              marginBottom: 8,
+                              padding: "10px 12px 0",
+                              fontSize: 12,
+                              color: "#9ca3af",
+                              flexWrap: "wrap"
+                            }}
                           >
-                            <title>
-                              {`${point.trade.symbol} · ${getBacktestScatterLabel(
-                                scatterXKey
-                              )}: ${formatBacktestScatterValue(
-                                scatterXKey,
-                                point.x
-                              )} · ${getBacktestScatterLabel(
-                                scatterYKey
-                              )}: ${formatBacktestScatterValue(scatterYKey, point.y)}`}
-                            </title>
-                          </circle>
-                        ))}
-                      </svg>
-                    </div>
-
-                    <div className="backtest-map-legend">
-                      <span>X: {getBacktestScatterLabel(scatterXKey)}</span>
-                      <span>Y: {getBacktestScatterLabel(scatterYKey)}</span>
-                      <span>Green: wins</span>
-                      <span>Red: losses</span>
-                    </div>
-                  </div>
-
-                  <div className="backtest-stack">
-                    <div className="backtest-card">
-                      <div className="backtest-card-head">
-                        <div>
-                          <h3>Monthly PnL</h3>
-                          <p>Last six active months from the current data set.</p>
-                        </div>
-                      </div>
-                      <div className="backtest-bar-list">
-                        {backtestGraphData.monthBars.map((bar) => {
-                          const maxValue = Math.max(
-                            1,
-                            ...backtestGraphData.monthBars.map((item) => Math.abs(item.value))
-                          );
-
-                          return (
-                            <div key={bar.key} className="backtest-bar-row">
-                              <div className="backtest-bar-copy">
-                                <strong>{bar.label}</strong>
-                                <span>{getMonthLabel(bar.key)}</span>
-                              </div>
-                              <div className="backtest-bar-track">
-                                <div
-                                  className={`backtest-bar-fill ${bar.value >= 0 ? "up" : "down"}`}
-                                  style={{ width: `${(Math.abs(bar.value) / maxValue) * 100}%` }}
-                                />
-                              </div>
-                              <div className="backtest-bar-values">
-                                <strong className={bar.value >= 0 ? "up" : "down"}>
-                                  {formatSignedUsd(bar.value)}
-                                </strong>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div className="backtest-card compact">
-                      <div className="backtest-card-head">
-                        <div>
-                          <h3>PnL Distribution</h3>
-                          <p>Bucketed outcomes for quick tail-risk inspection.</p>
-                        </div>
-                      </div>
-                      <div className="backtest-bar-list">
-                        {backtestGraphData.buckets.map((bucket) => (
-                          <div key={bucket.label} className="backtest-bar-row compact">
-                            <div className="backtest-bar-copy">
-                              <strong>{bucket.label}</strong>
-                            </div>
-                            <div className="backtest-bar-track">
-                              <div
-                                className="backtest-bar-fill neutral"
-                                style={{
-                                  width: `${
-                                    backtestSummary.tradeCount > 0
-                                      ? (bucket.count / backtestSummary.tradeCount) * 100
-                                      : 0
-                                  }%`
-                                }}
-                              />
-                            </div>
-                            <div className="backtest-bar-values">
-                              <span>
-                                {bucket.count} / {backtestSummary.tradeCount}
-                              </span>
-                            </div>
+                            <span>X:</span>
+                            <select
+                              value={scatterXKey}
+                              onChange={(event) =>
+                                setScatterXKey(event.target.value as BacktestScatterKey)
+                              }
+                              style={{
+                                background: "rgba(90,170,255,0.15)",
+                                border: "1px solid rgba(90,170,255,0.40)",
+                                color: "rgba(90,170,255,0.90)",
+                                padding: "4px 8px",
+                                borderRadius: 8,
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                appearance: "none"
+                              }}
+                            >
+                              {BACKTEST_SCATTER_KEYS.map((key) => (
+                                <option key={key} value={key}>
+                                  {backtestScatterVarDefs[key].label}
+                                </option>
+                              ))}
+                            </select>
+                            <span>Y:</span>
+                            <select
+                              value={scatterYKey}
+                              onChange={(event) =>
+                                setScatterYKey(event.target.value as BacktestScatterKey)
+                              }
+                              style={{
+                                background: "rgba(90,170,255,0.15)",
+                                border: "1px solid rgba(90,170,255,0.40)",
+                                color: "rgba(90,170,255,0.90)",
+                                padding: "4px 8px",
+                                borderRadius: 8,
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                appearance: "none"
+                              }}
+                            >
+                              {BACKTEST_SCATTER_KEYS.map((key) => (
+                                <option key={key} value={key}>
+                                  {backtestScatterVarDefs[key].label}
+                                </option>
+                              ))}
+                            </select>
                           </div>
-                        ))}
-                      </div>
-                    </div>
+
+                          <div
+                            style={{ position: "relative", height: "calc(100% - 40px)", padding: "0 8px 10px" }}
+                            onMouseLeave={() => setHoveredScatterPointId(null)}
+                          >
+                            <svg
+                              viewBox="0 0 100 100"
+                              preserveAspectRatio="none"
+                              aria-label="scatter plot"
+                              style={{ width: "100%", height: "100%" }}
+                            >
+                              <defs>
+                                <filter id="scatterGlow" x="-50%" y="-50%" width="200%" height="200%">
+                                  <feGaussianBlur stdDeviation="0.6" result="blur" />
+                                  <feMerge>
+                                    <feMergeNode in="blur" />
+                                    <feMergeNode in="SourceGraphic" />
+                                  </feMerge>
+                                </filter>
+                              </defs>
+                              <line x1="10" y1="88" x2="92" y2="88" stroke="#4b5563" strokeWidth="0.5" />
+                              <line x1="10" y1="10" x2="10" y2="88" stroke="#4b5563" strokeWidth="0.5" />
+                              {backtestScatterPlot.xZero != null ? (
+                                <line
+                                  x1={backtestScatterPlot.xZero}
+                                  y1="10"
+                                  x2={backtestScatterPlot.xZero}
+                                  y2="88"
+                                  stroke="#6b7280"
+                                  strokeOpacity="0.35"
+                                  strokeWidth="0.45"
+                                />
+                              ) : null}
+                              {backtestScatterPlot.yZero != null ? (
+                                <line
+                                  x1="10"
+                                  y1={backtestScatterPlot.yZero}
+                                  x2="92"
+                                  y2={backtestScatterPlot.yZero}
+                                  stroke="#6b7280"
+                                  strokeOpacity="0.35"
+                                  strokeWidth="0.45"
+                                />
+                              ) : null}
+                              {backtestScatterPlot.xTicks.map((tick) => (
+                                <text
+                                  key={`x-${tick.value}`}
+                                  x={tick.position}
+                                  y="95"
+                                  fill="#9ca3af"
+                                  fontSize="2.7"
+                                  textAnchor="middle"
+                                >
+                                  {tick.label}
+                                </text>
+                              ))}
+                              {backtestScatterPlot.yTicks.map((tick) => (
+                                <text
+                                  key={`y-${tick.value}`}
+                                  x="2"
+                                  y={tick.position}
+                                  fill="#9ca3af"
+                                  fontSize="2.7"
+                                  alignmentBaseline="middle"
+                                  textAnchor="start"
+                                >
+                                  {tick.label}
+                                </text>
+                              ))}
+                              <text
+                                x="92"
+                                y="99"
+                                fill="#9ca3af"
+                                fontSize="2.8"
+                                textAnchor="end"
+                              >
+                                {backtestScatterVarDefs[scatterXKey].label}
+                              </text>
+                              <text
+                                x="1"
+                                y="6"
+                                fill="#9ca3af"
+                                fontSize="2.8"
+                                textAnchor="start"
+                              >
+                                {backtestScatterVarDefs[scatterYKey].label}
+                              </text>
+                              {backtestScatterPlot.points.map((point) => {
+                                const active = hoveredScatterPointId === point.id;
+                                const stroke = point.isWin ? "#34d399" : "#f87171";
+
+                                return (
+                                  <circle
+                                    key={point.id}
+                                    cx={point.cx}
+                                    cy={point.cy}
+                                    r={active ? 2.25 : 1.8}
+                                    fill={active ? stroke : "transparent"}
+                                    stroke={active ? "#ffffff" : stroke}
+                                    strokeWidth={active ? 0.55 : 0.42}
+                                    filter="url(#scatterGlow)"
+                                    style={{ cursor: "pointer" }}
+                                    onMouseEnter={() => setHoveredScatterPointId(point.id)}
+                                  />
+                                );
+                              })}
+                            </svg>
+
+                            {hoveredScatterPoint ? (
+                              <div
+                                style={{
+                                  position: "absolute",
+                                  left: `${clamp(hoveredScatterPoint.cx, 24, 84)}%`,
+                                  top: `${clamp(hoveredScatterPoint.cy - 5, 12, 80)}%`,
+                                  transform: "translate(-50%, -100%)",
+                                  background: "#000000",
+                                  border: "1px solid #262626",
+                                  borderRadius: 11,
+                                  padding: "8px 10px",
+                                  color: "#e5e7eb",
+                                  fontSize: 12,
+                                  minWidth: 180,
+                                  pointerEvents: "none"
+                                }}
+                              >
+                                <div style={{ fontWeight: 900, marginBottom: 6 }}>Trade</div>
+                                <div>
+                                  {backtestScatterVarDefs[scatterYKey].label}:{" "}
+                                  <b>{formatScatterTooltipValue(scatterYKey, hoveredScatterPoint.y)}</b>
+                                </div>
+                                <div>
+                                  {backtestScatterVarDefs[scatterXKey].label}:{" "}
+                                  <b>{formatScatterTooltipValue(scatterXKey, hoveredScatterPoint.x)}</b>
+                                </div>
+                                <div style={{ marginTop: 6, opacity: 0.9 }}>
+                                  {hoveredScatterPoint.trade.symbol} · {hoveredScatterPoint.trade.side}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      )
+                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -7965,146 +9733,283 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       </div>
                     </div>
 
-                    <div className="backtest-toolbar-row">
-                      <button
-                        type="button"
-                        className={`ai-zip-button pill ${
-                          propProjectionMethod === "historical" ? "active" : ""
-                        }`}
-                        onClick={() => setPropProjectionMethod("historical")}
-                      >
-                        Historical
-                      </button>
-                      <button
-                        type="button"
-                        className={`ai-zip-button pill ${
-                          propProjectionMethod === "montecarlo" ? "active" : ""
-                        }`}
-                        onClick={() => setPropProjectionMethod("montecarlo")}
-                      >
-                        Monte Carlo
-                      </button>
-                    </div>
+                    {!backtestTrades.length ? (
+                      <div className="backtest-empty-inline">No trades to display.</div>
+                    ) : (
+                      <>
+                        <div className="backtest-input-grid">
+                          <label className="backtest-input-field">
+                            <span>Initial Balance</span>
+                            <input
+                              type="number"
+                              value={propInitialBalance}
+                              onChange={(event) =>
+                                setPropInitialBalance(Number(event.target.value) || 0)
+                              }
+                            />
+                          </label>
+                          <label className="backtest-input-field">
+                            <span>Daily Max Loss</span>
+                            <input
+                              type="number"
+                              value={propDailyMaxLoss}
+                              onChange={(event) =>
+                                setPropDailyMaxLoss(Number(event.target.value) || 0)
+                              }
+                            />
+                          </label>
+                          <label className="backtest-input-field">
+                            <span>Total Max Loss</span>
+                            <input
+                              type="number"
+                              value={propTotalMaxLoss}
+                              onChange={(event) =>
+                                setPropTotalMaxLoss(Number(event.target.value) || 0)
+                              }
+                            />
+                          </label>
+                          <label className="backtest-input-field">
+                            <span>Profit Target</span>
+                            <input
+                              type="number"
+                              value={propProfitTarget}
+                              onChange={(event) =>
+                                setPropProfitTarget(Number(event.target.value) || 0)
+                              }
+                            />
+                          </label>
+                        </div>
 
-                    <div className="backtest-input-grid">
-                      <label className="backtest-input-field">
-                        <span>Initial Balance</span>
-                        <input
-                          type="number"
-                          value={propInitialBalance}
-                          onChange={(event) => setPropInitialBalance(Number(event.target.value) || 0)}
-                        />
-                      </label>
-                      <label className="backtest-input-field">
-                        <span>Daily Max Loss</span>
-                        <input
-                          type="number"
-                          value={propDailyMaxLoss}
-                          onChange={(event) => setPropDailyMaxLoss(Number(event.target.value) || 0)}
-                        />
-                      </label>
-                      <label className="backtest-input-field">
-                        <span>Total Max Loss</span>
-                        <input
-                          type="number"
-                          value={propTotalMaxLoss}
-                          onChange={(event) => setPropTotalMaxLoss(Number(event.target.value) || 0)}
-                        />
-                      </label>
-                      <label className="backtest-input-field">
-                        <span>Profit Target</span>
-                        <input
-                          type="number"
-                          value={propProfitTarget}
-                          onChange={(event) => setPropProfitTarget(Number(event.target.value) || 0)}
-                        />
-                      </label>
-                    </div>
+                        <div className="backtest-toolbar-row">
+                          <button
+                            type="button"
+                            className={`ai-zip-button pill ${
+                              propProjectionMethod === "montecarlo" ? "active" : ""
+                            }`}
+                            onClick={() => setPropProjectionMethod("montecarlo")}
+                          >
+                            Monte Carlo
+                          </button>
+                          <button
+                            type="button"
+                            className={`ai-zip-button pill ${
+                              propProjectionMethod === "historical" ? "active" : ""
+                            }`}
+                            onClick={() => setPropProjectionMethod("historical")}
+                          >
+                            Historical
+                          </button>
+                          <button type="button" className="ai-zip-button pill" onClick={runPropFirm}>
+                            Run
+                          </button>
+                        </div>
 
-                    <div className="backtest-progress-block">
-                      <div className="backtest-progress-head">
-                        <span>Challenge progress</span>
-                        <strong>{propFirmProjection.progressPct.toFixed(1)}%</strong>
-                      </div>
-                      <div className="backtest-progress-track">
-                        <div
-                          className={`backtest-progress-fill ${
-                            propFirmProjection.status === "Failed"
-                              ? "down"
-                              : propFirmProjection.status === "Passed"
-                                ? "up"
-                                : "neutral"
-                          }`}
-                          style={{ width: `${propFirmProjection.progressPct}%` }}
-                        />
-                      </div>
-                    </div>
+                        {propResult ? (
+                          <>
+                            <div className="backtest-progress-block">
+                              <div className="backtest-progress-head">
+                                <span>Probability of passing</span>
+                                <strong className={propResult.probability >= 0.5 ? "up" : "down"}>
+                                  {(propResult.probability * 100).toFixed(1)}%
+                                </strong>
+                              </div>
+                              <div className="backtest-progress-track">
+                                <div
+                                  className={`backtest-progress-fill ${
+                                    propResult.probability >= 0.5 ? "up" : "down"
+                                  }`}
+                                  style={{
+                                    width: `${clamp(propResult.probability * 100, 0, 100)}%`
+                                  }}
+                                />
+                              </div>
+                            </div>
+
+                            {propStats ? (
+                              <div className="backtest-stat-list">
+                                <div className="backtest-stat-row">
+                                  <span>Avg trades to pass</span>
+                                  <strong>{propStats.avgTradesPass.toFixed(1)}</strong>
+                                </div>
+                                {propProjectionMethod !== "montecarlo" ? (
+                                  <div className="backtest-stat-row">
+                                    <span>Avg time to pass</span>
+                                    <strong>{formatPropFirmDuration(propStats.avgTimePass)}</strong>
+                                  </div>
+                                ) : null}
+                                <div className="backtest-stat-row">
+                                  <span>Avg trades to fail</span>
+                                  <strong>{propStats.avgTradesFail.toFixed(1)}</strong>
+                                </div>
+                                {propProjectionMethod !== "montecarlo" ? (
+                                  <div className="backtest-stat-row">
+                                    <span>Avg time to fail</span>
+                                    <strong>{formatPropFirmDuration(propStats.avgTimeFail)}</strong>
+                                  </div>
+                                ) : null}
+                                <div className="backtest-stat-row">
+                                  <span>Pass simulations</span>
+                                  <strong className="up">{propStats.passCount.toLocaleString()}</strong>
+                                </div>
+                                <div className="backtest-stat-row">
+                                  <span>Fail simulations</span>
+                                  <strong className="down">{propStats.failCount.toLocaleString()}</strong>
+                                </div>
+                                <div className="backtest-stat-row">
+                                  <span>Incomplete simulations</span>
+                                  <strong>{propStats.incompleteCount.toLocaleString()}</strong>
+                                </div>
+                                <div className="backtest-stat-row">
+                                  <span>Total simulations</span>
+                                  <strong>{propStats.totalSimulations.toLocaleString()}</strong>
+                                </div>
+                                <div className="backtest-stat-row">
+                                  <span>Incomplete %</span>
+                                  <strong>
+                                    {(
+                                      (propStats.incompleteCount /
+                                        Math.max(propStats.totalSimulations, 1)) *
+                                      100
+                                    ).toFixed(1)}
+                                    %
+                                  </strong>
+                                </div>
+                                <div className="backtest-stat-row">
+                                  <span>Avg win rate (passes)</span>
+                                  <strong
+                                    className={propStats.avgWinRatePass >= 0.5 ? "up" : "down"}
+                                  >
+                                    {(propStats.avgWinRatePass * 100).toFixed(1)}%
+                                  </strong>
+                                </div>
+                                <div className="backtest-stat-row">
+                                  <span>Avg win rate (fails)</span>
+                                  <strong
+                                    className={propStats.avgWinRateFail >= 0.5 ? "up" : "down"}
+                                  >
+                                    {(propStats.avgWinRateFail * 100).toFixed(1)}%
+                                  </strong>
+                                </div>
+                                <div className="backtest-stat-row">
+                                  <span>Avg win rate (overall)</span>
+                                  <strong
+                                    className={propStats.avgWinRateOverall >= 0.5 ? "up" : "down"}
+                                  >
+                                    {(propStats.avgWinRateOverall * 100).toFixed(1)}%
+                                  </strong>
+                                </div>
+                              </div>
+                            ) : null}
+                          </>
+                        ) : null}
+                      </>
+                    )}
                   </div>
 
                   <div className="backtest-stack">
-                    <div className="backtest-card compact">
-                      <div className="backtest-card-head">
-                        <div>
-                          <h3>{propFirmProjection.status}</h3>
-                          <p>
-                            {propFirmProjection.reason} ·{" "}
-                            {propProjectionMethod === "historical"
-                              ? "Historical order"
-                              : "Deterministic Monte Carlo path"}
-                          </p>
+                    {propResult && propHistogramBars.length > 0 ? (
+                      <div className="backtest-card compact">
+                        <div className="backtest-card-head">
+                          <div>
+                            <h3>Outcome Distribution</h3>
+                            <p>Simulated ending P/L distribution under current limits.</p>
+                          </div>
                         </div>
-                      </div>
-                      <div className="backtest-stat-list">
-                        <div className="backtest-stat-row">
-                          <span>Final balance</span>
-                          <strong
-                            className={
-                              propFirmProjection.finalBalance >= propInitialBalance ? "up" : "down"
-                            }
+                        <div className="backtest-graph-wrap short">
+                          <svg
+                            viewBox="0 0 100 34"
+                            preserveAspectRatio="none"
+                            aria-label="Prop firm distribution histogram"
                           >
-                            ${formatUsd(propFirmProjection.finalBalance)}
-                          </strong>
-                        </div>
-                        <div className="backtest-stat-row">
-                          <span>Target balance</span>
-                          <strong>${formatUsd(propFirmProjection.targetBalance)}</strong>
-                        </div>
-                        <div className="backtest-stat-row">
-                          <span>Remaining</span>
-                          <strong>${formatUsd(propFirmProjection.remaining)}</strong>
-                        </div>
-                        <div className="backtest-stat-row">
-                          <span>Worst drawdown</span>
-                          <strong className={propFirmProjection.worstDrawdown >= 0 ? "up" : "down"}>
-                            {formatSignedUsd(propFirmProjection.worstDrawdown)}
-                          </strong>
-                        </div>
-                        <div className="backtest-stat-row">
-                          <span>Trading days</span>
-                          <strong>{propFirmProjection.tradingDays}</strong>
+                            <line x1="4" y1="32" x2="96" y2="32" className="backtest-grid-line" />
+                            {propHistogramBars.map((bar, index) => (
+                              <rect
+                                key={`prop-hist-${index}`}
+                                x={bar.x}
+                                y={bar.y}
+                                width={bar.width}
+                                height={bar.height}
+                                rx="0.6"
+                                fill={
+                                  bar.bin >= 0 ? "rgba(52, 211, 153, 0.88)" : "rgba(248, 113, 113, 0.88)"
+                                }
+                              />
+                            ))}
+                          </svg>
                         </div>
                       </div>
-                    </div>
+                    ) : null}
 
-                    <div className="backtest-card compact">
-                      <div className="backtest-card-head">
-                        <div>
-                          <h3>Balance Path</h3>
-                          <p>Historical sequence under the current limits.</p>
+                    {propLineChart && propLineChart.paths.length > 0 ? (
+                      <div className="backtest-card compact">
+                        <div className="backtest-card-head">
+                          <div>
+                            <h3>Random Progress Runs</h3>
+                            <p>
+                              {propProjectionMethod === "montecarlo"
+                                ? "Monte Carlo sample paths."
+                                : "Historical start-date sample path."}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="backtest-graph-wrap short">
+                          <svg
+                            viewBox="0 0 100 40"
+                            preserveAspectRatio="none"
+                            aria-label="Prop firm simulation progress"
+                          >
+                            <line x1="4" y1="36" x2="96" y2="36" className="backtest-grid-line" />
+                            <line
+                              x1="4"
+                              y1={propLineChart.targetLineY}
+                              x2="96"
+                              y2={propLineChart.targetLineY}
+                              style={{
+                                stroke: "rgba(52, 211, 153, 0.92)",
+                                strokeDasharray: "1.8 1.4",
+                                strokeWidth: 0.8
+                              }}
+                            />
+                            <line
+                              x1="4"
+                              y1={propLineChart.totalLossLineY}
+                              x2="96"
+                              y2={propLineChart.totalLossLineY}
+                              style={{
+                                stroke: "rgba(248, 113, 113, 0.92)",
+                                strokeDasharray: "1.8 1.4",
+                                strokeWidth: 0.8
+                              }}
+                            />
+                            {propLineChart.dailyLossPath ? (
+                              <path
+                                d={propLineChart.dailyLossPath}
+                                style={{
+                                  fill: "none",
+                                  stroke: "rgba(248, 113, 113, 0.86)",
+                                  strokeDasharray: "1.1 1.1",
+                                  strokeWidth: 0.9
+                                }}
+                              />
+                            ) : null}
+                            {propLineChart.paths.map((line, index) => (
+                              <path
+                                key={`prop-line-${index}`}
+                                d={line.path}
+                                style={{
+                                  fill: "none",
+                                  stroke: line.color,
+                                  strokeWidth: index === 0 ? 1.45 : 0.95,
+                                  opacity: index === 0 ? 1 : 0.8,
+                                  strokeLinecap: "round",
+                                  strokeLinejoin: "round"
+                                }}
+                              />
+                            ))}
+                          </svg>
                         </div>
                       </div>
-                      <div className="backtest-graph-wrap short">
-                        <svg viewBox="0 0 100 32" preserveAspectRatio="none" aria-label="balance path">
-                          <line x1="0" y1="31" x2="100" y2="31" className="backtest-grid-line" />
-                          <path
-                            d={propFirmProjection.balancePath}
-                            className={`backtest-line-path ${
-                              propFirmProjection.finalBalance >= propInitialBalance ? "up" : "down"
-                            }`}
-                          />
-                        </svg>
-                      </div>
-                    </div>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
