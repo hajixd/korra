@@ -668,7 +668,6 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Window (trades)",
         type: "number",
         min: 50,
-        max: 200000,
         step: 50,
         help: "How many most-recent trades are eligible."
       },
@@ -8727,6 +8726,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     });
   }, [visibleBacktestDateKeys]);
 
+  const statsRefreshSecondsRemaining = Math.max(
+    0,
+    ((100 - clamp(statsRefreshProgress, 0, 100)) / 100) * (STATS_REFRESH_HOLD_MS / 1000)
+  );
+
   return (
     <main className="terminal">
       <nav className="surface-strip" aria-label="primary views">
@@ -12687,23 +12691,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       {statsRefreshOverlayVisible ? (
         <div className="stats-refresh-overlay" aria-live="polite" aria-atomic="true">
           <div className="stats-refresh-card">
-            <span className="stats-refresh-kicker">
-              {statsRefreshProgress >= 100 ? "Refreshing" : "Hold Control"}
-            </span>
-            <strong className="stats-refresh-title">
-              {statsRefreshProgress >= 100
-                ? "Syncing Main Statistics to the latest settings"
-                : `Hold Control for ${Math.round(
-                    STATS_REFRESH_HOLD_MS / 1000
-                  )} seconds to start refreshing the current stats snapshot`}
-            </strong>
-            <div className="stats-refresh-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(statsRefreshProgress)}>
-              <div
-                className="stats-refresh-fill"
-                style={{ width: `${statsRefreshProgress}%` }}
-              />
-            </div>
-            <span className="stats-refresh-meta">{Math.round(statsRefreshProgress)}%</span>
+            {statsRefreshProgress >= 100
+              ? "Refreshing Main Statistics..."
+              : `Hold CTRL · Full update in ${statsRefreshSecondsRemaining.toFixed(1)}s`}
           </div>
         </div>
       ) : null}

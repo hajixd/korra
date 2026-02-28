@@ -3334,7 +3334,6 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Window (trades)",
         type: "number",
         min: 50,
-        max: 200000,
         step: 50,
         help: "How many most-recent trades are eligible.",
       },
