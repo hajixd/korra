@@ -37,8 +37,42 @@ button {
 .terminal {
   min-height: 100vh;
   display: grid;
-  grid-template-rows: 50px 1fr 28px;
+  grid-template-rows: 42px 50px 1fr 28px;
   background: linear-gradient(180deg, #080b10, #080b10);
+}
+
+.surface-strip {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0 0.85rem;
+  border-bottom: 1px solid var(--line);
+  background: #0a0f16;
+}
+
+.surface-tab {
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  padding: 0 0.8rem;
+  font-size: 0.73rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: inset 0 -2px 0 transparent;
+}
+
+.surface-tab:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.surface-tab.active {
+  color: #e1e7f2;
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .topbar {
@@ -297,6 +331,35 @@ button {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 350px;
   position: relative;
+}
+
+.surface-stage {
+  min-height: 0;
+  position: relative;
+}
+
+.surface-view {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+}
+
+.surface-view.hidden,
+.backtest-surface.hidden {
+  display: none;
+}
+
+.surface-view .workspace {
+  flex: 1 1 auto;
+  height: 100%;
+}
+
+.backtest-surface {
+  min-height: 0;
+  height: 100%;
+  background:
+    radial-gradient(circle at top left, rgba(45, 108, 255, 0.08), transparent 38%),
+    linear-gradient(180deg, #090d13 0%, #080b10 100%);
 }
 
 .workspace.panel-collapsed {
@@ -953,7 +1016,11 @@ button {
   }
 
   .terminal {
-    grid-template-rows: auto 1fr 26px;
+    grid-template-rows: auto auto 1fr 26px;
+  }
+
+  .surface-strip {
+    padding: 0 0.65rem;
   }
 
   .topbar {

@@ -16,6 +16,7 @@ import {
 } from "lightweight-charts";
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
+type SurfaceTab = "chart" | "backtest";
 type PanelTab = "active" | "assets" | "models" | "history" | "actions" | "ai";
 
 type FutureAsset = {
@@ -275,14 +276,19 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
   { id: "ai", label: "AI" }
 ];
 
+const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
+  { id: "chart", label: "Chart" },
+  { id: "backtest", label: "Backtest" }
+];
+
 const candleHistoryCountByTimeframe: Record<Timeframe, number> = {
   "1m": 25000,
-  "5m": 25000,
-  "15m": 25000,
-  "1H": 25000,
-  "4H": 25000,
-  "1D": 25000,
-  "1W": 5000
+  "5m": 12000,
+  "15m": 8000,
+  "1H": 3000,
+  "4H": 1500,
+  "1D": 700,
+  "1W": 180
 };
 
 const symbolTimeframeKey = (symbol: string, timeframe: Timeframe) => {
@@ -860,6 +866,7 @@ export default function TradingTerminal() {
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
   const [selectedModelId, setSelectedModelId] = useState(modelProfiles[0].id);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
+  const [selectedSurfaceTab, setSelectedSurfaceTab] = useState<SurfaceTab>("chart");
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("active");
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
@@ -1821,7 +1828,7 @@ export default function TradingTerminal() {
     const chart = chartRef.current;
     const container = chartContainerRef.current;
 
-    if (!chart || !container) {
+    if (!chart || !container || selectedSurfaceTab !== "chart") {
       return;
     }
 
@@ -1835,7 +1842,7 @@ export default function TradingTerminal() {
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [panelExpanded, activePanelTab]);
+  }, [panelExpanded, activePanelTab, selectedSurfaceTab]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -2209,6 +2216,19 @@ export default function TradingTerminal() {
 
   return (
     <main className="terminal">
+      <nav className="surface-strip" aria-label="primary views">
+        {surfaceTabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={`surface-tab ${selectedSurfaceTab === tab.id ? "active" : ""}`}
+            onClick={() => setSelectedSurfaceTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+
       <header className="topbar">
         <div className="brand-area">
           <div className="asset-meta">
@@ -2299,389 +2319,407 @@ export default function TradingTerminal() {
         </div>
       </header>
 
-      <section className={`workspace ${panelExpanded ? "" : "panel-collapsed"}`}>
-        <section className="chart-wrap">
-          <div className="chart-toolbar">
-            {hoveredCandle ? (
-              <>
+      <section className="surface-stage">
+        <div className={`surface-view ${selectedSurfaceTab === "chart" ? "" : "hidden"}`}>
+          <section className={`workspace ${panelExpanded ? "" : "panel-collapsed"}`}>
+            <section className="chart-wrap">
+              <div className="chart-toolbar">
+                {hoveredCandle ? (
+                  <>
+                    <span>
+                      O <strong>{formatPrice(hoveredCandle.open)}</strong>
+                    </span>
+                    <span>
+                      H <strong>{formatPrice(hoveredCandle.high)}</strong>
+                    </span>
+                    <span>
+                      L <strong>{formatPrice(hoveredCandle.low)}</strong>
+                    </span>
+                    <span>
+                      C <strong>{formatPrice(hoveredCandle.close)}</strong>
+                    </span>
+                    <span className={hoveredChange >= 0 ? "up" : "down"}>
+                      {hoveredChange >= 0 ? "+" : ""}
+                      {hoveredChange.toFixed(2)}%
+                    </span>
+                  </>
+                ) : (
+                  <span>No market data loaded</span>
+                )}
                 <span>
-                  O <strong>{formatPrice(hoveredCandle.open)}</strong>
+                  Type <strong>{selectedAsset.funding}</strong>
                 </span>
                 <span>
-                  H <strong>{formatPrice(hoveredCandle.high)}</strong>
+                  Feed <strong>{selectedAsset.openInterest}</strong>
                 </span>
-                <span>
-                  L <strong>{formatPrice(hoveredCandle.low)}</strong>
-                </span>
-                <span>
-                  C <strong>{formatPrice(hoveredCandle.close)}</strong>
-                </span>
-                <span className={hoveredChange >= 0 ? "up" : "down"}>
-                  {hoveredChange >= 0 ? "+" : ""}
-                  {hoveredChange.toFixed(2)}%
-                </span>
-              </>
-            ) : (
-              <span>No market data loaded</span>
-            )}
-            <span>
-              Type <strong>{selectedAsset.funding}</strong>
-            </span>
-            <span>
-              Feed <strong>{selectedAsset.openInterest}</strong>
-            </span>
-            <span className="chart-hint">Scroll: zoom | Drag: pan | Opt+R: latest</span>
-          </div>
-          <div className="chart-stage">
-            <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
-          </div>
-        </section>
+                <span className="chart-hint">Scroll: zoom | Drag: pan | Opt+R: latest</span>
+              </div>
+              <div className="chart-stage">
+                <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
+              </div>
+            </section>
 
-        <aside className={`side-panel ${panelExpanded ? "expanded" : "collapsed"}`}>
-          <nav className="panel-rail" aria-label="sidebar tabs">
-            {sidebarTabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                className={`rail-btn ${activePanelTab === tab.id ? "active" : ""}`}
-                onClick={() => {
-                  if (panelExpanded && activePanelTab === tab.id) {
-                    setPanelExpanded(false);
-                    return;
-                  }
+            <aside className={`side-panel ${panelExpanded ? "expanded" : "collapsed"}`}>
+              <nav className="panel-rail" aria-label="sidebar tabs">
+                {sidebarTabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={`rail-btn ${activePanelTab === tab.id ? "active" : ""}`}
+                    onClick={() => {
+                      if (panelExpanded && activePanelTab === tab.id) {
+                        setPanelExpanded(false);
+                        return;
+                      }
 
-                  setActivePanelTab(tab.id);
-                  setPanelExpanded(true);
-                }}
-                title={tab.label}
-                aria-label={tab.label}
-              >
-                <TabIcon tab={tab.id} />
-              </button>
-            ))}
-          </nav>
+                      setActivePanelTab(tab.id);
+                      setPanelExpanded(true);
+                    }}
+                    title={tab.label}
+                    aria-label={tab.label}
+                  >
+                    <TabIcon tab={tab.id} />
+                  </button>
+                ))}
+              </nav>
 
-          {panelExpanded ? (
-            <div className="panel-content">
-              {activePanelTab === "active" ? (
-                <div className="tab-view active-tab">
-                  <div className="watchlist-head with-action">
-                    <div>
-                      <h2>Active Trade</h2>
-                      <p>Current open position · {selectedModel.name}</p>
-                    </div>
-                    <button
-                      type="button"
-                      className="panel-action-btn"
-                      disabled={!activeTrade}
-                      onClick={() => {
-                        if (!activeTrade) {
-                          return;
-                        }
-
-                        setSelectedSymbol(activeTrade.symbol);
-                        setShowAllTradesOnChart(false);
-                        setShowActiveTradeOnChart((current) => !current);
-                        setSelectedHistoryId(null);
-                        focusTradeIdRef.current = null;
-                      }}
-                    >
-                      {showActiveTradeOnChart ? "Hide On Chart" : "Show On Chart"}
-                    </button>
-                  </div>
-
-                  {activeTrade ? (
-                    <div className="active-card">
-                      <div className="active-card-top">
+              {panelExpanded ? (
+                <div className="panel-content">
+                  {activePanelTab === "active" ? (
+                    <div className="tab-view active-tab">
+                      <div className="watchlist-head with-action">
                         <div>
-                          <span
-                            className={`active-side ${
-                              activeTrade.side === "Long" ? "up" : "down"
-                            }`}
-                          >
-                            {activeTrade.side}
-                          </span>
-                          <h3>{activeTrade.symbol}</h3>
+                          <h2>Active Trade</h2>
+                          <p>Current open position · {selectedModel.name}</p>
                         </div>
-                        <span className="active-live-tag">Live</span>
-                      </div>
-
-                      <div className="active-pnl">
-                        <span>Unrealized PnL</span>
-                        <strong className={activeTrade.pnlValue >= 0 ? "up" : "down"}>
-                          {activeTrade.pnlValue >= 0 ? "+" : "-"}${formatUsd(Math.abs(activeTrade.pnlValue))}
-                        </strong>
-                        <small className={activeTrade.pnlPct >= 0 ? "up" : "down"}>
-                          {activeTrade.pnlPct >= 0 ? "+" : ""}
-                          {activeTrade.pnlPct.toFixed(2)}%
-                        </small>
-                      </div>
-
-                      <div className="active-metrics-grid">
-                        <div className="active-metric">
-                          <span>Entry</span>
-                          <strong>{formatPrice(activeTrade.entryPrice)}</strong>
-                        </div>
-                        <div className="active-metric">
-                          <span>Mark</span>
-                          <strong>{formatPrice(activeTrade.markPrice)}</strong>
-                        </div>
-                        <div className="active-metric">
-                          <span>TP</span>
-                          <strong className="up">{formatPrice(activeTrade.targetPrice)}</strong>
-                        </div>
-                        <div className="active-metric">
-                          <span>SL</span>
-                          <strong className="down">{formatPrice(activeTrade.stopPrice)}</strong>
-                        </div>
-                        <div className="active-metric">
-                          <span>Size</span>
-                          <strong>{formatUnits(activeTrade.units)} units</strong>
-                        </div>
-                        <div className="active-metric">
-                          <span>R:R</span>
-                          <strong>1:{activeTrade.rr.toFixed(2)}</strong>
-                        </div>
-                        <div className="active-metric">
-                          <span>Opened</span>
-                          <strong>{activeTrade.openedAtLabel}</strong>
-                        </div>
-                        <div className="active-metric">
-                          <span>Duration</span>
-                          <strong>{activeTrade.elapsed}</strong>
-                        </div>
-                      </div>
-
-                      <div className="active-progress">
-                        <div className="active-progress-head">
-                          <span>Progress To TP</span>
-                          <span>{activeTrade.progressPct.toFixed(1)}%</span>
-                        </div>
-                        <div className="active-progress-track">
-                          <div
-                            className="active-progress-fill"
-                            style={{ width: `${activeTrade.progressPct}%` }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="ai-placeholder">
-                      <p>No active trade data yet.</p>
-                    </div>
-                  )}
-                </div>
-              ) : null}
-
-              {activePanelTab === "assets" ? (
-                <div className="tab-view">
-                  <div className="watchlist-head">
-                    <div>
-                      <h2>XAUUSD</h2>
-                      <p>OANDA history + market live feed</p>
-                    </div>
-                  </div>
-
-                  <ul className="watchlist-body">
-                    <li className="watchlist-labels" aria-hidden>
-                      <span>Symbol</span>
-                      <span>Last</span>
-                      <span>Chg%</span>
-                    </li>
-                    {watchlistRows.map((row) => (
-                      <li key={row.symbol}>
                         <button
                           type="button"
-                          className={`watchlist-row ${
-                            row.symbol === selectedSymbol ? "selected" : ""
-                          }`}
-                          onClick={() => setSelectedSymbol(row.symbol)}
-                        >
-                          <span className="symbol-col">
-                            <span>{row.symbol}</span>
-                            <small>{row.name}</small>
-                          </span>
-
-                          <span className="num-col">
-                            {row.lastPrice === null ? "N/A" : formatPrice(row.lastPrice)}
-                          </span>
-                          <span
-                            className={`num-col ${
-                              row.change === null ? "" : row.change >= 0 ? "up" : "down"
-                            }`}
-                          >
-                            {row.change === null ? "N/A" : `${row.change >= 0 ? "+" : ""}${row.change.toFixed(2)}`}
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-
-              {activePanelTab === "models" ? (
-                <div className="tab-view">
-                  <div className="watchlist-head">
-                    <div>
-                      <h2>Models / People</h2>
-                      <p>Select one profile to drive history and actions</p>
-                    </div>
-                  </div>
-                  <ul className="model-list">
-                    {modelProfiles.map((model) => {
-                      const selected = model.id === selectedModelId;
-
-                      return (
-                        <li key={model.id}>
-                          <button
-                            type="button"
-                            className={`model-row ${selected ? "selected" : ""}`}
-                            onClick={() => setSelectedModelId(model.id)}
-                          >
-                            <span className="model-main">
-                              <span className="model-name">{model.name}</span>
-                              <span className="model-kind">{model.kind}</span>
-                            </span>
-                            {model.accountNumber ? (
-                              <span className="model-account">
-                                Korra Account #{model.accountNumber}
-                              </span>
-                            ) : null}
-                            <span className="model-state">{selected ? "Selected" : "Select"}</span>
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              ) : null}
-
-              {activePanelTab === "history" ? (
-                <div className="tab-view">
-                  <div className="watchlist-head with-action">
-                    <div>
-                      <h2>History</h2>
-                      <p>Simulated trade outcomes · {selectedModel.name}</p>
-                    </div>
-                    <button
-                      type="button"
-                      className="panel-action-btn"
-                      onClick={() => {
-                        const next = !showAllTradesOnChart;
-                        setShowAllTradesOnChart(next);
-                        setShowActiveTradeOnChart(false);
-                        focusTradeIdRef.current = null;
-
-                        if (next) {
-                          setSelectedHistoryId(null);
-                        }
-                      }}
-                    >
-                      {showAllTradesOnChart ? "Hide All On Chart" : "Show All On Chart"}
-                    </button>
-                  </div>
-                  <ul className="history-list">
-                    {historyRows.map((item) => (
-                      <li key={item.id}>
-                        <button
-                          type="button"
-                          className={`history-row ${
-                            selectedHistoryId === item.id ? "selected" : ""
-                          }`}
+                          className="panel-action-btn"
+                          disabled={!activeTrade}
                           onClick={() => {
-                            focusTradeIdRef.current = item.id;
-                            setSelectedHistoryId(item.id);
-                            setSelectedSymbol(item.symbol);
+                            if (!activeTrade) {
+                              return;
+                            }
+
+                            setSelectedSymbol(activeTrade.symbol);
                             setShowAllTradesOnChart(false);
-                            setShowActiveTradeOnChart(false);
+                            setShowActiveTradeOnChart((current) => !current);
+                            setSelectedHistoryId(null);
+                            focusTradeIdRef.current = null;
                           }}
                         >
-                          <span className="history-info">
-                            <span className="history-main">
+                          {showActiveTradeOnChart ? "Hide On Chart" : "Show On Chart"}
+                        </button>
+                      </div>
+
+                      {activeTrade ? (
+                        <div className="active-card">
+                          <div className="active-card-top">
+                            <div>
                               <span
-                                className={`history-action ${
-                                  item.pnlUsd < 0 ? "down" : "up"
+                                className={`active-side ${
+                                  activeTrade.side === "Long" ? "up" : "down"
                                 }`}
                               >
-                                {formatSignedUsd(item.pnlUsd)}
+                                {activeTrade.side}
                               </span>
-                              <span className="history-symbol">{item.symbol}</span>
-                            </span>
-                            <span className="history-levels">
-                              {item.side === "Long" ? "Buy" : "Sell"} {formatPrice(item.entryPrice)} | TP{" "}
-                              {formatPrice(item.targetPrice)} | SL {formatPrice(item.stopPrice)}
-                            </span>
-                          </span>
-                          <span className="history-meta">
-                            <span className={item.pnlPct < 0 ? "down" : "up"}>
-                              {item.pnlPct >= 0 ? "+" : ""}
-                              {item.pnlPct.toFixed(2)}%
-                            </span>
-                            <span>{item.time}</span>
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
+                              <h3>{activeTrade.symbol}</h3>
+                            </div>
+                            <span className="active-live-tag">Live</span>
+                          </div>
 
-              {activePanelTab === "actions" ? (
-                <div className="tab-view">
-                  <div className="watchlist-head">
-                    <div>
-                      <h2>Action</h2>
-                      <p>Entry, SL, TP, and exits · {selectedModel.name}</p>
+                          <div className="active-pnl">
+                            <span>Unrealized PnL</span>
+                            <strong className={activeTrade.pnlValue >= 0 ? "up" : "down"}>
+                              {activeTrade.pnlValue >= 0 ? "+" : "-"}$
+                              {formatUsd(Math.abs(activeTrade.pnlValue))}
+                            </strong>
+                            <small className={activeTrade.pnlPct >= 0 ? "up" : "down"}>
+                              {activeTrade.pnlPct >= 0 ? "+" : ""}
+                              {activeTrade.pnlPct.toFixed(2)}%
+                            </small>
+                          </div>
+
+                          <div className="active-metrics-grid">
+                            <div className="active-metric">
+                              <span>Entry</span>
+                              <strong>{formatPrice(activeTrade.entryPrice)}</strong>
+                            </div>
+                            <div className="active-metric">
+                              <span>Mark</span>
+                              <strong>{formatPrice(activeTrade.markPrice)}</strong>
+                            </div>
+                            <div className="active-metric">
+                              <span>TP</span>
+                              <strong className="up">{formatPrice(activeTrade.targetPrice)}</strong>
+                            </div>
+                            <div className="active-metric">
+                              <span>SL</span>
+                              <strong className="down">{formatPrice(activeTrade.stopPrice)}</strong>
+                            </div>
+                            <div className="active-metric">
+                              <span>Size</span>
+                              <strong>{formatUnits(activeTrade.units)} units</strong>
+                            </div>
+                            <div className="active-metric">
+                              <span>R:R</span>
+                              <strong>1:{activeTrade.rr.toFixed(2)}</strong>
+                            </div>
+                            <div className="active-metric">
+                              <span>Opened</span>
+                              <strong>{activeTrade.openedAtLabel}</strong>
+                            </div>
+                            <div className="active-metric">
+                              <span>Duration</span>
+                              <strong>{activeTrade.elapsed}</strong>
+                            </div>
+                          </div>
+
+                          <div className="active-progress">
+                            <div className="active-progress-head">
+                              <span>Progress To TP</span>
+                              <span>{activeTrade.progressPct.toFixed(1)}%</span>
+                            </div>
+                            <div className="active-progress-track">
+                              <div
+                                className="active-progress-fill"
+                                style={{ width: `${activeTrade.progressPct}%` }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="ai-placeholder">
+                          <p>No active trade data yet.</p>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                  <ul className="history-list">
-                    {actionRows.map((action) => (
-                      <li key={action.id}>
+                  ) : null}
+
+                  {activePanelTab === "assets" ? (
+                    <div className="tab-view">
+                      <div className="watchlist-head">
+                        <div>
+                          <h2>XAUUSD</h2>
+                          <p>OANDA history + market live feed</p>
+                        </div>
+                      </div>
+
+                      <ul className="watchlist-body">
+                        <li className="watchlist-labels" aria-hidden>
+                          <span>Symbol</span>
+                          <span>Last</span>
+                          <span>Chg%</span>
+                        </li>
+                        {watchlistRows.map((row) => (
+                          <li key={row.symbol}>
+                            <button
+                              type="button"
+                              className={`watchlist-row ${
+                                row.symbol === selectedSymbol ? "selected" : ""
+                              }`}
+                              onClick={() => setSelectedSymbol(row.symbol)}
+                            >
+                              <span className="symbol-col">
+                                <span>{row.symbol}</span>
+                                <small>{row.name}</small>
+                              </span>
+
+                              <span className="num-col">
+                                {row.lastPrice === null ? "N/A" : formatPrice(row.lastPrice)}
+                              </span>
+                              <span
+                                className={`num-col ${
+                                  row.change === null ? "" : row.change >= 0 ? "up" : "down"
+                                }`}
+                              >
+                                {row.change === null
+                                  ? "N/A"
+                                  : `${row.change >= 0 ? "+" : ""}${row.change.toFixed(2)}`}
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {activePanelTab === "models" ? (
+                    <div className="tab-view">
+                      <div className="watchlist-head">
+                        <div>
+                          <h2>Models / People</h2>
+                          <p>Select one profile to drive history and actions</p>
+                        </div>
+                      </div>
+                      <ul className="model-list">
+                        {modelProfiles.map((model) => {
+                          const selected = model.id === selectedModelId;
+
+                          return (
+                            <li key={model.id}>
+                              <button
+                                type="button"
+                                className={`model-row ${selected ? "selected" : ""}`}
+                                onClick={() => setSelectedModelId(model.id)}
+                              >
+                                <span className="model-main">
+                                  <span className="model-name">{model.name}</span>
+                                  <span className="model-kind">{model.kind}</span>
+                                </span>
+                                {model.accountNumber ? (
+                                  <span className="model-account">
+                                    Korra Account #{model.accountNumber}
+                                  </span>
+                                ) : null}
+                                <span className="model-state">
+                                  {selected ? "Selected" : "Select"}
+                                </span>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {activePanelTab === "history" ? (
+                    <div className="tab-view">
+                      <div className="watchlist-head with-action">
+                        <div>
+                          <h2>History</h2>
+                          <p>Simulated trade outcomes · {selectedModel.name}</p>
+                        </div>
                         <button
                           type="button"
-                          className={`history-row ${selectedHistoryId === action.tradeId ? "selected" : ""}`}
+                          className="panel-action-btn"
                           onClick={() => {
-                            focusTradeIdRef.current = action.tradeId;
-                            setSelectedHistoryId(action.tradeId);
-                            setSelectedSymbol(action.symbol);
-                            setShowAllTradesOnChart(false);
+                            const next = !showAllTradesOnChart;
+                            setShowAllTradesOnChart(next);
                             setShowActiveTradeOnChart(false);
+                            focusTradeIdRef.current = null;
+
+                            if (next) {
+                              setSelectedHistoryId(null);
+                            }
                           }}
                         >
-                          <span className="history-info">
-                            <span className="history-main">
-                              <span className="history-action">{action.label}</span>
-                              <span className="history-symbol">{action.symbol}</span>
-                            </span>
-                            <span className="history-levels">{action.details}</span>
-                          </span>
-                          <span className="history-meta">
-                            <span>{action.time}</span>
-                          </span>
+                          {showAllTradesOnChart ? "Hide All On Chart" : "Show All On Chart"}
                         </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-
-              {activePanelTab === "ai" ? (
-                <div className="tab-view ai-tab">
-                  <div className="watchlist-head">
-                    <div>
-                      <h2>AI</h2>
-                      <p>Assistant module</p>
+                      </div>
+                      <ul className="history-list">
+                        {historyRows.map((item) => (
+                          <li key={item.id}>
+                            <button
+                              type="button"
+                              className={`history-row ${
+                                selectedHistoryId === item.id ? "selected" : ""
+                              }`}
+                              onClick={() => {
+                                focusTradeIdRef.current = item.id;
+                                setSelectedHistoryId(item.id);
+                                setSelectedSymbol(item.symbol);
+                                setShowAllTradesOnChart(false);
+                                setShowActiveTradeOnChart(false);
+                              }}
+                            >
+                              <span className="history-info">
+                                <span className="history-main">
+                                  <span
+                                    className={`history-action ${
+                                      item.pnlUsd < 0 ? "down" : "up"
+                                    }`}
+                                  >
+                                    {formatSignedUsd(item.pnlUsd)}
+                                  </span>
+                                  <span className="history-symbol">{item.symbol}</span>
+                                </span>
+                                <span className="history-levels">
+                                  {item.side === "Long" ? "Buy" : "Sell"}{" "}
+                                  {formatPrice(item.entryPrice)} | TP{" "}
+                                  {formatPrice(item.targetPrice)} | SL{" "}
+                                  {formatPrice(item.stopPrice)}
+                                </span>
+                              </span>
+                              <span className="history-meta">
+                                <span className={item.pnlPct < 0 ? "down" : "up"}>
+                                  {item.pnlPct >= 0 ? "+" : ""}
+                                  {item.pnlPct.toFixed(2)}%
+                                </span>
+                                <span>{item.time}</span>
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
-                  </div>
-                  <div className="ai-placeholder">
-                    <p>AI panel is reserved for upcoming features.</p>
-                    <p>No actions are connected yet.</p>
-                  </div>
+                  ) : null}
+
+                  {activePanelTab === "actions" ? (
+                    <div className="tab-view">
+                      <div className="watchlist-head">
+                        <div>
+                          <h2>Action</h2>
+                          <p>Entry, SL, TP, and exits · {selectedModel.name}</p>
+                        </div>
+                      </div>
+                      <ul className="history-list">
+                        {actionRows.map((action) => (
+                          <li key={action.id}>
+                            <button
+                              type="button"
+                              className={`history-row ${
+                                selectedHistoryId === action.tradeId ? "selected" : ""
+                              }`}
+                              onClick={() => {
+                                focusTradeIdRef.current = action.tradeId;
+                                setSelectedHistoryId(action.tradeId);
+                                setSelectedSymbol(action.symbol);
+                                setShowAllTradesOnChart(false);
+                                setShowActiveTradeOnChart(false);
+                              }}
+                            >
+                              <span className="history-info">
+                                <span className="history-main">
+                                  <span className="history-action">{action.label}</span>
+                                  <span className="history-symbol">{action.symbol}</span>
+                                </span>
+                                <span className="history-levels">{action.details}</span>
+                              </span>
+                              <span className="history-meta">
+                                <span>{action.time}</span>
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {activePanelTab === "ai" ? (
+                    <div className="tab-view ai-tab">
+                      <div className="watchlist-head">
+                        <div>
+                          <h2>AI</h2>
+                          <p>Assistant module</p>
+                        </div>
+                      </div>
+                      <div className="ai-placeholder">
+                        <p>AI panel is reserved for upcoming features.</p>
+                        <p>No actions are connected yet.</p>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
-            </div>
-          ) : null}
-        </aside>
+            </aside>
+          </section>
+        </div>
+
+        <section
+          className={`backtest-surface ${selectedSurfaceTab === "backtest" ? "" : "hidden"}`}
+          aria-label="backtest workspace"
+        />
       </section>
 
       <footer className="statusbar">

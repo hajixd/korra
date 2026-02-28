@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "backfill:xauusd": "node scripts/backfill-xauusd-1m.mjs"
   },
   "dependencies": {
     "lightweight-charts": "^4.2.3",
