@@ -95,7 +95,7 @@ type Candle = {
 };
 
 const EMPTY_CANDLES: Candle[] = [];
-const STATS_REFRESH_HOLD_MS = 900;
+const STATS_REFRESH_HOLD_MS = 3000;
 
 const AI_ZIP_MONO_FONT =
   "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace";
@@ -12693,7 +12693,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             <strong className="stats-refresh-title">
               {statsRefreshProgress >= 100
                 ? "Syncing Main Statistics to the latest settings"
-                : "Hold to refresh the current stats snapshot"}
+                : `Hold Control for ${Math.round(
+                    STATS_REFRESH_HOLD_MS / 1000
+                  )} seconds to start refreshing the current stats snapshot`}
             </strong>
             <div className="stats-refresh-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(statsRefreshProgress)}>
               <div
