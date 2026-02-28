@@ -4049,6 +4049,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   );
   const [propResult, setPropResult] = useState<PropFirmResult | null>(null);
   const [propStats, setPropStats] = useState<PropFirmStats | null>(null);
+  const [backtestRunCount, setBacktestRunCount] = useState(0);
   const [backtestRefreshNowMs, setBacktestRefreshNowMs] = useState(() =>
     floorToTimeframe(Date.now(), "1m")
   );
@@ -4138,6 +4139,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return `${backtestModelProfiles.length} Main Settings models`;
   }, [backtestModelProfiles]);
+  const backtestHasRun = backtestRunCount > 0;
 
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
 
@@ -4148,6 +4150,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       return AI_VALIDATION_ORDER[nextIndex]!;
     });
+  };
+  const runBacktestFromMainSettings = () => {
+    setBacktestRunCount((current) => current + 1);
+    setBacktestRefreshNowMs(floorToTimeframe(Date.now(), "1m"));
+    setPropResult(null);
+    setPropStats(null);
   };
 
   useEffect(() => {
@@ -4338,24 +4346,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const recentOneMinutePromise = fetchRecentOneMinuteCandles();
 
     const connect = async () => {
-      void (async () => {
-        try {
-          const deepHistoryCandles = await fetchBacktestHistoryCandles(
-            selectedTimeframe,
-            recentOneMinutePromise
-          );
-
-          if (!cancelled && deepHistoryCandles.length >= MIN_SEED_CANDLES) {
-            setBacktestSeriesMap((prev) => ({
-              ...prev,
-              [key]: deepHistoryCandles
-            }));
-          }
-        } catch {
-          // Backtest falls back to chart history if deep history cannot load.
-        }
-      })();
-
       try {
         const historicalCandles = await fetchHistoryCandles(selectedTimeframe, recentOneMinutePromise);
 
@@ -4447,6 +4437,38 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [selectedKey, selectedTimeframe]);
 
+  useEffect(() => {
+    if (!backtestHasRun) {
+      return;
+    }
+
+    let cancelled = false;
+    const key = selectedKey;
+    const recentOneMinutePromise = fetchRecentOneMinuteCandles();
+
+    void (async () => {
+      try {
+        const deepHistoryCandles = await fetchBacktestHistoryCandles(
+          selectedTimeframe,
+          recentOneMinutePromise
+        );
+
+        if (!cancelled && deepHistoryCandles.length >= MIN_SEED_CANDLES) {
+          setBacktestSeriesMap((prev) => ({
+            ...prev,
+            [key]: deepHistoryCandles
+          }));
+        }
+      } catch {
+        // Backtest falls back to chart history if deep history cannot load.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [backtestHasRun, backtestRunCount, selectedKey, selectedTimeframe]);
+
   const selectedCandles = useMemo(() => {
     return seriesMap[selectedKey] ?? EMPTY_CANDLES;
   }, [selectedKey, seriesMap]);
@@ -4484,7 +4506,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [backtestRefreshNowMs, selectedBacktestCandles]);
 
   const backtestTargetTrades = useMemo(() => {
-    if (backtestModelProfiles.length === 0) {
+    if (!backtestHasRun || backtestModelProfiles.length === 0) {
       return 0;
     }
 
@@ -4502,6 +4524,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return Math.max(backtestModelProfiles.length, Math.min(availableSlots, densityTarget));
   }, [
+    backtestHasRun,
     backtestBlueprintRange,
     backtestModelProfiles.length,
     selectedBacktestCandles.length,
@@ -9430,6 +9453,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         Backtest now uses that selection instead of Models / People in the Chart tab.
                       </p>
                     </>
+                  ) : !backtestHasRun ? (
+                    <>
+                      <h3>Backtest is ready to run</h3>
+                      <p>
+                        Adjust Main Settings, then click Run Backtest at the bottom of the Main Settings
+                        tab to load the simulated trade history.
+                      </p>
+                    </>
                   ) : (
                     <>
                       <h3>Backtest data is still loading</h3>
@@ -10067,6 +10098,30 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           When enabled, the validation controls mirror the AI.zip anti-cheat panel.
                         </div>
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="backtest-card" style={{ padding: "0.95rem" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "0.85rem",
+                        flexWrap: "wrap"
+                      }}
+                    >
+                      <div className="ai-zip-note" style={{ margin: 0 }}>
+                        Simulated trades stay idle until you run the backtest.
+                      </div>
+                      <button
+                        type="button"
+                        className={`ai-zip-button ${backtestHasRun ? "active" : ""}`}
+                        disabled={backtestModelProfiles.length === 0}
+                        onClick={runBacktestFromMainSettings}
+                      >
+                        {backtestHasRun ? "Run Backtest Again" : "Run Backtest"}
+                      </button>
                     </div>
                   </div>
                 </div>
