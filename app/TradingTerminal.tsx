@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import type { CSSProperties, ReactNode } from "react";
 import {
   startTransition,
+  useCallback,
   useDeferredValue,
   useEffect,
   useId,
