@@ -70,9 +70,6 @@ const LIGHTWEIGHT_CHART_LINE_SOLID: LineStyle = 0;
 const LIGHTWEIGHT_CHART_LINE_DOTTED: LineStyle = 1;
 const BACKTEST_HISTORY_WORKER_LIMIT = 2;
 const BACKTEST_HISTORY_PARALLEL_THRESHOLD = 120;
-const CHART_WINDOW_MIN_BUFFER_BARS = 80;
-const CHART_WINDOW_EDGE_THRESHOLD_BARS = 24;
-
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type SurfaceTab = "chart" | "backtest";
 type BacktestTab =
@@ -2807,17 +2804,14 @@ const buildChartDataWindow = (
   }
 
   const clampedVisible = clampChartDataWindow(totalBars, visibleFrom, visibleTo);
-  const visibleSpan = Math.max(1, clampedVisible.to - clampedVisible.from + 1);
-  const buffer = Math.max(
-    CHART_WINDOW_MIN_BUFFER_BARS,
-    Math.round(visibleSpan * 2)
-  );
 
-  return clampChartDataWindow(
-    totalBars,
-    clampedVisible.from - buffer,
-    clampedVisible.to + buffer
-  );
+  // Keep the full loaded candle set mounted so panning and zooming do not
+  // trigger window swaps and series rebinds mid-gesture.
+  if (clampedVisible.to < clampedVisible.from) {
+    return { from: 0, to: -1 };
+  }
+
+  return { from: 0, to: totalBars - 1 };
 };
 
 const wrapIndex = (value: number, length: number): number => {
@@ -6455,36 +6449,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         };
 
         chartVisibleGlobalRangeRef.current = visibleGlobalRange;
-
-        const visibleSpan = Math.max(1, Math.ceil(visibleGlobalRange.to - visibleGlobalRange.from));
-        const edgeThreshold = Math.max(
-          CHART_WINDOW_EDGE_THRESHOLD_BARS,
-          Math.round(visibleSpan * 0.5)
-        );
-        const needsWindowShift =
-          visibleGlobalRange.from < currentWindow.from + edgeThreshold ||
-          visibleGlobalRange.to > currentWindow.to - edgeThreshold ||
-          visibleSpan > Math.max(1, currentWindow.to - currentWindow.from + 1 - edgeThreshold * 2);
-
-        if (!needsWindowShift) {
-          return;
-        }
-
-        const nextWindow = buildChartDataWindow(
-          totalBars,
-          visibleGlobalRange.from,
-          visibleGlobalRange.to
-        );
-
-        if (
-          nextWindow.from === currentWindow.from &&
-          nextWindow.to === currentWindow.to
-        ) {
-          return;
-        }
-
-        chartRenderWindowRef.current = nextWindow;
-        setChartRenderWindow(nextWindow);
       };
 
       chart.subscribeCrosshairMove(onCrosshairMove);
