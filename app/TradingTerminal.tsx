@@ -1368,7 +1368,7 @@ const futuresAssets: FutureAsset[] = [
     symbol: "XAUUSD",
     name: "XAU / USD",
     basePrice: 2945.25,
-    openInterest: "OANDA + CH",
+    openInterest: "CSV + LIVE",
     funding: "CFD"
   }
 ];
@@ -1824,26 +1824,6 @@ const fetchMarketCandles = async (timeframe: Timeframe, limit: number): Promise<
   return normalizeMarketCandles(payload.candles || []);
 };
 
-const fetchClickhouseCandles = async (timeframe: Timeframe, count: number): Promise<Candle[]> => {
-  const params = new URLSearchParams({
-    pair: XAUUSD_PAIR,
-    timeframe: marketTimeframeMap[timeframe],
-    count: String(count)
-  });
-
-  const response = await fetch(`/api/clickhouse/candles?${params.toString()}`, {
-    cache: "no-store"
-  });
-
-  if (!response.ok) {
-    return [];
-  }
-
-  const payload = await response.json();
-
-  return normalizeMarketCandles(payload.candles || []);
-};
-
 const fetchHistoryApiCandles = async (timeframe: Timeframe, count: number): Promise<Candle[]> => {
   const params = new URLSearchParams({
     pair: XAUUSD_PAIR,
@@ -1891,17 +1871,6 @@ const fetchHybridHistoryCandles = async (
   const recentTimeframeCandlesPromise = fetchRecentOneMinuteCandles(recentOneMinutePromise).then(
     (candles) => aggregateCandlesToTimeframe(candles, timeframe)
   );
-
-  try {
-    const clickhouseCandles = await fetchClickhouseCandles(timeframe, targetBars);
-
-    if (clickhouseCandles.length >= MIN_SEED_CANDLES) {
-      const recentTimeframeCandles = await recentTimeframeCandlesPromise;
-      return mergeHistoricalAndRecentCandles(clickhouseCandles, recentTimeframeCandles, targetBars);
-    }
-  } catch {
-    // Fall through to secondary history source.
-  }
 
   try {
     const historyCandles = await fetchHistoryApiCandles(
@@ -13003,7 +12972,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         <span>{selectedAsset.symbol}</span>
         <span>{selectedTimeframe}</span>
         <span>Model: {selectedModel.name}</span>
-        <span>Feed: simulated</span>
+        <span>Feed: csv + live</span>
         <span>UTC</span>
       </footer>
 

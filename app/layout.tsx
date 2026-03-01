@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Korra's Space",
-  description: "XAUUSD live trading UI with ClickHouse history and streaming prices."
+  description: "XAUUSD trading UI with local CSV history and streaming prices."
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
