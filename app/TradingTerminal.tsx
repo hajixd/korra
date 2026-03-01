@@ -2,7 +2,15 @@
 
 import dynamic from "next/dynamic";
 import type { CSSProperties, ReactNode } from "react";
-import { startTransition, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  startTransition,
+  useDeferredValue,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState
+} from "react";
 import type {
   CandlestickData,
   ColorType,
@@ -15,6 +23,12 @@ import type {
   Time,
   UTCTimestamp
 } from "lightweight-charts";
+import {
+  computeBacktestHistoryRowsChunk,
+  finalizeBacktestHistoryRows,
+  type BacktestHistoryRow,
+  type BacktestHistoryWorkerResponse
+} from "./backtestHistoryShared";
 
 const loadRecharts = () => import("recharts");
 const ResponsiveContainer = dynamic<any>(() => loadRecharts().then((mod) => mod.ResponsiveContainer), {
@@ -54,6 +68,8 @@ const LIGHTWEIGHT_CHART_SOLID_BACKGROUND: ColorType = "solid" as ColorType;
 const LIGHTWEIGHT_CHART_CROSSHAIR_NORMAL: CrosshairMode = 0;
 const LIGHTWEIGHT_CHART_LINE_SOLID: LineStyle = 0;
 const LIGHTWEIGHT_CHART_LINE_DOTTED: LineStyle = 1;
+const BACKTEST_HISTORY_WORKER_LIMIT = 2;
+const BACKTEST_HISTORY_PARALLEL_THRESHOLD = 120;
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type SurfaceTab = "chart" | "backtest";
@@ -172,6 +188,14 @@ type HistoryItem = {
   stopPrice: number;
   outcomePrice: number;
   units: number;
+};
+
+const normalizeBacktestHistoryRows = (rows: BacktestHistoryRow[]): HistoryItem[] => {
+  return rows.map((row) => ({
+    ...row,
+    entryTime: row.entryTime as UTCTimestamp,
+    exitTime: row.exitTime as UTCTimestamp
+  }));
 };
 
 type BacktestClusterGroupId = "momentum" | "trend" | "trap" | "chop";
@@ -4734,122 +4758,194 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [referenceNowMs, selectedCandles, selectedModel, selectedSymbol]);
 
-  const historyRows = useMemo(() => {
-    const rows: HistoryItem[] = [];
+  const [historyRows, setHistoryRows] = useState<HistoryItem[]>([]);
+  const deferredHistoryRows = useDeferredValue(historyRows);
+  const backtestHistoryJobIdRef = useRef(0);
+
+  const backtestHistorySeriesBySymbol = useMemo(() => {
+    const next: Record<string, Candle[]> = {};
 
     for (const blueprint of tradeBlueprints) {
-      const entryModel = modelProfileById[blueprint.modelId]?.name ?? "Main Settings";
+      if (next[blueprint.symbol]) {
+        continue;
+      }
+
       const key = symbolTimeframeKey(blueprint.symbol, selectedTimeframe);
-      const list = backtestSeriesMap[key] ?? seriesMap[key] ?? [];
-
-      if (list.length < 16) {
-        continue;
-      }
-
-      const entryIndex = findCandleIndexAtOrBefore(list, blueprint.entryMs);
-      const rawExitIndex = findCandleIndexAtOrBefore(list, blueprint.exitMs);
-
-      if (entryIndex < 0 || rawExitIndex < 0) {
-        continue;
-      }
-
-      const exitIndex = Math.min(list.length - 1, Math.max(entryIndex + 1, rawExitIndex));
-
-      if (exitIndex <= entryIndex) {
-        continue;
-      }
-
-      const entryPrice = list[entryIndex].close;
-      const rand = createSeededRng(hashString(`mapped-${blueprint.id}`));
-      let atr = 0;
-      let atrCount = 0;
-
-      for (let i = Math.max(1, entryIndex - 20); i <= entryIndex; i += 1) {
-        atr += list[i].high - list[i].low;
-        atrCount += 1;
-      }
-
-      atr /= Math.max(1, atrCount);
-
-      const riskPerUnit = Math.max(
-        entryPrice * blueprint.riskPct,
-        atr * (0.6 + rand() * 0.6),
-        entryPrice * 0.0009
-      );
-      const stopPrice =
-        blueprint.side === "Long"
-          ? Math.max(0.000001, entryPrice - riskPerUnit)
-          : entryPrice + riskPerUnit;
-      const targetPrice =
-        blueprint.side === "Long"
-          ? entryPrice + riskPerUnit * blueprint.rr
-          : Math.max(0.000001, entryPrice - riskPerUnit * blueprint.rr);
-      const path = evaluateTpSlPath(
-        list,
-        blueprint.side,
-        entryIndex,
-        targetPrice,
-        stopPrice,
-        exitIndex
-      );
-
-      const resolvedExitIndex = path.hit ? path.hitIndex : exitIndex;
-      const rawOutcomePrice = path.hit ? path.outcomePrice : list[resolvedExitIndex].close;
-      const outcomePrice = Math.max(0.000001, rawOutcomePrice);
-      const exitReason = path.hit
-        ? path.result === "Loss"
-          ? "Stop Loss"
-          : "Take Profit"
-        : "Model Exit";
-      const result: TradeResult = path.hit
-        ? (path.result ?? "Loss")
-        : blueprint.side === "Long"
-          ? outcomePrice >= entryPrice
-            ? "Win"
-            : "Loss"
-          : outcomePrice <= entryPrice
-            ? "Win"
-            : "Loss";
-      const pnlPct =
-        blueprint.side === "Long"
-          ? ((outcomePrice - entryPrice) / entryPrice) * 100
-          : ((entryPrice - outcomePrice) / entryPrice) * 100;
-      const pnlUsd =
-        blueprint.side === "Long"
-          ? (outcomePrice - entryPrice) * blueprint.units
-          : (entryPrice - outcomePrice) * blueprint.units;
-
-      rows.push({
-        id: blueprint.id,
-        symbol: blueprint.symbol,
-        side: blueprint.side,
-        result,
-        entrySource: entryModel,
-        exitReason,
-        pnlPct,
-        pnlUsd,
-        entryTime: toUtcTimestamp(list[entryIndex].time),
-        exitTime: toUtcTimestamp(list[resolvedExitIndex].time),
-        entryPrice,
-        targetPrice,
-        stopPrice,
-        outcomePrice,
-        units: blueprint.units,
-        entryAt: formatDateTime(list[entryIndex].time),
-        exitAt: formatDateTime(list[resolvedExitIndex].time),
-        time: formatDateTime(list[resolvedExitIndex].time)
-      });
+      next[blueprint.symbol] = backtestSeriesMap[key] ?? seriesMap[key] ?? EMPTY_CANDLES;
     }
 
-    return rows
-      .sort((a, b) => Number(b.exitTime) - Number(a.exitTime))
-      .slice(0, backtestTargetTrades);
+    return next;
   }, [
     backtestSeriesMap,
-    backtestTargetTrades,
-    modelProfileById,
     selectedTimeframe,
     seriesMap,
+    tradeBlueprints
+  ]);
+
+  useEffect(() => {
+    const nextJobId = backtestHistoryJobIdRef.current + 1;
+    backtestHistoryJobIdRef.current = nextJobId;
+
+    if (tradeBlueprints.length === 0 || backtestTargetTrades <= 0) {
+      startTransition(() => {
+        setHistoryRows([]);
+      });
+      return;
+    }
+
+    const modelNamesById: Record<string, string> = {};
+
+    for (const blueprint of tradeBlueprints) {
+      if (!modelNamesById[blueprint.modelId]) {
+        modelNamesById[blueprint.modelId] = modelProfileById[blueprint.modelId]?.name ?? "Main Settings";
+      }
+    }
+
+    const computeSynchronously = (): HistoryItem[] => {
+      return normalizeBacktestHistoryRows(
+        finalizeBacktestHistoryRows(
+          computeBacktestHistoryRowsChunk({
+            blueprints: tradeBlueprints,
+            candleSeriesBySymbol: backtestHistorySeriesBySymbol,
+            modelNamesById
+          }),
+          backtestTargetTrades
+        )
+      );
+    };
+
+    let cancelled = false;
+
+    const commitRows = (rows: HistoryItem[]) => {
+      if (cancelled || backtestHistoryJobIdRef.current !== nextJobId) {
+        return;
+      }
+
+      startTransition(() => {
+        setHistoryRows(rows);
+      });
+    };
+
+    if (typeof Worker === "undefined") {
+      commitRows(computeSynchronously());
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const workerCap =
+      typeof navigator === "undefined"
+        ? 1
+        : Math.max(1, Math.min(BACKTEST_HISTORY_WORKER_LIMIT, navigator.hardwareConcurrency || 1));
+    const workerCount =
+      tradeBlueprints.length >= BACKTEST_HISTORY_PARALLEL_THRESHOLD ? workerCap : 1;
+    const chunkSize = Math.ceil(tradeBlueprints.length / Math.max(1, workerCount));
+    const chunks: TradeBlueprint[][] = [];
+
+    for (let i = 0; i < tradeBlueprints.length; i += chunkSize) {
+      const chunk = tradeBlueprints.slice(i, i + chunkSize);
+
+      if (chunk.length > 0) {
+        chunks.push(chunk);
+      }
+    }
+
+    if (chunks.length <= 1) {
+      const worker = new Worker(new URL("./backtestHistoryWorker.ts", import.meta.url));
+
+      worker.onmessage = (event: MessageEvent<BacktestHistoryWorkerResponse>) => {
+        worker.terminate();
+
+        if (cancelled || event.data.requestId !== nextJobId) {
+          return;
+        }
+
+        commitRows(
+          normalizeBacktestHistoryRows(
+            finalizeBacktestHistoryRows(event.data.rows, backtestTargetTrades)
+          )
+        );
+      };
+
+      worker.onerror = () => {
+        worker.terminate();
+        commitRows(computeSynchronously());
+      };
+
+      worker.postMessage({
+        requestId: nextJobId,
+        blueprints: tradeBlueprints,
+        candleSeriesBySymbol: backtestHistorySeriesBySymbol,
+        modelNamesById
+      });
+
+      return () => {
+        cancelled = true;
+        worker.terminate();
+      };
+    }
+
+    const workers: Worker[] = [];
+    const rowChunks: BacktestHistoryRow[][] = new Array(chunks.length);
+    let completedChunks = 0;
+    let failed = false;
+
+    const handleFallback = () => {
+      if (failed) {
+        return;
+      }
+
+      failed = true;
+      workers.forEach((worker) => worker.terminate());
+      commitRows(computeSynchronously());
+    };
+
+    chunks.forEach((chunk, index) => {
+      const worker = new Worker(new URL("./backtestHistoryWorker.ts", import.meta.url));
+      workers.push(worker);
+
+      worker.onmessage = (event: MessageEvent<BacktestHistoryWorkerResponse>) => {
+        worker.terminate();
+
+        if (failed || cancelled || event.data.requestId !== nextJobId) {
+          return;
+        }
+
+        rowChunks[index] = event.data.rows;
+        completedChunks += 1;
+
+        if (completedChunks !== chunks.length) {
+          return;
+        }
+
+        commitRows(
+          normalizeBacktestHistoryRows(
+            finalizeBacktestHistoryRows(rowChunks.flat(), backtestTargetTrades)
+          )
+        );
+      };
+
+      worker.onerror = () => {
+        worker.terminate();
+        handleFallback();
+      };
+
+      worker.postMessage({
+        requestId: nextJobId,
+        blueprints: chunk,
+        candleSeriesBySymbol: backtestHistorySeriesBySymbol,
+        modelNamesById
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      workers.forEach((worker) => worker.terminate());
+    };
+  }, [
+    backtestHistorySeriesBySymbol,
+    backtestTargetTrades,
+    modelProfileById,
     tradeBlueprints
   ]);
 
@@ -4935,7 +5031,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const rows: ActionItem[] = [];
     const stepSeconds = timeframeMinutes[selectedTimeframe] * 60;
 
-    for (const trade of historyRows) {
+    for (const trade of deferredHistoryRows) {
       rows.push({
         id: `${trade.id}-entry`,
         tradeId: trade.id,
@@ -4983,7 +5079,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return rows.sort(
       (a, b) => Number(b.timestamp) - Number(a.timestamp) || b.id.localeCompare(a.id)
     );
-  }, [historyRows, selectedTimeframe]);
+  }, [deferredHistoryRows, selectedTimeframe]);
 
   const notificationItems = useMemo<NotificationItem[]>(() => {
     const items: NotificationItem[] = [];
@@ -6125,8 +6221,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   ]);
 
   const backtestSourceTrades = useMemo(() => {
-    return [...historyRows].sort((a, b) => Number(a.exitTime) - Number(b.exitTime));
-  }, [historyRows]);
+    return [...deferredHistoryRows].sort((a, b) => Number(a.exitTime) - Number(b.exitTime));
+  }, [deferredHistoryRows]);
 
   const backtestDateFilteredTrades = useMemo(() => {
     const startMs = getUtcDayStartMs(statsDateStart);
