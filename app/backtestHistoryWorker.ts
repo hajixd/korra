@@ -9,11 +9,20 @@ import {
 declare const self: DedicatedWorkerGlobalScope;
 
 self.onmessage = (event: MessageEvent<BacktestHistoryWorkerRequest>) => {
-  const { requestId, blueprints, candleSeriesBySymbol, modelNamesById } = event.data;
+  const {
+    requestId,
+    blueprints,
+    candleSeriesBySymbol,
+    modelNamesById,
+    tpDollars,
+    slDollars
+  } = event.data;
   const rows = computeBacktestHistoryRowsChunk({
     blueprints,
     candleSeriesBySymbol,
-    modelNamesById
+    modelNamesById,
+    tpDollars,
+    slDollars
   });
 
   self.postMessage({

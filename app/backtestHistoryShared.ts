@@ -48,6 +48,8 @@ export type BacktestHistoryWorkerRequest = {
   blueprints: BacktestHistoryTradeBlueprint[];
   candleSeriesBySymbol: Record<string, BacktestHistoryCandle[]>;
   modelNamesById: Record<string, string>;
+  tpDollars: number;
+  slDollars: number;
 };
 
 export type BacktestHistoryWorkerResponse = {
@@ -180,7 +182,9 @@ const formatDateTime = (timestampMs: number): string => {
 export const computeBacktestHistoryRowsChunk = ({
   blueprints,
   candleSeriesBySymbol,
-  modelNamesById
+  modelNamesById,
+  tpDollars,
+  slDollars
 }: Omit<BacktestHistoryWorkerRequest, "requestId">): BacktestHistoryRow[] => {
   const rows: BacktestHistoryRow[] = [];
 
@@ -206,30 +210,48 @@ export const computeBacktestHistoryRowsChunk = ({
     }
 
     const entryPrice = list[entryIndex].close;
-    const rand = createSeededRng(hashString(`mapped-${blueprint.id}`));
-    let atr = 0;
-    let atrCount = 0;
+    const units = Math.max(0.000001, Math.abs(blueprint.units) || 0.000001);
+    const tpDistance =
+      Number.isFinite(tpDollars) && tpDollars > 0
+        ? Math.max(0.000001, tpDollars / units)
+        : null;
+    const slDistance =
+      Number.isFinite(slDollars) && slDollars > 0
+        ? Math.max(0.000001, slDollars / units)
+        : null;
 
-    for (let i = Math.max(1, entryIndex - 20); i <= entryIndex; i += 1) {
-      atr += list[i].high - list[i].low;
-      atrCount += 1;
+    let riskPerUnit = 0;
+    if (tpDistance == null || slDistance == null) {
+      const rand = createSeededRng(hashString(`mapped-${blueprint.id}`));
+      let atr = 0;
+      let atrCount = 0;
+
+      for (let i = Math.max(1, entryIndex - 20); i <= entryIndex; i += 1) {
+        atr += list[i].high - list[i].low;
+        atrCount += 1;
+      }
+
+      atr /= Math.max(1, atrCount);
+      riskPerUnit = Math.max(
+        entryPrice * blueprint.riskPct,
+        atr * (0.6 + rand() * 0.6),
+        entryPrice * 0.0009
+      );
     }
 
-    atr /= Math.max(1, atrCount);
+    const effectiveTpDistance =
+      tpDistance ?? Math.max(0.000001, riskPerUnit * Math.max(0.25, blueprint.rr));
+    const effectiveSlDistance =
+      slDistance ?? Math.max(0.000001, riskPerUnit);
 
-    const riskPerUnit = Math.max(
-      entryPrice * blueprint.riskPct,
-      atr * (0.6 + rand() * 0.6),
-      entryPrice * 0.0009
-    );
     const stopPrice =
       blueprint.side === "Long"
-        ? Math.max(0.000001, entryPrice - riskPerUnit)
-        : entryPrice + riskPerUnit;
+        ? Math.max(0.000001, entryPrice - effectiveSlDistance)
+        : entryPrice + effectiveSlDistance;
     const targetPrice =
       blueprint.side === "Long"
-        ? entryPrice + riskPerUnit * blueprint.rr
-        : Math.max(0.000001, entryPrice - riskPerUnit * blueprint.rr);
+        ? entryPrice + effectiveTpDistance
+        : Math.max(0.000001, entryPrice - effectiveTpDistance);
     const path = evaluateTpSlPath(
       list,
       blueprint.side,
@@ -262,8 +284,8 @@ export const computeBacktestHistoryRowsChunk = ({
         : ((entryPrice - outcomePrice) / entryPrice) * 100;
     const pnlUsd =
       blueprint.side === "Long"
-        ? (outcomePrice - entryPrice) * blueprint.units
-        : (entryPrice - outcomePrice) * blueprint.units;
+        ? (outcomePrice - entryPrice) * units
+        : (entryPrice - outcomePrice) * units;
 
     rows.push({
       id: blueprint.id,
@@ -280,7 +302,7 @@ export const computeBacktestHistoryRowsChunk = ({
       targetPrice,
       stopPrice,
       outcomePrice,
-      units: blueprint.units,
+      units,
       entryAt: formatDateTime(list[entryIndex].time),
       exitAt: formatDateTime(list[resolvedExitIndex].time),
       time: formatDateTime(list[resolvedExitIndex].time)

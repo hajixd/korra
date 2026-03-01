@@ -4391,6 +4391,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     endMs: 0
   });
   const modelProfileByIdRef = useRef<Record<string, ModelProfile>>({});
+  const appliedBacktestTpDollarsRef = useRef(0);
+  const appliedBacktestSlDollarsRef = useRef(0);
   const chartSizeRef = useRef({ width: 0, height: 0 });
   const chartRenderWindowRef = useRef<ChartDataWindow>({ from: 0, to: -1 });
   const chartVisibleGlobalRangeRef = useRef<ChartDataWindow | null>(null);
@@ -5787,6 +5789,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   backtestTargetTradesRef.current = backtestTargetTrades;
   backtestBlueprintRangeRef.current = backtestBlueprintRange;
   modelProfileByIdRef.current = modelProfileById;
+  appliedBacktestTpDollarsRef.current = appliedBacktestSettings.tpDollars;
+  appliedBacktestSlDollarsRef.current = appliedBacktestSettings.slDollars;
 
   useEffect(() => {
     if (!backtestHasRun || !backtestHistorySeedReady) {
@@ -5801,6 +5805,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       backtestHistorySeriesBySymbolRef.current;
     const backtestBlueprintRangeSnapshot = backtestBlueprintRangeRef.current;
     const modelProfileByIdSnapshot = modelProfileByIdRef.current;
+    const tpDollarsSnapshot = appliedBacktestTpDollarsRef.current;
+    const slDollarsSnapshot = appliedBacktestSlDollarsRef.current;
 
     if (tradeBlueprintsSnapshot.length === 0 || backtestTargetTradesSnapshot <= 0) {
       startTransition(() => {
@@ -5852,7 +5858,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           computeBacktestHistoryRowsChunk({
             blueprints: tradeBlueprintsSnapshot,
             candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
-            modelNamesById
+            modelNamesById,
+            tpDollars: tpDollarsSnapshot,
+            slDollars: slDollarsSnapshot
           }),
           backtestTargetTradesSnapshot
         )
@@ -5979,7 +5987,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           requestId: nextJobId,
           blueprints: tradeBlueprintsSnapshot,
           candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
-          modelNamesById
+          modelNamesById,
+          tpDollars: tpDollarsSnapshot,
+          slDollars: slDollarsSnapshot
         });
       } catch {
         worker.terminate();
@@ -6045,7 +6055,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           requestId: nextJobId,
           blueprints: chunk,
           candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
-          modelNamesById
+          modelNamesById,
+          tpDollars: tpDollarsSnapshot,
+          slDollars: slDollarsSnapshot
         });
       } catch {
         worker.terminate();
