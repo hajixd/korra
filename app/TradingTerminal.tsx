@@ -94,6 +94,7 @@ type MainStatisticsCard = {
   tone: "up" | "down" | "neutral";
   span: 1 | 2 | 4 | 6;
   valueClassName?: string;
+  labelEmphasis?: boolean;
   children?: MainStatisticsCard[];
 };
 type RechartsTooltipRenderProps = {
@@ -2568,6 +2569,93 @@ const clamp = (value: number, min: number, max: number): number => {
   return Math.min(max, Math.max(min, value));
 };
 
+const clampTradePnlToRiskBounds = (
+  pnlUsd: number,
+  tpDollars: number,
+  slDollars: number
+): number => {
+  let nextPnl = pnlUsd;
+  const maxProfit = Number.isFinite(tpDollars) ? Math.max(0, tpDollars) : 0;
+  const maxLoss = Number.isFinite(slDollars) ? Math.max(0, slDollars) : 0;
+
+  if (maxProfit > 0) {
+    nextPnl = Math.min(nextPnl, maxProfit);
+  }
+
+  if (maxLoss > 0) {
+    nextPnl = Math.max(nextPnl, -maxLoss);
+  }
+
+  return nextPnl;
+};
+
+const getTradeOutcomePriceFromPnl = (
+  side: TradeSide,
+  entryPrice: number,
+  pnlUsd: number,
+  units: number
+): number => {
+  const safeUnits = Math.max(0.000001, Math.abs(units) || 0);
+  const direction = side === "Long" ? 1 : -1;
+
+  return Math.max(0.000001, entryPrice + (pnlUsd * direction) / safeUnits);
+};
+
+const getTradePnlPctFromUsd = (
+  entryPrice: number,
+  units: number,
+  pnlUsd: number
+): number => {
+  const notional = Math.max(0.000001, Math.abs(entryPrice) * Math.max(0.000001, Math.abs(units) || 0));
+
+  return (pnlUsd / notional) * 100;
+};
+
+const applyHistoryTradePnlBounds = (
+  trade: HistoryItem,
+  tpDollars: number,
+  slDollars: number
+): HistoryItem => {
+  const boundedPnlUsd = clampTradePnlToRiskBounds(trade.pnlUsd, tpDollars, slDollars);
+
+  if (Math.abs(boundedPnlUsd - trade.pnlUsd) <= 0.000001) {
+    return trade;
+  }
+
+  return {
+    ...trade,
+    pnlUsd: boundedPnlUsd,
+    pnlPct: getTradePnlPctFromUsd(trade.entryPrice, trade.units, boundedPnlUsd),
+    outcomePrice: getTradeOutcomePriceFromPnl(trade.side, trade.entryPrice, boundedPnlUsd, trade.units)
+  };
+};
+
+const applyHistoryCollectionPnlBounds = (
+  trades: HistoryItem[],
+  tpDollars: number,
+  slDollars: number
+): HistoryItem[] => {
+  const maxProfit = Number.isFinite(tpDollars) ? Math.max(0, tpDollars) : 0;
+  const maxLoss = Number.isFinite(slDollars) ? Math.max(0, slDollars) : 0;
+
+  if (trades.length === 0 || (maxProfit <= 0 && maxLoss <= 0)) {
+    return trades;
+  }
+
+  let changed = false;
+  const nextTrades = trades.map((trade) => {
+    const nextTrade = applyHistoryTradePnlBounds(trade, maxProfit, maxLoss);
+
+    if (nextTrade !== trade) {
+      changed = true;
+    }
+
+    return nextTrade;
+  });
+
+  return changed ? nextTrades : trades;
+};
+
 const clampChartDataWindow = (totalBars: number, from: number, to: number): ChartDataWindow => {
   if (totalBars <= 0) {
     return { from: 0, to: -1 };
@@ -4950,12 +5038,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     const units = Math.max(1, Number.isFinite(dollarsPerMove) ? dollarsPerMove : 1);
-    const markPrice = latest.close;
-    const pnlPct =
-      side === "Long"
-        ? ((markPrice - entryPrice) / entryPrice) * 100
-        : ((entryPrice - markPrice) / entryPrice) * 100;
-    const pnlValue = side === "Long" ? (markPrice - entryPrice) * units : (entryPrice - markPrice) * units;
+    const rawMarkPrice = latest.close;
+    const rawPnlValue =
+      side === "Long" ? (rawMarkPrice - entryPrice) * units : (entryPrice - rawMarkPrice) * units;
+    const pnlValue = clampTradePnlToRiskBounds(rawPnlValue, tpDollars, slDollars);
+    const markPrice =
+      Math.abs(pnlValue - rawPnlValue) <= 0.000001
+        ? rawMarkPrice
+        : getTradeOutcomePriceFromPnl(side, entryPrice, pnlValue, units);
+    const pnlPct = getTradePnlPctFromUsd(entryPrice, units, pnlValue);
     const progressRaw =
       side === "Long"
         ? (markPrice - stopPrice) / Math.max(0.000001, targetPrice - stopPrice)
@@ -4978,10 +5069,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       progressPct: clamp(progressRaw * 100, 0, 100),
       rr
     };
-  }, [chartSignalModel, dollarsPerMove, referenceNowMs, selectedCandles, selectedSymbol]);
+  }, [chartSignalModel, dollarsPerMove, referenceNowMs, selectedCandles, selectedSymbol, slDollars, tpDollars]);
 
   const [historyRows, setHistoryRows] = useState<HistoryItem[]>([]);
-  const deferredHistoryRows = useDeferredValue(historyRows);
+  const boundedHistoryRows = useMemo(() => {
+    return applyHistoryCollectionPnlBounds(historyRows, tpDollars, slDollars);
+  }, [historyRows, slDollars, tpDollars]);
+  const deferredHistoryRows = useDeferredValue(boundedHistoryRows);
   const backtestHistoryJobIdRef = useRef(0);
   const chronologicalHistoryRows = useMemo(() => {
     return [...deferredHistoryRows].sort(
@@ -7061,7 +7155,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const worstMonthRow =
       monthRowsByPnl.length > 0 ? monthRowsByPnl[monthRowsByPnl.length - 1] : null;
     const monthPnlValue = buildPnlNavigator(
-      "Month PnL",
+      "Monthly PnL",
       mainStatsMonthPnlFocusRow ? getMonthLabel(mainStatsMonthPnlFocusRow.key) : "—",
       mainStatsMonthPnlFocusRow
         ? `${formatSignedUsd(mainStatsMonthPnlFocusRow.total)} / month · ${
@@ -7393,6 +7487,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             : mainStatsModelPnlFocusRow.total >= 0
               ? "up"
               : "down",
+        labelEmphasis: true,
         valueClassName: "with-nav",
         span: 6
       },
@@ -7423,6 +7518,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             : mainStatsSessionPnlFocusRow.total >= 0
               ? "up"
               : "down",
+        labelEmphasis: true,
         valueClassName: "with-nav",
         span: 6
       },
@@ -7445,7 +7541,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         }
       ]),
       {
-        label: "Month PnL",
+        label: "Monthly PnL",
         value: monthPnlValue,
         tone:
           mainStatsMonthPnlFocusRow === null
@@ -7453,6 +7549,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             : mainStatsMonthPnlFocusRow.total >= 0
               ? "up"
               : "down",
+        labelEmphasis: true,
         valueClassName: "with-nav",
         span: 6
       },
@@ -9818,24 +9915,42 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         if (item.children) {
                           return (
                             <div key={item.label} className="backtest-stat-group">
-                              {item.children.map((child) => (
-                                <div
-                                  key={child.label}
-                                  className={`backtest-stat-card ${
-                                    child.tone === "neutral" ? "tone-neutral" : `tone-${child.tone}`
-                                  }`}
-                                >
-                                  <span>{child.label}</span>
-                                  <strong
-                                    className={child.tone === "neutral" ? "" : child.tone}
+                              {item.children.map((child) => {
+                                const childLabelClassName = [
+                                  "backtest-stat-label",
+                                  child.labelEmphasis ? "emphasized" : "",
+                                  child.labelEmphasis ? `tone-${child.tone}` : ""
+                                ]
+                                  .filter(Boolean)
+                                  .join(" ");
+
+                                return (
+                                  <div
+                                    key={child.label}
+                                    className={`backtest-stat-card ${
+                                      child.tone === "neutral" ? "tone-neutral" : `tone-${child.tone}`
+                                    }`}
                                   >
-                                    {child.value}
-                                  </strong>
-                                </div>
-                              ))}
+                                    <span className={childLabelClassName}>{child.label}</span>
+                                    <strong
+                                      className={child.tone === "neutral" ? "" : child.tone}
+                                    >
+                                      {child.value}
+                                    </strong>
+                                  </div>
+                                );
+                              })}
                             </div>
                           );
                         }
+
+                        const itemLabelClassName = [
+                          "backtest-stat-label",
+                          item.labelEmphasis ? "emphasized" : "",
+                          item.labelEmphasis ? `tone-${item.tone}` : ""
+                        ]
+                          .filter(Boolean)
+                          .join(" ");
 
                         return (
                           <div
@@ -9844,7 +9959,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               item.tone === "neutral" ? "tone-neutral" : `tone-${item.tone}`
                             } ${spanClassName}`}
                           >
-                            <span>{item.label}</span>
+                            <span className={itemLabelClassName}>{item.label}</span>
                             <strong
                               className={[
                                 item.tone === "neutral" ? "" : item.tone,

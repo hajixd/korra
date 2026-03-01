@@ -863,7 +863,7 @@ button {
 .backtest-stat-row span,
 .backtest-dimension-copy span,
 .backtest-dimension-reading span,
-.backtest-stat-card span {
+.backtest-stat-card > .backtest-stat-label {
   color: rgba(255, 255, 255, 0.65);
 }
 
@@ -2125,9 +2125,25 @@ button {
   gap: 0.16rem;
 }
 
-.backtest-stat-card span {
+.backtest-stat-card > .backtest-stat-label {
   font-size: 0.62rem;
   color: rgba(255, 255, 255, 0.65);
+}
+
+.backtest-stat-label.emphasized {
+  font-weight: 800;
+}
+
+.backtest-stat-label.emphasized.tone-up {
+  color: #34d399;
+}
+
+.backtest-stat-label.emphasized.tone-down {
+  color: #f87171;
+}
+
+.backtest-stat-label.emphasized.tone-neutral {
+  color: #60a5fa;
 }
 
 .backtest-stat-card strong {
@@ -2239,7 +2255,7 @@ button {
   gap: 0.24rem;
 }
 
-.backtest-stat-card.stat-span-6 span {
+.backtest-stat-card.stat-span-6 > .backtest-stat-label {
   font-size: 0.66rem;
 }
 
