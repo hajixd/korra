@@ -8086,6 +8086,13 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
     const onlineCore = {};
     // Dynamic Suppressed pool (suppressed outcomes as training-only neighbors).
     const onlineSuppressed = {};
+    const staticLibraryGeneratedCounts = {};
+    const addStaticLibraryGeneratedCount = (libId, amount) => {
+      const n = Math.max(0, Math.floor(Number(amount) || 0));
+      if (n <= 0) return;
+      staticLibraryGeneratedCounts[libId] =
+        (staticLibraryGeneratedCounts[libId] || 0) + n;
+    };
 
     const initLibStores = (models) => {
       for (const m of models) {
@@ -8524,10 +8531,11 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
     // Build a *static* pool of neighbor examples per model based on active libraries.
     // These points are training-only and never appear as "real trades" (stats/calendar/etc).
     const libs = {};
+    let usedModels: string[] = [];
     if (aiEntryOn || aiExitOn) {
       postMessage({ type: "progress", phase: "Embedding", pct: 0 });
 
-      let usedModels = Array.from(new Set([...entryModels, ...bothModels]));
+      usedModels = Array.from(new Set([...entryModels, ...bothModels]));
       if (!usedModels.length) usedModels = MODELS.slice();
       initLibStores(usedModels);
 
@@ -8588,6 +8596,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             if (cap > 0 && pts.length > cap) pts = pts.slice(pts.length - cap);
             cacheSet(ck, pts);
           }
+          addStaticLibraryGeneratedCount("base", pts.length);
           for (const p of pts) {
             staticPool.push({ ...p, uid: "base|" + String((p && (p.uid ?? p.metaTime)) || ""), weight: (p.weight || 1) * wt, metaLib: "base", metaTrainingOnly: true });
           }
@@ -8654,6 +8663,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
               if (cap > 0 && pts.length > cap) pts = pts.slice(pts.length - cap);
               cacheSet(ck, pts);
             }
+            addStaticLibraryGeneratedCount(libId, pts.length);
 
             for (const p of pts) {
               staticPool.push({
@@ -8691,6 +8701,17 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             if (cap > 0 && pts.length > cap) pts = pts.slice(0, cap);
             cacheSet(ck, pts);
           }
+          let countPts = pts;
+          if (typeof maxSeedIndexForSeed === "number") {
+            const countKey = "terrific|" + modelKey + "|" + String(chunkBars) + "|" + String(count) + "|" + String(pivotSpan) + "|" + String(strideEff) + "|" + parseMode + "|all";
+            countPts = cacheGet(countKey);
+            if (!countPts) {
+              countPts = seedTerrificOrTerrible(seedCandles, chunkBars, modelKey, "terrific", count, pivotSpan, strideEff, undefined, parseMode);
+              if (cap > 0 && countPts.length > cap) countPts = countPts.slice(0, cap);
+              cacheSet(countKey, countPts);
+            }
+          }
+          addStaticLibraryGeneratedCount("terrific", countPts.length);
           for (const p of pts) staticPool.push({ ...p, weight: (p.weight || 1) * wt, metaLib: "terrific", metaTrainingOnly: true });
         }
 
@@ -8710,6 +8731,17 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             if (cap > 0 && pts.length > cap) pts = pts.slice(0, cap);
             cacheSet(ck, pts);
           }
+          let countPts = pts;
+          if (typeof maxSeedIndexForSeed === "number") {
+            const countKey = "terrible|" + modelKey + "|" + String(chunkBars) + "|" + String(count) + "|" + String(pivotSpan) + "|" + String(strideEff) + "|" + parseMode + "|all";
+            countPts = cacheGet(countKey);
+            if (!countPts) {
+              countPts = seedTerrificOrTerrible(seedCandles, chunkBars, modelKey, "terrible", count, pivotSpan, strideEff, undefined, parseMode);
+              if (cap > 0 && countPts.length > cap) countPts = countPts.slice(0, cap);
+              cacheSet(countKey, countPts);
+            }
+          }
+          addStaticLibraryGeneratedCount("terrible", countPts.length);
           for (const p of pts) staticPool.push({ ...p, weight: (p.weight || 1) * wt, metaLib: "terrible", metaTrainingOnly: true });
         }
 
@@ -8739,6 +8771,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             );
             cacheSet(ck, pts);
           }
+          addStaticLibraryGeneratedCount(modelLibId, pts.length);
           for (const p of pts) staticPool.push({ ...p, uid: String(modelLibId) + "|" + String((p && (p.uid ?? p.metaTime)) || ""), weight: (p.weight || 1) * wt, metaLib: modelLibId, metaTrainingOnly: true });
         }
 
@@ -10263,13 +10296,35 @@ function flushSuppressedNeighbors(uptoIndex){
 
 
     // Library loaded counts (training-only neighbor examples)
-    const libraryCounts = {};
+    const libraryCounts = { ...staticLibraryGeneratedCounts };
     try {
-      for (const mk in libs) {
-        const arr = libs[mk] || [];
-        for (const p of arr) {
-          const lid = (p && p.metaLib) ? String(p.metaLib) : "unknown";
-          libraryCounts[lid] = (libraryCounts[lid] || 0) + 1;
+      for (const mk of usedModels) {
+        if (coreEnabled && onlineCore[mk] && onlineCore[mk].length) {
+          const capCore = libMaxSamples("core", 20000);
+          const arrCore = capCore > 0 ? onlineCore[mk].slice(0, capCore) : [];
+          if (arrCore.length) {
+            libraryCounts.core = (libraryCounts.core || 0) + arrCore.length;
+          }
+        }
+
+        if (suppressedEnabled && onlineSuppressed[mk] && onlineSuppressed[mk].length) {
+          const capSup = libMaxSamples("suppressed", 20000);
+          const arrSup = capSup > 0 ? onlineSuppressed[mk].slice(0, capSup) : [];
+          if (arrSup.length) {
+            libraryCounts.suppressed =
+              (libraryCounts.suppressed || 0) + arrSup.length;
+          }
+        }
+
+        if (recentEnabled && recentWeight > 0 && recentWindowTrades > 0) {
+          const raw = onlineRaw[mk] || [];
+          const win = Math.min(recentWindowTrades, raw.length);
+          const slice0 = win > 0 ? raw.slice(raw.length - win) : [];
+          const capRec = libMaxSamples("recent", 20000);
+          const slice = capRec > 0 ? slice0.slice(0, capRec) : [];
+          if (slice.length) {
+            libraryCounts.recent = (libraryCounts.recent || 0) + slice.length;
+          }
         }
       }
     } catch(_e) {}
@@ -32731,7 +32786,7 @@ export default function App() {
                                 fontWeight: 900,
                               }}
                             >
-                              {loaded ? "Loaded" : "Not Loaded"}
+                              {loaded ? "Stored" : "Empty"}
                             </span>
                             <span
                               style={{
@@ -32739,7 +32794,7 @@ export default function App() {
                                 fontWeight: 800,
                               }}
                             >
-                              {c.toLocaleString()} neighbors
+                              {c.toLocaleString()} nodes
                             </span>
                           </>
                         );
