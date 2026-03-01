@@ -3660,70 +3660,9 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     ],
   },
   {
-    id: "wins",
-    name: "Wins Only",
-    description: "Base‑seeded trades that hit TP (winners) only.",
-    defaults: {
-      weight: 100,
-      maxSamples: 10000,
-      stride: 0,
-      tpDollars: 250,
-      slDollars: 250,
-      jumpToResolution: true,
-    },
-    fields: [
-      {
-        key: "weight",
-        label: "Weight (%)",
-        type: "number",
-        min: 0,
-        max: 500,
-        step: 5,
-      },
-      {
-        key: "stride",
-        label: "Stride",
-        type: "number",
-        min: 0,
-        max: 5000,
-        step: 1,
-      },
-      {
-        key: "tpDollars",
-        label: "TP ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
-      {
-        key: "slDollars",
-        label: "SL ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
-      {
-        key: "jumpToResolution",
-        label: "Jump to resolution",
-        type: "boolean",
-        help: "If ON, the seeder places the next pair of trades at the candle where the prior trade resolves.",
-      },
-      {
-        key: "maxSamples",
-        label: "Amount of Samples",
-        type: "number",
-        min: 0,
-        max: 100000,
-        step: 100,
-      },
-    ],
-  },
-  {
-    id: "wins_tokyo",
-    name: "Tokyo Wins",
-    description: "Wins‑only base seeding restricted to the Tokyo session.",
+    id: "tokyo",
+    name: "Tokyo",
+    description: "Base seeding restricted to the Tokyo session.",
     defaults: {
       weight: 100,
       maxSamples: 8000,
@@ -3733,38 +3672,10 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
       jumpToResolution: true,
     },
     fields: [
-      {
-        key: "weight",
-        label: "Weight (%)",
-        type: "number",
-        min: 0,
-        max: 500,
-        step: 5,
-      },
-      {
-        key: "stride",
-        label: "Stride",
-        type: "number",
-        min: 0,
-        max: 5000,
-        step: 1,
-      },
-      {
-        key: "tpDollars",
-        label: "TP ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
-      {
-        key: "slDollars",
-        label: "SL ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
       { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
       {
         key: "maxSamples",
@@ -3777,9 +3688,9 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     ],
   },
   {
-    id: "wins_sydney",
-    name: "Sydney Wins",
-    description: "Wins‑only base seeding restricted to the Sydney session.",
+    id: "sydney",
+    name: "Sydney",
+    description: "Base seeding restricted to the Sydney session.",
     defaults: {
       weight: 100,
       maxSamples: 8000,
@@ -3789,38 +3700,10 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
       jumpToResolution: true,
     },
     fields: [
-      {
-        key: "weight",
-        label: "Weight (%)",
-        type: "number",
-        min: 0,
-        max: 500,
-        step: 5,
-      },
-      {
-        key: "stride",
-        label: "Stride",
-        type: "number",
-        min: 0,
-        max: 5000,
-        step: 1,
-      },
-      {
-        key: "tpDollars",
-        label: "TP ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
-      {
-        key: "slDollars",
-        label: "SL ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
       { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
       {
         key: "maxSamples",
@@ -3833,9 +3716,9 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     ],
   },
   {
-    id: "wins_london",
-    name: "London Wins",
-    description: "Wins‑only base seeding restricted to the London session.",
+    id: "london",
+    name: "London",
+    description: "Base seeding restricted to the London session.",
     defaults: {
       weight: 100,
       maxSamples: 8000,
@@ -3845,38 +3728,10 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
       jumpToResolution: true,
     },
     fields: [
-      {
-        key: "weight",
-        label: "Weight (%)",
-        type: "number",
-        min: 0,
-        max: 500,
-        step: 5,
-      },
-      {
-        key: "stride",
-        label: "Stride",
-        type: "number",
-        min: 0,
-        max: 5000,
-        step: 1,
-      },
-      {
-        key: "tpDollars",
-        label: "TP ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
-      {
-        key: "slDollars",
-        label: "SL ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
       { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
       {
         key: "maxSamples",
@@ -3889,9 +3744,9 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     ],
   },
   {
-    id: "wins_newyork",
-    name: "New York Wins",
-    description: "Wins‑only base seeding restricted to the New York session.",
+    id: "newyork",
+    name: "New York",
+    description: "Base seeding restricted to the New York session.",
     defaults: {
       weight: 100,
       maxSamples: 8000,
@@ -3901,318 +3756,10 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
       jumpToResolution: true,
     },
     fields: [
-      {
-        key: "weight",
-        label: "Weight (%)",
-        type: "number",
-        min: 0,
-        max: 500,
-        step: 5,
-      },
-      {
-        key: "stride",
-        label: "Stride",
-        type: "number",
-        min: 0,
-        max: 5000,
-        step: 1,
-      },
-      {
-        key: "tpDollars",
-        label: "TP ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
-      {
-        key: "slDollars",
-        label: "SL ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
-      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
-      {
-        key: "maxSamples",
-        label: "Amount of Samples",
-        type: "number",
-        min: 0,
-        max: 100000,
-        step: 100,
-      },
-    ],
-  },
-  {
-    id: "losses",
-    name: "Losses Only",
-    description: "Base-seeded trades that hit SL (losers) only.",
-    defaults: {
-      weight: 100,
-      maxSamples: 10000,
-      stride: 0,
-      tpDollars: 250,
-      slDollars: 250,
-      jumpToResolution: true,
-    },
-    fields: [
-      {
-        key: "weight",
-        label: "Weight (%)",
-        type: "number",
-        min: 0,
-        max: 500,
-        step: 5,
-      },
-      {
-        key: "stride",
-        label: "Stride",
-        type: "number",
-        min: 0,
-        max: 5000,
-        step: 1,
-      },
-      {
-        key: "tpDollars",
-        label: "TP ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
-      {
-        key: "slDollars",
-        label: "SL ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
-      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
-      {
-        key: "maxSamples",
-        label: "Amount of Samples",
-        type: "number",
-        min: 0,
-        max: 100000,
-        step: 100,
-      },
-    ],
-  },
-  {
-    id: "losses_tokyo",
-    name: "Tokyo Losses",
-    description: "Losses-only base seeding restricted to the Tokyo session.",
-    defaults: {
-      weight: 100,
-      maxSamples: 8000,
-      stride: 0,
-      tpDollars: 250,
-      slDollars: 250,
-      jumpToResolution: true,
-    },
-    fields: [
-      {
-        key: "weight",
-        label: "Weight (%)",
-        type: "number",
-        min: 0,
-        max: 500,
-        step: 5,
-      },
-      {
-        key: "stride",
-        label: "Stride",
-        type: "number",
-        min: 0,
-        max: 5000,
-        step: 1,
-      },
-      {
-        key: "tpDollars",
-        label: "TP ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
-      {
-        key: "slDollars",
-        label: "SL ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
-      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
-      {
-        key: "maxSamples",
-        label: "Amount of Samples",
-        type: "number",
-        min: 0,
-        max: 100000,
-        step: 100,
-      },
-    ],
-  },
-  {
-    id: "losses_sydney",
-    name: "Sydney Losses",
-    description: "Losses-only base seeding restricted to the Sydney session.",
-    defaults: {
-      weight: 100,
-      maxSamples: 8000,
-      stride: 0,
-      tpDollars: 250,
-      slDollars: 250,
-      jumpToResolution: true,
-    },
-    fields: [
-      {
-        key: "weight",
-        label: "Weight (%)",
-        type: "number",
-        min: 0,
-        max: 500,
-        step: 5,
-      },
-      {
-        key: "stride",
-        label: "Stride",
-        type: "number",
-        min: 0,
-        max: 5000,
-        step: 1,
-      },
-      {
-        key: "tpDollars",
-        label: "TP ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
-      {
-        key: "slDollars",
-        label: "SL ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
-      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
-      {
-        key: "maxSamples",
-        label: "Amount of Samples",
-        type: "number",
-        min: 0,
-        max: 100000,
-        step: 100,
-      },
-    ],
-  },
-  {
-    id: "losses_london",
-    name: "London Losses",
-    description: "Losses-only base seeding restricted to the London session.",
-    defaults: {
-      weight: 100,
-      maxSamples: 8000,
-      stride: 0,
-      tpDollars: 250,
-      slDollars: 250,
-      jumpToResolution: true,
-    },
-    fields: [
-      {
-        key: "weight",
-        label: "Weight (%)",
-        type: "number",
-        min: 0,
-        max: 500,
-        step: 5,
-      },
-      {
-        key: "stride",
-        label: "Stride",
-        type: "number",
-        min: 0,
-        max: 5000,
-        step: 1,
-      },
-      {
-        key: "tpDollars",
-        label: "TP ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
-      {
-        key: "slDollars",
-        label: "SL ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
-      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
-      {
-        key: "maxSamples",
-        label: "Amount of Samples",
-        type: "number",
-        min: 0,
-        max: 100000,
-        step: 100,
-      },
-    ],
-  },
-  {
-    id: "losses_newyork",
-    name: "New York Losses",
-    description: "Losses-only base seeding restricted to the New York session.",
-    defaults: {
-      weight: 100,
-      maxSamples: 8000,
-      stride: 0,
-      tpDollars: 250,
-      slDollars: 250,
-      jumpToResolution: true,
-    },
-    fields: [
-      {
-        key: "weight",
-        label: "Weight (%)",
-        type: "number",
-        min: 0,
-        max: 500,
-        step: 5,
-      },
-      {
-        key: "stride",
-        label: "Stride",
-        type: "number",
-        min: 0,
-        max: 5000,
-        step: 1,
-      },
-      {
-        key: "tpDollars",
-        label: "TP ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
-      {
-        key: "slDollars",
-        label: "SL ($)",
-        type: "number",
-        min: 1,
-        max: 20000,
-        step: 25,
-      },
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
       { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
       {
         key: "maxSamples",
@@ -8399,6 +7946,21 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
       staticLibraryGeneratedCounts[libId] =
         (staticLibraryGeneratedCounts[libId] || 0) + n;
     };
+    const naturalLibraryWinStats = {};
+    const addNaturalLibraryWinSamples = (libId, points) => {
+      if (!libId || !Array.isArray(points) || points.length === 0) return;
+      if (!naturalLibraryWinStats[libId]) {
+        naturalLibraryWinStats[libId] = { wins: 0, total: 0 };
+      }
+      const stat = naturalLibraryWinStats[libId];
+      for (const p of points) {
+        if (!p) continue;
+        if (Number(p.label || 0) > 0 || String(p.metaOutcome || "") === "Win") {
+          stat.wins += 1;
+        }
+        stat.total += 1;
+      }
+    };
     const getPointWinRatePercent = (points) => {
       if (!Array.isArray(points) || points.length === 0) return 50;
       let wins = 0;
@@ -9006,6 +8568,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             );
             cacheSet(ck, pts);
           }
+          addNaturalLibraryWinSamples("base", pts);
           const loadedPts = rebalancePointsToTargetWinRate(pts, "base", cap, false);
           addStaticLibraryGeneratedCount("base", loadedPts.length);
           for (const p of loadedPts) {
@@ -9013,21 +8576,15 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
           }
         }
 
-        // Outcome-filtered session libraries (quality subsets of Base Seeding)
-        const wantOutcomeLib =
-          useLib("wins") ||
-          useLib("wins_tokyo") ||
-          useLib("wins_sydney") ||
-          useLib("wins_london") ||
-          useLib("wins_newyork") ||
-          useLib("losses") ||
-          useLib("losses_tokyo") ||
-          useLib("losses_sydney") ||
-          useLib("losses_london") ||
-          useLib("losses_newyork");
+        // Session-specific base seeding libraries
+        const wantSessionLib =
+          useLib("tokyo") ||
+          useLib("sydney") ||
+          useLib("london") ||
+          useLib("newyork");
 
-        if (wantOutcomeLib) {
-          const seedOutcomeLib = (libId, sessionName, outcome) => {
+        if (wantSessionLib) {
+          const seedSessionLib = (libId, sessionName) => {
             const s = libSetting(libId);
             const tpD = Math.max(0, Number(s.tpDollars ?? (tpDist * dollarsPerMove)) || 0) / dollarsPerMove;
             const slD = Math.max(0, Number(s.slDollars ?? (slDist * dollarsPerMove)) || 0) / dollarsPerMove;
@@ -9041,9 +8598,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             if (!(wt > 0)) return;
 
             const ck =
-              "seed_outcome|" +
-              String(outcome) +
-              "|" +
+              "seed_session|" +
               libId +
               "|" +
               modelKey +
@@ -9073,12 +8628,12 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
 
               pts = pts.filter((p) => {
                 if (!p) return false;
-                if (p.metaOutcome !== outcome) return false;
                 if (sessionName && p.metaSession !== sessionName) return false;
                 return true;
               });
               cacheSet(ck, pts);
             }
+            addNaturalLibraryWinSamples(libId, pts);
             const loadedPts = rebalancePointsToTargetWinRate(pts, libId, cap, false);
             addStaticLibraryGeneratedCount(libId, loadedPts.length);
 
@@ -9093,20 +8648,10 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             }
           };
 
-          if (useLib("wins")) seedOutcomeLib("wins", undefined, "Win");
-          if (useLib("wins_tokyo")) seedOutcomeLib("wins_tokyo", "Tokyo", "Win");
-          if (useLib("wins_sydney")) seedOutcomeLib("wins_sydney", "Sydney", "Win");
-          if (useLib("wins_london")) seedOutcomeLib("wins_london", "London", "Win");
-          if (useLib("wins_newyork")) seedOutcomeLib("wins_newyork", "New York", "Win");
-          if (useLib("losses")) seedOutcomeLib("losses", undefined, "Loss");
-          if (useLib("losses_tokyo"))
-            seedOutcomeLib("losses_tokyo", "Tokyo", "Loss");
-          if (useLib("losses_sydney"))
-            seedOutcomeLib("losses_sydney", "Sydney", "Loss");
-          if (useLib("losses_london"))
-            seedOutcomeLib("losses_london", "London", "Loss");
-          if (useLib("losses_newyork"))
-            seedOutcomeLib("losses_newyork", "New York", "Loss");
+          if (useLib("tokyo")) seedSessionLib("tokyo", "Tokyo");
+          if (useLib("sydney")) seedSessionLib("sydney", "Sydney");
+          if (useLib("london")) seedSessionLib("london", "London");
+          if (useLib("newyork")) seedSessionLib("newyork", "New York");
         }
 
 
@@ -9126,6 +8671,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             pts = seedTerrificOrTerrible(seedCandles, chunkBars, modelKey, "terrific", count, pivotSpan, strideEff, maxSeedIndexForSeed, parseMode);
             cacheSet(ck, pts);
           }
+          addNaturalLibraryWinSamples("terrific", pts);
           const loadedPts = rebalancePointsToTargetWinRate(pts, "terrific", cap, true);
           addStaticLibraryGeneratedCount("terrific", loadedPts.length);
           for (const p of loadedPts) staticPool.push({ ...p, weight: (p.weight || 1) * wt, metaLib: "terrific", metaTrainingOnly: true });
@@ -9146,6 +8692,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             pts = seedTerrificOrTerrible(seedCandles, chunkBars, modelKey, "terrible", count, pivotSpan, strideEff, maxSeedIndexForSeed, parseMode);
             cacheSet(ck, pts);
           }
+          addNaturalLibraryWinSamples("terrible", pts);
           const loadedPts = rebalancePointsToTargetWinRate(pts, "terrible", cap, true);
           addStaticLibraryGeneratedCount("terrible", loadedPts.length);
           for (const p of loadedPts) staticPool.push({ ...p, weight: (p.weight || 1) * wt, metaLib: "terrible", metaTrainingOnly: true });
@@ -9177,6 +8724,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             );
             cacheSet(ck, pts);
           }
+          addNaturalLibraryWinSamples(modelLibId, pts);
           const loadedPts = rebalancePointsToTargetWinRate(pts, modelLibId, cap, false);
           addStaticLibraryGeneratedCount(modelLibId, loadedPts.length);
           for (const p of loadedPts) staticPool.push({ ...p, uid: String(modelLibId) + "|" + String((p && (p.uid ?? p.metaTime)) || ""), weight: (p.weight || 1) * wt, metaLib: modelLibId, metaTrainingOnly: true });
@@ -10704,42 +10252,15 @@ function flushSuppressedNeighbors(uptoIndex){
 
     // Library loaded counts (training-only neighbor examples)
     const libraryCounts = { ...staticLibraryGeneratedCounts };
-    const libraryWinStats = {};
-    const addLibraryWinSamples = (libId, points) => {
-      if (!libId || !Array.isArray(points) || points.length === 0) return;
-      if (!libraryWinStats[libId]) libraryWinStats[libId] = { wins: 0, total: 0 };
-      const stat = libraryWinStats[libId];
-      for (const p of points) {
-        if (!p) continue;
-        if (Number(p.label || 0) > 0 || String(p.metaOutcome || "") === "Win") {
-          stat.wins += 1;
-        }
-        stat.total += 1;
-      }
-    };
     try {
       for (const mk of usedModels) {
-        const staticPoints = libsStatic[mk] || [];
-        if (staticPoints.length) {
-          const pointsByLib = {};
-          for (const p of staticPoints) {
-            const lid = String((p && p.metaLib) || "");
-            if (!lid) continue;
-            if (!pointsByLib[lid]) pointsByLib[lid] = [];
-            pointsByLib[lid].push(p);
-          }
-          for (const lid of Object.keys(pointsByLib)) {
-            addLibraryWinSamples(lid, pointsByLib[lid]);
-          }
-        }
-
         if (coreEnabled && onlineCore[mk] && onlineCore[mk].length) {
           const capCore = libMaxSamples("core", 20000);
           const arrCore = getBalancedDynamicPoints("core", mk, onlineCore[mk], capCore, false);
           if (arrCore.length) {
             libraryCounts.core = (libraryCounts.core || 0) + arrCore.length;
-            addLibraryWinSamples("core", arrCore);
           }
+          addNaturalLibraryWinSamples("core", onlineCore[mk]);
         }
 
         if (suppressedEnabled && onlineSuppressed[mk] && onlineSuppressed[mk].length) {
@@ -10748,8 +10269,8 @@ function flushSuppressedNeighbors(uptoIndex){
           if (arrSup.length) {
             libraryCounts.suppressed =
               (libraryCounts.suppressed || 0) + arrSup.length;
-            addLibraryWinSamples("suppressed", arrSup);
           }
+          addNaturalLibraryWinSamples("suppressed", onlineSuppressed[mk]);
         }
 
         if (recentEnabled && recentWeight > 0 && recentWindowTrades > 0) {
@@ -10760,15 +10281,15 @@ function flushSuppressedNeighbors(uptoIndex){
           const slice = getBalancedDynamicPoints("recent", mk, slice0, capRec, false);
           if (slice.length) {
             libraryCounts.recent = (libraryCounts.recent || 0) + slice.length;
-            addLibraryWinSamples("recent", slice);
           }
+          addNaturalLibraryWinSamples("recent", slice0);
         }
       }
     } catch(_e) {}
     const libraryWinRates = {};
     try {
-      for (const lid of Object.keys(libraryWinStats)) {
-        const stat = libraryWinStats[lid];
+      for (const lid of Object.keys(naturalLibraryWinStats)) {
+        const stat = naturalLibraryWinStats[lid];
         if (!stat || !stat.total) continue;
         libraryWinRates[lid] = (stat.wins / stat.total) * 100;
       }
@@ -25783,6 +25304,19 @@ export default function App() {
   );
 
   useEffect(() => {
+    setAiActiveLibraries((current) => {
+      const filtered = current.filter((id) => !!AI_LIBRARY_DEF_BY_ID[id]);
+      if (
+        filtered.length === current.length &&
+        filtered.every((id, index) => id === current[index])
+      ) {
+        return current;
+      }
+      return filtered.length ? filtered : ["core"];
+    });
+  }, []);
+
+  useEffect(() => {
     // Keep selected library valid.
     if (!aiActiveLibraries.includes(aiSelectedLibrary)) {
       setAiSelectedLibrary(aiActiveLibraries[0] || "core");
@@ -33680,6 +33214,36 @@ export default function App() {
                                         ),
                                       }}
                                     />
+                                  ) : null}
+                                  {f.help ? (
+                                    <div
+                                      style={{
+                                        fontSize: 10,
+                                        opacity: 0.68,
+                                        lineHeight: 1.35,
+                                      }}
+                                    >
+                                      {f.help}
+                                    </div>
+                                  ) : null}
+                                  {f.key === AI_LIBRARY_TARGET_WIN_RATE_KEY ? (
+                                    <div
+                                      style={{
+                                        fontSize: 10,
+                                        opacity: 0.68,
+                                        lineHeight: 1.35,
+                                      }}
+                                    >
+                                      {Number.isFinite(
+                                        Number(aiLibraryWinRates[aiSelectedLibrary])
+                                      )
+                                        ? `Natural win rate: ${clamp(
+                                            Number(aiLibraryWinRates[aiSelectedLibrary]),
+                                            0,
+                                            100
+                                          ).toFixed(1)}% before target trimming.`
+                                        : "Natural win rate appears here after a run."}
+                                    </div>
                                   ) : null}
                                 </div>
                               </div>

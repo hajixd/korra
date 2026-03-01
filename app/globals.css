@@ -2290,6 +2290,65 @@ button {
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
 }
 
+.stats-refresh-loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background:
+    radial-gradient(900px 600px at 50% 42%, rgba(0, 255, 157, 0.12), transparent 62%),
+    rgba(0, 0, 0, 0.68);
+  backdrop-filter: blur(10px);
+}
+
+.stats-refresh-loading-shell {
+  width: min(680px, calc(100vw - 2.5rem));
+  padding: 1.25rem 1.35rem;
+  border-radius: 20px;
+  border: 1px solid rgba(0, 255, 157, 0.16);
+  background: rgba(3, 8, 8, 0.78);
+  box-shadow: 0 0 72px rgba(0, 255, 157, 0.08);
+}
+
+.stats-refresh-loading-status,
+.stats-refresh-loading-date {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.stats-refresh-loading-status {
+  margin-bottom: 0.75rem;
+  color: rgba(233, 255, 245, 0.9);
+}
+
+.stats-refresh-loading-track {
+  position: relative;
+  height: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(18, 22, 22, 0.92);
+  border-radius: 10px;
+  background: rgba(3, 5, 5, 0.98);
+}
+
+.stats-refresh-loading-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #00ff9d;
+  box-shadow: 0 0 22px rgba(0, 255, 157, 0.55);
+  transition: width 0.16s linear;
+}
+
+.stats-refresh-loading-date {
+  margin-top: 0.8rem;
+  color: rgba(201, 255, 230, 0.84);
+}
+
 .ai-zip-section {
   padding: 10px;
   border-radius: 11px;

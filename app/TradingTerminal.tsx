@@ -403,6 +403,40 @@ type AiLibraryDef = {
   fields: AiLibraryField[];
 };
 
+type StatsRefreshOverlayMode = "idle" | "hold" | "loading";
+
+type BacktestSettingsSnapshot = {
+  symbol: string;
+  timeframe: Timeframe;
+  statsDateStart: string;
+  statsDateEnd: string;
+  enabledBacktestWeekdays: string[];
+  enabledBacktestSessions: string[];
+  enabledBacktestMonths: number[];
+  enabledBacktestHours: number[];
+  aiMode: "off" | "knn" | "hdbscan";
+  aiFilterEnabled: boolean;
+  confidenceThreshold: number;
+  tpDollars: number;
+  slDollars: number;
+  dollarsPerMove: number;
+  aiModelStates: Record<string, AiModelState>;
+  aiFeatureLevels: Record<string, AiFeatureLevel>;
+  aiFeatureModes: Record<string, AiFeatureMode>;
+  selectedAiLibraries: string[];
+  selectedAiLibrarySettings: AiLibrarySettings;
+  chunkBars: number;
+  selectedAiModalities: string[];
+  dimensionAmount: number;
+  compressionMethod: AiCompressionMethod;
+  hdbMinClusterSize: number;
+  hdbMinSamples: number;
+  hdbEpsQuantile: number;
+  staticLibrariesClusters: boolean;
+  antiCheatEnabled: boolean;
+  validationMode: AiValidationMode;
+};
+
 type AiSettingsModalProps = {
   title: string;
   subtitle?: string;
@@ -769,37 +803,9 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     ]
   },
   {
-    id: "wins",
-    name: "Wins Only",
-    description: "Base-seeded trades that hit TP (winners) only.",
-    defaults: {
-      weight: 100,
-      maxSamples: 10000,
-      stride: 0,
-      tpDollars: 250,
-      slDollars: 250,
-      jumpToResolution: true
-    },
-    fields: [
-      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
-      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
-      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
-      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
-      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
-      {
-        key: "maxSamples",
-        label: "Amount of Samples",
-        type: "number",
-        min: 0,
-        max: 100000,
-        step: 100
-      }
-    ]
-  },
-  {
-    id: "wins_tokyo",
-    name: "Tokyo Wins",
-    description: "Wins-only base seeding restricted to the Tokyo session.",
+    id: "tokyo",
+    name: "Tokyo",
+    description: "Base seeding restricted to the Tokyo session.",
     defaults: {
       weight: 100,
       maxSamples: 8000,
@@ -825,9 +831,9 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     ]
   },
   {
-    id: "wins_sydney",
-    name: "Sydney Wins",
-    description: "Wins-only base seeding restricted to the Sydney session.",
+    id: "sydney",
+    name: "Sydney",
+    description: "Base seeding restricted to the Sydney session.",
     defaults: {
       weight: 100,
       maxSamples: 8000,
@@ -853,9 +859,9 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     ]
   },
   {
-    id: "wins_london",
-    name: "London Wins",
-    description: "Wins-only base seeding restricted to the London session.",
+    id: "london",
+    name: "London",
+    description: "Base seeding restricted to the London session.",
     defaults: {
       weight: 100,
       maxSamples: 8000,
@@ -881,149 +887,9 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     ]
   },
   {
-    id: "wins_newyork",
-    name: "New York Wins",
-    description: "Wins-only base seeding restricted to the New York session.",
-    defaults: {
-      weight: 100,
-      maxSamples: 8000,
-      stride: 0,
-      tpDollars: 250,
-      slDollars: 250,
-      jumpToResolution: true
-    },
-    fields: [
-      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
-      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
-      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
-      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
-      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
-      {
-        key: "maxSamples",
-        label: "Amount of Samples",
-        type: "number",
-        min: 0,
-        max: 100000,
-        step: 100
-      }
-    ]
-  },
-  {
-    id: "losses",
-    name: "Losses Only",
-    description: "Base-seeded trades that hit SL (losers) only.",
-    defaults: {
-      weight: 100,
-      maxSamples: 10000,
-      stride: 0,
-      tpDollars: 250,
-      slDollars: 250,
-      jumpToResolution: true
-    },
-    fields: [
-      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
-      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
-      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
-      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
-      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
-      {
-        key: "maxSamples",
-        label: "Amount of Samples",
-        type: "number",
-        min: 0,
-        max: 100000,
-        step: 100
-      }
-    ]
-  },
-  {
-    id: "losses_tokyo",
-    name: "Tokyo Losses",
-    description: "Losses-only base seeding restricted to the Tokyo session.",
-    defaults: {
-      weight: 100,
-      maxSamples: 8000,
-      stride: 0,
-      tpDollars: 250,
-      slDollars: 250,
-      jumpToResolution: true
-    },
-    fields: [
-      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
-      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
-      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
-      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
-      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
-      {
-        key: "maxSamples",
-        label: "Amount of Samples",
-        type: "number",
-        min: 0,
-        max: 100000,
-        step: 100
-      }
-    ]
-  },
-  {
-    id: "losses_sydney",
-    name: "Sydney Losses",
-    description: "Losses-only base seeding restricted to the Sydney session.",
-    defaults: {
-      weight: 100,
-      maxSamples: 8000,
-      stride: 0,
-      tpDollars: 250,
-      slDollars: 250,
-      jumpToResolution: true
-    },
-    fields: [
-      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
-      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
-      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
-      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
-      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
-      {
-        key: "maxSamples",
-        label: "Amount of Samples",
-        type: "number",
-        min: 0,
-        max: 100000,
-        step: 100
-      }
-    ]
-  },
-  {
-    id: "losses_london",
-    name: "London Losses",
-    description: "Losses-only base seeding restricted to the London session.",
-    defaults: {
-      weight: 100,
-      maxSamples: 8000,
-      stride: 0,
-      tpDollars: 250,
-      slDollars: 250,
-      jumpToResolution: true
-    },
-    fields: [
-      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
-      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
-      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
-      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
-      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
-      {
-        key: "maxSamples",
-        label: "Amount of Samples",
-        type: "number",
-        min: 0,
-        max: 100000,
-        step: 100
-      }
-    ]
-  },
-  {
-    id: "losses_newyork",
-    name: "New York Losses",
-    description: "Losses-only base seeding restricted to the New York session.",
+    id: "newyork",
+    name: "New York",
+    description: "Base seeding restricted to the New York session.",
     defaults: {
       weight: 100,
       maxSamples: 8000,
@@ -4284,6 +4150,32 @@ const getAiZipTradeDisplayId = (trade: Pick<HistoryItem, "id" | "entryTime">) =>
   return `live| ${shortCode}`;
 };
 
+const cloneAiLibrarySettings = (settings: AiLibrarySettings): AiLibrarySettings => {
+  const next: AiLibrarySettings = {};
+
+  for (const [libraryId, values] of Object.entries(settings)) {
+    next[libraryId] = { ...values };
+  }
+
+  return next;
+};
+
+const formatStatsRefreshDateLabel = (timeMs: number) => {
+  const date = new Date(timeMs);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Preparing range...";
+  }
+
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+};
+
 export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProps) {
   const modelProfiles = useMemo(() => {
     return buildModelProfiles(aiZipModelNames);
@@ -4449,9 +4341,47 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [backtestRefreshNowMs, setBacktestRefreshNowMs] = useState(() =>
     floorToTimeframe(Date.now(), "1m")
   );
-  const [statsRefreshOverlayVisible, setStatsRefreshOverlayVisible] = useState(false);
+  const [statsRefreshOverlayMode, setStatsRefreshOverlayMode] =
+    useState<StatsRefreshOverlayMode>("idle");
   const [statsRefreshProgress, setStatsRefreshProgress] = useState(0);
+  const [statsRefreshProgressLabel, setStatsRefreshProgressLabel] = useState("");
+  const [backtestHistorySeedReady, setBacktestHistorySeedReady] = useState(false);
   const [isBacktestSurfaceSettled, setIsBacktestSurfaceSettled] = useState(true);
+
+  const buildCurrentBacktestSettingsSnapshot = (): BacktestSettingsSnapshot => ({
+    symbol: selectedSymbol,
+    timeframe: selectedTimeframe,
+    statsDateStart,
+    statsDateEnd,
+    enabledBacktestWeekdays: [...enabledBacktestWeekdays],
+    enabledBacktestSessions: [...enabledBacktestSessions],
+    enabledBacktestMonths: [...enabledBacktestMonths],
+    enabledBacktestHours: [...enabledBacktestHours],
+    aiMode,
+    aiFilterEnabled,
+    confidenceThreshold,
+    tpDollars,
+    slDollars,
+    dollarsPerMove,
+    aiModelStates: { ...aiModelStates },
+    aiFeatureLevels: { ...aiFeatureLevels },
+    aiFeatureModes: { ...aiFeatureModes },
+    selectedAiLibraries: [...selectedAiLibraries],
+    selectedAiLibrarySettings: cloneAiLibrarySettings(selectedAiLibrarySettings),
+    chunkBars,
+    selectedAiModalities: [...selectedAiModalities],
+    dimensionAmount,
+    compressionMethod,
+    hdbMinClusterSize,
+    hdbMinSamples,
+    hdbEpsQuantile,
+    staticLibrariesClusters,
+    antiCheatEnabled,
+    validationMode
+  });
+  const [appliedBacktestSettings, setAppliedBacktestSettings] = useState<BacktestSettingsSnapshot>(
+    () => buildCurrentBacktestSettingsSnapshot()
+  );
 
   useEffect(() => {
     setAiModelStates((current) => syncAiModelStates(current, availableAiModelNames));
@@ -4472,6 +4402,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const notificationRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<EventSource | null>(null);
   const selectedSurfaceTabRef = useRef<SurfaceTab>(selectedSurfaceTab);
+  const statsRefreshOverlayModeRef = useRef<StatsRefreshOverlayMode>("idle");
+  const statsRefreshResetTimeoutRef = useRef(0);
+  const liveBacktestSettingsRef = useRef<BacktestSettingsSnapshot>(appliedBacktestSettings);
   const chartSizeRef = useRef({ width: 0, height: 0 });
   const chartRenderWindowRef = useRef<ChartDataWindow>({ from: 0, to: -1 });
   const chartVisibleGlobalRangeRef = useRef<ChartDataWindow | null>(null);
@@ -4483,6 +4416,62 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const requestChartVisibleRangeRef = useRef<(visibleRange: ChartDataWindow) => void>(() => {});
   const chartDataLengthRef = useRef(0);
   const [chartRenderWindow, setChartRenderWindow] = useState<ChartDataWindow>({ from: 0, to: -1 });
+
+  liveBacktestSettingsRef.current = buildCurrentBacktestSettingsSnapshot();
+
+  const updateStatsRefreshOverlayMode = useCallback((mode: StatsRefreshOverlayMode) => {
+    statsRefreshOverlayModeRef.current = mode;
+    setStatsRefreshOverlayMode(mode);
+  }, []);
+  const clearStatsRefreshResetTimeout = useCallback(() => {
+    if (!statsRefreshResetTimeoutRef.current) {
+      return;
+    }
+
+    window.clearTimeout(statsRefreshResetTimeoutRef.current);
+    statsRefreshResetTimeoutRef.current = 0;
+  }, []);
+  const finishStatsRefreshLoading = useCallback(
+    (label: string) => {
+      clearStatsRefreshResetTimeout();
+      setStatsRefreshProgress(100);
+      setStatsRefreshProgressLabel(label);
+      statsRefreshResetTimeoutRef.current = window.setTimeout(() => {
+        updateStatsRefreshOverlayMode("idle");
+        setStatsRefreshProgress(0);
+        setStatsRefreshProgressLabel("");
+        statsRefreshResetTimeoutRef.current = 0;
+      }, 280);
+    },
+    [clearStatsRefreshResetTimeout, updateStatsRefreshOverlayMode]
+  );
+  const applyBacktestSettingsSnapshot = useCallback(() => {
+    const nextSettings = liveBacktestSettingsRef.current;
+    const nextRefreshMs = floorToTimeframe(Date.now(), "1m");
+
+    clearStatsRefreshResetTimeout();
+    setAppliedBacktestSettings(nextSettings);
+    setBacktestRunCount((current) => current + 1);
+    setBacktestRefreshNowMs(nextRefreshMs);
+    setBacktestHistorySeedReady(false);
+    updateStatsRefreshOverlayMode("loading");
+    setStatsRefreshProgress(5);
+    setStatsRefreshProgressLabel(
+      formatStatsRefreshDateLabel(
+        nextRefreshMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000
+      )
+    );
+    setPropResult(null);
+    setPropStats(null);
+  }, [clearStatsRefreshResetTimeout, updateStatsRefreshOverlayMode]);
+
+  const statsRefreshOverlayVisible = statsRefreshOverlayMode !== "idle";
+
+  useEffect(() => {
+    return () => {
+      clearStatsRefreshResetTimeout();
+    };
+  }, [clearStatsRefreshResetTimeout]);
 
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
@@ -4584,6 +4573,45 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [backtestModelProfiles, backtestModelSelectionSummary]);
   const backtestHasRun = backtestRunCount > 0;
+  const appliedBacktestKey = useMemo(() => {
+    return symbolTimeframeKey(appliedBacktestSettings.symbol, appliedBacktestSettings.timeframe);
+  }, [appliedBacktestSettings.symbol, appliedBacktestSettings.timeframe]);
+  const appliedBacktestModelNames = useMemo(() => {
+    return availableAiModelNames.filter(
+      (modelName) => (appliedBacktestSettings.aiModelStates[modelName] ?? 0) > 0
+    );
+  }, [appliedBacktestSettings.aiModelStates, availableAiModelNames]);
+  const appliedBacktestModelProfiles = useMemo(() => {
+    return appliedBacktestModelNames
+      .map((modelName) => modelProfileById[createModelId(modelName)] ?? null)
+      .filter((model): model is ModelProfile => model !== null);
+  }, [appliedBacktestModelNames, modelProfileById]);
+  const appliedBacktestModelSelectionSummary = useMemo(() => {
+    if (appliedBacktestModelProfiles.length === 0) {
+      return "No Main Settings models selected";
+    }
+
+    if (appliedBacktestModelProfiles.length === 1) {
+      return appliedBacktestModelProfiles[0]!.name;
+    }
+
+    if (appliedBacktestModelProfiles.length === 2) {
+      return `${appliedBacktestModelProfiles[0]!.name} + ${appliedBacktestModelProfiles[1]!.name}`;
+    }
+
+    return `${appliedBacktestModelProfiles.length} Main Settings models`;
+  }, [appliedBacktestModelProfiles]);
+  const appliedConfidenceGateDisabled =
+    appliedBacktestSettings.aiMode === "off" || !appliedBacktestSettings.aiFilterEnabled;
+  const appliedEffectiveConfidenceThreshold = appliedConfidenceGateDisabled
+    ? 0
+    : appliedBacktestSettings.confidenceThreshold;
+  const backtestDisplayModelSelectionSummary = backtestHasRun
+    ? appliedBacktestModelSelectionSummary
+    : backtestModelSelectionSummary;
+  const backtestDisplayTimeframe = backtestHasRun
+    ? appliedBacktestSettings.timeframe
+    : selectedTimeframe;
 
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
 
@@ -4594,12 +4622,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       return AI_VALIDATION_ORDER[nextIndex]!;
     });
-  };
-  const runBacktestFromMainSettings = () => {
-    setBacktestRunCount((current) => current + 1);
-    setBacktestRefreshNowMs(floorToTimeframe(Date.now(), "1m"));
-    setPropResult(null);
-    setPropStats(null);
   };
 
   useEffect(() => {
@@ -4775,6 +4797,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   };
 
   useEffect(() => {
+    setSelectedAiLibraries((current) => {
+      const filtered = current.filter((libraryId) => Boolean(aiLibraryDefById[libraryId]));
+
+      if (
+        filtered.length === current.length &&
+        filtered.every((libraryId, index) => libraryId === current[index])
+      ) {
+        return current;
+      }
+
+      return filtered.length > 0 ? filtered : ["core"];
+    });
+  }, [aiLibraryDefById]);
+
+  useEffect(() => {
     if (selectedAiLibraries.length === 0) {
       if (selectedAiLibraryId !== "") {
         setSelectedAiLibraryId("");
@@ -4898,13 +4935,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     let cancelled = false;
-    const key = selectedKey;
+    const key = appliedBacktestKey;
     const recentOneMinutePromise = fetchRecentOneMinuteCandles();
+
+    setStatsRefreshProgress((current) => Math.max(current, 14));
 
     void (async () => {
       try {
         const deepHistoryCandles = await fetchBacktestHistoryCandles(
-          selectedTimeframe,
+          appliedBacktestSettings.timeframe,
           recentOneMinutePromise
         );
 
@@ -4916,21 +4955,36 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         }
       } catch {
         // Backtest falls back to chart history if deep history cannot load.
+      } finally {
+        if (!cancelled) {
+          setStatsRefreshProgress((current) => Math.max(current, 32));
+          setBacktestHistorySeedReady(true);
+        }
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [backtestHasRun, backtestRunCount, selectedKey, selectedTimeframe]);
+  }, [
+    appliedBacktestKey,
+    appliedBacktestSettings.timeframe,
+    backtestHasRun,
+    backtestRefreshNowMs,
+    backtestRunCount
+  ]);
 
   const selectedCandles = useMemo(() => {
     return seriesMap[selectedKey] ?? EMPTY_CANDLES;
   }, [selectedKey, seriesMap]);
 
   const selectedBacktestCandles = useMemo(() => {
-    return backtestSeriesMap[selectedKey] ?? seriesMap[selectedKey] ?? EMPTY_CANDLES;
-  }, [backtestSeriesMap, selectedKey, seriesMap]);
+    return (
+      backtestSeriesMap[appliedBacktestKey] ??
+      seriesMap[appliedBacktestKey] ??
+      EMPTY_CANDLES
+    );
+  }, [appliedBacktestKey, backtestSeriesMap, seriesMap]);
 
   const backtestBlueprintRange = useMemo(() => {
     const fallbackEndMs = floorToTimeframe(backtestRefreshNowMs, "1m");
@@ -4961,14 +5015,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [backtestRefreshNowMs, selectedBacktestCandles]);
 
   const backtestTargetTrades = useMemo(() => {
-    if (!backtestHasRun || backtestModelProfiles.length === 0) {
+    if (!backtestHasRun || !backtestHistorySeedReady || appliedBacktestModelProfiles.length === 0) {
       return 0;
     }
 
     const rangeMs = Math.max(60_000, backtestBlueprintRange.endMs - backtestBlueprintRange.startMs);
     const estimatedSlots = Math.max(
       1,
-      Math.floor(rangeMs / Math.max(60_000, getTimeframeMs(selectedTimeframe)))
+      Math.floor(rangeMs / Math.max(60_000, getTimeframeMs(appliedBacktestSettings.timeframe)))
     );
     const availableSlots =
       selectedBacktestCandles.length > 0
@@ -4977,13 +5031,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const rangeDays = Math.max(1, Math.ceil(rangeMs / (24 * 60 * 60_000)));
     const densityTarget = rangeDays * BACKTEST_TARGET_TRADES_PER_DAY;
 
-    return Math.max(backtestModelProfiles.length, Math.min(availableSlots, densityTarget));
+    return Math.max(appliedBacktestModelProfiles.length, Math.min(availableSlots, densityTarget));
   }, [
+    appliedBacktestModelProfiles.length,
+    appliedBacktestSettings.timeframe,
     backtestHasRun,
+    backtestHistorySeedReady,
     backtestBlueprintRange,
-    backtestModelProfiles.length,
-    selectedBacktestCandles.length,
-    selectedTimeframe
+    selectedBacktestCandles.length
   ]);
 
   const deepChartCandles = backtestSeriesMap[selectedKey] ?? null;
@@ -5200,15 +5255,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [selectedTimeframe, seriesMap]);
 
   const tradeBlueprints = useMemo(() => {
-    if (backtestModelProfiles.length === 0 || backtestTargetTrades <= 0) {
+    if (appliedBacktestModelProfiles.length === 0 || backtestTargetTrades <= 0) {
       return [];
     }
 
-    const perModelBase = Math.floor(backtestTargetTrades / backtestModelProfiles.length);
-    const remainder = backtestTargetTrades % backtestModelProfiles.length;
+    const perModelBase = Math.floor(backtestTargetTrades / appliedBacktestModelProfiles.length);
+    const remainder = backtestTargetTrades % appliedBacktestModelProfiles.length;
     const blueprints: TradeBlueprint[] = [];
 
-    backtestModelProfiles.forEach((model, index) => {
+    appliedBacktestModelProfiles.forEach((model, index) => {
       const count = perModelBase + (index < remainder ? 1 : 0);
 
       if (count <= 0) {
@@ -5221,7 +5276,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           count,
           backtestRefreshNowMs,
           backtestBlueprintRange,
-          dollarsPerMove
+          appliedBacktestSettings.dollarsPerMove
         )
       );
     });
@@ -5230,11 +5285,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       .sort((left, right) => right.exitMs - left.exitMs)
       .slice(0, backtestTargetTrades);
   }, [
+    appliedBacktestModelProfiles,
+    appliedBacktestSettings.dollarsPerMove,
     backtestBlueprintRange,
-    backtestModelProfiles,
     backtestRefreshNowMs,
-    backtestTargetTrades,
-    dollarsPerMove
+    backtestTargetTrades
   ]);
 
   const activeTrade = useMemo<ActiveTrade | null>(() => {
@@ -5339,8 +5394,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   const [historyRows, setHistoryRows] = useState<HistoryItem[]>([]);
   const boundedHistoryRows = useMemo(() => {
-    return applyHistoryCollectionPnlBounds(historyRows, tpDollars, slDollars);
-  }, [historyRows, slDollars, tpDollars]);
+    return applyHistoryCollectionPnlBounds(
+      historyRows,
+      appliedBacktestSettings.tpDollars,
+      appliedBacktestSettings.slDollars
+    );
+  }, [appliedBacktestSettings.slDollars, appliedBacktestSettings.tpDollars, historyRows]);
   const deferredHistoryRows = useDeferredValue(boundedHistoryRows);
   const backtestHistoryJobIdRef = useRef(0);
   const chronologicalHistoryRows = useMemo(() => {
@@ -5352,8 +5411,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return chronologicalHistoryRows;
   }, [chronologicalHistoryRows]);
   const antiCheatBacktestContext = useMemo(() => {
-    const startMs = getUtcDayStartMs(statsDateStart);
-    const endExclusiveMs = getUtcDayEndExclusiveMs(statsDateEnd);
+    const startMs = getUtcDayStartMs(appliedBacktestSettings.statsDateStart);
+    const endExclusiveMs = getUtcDayEndExclusiveMs(appliedBacktestSettings.statsDateEnd);
     const dateFilteredTrades = backtestSourceTrades.filter((trade) => {
       const tradeMs = Number(trade.entryTime) * 1000;
 
@@ -5378,39 +5437,52 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const entryHour = getTradeHour(trade.entryTime);
 
       return (
-        enabledBacktestWeekdays.includes(weekday) &&
-        enabledBacktestSessions.includes(session) &&
-        enabledBacktestMonths.includes(monthIndex) &&
-        enabledBacktestHours.includes(entryHour)
+        appliedBacktestSettings.enabledBacktestWeekdays.includes(weekday) &&
+        appliedBacktestSettings.enabledBacktestSessions.includes(session) &&
+        appliedBacktestSettings.enabledBacktestMonths.includes(monthIndex) &&
+        appliedBacktestSettings.enabledBacktestHours.includes(entryHour)
       );
     });
     const confidenceById = new Map<string, number>();
 
-    if (!antiCheatEnabled || timeFilteredBase.length === 0) {
+    if (!appliedBacktestSettings.antiCheatEnabled || timeFilteredBase.length === 0) {
       return {
         dateFilteredTrades,
         timeFilteredTrades:
-          antiCheatEnabled && validationMode === "split"
+          appliedBacktestSettings.antiCheatEnabled &&
+          appliedBacktestSettings.validationMode === "split"
             ? timeFilteredBase.slice(Math.floor(timeFilteredBase.length * 0.5))
             : timeFilteredBase,
         confidenceById
       };
     }
 
-    const activeLibraryIds = selectedAiLibraries.length > 0 ? selectedAiLibraries : ["core"];
+    const activeLibraryIds =
+      appliedBacktestSettings.selectedAiLibraries.length > 0
+        ? appliedBacktestSettings.selectedAiLibraries
+        : ["core"];
     const splitIndex =
-      validationMode === "split" ? Math.floor(timeFilteredBase.length * 0.5) : 0;
+      appliedBacktestSettings.validationMode === "split"
+        ? Math.floor(timeFilteredBase.length * 0.5)
+        : 0;
     const splitTrainingTrades =
-      validationMode === "split" ? timeFilteredBase.slice(0, splitIndex) : timeFilteredBase;
+      appliedBacktestSettings.validationMode === "split"
+        ? timeFilteredBase.slice(0, splitIndex)
+        : timeFilteredBase;
     const timeFilteredTrades =
-      validationMode === "split" ? timeFilteredBase.slice(splitIndex) : timeFilteredBase;
+      appliedBacktestSettings.validationMode === "split"
+        ? timeFilteredBase.slice(splitIndex)
+        : timeFilteredBase;
 
     const getLibrarySettings = (libraryId: string) => {
       const definition = aiLibraryDefById[libraryId];
       const defaults = definition?.defaults ?? {};
       return {
         ...(defaults as Record<string, AiLibrarySettingValue>),
-        ...((selectedAiLibrarySettings[libraryId] ?? {}) as Record<string, AiLibrarySettingValue>)
+        ...((appliedBacktestSettings.selectedAiLibrarySettings[libraryId] ?? {}) as Record<
+          string,
+          AiLibrarySettingValue
+        >)
       };
     };
 
@@ -5495,49 +5567,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           5000
         );
         source = windowTrades > 0 ? pool.slice(-windowTrades) : [];
-      } else if (normalizedId === "wins") {
-        source = pool.filter((trade) => trade.result === "Win");
-      } else if (normalizedId === "wins_tokyo") {
+      } else if (normalizedId === "tokyo") {
         source = pool.filter(
-          (trade) =>
-            trade.result === "Win" && getSessionLabel(trade.entryTime) === "Tokyo"
+          (trade) => getSessionLabel(trade.entryTime) === "Tokyo"
         );
-      } else if (normalizedId === "wins_sydney") {
+      } else if (normalizedId === "sydney") {
         source = pool.filter(
-          (trade) =>
-            trade.result === "Win" && getSessionLabel(trade.entryTime) === "Sydney"
+          (trade) => getSessionLabel(trade.entryTime) === "Sydney"
         );
-      } else if (normalizedId === "wins_london") {
+      } else if (normalizedId === "london") {
         source = pool.filter(
-          (trade) =>
-            trade.result === "Win" && getSessionLabel(trade.entryTime) === "London"
+          (trade) => getSessionLabel(trade.entryTime) === "London"
         );
-      } else if (normalizedId === "wins_newyork") {
+      } else if (normalizedId === "newyork") {
         source = pool.filter(
-          (trade) =>
-            trade.result === "Win" && getSessionLabel(trade.entryTime) === "New York"
-        );
-      } else if (normalizedId === "losses") {
-        source = pool.filter((trade) => trade.result === "Loss");
-      } else if (normalizedId === "losses_tokyo") {
-        source = pool.filter(
-          (trade) =>
-            trade.result === "Loss" && getSessionLabel(trade.entryTime) === "Tokyo"
-        );
-      } else if (normalizedId === "losses_sydney") {
-        source = pool.filter(
-          (trade) =>
-            trade.result === "Loss" && getSessionLabel(trade.entryTime) === "Sydney"
-        );
-      } else if (normalizedId === "losses_london") {
-        source = pool.filter(
-          (trade) =>
-            trade.result === "Loss" && getSessionLabel(trade.entryTime) === "London"
-        );
-      } else if (normalizedId === "losses_newyork") {
-        source = pool.filter(
-          (trade) =>
-            trade.result === "Loss" && getSessionLabel(trade.entryTime) === "New York"
+          (trade) => getSessionLabel(trade.entryTime) === "New York"
         );
       } else if (normalizedId === "terrific") {
         const count = getLibraryCount(libraryId, 96);
@@ -5623,7 +5667,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     for (let index = 0; index < timeFilteredBase.length; index += 1) {
       const trade = timeFilteredBase[index]!;
       const basePool =
-        validationMode === "split" ? splitTrainingTrades : timeFilteredBase.slice(0, index);
+        appliedBacktestSettings.validationMode === "split"
+          ? splitTrainingTrades
+          : timeFilteredBase.slice(0, index);
 
       if (basePool.length === 0) {
         confidenceById.set(trade.id, getSyntheticWinProb(trade));
@@ -5650,7 +5696,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         for (const candidate of source) {
           const similarityWeight = getSimilarityWeight(trade, candidate) * libraryWeight;
           const outcome =
-            validationMode === "synthetic"
+            appliedBacktestSettings.validationMode === "synthetic"
               ? getSyntheticWinProb(candidate)
               : candidate.result === "Win"
                 ? 1
@@ -5690,17 +5736,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [
     aiLibraryDefById,
-    antiCheatEnabled,
+    appliedBacktestSettings.antiCheatEnabled,
+    appliedBacktestSettings.enabledBacktestHours,
+    appliedBacktestSettings.enabledBacktestMonths,
+    appliedBacktestSettings.enabledBacktestSessions,
+    appliedBacktestSettings.enabledBacktestWeekdays,
+    appliedBacktestSettings.selectedAiLibraries,
+    appliedBacktestSettings.selectedAiLibrarySettings,
+    appliedBacktestSettings.statsDateEnd,
+    appliedBacktestSettings.statsDateStart,
+    appliedBacktestSettings.validationMode,
     backtestSourceTrades,
-    enabledBacktestHours,
-    enabledBacktestMonths,
-    enabledBacktestSessions,
-    enabledBacktestWeekdays,
-    selectedAiLibraries,
-    selectedAiLibrarySettings,
-    statsDateEnd,
-    statsDateStart,
-    validationMode
   ]);
   const getEffectiveTradeConfidenceScore = useCallback(
     (trade: HistoryItem) => {
@@ -5712,13 +5758,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return antiCheatBacktestContext.timeFilteredTrades
       .filter((trade) => {
         const confidence = getEffectiveTradeConfidenceScore(trade) * 100;
-        return !aiFilterEnabled || confidence >= confidenceThreshold;
+        return (
+          !appliedBacktestSettings.aiFilterEnabled ||
+          confidence >= appliedBacktestSettings.confidenceThreshold
+        );
       })
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime) || b.id.localeCompare(a.id));
   }, [
+    appliedBacktestSettings.aiFilterEnabled,
+    appliedBacktestSettings.confidenceThreshold,
     antiCheatBacktestContext,
-    aiFilterEnabled,
-    confidenceThreshold,
     getEffectiveTradeConfidenceScore
   ]);
 
@@ -5730,19 +5779,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         continue;
       }
 
-      const key = symbolTimeframeKey(blueprint.symbol, selectedTimeframe);
+      const key = symbolTimeframeKey(blueprint.symbol, appliedBacktestSettings.timeframe);
       next[blueprint.symbol] = backtestSeriesMap[key] ?? seriesMap[key] ?? EMPTY_CANDLES;
     }
 
     return next;
   }, [
+    appliedBacktestSettings.timeframe,
     backtestSeriesMap,
-    selectedTimeframe,
     seriesMap,
     tradeBlueprints
   ]);
 
   useEffect(() => {
+    if (!backtestHasRun || !backtestHistorySeedReady) {
+      return;
+    }
+
     const nextJobId = backtestHistoryJobIdRef.current + 1;
     backtestHistoryJobIdRef.current = nextJobId;
 
@@ -5750,16 +5803,43 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       startTransition(() => {
         setHistoryRows([]);
       });
+      finishStatsRefreshLoading(formatStatsRefreshDateLabel(backtestRefreshNowMs));
       return;
     }
 
     const modelNamesById: Record<string, string> = {};
+    let earliestEntryMs = Number.POSITIVE_INFINITY;
+    let latestExitMs = Number.NEGATIVE_INFINITY;
 
     for (const blueprint of tradeBlueprints) {
+      earliestEntryMs = Math.min(earliestEntryMs, blueprint.entryMs);
+      latestExitMs = Math.max(latestExitMs, blueprint.exitMs);
+
       if (!modelNamesById[blueprint.modelId]) {
-        modelNamesById[blueprint.modelId] = modelProfileById[blueprint.modelId]?.name ?? "Main Settings";
+        modelNamesById[blueprint.modelId] =
+          modelProfileById[blueprint.modelId]?.name ?? "Main Settings";
       }
     }
+
+    const timelineStartMs =
+      Number.isFinite(earliestEntryMs) && earliestEntryMs > 0
+        ? earliestEntryMs
+        : backtestBlueprintRange.startMs;
+    const timelineEndMs =
+      Number.isFinite(latestExitMs) && latestExitMs > 0 ? latestExitMs : backtestBlueprintRange.endMs;
+    const setLoadingProgress = (ratio: number) => {
+      const normalizedRatio = clamp(ratio, 0, 1);
+      const progressPct = 35 + normalizedRatio * 65;
+      const currentMs =
+        Number.isFinite(timelineStartMs) &&
+        Number.isFinite(timelineEndMs) &&
+        timelineEndMs >= timelineStartMs
+          ? timelineStartMs + (timelineEndMs - timelineStartMs) * normalizedRatio
+          : timelineEndMs;
+
+      setStatsRefreshProgress((current) => Math.max(current, progressPct));
+      setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(currentMs));
+    };
 
     const computeSynchronously = (): HistoryItem[] => {
       return normalizeBacktestHistoryRows(
@@ -5784,7 +5864,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       startTransition(() => {
         setHistoryRows(rows);
       });
+      finishStatsRefreshLoading(formatStatsRefreshDateLabel(timelineEndMs));
     };
+
+    setLoadingProgress(0);
 
     if (typeof Worker === "undefined") {
       commitRows(computeSynchronously());
@@ -5873,6 +5956,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
         rowChunks[index] = event.data.rows;
         completedChunks += 1;
+        setLoadingProgress(completedChunks / chunks.length);
 
         if (completedChunks !== chunks.length) {
           return;
@@ -5903,8 +5987,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       workers.forEach((worker) => worker.terminate());
     };
   }, [
+    backtestBlueprintRange.endMs,
+    backtestBlueprintRange.startMs,
+    backtestHasRun,
+    backtestHistorySeedReady,
     backtestHistorySeriesBySymbol,
+    backtestRefreshNowMs,
     backtestTargetTrades,
+    finishStatsRefreshLoading,
     modelProfileById,
     tradeBlueprints
   ]);
@@ -6132,7 +6222,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setShowActiveTradeOnChart(false);
     setActiveBacktestTradeDetails(null);
     focusTradeIdRef.current = null;
-  }, [selectedBacktestModelNames]);
+  }, [appliedBacktestModelNames]);
 
   useEffect(() => {
     if (!notificationsOpen) {
@@ -6634,7 +6724,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   useEffect(() => {
     let frameId = 0;
-    let resetTimeout = 0;
     let holdStart = 0;
     let holdActive = false;
     let holdCompleted = false;
@@ -6647,13 +6736,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         frameId = 0;
       }
 
-      if (resetTimeout) {
-        window.clearTimeout(resetTimeout);
-        resetTimeout = 0;
-      }
-
-      if (resetState) {
-        setStatsRefreshOverlayVisible(false);
+      if (resetState && statsRefreshOverlayModeRef.current === "hold") {
+        updateStatsRefreshOverlayMode("idle");
         setStatsRefreshProgress(0);
       }
     };
@@ -6671,16 +6755,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         frameId = 0;
       }
 
-      setStatsRefreshProgress(100);
-      setBacktestRefreshNowMs(floorToTimeframe(Date.now(), "1m"));
-      setPropResult(null);
-      setPropStats(null);
-
-      resetTimeout = window.setTimeout(() => {
-        setStatsRefreshOverlayVisible(false);
-        setStatsRefreshProgress(0);
-        resetTimeout = 0;
-      }, 220);
+      applyBacktestSettingsSnapshot();
     };
 
     const tick = (timestamp: number) => {
@@ -6707,19 +6782,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       if (
         selectedSurfaceTabRef.current !== "backtest" ||
         holdActive ||
-        holdCompleted
+        holdCompleted ||
+        statsRefreshOverlayModeRef.current !== "idle"
       ) {
         return;
       }
 
-      if (resetTimeout) {
-        window.clearTimeout(resetTimeout);
-        resetTimeout = 0;
-      }
-
+      clearStatsRefreshResetTimeout();
       holdActive = true;
       holdStart = performance.now();
-      setStatsRefreshOverlayVisible(true);
+      updateStatsRefreshOverlayMode("hold");
       setStatsRefreshProgress(0);
       frameId = window.requestAnimationFrame(tick);
     };
@@ -6738,7 +6810,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
 
     const onBlur = () => {
-      holdCompleted = false;
       stopHold();
     };
 
@@ -6752,7 +6823,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       window.removeEventListener("blur", onBlur);
       stopHold(false);
     };
-  }, []);
+  }, [
+    applyBacktestSettingsSnapshot,
+    clearStatsRefreshResetTimeout,
+    updateStatsRefreshOverlayMode
+  ]);
 
   useEffect(() => {
     const pendingTradeId = focusTradeIdRef.current;
@@ -7222,29 +7297,32 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const entryHour = getTradeHour(trade.entryTime);
 
       return (
-        enabledBacktestWeekdays.includes(weekday) &&
-        enabledBacktestSessions.includes(session) &&
-        enabledBacktestMonths.includes(monthIndex) &&
-        enabledBacktestHours.includes(entryHour)
+        appliedBacktestSettings.enabledBacktestWeekdays.includes(weekday) &&
+        appliedBacktestSettings.enabledBacktestSessions.includes(session) &&
+        appliedBacktestSettings.enabledBacktestMonths.includes(monthIndex) &&
+        appliedBacktestSettings.enabledBacktestHours.includes(entryHour)
       );
     });
   }, [
+    appliedBacktestSettings.enabledBacktestHours,
+    appliedBacktestSettings.enabledBacktestMonths,
+    appliedBacktestSettings.enabledBacktestSessions,
+    appliedBacktestSettings.enabledBacktestWeekdays,
     backtestDateFilteredTrades,
-    enabledBacktestHours,
-    enabledBacktestMonths,
-    enabledBacktestSessions,
-    enabledBacktestWeekdays
   ]);
 
   const backtestTrades = useMemo(() => {
     return backtestTimeFilteredTrades.filter((trade) => {
       const confidence = getEffectiveTradeConfidenceScore(trade) * 100;
-      return !aiFilterEnabled || confidence >= confidenceThreshold;
+      return (
+        !appliedBacktestSettings.aiFilterEnabled ||
+        confidence >= appliedBacktestSettings.confidenceThreshold
+      );
     });
   }, [
-    aiFilterEnabled,
+    appliedBacktestSettings.aiFilterEnabled,
+    appliedBacktestSettings.confidenceThreshold,
     backtestTimeFilteredTrades,
-    confidenceThreshold,
     getEffectiveTradeConfidenceScore
   ]);
   const deferredBacktestAnalyticsTrades = useDeferredValue(backtestTrades);
@@ -7311,7 +7389,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const getSettings = (definition: AiLibraryDef) => {
       return {
         ...definition.defaults,
-        ...(selectedAiLibrarySettings[definition.id] ?? {})
+        ...(appliedBacktestSettings.selectedAiLibrarySettings[definition.id] ?? {})
       };
     };
 
@@ -7347,49 +7425,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           5000
         );
         source = windowTrades > 0 ? backtestTrades.slice(-windowTrades) : [];
-      } else if (normalizedId === "wins") {
-        source = backtestLibraryCandidateTrades.filter((trade) => trade.result === "Win");
-      } else if (normalizedId === "wins_tokyo") {
+      } else if (normalizedId === "tokyo") {
         source = backtestLibraryCandidateTrades.filter(
-          (trade) =>
-            trade.result === "Win" && getSessionLabel(trade.entryTime) === "Tokyo"
+          (trade) => getSessionLabel(trade.entryTime) === "Tokyo"
         );
-      } else if (normalizedId === "wins_sydney") {
+      } else if (normalizedId === "sydney") {
         source = backtestLibraryCandidateTrades.filter(
-          (trade) =>
-            trade.result === "Win" && getSessionLabel(trade.entryTime) === "Sydney"
+          (trade) => getSessionLabel(trade.entryTime) === "Sydney"
         );
-      } else if (normalizedId === "wins_london") {
+      } else if (normalizedId === "london") {
         source = backtestLibraryCandidateTrades.filter(
-          (trade) =>
-            trade.result === "Win" && getSessionLabel(trade.entryTime) === "London"
+          (trade) => getSessionLabel(trade.entryTime) === "London"
         );
-      } else if (normalizedId === "wins_newyork") {
+      } else if (normalizedId === "newyork") {
         source = backtestLibraryCandidateTrades.filter(
-          (trade) =>
-            trade.result === "Win" && getSessionLabel(trade.entryTime) === "New York"
-        );
-      } else if (normalizedId === "losses") {
-        source = backtestLibraryCandidateTrades.filter((trade) => trade.result === "Loss");
-      } else if (normalizedId === "losses_tokyo") {
-        source = backtestLibraryCandidateTrades.filter(
-          (trade) =>
-            trade.result === "Loss" && getSessionLabel(trade.entryTime) === "Tokyo"
-        );
-      } else if (normalizedId === "losses_sydney") {
-        source = backtestLibraryCandidateTrades.filter(
-          (trade) =>
-            trade.result === "Loss" && getSessionLabel(trade.entryTime) === "Sydney"
-        );
-      } else if (normalizedId === "losses_london") {
-        source = backtestLibraryCandidateTrades.filter(
-          (trade) =>
-            trade.result === "Loss" && getSessionLabel(trade.entryTime) === "London"
-        );
-      } else if (normalizedId === "losses_newyork") {
-        source = backtestLibraryCandidateTrades.filter(
-          (trade) =>
-            trade.result === "Loss" && getSessionLabel(trade.entryTime) === "New York"
+          (trade) => getSessionLabel(trade.entryTime) === "New York"
         );
       } else if (normalizedId === "terrific") {
         const count = clamp(
@@ -7455,11 +7505,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       baselineWinRates
     };
   }, [
+    appliedBacktestSettings.selectedAiLibrarySettings,
     aiLibraryDefs,
     backtestLibraryCandidateTrades,
     backtestTimeFilteredTrades,
-    backtestTrades,
-    selectedAiLibrarySettings
+    backtestTrades
   ]);
   const aiLibraryCounts = aiLibraryInsights.counts;
   const aiLibraryBaselineWinRates = aiLibraryInsights.baselineWinRates;
@@ -7484,24 +7534,32 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [getEffectiveTradeConfidenceScore, mainStatsTrades]);
 
   const mainStatsTitle = useMemo(() => {
-    if (!statsDateStart && !statsDateEnd) {
+    if (!appliedBacktestSettings.statsDateStart && !appliedBacktestSettings.statsDateEnd) {
       return "Stats (All Trades)";
     }
 
-    const startLabel = statsDateStart ? formatStatsDateLabel(statsDateStart) : "Start";
-    const endLabel = statsDateEnd ? formatStatsDateLabel(statsDateEnd) : "End";
+    const startLabel = appliedBacktestSettings.statsDateStart
+      ? formatStatsDateLabel(appliedBacktestSettings.statsDateStart)
+      : "Start";
+    const endLabel = appliedBacktestSettings.statsDateEnd
+      ? formatStatsDateLabel(appliedBacktestSettings.statsDateEnd)
+      : "End";
     return `Stats (${startLabel} -> ${endLabel})`;
-  }, [statsDateEnd, statsDateStart]);
+  }, [appliedBacktestSettings.statsDateEnd, appliedBacktestSettings.statsDateStart]);
 
   const backtestDateRangeLabel = useMemo(() => {
-    if (!statsDateStart && !statsDateEnd) {
+    if (!appliedBacktestSettings.statsDateStart && !appliedBacktestSettings.statsDateEnd) {
       return "All dates";
     }
 
-    const startLabel = statsDateStart ? formatStatsDateLabel(statsDateStart) : "Start";
-    const endLabel = statsDateEnd ? formatStatsDateLabel(statsDateEnd) : "End";
+    const startLabel = appliedBacktestSettings.statsDateStart
+      ? formatStatsDateLabel(appliedBacktestSettings.statsDateStart)
+      : "Start";
+    const endLabel = appliedBacktestSettings.statsDateEnd
+      ? formatStatsDateLabel(appliedBacktestSettings.statsDateEnd)
+      : "End";
     return `${startLabel} -> ${endLabel}`;
-  }, [statsDateEnd, statsDateStart]);
+  }, [appliedBacktestSettings.statsDateEnd, appliedBacktestSettings.statsDateStart]);
 
   const mainStatsSessionRows = useMemo(() => {
     const map = new Map<string, { label: string; total: number; trades: number }>();
@@ -7589,7 +7647,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [mainStatsTrades]);
 
   const mainStatsAiEfficiency = useMemo(() => {
-    if (aiMode === "off" || mainStatsTrades.length < 10) {
+    if (appliedBacktestSettings.aiMode === "off" || mainStatsTrades.length < 10) {
       return null;
     }
 
@@ -7631,10 +7689,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       (positiveRankTotal - (positives * (positives + 1)) / 2) / (Math.max(1, positives) * Math.max(1, negatives));
 
     return clamp(auc, 0, 1);
-  }, [aiMode, getEffectiveTradeConfidenceScore, mainStatsTrades]);
+  }, [appliedBacktestSettings.aiMode, getEffectiveTradeConfidenceScore, mainStatsTrades]);
 
   const mainStatsAiEffectivenessPct = useMemo(() => {
-    if (aiMode === "off" || !aiFilterEnabled) {
+    if (
+      appliedBacktestSettings.aiMode === "off" ||
+      !appliedBacktestSettings.aiFilterEnabled
+    ) {
       return null;
     }
 
@@ -7644,8 +7705,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return mainStatsSummary.winRate - baselineMainStatsSummary.winRate;
   }, [
-    aiFilterEnabled,
-    aiMode,
+    appliedBacktestSettings.aiFilterEnabled,
+    appliedBacktestSettings.aiMode,
     baselineMainStatsSummary.winRate,
     baselineMainStatsTrades.length,
     mainStatsSummary.winRate,
@@ -7653,7 +7714,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   ]);
 
   const mainStatsAiEfficacyPct = useMemo(() => {
-    if (aiMode === "off" || !aiFilterEnabled) {
+    if (
+      appliedBacktestSettings.aiMode === "off" ||
+      !appliedBacktestSettings.aiFilterEnabled
+    ) {
       return null;
     }
 
@@ -7670,8 +7734,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return ((currentPnl - baselinePnl) / denominator) * 100;
   }, [
-    aiFilterEnabled,
-    aiMode,
+    appliedBacktestSettings.aiFilterEnabled,
+    appliedBacktestSettings.aiMode,
     baselineMainStatsSummary.totalPnl,
     baselineMainStatsTrades.length,
     mainStatsSummary.totalPnl,
@@ -8512,14 +8576,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       )
     );
 
-    for (const modelName of selectedBacktestModelNames) {
+    for (const modelName of appliedBacktestModelNames) {
       if (!models.includes(modelName)) {
         models.push(modelName);
       }
     }
 
     return ["All", ...models];
-  }, [backtestSourceTrades, isPerformanceStatsBacktestTabActive, selectedBacktestModelNames]);
+  }, [appliedBacktestModelNames, backtestSourceTrades, isPerformanceStatsBacktestTabActive]);
 
   useEffect(() => {
     if (!isPerformanceStatsBacktestTabActive) {
@@ -8948,10 +9012,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const sortedTrades = [...deferredBacktestAnalyticsTrades].sort(
       (left, right) => Number(left.entryTime) - Number(right.entryTime)
     );
-    const splitAllowed = antiCheatEnabled && validationMode === "split";
+    const splitAllowed =
+      appliedBacktestSettings.antiCheatEnabled &&
+      appliedBacktestSettings.validationMode === "split";
     const splitIndex = Math.floor(sortedTrades.length * (DIMENSION_STATS_SPLIT_PCT / 100));
     const evaluationTrades = splitAllowed ? sortedTrades.slice(splitIndex) : sortedTrades;
-    const effectiveBars = getAiFeatureWindowBars(chunkBars);
+    const effectiveBars = getAiFeatureWindowBars(appliedBacktestSettings.chunkBars);
     const dimensionDefs: Array<{
       key: string;
       featureId: string;
@@ -8961,7 +9027,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }> = [];
 
     for (const feature of AI_FEATURE_OPTIONS) {
-      const level = aiFeatureLevels[feature.id] ?? 0;
+      const level = appliedBacktestSettings.aiFeatureLevels[feature.id] ?? 0;
       const take = featureTakeCount(feature.id, level);
 
       if (take <= 0) {
@@ -8969,7 +9035,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       const names = DIMENSION_FEATURE_NAME_BANK[feature.id] ?? [];
-      const mode = aiFeatureModes[feature.id] ?? "individual";
+      const mode = appliedBacktestSettings.aiFeatureModes[feature.id] ?? "individual";
       const parts = mode === "individual" ? effectiveBars : 1;
 
       for (let featureIndex = 0; featureIndex < take; featureIndex += 1) {
@@ -9014,8 +9080,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     for (const trade of evaluationTrades) {
       const candles =
-        backtestSeriesMap[symbolTimeframeKey(trade.symbol, selectedTimeframe)] ??
-        seriesMap[symbolTimeframeKey(trade.symbol, selectedTimeframe)] ??
+        backtestSeriesMap[symbolTimeframeKey(trade.symbol, appliedBacktestSettings.timeframe)] ??
+        seriesMap[symbolTimeframeKey(trade.symbol, appliedBacktestSettings.timeframe)] ??
         EMPTY_CANDLES;
 
       if (candles.length === 0) {
@@ -9028,7 +9094,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         continue;
       }
 
-      const featureBuckets = buildDimensionFeatureLagBuckets(candles, entryIndex, chunkBars);
+      const featureBuckets = buildDimensionFeatureLagBuckets(
+        candles,
+        entryIndex,
+        appliedBacktestSettings.chunkBars
+      );
 
       if (!featureBuckets) {
         continue;
@@ -9149,12 +9219,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     dimensions.sort((left, right) => right.absCorr - left.absCorr);
 
     const inDim = dimensions.length;
-    const outDim = inDim > 0 ? clamp(Math.round(dimensionAmount), 2, inDim) : 0;
+    const outDim =
+      inDim > 0 ? clamp(Math.round(appliedBacktestSettings.dimensionAmount), 2, inDim) : 0;
     const dimKeyOrder = dimensions.map((dimension) => dimension.key);
     let keptKeys = dimKeyOrder;
 
     if (outDim < inDim) {
-      if (compressionMethod === "subsample") {
+      if (appliedBacktestSettings.compressionMethod === "subsample") {
         if (outDim <= 1) {
           keptKeys = [dimKeyOrder[0]!];
         } else {
@@ -9163,7 +9234,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             return dimKeyOrder[keyIndex]!;
           });
         }
-      } else if (compressionMethod === "variance") {
+      } else if (appliedBacktestSettings.compressionMethod === "variance") {
         keptKeys = [...dimensions]
           .sort(
             (left, right) =>
@@ -9189,19 +9260,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       outDim
     };
   }, [
-    antiCheatEnabled,
+    appliedBacktestSettings.aiFeatureLevels,
+    appliedBacktestSettings.aiFeatureModes,
+    appliedBacktestSettings.antiCheatEnabled,
+    appliedBacktestSettings.chunkBars,
+    appliedBacktestSettings.compressionMethod,
+    appliedBacktestSettings.dimensionAmount,
+    appliedBacktestSettings.timeframe,
+    appliedBacktestSettings.validationMode,
     backtestSeriesMap,
-    chunkBars,
-    compressionMethod,
-    dimensionAmount,
     deferredBacktestAnalyticsTrades,
-    aiFeatureLevels,
-    aiFeatureModes,
     isBacktestAnalyticsVisible,
     selectedBacktestTab,
-    selectedTimeframe,
     seriesMap,
-    validationMode
   ]);
 
   const toggleDimSort = (column: DimensionSortColumn) => {
@@ -10420,7 +10491,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 <div className="backtest-hero-copy">
                   <span className="backtest-kicker">Backtest Workspace</span>
                   <h2>
-                    {backtestModelSelectionSummary} on {selectedTimeframe}
+                    {backtestDisplayModelSelectionSummary} on {backtestDisplayTimeframe}
                   </h2>
                 </div>
 
@@ -10502,8 +10573,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <>
                       <h3>Backtest is ready to run</h3>
                       <p>
-                        Adjust Main Settings, then click Run Backtest at the bottom of the Main Settings
-                        tab to load the simulated trade history.
+                        Adjust Main Settings, then hold CTRL for 3 seconds to apply the update.
+                        Stats stay frozen until that hold completes.
                       </p>
                     </>
                   ) : backtestSourceTrades.length > 0 ? (
@@ -11169,19 +11240,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       style={{
                         display: "flex",
                         alignItems: "center",
-                        justifyContent: "space-between",
                         gap: "0.85rem",
                         flexWrap: "wrap"
                       }}
                     >
-                      <button
-                        type="button"
-                        className={`ai-zip-button ${backtestHasRun ? "active" : ""}`}
-                        disabled={backtestModelProfiles.length === 0}
-                        onClick={runBacktestFromMainSettings}
-                      >
-                        {backtestHasRun ? "Run Backtest Again" : "Run Backtest"}
-                      </button>
+                      <div style={{ fontSize: 11, lineHeight: 1.6, color: "rgba(255,255,255,0.72)" }}>
+                        {backtestModelProfiles.length === 0
+                          ? "Enable at least one model, then hold CTRL for 3 seconds to apply changes."
+                          : backtestHasRun
+                            ? "Stats never auto-update. Hold CTRL for 3 seconds to apply any changes."
+                            : "Hold CTRL for 3 seconds to apply the current settings and run the backtest."}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -11757,6 +11826,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 {field.help ? (
                                   <p className="ai-zip-library-field-help">{field.help}</p>
                                 ) : null}
+                                {field.key === AI_LIBRARY_TARGET_WIN_RATE_KEY ? (
+                                  <p className="ai-zip-library-field-help">
+                                    {Number.isFinite(
+                                      aiLibraryBaselineWinRates[selectedAiLibrary.id]
+                                    )
+                                      ? `Natural win rate: ${aiLibraryBaselineWinRates[
+                                          selectedAiLibrary.id
+                                        ]!.toFixed(1)}% before target trimming.`
+                                      : "Natural win rate appears here once source trades are available."}
+                                  </p>
+                                ) : null}
                               </label>
                             );
                           })}
@@ -12291,11 +12371,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           const durationMinutes = getHistoryTradeDurationMinutes(trade);
                           const estimatedBars = Math.max(
                             1,
-                            Math.round(durationMinutes / timeframeMinutes[selectedTimeframe])
+                            Math.round(
+                              durationMinutes /
+                                timeframeMinutes[appliedBacktestSettings.timeframe]
+                            )
                           );
                           const tradeCandles =
-                            backtestSeriesMap[symbolTimeframeKey(trade.symbol, selectedTimeframe)] ??
-                            seriesMap[symbolTimeframeKey(trade.symbol, selectedTimeframe)] ??
+                            backtestSeriesMap[
+                              symbolTimeframeKey(trade.symbol, appliedBacktestSettings.timeframe)
+                            ] ??
+                            seriesMap[
+                              symbolTimeframeKey(trade.symbol, appliedBacktestSettings.timeframe)
+                            ] ??
                             EMPTY_CANDLES;
 
                           return (
@@ -12323,7 +12410,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   <div className="backtest-calendar-trade-copy">
                                     <div className="backtest-calendar-trade-inline">
                                       <span className="backtest-calendar-trade-inline-label">
-                                        Entry ({selectedTimeframe}):
+                                        Entry ({appliedBacktestSettings.timeframe}):
                                       </span>
                                       <span className="backtest-calendar-trade-inline-value">
                                         {trade.entryAt}
@@ -12334,7 +12421,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     </div>
                                     <div className="backtest-calendar-trade-inline optional">
                                       <span className="backtest-calendar-trade-inline-label">
-                                        Exit ({selectedTimeframe}):
+                                        Exit ({appliedBacktestSettings.timeframe}):
                                       </span>
                                       <span className="backtest-calendar-trade-inline-value">
                                         {trade.exitAt}
@@ -12391,7 +12478,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     <BacktestTradeMiniChart
                                       trade={trade}
                                       candles={tradeCandles}
-                                      minutesPerBar={timeframeMinutes[selectedTimeframe]}
+                                      minutesPerBar={timeframeMinutes[appliedBacktestSettings.timeframe]}
                                       isOpen={isExpanded}
                                     />
                                   </div>
@@ -12418,9 +12505,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         trades={aiZipClusterTrades}
                         ghostEntries={[]}
                         libraryPoints={[]}
-                        activeLibraries={selectedAiLibraries}
+                        activeLibraries={appliedBacktestSettings.selectedAiLibraries}
                         libraryCounts={{}}
-                        chunkBars={chunkBars}
+                        chunkBars={appliedBacktestSettings.chunkBars}
                         potential={null}
                         parseMode="utc"
                         showPotential={false}
@@ -12435,17 +12522,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         onPostHocTrades={() => {}}
                         onPostHocProgress={() => {}}
                         onMitMap={() => {}}
-                        aiMethod={aiMode}
-                        aiModalities={selectedAiModalities}
+                        aiMethod={appliedBacktestSettings.aiMode}
+                        aiModalities={appliedBacktestSettings.selectedAiModalities}
                         hdbModalityDistinction="conceptual"
-                        hdbMinClusterSize={hdbMinClusterSize}
-                        hdbMinSamples={hdbMinSamples}
-                        hdbEpsQuantile={hdbEpsQuantile}
-                        staticLibrariesClusters={staticLibrariesClusters}
-                        confidenceThreshold={effectiveConfidenceThreshold}
-                        statsDateStart={statsDateStart}
-                        statsDateEnd={statsDateEnd}
-                        antiCheatEnabled={antiCheatEnabled}
+                        hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}
+                        hdbMinSamples={appliedBacktestSettings.hdbMinSamples}
+                        hdbEpsQuantile={appliedBacktestSettings.hdbEpsQuantile}
+                        staticLibrariesClusters={appliedBacktestSettings.staticLibrariesClusters}
+                        confidenceThreshold={appliedEffectiveConfidenceThreshold}
+                        statsDateStart={appliedBacktestSettings.statsDateStart}
+                        statsDateEnd={appliedBacktestSettings.statsDateEnd}
+                        antiCheatEnabled={appliedBacktestSettings.antiCheatEnabled}
                       />
                     ) : (
                       <AIZipClusterMap3D
@@ -12453,7 +12540,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         trades={aiZipClusterTrades}
                         ghostEntries={[]}
                         libraryPoints={[]}
-                        chunkBarsDeb={chunkBars}
+                        chunkBarsDeb={appliedBacktestSettings.chunkBars}
                         potential={null}
                         parseMode="utc"
                         showPotential={false}
@@ -12465,16 +12552,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         onToggleClusterMapView={() =>
                           setAiZipClusterMapView((current) => (current === "3d" ? "2d" : "3d"))
                         }
-                        activeLibraries={selectedAiLibraries}
-                        staticLibrariesClusters={staticLibrariesClusters}
-                        aiMethod={aiMode}
-                        aiModalities={selectedAiModalities}
-                        hdbMinClusterSize={hdbMinClusterSize}
-                        hdbMinSamples={hdbMinSamples}
-                        hdbEpsQuantile={hdbEpsQuantile}
+                        activeLibraries={appliedBacktestSettings.selectedAiLibraries}
+                        staticLibrariesClusters={appliedBacktestSettings.staticLibrariesClusters}
+                        aiMethod={appliedBacktestSettings.aiMode}
+                        aiModalities={appliedBacktestSettings.selectedAiModalities}
+                        hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}
+                        hdbMinSamples={appliedBacktestSettings.hdbMinSamples}
+                        hdbEpsQuantile={appliedBacktestSettings.hdbEpsQuantile}
                         hdbModalityDistinction="conceptual"
                         clusterGroupStatsMode="All"
-                        antiCheatEnabled={antiCheatEnabled}
+                        antiCheatEnabled={appliedBacktestSettings.antiCheatEnabled}
                       />
                     )}
                   </div>
@@ -13890,13 +13977,35 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       </section>
 
       {statsRefreshOverlayVisible ? (
-        <div className="stats-refresh-overlay" aria-live="polite" aria-atomic="true">
-          <div className="stats-refresh-card">
-            {statsRefreshProgress >= 100
-              ? "Refreshing Main Statistics..."
-              : `Hold CTRL · Full update in ${statsRefreshSecondsRemaining.toFixed(1)}s`}
+        statsRefreshOverlayMode === "loading" ? (
+          <div className="stats-refresh-loading-overlay" aria-live="polite" aria-atomic="true">
+            <div className="stats-refresh-loading-shell">
+              <div className="stats-refresh-loading-status">Updating Backtest Statistics</div>
+              <div
+                className="stats-refresh-loading-track"
+                role="progressbar"
+                aria-label="Updating backtest statistics"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(clamp(statsRefreshProgress, 0, 100))}
+              >
+                <div
+                  className="stats-refresh-loading-fill"
+                  style={{ width: `${clamp(statsRefreshProgress, 0, 100)}%` }}
+                />
+              </div>
+              <div className="stats-refresh-loading-date">
+                {statsRefreshProgressLabel || formatStatsRefreshDateLabel(backtestRefreshNowMs)}
+              </div>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="stats-refresh-overlay" aria-live="polite" aria-atomic="true">
+            <div className="stats-refresh-card">
+              {`Hold CTRL for ${statsRefreshSecondsRemaining.toFixed(1)}s to apply updates`}
+            </div>
+          </div>
+        )
       ) : null}
 
       <footer className="statusbar">
