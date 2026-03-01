@@ -70,6 +70,8 @@ const LIGHTWEIGHT_CHART_LINE_SOLID: LineStyle = 0;
 const LIGHTWEIGHT_CHART_LINE_DOTTED: LineStyle = 1;
 const BACKTEST_HISTORY_WORKER_LIMIT = 2;
 const BACKTEST_HISTORY_PARALLEL_THRESHOLD = 120;
+const CHART_WINDOW_MIN_BUFFER_BARS = 80;
+const CHART_WINDOW_EDGE_THRESHOLD_BARS = 24;
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type SurfaceTab = "chart" | "backtest";
@@ -317,6 +319,11 @@ type MultiTradeOverlaySeries = {
   targetLine: ISeriesApi<"Line">;
   stopLine: ISeriesApi<"Line">;
   pathLine: ISeriesApi<"Line">;
+};
+
+type ChartDataWindow = {
+  from: number;
+  to: number;
 };
 
 type MarketApiCandle = {
@@ -2557,6 +2564,41 @@ const clamp = (value: number, min: number, max: number): number => {
   return Math.min(max, Math.max(min, value));
 };
 
+const clampChartDataWindow = (totalBars: number, from: number, to: number): ChartDataWindow => {
+  if (totalBars <= 0) {
+    return { from: 0, to: -1 };
+  }
+
+  const maxIndex = totalBars - 1;
+  const nextFrom = Math.min(maxIndex, Math.max(0, Math.floor(from)));
+  const nextTo = Math.min(maxIndex, Math.max(nextFrom, Math.ceil(to)));
+
+  return { from: nextFrom, to: nextTo };
+};
+
+const buildChartDataWindow = (
+  totalBars: number,
+  visibleFrom: number,
+  visibleTo: number
+): ChartDataWindow => {
+  if (totalBars <= 0) {
+    return { from: 0, to: -1 };
+  }
+
+  const clampedVisible = clampChartDataWindow(totalBars, visibleFrom, visibleTo);
+  const visibleSpan = Math.max(1, clampedVisible.to - clampedVisible.from + 1);
+  const buffer = Math.max(
+    CHART_WINDOW_MIN_BUFFER_BARS,
+    Math.round(visibleSpan * 2)
+  );
+
+  return clampChartDataWindow(
+    totalBars,
+    clampedVisible.from - buffer,
+    clampedVisible.to + buffer
+  );
+};
+
 const wrapIndex = (value: number, length: number): number => {
   if (length <= 0) {
     return 0;
@@ -4084,8 +4126,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const streamRef = useRef<EventSource | null>(null);
   const selectedSurfaceTabRef = useRef<SurfaceTab>(selectedSurfaceTab);
   const chartSizeRef = useRef({ width: 0, height: 0 });
+  const chartRenderWindowRef = useRef<ChartDataWindow>({ from: 0, to: -1 });
+  const chartVisibleGlobalRangeRef = useRef<ChartDataWindow | null>(null);
+  const chartPendingVisibleGlobalRangeRef = useRef<ChartDataWindow | null>(null);
+  const chartVisibleRangeSyncRafRef = useRef(0);
+  const chartIsApplyingVisibleRangeRef = useRef(false);
+  const chartSourceLengthRef = useRef(0);
+  const previousChartSourceLengthRef = useRef(0);
+  const requestChartVisibleRangeRef = useRef<(visibleRange: ChartDataWindow) => void>(() => {});
   const chartDataLengthRef = useRef(0);
-  const chartSyncedLastTimeRef = useRef<UTCTimestamp | null>(null);
+  const [chartRenderWindow, setChartRenderWindow] = useState<ChartDataWindow>({ from: 0, to: -1 });
 
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
@@ -4559,18 +4609,181 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const deepChartCandles = backtestSeriesMap[selectedKey] ?? null;
   const usesDeepChartHistory = (deepChartCandles?.length ?? 0) > 0;
   const selectedChartCandles = useMemo(() => {
-    return usesDeepChartHistory ? deepChartCandles ?? EMPTY_CANDLES : selectedCandles;
+    if (!usesDeepChartHistory) {
+      return selectedCandles;
+    }
+
+    const deepHistory = deepChartCandles ?? EMPTY_CANDLES;
+
+    if (selectedCandles.length === 0) {
+      return deepHistory;
+    }
+
+    return mergeRecentCandles(
+      deepHistory,
+      selectedCandles,
+      Math.max(deepHistory.length + selectedCandles.length, selectedCandles.length)
+    );
   }, [deepChartCandles, selectedCandles, usesDeepChartHistory]);
+
+  useEffect(() => {
+    const totalBars = selectedChartCandles.length;
+    const selection = `${selectedSymbol}-${selectedTimeframe}`;
+    const selectionChanged = selectionRef.current !== selection;
+    const previousTotalBars = previousChartSourceLengthRef.current;
+
+    selectionRef.current = selection;
+    previousChartSourceLengthRef.current = totalBars;
+    chartSourceLengthRef.current = totalBars;
+
+    if (totalBars === 0) {
+      chartRenderWindowRef.current = { from: 0, to: -1 };
+      chartVisibleGlobalRangeRef.current = null;
+      chartPendingVisibleGlobalRangeRef.current = null;
+      setChartRenderWindow((current) =>
+        current.from === 0 && current.to === -1 ? current : { from: 0, to: -1 }
+      );
+      return;
+    }
+
+    const moveToLatest = () => {
+      const visibleTo = totalBars - 1;
+      const visibleFrom = Math.max(0, visibleTo - timeframeVisibleCount[selectedTimeframe]);
+      const visibleRange = { from: visibleFrom, to: visibleTo };
+      const nextWindow = buildChartDataWindow(totalBars, visibleFrom, visibleTo);
+
+      chartVisibleGlobalRangeRef.current = visibleRange;
+      chartPendingVisibleGlobalRangeRef.current = visibleRange;
+      chartRenderWindowRef.current = nextWindow;
+      setChartRenderWindow((current) =>
+        current.from === nextWindow.from && current.to === nextWindow.to ? current : nextWindow
+      );
+    };
+
+    if (selectionChanged || previousTotalBars <= 0) {
+      moveToLatest();
+      return;
+    }
+
+    if (totalBars < previousTotalBars) {
+      const currentVisible = chartVisibleGlobalRangeRef.current ?? chartPendingVisibleGlobalRangeRef.current;
+      const fallbackVisible =
+        currentVisible !== null
+          ? clampChartDataWindow(totalBars, currentVisible.from, currentVisible.to)
+          : clampChartDataWindow(
+              totalBars,
+              totalBars - 1 - timeframeVisibleCount[selectedTimeframe],
+              totalBars - 1
+            );
+      const nextWindow = buildChartDataWindow(totalBars, fallbackVisible.from, fallbackVisible.to);
+
+      chartVisibleGlobalRangeRef.current = fallbackVisible;
+      chartPendingVisibleGlobalRangeRef.current = fallbackVisible;
+      chartRenderWindowRef.current = nextWindow;
+      setChartRenderWindow((current) =>
+        current.from === nextWindow.from && current.to === nextWindow.to ? current : nextWindow
+      );
+      return;
+    }
+
+    if (totalBars > previousTotalBars) {
+      const currentVisible = chartVisibleGlobalRangeRef.current;
+
+      if (currentVisible && currentVisible.to >= previousTotalBars - 3) {
+        const shift = totalBars - previousTotalBars;
+        const nextVisible = clampChartDataWindow(
+          totalBars,
+          currentVisible.from + shift,
+          currentVisible.to + shift
+        );
+        const nextWindow = buildChartDataWindow(totalBars, nextVisible.from, nextVisible.to);
+
+        chartVisibleGlobalRangeRef.current = nextVisible;
+        chartPendingVisibleGlobalRangeRef.current = nextVisible;
+        chartRenderWindowRef.current = nextWindow;
+        setChartRenderWindow((current) =>
+          current.from === nextWindow.from && current.to === nextWindow.to ? current : nextWindow
+        );
+      }
+    }
+  }, [selectedChartCandles.length, selectedSymbol, selectedTimeframe]);
+
+  const chartRenderCandles = useMemo(() => {
+    if (chartRenderWindow.to < chartRenderWindow.from) {
+      return EMPTY_CANDLES;
+    }
+
+    return selectedChartCandles.slice(chartRenderWindow.from, chartRenderWindow.to + 1);
+  }, [chartRenderWindow, selectedChartCandles]);
+
+  requestChartVisibleRangeRef.current = (visibleRange: ChartDataWindow) => {
+    const totalBars = chartSourceLengthRef.current;
+
+    if (totalBars <= 0) {
+      return;
+    }
+
+    const nextVisibleRange = clampChartDataWindow(
+      totalBars,
+      visibleRange.from,
+      visibleRange.to
+    );
+    const nextWindow = buildChartDataWindow(
+      totalBars,
+      nextVisibleRange.from,
+      nextVisibleRange.to
+    );
+    const currentWindow = chartRenderWindowRef.current;
+
+    chartVisibleGlobalRangeRef.current = nextVisibleRange;
+    chartPendingVisibleGlobalRangeRef.current = nextVisibleRange;
+
+    if (
+      currentWindow.from === nextWindow.from &&
+      currentWindow.to === nextWindow.to
+    ) {
+      const chart = chartRef.current;
+
+      if (!chart || currentWindow.to < currentWindow.from) {
+        return;
+      }
+
+      chart.applyOptions({
+        rightPriceScale: {
+          autoScale: true
+        }
+      });
+      chartIsApplyingVisibleRangeRef.current = true;
+      chart.timeScale().setVisibleLogicalRange({
+        from: nextVisibleRange.from - currentWindow.from,
+        to: nextVisibleRange.to - currentWindow.from
+      });
+      chartPendingVisibleGlobalRangeRef.current = null;
+
+      if (chartVisibleRangeSyncRafRef.current) {
+        window.cancelAnimationFrame(chartVisibleRangeSyncRafRef.current);
+      }
+
+      chartVisibleRangeSyncRafRef.current = window.requestAnimationFrame(() => {
+        chartIsApplyingVisibleRangeRef.current = false;
+        chartVisibleRangeSyncRafRef.current = 0;
+      });
+      return;
+    }
+
+    chartRenderWindowRef.current = nextWindow;
+    setChartRenderWindow(nextWindow);
+  };
 
   const candleByUnix = useMemo(() => {
     const map = new Map<number, Candle>();
 
-    for (const candle of selectedChartCandles) {
+    for (const candle of chartRenderCandles) {
       map.set(toUtcTimestamp(candle.time), candle);
     }
 
     return map;
-  }, [selectedChartCandles]);
+  }, [chartRenderCandles]);
 
   const latestCandle = selectedCandles[selectedCandles.length - 1] ?? null;
   const previousCandle =
@@ -5357,8 +5570,66 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
         setHoveredTime(parseTimeFromCrosshair(param.time));
       };
+      const onVisibleLogicalRangeChange = (range: { from: number; to: number } | null) => {
+        if (
+          !range ||
+          chartIsApplyingVisibleRangeRef.current
+        ) {
+          return;
+        }
+
+        const totalBars = chartSourceLengthRef.current;
+
+        if (totalBars <= 0) {
+          return;
+        }
+
+        const currentWindow = chartRenderWindowRef.current;
+
+        if (currentWindow.to < currentWindow.from) {
+          return;
+        }
+
+        const visibleGlobalRange = {
+          from: currentWindow.from + range.from,
+          to: currentWindow.from + range.to
+        };
+
+        chartVisibleGlobalRangeRef.current = visibleGlobalRange;
+
+        const visibleSpan = Math.max(1, Math.ceil(visibleGlobalRange.to - visibleGlobalRange.from));
+        const edgeThreshold = Math.max(
+          CHART_WINDOW_EDGE_THRESHOLD_BARS,
+          Math.round(visibleSpan * 0.5)
+        );
+        const needsWindowShift =
+          visibleGlobalRange.from < currentWindow.from + edgeThreshold ||
+          visibleGlobalRange.to > currentWindow.to - edgeThreshold ||
+          visibleSpan > Math.max(1, currentWindow.to - currentWindow.from + 1 - edgeThreshold * 2);
+
+        if (!needsWindowShift) {
+          return;
+        }
+
+        const nextWindow = buildChartDataWindow(
+          totalBars,
+          visibleGlobalRange.from,
+          visibleGlobalRange.to
+        );
+
+        if (
+          nextWindow.from === currentWindow.from &&
+          nextWindow.to === currentWindow.to
+        ) {
+          return;
+        }
+
+        chartRenderWindowRef.current = nextWindow;
+        setChartRenderWindow(nextWindow);
+      };
 
       chart.subscribeCrosshairMove(onCrosshairMove);
+      chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange);
       let resizeRaf = 0;
 
       const applyChartSize = (rawWidth: number, rawHeight: number, force = false) => {
@@ -5462,6 +5733,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         document.removeEventListener("fullscreenchange", queueResizeFromContainer);
         resizeObserver.disconnect();
         chart.unsubscribeCrosshairMove(onCrosshairMove);
+        chart.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange);
         chart.remove();
         chartRef.current = null;
         candleSeriesRef.current = null;
@@ -5473,8 +5745,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         tradePathLineRef.current = null;
         chartSizeRef.current = { width: 0, height: 0 };
         multiTradeSeriesRef.current = [];
+        if (chartVisibleRangeSyncRafRef.current) {
+          window.cancelAnimationFrame(chartVisibleRangeSyncRafRef.current);
+          chartVisibleRangeSyncRafRef.current = 0;
+        }
         chartDataLengthRef.current = 0;
-        chartSyncedLastTimeRef.current = null;
+        chartRenderWindowRef.current = { from: 0, to: -1 };
+        chartVisibleGlobalRangeRef.current = null;
+        chartPendingVisibleGlobalRangeRef.current = null;
+        chartIsApplyingVisibleRangeRef.current = false;
       };
 
       if (disposed) {
@@ -5499,14 +5778,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return;
     }
 
-    if (selectedChartCandles.length === 0) {
+    if (chartRenderCandles.length === 0 || chartRenderWindow.to < chartRenderWindow.from) {
       candleSeries.setData([]);
       chartDataLengthRef.current = 0;
-      chartSyncedLastTimeRef.current = null;
       return;
     }
 
-    const candleData: CandlestickData<UTCTimestamp>[] = selectedChartCandles.map((candle) => ({
+    const candleData: CandlestickData<UTCTimestamp>[] = chartRenderCandles.map((candle) => ({
       time: toUtcTimestamp(candle.time),
       open: candle.open,
       high: candle.high,
@@ -5516,69 +5794,32 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     candleSeries.setData(candleData);
     chartDataLengthRef.current = candleData.length;
-    chartSyncedLastTimeRef.current = candleData[candleData.length - 1]?.time ?? null;
+    const targetVisibleRange =
+      chartPendingVisibleGlobalRangeRef.current ?? chartVisibleGlobalRangeRef.current;
 
-    const selection = `${selectedSymbol}-${selectedTimeframe}`;
-
-    if (selectionRef.current !== selection) {
-      const to = candleData.length - 1;
-      const from = Math.max(0, to - timeframeVisibleCount[selectedTimeframe]);
-
+    if (targetVisibleRange) {
       chart.applyOptions({
         rightPriceScale: {
           autoScale: true
         }
       });
-      chart.timeScale().setVisibleLogicalRange({ from, to });
-      selectionRef.current = selection;
+      chartIsApplyingVisibleRangeRef.current = true;
+      chart.timeScale().setVisibleLogicalRange({
+        from: targetVisibleRange.from - chartRenderWindow.from,
+        to: targetVisibleRange.to - chartRenderWindow.from
+      });
+      chartPendingVisibleGlobalRangeRef.current = null;
+
+      if (chartVisibleRangeSyncRafRef.current) {
+        window.cancelAnimationFrame(chartVisibleRangeSyncRafRef.current);
+      }
+
+      chartVisibleRangeSyncRafRef.current = window.requestAnimationFrame(() => {
+        chartIsApplyingVisibleRangeRef.current = false;
+        chartVisibleRangeSyncRafRef.current = 0;
+      });
     }
-  }, [selectedChartCandles, selectedSymbol, selectedTimeframe]);
-
-  useEffect(() => {
-    const candleSeries = candleSeriesRef.current;
-    const syncedTime = chartSyncedLastTimeRef.current;
-
-    if (!candleSeries || !usesDeepChartHistory || selectedCandles.length === 0 || syncedTime === null) {
-      return;
-    }
-
-    const toDataPoint = (candle: Candle): CandlestickData<UTCTimestamp> => ({
-      time: toUtcTimestamp(candle.time),
-      open: candle.open,
-      high: candle.high,
-      low: candle.low,
-      close: candle.close
-    });
-
-    let startIndex = selectedCandles.length - 1;
-
-    while (startIndex >= 0 && toUtcTimestamp(selectedCandles[startIndex]!.time) > syncedTime) {
-      startIndex -= 1;
-    }
-
-    if (startIndex >= 0 && toUtcTimestamp(selectedCandles[startIndex]!.time) === syncedTime) {
-      candleSeries.update(toDataPoint(selectedCandles[startIndex]!));
-      startIndex += 1;
-    } else {
-      startIndex += 1;
-    }
-
-    if (startIndex >= selectedCandles.length) {
-      return;
-    }
-
-    let appended = 0;
-
-    for (let i = startIndex; i < selectedCandles.length; i += 1) {
-      candleSeries.update(toDataPoint(selectedCandles[i]!));
-      appended += 1;
-    }
-
-    if (appended > 0) {
-      chartDataLengthRef.current += appended;
-      chartSyncedLastTimeRef.current = toUtcTimestamp(selectedCandles[selectedCandles.length - 1]!.time);
-    }
-  }, [selectedCandles, usesDeepChartHistory]);
+  }, [chartRenderCandles, chartRenderWindow]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -5602,17 +5843,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       event.preventDefault();
 
-      const chart = chartRef.current;
+      const totalBars = chartSourceLengthRef.current;
 
-      const chartLength = chartDataLengthRef.current;
-
-      if (!chart || chartLength === 0) {
+      if (totalBars === 0) {
         return;
       }
 
-      const to = chartLength - 1;
+      const to = totalBars - 1;
       const from = Math.max(0, to - timeframeVisibleCount[selectedTimeframe]);
-      chart.timeScale().setVisibleLogicalRange({ from, to });
+
+      requestChartVisibleRangeRef.current({ from, to });
       focusTradeIdRef.current = null;
     };
 
@@ -5746,11 +5986,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, []);
 
   useEffect(() => {
-    const chart = chartRef.current;
     const pendingTradeId = focusTradeIdRef.current;
 
     if (
-      !chart ||
+      !chartRef.current ||
       !pendingTradeId ||
       !selectedHistoryTrade ||
       selectedHistoryTrade.id !== pendingTradeId ||
@@ -5772,7 +6011,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const span = Math.max(32, Math.round(timeframeVisibleCount[selectedTimeframe] * 0.72));
     const from = Math.max(0, leftBound - Math.round(span * 0.4));
     const to = Math.min(selectedChartCandles.length - 1, rightBound + Math.round(span * 0.6));
-    chart.timeScale().setVisibleLogicalRange({ from, to });
+    requestChartVisibleRangeRef.current({ from, to });
     focusTradeIdRef.current = null;
   }, [
     candleIndexByUnix,
