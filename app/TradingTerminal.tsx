@@ -909,6 +909,146 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     ]
   },
   {
+    id: "losses",
+    name: "Losses Only",
+    description: "Base-seeded trades that hit SL (losers) only.",
+    defaults: {
+      weight: 100,
+      maxSamples: 10000,
+      stride: 0,
+      tpDollars: 250,
+      slDollars: 250,
+      jumpToResolution: true
+    },
+    fields: [
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100
+      }
+    ]
+  },
+  {
+    id: "losses_tokyo",
+    name: "Tokyo Losses",
+    description: "Losses-only base seeding restricted to the Tokyo session.",
+    defaults: {
+      weight: 100,
+      maxSamples: 8000,
+      stride: 0,
+      tpDollars: 250,
+      slDollars: 250,
+      jumpToResolution: true
+    },
+    fields: [
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100
+      }
+    ]
+  },
+  {
+    id: "losses_sydney",
+    name: "Sydney Losses",
+    description: "Losses-only base seeding restricted to the Sydney session.",
+    defaults: {
+      weight: 100,
+      maxSamples: 8000,
+      stride: 0,
+      tpDollars: 250,
+      slDollars: 250,
+      jumpToResolution: true
+    },
+    fields: [
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100
+      }
+    ]
+  },
+  {
+    id: "losses_london",
+    name: "London Losses",
+    description: "Losses-only base seeding restricted to the London session.",
+    defaults: {
+      weight: 100,
+      maxSamples: 8000,
+      stride: 0,
+      tpDollars: 250,
+      slDollars: 250,
+      jumpToResolution: true
+    },
+    fields: [
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100
+      }
+    ]
+  },
+  {
+    id: "losses_newyork",
+    name: "New York Losses",
+    description: "Losses-only base seeding restricted to the New York session.",
+    defaults: {
+      weight: 100,
+      maxSamples: 8000,
+      stride: 0,
+      tpDollars: 250,
+      slDollars: 250,
+      jumpToResolution: true
+    },
+    fields: [
+      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
+      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
+      { key: "tpDollars", label: "TP ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "slDollars", label: "SL ($)", type: "number", min: 1, max: 20000, step: 25 },
+      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100
+      }
+    ]
+  },
+  {
     id: "terrific",
     name: "Terrific Trades",
     description: "Hand-picked high quality trades.",
@@ -5255,6 +5395,28 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           (trade) =>
             trade.result === "Win" && getSessionLabel(trade.entryTime) === "New York"
         );
+      } else if (normalizedId === "losses") {
+        source = pool.filter((trade) => trade.result === "Loss");
+      } else if (normalizedId === "losses_tokyo") {
+        source = pool.filter(
+          (trade) =>
+            trade.result === "Loss" && getSessionLabel(trade.entryTime) === "Tokyo"
+        );
+      } else if (normalizedId === "losses_sydney") {
+        source = pool.filter(
+          (trade) =>
+            trade.result === "Loss" && getSessionLabel(trade.entryTime) === "Sydney"
+        );
+      } else if (normalizedId === "losses_london") {
+        source = pool.filter(
+          (trade) =>
+            trade.result === "Loss" && getSessionLabel(trade.entryTime) === "London"
+        );
+      } else if (normalizedId === "losses_newyork") {
+        source = pool.filter(
+          (trade) =>
+            trade.result === "Loss" && getSessionLabel(trade.entryTime) === "New York"
+        );
       } else if (normalizedId === "terrific") {
         const count = getLibraryCount(libraryId, 96);
         source = [...pool]
@@ -7021,18 +7183,30 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       London: 0,
       "New York": 0
     };
+    const sessionLosses: Record<string, number> = {
+      Tokyo: 0,
+      Sydney: 0,
+      London: 0,
+      "New York": 0
+    };
     let winsOnlyCount = 0;
+    let lossesOnlyCount = 0;
 
     for (const trade of backtestLibraryCandidateTrades) {
-      if (trade.result !== "Win") {
-        continue;
-      }
-
-      winsOnlyCount += 1;
       const session = getSessionLabel(trade.entryTime);
 
-      if (sessionWins[session] !== undefined) {
-        sessionWins[session] += 1;
+      if (trade.result === "Win") {
+        winsOnlyCount += 1;
+
+        if (sessionWins[session] !== undefined) {
+          sessionWins[session] += 1;
+        }
+      } else if (trade.result === "Loss") {
+        lossesOnlyCount += 1;
+
+        if (sessionLosses[session] !== undefined) {
+          sessionLosses[session] += 1;
+        }
       }
     }
 
@@ -7078,6 +7252,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           break;
         case "wins_newyork":
           sourceCount = sessionWins["New York"];
+          break;
+        case "losses":
+          sourceCount = lossesOnlyCount;
+          break;
+        case "losses_tokyo":
+          sourceCount = sessionLosses.Tokyo;
+          break;
+        case "losses_sydney":
+          sourceCount = sessionLosses.Sydney;
+          break;
+        case "losses_london":
+          sourceCount = sessionLosses.London;
+          break;
+        case "losses_newyork":
+          sourceCount = sessionLosses["New York"];
           break;
         case "terrific":
         case "terrible":

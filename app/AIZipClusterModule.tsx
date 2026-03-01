@@ -3945,6 +3945,286 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     ],
   },
   {
+    id: "losses",
+    name: "Losses Only",
+    description: "Base-seeded trades that hit SL (losers) only.",
+    defaults: {
+      weight: 100,
+      maxSamples: 10000,
+      stride: 0,
+      tpDollars: 250,
+      slDollars: 250,
+      jumpToResolution: true,
+    },
+    fields: [
+      {
+        key: "weight",
+        label: "Weight (%)",
+        type: "number",
+        min: 0,
+        max: 500,
+        step: 5,
+      },
+      {
+        key: "stride",
+        label: "Stride",
+        type: "number",
+        min: 0,
+        max: 5000,
+        step: 1,
+      },
+      {
+        key: "tpDollars",
+        label: "TP ($)",
+        type: "number",
+        min: 1,
+        max: 20000,
+        step: 25,
+      },
+      {
+        key: "slDollars",
+        label: "SL ($)",
+        type: "number",
+        min: 1,
+        max: 20000,
+        step: 25,
+      },
+      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100,
+      },
+    ],
+  },
+  {
+    id: "losses_tokyo",
+    name: "Tokyo Losses",
+    description: "Losses-only base seeding restricted to the Tokyo session.",
+    defaults: {
+      weight: 100,
+      maxSamples: 8000,
+      stride: 0,
+      tpDollars: 250,
+      slDollars: 250,
+      jumpToResolution: true,
+    },
+    fields: [
+      {
+        key: "weight",
+        label: "Weight (%)",
+        type: "number",
+        min: 0,
+        max: 500,
+        step: 5,
+      },
+      {
+        key: "stride",
+        label: "Stride",
+        type: "number",
+        min: 0,
+        max: 5000,
+        step: 1,
+      },
+      {
+        key: "tpDollars",
+        label: "TP ($)",
+        type: "number",
+        min: 1,
+        max: 20000,
+        step: 25,
+      },
+      {
+        key: "slDollars",
+        label: "SL ($)",
+        type: "number",
+        min: 1,
+        max: 20000,
+        step: 25,
+      },
+      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100,
+      },
+    ],
+  },
+  {
+    id: "losses_sydney",
+    name: "Sydney Losses",
+    description: "Losses-only base seeding restricted to the Sydney session.",
+    defaults: {
+      weight: 100,
+      maxSamples: 8000,
+      stride: 0,
+      tpDollars: 250,
+      slDollars: 250,
+      jumpToResolution: true,
+    },
+    fields: [
+      {
+        key: "weight",
+        label: "Weight (%)",
+        type: "number",
+        min: 0,
+        max: 500,
+        step: 5,
+      },
+      {
+        key: "stride",
+        label: "Stride",
+        type: "number",
+        min: 0,
+        max: 5000,
+        step: 1,
+      },
+      {
+        key: "tpDollars",
+        label: "TP ($)",
+        type: "number",
+        min: 1,
+        max: 20000,
+        step: 25,
+      },
+      {
+        key: "slDollars",
+        label: "SL ($)",
+        type: "number",
+        min: 1,
+        max: 20000,
+        step: 25,
+      },
+      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100,
+      },
+    ],
+  },
+  {
+    id: "losses_london",
+    name: "London Losses",
+    description: "Losses-only base seeding restricted to the London session.",
+    defaults: {
+      weight: 100,
+      maxSamples: 8000,
+      stride: 0,
+      tpDollars: 250,
+      slDollars: 250,
+      jumpToResolution: true,
+    },
+    fields: [
+      {
+        key: "weight",
+        label: "Weight (%)",
+        type: "number",
+        min: 0,
+        max: 500,
+        step: 5,
+      },
+      {
+        key: "stride",
+        label: "Stride",
+        type: "number",
+        min: 0,
+        max: 5000,
+        step: 1,
+      },
+      {
+        key: "tpDollars",
+        label: "TP ($)",
+        type: "number",
+        min: 1,
+        max: 20000,
+        step: 25,
+      },
+      {
+        key: "slDollars",
+        label: "SL ($)",
+        type: "number",
+        min: 1,
+        max: 20000,
+        step: 25,
+      },
+      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100,
+      },
+    ],
+  },
+  {
+    id: "losses_newyork",
+    name: "New York Losses",
+    description: "Losses-only base seeding restricted to the New York session.",
+    defaults: {
+      weight: 100,
+      maxSamples: 8000,
+      stride: 0,
+      tpDollars: 250,
+      slDollars: 250,
+      jumpToResolution: true,
+    },
+    fields: [
+      {
+        key: "weight",
+        label: "Weight (%)",
+        type: "number",
+        min: 0,
+        max: 500,
+        step: 5,
+      },
+      {
+        key: "stride",
+        label: "Stride",
+        type: "number",
+        min: 0,
+        max: 5000,
+        step: 1,
+      },
+      {
+        key: "tpDollars",
+        label: "TP ($)",
+        type: "number",
+        min: 1,
+        max: 20000,
+        step: 25,
+      },
+      {
+        key: "slDollars",
+        label: "SL ($)",
+        type: "number",
+        min: 1,
+        max: 20000,
+        step: 25,
+      },
+      { key: "jumpToResolution", label: "Jump to resolution", type: "boolean" },
+      {
+        key: "maxSamples",
+        label: "Amount of Samples",
+        type: "number",
+        min: 0,
+        max: 100000,
+        step: 100,
+      },
+    ],
+  },
+  {
     id: "terrific",
     name: "Terrific Trades",
     description: "",
@@ -8602,16 +8882,21 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
           }
         }
 
-        // Wins-only session libraries (quality subsets of Base Seeding)
-        const wantWinsLib =
+        // Outcome-filtered session libraries (quality subsets of Base Seeding)
+        const wantOutcomeLib =
           useLib("wins") ||
           useLib("wins_tokyo") ||
           useLib("wins_sydney") ||
           useLib("wins_london") ||
-          useLib("wins_newyork");
+          useLib("wins_newyork") ||
+          useLib("losses") ||
+          useLib("losses_tokyo") ||
+          useLib("losses_sydney") ||
+          useLib("losses_london") ||
+          useLib("losses_newyork");
 
-        if (wantWinsLib) {
-          const seedWinsLib = (libId, sessionName) => {
+        if (wantOutcomeLib) {
+          const seedOutcomeLib = (libId, sessionName, outcome) => {
             const s = libSetting(libId);
             const tpD = Math.max(0, Number(s.tpDollars ?? (tpDist * dollarsPerMove)) || 0) / dollarsPerMove;
             const slD = Math.max(0, Number(s.slDollars ?? (slDist * dollarsPerMove)) || 0) / dollarsPerMove;
@@ -8625,7 +8910,9 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             if (!(wt > 0)) return;
 
             const ck =
-              "wins|" +
+              "seed_outcome|" +
+              String(outcome) +
+              "|" +
               libId +
               "|" +
               modelKey +
@@ -8655,7 +8942,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
 
               pts = pts.filter((p) => {
                 if (!p) return false;
-                if (p.metaOutcome !== "Win") return false;
+                if (p.metaOutcome !== outcome) return false;
                 if (sessionName && p.metaSession !== sessionName) return false;
                 return true;
               });
@@ -8676,11 +8963,20 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             }
           };
 
-          if (useLib("wins")) seedWinsLib("wins", undefined);
-          if (useLib("wins_tokyo")) seedWinsLib("wins_tokyo", "Tokyo");
-          if (useLib("wins_sydney")) seedWinsLib("wins_sydney", "Sydney");
-          if (useLib("wins_london")) seedWinsLib("wins_london", "London");
-          if (useLib("wins_newyork")) seedWinsLib("wins_newyork", "New York");
+          if (useLib("wins")) seedOutcomeLib("wins", undefined, "Win");
+          if (useLib("wins_tokyo")) seedOutcomeLib("wins_tokyo", "Tokyo", "Win");
+          if (useLib("wins_sydney")) seedOutcomeLib("wins_sydney", "Sydney", "Win");
+          if (useLib("wins_london")) seedOutcomeLib("wins_london", "London", "Win");
+          if (useLib("wins_newyork")) seedOutcomeLib("wins_newyork", "New York", "Win");
+          if (useLib("losses")) seedOutcomeLib("losses", undefined, "Loss");
+          if (useLib("losses_tokyo"))
+            seedOutcomeLib("losses_tokyo", "Tokyo", "Loss");
+          if (useLib("losses_sydney"))
+            seedOutcomeLib("losses_sydney", "Sydney", "Loss");
+          if (useLib("losses_london"))
+            seedOutcomeLib("losses_london", "London", "Loss");
+          if (useLib("losses_newyork"))
+            seedOutcomeLib("losses_newyork", "New York", "Loss");
         }
 
 
