@@ -6801,43 +6801,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const exitIndexRaw = candleIndexByUnix.get(selectedHistoryTrade.exitTime) ?? -1;
     const inferredExitIndex =
       entryIndex + Math.max(1, Math.round((Number(selectedHistoryTrade.exitTime) - Number(selectedHistoryTrade.entryTime)) / (timeframeMinutes[selectedTimeframe] * 60)));
-    let exitIndex =
+    const exitIndex =
       exitIndexRaw >= 0
         ? Math.max(entryIndex, exitIndexRaw)
         : Math.min(selectedChartCandles.length - 1, inferredExitIndex);
 
     if (entryIndex < 0) {
       return;
-    }
-
-    const normalizedExitReason = normalizeBacktestExitReason(selectedHistoryTrade.exitReason);
-
-    if (
-      exitIndex > entryIndex &&
-      (normalizedExitReason === "Take Profit" || normalizedExitReason === "Stop Loss")
-    ) {
-      const isTargetExit = normalizedExitReason === "Take Profit";
-
-      for (let index = entryIndex + 1; index <= exitIndex; index += 1) {
-        const candle = selectedChartCandles[index];
-
-        if (!candle) {
-          continue;
-        }
-
-        const hitLevel = isTargetExit
-          ? selectedHistoryTrade.side === "Long"
-            ? candle.high >= selectedHistoryTrade.targetPrice
-            : candle.low <= selectedHistoryTrade.targetPrice
-          : selectedHistoryTrade.side === "Long"
-            ? candle.low <= selectedHistoryTrade.stopPrice
-            : candle.high >= selectedHistoryTrade.stopPrice;
-
-        if (hitLevel) {
-          exitIndex = index;
-          break;
-        }
-      }
     }
 
     const leftBound = Math.min(entryIndex, exitIndex);
@@ -7067,13 +7037,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
 
     const getTradeOverlayGeometry = (trade: {
-      side: TradeSide;
-      status: "closed" | "pending";
       entryTime: UTCTimestamp;
       exitTime: UTCTimestamp;
-      targetPrice: number;
-      stopPrice: number;
-      exitReason?: string;
     }) => {
       const stepSeconds = timeframeMinutes[selectedTimeframe] * 60;
       const entryMs = Number(trade.entryTime) * 1000;
@@ -7085,62 +7050,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           ? toUtcTimestamp(selectedChartCandles[entryIndex]!.time)
           : toUtcTimestamp(floorToTimeframe(entryMs, selectedTimeframe));
       const rawExitIndex = findCandleIndexAtOrBefore(selectedChartCandles, rawExitMs);
-      const inferredExitIndex =
-        entryIndex >= 0
-          ? entryIndex +
-            Math.max(1, Math.round((Number(trade.exitTime) - Number(trade.entryTime)) / stepSeconds))
-          : -1;
-      let exitIndex =
+      const exitIndex =
         rawExitIndex >= 0 && entryIndex >= 0 ? Math.max(entryIndex, rawExitIndex) : rawExitIndex;
-      if (exitIndex < 0 && entryIndex >= 0) {
-        exitIndex = Math.min(selectedChartCandles.length - 1, inferredExitIndex);
-      }
-
-      const normalizedExitReason =
-        trade.status === "closed" ? normalizeBacktestExitReason(trade.exitReason) : "";
-
-      if (
-        entryIndex >= 0 &&
-        exitIndex > entryIndex &&
-        (normalizedExitReason === "Take Profit" || normalizedExitReason === "Stop Loss")
-      ) {
-        const isTargetExit = normalizedExitReason === "Take Profit";
-
-        for (let index = entryIndex + 1; index <= exitIndex; index += 1) {
-          const candle = selectedChartCandles[index];
-
-          if (!candle) {
-            continue;
-          }
-
-          const hitLevel = isTargetExit
-            ? trade.side === "Long"
-              ? candle.high >= trade.targetPrice
-              : candle.low <= trade.targetPrice
-            : trade.side === "Long"
-              ? candle.low <= trade.stopPrice
-              : candle.high >= trade.stopPrice;
-
-          if (hitLevel) {
-            exitIndex = index;
-            break;
-          }
-        }
-      }
-
       const exitTime =
         exitIndex >= 0
           ? toUtcTimestamp(selectedChartCandles[exitIndex]!.time)
           : trade.exitTime > trade.entryTime
             ? toUtcTimestamp(floorToTimeframe(rawExitMs, selectedTimeframe))
             : startTime;
-      const rangeStartTime = startTime;
+      const rangeStartTime =
+        entryIndex > 0
+          ? toUtcTimestamp(selectedChartCandles[entryIndex - 1]!.time)
+          : ((startTime - stepSeconds) as UTCTimestamp);
       const rangeEndTime =
-        exitTime > startTime
-          ? exitTime
-          : exitIndex >= 0 && exitIndex + 1 < selectedChartCandles.length
-            ? toUtcTimestamp(selectedChartCandles[exitIndex + 1]!.time)
-            : ((startTime + stepSeconds) as UTCTimestamp);
+        exitIndex >= 0 && exitIndex + 1 < selectedChartCandles.length
+          ? toUtcTimestamp(selectedChartCandles[exitIndex + 1]!.time)
+          : ((exitTime + stepSeconds) as UTCTimestamp);
 
       return {
         rangeStartTime,
@@ -7242,17 +7167,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       targetPrice: number;
       stopPrice: number;
       outcomePrice: number;
-      exitReason?: string;
       pnlUsd: number;
     }) => {
       const { rangeStartTime, startTime, exitTime, rangeEndTime } = getTradeOverlayGeometry({
-        side: trade.side,
-        status: trade.status,
         entryTime: trade.entryTime,
-        exitTime: trade.exitTime,
-        targetPrice: trade.targetPrice,
-        stopPrice: trade.stopPrice,
-        exitReason: trade.exitReason
+        exitTime: trade.exitTime
       });
       const entryAction = trade.side === "Long" ? "Buy" : "Sell";
       const tradeZoneData = [
@@ -7324,13 +7243,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       for (const trade of currentSymbolHistoryRows) {
         const tradeResult: TradeResult = trade.result;
         const { rangeStartTime, startTime, exitTime, rangeEndTime } = getTradeOverlayGeometry({
-          side: trade.side,
-          status: "closed",
           entryTime: trade.entryTime,
-          exitTime: trade.exitTime,
-          targetPrice: trade.targetPrice,
-          stopPrice: trade.stopPrice,
-          exitReason: trade.exitReason
+          exitTime: trade.exitTime
         });
         const entryAction = trade.side === "Long" ? "Buy" : "Sell";
         const targetData = [
@@ -7414,19 +7328,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return;
     }
 
-      renderSingleTrade({
-        side: selectedHistoryTrade.side,
-        status: "closed",
-        result: selectedHistoryTrade.result,
-        entryTime: selectedHistoryTrade.entryTime,
-        exitTime: selectedHistoryTrade.exitTime,
-        entryPrice: selectedHistoryTrade.entryPrice,
-        targetPrice: selectedHistoryTrade.targetPrice,
-        stopPrice: selectedHistoryTrade.stopPrice,
-        outcomePrice: selectedHistoryTrade.outcomePrice,
-        exitReason: selectedHistoryTrade.exitReason,
-        pnlUsd: selectedHistoryTrade.pnlUsd
-      });
+    renderSingleTrade({
+      side: selectedHistoryTrade.side,
+      status: "closed",
+      result: selectedHistoryTrade.result,
+      entryTime: selectedHistoryTrade.entryTime,
+      exitTime: selectedHistoryTrade.exitTime,
+      entryPrice: selectedHistoryTrade.entryPrice,
+      targetPrice: selectedHistoryTrade.targetPrice,
+      stopPrice: selectedHistoryTrade.stopPrice,
+      outcomePrice: selectedHistoryTrade.outcomePrice,
+      pnlUsd: selectedHistoryTrade.pnlUsd
+    });
   }, [
     activeChartTrade,
     currentSymbolHistoryRows,
