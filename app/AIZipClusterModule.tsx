@@ -31,6 +31,176 @@ import {
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
+const tradeNum = (value) => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const pickTradeNum = (...values) => {
+  for (const value of values) {
+    const parsed = tradeNum(value);
+    if (parsed != null) return parsed;
+  }
+  return null;
+};
+
+const inferTradeDirection = (trade) => {
+  const raw =
+    (trade as any)?.dir ??
+    (trade as any)?.direction ??
+    (trade as any)?.sideNum ??
+    (trade as any)?.side ??
+    (trade as any)?.sideText;
+  const asNumber = tradeNum(raw);
+  if (asNumber === -1) return -1;
+  if (asNumber === 1) return 1;
+  const text = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (
+    text === "sell" ||
+    text === "short" ||
+    text.startsWith("sell") ||
+    text.startsWith("short") ||
+    text === "s"
+  ) {
+    return -1;
+  }
+  return 1;
+};
+
+const resolveTradePnlSnapshot = (trade, dollarsPerMove, candles) => {
+  const safeTrade = trade ?? {};
+  const dir = inferTradeDirection(safeTrade);
+  const candleList = Array.isArray(candles) ? candles : [];
+  const clampIndex = (rawIndex) => {
+    if (!candleList.length) return null;
+    const index = tradeNum(rawIndex);
+    if (index == null) return null;
+    return Math.max(0, Math.min(candleList.length - 1, Math.round(index)));
+  };
+
+  const entryIndex = clampIndex(
+    (safeTrade as any).entryIndex ??
+      (safeTrade as any).signalIndex ??
+      (safeTrade as any).openIndex
+  );
+  const exitIndex = clampIndex(
+    (safeTrade as any).exitIndex ??
+      (safeTrade as any).closeIndex ??
+      (safeTrade as any).endIndex
+  );
+  const entryCandle = entryIndex != null ? candleList[entryIndex] : null;
+  const exitCandle = exitIndex != null ? candleList[exitIndex] : null;
+  const lastCandle = candleList.length ? candleList[candleList.length - 1] : null;
+
+  const entryPrice = pickTradeNum(
+    (safeTrade as any).entryPrice,
+    (safeTrade as any).openPrice,
+    (safeTrade as any).entry,
+    (safeTrade as any).open,
+    (safeTrade as any).priceEntry,
+    (safeTrade as any).entryPx,
+    entryCandle?.open,
+    entryCandle?.close
+  );
+
+  const livePrice = (safeTrade as any).isOpen
+    ? pickTradeNum(
+        (safeTrade as any).markPrice,
+        (safeTrade as any).currentPrice,
+        (safeTrade as any).lastPrice,
+        (safeTrade as any).priceNow,
+        (safeTrade as any).nowPrice,
+        lastCandle?.close,
+        lastCandle?.open
+      )
+    : null;
+
+  const exitPrice = pickTradeNum(
+    (safeTrade as any).exitPrice,
+    (safeTrade as any).closePrice,
+    (safeTrade as any).exit,
+    (safeTrade as any).close,
+    (safeTrade as any).priceExit,
+    (safeTrade as any).exitPx,
+    exitCandle?.close,
+    exitCandle?.open,
+    livePrice
+  );
+
+  const storedPnl = pickTradeNum(
+    (safeTrade as any).isOpen ? (safeTrade as any).unrealizedPnl : null,
+    (safeTrade as any).pnl,
+    (safeTrade as any).realizedPnl,
+    (safeTrade as any).profit,
+    (safeTrade as any).netPnl,
+    (safeTrade as any).pnlUsd
+  );
+
+  const dpm = Math.max(1e-6, Math.abs(tradeNum(dollarsPerMove) ?? 1));
+  const pricePnl =
+    entryPrice != null && exitPrice != null
+      ? (exitPrice - entryPrice) * dir * dpm
+      : null;
+
+  return {
+    dir,
+    entryPrice,
+    exitPrice,
+    storedPnl,
+    pricePnl,
+    effectivePnl: pricePnl != null ? pricePnl : storedPnl,
+  };
+};
+
+const normalizeTradePnlValues = (trade, dollarsPerMove, candles) => {
+  if (!trade || typeof trade !== "object") return trade;
+
+  const snapshot = resolveTradePnlSnapshot(trade, dollarsPerMove, candles);
+  const next = { ...(trade as any) };
+
+  if (snapshot.entryPrice != null) next.entryPrice = snapshot.entryPrice;
+  if (snapshot.exitPrice != null) {
+    if (next.isOpen) {
+      next.markPrice =
+        typeof next.markPrice === "number" && Number.isFinite(next.markPrice)
+          ? next.markPrice
+          : snapshot.exitPrice;
+    } else {
+      next.exitPrice = snapshot.exitPrice;
+    }
+  }
+
+  next.direction = snapshot.dir;
+  next.dir = snapshot.dir;
+
+  if (snapshot.effectivePnl != null) {
+    const rounded = Number(snapshot.effectivePnl.toFixed(2));
+    if (next.isOpen) {
+      next.unrealizedPnl = rounded;
+    } else {
+      next.pnl = rounded;
+      next.realizedPnl = rounded;
+      next.netPnl = rounded;
+      next.pnlUsd = rounded;
+      next.win = rounded >= 0;
+      next.label = rounded >= 0 ? 1 : -1;
+    }
+  }
+
+  return next;
+};
+
+const normalizeTradeCollectionPnl = (trades, dollarsPerMove, candles) => {
+  if (!Array.isArray(trades) || trades.length === 0) return [];
+  return trades.map((trade) => normalizeTradePnlValues(trade, dollarsPerMove, candles));
+};
+
 // --- Trade Details Modal (module-scope) ---
 function TradeDetailsModalImpl({
   trade,
@@ -53,54 +223,14 @@ function TradeDetailsModalImpl({
     return Number.isFinite(x) ? x : NaN;
   };
 
-  const entryPrice = num((trade as any).entryPrice);
-  const rawExitPrice = num(
-    (trade as any).exitPrice ??
-      (trade as any).closePrice ??
-      (trade as any).exit ??
-      (trade as any).close ??
-      (trade as any).priceExit
-  );
-
-  // Direction can be stored in several ways (1/-1, "long"/"short", etc.)
-  const dirRaw =
-    (trade as any).dir ??
-    (trade as any).direction ??
-    (trade as any).sideNum ??
-    (trade as any).side ??
-    (trade as any).sideText;
-
-  const dirNum = num(dirRaw);
-  const dirStr = typeof dirRaw === "string" ? dirRaw.toLowerCase() : "";
-  const dirSign = dirNum === -1 || dirStr.startsWith("s") ? -1 : 1;
-  const dir = dirSign;
-
-  // Prefer realized pnl; fall back to whatever the dataset provides.
-  const pnl = num(
-    (trade as any).isOpen
-      ? (trade as any).unrealizedPnl ?? (trade as any).pnl
-      : (trade as any).pnl ??
-          (trade as any).realizedPnl ??
-          (trade as any).profit ??
-          (trade as any).netPnl
-  );
+  const pnlSnapshot = resolveTradePnlSnapshot(trade, dollarsPerMove, candles);
+  const entryPrice = pnlSnapshot.entryPrice ?? num((trade as any).entryPrice);
+  const exitPrice = pnlSnapshot.exitPrice;
+  const dir = pnlSnapshot.dir;
+  const pnl = pnlSnapshot.effectivePnl;
 
   const isWin = Number.isFinite(pnl) ? pnl >= 0 : false;
   const accent = isWin ? "rgba(52,211,153,0.95)" : "rgba(248,113,113,0.95)";
-
-  let exitPrice = rawExitPrice;
-  // If the dataset doesn't store exitPrice, derive it from PnL and dollarsPerMove.
-  // For shorts, a positive PnL means price moved down, so invert the delta.
-  if (
-    !Number.isFinite(exitPrice) &&
-    Number.isFinite(entryPrice) &&
-    Number.isFinite(pnl) &&
-    Number.isFinite(dollarsPerMove) &&
-    dollarsPerMove !== 0
-  ) {
-    const delta = pnl / dollarsPerMove;
-    exitPrice = entryPrice + delta * (dirSign === -1 ? -1 : 1);
-  }
 
   let tpPrice = num(
     (trade as any).tpPrice ??
@@ -142,8 +272,8 @@ function TradeDetailsModalImpl({
     const ep = entryPrice;
     if (!Number.isFinite(ep)) return null;
 
-    let maxFav = -Infinity;
-    let maxAdv = Infinity;
+    let maxFav = 0;
+    let maxAdv = 0;
     let peak = -Infinity;
     let trough = Infinity;
 
@@ -157,11 +287,19 @@ function TradeDetailsModalImpl({
       const loPx = Number.isFinite(lo) ? lo : close;
       if (!Number.isFinite(hiPx) || !Number.isFinite(loPx)) continue;
 
-      const fav = (hiPx - ep) * dir * (dollarsPerMove ?? 1);
-      const adv = (loPx - ep) * dir * (dollarsPerMove ?? 1);
+      const favorablePx = dir === 1 ? hiPx : loPx;
+      const adversePx = dir === 1 ? loPx : hiPx;
+      const favorablePnl = Math.max(
+        0,
+        (favorablePx - ep) * dir * (dollarsPerMove ?? 1)
+      );
+      const adversePnl = Math.max(
+        0,
+        -((adversePx - ep) * dir * (dollarsPerMove ?? 1))
+      );
 
-      if (fav > maxFav) maxFav = fav;
-      if (adv < maxAdv) maxAdv = adv;
+      if (favorablePnl > maxFav) maxFav = favorablePnl;
+      if (adversePnl > maxAdv) maxAdv = adversePnl;
 
       if (hiPx > peak) peak = hiPx;
       if (loPx < trough) trough = loPx;
@@ -536,7 +674,7 @@ function TradeDetailsModalImpl({
             <InfoBox
               label="PnL"
               value={fmtUsd(pnl)}
-              tone={pnl >= 0 ? "green" : "red"}
+              tone={Number.isFinite(pnl) ? (pnl >= 0 ? "green" : "red") : "neutral"}
             />
             <InfoBox
               label="Duration"
@@ -25903,6 +26041,19 @@ export default function App() {
     () => new Map()
   );
 
+  const normalizedAllTrades = useMemo(
+    () => normalizeTradeCollectionPnl(allTrades, dollarsPerMove, candles),
+    [allTrades, candles, dollarsPerMove]
+  );
+  const normalizedBaselineAllTrades = useMemo(() => {
+    if (!Array.isArray(baselineAllTrades)) return null;
+    return normalizeTradeCollectionPnl(baselineAllTrades, dollarsPerMove, candles);
+  }, [baselineAllTrades, candles, dollarsPerMove]);
+  const normalizedPostHocTrades = useMemo(
+    () => normalizeTradeCollectionPnl(postHocTrades, dollarsPerMove, candles),
+    [postHocTrades, candles, dollarsPerMove]
+  );
+
   // Use the same post-hoc trade set for the main stats so they match the map.
   const effectiveStats = useMemo(() => {
     if (aiMethod !== "hdbscan") return stats;
@@ -25910,7 +26061,9 @@ export default function App() {
     // Until the post-hoc set is available (e.g. before Cluster Map finishes computing),
     // fall back to the runtime trade list so the UI never shows "0".
     const src =
-      (postHocTrades && postHocTrades.length ? postHocTrades : trades) || [];
+      (normalizedPostHocTrades && normalizedPostHocTrades.length
+        ? normalizedPostHocTrades
+        : trades) || [];
     const closed = (src as any[]).filter((t: any) => t && !t.isOpen);
     const ranged = filterTradesByDateRange(
       closed,
@@ -25922,7 +26075,7 @@ export default function App() {
   }, [
     aiMethod,
     stats,
-    postHocTrades,
+    normalizedPostHocTrades,
     trades,
     statsDateStart,
     statsDateEnd,
@@ -25934,15 +26087,19 @@ export default function App() {
   // - HDBSCAN: prefer post-hoc trades; fall back to runtime trades until post-hoc arrives.
   const uiTrades = useMemo(() => {
     if (aiMethod !== "hdbscan") return trades;
-    return postHocTrades && postHocTrades.length ? postHocTrades : trades;
-  }, [aiMethod, trades, postHocTrades]);
+    return normalizedPostHocTrades && normalizedPostHocTrades.length
+      ? normalizedPostHocTrades
+      : trades;
+  }, [aiMethod, trades, normalizedPostHocTrades]);
 
   // Some parts of the UI derive from `allTrades` (year filters, month buckets, etc.).
   // Keep those in sync with the post-hoc trade set as well.
   const uiAllTrades = useMemo(() => {
-    if (aiMethod !== "hdbscan") return allTrades;
-    return postHocTrades && postHocTrades.length ? postHocTrades : allTrades;
-  }, [aiMethod, allTrades, postHocTrades]);
+    if (aiMethod !== "hdbscan") return normalizedAllTrades;
+    return normalizedPostHocTrades && normalizedPostHocTrades.length
+      ? normalizedPostHocTrades
+      : normalizedAllTrades;
+  }, [aiMethod, normalizedAllTrades, normalizedPostHocTrades]);
 
   const applyAntiCheat = React.useCallback(
     (tradesList) => {
@@ -26508,7 +26665,7 @@ export default function App() {
     applyAntiCheatRef.current = applyAntiCheat;
   }, [applyAntiCheat]);
   useEffect(() => {
-    const raw = allTrades;
+    const raw = normalizedAllTrades;
     if (!raw || raw.length === 0) {
       setTrades([]);
       setStats(computeStatsClient([], parseMode));
@@ -26542,7 +26699,7 @@ export default function App() {
     );
     setStats(computeStatsClient(ranged, parseMode));
   }, [
-    uiAllTrades,
+    normalizedAllTrades,
     antiCheatEnabled,
     enabledYears,
     enabledMonths,
@@ -27848,9 +28005,12 @@ export default function App() {
   ]);
 
   const baselineClosedForAiMetrics = useMemo(() => {
-    if (!baselineAllTrades || baselineAllTrades.length === 0) return null;
+    if (!normalizedBaselineAllTrades || normalizedBaselineAllTrades.length === 0)
+      return null;
     const antiOn = !!antiCheatEnabled;
-    const base = antiOn ? applyAntiCheat(baselineAllTrades) : baselineAllTrades;
+    const base = antiOn
+      ? applyAntiCheat(normalizedBaselineAllTrades)
+      : normalizedBaselineAllTrades;
     const yearFiltered = filterTradesByYears(base, enabledYears, parseMode);
     const monthFiltered = filterTradesByMonths(
       yearFiltered,
@@ -27877,7 +28037,7 @@ export default function App() {
       parseMode
     );
   }, [
-    baselineAllTrades,
+    normalizedBaselineAllTrades,
     antiCheatEnabled,
     applyAntiCheat,
     enabledYears,
@@ -27989,9 +28149,12 @@ export default function App() {
     return (winRate(cur) - winRate(base)) * 100;
   }, [isAIActive, baselineClosedForAiMetrics, currentClosedForAiMetrics]);
   const baselineStatsForEfficacy = useMemo(() => {
-    if (!baselineAllTrades || baselineAllTrades.length === 0) return null;
+    if (!normalizedBaselineAllTrades || normalizedBaselineAllTrades.length === 0)
+      return null;
     const antiOn = !!antiCheatEnabled;
-    const base = antiOn ? applyAntiCheat(baselineAllTrades) : baselineAllTrades;
+    const base = antiOn
+      ? applyAntiCheat(normalizedBaselineAllTrades)
+      : normalizedBaselineAllTrades;
     const yearFiltered = filterTradesByYears(base, enabledYears, parseMode);
     const monthFiltered = filterTradesByMonths(
       yearFiltered,
@@ -28017,7 +28180,7 @@ export default function App() {
     );
     return computeStatsClient(ranged, parseMode);
   }, [
-    baselineAllTrades,
+    normalizedBaselineAllTrades,
     antiCheatEnabled,
     applyAntiCheat,
     enabledYears,
