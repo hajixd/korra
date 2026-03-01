@@ -4383,6 +4383,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const statsRefreshOverlayModeRef = useRef<StatsRefreshOverlayMode>("idle");
   const statsRefreshResetTimeoutRef = useRef(0);
   const liveBacktestSettingsRef = useRef<BacktestSettingsSnapshot>(appliedBacktestSettings);
+  const tradeBlueprintsRef = useRef<TradeBlueprint[]>([]);
+  const backtestHistorySeriesBySymbolRef = useRef<Record<string, Candle[]>>({});
+  const backtestTargetTradesRef = useRef(0);
+  const backtestBlueprintRangeRef = useRef<{ startMs: number; endMs: number }>({
+    startMs: 0,
+    endMs: 0
+  });
+  const modelProfileByIdRef = useRef<Record<string, ModelProfile>>({});
   const chartSizeRef = useRef({ width: 0, height: 0 });
   const chartRenderWindowRef = useRef<ChartDataWindow>({ from: 0, to: -1 });
   const chartVisibleGlobalRangeRef = useRef<ChartDataWindow | null>(null);
@@ -5774,6 +5782,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     seriesMap,
     tradeBlueprints
   ]);
+  tradeBlueprintsRef.current = tradeBlueprints;
+  backtestHistorySeriesBySymbolRef.current = backtestHistorySeriesBySymbol;
+  backtestTargetTradesRef.current = backtestTargetTrades;
+  backtestBlueprintRangeRef.current = backtestBlueprintRange;
+  modelProfileByIdRef.current = modelProfileById;
 
   useEffect(() => {
     if (!backtestHasRun || !backtestHistorySeedReady) {
@@ -5782,8 +5795,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     const nextJobId = backtestHistoryJobIdRef.current + 1;
     backtestHistoryJobIdRef.current = nextJobId;
+    const tradeBlueprintsSnapshot = tradeBlueprintsRef.current;
+    const backtestTargetTradesSnapshot = backtestTargetTradesRef.current;
+    const backtestHistorySeriesBySymbolSnapshot =
+      backtestHistorySeriesBySymbolRef.current;
+    const backtestBlueprintRangeSnapshot = backtestBlueprintRangeRef.current;
+    const modelProfileByIdSnapshot = modelProfileByIdRef.current;
 
-    if (tradeBlueprints.length === 0 || backtestTargetTrades <= 0) {
+    if (tradeBlueprintsSnapshot.length === 0 || backtestTargetTradesSnapshot <= 0) {
       startTransition(() => {
         setHistoryRows([]);
       });
@@ -5795,22 +5814,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     let earliestEntryMs = Number.POSITIVE_INFINITY;
     let latestExitMs = Number.NEGATIVE_INFINITY;
 
-    for (const blueprint of tradeBlueprints) {
+    for (const blueprint of tradeBlueprintsSnapshot) {
       earliestEntryMs = Math.min(earliestEntryMs, blueprint.entryMs);
       latestExitMs = Math.max(latestExitMs, blueprint.exitMs);
 
       if (!modelNamesById[blueprint.modelId]) {
         modelNamesById[blueprint.modelId] =
-          modelProfileById[blueprint.modelId]?.name ?? "Main Settings";
+          modelProfileByIdSnapshot[blueprint.modelId]?.name ?? "Main Settings";
       }
     }
 
     const timelineStartMs =
       Number.isFinite(earliestEntryMs) && earliestEntryMs > 0
         ? earliestEntryMs
-        : backtestBlueprintRange.startMs;
+        : backtestBlueprintRangeSnapshot.startMs;
     const timelineEndMs =
-      Number.isFinite(latestExitMs) && latestExitMs > 0 ? latestExitMs : backtestBlueprintRange.endMs;
+      Number.isFinite(latestExitMs) && latestExitMs > 0
+        ? latestExitMs
+        : backtestBlueprintRangeSnapshot.endMs;
     const setLoadingProgress = (ratio: number) => {
       const normalizedRatio = clamp(ratio, 0, 1);
       const progressPct = 35 + normalizedRatio * 65;
@@ -5829,34 +5850,71 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return normalizeBacktestHistoryRows(
         finalizeBacktestHistoryRows(
           computeBacktestHistoryRowsChunk({
-            blueprints: tradeBlueprints,
-            candleSeriesBySymbol: backtestHistorySeriesBySymbol,
+            blueprints: tradeBlueprintsSnapshot,
+            candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
             modelNamesById
           }),
-          backtestTargetTrades
+          backtestTargetTradesSnapshot
         )
       );
     };
 
     let cancelled = false;
+    let failed = false;
+    let settled = false;
+    const workers: Worker[] = [];
+    let fallbackTimeoutId = window.setTimeout(() => {
+      handleFallback();
+    }, 45_000);
 
-    const commitRows = (rows: HistoryItem[]) => {
-      if (cancelled || backtestHistoryJobIdRef.current !== nextJobId) {
+    const clearFallbackTimeout = () => {
+      if (!fallbackTimeoutId) {
         return;
       }
 
+      window.clearTimeout(fallbackTimeoutId);
+      fallbackTimeoutId = 0;
+    };
+
+    const commitRows = (rows: HistoryItem[]) => {
+      if (
+        cancelled ||
+        settled ||
+        backtestHistoryJobIdRef.current !== nextJobId
+      ) {
+        return;
+      }
+
+      settled = true;
+      clearFallbackTimeout();
       startTransition(() => {
         setHistoryRows(rows);
       });
       finishStatsRefreshLoading(formatStatsRefreshDateLabel(timelineEndMs));
     };
 
+    const handleFallback = () => {
+      if (failed || cancelled || settled) {
+        return;
+      }
+
+      failed = true;
+      workers.forEach((worker) => worker.terminate());
+
+      try {
+        commitRows(computeSynchronously());
+      } catch {
+        commitRows([]);
+      }
+    };
+
     setLoadingProgress(0);
 
     if (typeof Worker === "undefined") {
-      commitRows(computeSynchronously());
+      handleFallback();
       return () => {
         cancelled = true;
+        clearFallbackTimeout();
       };
     }
 
@@ -5865,12 +5923,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         ? 1
         : Math.max(1, Math.min(BACKTEST_HISTORY_WORKER_LIMIT, navigator.hardwareConcurrency || 1));
     const workerCount =
-      tradeBlueprints.length >= BACKTEST_HISTORY_PARALLEL_THRESHOLD ? workerCap : 1;
-    const chunkSize = Math.ceil(tradeBlueprints.length / Math.max(1, workerCount));
+      tradeBlueprintsSnapshot.length >= BACKTEST_HISTORY_PARALLEL_THRESHOLD
+        ? workerCap
+        : 1;
+    const chunkSize = Math.ceil(
+      tradeBlueprintsSnapshot.length / Math.max(1, workerCount)
+    );
     const chunks: TradeBlueprint[][] = [];
 
-    for (let i = 0; i < tradeBlueprints.length; i += chunkSize) {
-      const chunk = tradeBlueprints.slice(i, i + chunkSize);
+    for (let i = 0; i < tradeBlueprintsSnapshot.length; i += chunkSize) {
+      const chunk = tradeBlueprintsSnapshot.slice(i, i + chunkSize);
 
       if (chunk.length > 0) {
         chunks.push(chunk);
@@ -5878,57 +5940,74 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     if (chunks.length <= 1) {
-      const worker = new Worker(new URL("./backtestHistoryWorker.ts", import.meta.url));
+      let worker: Worker;
+      try {
+        worker = new Worker(new URL("./backtestHistoryWorker.ts", import.meta.url));
+      } catch {
+        handleFallback();
+        return () => {
+          cancelled = true;
+          clearFallbackTimeout();
+        };
+      }
+      workers.push(worker);
 
       worker.onmessage = (event: MessageEvent<BacktestHistoryWorkerResponse>) => {
         worker.terminate();
 
-        if (cancelled || event.data.requestId !== nextJobId) {
+        if (failed || cancelled || event.data.requestId !== nextJobId) {
           return;
         }
 
         commitRows(
           normalizeBacktestHistoryRows(
-            finalizeBacktestHistoryRows(event.data.rows, backtestTargetTrades)
+            finalizeBacktestHistoryRows(
+              event.data.rows,
+              backtestTargetTradesSnapshot
+            )
           )
         );
       };
 
       worker.onerror = () => {
         worker.terminate();
-        commitRows(computeSynchronously());
+        handleFallback();
       };
 
-      worker.postMessage({
-        requestId: nextJobId,
-        blueprints: tradeBlueprints,
-        candleSeriesBySymbol: backtestHistorySeriesBySymbol,
-        modelNamesById
-      });
+      try {
+        worker.postMessage({
+          requestId: nextJobId,
+          blueprints: tradeBlueprintsSnapshot,
+          candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
+          modelNamesById
+        });
+      } catch {
+        worker.terminate();
+        handleFallback();
+      }
 
       return () => {
         cancelled = true;
+        clearFallbackTimeout();
         worker.terminate();
       };
     }
 
-    const workers: Worker[] = [];
     const rowChunks: BacktestHistoryRow[][] = new Array(chunks.length);
     let completedChunks = 0;
-    let failed = false;
 
-    const handleFallback = () => {
-      if (failed) {
+    chunks.forEach((chunk, index) => {
+      if (failed || cancelled || settled) {
         return;
       }
 
-      failed = true;
-      workers.forEach((worker) => worker.terminate());
-      commitRows(computeSynchronously());
-    };
-
-    chunks.forEach((chunk, index) => {
-      const worker = new Worker(new URL("./backtestHistoryWorker.ts", import.meta.url));
+      let worker: Worker;
+      try {
+        worker = new Worker(new URL("./backtestHistoryWorker.ts", import.meta.url));
+      } catch {
+        handleFallback();
+        return;
+      }
       workers.push(worker);
 
       worker.onmessage = (event: MessageEvent<BacktestHistoryWorkerResponse>) => {
@@ -5948,7 +6027,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
         commitRows(
           normalizeBacktestHistoryRows(
-            finalizeBacktestHistoryRows(rowChunks.flat(), backtestTargetTrades)
+            finalizeBacktestHistoryRows(
+              rowChunks.flat(),
+              backtestTargetTradesSnapshot
+            )
           )
         );
       };
@@ -5958,29 +6040,30 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         handleFallback();
       };
 
-      worker.postMessage({
-        requestId: nextJobId,
-        blueprints: chunk,
-        candleSeriesBySymbol: backtestHistorySeriesBySymbol,
-        modelNamesById
-      });
+      try {
+        worker.postMessage({
+          requestId: nextJobId,
+          blueprints: chunk,
+          candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
+          modelNamesById
+        });
+      } catch {
+        worker.terminate();
+        handleFallback();
+      }
     });
 
     return () => {
       cancelled = true;
+      clearFallbackTimeout();
       workers.forEach((worker) => worker.terminate());
     };
   }, [
-    backtestBlueprintRange.endMs,
-    backtestBlueprintRange.startMs,
     backtestHasRun,
     backtestHistorySeedReady,
-    backtestHistorySeriesBySymbol,
+    backtestRunCount,
     backtestRefreshNowMs,
-    backtestTargetTrades,
-    finishStatsRefreshLoading,
-    modelProfileById,
-    tradeBlueprints
+    finishStatsRefreshLoading
   ]);
 
   const selectedHistoryTrade = useMemo(() => {
