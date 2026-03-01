@@ -32786,7 +32786,7 @@ export default function App() {
                                 fontWeight: 900,
                               }}
                             >
-                              {loaded ? "Stored" : "Empty"}
+                              {loaded ? "Loaded" : "Not Loaded"}
                             </span>
                             <span
                               style={{
@@ -32794,7 +32794,7 @@ export default function App() {
                                 fontWeight: 800,
                               }}
                             >
-                              {c.toLocaleString()} nodes
+                              {c.toLocaleString()} neighbors
                             </span>
                           </>
                         );

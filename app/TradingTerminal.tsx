@@ -6926,6 +6926,28 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return antiCheatBacktestContext.timeFilteredTrades;
   }, [antiCheatBacktestContext]);
 
+  const backtestLibraryCandidateTrades = useMemo(() => {
+    return backtestDateFilteredTrades.filter((trade) => {
+      const weekday = getWeekdayLabel(getTradeDayKey(trade.exitTime));
+      const session = getSessionLabel(trade.entryTime);
+      const monthIndex = getTradeMonthIndex(trade.exitTime);
+      const entryHour = getTradeHour(trade.entryTime);
+
+      return (
+        enabledBacktestWeekdays.includes(weekday) &&
+        enabledBacktestSessions.includes(session) &&
+        enabledBacktestMonths.includes(monthIndex) &&
+        enabledBacktestHours.includes(entryHour)
+      );
+    });
+  }, [
+    backtestDateFilteredTrades,
+    enabledBacktestHours,
+    enabledBacktestMonths,
+    enabledBacktestSessions,
+    enabledBacktestWeekdays
+  ]);
+
   const backtestTrades = useMemo(() => {
     return backtestTimeFilteredTrades.filter((trade) => {
       const confidence = getEffectiveTradeConfidenceScore(trade) * 100;
@@ -7001,7 +7023,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
     let winsOnlyCount = 0;
 
-    for (const trade of backtestTrades) {
+    for (const trade of backtestLibraryCandidateTrades) {
       if (trade.result !== "Win") {
         continue;
       }
@@ -7014,24 +7036,33 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
     }
 
-    const totalVisibleTrades = backtestTrades.length;
+    const totalStaticTrades = backtestLibraryCandidateTrades.length;
+    const totalDynamicTrades = backtestTrades.length;
     const suppressedTrades = Math.max(0, backtestTimeFilteredTrades.length - backtestTrades.length);
-    const perModelEstimate = Math.floor(totalVisibleTrades / Math.max(availableAiModelNames.length, 1));
+    const perModelEstimate = Math.floor(
+      totalStaticTrades / Math.max(availableAiModelNames.length, 1)
+    );
 
     return aiLibraryDefs.reduce<Record<string, number>>((accumulator, definition) => {
       const settings = selectedAiLibrarySettings[definition.id] ?? definition.defaults;
-      const maxSamplesValue = Number(settings.maxSamples ?? totalVisibleTrades);
+      const maxSamplesValue = Number(settings.maxSamples ?? totalStaticTrades);
       const maxSamples = Number.isFinite(maxSamplesValue)
         ? Math.max(0, Math.round(maxSamplesValue))
-        : totalVisibleTrades;
-      let sourceCount = totalVisibleTrades;
+        : totalStaticTrades;
+      let sourceCount = totalStaticTrades;
 
       switch (definition.id) {
+        case "core":
+          sourceCount = totalDynamicTrades;
+          break;
         case "suppressed":
           sourceCount = suppressedTrades;
           break;
         case "recent":
-          sourceCount = Math.min(totalVisibleTrades, Math.max(0, Number(settings.windowTrades ?? totalVisibleTrades)));
+          sourceCount = Math.min(
+            totalDynamicTrades,
+            Math.max(0, Number(settings.windowTrades ?? totalDynamicTrades))
+          );
           break;
         case "wins":
           sourceCount = winsOnlyCount;
@@ -7050,7 +7081,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           break;
         case "terrific":
         case "terrible":
-          sourceCount = Math.min(totalVisibleTrades, Math.max(0, Number(settings.count ?? 0)));
+          sourceCount = Math.min(totalStaticTrades, Math.max(0, Number(settings.count ?? 0)));
           break;
         default:
           if (settings.kind === "model_sim") {
@@ -7065,6 +7096,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [
     aiLibraryDefs,
     availableAiModelNames.length,
+    backtestLibraryCandidateTrades,
     backtestTimeFilteredTrades.length,
     backtestTrades,
     selectedAiLibrarySettings
