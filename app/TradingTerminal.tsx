@@ -13,6 +13,7 @@ import {
   useState
 } from "react";
 import type {
+  AutoscaleInfo,
   CandlestickData,
   ColorType,
   CrosshairMode,
@@ -20,6 +21,7 @@ import type {
   ISeriesApi,
   LineStyle,
   MouseEventParams,
+  PriceRange,
   SeriesMarker,
   Time,
   UTCTimestamp
@@ -4389,6 +4391,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const chartVisibleGlobalRangeRef = useRef<ChartDataWindow | null>(null);
   const chartPendingVisibleGlobalRangeRef = useRef<ChartDataWindow | null>(null);
   const chartVisibleRangeSyncRafRef = useRef(0);
+  const chartFocusedPriceRangeRef = useRef<PriceRange | null>(null);
+  const chartFocusedPriceRangeResetRafRef = useRef(0);
   const chartIsApplyingVisibleRangeRef = useRef(false);
   const chartSourceLengthRef = useRef(0);
   const previousChartSourceLengthRef = useRef(0);
@@ -6344,7 +6348,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         borderUpColor: "#1bae8a",
         borderDownColor: "#f0455a",
         priceLineVisible: false,
-        lastValueVisible: true
+        lastValueVisible: true,
+        autoscaleInfoProvider: (original: () => AutoscaleInfo | null): AutoscaleInfo | null => {
+          const focusedPriceRange = chartFocusedPriceRangeRef.current;
+
+          if (!focusedPriceRange) {
+            return original();
+          }
+
+          return {
+            priceRange: focusedPriceRange
+          };
+        }
       });
 
       const tradeEntryLine = chart.addLineSeries({
@@ -6561,10 +6576,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           window.cancelAnimationFrame(chartVisibleRangeSyncRafRef.current);
           chartVisibleRangeSyncRafRef.current = 0;
         }
+        if (chartFocusedPriceRangeResetRafRef.current) {
+          window.cancelAnimationFrame(chartFocusedPriceRangeResetRafRef.current);
+          chartFocusedPriceRangeResetRafRef.current = 0;
+        }
         chartDataLengthRef.current = 0;
         chartRenderWindowRef.current = { from: 0, to: -1 };
         chartVisibleGlobalRangeRef.current = null;
         chartPendingVisibleGlobalRangeRef.current = null;
+        chartFocusedPriceRangeRef.current = null;
         chartIsApplyingVisibleRangeRef.current = false;
       };
 
@@ -6764,10 +6784,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   ]);
 
   useEffect(() => {
+    const chart = chartRef.current;
     const pendingTradeId = focusTradeIdRef.current;
 
     if (
-      !chartRef.current ||
+      !chart ||
       !pendingTradeId ||
       !selectedHistoryTrade ||
       selectedHistoryTrade.id !== pendingTradeId ||
@@ -6778,7 +6799,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     const entryIndex = candleIndexByUnix.get(selectedHistoryTrade.entryTime) ?? -1;
     const exitIndexRaw = candleIndexByUnix.get(selectedHistoryTrade.exitTime) ?? -1;
-    const exitIndex = exitIndexRaw >= 0 ? exitIndexRaw : entryIndex + 1;
+    const inferredExitIndex =
+      entryIndex + Math.max(1, Math.round((Number(selectedHistoryTrade.exitTime) - Number(selectedHistoryTrade.entryTime)) / (timeframeMinutes[selectedTimeframe] * 60)));
+    const exitIndex =
+      exitIndexRaw >= 0
+        ? Math.max(entryIndex, exitIndexRaw)
+        : Math.min(selectedChartCandles.length - 1, inferredExitIndex);
 
     if (entryIndex < 0) {
       return;
@@ -6786,14 +6812,75 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     const leftBound = Math.min(entryIndex, exitIndex);
     const rightBound = Math.max(entryIndex, exitIndex);
-    const span = Math.max(32, Math.round(timeframeVisibleCount[selectedTimeframe] * 0.72));
-    const from = Math.max(0, leftBound - Math.round(span * 0.4));
-    const to = Math.min(selectedChartCandles.length - 1, rightBound + Math.round(span * 0.6));
-    requestChartVisibleRangeRef.current({ from, to });
+    const tradeSpan = Math.max(1, rightBound - leftBound + 1);
+    const visibleSpan = Math.max(36, tradeSpan + Math.max(18, Math.round(tradeSpan * 1.6)));
+    const centerIndex = (leftBound + rightBound) / 2;
+    const nextVisibleRange = clampChartDataWindow(
+      selectedChartCandles.length,
+      centerIndex - (visibleSpan - 1) / 2,
+      centerIndex + (visibleSpan - 1) / 2
+    );
+
+    requestChartVisibleRangeRef.current(nextVisibleRange);
+
+    let minPrice = Math.min(
+      selectedHistoryTrade.entryPrice,
+      selectedHistoryTrade.targetPrice,
+      selectedHistoryTrade.stopPrice,
+      selectedHistoryTrade.outcomePrice
+    );
+    let maxPrice = Math.max(
+      selectedHistoryTrade.entryPrice,
+      selectedHistoryTrade.targetPrice,
+      selectedHistoryTrade.stopPrice,
+      selectedHistoryTrade.outcomePrice
+    );
+
+    for (let index = leftBound; index <= rightBound; index += 1) {
+      const candle = selectedChartCandles[index];
+
+      if (!candle) {
+        continue;
+      }
+
+      minPrice = Math.min(minPrice, candle.low);
+      maxPrice = Math.max(maxPrice, candle.high);
+    }
+
+    const rawSpan = Math.max(0.01, maxPrice - minPrice);
+    const padding = Math.max(rawSpan * 0.35, Math.abs(selectedHistoryTrade.entryPrice) * 0.0012);
+
+    chartFocusedPriceRangeRef.current = {
+      minValue: minPrice - padding,
+      maxValue: maxPrice + padding
+    };
+
+    if (chartFocusedPriceRangeResetRafRef.current) {
+      window.cancelAnimationFrame(chartFocusedPriceRangeResetRafRef.current);
+    }
+
+    chartFocusedPriceRangeResetRafRef.current = window.requestAnimationFrame(() => {
+      chart.applyOptions({
+        rightPriceScale: {
+          autoScale: true
+        }
+      });
+
+      chartFocusedPriceRangeResetRafRef.current = window.requestAnimationFrame(() => {
+        chartFocusedPriceRangeRef.current = null;
+        chart.applyOptions({
+          rightPriceScale: {
+            autoScale: false
+          }
+        });
+        chartFocusedPriceRangeResetRafRef.current = 0;
+      });
+    });
+
     focusTradeIdRef.current = null;
   }, [
     candleIndexByUnix,
-    selectedChartCandles.length,
+    selectedChartCandles,
     selectedHistoryInteractionTick,
     selectedHistoryTrade,
     selectedSymbol,
