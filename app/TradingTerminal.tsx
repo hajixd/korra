@@ -7143,14 +7143,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           : trade.exitTime > trade.entryTime
             ? toUtcTimestamp(floorToTimeframe(rawExitMs, selectedTimeframe))
             : startTime;
+      const rangeStartTime =
+        entryIndex > 0
+          ? toUtcTimestamp(selectedChartCandles[entryIndex - 1]!.time)
+          : ((startTime - stepSeconds) as UTCTimestamp);
       const rangeEndTime =
-        exitTime > startTime
-          ? exitTime
-          : exitIndex >= 0 && exitIndex + 1 < selectedChartCandles.length
-            ? toUtcTimestamp(selectedChartCandles[exitIndex + 1]!.time)
-            : ((startTime + stepSeconds) as UTCTimestamp);
+        exitIndex >= 0 && exitIndex + 1 < selectedChartCandles.length
+          ? toUtcTimestamp(selectedChartCandles[exitIndex + 1]!.time)
+          : ((exitTime + stepSeconds) as UTCTimestamp);
 
       return {
+        rangeStartTime,
         startTime,
         exitTime,
         rangeEndTime
@@ -7251,17 +7254,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       outcomePrice: number;
       pnlUsd: number;
     }) => {
-      const { startTime, exitTime, rangeEndTime } = getTradeOverlayGeometry({
+      const { rangeStartTime, startTime, exitTime, rangeEndTime } = getTradeOverlayGeometry({
         entryTime: trade.entryTime,
         exitTime: trade.exitTime
       });
       const entryAction = trade.side === "Long" ? "Buy" : "Sell";
       const tradeZoneData = [
-        { time: startTime, value: trade.targetPrice },
+        { time: rangeStartTime, value: trade.targetPrice },
         { time: rangeEndTime, value: trade.targetPrice }
       ];
       const stopZoneData = [
-        { time: startTime, value: trade.stopPrice },
+        { time: rangeStartTime, value: trade.stopPrice },
         { time: rangeEndTime, value: trade.stopPrice }
       ];
       const derivedResult: TradeResult =
@@ -7287,7 +7290,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       applyTradeZonePalette(trade.side, trade.entryPrice);
       tradeEntryLine.setData([
-        { time: startTime, value: trade.entryPrice },
+        { time: rangeStartTime, value: trade.entryPrice },
         { time: rangeEndTime, value: trade.entryPrice }
       ]);
       tradeTargetLine.setData(tradeZoneData);
@@ -7324,17 +7327,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       for (const trade of currentSymbolHistoryRows) {
         const tradeResult: TradeResult = trade.result;
-        const { startTime, exitTime, rangeEndTime } = getTradeOverlayGeometry({
+        const { rangeStartTime, startTime, exitTime, rangeEndTime } = getTradeOverlayGeometry({
           entryTime: trade.entryTime,
           exitTime: trade.exitTime
         });
         const entryAction = trade.side === "Long" ? "Buy" : "Sell";
         const targetData = [
-          { time: startTime, value: trade.targetPrice },
+          { time: rangeStartTime, value: trade.targetPrice },
           { time: rangeEndTime, value: trade.targetPrice }
         ];
         const stopData = [
-          { time: startTime, value: trade.stopPrice },
+          { time: rangeStartTime, value: trade.stopPrice },
           { time: rangeEndTime, value: trade.stopPrice }
         ];
         const seriesGroup = createMultiTradeSeries();
@@ -7347,7 +7350,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           false
         );
         seriesGroup.entryLine.setData([
-          { time: startTime, value: trade.entryPrice },
+          { time: rangeStartTime, value: trade.entryPrice },
           { time: rangeEndTime, value: trade.entryPrice }
         ]);
         seriesGroup.targetLine.setData(targetData);
