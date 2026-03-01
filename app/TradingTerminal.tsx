@@ -2374,6 +2374,32 @@ const getBacktestExitLabel = (trade: HistoryItem): string => {
   return "Model Exit";
 };
 
+const getBacktestExitShortLabel = (trade: HistoryItem): string => {
+  const label = getBacktestExitLabel(trade);
+
+  if (label === "Take Profit") {
+    return "TP";
+  }
+
+  if (label === "Stop Loss") {
+    return "SL";
+  }
+
+  if (label === "Break Even") {
+    return "BE";
+  }
+
+  if (label === "Trailing Stop") {
+    return "TSL";
+  }
+
+  if (label === "Model Exit") {
+    return "MODEL";
+  }
+
+  return label.toUpperCase();
+};
+
 const getEntryExitBarFill = (bucket: string): string => {
   const normalized = bucket.trim().toLowerCase();
 
@@ -2713,6 +2739,34 @@ const getTradeOutcomePriceFromPnl = (
   return Math.max(0.000001, entryPrice + (pnlUsd * direction) / safeUnits);
 };
 
+const getEffectiveTradeLevelPrice = (
+  side: TradeSide,
+  entryPrice: number,
+  units: number,
+  originalPrice: number,
+  boundUsd: number,
+  isProfitLevel: boolean
+): number => {
+  if (!Number.isFinite(originalPrice)) {
+    return originalPrice;
+  }
+
+  if (!Number.isFinite(boundUsd) || boundUsd <= 0) {
+    return originalPrice;
+  }
+
+  const boundedPrice = getTradeOutcomePriceFromPnl(
+    side,
+    entryPrice,
+    isProfitLevel ? Math.abs(boundUsd) : -Math.abs(boundUsd),
+    units
+  );
+  const originalDistance = Math.abs(originalPrice - entryPrice);
+  const boundedDistance = Math.abs(boundedPrice - entryPrice);
+
+  return boundedDistance < originalDistance ? boundedPrice : originalPrice;
+};
+
 const getTradePnlPctFromUsd = (
   entryPrice: number,
   units: number,
@@ -2729,15 +2783,46 @@ const applyHistoryTradePnlBounds = (
   slDollars: number
 ): HistoryItem => {
   const boundedPnlUsd = clampTradePnlToRiskBounds(trade.pnlUsd, tpDollars, slDollars);
+  const nextTargetPrice = getEffectiveTradeLevelPrice(
+    trade.side,
+    trade.entryPrice,
+    trade.units,
+    trade.targetPrice,
+    tpDollars,
+    true
+  );
+  const nextStopPrice = getEffectiveTradeLevelPrice(
+    trade.side,
+    trade.entryPrice,
+    trade.units,
+    trade.stopPrice,
+    slDollars,
+    false
+  );
+  const hitProfitCap = boundedPnlUsd < trade.pnlUsd - 0.000001;
+  const hitLossCap = boundedPnlUsd > trade.pnlUsd + 0.000001;
+  const nextExitReason = hitProfitCap
+    ? "Take Profit"
+    : hitLossCap
+      ? "Stop Loss"
+      : trade.exitReason;
 
-  if (Math.abs(boundedPnlUsd - trade.pnlUsd) <= 0.000001) {
+  if (
+    Math.abs(boundedPnlUsd - trade.pnlUsd) <= 0.000001 &&
+    Math.abs(nextTargetPrice - trade.targetPrice) <= 0.000001 &&
+    Math.abs(nextStopPrice - trade.stopPrice) <= 0.000001 &&
+    nextExitReason === trade.exitReason
+  ) {
     return trade;
   }
 
   return {
     ...trade,
+    exitReason: nextExitReason,
     pnlUsd: boundedPnlUsd,
     pnlPct: getTradePnlPctFromUsd(trade.entryPrice, trade.units, boundedPnlUsd),
+    targetPrice: nextTargetPrice,
+    stopPrice: nextStopPrice,
     outcomePrice: getTradeOutcomePriceFromPnl(trade.side, trade.entryPrice, boundedPnlUsd, trade.units)
   };
 };
@@ -10434,7 +10519,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   {item.pnlPct >= 0 ? "+" : ""}
                                   {item.pnlPct.toFixed(2)}%
                                 </span>
-                                <span>{item.time}</span>
+                                <span>
+                                  {getBacktestExitShortLabel(item)} · {item.time}
+                                </span>
                               </span>
                             </button>
                           </li>
