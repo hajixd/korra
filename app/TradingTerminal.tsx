@@ -41,7 +41,6 @@ const BarChart = dynamic<any>(() => loadRecharts().then((mod) => mod.BarChart), 
   ssr: false
 });
 const Bar = dynamic<any>(() => loadRecharts().then((mod) => mod.Bar), { ssr: false });
-const Cell = dynamic<any>(() => loadRecharts().then((mod) => mod.Cell), { ssr: false });
 const Line = dynamic<any>(() => loadRecharts().then((mod) => mod.Line), { ssr: false });
 const ReferenceLine = dynamic<any>(() => loadRecharts().then((mod) => mod.ReferenceLine), {
   ssr: false
@@ -2321,6 +2320,12 @@ const getEntryExitBarFill = (bucket: string): string => {
   return "rgba(90,170,255,0.88)";
 };
 
+const getPerformanceStatsBarFill = (pnl: number, opacity = 0.88): string => {
+  return pnl >= 0
+    ? `rgba(34,197,94,${opacity})`
+    : `rgba(239,68,68,${opacity})`;
+};
+
 const getTradeConfidenceScore = (trade: HistoryItem): number => {
   const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
   const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
@@ -3619,7 +3624,8 @@ const generateTradeBlueprints = (
   model: ModelProfile,
   total: number,
   seedMs = floorToTimeframe(Date.now(), "1m"),
-  range?: { startMs: number; endMs: number }
+  range?: { startMs: number; endMs: number },
+  unitsPerMove = 1
 ): TradeBlueprint[] => {
   const rand = createSeededRng(hashString(`blueprints-${model.id}-${seedMs}`));
   const blueprints: TradeBlueprint[] = [];
@@ -3667,7 +3673,7 @@ const generateTradeBlueprints = (
 
     usedTimes.add(uniqueExitMs);
     const entryMs = Math.max(startMs, uniqueExitMs - holdMinutes * 60_000);
-    const units = 0.4 + rand() * 3.6;
+    const units = Math.max(1, Number.isFinite(unitsPerMove) ? unitsPerMove : 1);
 
     blueprints.push({
       id: `${model.id}-t${String(i + 1).padStart(4, "0")}`,
@@ -4836,14 +4842,26 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       blueprints.push(
-        ...generateTradeBlueprints(model, count, backtestRefreshNowMs, backtestBlueprintRange)
+        ...generateTradeBlueprints(
+          model,
+          count,
+          backtestRefreshNowMs,
+          backtestBlueprintRange,
+          dollarsPerMove
+        )
       );
     });
 
     return blueprints
       .sort((left, right) => right.exitMs - left.exitMs)
       .slice(0, backtestTargetTrades);
-  }, [backtestBlueprintRange, backtestModelProfiles, backtestRefreshNowMs, backtestTargetTrades]);
+  }, [
+    backtestBlueprintRange,
+    backtestModelProfiles,
+    backtestRefreshNowMs,
+    backtestTargetTrades,
+    dollarsPerMove
+  ]);
 
   const activeTrade = useMemo<ActiveTrade | null>(() => {
     if (selectedCandles.length < 70) {
@@ -4910,15 +4928,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           : Math.max(0.000001, entryPrice - riskPerUnit * rr);
     }
 
-    const maxRiskUsd = 60 + rand() * 240;
-    const maxNotionalUsd = 1400 + rand() * 5200;
-    const units = Math.max(
-      0.001,
-      Math.min(
-        maxRiskUsd / Math.max(0.000001, riskPerUnit),
-        maxNotionalUsd / Math.max(0.000001, entryPrice)
-      )
-    );
+    const units = Math.max(1, Number.isFinite(dollarsPerMove) ? dollarsPerMove : 1);
     const markPrice = latest.close;
     const pnlPct =
       side === "Long"
@@ -4947,7 +4957,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       progressPct: clamp(progressRaw * 100, 0, 100),
       rr
     };
-  }, [referenceNowMs, selectedCandles, selectedModel, selectedSymbol]);
+  }, [dollarsPerMove, referenceNowMs, selectedCandles, selectedModel, selectedSymbol]);
 
   const [historyRows, setHistoryRows] = useState<HistoryItem[]>([]);
   const deferredHistoryRows = useDeferredValue(historyRows);
@@ -9560,10 +9570,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 <div className="backtest-card-head backtest-stats-head">
                   <div>
                     <h3>Backtest Date Range</h3>
-                    <p>
-                      This filter applies to every backtest module and keeps Chrome from painting
-                      more trade history than you need.
-                    </p>
                   </div>
 
                   <div className="backtest-stats-range" aria-label="global backtest date range">
@@ -9608,11 +9614,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <h2>
                     {backtestModelSelectionSummary} on {selectedTimeframe}
                   </h2>
-                  <p>
-                    AI.zip modules stay grouped here with the same core workflow: settings,
-                    statistics, trade review, calendar, clustering, graphs, and prop evaluation.
-                    Backtest now follows the Main Settings model selection instead of the Chart tab.
-                  </p>
                 </div>
 
                 <div className="backtest-summary-grid">
@@ -9731,11 +9732,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="backtest-card-head backtest-stats-head">
                       <div>
                         <h3>{mainStatsTitle}</h3>
-                        <p>
-                          Core AI.zip performance metrics for the active Main Settings trade slice
-                          on {backtestModelSelectionSummary} {selectedTimeframe}. Hold Control to
-                          sync this snapshot to the latest settings.
-                        </p>
                       </div>
 
                       <div className="backtest-stats-range" aria-label="main statistics date range">
@@ -10355,9 +10351,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         flexWrap: "wrap"
                       }}
                     >
-                      <div className="ai-zip-note" style={{ margin: 0 }}>
-                        Simulated trades stay idle until you run the backtest.
-                      </div>
                       <button
                         type="button"
                         className={`ai-zip-button ${backtestHasRun ? "active" : ""}`}
@@ -11371,7 +11364,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="backtest-card-head">
                       <div>
                         <h3>Calendar</h3>
-                        <p>Daily trade clustering with the same AI.zip layout and expandable trade detail.</p>
                       </div>
                     </div>
 
@@ -11670,7 +11662,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <div className="backtest-card-head">
                         <div>
                           <h3>Sessions</h3>
-                          <p>Exact AI.zip-style session tiles, now wired directly into the backtest filters.</p>
                         </div>
                       </div>
                       <div className="ai-zip-toggle-grid tiles">
@@ -11708,7 +11699,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <div className="backtest-card-head">
                         <div>
                           <h3>Months</h3>
-                          <p>Monthly gating moved into its own filter surface.</p>
                         </div>
                       </div>
                       <div className="ai-zip-toggle-grid tiles compact">
@@ -11746,7 +11736,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <div className="backtest-card-head">
                         <div>
                           <h3>Days of the Week</h3>
-                          <p>The weekday filters now match the AI.zip panel layout.</p>
                         </div>
                       </div>
                       <div className="ai-zip-toggle-grid tiles compact">
@@ -11781,7 +11770,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <div className="backtest-card-head">
                         <div>
                           <h3>Hours</h3>
-                          <p>Fine-grained hour gating with the same color treatment as AI.zip.</p>
                         </div>
                       </div>
                       <div className="ai-zip-toggle-grid tiles compact hours">
@@ -12020,8 +12008,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
                                   const value = Number(payload[0]?.value ?? 0);
                                   const count = Number(payload[0]?.payload?.count ?? 0);
-                                  const positive = value >= 0;
-
                                   return (
                                     <div
                                       style={{
@@ -12049,9 +12035,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                         <span
                                           style={{
                                             fontWeight: 900,
-                                            color: positive
-                                              ? "rgba(34,197,94,1)"
-                                              : "rgba(239,68,68,1)"
+                                            color: getPerformanceStatsBarFill(value, 1)
                                           }}
                                         >
                                           {formatChartUsd(value)}
@@ -12069,9 +12053,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                         <span
                                           style={{
                                             fontWeight: 900,
-                                            color: positive
-                                              ? "rgba(34,197,94,1)"
-                                              : "rgba(239,68,68,1)"
+                                            color: getPerformanceStatsBarFill(value, 1)
                                           }}
                                         >
                                           {formatChartUsd(count > 0 ? value / count : 0)}
@@ -12099,18 +12081,30 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   );
                                 }}
                               />
-                              <Bar dataKey="pnl" radius={0} isAnimationActive={false}>
-                                {performanceStatsTemporalData.map((row, index) => (
-                                  <Cell
-                                    key={`${row.bucket}-${index}`}
-                                    fill={
-                                      row.pnl >= 0
-                                        ? "rgba(34,197,94,0.88)"
-                                        : "rgba(239,68,68,0.88)"
-                                    }
-                                  />
-                                ))}
-                              </Bar>
+                              <Bar
+                                dataKey="pnl"
+                                radius={0}
+                                isAnimationActive={false}
+                                shape={(props: any) => {
+                                  const { x, y, width, height, payload } = props;
+                                  const resolvedWidth = Number(width);
+                                  const resolvedHeight = Number(height);
+
+                                  if (!Number.isFinite(resolvedWidth) || !Number.isFinite(resolvedHeight)) {
+                                    return null;
+                                  }
+
+                                  return (
+                                    <rect
+                                      x={x}
+                                      y={y}
+                                      width={Math.max(0, resolvedWidth)}
+                                      height={Math.max(0, resolvedHeight)}
+                                      fill={getPerformanceStatsBarFill(Number(payload?.pnl ?? 0))}
+                                    />
+                                  );
+                                }}
+                              />
                             </BarChart>
                           </ResponsiveContainer>
                         )}
