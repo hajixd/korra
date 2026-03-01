@@ -1804,23 +1804,7 @@ const mergeLivePriceIntoCandles = (
       close: price
     };
   } else {
-    const step = getTimeframeMs(timeframe);
-    let previousClose = last.close;
-    let time = last.time + step;
-
-    while (time < bucketTime) {
-      if (isXauTradingTime(time)) {
-        next.push({
-          time,
-          open: previousClose,
-          high: previousClose,
-          low: previousClose,
-          close: previousClose
-        });
-      }
-
-      time += step;
-    }
+    const previousClose = last.close;
 
     next.push({
       time: bucketTime,
@@ -5177,11 +5161,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         return;
       }
 
-      chart.applyOptions({
-        rightPriceScale: {
-          autoScale: true
-        }
-      });
       chartIsApplyingVisibleRangeRef.current = true;
       chart.timeScale().setVisibleLogicalRange({
         from: nextVisibleRange.from - currentWindow.from,
@@ -6621,11 +6600,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       chartPendingVisibleGlobalRangeRef.current ?? chartVisibleGlobalRangeRef.current;
 
     if (targetVisibleRange) {
-      chart.applyOptions({
-        rightPriceScale: {
-          autoScale: true
-        }
-      });
       chartIsApplyingVisibleRangeRef.current = true;
       chart.timeScale().setVisibleLogicalRange({
         from: targetVisibleRange.from - chartRenderWindow.from,
@@ -6643,20 +6617,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       });
     }
   }, [chartRenderCandles, chartRenderWindow]);
-
-  useEffect(() => {
-    const chart = chartRef.current;
-
-    if (!chart) {
-      return;
-    }
-
-    chart.applyOptions({
-      rightPriceScale: {
-        autoScale: true
-      }
-    });
-  }, [selectedSymbol, selectedTimeframe]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -6978,6 +6938,68 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       applyTradeZonePaletteTo(tradeProfitZone, tradeLossZone, side, entryPrice, true);
     };
 
+    const getTradeOverlayGeometry = (trade: {
+      status: "closed" | "pending";
+      result: TradeResult;
+      entryTime: UTCTimestamp;
+      exitTime: UTCTimestamp;
+      targetPrice: number;
+      stopPrice: number;
+      outcomePrice: number;
+    }) => {
+      const stepSeconds = timeframeMinutes[selectedTimeframe] * 60;
+      const entryMs = Number(trade.entryTime) * 1000;
+      const rawExitMs =
+        trade.exitTime > trade.entryTime ? Number(trade.exitTime) * 1000 : entryMs;
+      const entryIndex = findCandleIndexAtOrBefore(selectedChartCandles, entryMs);
+      const startTime =
+        entryIndex >= 0
+          ? toUtcTimestamp(selectedChartCandles[entryIndex]!.time)
+          : toUtcTimestamp(floorToTimeframe(entryMs, selectedTimeframe));
+      const rawExitIndex = findCandleIndexAtOrBefore(selectedChartCandles, rawExitMs);
+      const exitIndex =
+        rawExitIndex >= 0 && entryIndex >= 0 ? Math.max(entryIndex, rawExitIndex) : rawExitIndex;
+      const exitTime =
+        exitIndex >= 0
+          ? toUtcTimestamp(selectedChartCandles[exitIndex]!.time)
+          : trade.exitTime > trade.entryTime
+            ? toUtcTimestamp(floorToTimeframe(rawExitMs, selectedTimeframe))
+            : startTime;
+      const rangeEndTime =
+        exitTime > startTime
+          ? exitTime
+          : exitIndex >= 0 && exitIndex + 1 < selectedChartCandles.length
+            ? toUtcTimestamp(selectedChartCandles[exitIndex + 1]!.time)
+            : ((startTime + stepSeconds) as UTCTimestamp);
+      const exitPrice =
+        trade.status === "pending"
+          ? trade.outcomePrice
+          : trade.result === "Win"
+            ? trade.targetPrice
+            : trade.stopPrice;
+
+      return {
+        startTime,
+        exitTime,
+        rangeEndTime,
+        exitPrice
+      };
+    };
+
+    const createExitMarker = (
+      time: UTCTimestamp,
+      position: "aboveBar" | "belowBar",
+      color: string,
+      pnlUsd: number
+    ): SeriesMarker<Time> => ({
+      time,
+      position,
+      shape: "circle",
+      size: 0.1,
+      color,
+      text: `x PnL: ${formatSignedUsd(pnlUsd)}`
+    });
+
     const createMultiTradeSeries = (): MultiTradeOverlaySeries => {
       const entryLine = chart.addLineSeries({
         color: "rgba(232, 238, 250, 0.62)",
@@ -7058,24 +7080,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       outcomePrice: number;
       pnlUsd: number;
     }) => {
-      const startTime = trade.entryTime;
-      const endTime =
-        trade.exitTime > trade.entryTime
-          ? trade.exitTime
-          : ((trade.entryTime + timeframeMinutes[selectedTimeframe] * 60) as UTCTimestamp);
+      const { startTime, exitTime, rangeEndTime, exitPrice } = getTradeOverlayGeometry(trade);
       const entryAction = trade.side === "Long" ? "Buy" : "Sell";
-      const exitAction = trade.side === "Long" ? "Sell" : "Buy";
       const tradeZoneData = [
         { time: startTime, value: trade.targetPrice },
-        { time: endTime, value: trade.targetPrice }
+        { time: rangeEndTime, value: trade.targetPrice }
       ];
       const stopZoneData = [
         { time: startTime, value: trade.stopPrice },
-        { time: endTime, value: trade.stopPrice }
+        { time: rangeEndTime, value: trade.stopPrice }
       ];
       const derivedResult: TradeResult =
         trade.status === "pending" ? (trade.pnlUsd >= 0 ? "Win" : "Loss") : trade.result;
-      const exitPrefix = derivedResult === "Win" ? "✓" : "x";
       const exitPosition = getExitMarkerPosition(trade.side, derivedResult);
       clearMultiTradeOverlays();
 
@@ -7087,25 +7103,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           color: trade.side === "Long" ? "#30b76f" : "#f0455a",
           text: `Entry ${entryAction}`
         },
-        {
-          time: endTime,
-          position: exitPosition,
-          shape: "square",
-          color: derivedResult === "Win" ? "#35c971" : "#f0455a",
-          text: `Exit ${exitAction} · ${exitPrefix} ${formatSignedUsd(trade.pnlUsd)}`
-        }
+        createExitMarker(
+          exitTime,
+          exitPosition,
+          derivedResult === "Win" ? "#35c971" : "#f0455a",
+          trade.pnlUsd
+        )
       ]);
 
       applyTradeZonePalette(trade.side, trade.entryPrice);
       tradeEntryLine.setData([
         { time: startTime, value: trade.entryPrice },
-        { time: endTime, value: trade.entryPrice }
+        { time: rangeEndTime, value: trade.entryPrice }
       ]);
       tradeTargetLine.setData(tradeZoneData);
       tradeStopLine.setData(stopZoneData);
       tradePathLine.setData([
         { time: startTime, value: trade.entryPrice },
-        { time: endTime, value: trade.outcomePrice }
+        { time: exitTime, value: exitPrice }
       ]);
 
       if (trade.side === "Long") {
@@ -7135,19 +7150,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       for (const trade of currentSymbolHistoryRows) {
         const tradeResult: TradeResult = trade.result;
+        const { startTime, exitTime, rangeEndTime, exitPrice } = getTradeOverlayGeometry({
+          status: "closed",
+          result: trade.result,
+          entryTime: trade.entryTime,
+          exitTime: trade.exitTime,
+          targetPrice: trade.targetPrice,
+          stopPrice: trade.stopPrice,
+          outcomePrice: trade.outcomePrice
+        });
         const entryAction = trade.side === "Long" ? "Buy" : "Sell";
-        const exitAction = trade.side === "Long" ? "Sell" : "Buy";
-        const endTime =
-          trade.exitTime > trade.entryTime
-            ? trade.exitTime
-            : ((trade.entryTime + timeframeMinutes[selectedTimeframe] * 60) as UTCTimestamp);
         const targetData = [
-          { time: trade.entryTime, value: trade.targetPrice },
-          { time: endTime, value: trade.targetPrice }
+          { time: startTime, value: trade.targetPrice },
+          { time: rangeEndTime, value: trade.targetPrice }
         ];
         const stopData = [
-          { time: trade.entryTime, value: trade.stopPrice },
-          { time: endTime, value: trade.stopPrice }
+          { time: startTime, value: trade.stopPrice },
+          { time: rangeEndTime, value: trade.stopPrice }
         ];
         const seriesGroup = createMultiTradeSeries();
 
@@ -7159,14 +7178,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           false
         );
         seriesGroup.entryLine.setData([
-          { time: trade.entryTime, value: trade.entryPrice },
-          { time: endTime, value: trade.entryPrice }
+          { time: startTime, value: trade.entryPrice },
+          { time: rangeEndTime, value: trade.entryPrice }
         ]);
         seriesGroup.targetLine.setData(targetData);
         seriesGroup.stopLine.setData(stopData);
         seriesGroup.pathLine.setData([
-          { time: trade.entryTime, value: trade.entryPrice },
-          { time: endTime, value: trade.outcomePrice }
+          { time: startTime, value: trade.entryPrice },
+          { time: exitTime, value: exitPrice }
         ]);
 
         if (trade.side === "Long") {
@@ -7180,21 +7199,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         multiTradeSeriesRef.current.push(seriesGroup);
 
         allMarkers.push({
-          time: trade.entryTime,
+          time: startTime,
           position: trade.side === "Long" ? "belowBar" : "aboveBar",
           shape: trade.side === "Long" ? "arrowUp" : "arrowDown",
           color: trade.side === "Long" ? "#35c971" : "#f0455a",
           text: `Entry ${entryAction}`
         });
-        allMarkers.push({
-          time: endTime,
-          position: getExitMarkerPosition(trade.side, tradeResult),
-          shape: "square",
-          color: tradeResult === "Win" ? "#35c971" : "#f0455a",
-          text: `Exit ${exitAction} · ${tradeResult === "Win" ? "✓" : "x"} ${formatSignedUsd(
+        allMarkers.push(
+          createExitMarker(
+            exitTime,
+            getExitMarkerPosition(trade.side, tradeResult),
+            tradeResult === "Win" ? "#35c971" : "#f0455a",
             trade.pnlUsd
-          )}`
-        });
+          )
+        );
       }
 
       allMarkers.sort((a, b) => Number(a.time) - Number(b.time));
@@ -7238,6 +7256,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [
     activeChartTrade,
     currentSymbolHistoryRows,
+    selectedChartCandles,
     selectedHistoryTrade,
     selectedSymbol,
     selectedTimeframe,
