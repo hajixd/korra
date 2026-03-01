@@ -1152,8 +1152,36 @@ const buildModelAiLibraryDefs = (modelNames: readonly string[]): AiLibraryDef[] 
   }));
 };
 
+const AI_LIBRARY_TARGET_WIN_RATE_KEY = "targetWinRate";
+const AI_LIBRARY_TARGET_WIN_RATE_FIELD: AiLibraryField = {
+  key: AI_LIBRARY_TARGET_WIN_RATE_KEY,
+  label: "Target Win Rate (%)",
+  type: "number",
+  min: 0,
+  max: 100,
+  step: 1,
+  help: "Trim this library's loaded neighbors toward the requested win ratio."
+};
+
+const withAiLibraryTargetWinRateField = (definition: AiLibraryDef): AiLibraryDef => {
+  if (definition.fields.some((field) => field.key === AI_LIBRARY_TARGET_WIN_RATE_KEY)) {
+    return definition;
+  }
+
+  const fields = [...definition.fields];
+  const maxSamplesIndex = fields.findIndex((field) => field.key === "maxSamples");
+  const insertAt = maxSamplesIndex >= 0 ? maxSamplesIndex : fields.length;
+  fields.splice(insertAt, 0, AI_LIBRARY_TARGET_WIN_RATE_FIELD);
+  return {
+    ...definition,
+    fields
+  };
+};
+
 const buildAiLibraryDefs = (modelNames: readonly string[]): AiLibraryDef[] => {
-  return [...BASE_AI_LIBRARY_DEFS, ...buildModelAiLibraryDefs(modelNames)];
+  return [...BASE_AI_LIBRARY_DEFS, ...buildModelAiLibraryDefs(modelNames)].map(
+    withAiLibraryTargetWinRateField
+  );
 };
 
 const buildDefaultAiLibrarySettings = (libraryDefs: readonly AiLibraryDef[]): AiLibrarySettings => {
@@ -1164,6 +1192,100 @@ const buildDefaultAiLibrarySettings = (libraryDefs: readonly AiLibraryDef[]): Ai
   }
 
   return next;
+};
+
+const getOutcomeWinRatePercent = <T,>(
+  items: readonly T[],
+  isWin: (item: T) => boolean
+): number => {
+  if (items.length === 0) {
+    return 50;
+  }
+
+  let wins = 0;
+
+  for (const item of items) {
+    if (isWin(item)) {
+      wins += 1;
+    }
+  }
+
+  return (wins / items.length) * 100;
+};
+
+const findTargetBalancedOutcomeCounts = (
+  winCount: number,
+  lossCount: number,
+  maxSamples: number,
+  targetWinRatePercent: number
+) => {
+  const availableWins = Math.max(0, Math.floor(Number(winCount) || 0));
+  const availableLosses = Math.max(0, Math.floor(Number(lossCount) || 0));
+  const totalCap = Math.min(
+    Math.max(0, Math.floor(Number(maxSamples) || 0)),
+    availableWins + availableLosses
+  );
+
+  if (totalCap <= 0) {
+    return { winCount: 0, lossCount: 0 };
+  }
+
+  const target = clamp(targetWinRatePercent, 0, 100) / 100;
+  let bestWins = 0;
+  let bestTotal = 0;
+  let bestDiff = Number.POSITIVE_INFINITY;
+
+  for (let total = totalCap; total >= 1; total -= 1) {
+    const minWins = Math.max(0, total - availableLosses);
+    const maxWins = Math.min(availableWins, total);
+    let candidateWins = Math.round(target * total);
+    candidateWins = clamp(candidateWins, minWins, maxWins);
+    const diff = Math.abs(candidateWins / total - target);
+
+    if (diff < bestDiff - 1e-9) {
+      bestDiff = diff;
+      bestWins = candidateWins;
+      bestTotal = total;
+    }
+  }
+
+  return {
+    winCount: bestWins,
+    lossCount: Math.max(0, bestTotal - bestWins)
+  };
+};
+
+const rebalanceItemsToTargetWinRate = <T,>(
+  items: readonly T[],
+  maxSamples: number,
+  targetWinRatePercent: number,
+  isWin: (item: T) => boolean,
+  preferFront = false
+): T[] => {
+  const cap = Math.max(0, Math.floor(Number(maxSamples) || 0));
+
+  if (cap <= 0 || items.length === 0) {
+    return [];
+  }
+
+  const indexedItems = items.map((item, index) => ({
+    item,
+    index,
+    win: isWin(item)
+  }));
+  const orderedItems = preferFront ? indexedItems : [...indexedItems].reverse();
+  const wins = orderedItems.filter((entry) => entry.win);
+  const losses = orderedItems.filter((entry) => !entry.win);
+  const balancedCounts = findTargetBalancedOutcomeCounts(
+    wins.length,
+    losses.length,
+    cap,
+    targetWinRatePercent
+  );
+
+  return [...wins.slice(0, balancedCounts.winCount), ...losses.slice(0, balancedCounts.lossCount)]
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => entry.item);
 };
 
 const AI_MODALITY_OPTIONS = [
@@ -5438,18 +5560,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       const maxSamples = getLibraryMaxSamples(libraryId, 96);
-      if (maxSamples <= 0) {
-        return [] as HistoryItem[];
-      }
+      const defaultTargetWinRate = getOutcomeWinRatePercent(
+        source,
+        (candidate) => candidate.result === "Win"
+      );
+      const rawTargetWinRate = Number(settings[AI_LIBRARY_TARGET_WIN_RATE_KEY]);
+      const targetWinRate = Number.isFinite(rawTargetWinRate)
+        ? clamp(rawTargetWinRate, 0, 100)
+        : defaultTargetWinRate;
 
-      if (source.length > maxSamples) {
-        source =
-          normalizedId === "terrific" || normalizedId === "terrible"
-            ? source.slice(0, maxSamples)
-            : source.slice(source.length - maxSamples);
-      }
-
-      return source;
+      return rebalanceItemsToTargetWinRate(
+        source,
+        maxSamples,
+        targetWinRate,
+        (candidate) => candidate.result === "Win",
+        normalizedId === "terrific" || normalizedId === "terrible"
+      );
     };
 
     const getSimilarityWeight = (currentTrade: HistoryItem, candidateTrade: HistoryItem) => {
@@ -7176,122 +7302,176 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return summarizeBacktestTrades(backtestTrades, getEffectiveTradeConfidenceScore);
   }, [backtestTrades, getEffectiveTradeConfidenceScore]);
 
-  const aiLibraryCounts = useMemo(() => {
-    const sessionWins: Record<string, number> = {
-      Tokyo: 0,
-      Sydney: 0,
-      London: 0,
-      "New York": 0
-    };
-    const sessionLosses: Record<string, number> = {
-      Tokyo: 0,
-      Sydney: 0,
-      London: 0,
-      "New York": 0
-    };
-    let winsOnlyCount = 0;
-    let lossesOnlyCount = 0;
-
-    for (const trade of backtestLibraryCandidateTrades) {
-      const session = getSessionLabel(trade.entryTime);
-
-      if (trade.result === "Win") {
-        winsOnlyCount += 1;
-
-        if (sessionWins[session] !== undefined) {
-          sessionWins[session] += 1;
-        }
-      } else if (trade.result === "Loss") {
-        lossesOnlyCount += 1;
-
-        if (sessionLosses[session] !== undefined) {
-          sessionLosses[session] += 1;
-        }
-      }
-    }
-
-    const totalStaticTrades = backtestLibraryCandidateTrades.length;
-    const totalDynamicTrades = backtestTrades.length;
-    const suppressedTrades = Math.max(0, backtestTimeFilteredTrades.length - backtestTrades.length);
-    const perModelEstimate = Math.floor(
-      totalStaticTrades / Math.max(availableAiModelNames.length, 1)
+  const aiLibraryInsights = useMemo(() => {
+    const executedTradeIds = new Set(backtestTrades.map((trade) => trade.id));
+    const suppressedTradePool = backtestTimeFilteredTrades.filter(
+      (trade) => !executedTradeIds.has(trade.id)
     );
 
-    return aiLibraryDefs.reduce<Record<string, number>>((accumulator, definition) => {
-      const settings = selectedAiLibrarySettings[definition.id] ?? definition.defaults;
-      const maxSamplesValue = Number(settings.maxSamples ?? totalStaticTrades);
-      const maxSamples = Number.isFinite(maxSamplesValue)
-        ? Math.max(0, Math.round(maxSamplesValue))
-        : totalStaticTrades;
-      let sourceCount = totalStaticTrades;
+    const getSettings = (definition: AiLibraryDef) => {
+      return {
+        ...definition.defaults,
+        ...(selectedAiLibrarySettings[definition.id] ?? {})
+      };
+    };
 
-      switch (definition.id) {
-        case "core":
-          sourceCount = totalDynamicTrades;
-          break;
-        case "suppressed":
-          sourceCount = suppressedTrades;
-          break;
-        case "recent":
-          sourceCount = Math.min(
-            totalDynamicTrades,
-            Math.max(0, Number(settings.windowTrades ?? totalDynamicTrades))
-          );
-          break;
-        case "wins":
-          sourceCount = winsOnlyCount;
-          break;
-        case "wins_tokyo":
-          sourceCount = sessionWins.Tokyo;
-          break;
-        case "wins_sydney":
-          sourceCount = sessionWins.Sydney;
-          break;
-        case "wins_london":
-          sourceCount = sessionWins.London;
-          break;
-        case "wins_newyork":
-          sourceCount = sessionWins["New York"];
-          break;
-        case "losses":
-          sourceCount = lossesOnlyCount;
-          break;
-        case "losses_tokyo":
-          sourceCount = sessionLosses.Tokyo;
-          break;
-        case "losses_sydney":
-          sourceCount = sessionLosses.Sydney;
-          break;
-        case "losses_london":
-          sourceCount = sessionLosses.London;
-          break;
-        case "losses_newyork":
-          sourceCount = sessionLosses["New York"];
-          break;
-        case "terrific":
-        case "terrible":
-          sourceCount = Math.min(totalStaticTrades, Math.max(0, Number(settings.count ?? 0)));
-          break;
-        default:
-          if (settings.kind === "model_sim") {
-            sourceCount = perModelEstimate;
-          }
-          break;
+    const getStride = (definition: AiLibraryDef) => {
+      return clamp(
+        Math.floor(Number(getSettings(definition).stride ?? 0) || 0),
+        0,
+        5000
+      );
+    };
+
+    const getMaxSamples = (definition: AiLibraryDef, fallback: number) => {
+      return clamp(
+        Math.floor(Number(getSettings(definition).maxSamples ?? fallback) || fallback),
+        0,
+        100000
+      );
+    };
+
+    const buildRawSource = (definition: AiLibraryDef) => {
+      const settings = getSettings(definition);
+      const normalizedId = definition.id.toLowerCase();
+      let source: HistoryItem[] = backtestLibraryCandidateTrades;
+
+      if (normalizedId === "core") {
+        source = backtestTrades;
+      } else if (normalizedId === "suppressed") {
+        source = suppressedTradePool;
+      } else if (normalizedId === "recent") {
+        const windowTrades = clamp(
+          Math.floor(Number(settings.windowTrades ?? 1500) || 1500),
+          0,
+          5000
+        );
+        source = windowTrades > 0 ? backtestTrades.slice(-windowTrades) : [];
+      } else if (normalizedId === "wins") {
+        source = backtestLibraryCandidateTrades.filter((trade) => trade.result === "Win");
+      } else if (normalizedId === "wins_tokyo") {
+        source = backtestLibraryCandidateTrades.filter(
+          (trade) =>
+            trade.result === "Win" && getSessionLabel(trade.entryTime) === "Tokyo"
+        );
+      } else if (normalizedId === "wins_sydney") {
+        source = backtestLibraryCandidateTrades.filter(
+          (trade) =>
+            trade.result === "Win" && getSessionLabel(trade.entryTime) === "Sydney"
+        );
+      } else if (normalizedId === "wins_london") {
+        source = backtestLibraryCandidateTrades.filter(
+          (trade) =>
+            trade.result === "Win" && getSessionLabel(trade.entryTime) === "London"
+        );
+      } else if (normalizedId === "wins_newyork") {
+        source = backtestLibraryCandidateTrades.filter(
+          (trade) =>
+            trade.result === "Win" && getSessionLabel(trade.entryTime) === "New York"
+        );
+      } else if (normalizedId === "losses") {
+        source = backtestLibraryCandidateTrades.filter((trade) => trade.result === "Loss");
+      } else if (normalizedId === "losses_tokyo") {
+        source = backtestLibraryCandidateTrades.filter(
+          (trade) =>
+            trade.result === "Loss" && getSessionLabel(trade.entryTime) === "Tokyo"
+        );
+      } else if (normalizedId === "losses_sydney") {
+        source = backtestLibraryCandidateTrades.filter(
+          (trade) =>
+            trade.result === "Loss" && getSessionLabel(trade.entryTime) === "Sydney"
+        );
+      } else if (normalizedId === "losses_london") {
+        source = backtestLibraryCandidateTrades.filter(
+          (trade) =>
+            trade.result === "Loss" && getSessionLabel(trade.entryTime) === "London"
+        );
+      } else if (normalizedId === "losses_newyork") {
+        source = backtestLibraryCandidateTrades.filter(
+          (trade) =>
+            trade.result === "Loss" && getSessionLabel(trade.entryTime) === "New York"
+        );
+      } else if (normalizedId === "terrific") {
+        const count = clamp(
+          Math.floor(Number(settings.count ?? 96) || 96),
+          0,
+          100000
+        );
+        source = [...backtestLibraryCandidateTrades]
+          .sort((left, right) => right.pnlUsd - left.pnlUsd)
+          .slice(0, count);
+      } else if (normalizedId === "terrible") {
+        const count = clamp(
+          Math.floor(Number(settings.count ?? 96) || 96),
+          0,
+          100000
+        );
+        source = [...backtestLibraryCandidateTrades]
+          .sort((left, right) => left.pnlUsd - right.pnlUsd)
+          .slice(0, count);
+      } else if (settings.kind === "model_sim") {
+        const targetModel = String(settings.model ?? "");
+        source = backtestLibraryCandidateTrades.filter(
+          (trade) => trade.entrySource === targetModel
+        );
       }
 
-      accumulator[definition.id] = Math.min(Math.max(0, Math.round(sourceCount)), maxSamples);
+      const stride = getStride(definition);
+      if (stride > 1) {
+        source = source.filter((_, index) => index % stride === 0);
+      }
+
+      return source;
+    };
+
+    const baselineWinRates: Record<string, number> = {};
+    const counts = aiLibraryDefs.reduce<Record<string, number>>((accumulator, definition) => {
+      const source = buildRawSource(definition);
+      const settings = getSettings(definition);
+      const baselineWinRate = getOutcomeWinRatePercent(
+        source,
+        (trade) => trade.result === "Win"
+      );
+      const rawTargetWinRate = Number(settings[AI_LIBRARY_TARGET_WIN_RATE_KEY]);
+      const targetWinRate = Number.isFinite(rawTargetWinRate)
+        ? clamp(rawTargetWinRate, 0, 100)
+        : baselineWinRate;
+      const maxSamples = getMaxSamples(definition, Math.max(96, source.length));
+      const balanced = rebalanceItemsToTargetWinRate(
+        source,
+        maxSamples,
+        targetWinRate,
+        (trade) => trade.result === "Win",
+        definition.id === "terrific" || definition.id === "terrible"
+      );
+
+      baselineWinRates[definition.id] = baselineWinRate;
+      accumulator[definition.id] = balanced.length;
       return accumulator;
     }, {});
+
+    return {
+      counts,
+      baselineWinRates
+    };
   }, [
     aiLibraryDefs,
-    availableAiModelNames.length,
     backtestLibraryCandidateTrades,
-    backtestTimeFilteredTrades.length,
+    backtestTimeFilteredTrades,
     backtestTrades,
     selectedAiLibrarySettings
   ]);
-  const selectedAiLibraryConfig = selectedAiLibrary
-    ? selectedAiLibrarySettings[selectedAiLibrary.id] ?? selectedAiLibrary.defaults
+  const aiLibraryCounts = aiLibraryInsights.counts;
+  const aiLibraryBaselineWinRates = aiLibraryInsights.baselineWinRates;
+  const selectedAiLibraryConfig: Record<string, AiLibrarySettingValue> | null = selectedAiLibrary
+    ? ({
+        ...selectedAiLibrary.defaults,
+        ...(selectedAiLibrarySettings[selectedAiLibrary.id] ?? {}),
+        [AI_LIBRARY_TARGET_WIN_RATE_KEY]:
+          selectedAiLibrarySettings[selectedAiLibrary.id]?.[AI_LIBRARY_TARGET_WIN_RATE_KEY] ??
+          aiLibraryBaselineWinRates[selectedAiLibrary.id] ??
+          50
+      } as Record<string, AiLibrarySettingValue>)
     : null;
   const selectedAiLibraryLoadedCount = selectedAiLibrary ? aiLibraryCounts[selectedAiLibrary.id] ?? 0 : 0;
 

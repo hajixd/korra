@@ -4387,10 +4387,36 @@ const MODEL_AI_LIBRARY_DEFS: AiLibraryDef[] = MODELS.map((model) => {
   };
 });
 
+const AI_LIBRARY_TARGET_WIN_RATE_KEY = "targetWinRate";
+const AI_LIBRARY_TARGET_WIN_RATE_FIELD: AiLibraryField = {
+  key: AI_LIBRARY_TARGET_WIN_RATE_KEY,
+  label: "Target Win Rate (%)",
+  type: "number",
+  min: 0,
+  max: 100,
+  step: 1,
+  help: "Trim this library's loaded neighbors toward the requested win ratio.",
+};
+
+const withTargetWinRateField = (definition: AiLibraryDef): AiLibraryDef => {
+  if ((definition.fields || []).some((field) => field.key === AI_LIBRARY_TARGET_WIN_RATE_KEY)) {
+    return definition;
+  }
+
+  const fields = [...(definition.fields || [])];
+  const maxSamplesIndex = fields.findIndex((field) => field.key === "maxSamples");
+  const insertAt = maxSamplesIndex >= 0 ? maxSamplesIndex : fields.length;
+  fields.splice(insertAt, 0, AI_LIBRARY_TARGET_WIN_RATE_FIELD);
+  return {
+    ...definition,
+    fields,
+  };
+};
+
 const AI_LIBRARY_DEFS: AiLibraryDef[] = [
   ...BASE_AI_LIBRARY_DEFS,
   ...MODEL_AI_LIBRARY_DEFS,
-];
+].map(withTargetWinRateField);
 
 const AI_LIBRARY_DEF_BY_ID: Record<string, AiLibraryDef> =
   AI_LIBRARY_DEFS.reduce((acc, d) => {
@@ -8373,6 +8399,111 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
       staticLibraryGeneratedCounts[libId] =
         (staticLibraryGeneratedCounts[libId] || 0) + n;
     };
+    const getPointWinRatePercent = (points) => {
+      if (!Array.isArray(points) || points.length === 0) return 50;
+      let wins = 0;
+      for (const p of points) {
+        if (!p) continue;
+        const label = Number(p.label || 0);
+        if (label > 0 || String(p.metaOutcome || "") === "Win") wins += 1;
+      }
+      return (wins / points.length) * 100;
+    };
+    const getLibTargetWinRate = (libId, points) => {
+      const raw = Number((libSetting(libId) || {}).targetWinRate);
+      const fallback = getPointWinRatePercent(points);
+      return Number.isFinite(raw) ? clamp(raw, 0, 100) : fallback;
+    };
+    const findBalancedPointCounts = (winsAvail, lossesAvail, cap, targetPct) => {
+      const winCount = Math.max(0, Math.floor(Number(winsAvail) || 0));
+      const lossCount = Math.max(0, Math.floor(Number(lossesAvail) || 0));
+      const totalCap = Math.min(
+        Math.max(0, Math.floor(Number(cap) || 0)),
+        winCount + lossCount
+      );
+      if (totalCap <= 0) return { wins: 0, losses: 0 };
+
+      const target = clamp(Number(targetPct) || 0, 0, 100) / 100;
+      let bestWins = 0;
+      let bestTotal = 0;
+      let bestDiff = Infinity;
+
+      for (let total = totalCap; total >= 1; total -= 1) {
+        const minWins = Math.max(0, total - lossCount);
+        const maxWins = Math.min(winCount, total);
+        let wins = Math.round(target * total);
+        wins = clamp(wins, minWins, maxWins);
+        const diff = Math.abs(wins / total - target);
+        if (diff < bestDiff - 1e-9) {
+          bestDiff = diff;
+          bestWins = wins;
+          bestTotal = total;
+        }
+      }
+
+      return {
+        wins: bestWins,
+        losses: Math.max(0, bestTotal - bestWins),
+      };
+    };
+    const rebalancePointsToTargetWinRate = (points, libId, cap, preferFront) => {
+      const list = Array.isArray(points) ? points : [];
+      const maxSamples = Math.max(0, Math.floor(Number(cap) || 0));
+      if (maxSamples <= 0 || list.length === 0) return [];
+
+      const targetPct = getLibTargetWinRate(libId, list);
+      const indexed = list.map((point, index) => ({
+        point,
+        index,
+        win:
+          Number((point && point.label) || 0) > 0 ||
+          String((point && point.metaOutcome) || "") === "Win",
+      }));
+      const ordered = preferFront ? indexed : indexed.slice().reverse();
+      const wins = ordered.filter((entry) => entry.win);
+      const losses = ordered.filter((entry) => !entry.win);
+      const counts = findBalancedPointCounts(
+        wins.length,
+        losses.length,
+        maxSamples,
+        targetPct
+      );
+
+      return wins
+        .slice(0, counts.wins)
+        .concat(losses.slice(0, counts.losses))
+        .sort((a, b) => a.index - b.index)
+        .map((entry) => entry.point);
+    };
+    const balancedDynamicLibraryCache = {};
+    const getBalancedDynamicPoints = (libId, modelKey, points, cap, preferFront=false) => {
+      const list = Array.isArray(points) ? points : [];
+      const explicitTarget = Number((libSetting(libId) || {}).targetWinRate);
+      const firstUid = list.length ? String((list[0] && list[0].uid) || "") : "";
+      const lastUid = list.length ? String((list[list.length - 1] && list[list.length - 1].uid) || "") : "";
+      const stateKey =
+        String(modelKey || "") +
+        "|" +
+        String(cap || 0) +
+        "|" +
+        String(preferFront ? 1 : 0) +
+        "|" +
+        String(list.length) +
+        "|" +
+        firstUid +
+        "|" +
+        lastUid +
+        "|" +
+        (Number.isFinite(explicitTarget) ? String(clamp(explicitTarget, 0, 100)) : "auto");
+      const cacheKey = String(libId || "");
+      const cached = balancedDynamicLibraryCache[cacheKey];
+      if (cached && cached.stateKey === stateKey) {
+        return cached.points;
+      }
+      const next = rebalancePointsToTargetWinRate(list, libId, cap, preferFront);
+      balancedDynamicLibraryCache[cacheKey] = { stateKey, points: next };
+      return next;
+    };
 
     const initLibStores = (models) => {
       for (const m of models) {
@@ -8873,11 +9004,11 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
               modelKey, enabledSessions, parseMode,
               0, 0, undefined
             );
-            if (cap > 0 && pts.length > cap) pts = pts.slice(pts.length - cap);
             cacheSet(ck, pts);
           }
-          addStaticLibraryGeneratedCount("base", pts.length);
-          for (const p of pts) {
+          const loadedPts = rebalancePointsToTargetWinRate(pts, "base", cap, false);
+          addStaticLibraryGeneratedCount("base", loadedPts.length);
+          for (const p of loadedPts) {
             staticPool.push({ ...p, uid: "base|" + String((p && (p.uid ?? p.metaTime)) || ""), weight: (p.weight || 1) * wt, metaLib: "base", metaTrainingOnly: true });
           }
         }
@@ -8946,13 +9077,12 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
                 if (sessionName && p.metaSession !== sessionName) return false;
                 return true;
               });
-
-              if (cap > 0 && pts.length > cap) pts = pts.slice(pts.length - cap);
               cacheSet(ck, pts);
             }
-            addStaticLibraryGeneratedCount(libId, pts.length);
+            const loadedPts = rebalancePointsToTargetWinRate(pts, libId, cap, false);
+            addStaticLibraryGeneratedCount(libId, loadedPts.length);
 
-            for (const p of pts) {
+            for (const p of loadedPts) {
               staticPool.push({
                 ...p,
                 uid: libId + "|" + String((p && (p.uid ?? p.metaTime)) || ""),
@@ -8994,21 +9124,11 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
           let pts = cacheGet(ck);
           if (!pts) {
             pts = seedTerrificOrTerrible(seedCandles, chunkBars, modelKey, "terrific", count, pivotSpan, strideEff, maxSeedIndexForSeed, parseMode);
-            if (cap > 0 && pts.length > cap) pts = pts.slice(0, cap);
             cacheSet(ck, pts);
           }
-          let countPts = pts;
-          if (typeof maxSeedIndexForSeed === "number") {
-            const countKey = "terrific|" + modelKey + "|" + String(chunkBars) + "|" + String(count) + "|" + String(pivotSpan) + "|" + String(strideEff) + "|" + parseMode + "|all";
-            countPts = cacheGet(countKey);
-            if (!countPts) {
-              countPts = seedTerrificOrTerrible(seedCandles, chunkBars, modelKey, "terrific", count, pivotSpan, strideEff, undefined, parseMode);
-              if (cap > 0 && countPts.length > cap) countPts = countPts.slice(0, cap);
-              cacheSet(countKey, countPts);
-            }
-          }
-          addStaticLibraryGeneratedCount("terrific", countPts.length);
-          for (const p of pts) staticPool.push({ ...p, weight: (p.weight || 1) * wt, metaLib: "terrific", metaTrainingOnly: true });
+          const loadedPts = rebalancePointsToTargetWinRate(pts, "terrific", cap, true);
+          addStaticLibraryGeneratedCount("terrific", loadedPts.length);
+          for (const p of loadedPts) staticPool.push({ ...p, weight: (p.weight || 1) * wt, metaLib: "terrific", metaTrainingOnly: true });
         }
 
         if (useLib("terrible")) {
@@ -9024,21 +9144,11 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
           let pts = cacheGet(ck);
           if (!pts) {
             pts = seedTerrificOrTerrible(seedCandles, chunkBars, modelKey, "terrible", count, pivotSpan, strideEff, maxSeedIndexForSeed, parseMode);
-            if (cap > 0 && pts.length > cap) pts = pts.slice(0, cap);
             cacheSet(ck, pts);
           }
-          let countPts = pts;
-          if (typeof maxSeedIndexForSeed === "number") {
-            const countKey = "terrible|" + modelKey + "|" + String(chunkBars) + "|" + String(count) + "|" + String(pivotSpan) + "|" + String(strideEff) + "|" + parseMode + "|all";
-            countPts = cacheGet(countKey);
-            if (!countPts) {
-              countPts = seedTerrificOrTerrible(seedCandles, chunkBars, modelKey, "terrible", count, pivotSpan, strideEff, undefined, parseMode);
-              if (cap > 0 && countPts.length > cap) countPts = countPts.slice(0, cap);
-              cacheSet(countKey, countPts);
-            }
-          }
-          addStaticLibraryGeneratedCount("terrible", countPts.length);
-          for (const p of pts) staticPool.push({ ...p, weight: (p.weight || 1) * wt, metaLib: "terrible", metaTrainingOnly: true });
+          const loadedPts = rebalancePointsToTargetWinRate(pts, "terrible", cap, true);
+          addStaticLibraryGeneratedCount("terrible", loadedPts.length);
+          for (const p of loadedPts) staticPool.push({ ...p, weight: (p.weight || 1) * wt, metaLib: "terrible", metaTrainingOnly: true });
         }
 
         // Per-model simulated library (6 model libraries)
@@ -9067,8 +9177,9 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             );
             cacheSet(ck, pts);
           }
-          addStaticLibraryGeneratedCount(modelLibId, pts.length);
-          for (const p of pts) staticPool.push({ ...p, uid: String(modelLibId) + "|" + String((p && (p.uid ?? p.metaTime)) || ""), weight: (p.weight || 1) * wt, metaLib: modelLibId, metaTrainingOnly: true });
+          const loadedPts = rebalancePointsToTargetWinRate(pts, modelLibId, cap, false);
+          addStaticLibraryGeneratedCount(modelLibId, loadedPts.length);
+          for (const p of loadedPts) staticPool.push({ ...p, uid: String(modelLibId) + "|" + String((p && (p.uid ?? p.metaTime)) || ""), weight: (p.weight || 1) * wt, metaLib: modelLibId, metaTrainingOnly: true });
         }
 
         libsStatic[modelKey] = staticPool;
@@ -9150,13 +9261,13 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
 
             if (coreEnabled && onlineCore[m] && onlineCore[m].length) {
               const capCore = libMaxSamples("core", 20000);
-              const arrCore = capCore > 0 ? onlineCore[m].slice(0, capCore) : [];
+              const arrCore = getBalancedDynamicPoints("core", m, onlineCore[m], capCore, false);
               for (const p of arrCore) out.push(p);
             }
 
             if (suppressedEnabled && onlineSuppressed[m] && onlineSuppressed[m].length) {
               const capSup = libMaxSamples("suppressed", 20000);
-              const arrSup = capSup > 0 ? onlineSuppressed[m].slice(0, capSup) : [];
+              const arrSup = getBalancedDynamicPoints("suppressed", m, onlineSuppressed[m], capSup, false);
               for (const p of arrSup) out.push(p);
             }
 
@@ -9165,7 +9276,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
               const win = Math.min(recentWindowTrades, raw.length);
               const slice0 = win > 0 ? raw.slice(raw.length - win) : [];
               const capRec = libMaxSamples("recent", 20000);
-              const slice = capRec > 0 ? slice0.slice(0, capRec) : [];
+              const slice = getBalancedDynamicPoints("recent", m, slice0, capRec, false);
               for (const bp of slice) {
                 // clone with recent weighting (training-only)
                 const __uidBody = (bp && bp.uid) ? String(bp.uid).replace(/^[^|]+\|/, "") : String((bp && bp.metaTime) || "");
@@ -10593,22 +10704,51 @@ function flushSuppressedNeighbors(uptoIndex){
 
     // Library loaded counts (training-only neighbor examples)
     const libraryCounts = { ...staticLibraryGeneratedCounts };
+    const libraryWinStats = {};
+    const addLibraryWinSamples = (libId, points) => {
+      if (!libId || !Array.isArray(points) || points.length === 0) return;
+      if (!libraryWinStats[libId]) libraryWinStats[libId] = { wins: 0, total: 0 };
+      const stat = libraryWinStats[libId];
+      for (const p of points) {
+        if (!p) continue;
+        if (Number(p.label || 0) > 0 || String(p.metaOutcome || "") === "Win") {
+          stat.wins += 1;
+        }
+        stat.total += 1;
+      }
+    };
     try {
       for (const mk of usedModels) {
+        const staticPoints = libsStatic[mk] || [];
+        if (staticPoints.length) {
+          const pointsByLib = {};
+          for (const p of staticPoints) {
+            const lid = String((p && p.metaLib) || "");
+            if (!lid) continue;
+            if (!pointsByLib[lid]) pointsByLib[lid] = [];
+            pointsByLib[lid].push(p);
+          }
+          for (const lid of Object.keys(pointsByLib)) {
+            addLibraryWinSamples(lid, pointsByLib[lid]);
+          }
+        }
+
         if (coreEnabled && onlineCore[mk] && onlineCore[mk].length) {
           const capCore = libMaxSamples("core", 20000);
-          const arrCore = capCore > 0 ? onlineCore[mk].slice(0, capCore) : [];
+          const arrCore = getBalancedDynamicPoints("core", mk, onlineCore[mk], capCore, false);
           if (arrCore.length) {
             libraryCounts.core = (libraryCounts.core || 0) + arrCore.length;
+            addLibraryWinSamples("core", arrCore);
           }
         }
 
         if (suppressedEnabled && onlineSuppressed[mk] && onlineSuppressed[mk].length) {
           const capSup = libMaxSamples("suppressed", 20000);
-          const arrSup = capSup > 0 ? onlineSuppressed[mk].slice(0, capSup) : [];
+          const arrSup = getBalancedDynamicPoints("suppressed", mk, onlineSuppressed[mk], capSup, false);
           if (arrSup.length) {
             libraryCounts.suppressed =
               (libraryCounts.suppressed || 0) + arrSup.length;
+            addLibraryWinSamples("suppressed", arrSup);
           }
         }
 
@@ -10617,11 +10757,20 @@ function flushSuppressedNeighbors(uptoIndex){
           const win = Math.min(recentWindowTrades, raw.length);
           const slice0 = win > 0 ? raw.slice(raw.length - win) : [];
           const capRec = libMaxSamples("recent", 20000);
-          const slice = capRec > 0 ? slice0.slice(0, capRec) : [];
+          const slice = getBalancedDynamicPoints("recent", mk, slice0, capRec, false);
           if (slice.length) {
             libraryCounts.recent = (libraryCounts.recent || 0) + slice.length;
+            addLibraryWinSamples("recent", slice);
           }
         }
+      }
+    } catch(_e) {}
+    const libraryWinRates = {};
+    try {
+      for (const lid of Object.keys(libraryWinStats)) {
+        const stat = libraryWinStats[lid];
+        if (!stat || !stat.total) continue;
+        libraryWinRates[lid] = (stat.wins / stat.total) * 100;
       }
     } catch(_e) {}
 
@@ -10681,6 +10830,7 @@ function flushSuppressedNeighbors(uptoIndex){
     postMessage({type:"progress", phase:"Done", pct: 1});
     return {
       libraryCounts,
+      libraryWinRates,
       libraryPoints,
       trades,
       ghostEntries,
@@ -24680,6 +24830,7 @@ export default function App() {
     setAiBulkStride(0);
     setAiBulkMaxSamples(10000);
     setAiLibraryCounts({});
+    setAiLibraryWinRates({});
     setAiLibraryPoints([]);
 
     // Reset per-feature mode selections
@@ -25530,6 +25681,9 @@ export default function App() {
   >(() => ({ ...DEFAULT_AI_LIBRARY_SETTINGS }));
   const [aiSelectedLibrary, setAiSelectedLibrary] = useState<string>("core");
   const [aiLibraryCounts, setAiLibraryCounts] = useState<
+    Record<string, number>
+  >({});
+  const [aiLibraryWinRates, setAiLibraryWinRates] = useState<
     Record<string, number>
   >({});
   const [aiLibraryPoints, setAiLibraryPoints] = useState<any[]>([]);
@@ -27363,6 +27517,7 @@ export default function App() {
         if (msg.id !== reqIdRef.current) return;
         const res = msg.res || {};
         setAiLibraryCounts(res && res.libraryCounts ? res.libraryCounts : {});
+        setAiLibraryWinRates(res && res.libraryWinRates ? res.libraryWinRates : {});
         setAiLibraryPoints(res && res.libraryPoints ? res.libraryPoints : []);
         const rawTrades0 = res.trades || [];
         // Ensure every trade has a stable unique ID for display + selection across the app.
@@ -27469,6 +27624,7 @@ export default function App() {
       if (msg.type === "error") {
         if (msg.id !== reqIdRef.current) return;
         setAiLibraryCounts({});
+        setAiLibraryWinRates({});
         isComputingStateRef.current = false;
         setIsComputing(false);
         setComputeProgress({ phase: "", pct: 0 });
@@ -33108,9 +33264,28 @@ export default function App() {
                           </div>
                         );
                       }
-                      const s = (aiLibrarySettings &&
-                        aiLibrarySettings[aiSelectedLibrary]) || {
+                      const currentSettings =
+                        (aiLibrarySettings &&
+                          aiLibrarySettings[aiSelectedLibrary]) ||
+                        {};
+                      const s = {
                         ...(def.defaults || {}),
+                        ...(currentSettings || {}),
+                        [AI_LIBRARY_TARGET_WIN_RATE_KEY]:
+                          currentSettings &&
+                          currentSettings[AI_LIBRARY_TARGET_WIN_RATE_KEY] != null
+                            ? currentSettings[AI_LIBRARY_TARGET_WIN_RATE_KEY]
+                            : Number.isFinite(
+                                  Number(
+                                    aiLibraryWinRates[aiSelectedLibrary]
+                                  )
+                                )
+                              ? clamp(
+                                  Number(aiLibraryWinRates[aiSelectedLibrary]),
+                                  0,
+                                  100
+                                )
+                              : 50,
                       };
                       return (
                         <div style={{ display: "grid", gap: 10 }}>
