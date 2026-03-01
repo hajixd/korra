@@ -10012,7 +10012,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
                     <div className="backtest-card" style={{ padding: "0.85rem" }}>
                       <div className="ai-zip-section main-settings-panel">
-                        <div className="main-settings-panel-title">Core AI Controls</div>
+                        <div className="main-settings-panel-title">
+                          <strong>Core AI Controls</strong>
+                        </div>
 
                         <button
                           type="button"
@@ -10365,10 +10367,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               }}
                               className="ai-zip-input"
                             />
-                            <span className="ai-zip-note">
-                              {configuredAiFeatureDimensionCount.toLocaleString("en-US")} raw dims active before
-                              compression
-                            </span>
                           </label>
 
                           <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
@@ -10488,9 +10486,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           Realism · {AI_REALISM_LABELS[clamp(realismLevel, 0, 4)]}
                         </button>
 
-                        <div className={`ai-zip-note ${antiCheatEnabled ? "" : "ai-zip-control disabled"}`}>
-                          When enabled, the validation controls mirror the AI.zip anti-cheat panel.
-                        </div>
                       </div>
                     </div>
                   </div>
