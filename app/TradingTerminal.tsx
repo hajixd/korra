@@ -86,25 +86,6 @@ type BacktestTab =
   | "propFirm";
 type EntryExitChartMode = "Entry" | "Exit";
 type PerformanceStatsRange = "Years" | "Months" | "Days of the Week" | "Hours";
-const BACKTEST_SCATTER_KEYS = [
-  "duration",
-  "pnl",
-  "margin",
-  "aiMargin",
-  "drawdown",
-  "rr",
-  "entryPrice",
-  "exitPrice",
-  "model",
-  "session"
-] as const;
-type BacktestScatterKey = (typeof BACKTEST_SCATTER_KEYS)[number];
-type BacktestScatterAxisDef = {
-  label: string;
-  numeric: boolean;
-  tickFormatter?: (value: number) => string;
-  tooltipFormatter?: (value: number) => string;
-};
 type PanelTab = "active" | "assets" | "models" | "mt5" | "history" | "actions" | "ai";
 type MainStatisticsCard = {
   label: string;
@@ -4069,10 +4050,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [dimScope, setDimScope] = useState<DimensionScope>("active");
   const [dimSortCol, setDimSortCol] = useState<DimensionSortColumn>("corr");
   const [dimSortDir, setDimSortDir] = useState<-1 | 1>(-1);
-  const [scatterXKey, setScatterXKey] = useState<BacktestScatterKey>("duration");
-  const [scatterYKey, setScatterYKey] = useState<BacktestScatterKey>("pnl");
   const [isGraphsCollapsed, setIsGraphsCollapsed] = useState(false);
-  const [hoveredScatterPointId, setHoveredScatterPointId] = useState<string | null>(null);
   const [propProjectionMethod, setPropProjectionMethod] = useState<"historical" | "montecarlo">(
     "montecarlo"
   );
@@ -6278,6 +6256,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return !aiFilterEnabled || confidence >= confidenceThreshold;
     });
   }, [aiFilterEnabled, backtestTimeFilteredTrades, confidenceThreshold]);
+  const deferredBacktestAnalyticsTrades = useDeferredValue(backtestTrades);
+  const isBacktestAnalyticsVisible = selectedSurfaceTab === "backtest";
+  const isHistoryBacktestTabActive =
+    isBacktestAnalyticsVisible && selectedBacktestTab === "history";
+  const isCalendarBacktestTabActive =
+    isBacktestAnalyticsVisible && selectedBacktestTab === "calendar";
+  const isClusterBacktestTabActive =
+    isBacktestAnalyticsVisible && selectedBacktestTab === "cluster";
+  const isPerformanceStatsBacktestTabActive =
+    isBacktestAnalyticsVisible && selectedBacktestTab === "performanceStats";
+  const isEntryExitBacktestTabActive =
+    isBacktestAnalyticsVisible && selectedBacktestTab === "entryExit";
+  const isPropFirmBacktestTabActive =
+    isBacktestAnalyticsVisible && selectedBacktestTab === "propFirm";
 
   const mainStatsTrades = useMemo(() => backtestTrades, [backtestTrades]);
 
@@ -7175,19 +7167,27 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   ]);
 
   const availableBacktestMonths = useMemo(() => {
+    if (!isCalendarBacktestTabActive) {
+      return [] as string[];
+    }
+
     const monthKeys = new Set<string>();
 
-    for (const trade of backtestTrades) {
+    for (const trade of deferredBacktestAnalyticsTrades) {
       monthKeys.add(getTradeMonthKey(trade.exitTime));
     }
 
     return Array.from(monthKeys).sort((a, b) => b.localeCompare(a));
-  }, [backtestTrades]);
+  }, [deferredBacktestAnalyticsTrades, isCalendarBacktestTabActive]);
 
   const backtestCalendarAgg = useMemo(() => {
+    if (!isCalendarBacktestTabActive) {
+      return new Map<string, { count: number; wins: number; pnl: number; items: HistoryItem[] }>();
+    }
+
     const map = new Map<string, { count: number; wins: number; pnl: number; items: HistoryItem[] }>();
 
-    for (const trade of backtestTrades) {
+    for (const trade of deferredBacktestAnalyticsTrades) {
       const dateKey = getTradeDayKey(trade.exitTime);
       const bucket = map.get(dateKey) ?? { count: 0, wins: 0, pnl: 0, items: [] };
       bucket.count += 1;
@@ -7198,12 +7198,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     return map;
-  }, [backtestTrades]);
+  }, [deferredBacktestAnalyticsTrades, isCalendarBacktestTabActive]);
 
   const activeBacktestMonthKey = selectedBacktestMonthKey || getCurrentTradeMonthKey();
   const calendarMonthLabel = getMonthLabel(activeBacktestMonthKey);
 
   const backtestCalendarGrid = useMemo(() => {
+    if (!isCalendarBacktestTabActive) {
+      return [];
+    }
+
     const [year, month] = activeBacktestMonthKey.split("-").map((value) => Number(value));
 
     if (!Number.isFinite(year) || !Number.isFinite(month)) {
@@ -7225,7 +7229,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         activity: backtestCalendarAgg.get(dateKey) ?? null
       };
     });
-  }, [activeBacktestMonthKey, backtestCalendarAgg]);
+  }, [activeBacktestMonthKey, backtestCalendarAgg, isCalendarBacktestTabActive]);
 
   const selectedBacktestMonthPnl = useMemo(() => {
     return backtestCalendarGrid.reduce((sum, cell) => {
@@ -7244,6 +7248,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [backtestCalendarGrid]);
 
   const selectedBacktestDayTrades = useMemo(() => {
+    if (!isCalendarBacktestTabActive) {
+      return [] as HistoryItem[];
+    }
+
     const bucket = backtestCalendarAgg.get(selectedBacktestDateKey);
 
     if (!bucket) {
@@ -7251,9 +7259,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     return [...bucket.items].sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
-  }, [backtestCalendarAgg, selectedBacktestDateKey]);
+  }, [backtestCalendarAgg, isCalendarBacktestTabActive, selectedBacktestDateKey]);
 
   useEffect(() => {
+    if (!isCalendarBacktestTabActive) {
+      return;
+    }
+
     setExpandedBacktestTradeId((current) => {
       if (!current) {
         return null;
@@ -7261,16 +7273,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       return selectedBacktestDayTrades.some((trade) => trade.id === current) ? current : null;
     });
-  }, [selectedBacktestDayTrades]);
+  }, [isCalendarBacktestTabActive, selectedBacktestDayTrades]);
 
   const filteredBacktestHistory = useMemo(() => {
+    if (!isHistoryBacktestTabActive) {
+      return [] as HistoryItem[];
+    }
+
     const query = backtestHistoryQuery.trim().toLowerCase();
 
     if (!query) {
-      return [...backtestTrades].sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
+      return [...deferredBacktestAnalyticsTrades].sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
     }
 
-    return [...backtestTrades]
+    return [...deferredBacktestAnalyticsTrades]
       .filter((trade) => {
         const haystack = [
           trade.id,
@@ -7293,11 +7309,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         return haystack.includes(query);
       })
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
-  }, [backtestHistoryQuery, backtestTrades]);
+  }, [backtestHistoryQuery, deferredBacktestAnalyticsTrades, isHistoryBacktestTabActive]);
 
   useEffect(() => {
+    if (!isHistoryBacktestTabActive) {
+      return;
+    }
+
     setBacktestHistoryPage(1);
-  }, [backtestHistoryQuery, backtestTrades]);
+  }, [backtestHistoryQuery, backtestTrades, isHistoryBacktestTabActive]);
 
   const backtestHistoryPageCount = Math.max(
     1,
@@ -7322,19 +7342,27 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [filteredBacktestHistory, visibleBacktestHistoryPage]);
 
   const aiZipClusterCandles = useMemo(() => {
+    if (!isClusterBacktestTabActive) {
+      return [] as Array<Candle & { time: number }>;
+    }
+
     return selectedChartCandles.map((candle) => ({
       ...candle,
       time: Number(candle.time)
     }));
-  }, [selectedChartCandles]);
+  }, [isClusterBacktestTabActive, selectedChartCandles]);
 
   const aiZipClusterTrades = useMemo(() => {
+    if (!isClusterBacktestTabActive) {
+      return [];
+    }
+
     const maxIndex = Math.max(0, selectedChartCandles.length - 1);
 
-    return backtestTrades.map((trade, index) => {
+    return deferredBacktestAnalyticsTrades.map((trade, index) => {
       const fallbackIndex =
         maxIndex > 0
-          ? Math.round((index / Math.max(1, backtestTrades.length - 1)) * maxIndex)
+          ? Math.round((index / Math.max(1, deferredBacktestAnalyticsTrades.length - 1)) * maxIndex)
           : 0;
       const entryIndex = clamp(candleIndexByUnix.get(Number(trade.entryTime)) ?? fallbackIndex, 0, maxIndex);
       const exitIndex = clamp(
@@ -7370,13 +7398,26 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         side: trade.side
       };
     });
-  }, [backtestTrades, candleIndexByUnix, selectedChartCandles.length]);
+  }, [
+    candleIndexByUnix,
+    deferredBacktestAnalyticsTrades,
+    isClusterBacktestTabActive,
+    selectedChartCandles.length
+  ]);
 
   useEffect(() => {
+    if (!isClusterBacktestTabActive) {
+      return;
+    }
+
     setAiZipClusterTimelineIdx(Math.max(0, aiZipClusterCandles.length - 1));
-  }, [aiZipClusterCandles.length]);
+  }, [aiZipClusterCandles.length, isClusterBacktestTabActive]);
 
   const performanceStatsModelOptions = useMemo(() => {
+    if (!isPerformanceStatsBacktestTabActive) {
+      return ["All"];
+    }
+
     const models = Array.from(
       new Set(
         backtestSourceTrades
@@ -7392,19 +7433,27 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     return ["All", ...models];
-  }, [backtestSourceTrades, selectedBacktestModelNames]);
+  }, [backtestSourceTrades, isPerformanceStatsBacktestTabActive, selectedBacktestModelNames]);
 
   useEffect(() => {
+    if (!isPerformanceStatsBacktestTabActive) {
+      return;
+    }
+
     if (!performanceStatsModelOptions.includes(performanceStatsModel)) {
       setPerformanceStatsModel("All");
     }
-  }, [performanceStatsModel, performanceStatsModelOptions]);
+  }, [isPerformanceStatsBacktestTabActive, performanceStatsModel, performanceStatsModelOptions]);
 
   const performanceStatsTemporalData = useMemo(() => {
+    if (!isPerformanceStatsBacktestTabActive) {
+      return [];
+    }
+
     const filteredTrades =
       performanceStatsModel === "All"
-        ? mainStatsTrades
-        : mainStatsTrades.filter((trade) => trade.entrySource === performanceStatsModel);
+        ? deferredBacktestAnalyticsTrades
+        : deferredBacktestAnalyticsTrades.filter((trade) => trade.entrySource === performanceStatsModel);
     const buckets = new Map<string, { pnl: number; count: number }>();
 
     for (const trade of filteredTrades) {
@@ -7459,69 +7508,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         count: record.count
       };
     });
-  }, [mainStatsTrades, performanceStatsModel, performanceStatsRange]);
-
-  const backtestEntryExitStats = useMemo(() => {
-    const sideMap = new Map<TradeSide, { side: TradeSide; count: number; wins: number; pnl: number }>();
-    const exitMap = new Map<string, number>([
-      ["Take Profit", 0],
-      ["Stop Loss", 0],
-      ["Model Exit", 0]
-    ]);
-    let totalEntry = 0;
-    let totalExit = 0;
-    let totalStopDistance = 0;
-    let totalTargetDistance = 0;
-    let totalUnits = 0;
-    let totalHoldMinutes = 0;
-
-    sideMap.set("Long", { side: "Long", count: 0, wins: 0, pnl: 0 });
-    sideMap.set("Short", { side: "Short", count: 0, wins: 0, pnl: 0 });
-
-    for (const trade of backtestTrades) {
-      totalEntry += trade.entryPrice;
-      totalExit += trade.outcomePrice;
-      totalStopDistance += Math.abs(trade.entryPrice - trade.stopPrice);
-      totalTargetDistance += Math.abs(trade.targetPrice - trade.entryPrice);
-      totalUnits += trade.units;
-      totalHoldMinutes += Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
-
-      const side = sideMap.get(trade.side);
-
-      if (side) {
-        side.count += 1;
-        side.wins += trade.result === "Win" ? 1 : 0;
-        side.pnl += trade.pnlUsd;
-      }
-
-      const exitLabel = getBacktestExitLabel(trade);
-
-      exitMap.set(exitLabel, (exitMap.get(exitLabel) ?? 0) + 1);
-    }
-
-    const count = backtestTrades.length;
-
-    return {
-      avgEntry: count > 0 ? totalEntry / count : 0,
-      avgExit: count > 0 ? totalExit / count : 0,
-      avgStopDistance: count > 0 ? totalStopDistance / count : 0,
-      avgTargetDistance: count > 0 ? totalTargetDistance / count : 0,
-      avgUnits: count > 0 ? totalUnits / count : 0,
-      avgHoldMinutes: count > 0 ? totalHoldMinutes / count : 0,
-      sides: Array.from(sideMap.values()).map((row) => ({
-        ...row,
-        winRate: row.count > 0 ? (row.wins / row.count) * 100 : 0
-      })),
-      exits: Array.from(exitMap.entries()).map(([label, value]) => ({
-        label,
-        value,
-        pct: count > 0 ? (value / count) * 100 : 0
-      }))
-    };
-  }, [backtestTrades]);
+  }, [
+    deferredBacktestAnalyticsTrades,
+    isPerformanceStatsBacktestTabActive,
+    performanceStatsModel,
+    performanceStatsRange
+  ]);
 
   const backtestClusterData = useMemo(() => {
-    const holds = backtestTrades.map((trade) =>
+    if (!isClusterBacktestTabActive) {
+      return {
+        total: 0,
+        nodes: [] as BacktestClusterNode[],
+        groups: [] as BacktestClusterGroup[]
+      };
+    }
+
+    const holds = deferredBacktestAnalyticsTrades.map((trade) =>
       Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60)
     );
     const sortedHolds = [...holds].sort((a, b) => a - b);
@@ -7529,13 +7532,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       sortedHolds.length > 0 ? sortedHolds[Math.floor(sortedHolds.length / 2)] : 0;
     const maxHold = holds.length > 0 ? Math.max(1, ...holds) : 1;
     const maxUnits =
-      backtestTrades.length > 0 ? Math.max(1, ...backtestTrades.map((trade) => trade.units)) : 1;
+      deferredBacktestAnalyticsTrades.length > 0
+        ? Math.max(1, ...deferredBacktestAnalyticsTrades.map((trade) => trade.units))
+        : 1;
     const maxAbsPnl =
-      backtestTrades.length > 0
-        ? Math.max(1, ...backtestTrades.map((trade) => Math.abs(trade.pnlPct)))
+      deferredBacktestAnalyticsTrades.length > 0
+        ? Math.max(1, ...deferredBacktestAnalyticsTrades.map((trade) => Math.abs(trade.pnlPct)))
         : 1;
 
-    const nodes: BacktestClusterNode[] = backtestTrades.map((trade) => {
+    const nodes: BacktestClusterNode[] = deferredBacktestAnalyticsTrades.map((trade) => {
       const holdMinutes = Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
       const clusterId: BacktestClusterGroupId =
         trade.result === "Win"
@@ -7570,13 +7575,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     });
 
     return {
-      total: backtestTrades.length,
+      total: deferredBacktestAnalyticsTrades.length,
       nodes,
       groups: buildBacktestClusterGroups(nodes)
     };
-  }, [backtestTrades]);
+  }, [deferredBacktestAnalyticsTrades, isClusterBacktestTabActive]);
 
   const backtestClusterViewOptions = useMemo(() => {
+    if (!isClusterBacktestTabActive) {
+      return {
+        sessions: [] as string[],
+        months: [] as number[],
+        weekdays: [] as number[],
+        hours: [] as number[]
+      };
+    }
+
     const sessions = new Set<string>();
     const months = new Set<number>();
     const weekdays = new Set<number>();
@@ -7595,9 +7609,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       weekdays: Array.from(weekdays).sort((a, b) => a - b),
       hours: Array.from(hours).sort((a, b) => a - b)
     };
-  }, [backtestClusterData.nodes]);
+  }, [backtestClusterData.nodes, isClusterBacktestTabActive]);
 
   useEffect(() => {
+    if (!isClusterBacktestTabActive) {
+      return;
+    }
+
     if (
       clusterViewSession !== "All" &&
       !backtestClusterViewOptions.sessions.some((label) => label === clusterViewSession)
@@ -7630,10 +7648,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     clusterViewHour,
     clusterViewMonth,
     clusterViewSession,
-    clusterViewWeekday
+    clusterViewWeekday,
+    isClusterBacktestTabActive
   ]);
 
   const visibleBacktestClusterNodes = useMemo(() => {
+    if (!isClusterBacktestTabActive) {
+      return [] as BacktestClusterNode[];
+    }
+
     return backtestClusterData.nodes.filter((node) => {
       if (!clusterLegendToggles[node.clusterId]) {
         return false;
@@ -7680,14 +7703,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     clusterViewHour,
     clusterViewMonth,
     clusterViewSession,
-    clusterViewWeekday
+    clusterViewWeekday,
+    isClusterBacktestTabActive
   ]);
 
   const visibleBacktestClusterGroups = useMemo(() => {
+    if (!isClusterBacktestTabActive) {
+      return [] as BacktestClusterGroup[];
+    }
+
     return buildBacktestClusterGroups(visibleBacktestClusterNodes);
-  }, [visibleBacktestClusterNodes]);
+  }, [isClusterBacktestTabActive, visibleBacktestClusterNodes]);
 
   const backtestClusterTableRows = useMemo(() => {
+    if (!isClusterBacktestTabActive) {
+      return [] as BacktestClusterGroup[];
+    }
+
     return [...visibleBacktestClusterGroups].sort((left, right) => {
       if (right.avgPnl !== left.avgPnl) {
         return right.avgPnl - left.avgPnl;
@@ -7699,9 +7731,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       return right.winRate - left.winRate;
     });
-  }, [visibleBacktestClusterGroups]);
+  }, [isClusterBacktestTabActive, visibleBacktestClusterGroups]);
 
   const backtestClusterCounts = useMemo(() => {
+    if (!isClusterBacktestTabActive) {
+      return {
+        total: 0,
+        visible: 0,
+        wins: 0,
+        losses: 0,
+        buys: 0,
+        sells: 0,
+        visibleRate: 0,
+        winRate: 0,
+        buyRate: 0,
+        avgConfidence: 0
+      };
+    }
+
     let wins = 0;
     let losses = 0;
     let buys = 0;
@@ -7731,33 +7778,33 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       buyRate: visible > 0 ? (buys / visible) * 100 : 0,
       avgConfidence: visible > 0 ? confidence / visible : 0
     };
-  }, [backtestClusterData.total, visibleBacktestClusterNodes]);
+  }, [backtestClusterData.total, isClusterBacktestTabActive, visibleBacktestClusterNodes]);
 
   const selectedBacktestClusterNode = useMemo(() => {
-    if (!selectedHistoryId) {
+    if (!isClusterBacktestTabActive || !selectedHistoryId) {
       return null;
     }
 
     return visibleBacktestClusterNodes.find((node) => node.id === selectedHistoryId) ?? null;
-  }, [selectedHistoryId, visibleBacktestClusterNodes]);
+  }, [isClusterBacktestTabActive, selectedHistoryId, visibleBacktestClusterNodes]);
 
   const selectedBacktestClusterGroup = useMemo(() => {
-    if (!selectedBacktestClusterGroupId) {
+    if (!isClusterBacktestTabActive || !selectedBacktestClusterGroupId) {
       return null;
     }
 
     return visibleBacktestClusterGroups.find((group) => group.id === selectedBacktestClusterGroupId) ?? null;
-  }, [selectedBacktestClusterGroupId, visibleBacktestClusterGroups]);
+  }, [isClusterBacktestTabActive, selectedBacktestClusterGroupId, visibleBacktestClusterGroups]);
 
   useEffect(() => {
-    if (!selectedBacktestClusterGroupId) {
+    if (!isClusterBacktestTabActive || !selectedBacktestClusterGroupId) {
       return;
     }
 
     if (!visibleBacktestClusterGroups.some((group) => group.id === selectedBacktestClusterGroupId)) {
       setSelectedBacktestClusterGroupId(null);
     }
-  }, [selectedBacktestClusterGroupId, visibleBacktestClusterGroups]);
+  }, [isClusterBacktestTabActive, selectedBacktestClusterGroupId, visibleBacktestClusterGroups]);
 
   const resetBacktestClusterView = () => {
     setClusterViewDir("All");
@@ -7803,128 +7850,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setSelectedHistoryId(match.id);
   };
 
-  const backtestScatterData = useMemo(() => {
-    const modelIndexMap = new Map<string, number>();
-    const sessionIndexMap = new Map<string, number>();
-    const revModel: Record<number, string> = {};
-    const revSession: Record<number, string> = {};
-
-    const points = backtestTrades.map((trade, index) => {
-      const modelKey = trade.entrySource || "Unknown";
-      const sessionKey = getSessionLabel(trade.entryTime);
-      const modelIndex = modelIndexMap.get(modelKey) ?? modelIndexMap.size;
-      const sessionIndex = sessionIndexMap.get(sessionKey) ?? sessionIndexMap.size;
-      modelIndexMap.set(modelKey, modelIndex);
-      sessionIndexMap.set(sessionKey, sessionIndex);
-      revModel[modelIndex] = modelKey;
-      revSession[sessionIndex] = sessionKey;
-
-      const holdMinutes = Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
-      const durationBars = Math.max(1, holdMinutes / timeframeMinutes[selectedTimeframe]);
-      const confidence = getTradeConfidenceScore(trade);
-      const aiConfidence = clamp(confidence * (trade.result === "Win" ? 1.03 : 0.97), 0, 1);
-      const riskUsd = Math.max(0.01, Math.abs(trade.entryPrice - trade.stopPrice) * trade.units);
-      const rrMultiple = trade.pnlUsd / riskUsd;
-      const drawdown =
-        trade.result === "Loss"
-          ? Math.max(Math.abs(trade.pnlUsd), riskUsd)
-          : Math.max(riskUsd * 0.35, Math.abs(trade.pnlUsd) * 0.45);
-
-      return {
-        id: `${trade.id}-${index}`,
-        trade,
-        isWin: trade.pnlUsd > 0,
-        values: {
-          duration: durationBars,
-          pnl: trade.pnlUsd,
-          margin: confidence,
-          aiMargin: aiConfidence,
-          drawdown,
-          rr: rrMultiple,
-          entryPrice: trade.entryPrice,
-          exitPrice: trade.outcomePrice,
-          model: modelIndex,
-          session: sessionIndex
-        } satisfies Record<BacktestScatterKey, number>
-      };
-    });
-
-    return { points, revModel, revSession };
-  }, [backtestTrades, selectedTimeframe]);
-
-  const backtestScatterVarDefs = useMemo<Record<BacktestScatterKey, BacktestScatterAxisDef>>(() => {
-    const formatPercent = (value: number) => `${Math.round(clamp(value, 0, 1) * 100)}%`;
-
-    return {
-      duration: {
-        label: "Duration (bars)",
-        numeric: true,
-        tickFormatter: (value) => (Number.isFinite(value) ? String(Math.round(value)) : ""),
-        tooltipFormatter: (value) => `${Math.round(value)} bars`
-      },
-      pnl: {
-        label: "PnL",
-        numeric: true,
-        tickFormatter: (value) => formatSignedUsd(value).replace("$", ""),
-        tooltipFormatter: (value) => formatSignedUsd(value)
-      },
-      margin: {
-        label: "Confidence",
-        numeric: true,
-        tickFormatter: (value) => formatPercent(value),
-        tooltipFormatter: (value) => formatPercent(value)
-      },
-      aiMargin: {
-        label: "AI Confidence",
-        numeric: true,
-        tickFormatter: (value) => formatPercent(value),
-        tooltipFormatter: (value) => formatPercent(value)
-      },
-      drawdown: {
-        label: "Drawdown",
-        numeric: true,
-        tickFormatter: (value) => formatUsd(value).replace("$", ""),
-        tooltipFormatter: (value) => `$${formatUsd(value)}`
-      },
-      rr: {
-        label: "R Multiple",
-        numeric: true,
-        tickFormatter: (value) => value.toFixed(2),
-        tooltipFormatter: (value) => value.toFixed(2)
-      },
-      entryPrice: {
-        label: "Entry Price",
-        numeric: true,
-        tickFormatter: (value) => formatPrice(value),
-        tooltipFormatter: (value) => formatPrice(value)
-      },
-      exitPrice: {
-        label: "Exit Price",
-        numeric: true,
-        tickFormatter: (value) => formatPrice(value),
-        tooltipFormatter: (value) => formatPrice(value)
-      },
-      model: {
-        label: "Model",
-        numeric: false,
-        tickFormatter: (value) => backtestScatterData.revModel[value] ?? String(value),
-        tooltipFormatter: (value) => backtestScatterData.revModel[value] ?? String(value)
-      },
-      session: {
-        label: "Session",
-        numeric: false,
-        tickFormatter: (value) => backtestScatterData.revSession[value] ?? String(value),
-        tooltipFormatter: (value) => backtestScatterData.revSession[value] ?? String(value)
-      }
-    };
-  }, [backtestScatterData.revModel, backtestScatterData.revSession]);
-
   const dimensionStats = useMemo<DimensionStatsSummary | null>(() => {
-    if (selectedBacktestTab !== "dimensions") {
+    if (!isBacktestAnalyticsVisible || selectedBacktestTab !== "dimensions") {
       return null;
     }
 
-    const sortedTrades = [...backtestTrades].sort(
+    const sortedTrades = [...deferredBacktestAnalyticsTrades].sort(
       (left, right) => Number(left.entryTime) - Number(right.entryTime)
     );
     const splitAllowed = antiCheatEnabled && validationMode === "split";
@@ -8170,12 +8101,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [
     antiCheatEnabled,
     backtestSeriesMap,
-    backtestTrades,
     chunkBars,
     compressionMethod,
     dimensionAmount,
+    deferredBacktestAnalyticsTrades,
     aiFeatureLevels,
     aiFeatureModes,
+    isBacktestAnalyticsVisible,
     selectedBacktestTab,
     selectedTimeframe,
     seriesMap,
@@ -8276,10 +8208,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [dimensionStats]);
 
   const entryExitStats = useMemo(() => {
+    if (!isEntryExitBacktestTabActive) {
+      return {
+        entry: [] as Array<[string, number]>,
+        exit: [] as Array<[string, number]>
+      };
+    }
+
     const entryCounts: Record<string, number> = {};
     const exitCounts: Record<string, number> = {};
 
-    for (const trade of mainStatsTrades) {
+    for (const trade of deferredBacktestAnalyticsTrades) {
       const entryKey = trade.entrySource || "Unknown";
       const exitKey = trade.exitReason || "None";
       entryCounts[entryKey] = (entryCounts[entryKey] ?? 0) + 1;
@@ -8294,7 +8233,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       entry: toSorted(entryCounts),
       exit: toSorted(exitCounts)
     };
-  }, [mainStatsTrades]);
+  }, [deferredBacktestAnalyticsTrades, isEntryExitBacktestTabActive]);
 
   const entryExitChartData = useMemo(() => {
     const source = entryExitChartMode === "Entry" ? entryExitStats.entry : entryExitStats.exit;
@@ -8319,177 +8258,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       maxCount: Math.max(1, ...entryExitChartData.map((row) => row.count))
     };
   }, [entryExitChartData]);
-
-  const backtestScatterPlot = useMemo(() => {
-    const xDef = backtestScatterVarDefs[scatterXKey];
-    const yDef = backtestScatterVarDefs[scatterYKey];
-    const left = 10;
-    const right = 92;
-    const top = 10;
-    const bottom = 88;
-    const width = right - left;
-    const height = bottom - top;
-
-    const rawPoints = backtestScatterData.points
-      .map((point) => ({
-        id: point.id,
-        trade: point.trade,
-        isWin: point.isWin,
-        x: point.values[scatterXKey],
-        y: point.values[scatterYKey]
-      }))
-      .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
-
-    if (rawPoints.length === 0) {
-      return {
-        points: [] as Array<{
-          id: string;
-          trade: HistoryItem;
-          isWin: boolean;
-          x: number;
-          y: number;
-          cx: number;
-          cy: number;
-        }>,
-        xTicks: [] as Array<{ value: number; label: string; position: number }>,
-        yTicks: [] as Array<{ value: number; label: string; position: number }>,
-        xZero: null as number | null,
-        yZero: null as number | null
-      };
-    }
-
-    const buildNumericAxis = (
-      values: number[],
-      isY = false
-    ): {
-      project: (value: number) => number;
-      ticks: Array<{ value: number; position: number }>;
-      zero: number | null;
-    } => {
-      let min = Math.min(...values);
-      let max = Math.max(...values);
-
-      if (min === max) {
-        min -= 1;
-        max += 1;
-      }
-
-      const padding = (max - min) * 0.08;
-      min -= padding;
-      max += padding;
-      const span = Math.max(0.000001, max - min);
-      const project = (value: number): number => {
-        const ratio = (value - min) / span;
-        return isY ? bottom - ratio * height : left + ratio * width;
-      };
-
-      return {
-        project,
-        ticks: Array.from({ length: 4 }, (_, index) => {
-          const ratio = index / 3;
-          const value = min + span * ratio;
-          return {
-            value,
-            position: isY ? bottom - ratio * height : left + ratio * width
-          };
-        }),
-        zero: min <= 0 && max >= 0 ? project(0) : null
-      };
-    };
-
-    const buildCategoryAxis = (
-      values: number[],
-      isY = false
-    ): {
-      project: (value: number) => number;
-      ticks: Array<{ value: number; position: number }>;
-      zero: number | null;
-    } => {
-      const domain = Array.from(new Set(values.map((value) => Math.round(value))));
-      const valueToIndex = new Map<number, number>();
-      for (let index = 0; index < domain.length; index += 1) {
-        valueToIndex.set(domain[index]!, index);
-      }
-
-      const project = (value: number): number => {
-        const index = valueToIndex.get(Math.round(value)) ?? 0;
-        const ratio = domain.length <= 1 ? 0.5 : index / (domain.length - 1);
-        return isY ? bottom - ratio * height : left + ratio * width;
-      };
-
-      return {
-        project,
-        ticks: domain.map((value, index) => {
-          const ratio = domain.length <= 1 ? 0.5 : index / (domain.length - 1);
-          return {
-            value,
-            position: isY ? bottom - ratio * height : left + ratio * width
-          };
-        }),
-        zero: null
-      };
-    };
-
-    const xAxis = xDef.numeric
-      ? buildNumericAxis(rawPoints.map((point) => point.x), false)
-      : buildCategoryAxis(rawPoints.map((point) => point.x), false);
-    const yAxis = yDef.numeric
-      ? buildNumericAxis(rawPoints.map((point) => point.y), true)
-      : buildCategoryAxis(rawPoints.map((point) => point.y), true);
-
-    const step = rawPoints.length > 1600 ? Math.ceil(rawPoints.length / 1600) : 1;
-    const points = rawPoints
-      .filter((_, index) => index % step === 0)
-      .map((point) => ({
-        ...point,
-        cx: xAxis.project(point.x),
-        cy: yAxis.project(point.y)
-      }));
-
-    const formatTick = (def: BacktestScatterAxisDef, value: number): string => {
-      if (def.tickFormatter) {
-        return def.tickFormatter(value);
-      }
-
-      if (!Number.isFinite(value)) {
-        return "";
-      }
-
-      return Number.isInteger(value) ? String(value) : value.toFixed(2);
-    };
-
-    return {
-      points,
-      xTicks: xAxis.ticks.map((tick) => ({
-        ...tick,
-        label: formatTick(xDef, tick.value)
-      })),
-      yTicks: yAxis.ticks.map((tick) => ({
-        ...tick,
-        label: formatTick(yDef, tick.value)
-      })),
-      xZero: "zero" in xAxis ? xAxis.zero : null,
-      yZero: "zero" in yAxis ? yAxis.zero : null
-    };
-  }, [backtestScatterData.points, backtestScatterVarDefs, scatterXKey, scatterYKey]);
-
-  const hoveredScatterPoint = useMemo(() => {
-    if (!hoveredScatterPointId) {
-      return null;
-    }
-
-    return backtestScatterPlot.points.find((point) => point.id === hoveredScatterPointId) ?? null;
-  }, [backtestScatterPlot.points, hoveredScatterPointId]);
-
-  const formatScatterTooltipValue = (key: BacktestScatterKey, value: number): string => {
-    const def = backtestScatterVarDefs[key];
-
-    if (def.tooltipFormatter) {
-      return def.tooltipFormatter(value);
-    }
-
-    return Number.isInteger(value) ? String(value) : value.toFixed(2);
-  };
 
   const runPropFirm = () => {
     if (backtestTrades.length === 0) {
@@ -8896,7 +8664,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   };
 
   const propLineChart = useMemo(() => {
-    if (!propStats || propStats.randomProgressRuns.length === 0) {
+    if (!isPropFirmBacktestTabActive || !propStats || propStats.randomProgressRuns.length === 0) {
       return null;
     }
 
@@ -8936,10 +8704,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     propProfitTarget,
     propProjectionMethod,
     propStats,
-    propTotalMaxLoss
+    propTotalMaxLoss,
+    isPropFirmBacktestTabActive
   ]);
 
   useEffect(() => {
+    if (!isCalendarBacktestTabActive) {
+      return;
+    }
+
     setSelectedBacktestMonthKey((current) => {
       if (current) {
         return current;
@@ -8947,9 +8720,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       return availableBacktestMonths[0] ?? getCurrentTradeMonthKey();
     });
-  }, [availableBacktestMonths]);
+  }, [availableBacktestMonths, isCalendarBacktestTabActive]);
 
   useEffect(() => {
+    if (!isCalendarBacktestTabActive) {
+      return;
+    }
+
     setSelectedBacktestDateKey((current) => {
       if (visibleBacktestDateKeys.length === 0) {
         return "";
@@ -8957,7 +8734,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       return visibleBacktestDateKeys.includes(current) ? current : visibleBacktestDateKeys[0];
     });
-  }, [visibleBacktestDateKeys]);
+  }, [isCalendarBacktestTabActive, visibleBacktestDateKeys]);
 
   const statsRefreshSecondsRemaining = Math.max(
     0,
