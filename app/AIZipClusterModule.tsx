@@ -5302,6 +5302,8 @@ function createComputeWorker() {
   let REMAP_OPPOSITE_OUTCOMES = true;
   let MODALITIES = [];
   let MODALITY_SET = null;
+  let CHRONOLOGICAL_NEIGHBOR_FILTER = false;
+  let CANDLE_INDEX_BY_TIME = new Map();
 
   
   // AI method
@@ -6323,9 +6325,54 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
     return { session, month, dow, hour };
   }
 
-  function knnMargin(points, q, k, dirFilter, excludeTime, modelKey, qMeta, queryDir){
+  function resolveNeighborReadyIndex(point){
+    if(!point) return null;
+
+    const rawCandidates = [
+      point.metaReadyIndex,
+      point.metaExitIndex,
+      point.exitIndex,
+      point.metaEntryIndex,
+      point.entryIndex,
+      point.metaSignalIndex,
+      point.signalIndex,
+    ];
+
+    for(const raw of rawCandidates){
+      const idx = Number(raw);
+      if(Number.isFinite(idx)) return idx;
+    }
+
+    const timeKey = point.metaTime || point.time || point.entryTime || point.entry || point.t || "";
+    if(timeKey !== ""){
+      const idx = CANDLE_INDEX_BY_TIME.get(String(timeKey));
+      if(Number.isFinite(idx)) return idx;
+    }
+
+    return null;
+  }
+
+  function resolveChronologyCutoffIndex(excludeTime){
+    if(!CHRONOLOGICAL_NEIGHBOR_FILTER || excludeTime == null) return null;
+    const idx = CANDLE_INDEX_BY_TIME.get(String(excludeTime));
+    return Number.isFinite(idx) ? idx : null;
+  }
+
+  function filterUsableNeighbors(points, excludeTime){
     let usable = points || [];
     if(excludeTime) usable = usable.filter(p=>p.metaTime !== excludeTime);
+
+    const cutoffIndex = resolveChronologyCutoffIndex(excludeTime);
+    if(cutoffIndex == null) return usable;
+
+    return usable.filter((p) => {
+      const readyIndex = resolveNeighborReadyIndex(p);
+      return readyIndex == null || readyIndex < cutoffIndex;
+    });
+  }
+
+  function knnMargin(points, q, k, dirFilter, excludeTime, modelKey, qMeta, queryDir){
+    let usable = filterUsableNeighbors(points, excludeTime);
     if(!COUNT_SUPPRESSED_NEIGHBORS) usable = usable.filter(p=>!p.metaSuppressed);
     if(MODALITY_SET && qMeta) usable = usable.filter(p=>passesModalities(p, qMeta));
     if(MODALITY_SET && MODALITY_SET.has("Direction") && dirFilter){
@@ -6609,6 +6656,7 @@ function buildHdbCache(usable, phase, modelKey, datasetKey){
       month: tm ? tm.month : null,
       dow: tm ? tm.dow : null,
       hour: tm ? tm.hour : null,
+      readyIndex: resolveNeighborReadyIndex(p),
       win
     };
 
@@ -6725,13 +6773,14 @@ function hdbMetaMatches(meta, qMeta, queryDir){
   return true;
 }
 
-function hdbFilteredWinRate(cache, idxs, qMeta, queryDir){
+function hdbFilteredWinRate(cache, idxs, qMeta, queryDir, cutoffIndex){
   if(!cache || !cache.ptMeta || !idxs || !idxs.length) return { n:0, wins:0, winRate: NaN };
   let n=0, wins=0;
   for(let ii=0; ii<idxs.length; ii++){
     const i = idxs[ii];
     const m = cache.ptMeta[i];
     if(!m) continue;
+    if(cutoffIndex != null && Number.isFinite(Number(m.readyIndex)) && Number(m.readyIndex) >= cutoffIndex) continue;
     if(!hdbMetaMatches(m, qMeta, queryDir)) continue;
     n++;
     wins += (Number(m.win) ? 1 : 0);
@@ -6739,12 +6788,13 @@ function hdbFilteredWinRate(cache, idxs, qMeta, queryDir){
   return { n, wins, winRate: n ? (wins/n) : NaN };
 }
 
-function hdbFilteredGlobalWinRate(cache, qMeta, queryDir){
+function hdbFilteredGlobalWinRate(cache, qMeta, queryDir, cutoffIndex){
   if(!cache || !cache.ptMeta || !cache.ptMeta.length) return { n:0, wins:0, winRate: NaN };
   let n=0, wins=0;
   for(let i=0;i<cache.ptMeta.length;i++){
     const m = cache.ptMeta[i];
     if(!m) continue;
+    if(cutoffIndex != null && Number.isFinite(Number(m.readyIndex)) && Number(m.readyIndex) >= cutoffIndex) continue;
     if(!hdbMetaMatches(m, qMeta, queryDir)) continue;
     n++;
     wins += (Number(m.win) ? 1 : 0);
@@ -6752,7 +6802,7 @@ function hdbFilteredGlobalWinRate(cache, qMeta, queryDir){
   return { n, wins, winRate: n ? (wins/n) : NaN };
 }
 function hdbscanMargin(points, q, phase, dirFilter, excludeTime, modelKey, qMeta, queryDir){
-  let usable = points || [];
+  let usable = filterUsableNeighbors(points, excludeTime);
   if(!COUNT_SUPPRESSED_NEIGHBORS) usable = usable.filter(p=>!p.metaSuppressed);
 
   const modSet = MODALITY_SET || null;
@@ -6769,7 +6819,11 @@ function hdbscanMargin(points, q, phase, dirFilter, excludeTime, modelKey, qMeta
   if(!usable.length) return NaN;
 
   // Build one cluster cache (no modality-based rebuilds)
-  const cache = buildHdbCache(usable, phase, cacheModelKey, "");
+  const datasetKey =
+    CHRONOLOGICAL_NEIGHBOR_FILTER
+      ? String(resolveChronologyCutoffIndex(excludeTime) ?? "na")
+      : "";
+  const cache = buildHdbCache(usable, phase, cacheModelKey, datasetKey);
   if(!cache || !cache.ok) return NaN;
 
   // Standardize query in the model space, then z-score in the HDB cache space
@@ -6787,63 +6841,23 @@ function hdbscanMargin(points, q, phase, dirFilter, excludeTime, modelKey, qMeta
   const cid = assignHdbCluster(cache, qz);
   if(cid < 0) return NaN;
 
+  const cutoffIndex = resolveChronologyCutoffIndex(excludeTime);
   const st = cache.clusterStats?.[cid];
   if(!st) return NaN;
-
-  
-
-  // No active modalities => cluster's overall win-rate (exact)
-  if(!modSet || modSet.size === 0){
-    return st.winRate;
-  }
-
-  const qd = Number(queryDir);
-  const wantDir = (modSet.has("Direction") && (qd === 1 || qd === -1)) ? qd : 0;
-
-  // Otherwise: filter cluster members to the active modalities and return that win-rate (exact)
   const idxs = (cache.members && cache.members[cid]) ? cache.members[cid] : [];
   if(!idxs.length) return NaN;
 
-  const wantModel   = modSet.has("Model")   ? cacheModelKey : null;
-  const wantSession = modSet.has("Session") ? (qMeta?.session ?? null) : null;
-  const wantMonth   = modSet.has("Month")   ? (qMeta?.month ?? null) : null;
-  const wantDow     = modSet.has("Weekday") ? (qMeta?.dow ?? null) : null;
-  const wantHour    = modSet.has("Hour")    ? (qMeta?.hour ?? null) : null;
-
-  let n = 0;
-  let wins = 0;
-
-  for(const i of idxs){
-    const m = cache.ptMeta ? cache.ptMeta[i] : null;
-    if(!m) continue;
-
-    if(wantDir && Number(m.dir) !== wantDir) continue;
-
-    if(wantModel != null && wantModel !== ""){
-      if(String(m.model || "") !== wantModel) continue;
-    }
-
-    if(wantSession != null && String(wantSession) !== "" && String(wantSession) !== "All"){
-      if(String(m.session || "") !== String(wantSession)) continue;
-    }
-
-    if(wantMonth != null && Number.isFinite(Number(wantMonth))){
-      if(Number(m.month) !== Number(wantMonth)) continue;
-    }
-
-    if(wantDow != null && Number.isFinite(Number(wantDow))){
-      if(Number(m.dow) !== Number(wantDow)) continue;
-    }
-
-    if(wantHour != null && Number.isFinite(Number(wantHour))){
-      if(Number(m.hour) !== Number(wantHour)) continue;
-    }
-
-    n += 1;
-    wins += (Number(m.win) ? 1 : 0);
+  if((!modSet || modSet.size === 0) && cutoffIndex == null){
+    return st.winRate;
   }
 
-  return n ? (wins / n) : NaN;
+  const clusterRate = hdbFilteredWinRate(cache, idxs, qMeta, queryDir, cutoffIndex);
+  if(Number.isFinite(clusterRate.winRate)){
+    return clusterRate.winRate;
+  }
+
+  const globalRate = hdbFilteredGlobalWinRate(cache, qMeta, queryDir, cutoffIndex);
+  return Number.isFinite(globalRate.winRate) ? globalRate.winRate : NaN;
 }
 
 
@@ -6857,8 +6871,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
 
 
   function knnNeighbors(points, q, k, dirFilter, excludeTime, modelKey, qMeta, queryDir){
-    let usable = points || [];
-    if(excludeTime) usable = usable.filter(p=>p.metaTime !== excludeTime);
+    let usable = filterUsableNeighbors(points, excludeTime);
     if(!COUNT_SUPPRESSED_NEIGHBORS) usable = usable.filter(p=>!p.metaSuppressed);
     if(MODALITY_SET && qMeta) usable = usable.filter(p=>passesModalities(p, qMeta));
     if(MODALITY_SET && MODALITY_SET.has("Direction") && dirFilter){
@@ -6916,8 +6929,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
 
 
   function closestPointLabel(points, q, dir, modelKey, excludeTime, qMeta, queryDir){
-    let usable = points || [];
-    if(excludeTime) usable = usable.filter(p=>p.metaTime !== excludeTime);
+    let usable = filterUsableNeighbors(points, excludeTime);
     if(!COUNT_SUPPRESSED_NEIGHBORS) usable = usable.filter(p=>!p.metaSuppressed);
     if(MODALITY_SET && qMeta) usable = usable.filter(p=>passesModalities(p, qMeta));
     const wantDir = (MODALITY_SET && MODALITY_SET.has("Direction") && dir) ? dir : 0;
@@ -6953,8 +6965,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
 
 
   function closestPointUid(points, q, dir, excludeTime, modelKey, qMeta, queryDir){
-    let usable = points || [];
-    if(excludeTime) usable = usable.filter(p=>p.metaTime !== excludeTime);
+    let usable = filterUsableNeighbors(points, excludeTime);
     if(!COUNT_SUPPRESSED_NEIGHBORS) usable = usable.filter(p=>!p.metaSuppressed);
     if(MODALITY_SET && qMeta) usable = usable.filter(p=>passesModalities(p, qMeta));
     const wantDir = (MODALITY_SET && MODALITY_SET.has("Direction") && dir) ? dir : 0;
@@ -6979,8 +6990,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
 
 
   function closestPointPnl(points, q, dir, excludeTime, modelKey, qMeta, queryDir){
-    let usable = points || [];
-    if(excludeTime) usable = usable.filter(p=>p.metaTime !== excludeTime);
+    let usable = filterUsableNeighbors(points, excludeTime);
     if(!COUNT_SUPPRESSED_NEIGHBORS) usable = usable.filter(p=>!p.metaSuppressed);
     if(MODALITY_SET && qMeta) usable = usable.filter(p=>passesModalities(p, qMeta));
     const wantDir = (MODALITY_SET && MODALITY_SET.has("Direction") && dir) ? dir : 0;
@@ -7256,18 +7266,22 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
         const sl = dir === 1 ? entry - slDist : entry + slDist;
         let hit = null;
         const end = Math.min(n - 1, entryIdx + lookaheadBars);
+        let resolvedExitIndex = end;
         for (let j = entryIdx; j <= end; j++) {
           const c = candles[j];
           const r = conservativeTpSlResolution(dir, c, tp, sl);
           if (r.both) {
+            resolvedExitIndex = j;
             hit = "SL";
             break;
           }
           if (r.slHit) {
+            resolvedExitIndex = j;
             hit = "SL";
             break;
           }
           if (r.tpHit) {
+            resolvedExitIndex = j;
             hit = "TP";
             break;
           }
@@ -7287,6 +7301,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
           metaModel: modelKey,
           metaSignalIndex: i,
           metaEntryIndex: entryIdx,
+          metaExitIndex: resolvedExitIndex,
           metaSession: sess,
           metaOutcome: hit === "TP" ? "Win" : "Loss",
           metaDir: dir === 1 ? "Buy" : "Sell",
@@ -7616,6 +7631,13 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
     const useMimExit = !!settings.useMimExit;
     const onlineLearning = validationMode === "online" && !staticLibrariesClusters;
     const syntheticTraining = validationMode === "synthetic";
+    CHRONOLOGICAL_NEIGHBOR_FILTER = !!(antiCheatEnabled && validationMode === "off");
+    CANDLE_INDEX_BY_TIME = new Map();
+    for(let i=0;i<n;i++){
+      const t = candles[i]?.time;
+      if(t != null && t !== "") CANDLE_INDEX_BY_TIME.set(String(t), i);
+    }
+    HDB_CACHE.clear();
     const effectivePreventAiLeak = staticLibrariesClusters
       ? false
       : (antiCheatEnabled
@@ -8115,6 +8137,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
         const vec = buildChunkVector(candles, i, chunkBars, modelKey, parseMode);
         const sess = sessionFromTime(candles[entryIdx].time, parseMode);
         const label = wantWin ? 1 : -1;
+        const readyIndex = Math.min(n - 1, i + span);
 
         out.push({
           uid: String(candles[entryIdx].time) + "|" + kind + "|" + modelKey + "|" + String(i) + "|" + String(dir),
@@ -8125,6 +8148,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
           metaTime: candles[entryIdx].time,
           metaSignalIndex: i,
           metaEntryIndex: entryIdx,
+          metaReadyIndex: readyIndex,
           metaSession: sess,
           metaOutcome: label === 1 ? "Win" : "Loss",
           metaDir: dir === 1 ? "Buy" : "Sell",
@@ -8522,12 +8546,14 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
           Math.floor(n * 0.08)
         )
       );
-      // For fully-static libraries/clusters, never apply a training cut-off.
+      // Anti-cheat + Validation OFF keeps the full seeded library and applies chronology per query instead.
       const maxSeedIndexForSeed = staticLibrariesClusters
         ? undefined
         : (antiCheatEnabled && onlineLearning
             ? onlineInitMaxSeedIndex
-            : (effectivePreventAiLeak ? trainCut : undefined));
+            : (effectivePreventAiLeak && !CHRONOLOGICAL_NEIGHBOR_FILTER
+                ? trainCut
+                : undefined));
 
       // Cache per-library, per-model.
       const cacheGet = (k) => cachedLibsMap[k];
@@ -9396,9 +9422,20 @@ function flushSuppressedNeighbors(uptoIndex){
 
       if(aiExitOn && entryModelUsed && libs[entryModelUsed] && libs[entryModelUsed].length>=40){
         const q = buildChunkVector(candles, i, chunkBars, entryModelUsed, parseMode);
-        const qMeta = queryMetaFromTime((candles[i] && candles[i].time) || "", parseMode);
+        const exitEvalTime = (candles[i] && candles[i].time) || null;
+        const qMeta = queryMetaFromTime(exitEvalTime || "", parseMode);
         const enforceDir = !!(MODALITY_SET && MODALITY_SET.has("Direction"));
-        const m = aiMargin(libs[entryModelUsed], q, kExitEff, "exit", enforceDir ? tradeDir : 0, undefined, entryModelUsed, qMeta, tradeDir);
+        const m = aiMargin(
+          libs[entryModelUsed],
+          q,
+          kExitEff,
+          "exit",
+          enforceDir ? tradeDir : 0,
+          CHRONOLOGICAL_NEIGHBOR_FILTER ? exitEvalTime : undefined,
+          entryModelUsed,
+          qMeta,
+          tradeDir
+        );
         const unrealPnl = (candles[i].close - entryPrice) * tradeDir * dollarsPerMove;
         const thresh = adjustedAiExitThresh(unrealPnl); // probability in [0,1)
         const pNow = marginToProb(m);
@@ -9450,9 +9487,20 @@ function flushSuppressedNeighbors(uptoIndex){
       const lib = libs[entryModelUsed];
       if(!lib || lib.length < 40) return null;
       const q = buildChunkVector(candles, i, chunkBars, entryModelUsed, parseMode);
-      const qMeta = queryMetaFromTime((candles[i] && candles[i].time) || "", parseMode);
+      const exitEvalTime = (candles[i] && candles[i].time) || null;
+      const qMeta = queryMetaFromTime(exitEvalTime || "", parseMode);
       const enforceDir = !!(MODALITY_SET && MODALITY_SET.has("Direction"));
-      const m = aiMargin(lib, q, kExitEff, "exit", enforceDir ? tradeDir : 0, undefined, entryModelUsed, qMeta, tradeDir);
+      const m = aiMargin(
+        lib,
+        q,
+        kExitEff,
+        "exit",
+        enforceDir ? tradeDir : 0,
+        CHRONOLOGICAL_NEIGHBOR_FILTER ? exitEvalTime : undefined,
+        entryModelUsed,
+        qMeta,
+        tradeDir
+      );
       const unrealPnl = (candles[i].close - entryPrice) * tradeDir * dollarsPerMove;
       const thresh = adjustedAiExitThresh(unrealPnl);
       if(m <= -thresh){
@@ -9467,9 +9515,20 @@ function flushSuppressedNeighbors(uptoIndex){
 
       if(aiExitOn && libs[entryModelUsed] && libs[entryModelUsed].length>=40){
         const q = buildChunkVector(candles, i, chunkBars, entryModelUsed, parseMode);
-        const qMeta = queryMetaFromTime((candles[i] && candles[i].time) || "", parseMode);
+        const exitEvalTime = (candles[i] && candles[i].time) || null;
+        const qMeta = queryMetaFromTime(exitEvalTime || "", parseMode);
         const enforceDir = !!(MODALITY_SET && MODALITY_SET.has("Direction"));
-        const m = aiMargin(libs[entryModelUsed], q, kExitEff, "exit", enforceDir ? tradeDir : 0, undefined, entryModelUsed, qMeta, tradeDir);
+        const m = aiMargin(
+          libs[entryModelUsed],
+          q,
+          kExitEff,
+          "exit",
+          enforceDir ? tradeDir : 0,
+          CHRONOLOGICAL_NEIGHBOR_FILTER ? exitEvalTime : undefined,
+          entryModelUsed,
+          qMeta,
+          tradeDir
+        );
         const unrealPnl = (candles[i].close - entryPrice) * tradeDir * dollarsPerMove;
         const thresh = adjustedAiExitThresh(unrealPnl);
         const aiExit = (m <= -thresh);
