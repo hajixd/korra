@@ -11771,6 +11771,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         confidenceThreshold={effectiveConfidenceThreshold}
                         statsDateStart={statsDateStart}
                         statsDateEnd={statsDateEnd}
+                        antiCheatEnabled={antiCheatEnabled}
                       />
                     ) : (
                       <AIZipClusterMap3D
@@ -11799,6 +11800,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         hdbEpsQuantile={hdbEpsQuantile}
                         hdbModalityDistinction="conceptual"
                         clusterGroupStatsMode="All"
+                        antiCheatEnabled={antiCheatEnabled}
                       />
                     )}
                   </div>

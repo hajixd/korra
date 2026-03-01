@@ -11441,6 +11441,7 @@ export function ClusterMap({
   confidenceThreshold,
   statsDateStart,
   statsDateEnd,
+  antiCheatEnabled = false,
   headless = false,
 }) {
   const disabled = false;
@@ -11504,6 +11505,144 @@ export function ClusterMap({
 
   // Track whether the mouse is currently over the map so WASD/arrow panning doesn't steal keys elsewhere.
   const mapFocusRef = useRef(false);
+
+  // Active AI modalities selected by the user (UI-side).
+  // NOTE: The backtest/runtime engine also has its own modality set, but that one is not in scope here.
+  const activeModSet = useMemo(
+    () => new Set<string>((aiModalities as any) || []),
+    [aiModalities]
+  );
+
+  const nodeChronologyValue = React.useCallback(
+    (n: any): number | null => {
+      if (!n) return null;
+
+      const idx = Number((n as any).signalIndex ?? (n as any).entryIndex);
+      if (Number.isFinite(idx)) return idx;
+
+      const raw =
+        (n as any).entryTime ??
+        (n as any).metaTime ??
+        (n as any).time ??
+        (n as any).exitTime ??
+        "";
+      const parsed = raw ? parseDateFromString(String(raw), parseMode) : null;
+      const ts = parsed ? parsed.getTime() : NaN;
+      return Number.isFinite(ts) ? ts : null;
+    },
+    [parseMode]
+  );
+
+  const nodeStableKey = React.useCallback((n: any): string => {
+    return String(
+      (n as any)?.uid ??
+        (n as any)?.tradeUid ??
+        (n as any)?.tradeId ??
+        (n as any)?.id ??
+        (n as any)?.metaOrigUid ??
+        (n as any)?.metaOrigId ??
+        ""
+    ).trim();
+  }, []);
+
+  const resolveHdbClusterWinRate = React.useCallback(
+    (cluster: any, node: any): number => {
+      if (!cluster || !node) return 0.01;
+
+      const st: any = (cluster as any)?.stats || {};
+      const dir = Number((node as any)?.dir ?? (node as any)?.direction ?? 0);
+
+      if (antiCheatEnabled) {
+        const cutoff = nodeChronologyValue(node);
+        const members = Array.isArray((cluster as any)?.memberNodes)
+          ? ((cluster as any).memberNodes as any[])
+          : [];
+
+        if (cutoff !== null && members.length > 0) {
+          const selfKey = nodeStableKey(node);
+          let total = 0;
+          let wins = 0;
+          let buyTotal = 0;
+          let buyWins = 0;
+          let sellTotal = 0;
+          let sellWins = 0;
+
+          for (const member of members) {
+            if (!member) continue;
+
+            const memberKey = nodeStableKey(member);
+            if (selfKey && memberKey && memberKey === selfKey) continue;
+
+            const memberOrder = nodeChronologyValue(member);
+            if (memberOrder === null || memberOrder >= cutoff) continue;
+
+            const memberDir = Number(
+              (member as any).dir ?? (member as any).direction ?? 0
+            );
+            const memberWin =
+              typeof (member as any).win === "boolean"
+                ? !!(member as any).win
+                : Number(
+                    (member as any).pnl ?? (member as any).unrealizedPnl ?? 0
+                  ) >= 0;
+
+            total += 1;
+            wins += memberWin ? 1 : 0;
+
+            if (memberDir === 1) {
+              buyTotal += 1;
+              buyWins += memberWin ? 1 : 0;
+            } else if (memberDir === -1) {
+              sellTotal += 1;
+              sellWins += memberWin ? 1 : 0;
+            }
+          }
+
+          if (activeModSet && activeModSet.has("Direction")) {
+            if (dir === 1 && buyTotal > 0) {
+              return clamp(buyWins / buyTotal, 0, 1);
+            }
+
+            if (dir === -1 && sellTotal > 0) {
+              return clamp(sellWins / sellTotal, 0, 1);
+            }
+          }
+
+          if (total > 0) {
+            return clamp(wins / total, 0, 1);
+          }
+
+          return 0.01;
+        }
+      }
+
+      let wr = Number(st?.winRate);
+
+      if (activeModSet && activeModSet.has("Direction")) {
+        if (dir === 1) {
+          const bc = Number(st?.buyCount ?? st?.buys ?? 0);
+          const bwr = Number(st?.buyWinRate);
+          if (Number.isFinite(bwr) && bc > 0) wr = bwr;
+        } else if (dir === -1) {
+          const sc = Number(st?.sellCount ?? st?.sells ?? 0);
+          const swr = Number(st?.sellWinRate);
+          if (Number.isFinite(swr) && sc > 0) wr = swr;
+        }
+      }
+
+      if (!Number.isFinite(wr)) {
+        const wins0 = Number(st?.wins);
+        const count0 = Number(st?.count);
+        if (Number.isFinite(wins0) && Number.isFinite(count0) && count0 > 0) {
+          wr = wins0 / Math.max(1, count0);
+        }
+      }
+
+      if (!Number.isFinite(wr)) wr = 0;
+      return clamp(wr, 0, 1);
+    },
+    [activeModSet, antiCheatEnabled, nodeChronologyValue, nodeStableKey]
+  );
 
   // Effective heat hover used by UI (pinned beats live).
   const heatHover = pinnedHeatHover ?? heatHoverLive;
@@ -12588,9 +12727,21 @@ export function ClusterMap({
             let bestD = Infinity;
             const nx = Number((n as any).x);
             const ny = Number((n as any).y);
+            const tradeOrder = antiCheatEnabled ? nodeChronologyValue(n) : null;
+            const tradeKey = antiCheatEnabled ? nodeStableKey(n) : "";
             if (!Number.isFinite(nx) || !Number.isFinite(ny)) continue;
 
             for (const l of libs) {
+              if (antiCheatEnabled) {
+                const libKey = nodeStableKey(l);
+                if (tradeKey && libKey && tradeKey === libKey) continue;
+
+                if (tradeOrder !== null) {
+                  const libOrder = nodeChronologyValue(l);
+                  if (libOrder === null || libOrder >= tradeOrder) continue;
+                }
+              }
+
               if (
                 !Number.isFinite((l as any)?.x) ||
                 !Number.isFinite((l as any)?.y)
@@ -12626,6 +12777,9 @@ export function ClusterMap({
     parseMode,
     showPotential,
     libraryPoints,
+    antiCheatEnabled,
+    nodeChronologyValue,
+    nodeStableKey,
   ]);
 
   const tradeNodeByUidAll = useMemo(() => {
@@ -13436,6 +13590,9 @@ export function ClusterMap({
       clusters.push({
         id: Number(k0),
         members: (clusterMembers[k0] || []).slice(),
+        memberNodes: (clusterMembers[k0] || [])
+          .map((memberIndex) => nodeRefs[memberIndex])
+          .filter(Boolean),
         hull,
         stats: {
           count: cN,
@@ -13590,13 +13747,6 @@ export function ClusterMap({
       if (!Number.isFinite(x) || !Number.isFinite(y))
         return { wr: 0.01, clusterId: null };
 
-      // Direction modality check (avoid activeModSet TDZ)
-      const wantDir =
-        Array.isArray(aiModalities) &&
-        (aiModalities as any[]).some(
-          (m) => String(m || "").toLowerCase() === "direction"
-        );
-
       // Point-in-polygon in world coords (avoid pointInPolyWorld TDZ)
       const pointInPoly = (
         px: number,
@@ -13616,8 +13766,6 @@ export function ClusterMap({
         }
         return inside;
       };
-
-      const dir = Number((node as any).dir ?? (node as any).direction ?? 0);
 
       // Build confidence clusters locally from hdbOverlay (avoid hdbConfidenceClusters TDZ)
       const clArr: any[] = ((hdbOverlay as any)?.clusters as any[]) || [];
@@ -13656,33 +13804,9 @@ export function ClusterMap({
         if (x < minX || x > maxX || y < minY || y > maxY) continue;
         if (!pointInPoly(x, y, poly)) continue;
 
-        const st: any = (c as any)?.stats || {};
-        let wr = Number(st?.winRate);
-
-        // Direction-specific win rate only when Direction modality enabled
-        if (wantDir) {
-          if (dir === 1) {
-            const bc = Number(st?.buyCount ?? st?.buys ?? 0);
-            const bwr = Number(st?.buyWinRate);
-            if (Number.isFinite(bwr) && bc > 0) wr = bwr;
-          } else if (dir === -1) {
-            const sc = Number(st?.sellCount ?? st?.sells ?? 0);
-            const swr = Number(st?.sellWinRate);
-            if (Number.isFinite(swr) && sc > 0) wr = swr;
-          }
-        }
-
-        if (!Number.isFinite(wr)) {
-          const wins = Number(st?.wins);
-          const count = Number(st?.count);
-          if (Number.isFinite(wins) && Number.isFinite(count) && count > 0)
-            wr = wins / Math.max(1, count);
-        }
-        if (!Number.isFinite(wr)) wr = 0;
-
         const cidRaw = Number((c as any).id);
         const cid = Number.isFinite(cidRaw) ? cidRaw : null;
-        return { wr: clamp(wr, 0, 1), clusterId: cid };
+        return { wr: resolveHdbClusterWinRate(c, node), clusterId: cid };
       }
 
       // Noise
@@ -14022,7 +14146,13 @@ export function ClusterMap({
     }
 
     return out;
-  }, [timelineNodes, aiMethod, confidenceThreshold, hdbOverlay]);
+  }, [
+    timelineNodes,
+    aiMethod,
+    confidenceThreshold,
+    hdbOverlay,
+    resolveHdbClusterWinRate,
+  ]);
 
   // HDBSCAN cluster info helper for hover/tooltips (component-scope).
   // Uses stamped fields when available, otherwise falls back to hull membership.
@@ -15437,17 +15567,13 @@ export function ClusterMap({
         minY,
         maxY,
         stats: (c as any)?.stats || null,
+        memberNodes: Array.isArray((c as any)?.memberNodes)
+          ? (c as any).memberNodes
+          : [],
       });
     }
     return out;
   }, [aiMethod, hdbOverlay]);
-
-  // Active AI modalities selected by the user (UI-side).
-  // NOTE: The backtest/runtime engine also has its own modality set, but that one is not in scope here.
-  const activeModSet = useMemo(
-    () => new Set<string>((aiModalities as any) || []),
-    [aiModalities]
-  );
 
   const hdbConfidenceForNode = React.useCallback(
     (n: any) => {
@@ -15474,46 +15600,17 @@ export function ClusterMap({
       const y = Number((n as any).y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) return 0.01;
 
-      const dir = Number((n as any).dir ?? (n as any).direction ?? 0);
-
       for (const c of hdbConfidenceClusters as any[]) {
         if (!c || !c.poly) continue;
         if (x < c.minX || x > c.maxX || y < c.minY || y > c.maxY) continue;
         if (!pointInPolyWorld(x, y, c.poly)) continue;
-
-        const st: any = c.stats || {};
-        let wr = Number(st?.winRate);
-
-        // Use direction-specific win rate ONLY when the Direction modality is enabled.
-        // Otherwise, keep the cluster's overall winRate.
-        if (activeModSet && activeModSet.has("Direction")) {
-          if (dir === 1) {
-            const bc = Number(st?.buyCount ?? st?.buys ?? 0);
-            const bwr = Number(st?.buyWinRate);
-            if (Number.isFinite(bwr) && bc > 0) wr = bwr;
-          } else if (dir === -1) {
-            const sc = Number(st?.sellCount ?? st?.sells ?? 0);
-            const swr = Number(st?.sellWinRate);
-            if (Number.isFinite(swr) && sc > 0) wr = swr;
-          }
-        }
-
-        if (!Number.isFinite(wr)) {
-          const wins = Number(st?.wins);
-          const count = Number(st?.count);
-          if (Number.isFinite(wins) && Number.isFinite(count) && count > 0) {
-            wr = wins / Math.max(1, count);
-          }
-        }
-
-        if (!Number.isFinite(wr)) wr = 0;
-        return clamp(wr, 0, 1);
+        return resolveHdbClusterWinRate(c, n);
       }
 
       // Noise
       return 0.01;
     },
-    [aiMethod, hdbConfidenceClusters, pointInPolyWorld, activeModSet]
+    [aiMethod, hdbConfidenceClusters, pointInPolyWorld, resolveHdbClusterWinRate]
   );
 
   const gateConfidenceForNode = React.useCallback((n: any): number | null => {
@@ -15543,47 +15640,18 @@ export function ClusterMap({
         return { wr: 0.01, clusterId: null };
       }
 
-      const dir = Number((n as any).dir ?? (n as any).direction ?? 0);
-
       for (const c of hdbConfidenceClusters as any[]) {
         if (!c || !c.poly) continue;
         if (x < c.minX || x > c.maxX || y < c.minY || y > c.maxY) continue;
         if (!pointInPolyWorld(x, y, c.poly)) continue;
-
-        const st: any = c.stats || {};
-        let wr = Number(st?.winRate);
-
-        // Use direction-specific win rate ONLY when the Direction modality is enabled.
-        if (activeModSet && activeModSet.has("Direction")) {
-          if (dir === 1) {
-            const bc = Number(st?.buyCount ?? st?.buys ?? 0);
-            const bwr = Number(st?.buyWinRate);
-            if (Number.isFinite(bwr) && bc > 0) wr = bwr;
-          } else if (dir === -1) {
-            const sc = Number(st?.sellCount ?? st?.sells ?? 0);
-            const swr = Number(st?.sellWinRate);
-            if (Number.isFinite(swr) && sc > 0) wr = swr;
-          }
-        }
-
-        if (!Number.isFinite(wr)) {
-          const wins = Number(st?.wins);
-          const count = Number(st?.count);
-          if (Number.isFinite(wins) && Number.isFinite(count) && count > 0) {
-            wr = wins / Math.max(1, count);
-          }
-        }
-
-        if (!Number.isFinite(wr)) wr = 0;
-
         const cidRaw = Number((c as any).id);
         const cid = Number.isFinite(cidRaw) ? cidRaw : null;
-        return { wr: clamp(wr, 0, 1), clusterId: cid };
+        return { wr: resolveHdbClusterWinRate(c, n), clusterId: cid };
       }
 
       return { wr: 0.01, clusterId: null };
     },
-    [aiMethod, hdbConfidenceClusters, pointInPolyWorld, activeModSet]
+    [aiMethod, hdbConfidenceClusters, pointInPolyWorld, resolveHdbClusterWinRate]
   );
 
   // --- HDBSCAN post-hoc entry pass: determine entries purely from cluster win-rate (no gate)
