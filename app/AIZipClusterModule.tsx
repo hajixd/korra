@@ -73,7 +73,32 @@ const inferTradeDirection = (trade) => {
   return 1;
 };
 
-const resolveTradePnlSnapshot = (trade, dollarsPerMove, candles) => {
+const isTpExitReason = (value) => {
+  const reason = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return (
+    reason === "tp" ||
+    reason === "take profit" ||
+    reason === "takeprofit" ||
+    reason.includes("take profit")
+  );
+};
+
+const isStopExitReason = (value) => {
+  const reason = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return (
+    reason === "sl" ||
+    reason === "be" ||
+    reason === "trailing" ||
+    reason === "stop loss" ||
+    reason === "stoploss" ||
+    reason.includes("stop loss") ||
+    reason.includes("break even") ||
+    reason.includes("breakeven") ||
+    reason.includes("trailing")
+  );
+};
+
+const resolveTradePnlSnapshot = (trade, dollarsPerMove, candles, tpDist, slDist) => {
   const safeTrade = trade ?? {};
   const dir = inferTradeDirection(safeTrade);
   const candleList = Array.isArray(candles) ? candles : [];
@@ -109,6 +134,33 @@ const resolveTradePnlSnapshot = (trade, dollarsPerMove, candles) => {
     entryCandle?.close
   );
 
+  const takeProfitPrice = pickTradeNum(
+    (safeTrade as any).tpPrice,
+    (safeTrade as any).tp,
+    (safeTrade as any).takeProfitPrice,
+    (safeTrade as any).takeProfit,
+    entryPrice != null && tradeNum(tpDist) != null
+      ? entryPrice + dir * Math.abs(tradeNum(tpDist))
+      : null
+  );
+  const stopLossPrice = pickTradeNum(
+    (safeTrade as any).slPrice,
+    (safeTrade as any).sl,
+    (safeTrade as any).stopLossPrice,
+    (safeTrade as any).stopLoss,
+    entryPrice != null && tradeNum(slDist) != null
+      ? entryPrice - dir * Math.abs(tradeNum(slDist))
+      : null
+  );
+
+  const exitReason =
+    (safeTrade as any).exitReason ??
+    (safeTrade as any).exit_reason ??
+    (safeTrade as any).reasonExit ??
+    (safeTrade as any).exitTag ??
+    (safeTrade as any).exit_source ??
+    (safeTrade as any).exitSource;
+
   const livePrice = (safeTrade as any).isOpen
     ? pickTradeNum(
         (safeTrade as any).markPrice,
@@ -121,7 +173,7 @@ const resolveTradePnlSnapshot = (trade, dollarsPerMove, candles) => {
       )
     : null;
 
-  const exitPrice = pickTradeNum(
+  const explicitExitPrice = pickTradeNum(
     (safeTrade as any).exitPrice,
     (safeTrade as any).closePrice,
     (safeTrade as any).exit,
@@ -132,6 +184,13 @@ const resolveTradePnlSnapshot = (trade, dollarsPerMove, candles) => {
     exitCandle?.open,
     livePrice
   );
+  const exitPrice = (safeTrade as any).isOpen
+    ? explicitExitPrice
+    : isTpExitReason(exitReason) && takeProfitPrice != null
+      ? takeProfitPrice
+      : isStopExitReason(exitReason) && stopLossPrice != null
+        ? stopLossPrice
+        : explicitExitPrice;
 
   const storedPnl = pickTradeNum(
     (safeTrade as any).isOpen ? (safeTrade as any).unrealizedPnl : null,
@@ -152,19 +211,30 @@ const resolveTradePnlSnapshot = (trade, dollarsPerMove, candles) => {
     dir,
     entryPrice,
     exitPrice,
+    tpPrice: takeProfitPrice,
+    slPrice: stopLossPrice,
+    exitReason,
     storedPnl,
     pricePnl,
     effectivePnl: pricePnl != null ? pricePnl : storedPnl,
   };
 };
 
-const normalizeTradePnlValues = (trade, dollarsPerMove, candles) => {
+const normalizeTradePnlValues = (trade, dollarsPerMove, candles, tpDist, slDist) => {
   if (!trade || typeof trade !== "object") return trade;
 
-  const snapshot = resolveTradePnlSnapshot(trade, dollarsPerMove, candles);
+  const snapshot = resolveTradePnlSnapshot(
+    trade,
+    dollarsPerMove,
+    candles,
+    tpDist,
+    slDist
+  );
   const next = { ...(trade as any) };
 
   if (snapshot.entryPrice != null) next.entryPrice = snapshot.entryPrice;
+  if (snapshot.tpPrice != null) next.tpPrice = snapshot.tpPrice;
+  if (snapshot.slPrice != null) next.slPrice = snapshot.slPrice;
   if (snapshot.exitPrice != null) {
     if (next.isOpen) {
       next.markPrice =
@@ -196,9 +266,11 @@ const normalizeTradePnlValues = (trade, dollarsPerMove, candles) => {
   return next;
 };
 
-const normalizeTradeCollectionPnl = (trades, dollarsPerMove, candles) => {
+const normalizeTradeCollectionPnl = (trades, dollarsPerMove, candles, tpDist, slDist) => {
   if (!Array.isArray(trades) || trades.length === 0) return [];
-  return trades.map((trade) => normalizeTradePnlValues(trade, dollarsPerMove, candles));
+  return trades.map((trade) =>
+    normalizeTradePnlValues(trade, dollarsPerMove, candles, tpDist, slDist)
+  );
 };
 
 // --- Trade Details Modal (module-scope) ---
@@ -223,7 +295,13 @@ function TradeDetailsModalImpl({
     return Number.isFinite(x) ? x : NaN;
   };
 
-  const pnlSnapshot = resolveTradePnlSnapshot(trade, dollarsPerMove, candles);
+  const pnlSnapshot = resolveTradePnlSnapshot(
+    trade,
+    dollarsPerMove,
+    candles,
+    tpDist,
+    slDist
+  );
   const entryPrice = pnlSnapshot.entryPrice ?? num((trade as any).entryPrice);
   const exitPrice = pnlSnapshot.exitPrice;
   const dir = pnlSnapshot.dir;
@@ -26042,16 +26120,22 @@ export default function App() {
   );
 
   const normalizedAllTrades = useMemo(
-    () => normalizeTradeCollectionPnl(allTrades, dollarsPerMove, candles),
-    [allTrades, candles, dollarsPerMove]
+    () => normalizeTradeCollectionPnl(allTrades, dollarsPerMove, candles, tpDist, slDist),
+    [allTrades, candles, dollarsPerMove, tpDist, slDist]
   );
   const normalizedBaselineAllTrades = useMemo(() => {
     if (!Array.isArray(baselineAllTrades)) return null;
-    return normalizeTradeCollectionPnl(baselineAllTrades, dollarsPerMove, candles);
-  }, [baselineAllTrades, candles, dollarsPerMove]);
+    return normalizeTradeCollectionPnl(
+      baselineAllTrades,
+      dollarsPerMove,
+      candles,
+      tpDist,
+      slDist
+    );
+  }, [baselineAllTrades, candles, dollarsPerMove, tpDist, slDist]);
   const normalizedPostHocTrades = useMemo(
-    () => normalizeTradeCollectionPnl(postHocTrades, dollarsPerMove, candles),
-    [postHocTrades, candles, dollarsPerMove]
+    () => normalizeTradeCollectionPnl(postHocTrades, dollarsPerMove, candles, tpDist, slDist),
+    [postHocTrades, candles, dollarsPerMove, tpDist, slDist]
   );
 
   // Use the same post-hoc trade set for the main stats so they match the map.
