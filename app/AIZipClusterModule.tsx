@@ -1467,7 +1467,28 @@ function TradeCandlestickChartSVG({
           );
         })}
 
-        {/* TP / SL */}
+        {/* Entry / TP / SL */}
+        {entryPrice != null ? (
+          <g>
+            <line
+              x1={plot.x}
+              y1={yForPrice(entryPrice)}
+              x2={plot.x + plot.w}
+              y2={yForPrice(entryPrice)}
+              stroke="#ffffff"
+              opacity={0.92}
+            />
+            <text
+              x={plot.x + 8}
+              y={yForPrice(entryPrice) - 6}
+              fill="#ffffff"
+              fontSize={12}
+              fontFamily="ui-sans-serif, system-ui"
+            >
+              Entry {fmt2(entryPrice)}
+            </text>
+          </g>
+        ) : null}
         {tp != null ? (
           <g>
             <line
@@ -1938,6 +1959,7 @@ function TradeCandlestickChartLightweight({
       wickUpColor: "#34d399",
       wickDownColor: "#fb7185",
       borderVisible: false,
+      priceLineVisible: false,
     });
 
     series.setData(data);
@@ -1969,6 +1991,16 @@ function TradeCandlestickChartLightweight({
     }
     if (markers.length) series.setMarkers(markers);
 
+    if (entryPrice != null && series.createPriceLine) {
+      series.createPriceLine({
+        price: entryPrice,
+        color: "#ffffff",
+        lineWidth: 1,
+        lineStyle: LineStyle ? LineStyle.Solid : 0,
+        axisLabelVisible: true,
+        title: "Entry",
+      });
+    }
     if (tp != null && series.createPriceLine) {
       series.createPriceLine({
         price: tp,
@@ -2014,6 +2046,7 @@ function TradeCandlestickChartLightweight({
     lw,
     data,
     heightPx,
+    entryPrice,
     tp,
     sl,
     entryIdx,

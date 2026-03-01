@@ -87,7 +87,7 @@ type BacktestTab =
   | "propFirm";
 type EntryExitChartMode = "Entry" | "Exit";
 type PerformanceStatsRange = "Years" | "Months" | "Days of the Week" | "Hours";
-type PanelTab = "active" | "assets" | "models" | "mt5" | "history" | "actions" | "ai";
+type PanelTab = "active" | "assets" | "mt5" | "history" | "actions" | "ai";
 type MainStatisticsCard = {
   label: string;
   value: ReactNode;
@@ -1419,7 +1419,6 @@ const timeframeVisibleCount: Record<Timeframe, number> = {
 const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
   { id: "active", label: "Active" },
   { id: "assets", label: "Assets" },
-  { id: "models", label: "Models" },
   { id: "mt5", label: "MT5" },
   { id: "history", label: "History" },
   { id: "actions", label: "Action" },
@@ -3860,17 +3859,6 @@ const TabIcon = ({ tab }: { tab: PanelTab }) => {
     );
   }
 
-  if (tab === "models") {
-    return (
-      <svg className="rail-icon" viewBox="0 0 24 24" aria-hidden>
-        <circle cx="8" cy="9" r="2.4" fill="none" stroke="currentColor" strokeWidth="1.6" />
-        <circle cx="16.2" cy="8.4" r="2.1" fill="none" stroke="currentColor" strokeWidth="1.5" />
-        <path d="M4.5 17.8c.6-2 2-3.1 3.5-3.1h.1c1.6 0 2.9 1.1 3.5 3.1" fill="none" stroke="currentColor" strokeWidth="1.6" />
-        <path d="M12.8 17.4c.5-1.6 1.6-2.5 2.9-2.5h.1c1.4 0 2.4.9 2.9 2.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      </svg>
-    );
-  }
-
   if (tab === "mt5") {
     return (
       <svg className="rail-icon" viewBox="0 0 24 24" aria-hidden>
@@ -3966,7 +3954,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }, {});
   }, [aiLibraryDefs]);
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
-  const [selectedModelId, setSelectedModelId] = useState(modelProfiles[0]?.id ?? "");
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
   const [selectedSurfaceTab, setSelectedSurfaceTab] = useState<SurfaceTab>("chart");
   const [selectedBacktestTab, setSelectedBacktestTab] = useState<BacktestTab>("mainSettings");
@@ -4152,9 +4139,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return accumulator;
     }, {});
   }, [modelProfiles]);
-  const selectedModel = useMemo(() => {
-    return modelProfiles.find((model) => model.id === selectedModelId) ?? modelProfiles[0]!;
-  }, [modelProfiles, selectedModelId]);
   const aiDisabled = aiMode === "off";
   const confidenceGateDisabled = aiMode === "off" || !aiFilterEnabled;
   const effectiveConfidenceThreshold = confidenceGateDisabled ? 0 : confidenceThreshold;
@@ -4203,6 +4187,48 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return `${backtestModelProfiles.length} Main Settings models`;
   }, [backtestModelProfiles]);
+  const chartSignalModel = useMemo<ModelProfile | null>(() => {
+    if (backtestModelProfiles.length === 0) {
+      return null;
+    }
+
+    if (backtestModelProfiles.length === 1) {
+      return backtestModelProfiles[0]!;
+    }
+
+    const aggregate = backtestModelProfiles.reduce(
+      (accumulator, model) => {
+        accumulator.riskMin += model.riskMin;
+        accumulator.riskMax += model.riskMax;
+        accumulator.rrMin += model.rrMin;
+        accumulator.rrMax += model.rrMax;
+        accumulator.longBias += model.longBias;
+        accumulator.winRate += model.winRate;
+        return accumulator;
+      },
+      {
+        riskMin: 0,
+        riskMax: 0,
+        rrMin: 0,
+        rrMax: 0,
+        longBias: 0,
+        winRate: 0
+      }
+    );
+    const count = backtestModelProfiles.length;
+
+    return {
+      id: `backtest-${backtestModelProfiles.map((model) => model.id).join("-")}`,
+      name: backtestModelSelectionSummary,
+      kind: "Model",
+      riskMin: aggregate.riskMin / count,
+      riskMax: aggregate.riskMax / count,
+      rrMin: aggregate.rrMin / count,
+      rrMax: aggregate.rrMax / count,
+      longBias: aggregate.longBias / count,
+      winRate: aggregate.winRate / count
+    };
+  }, [backtestModelProfiles, backtestModelSelectionSummary]);
   const backtestHasRun = backtestRunCount > 0;
 
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
@@ -4393,12 +4419,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return next;
     });
   };
-
-  useEffect(() => {
-    if (!modelProfiles.some((model) => model.id === selectedModelId)) {
-      setSelectedModelId(modelProfiles[0]?.id ?? "");
-    }
-  }, [modelProfiles, selectedModelId]);
 
   useEffect(() => {
     if (selectedAiLibraries.length === 0) {
@@ -4864,13 +4884,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   ]);
 
   const activeTrade = useMemo<ActiveTrade | null>(() => {
-    if (selectedCandles.length < 70) {
+    if (!chartSignalModel || selectedCandles.length < 70) {
       return null;
     }
 
     const latestIndex = selectedCandles.length - 1;
     const latest = selectedCandles[latestIndex];
-    const rand = createSeededRng(hashString(`active-${selectedModel.id}-${selectedSymbol}`));
+    const rand = createSeededRng(hashString(`active-${chartSignalModel.id}-${selectedSymbol}`));
     const nowMs = floorToTimeframe(referenceNowMs, "1m");
     const lookbackMinutes = 28 + Math.floor(rand() * 520);
     let entryIndex = findCandleIndexAtOrBefore(selectedCandles, nowMs - lookbackMinutes * 60_000);
@@ -4881,8 +4901,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     const entryPrice = selectedCandles[entryIndex].close;
-    const side: TradeSide = rand() <= selectedModel.longBias ? "Long" : "Short";
-    const rr = selectedModel.rrMin + rand() * (selectedModel.rrMax - selectedModel.rrMin);
+    const side: TradeSide = rand() <= chartSignalModel.longBias ? "Long" : "Short";
+    const rr = chartSignalModel.rrMin + rand() * (chartSignalModel.rrMax - chartSignalModel.rrMin);
 
     let atr = 0;
     let atrCount = 0;
@@ -4895,7 +4915,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     atr /= Math.max(1, atrCount);
 
     let riskPerUnit = Math.max(
-      entryPrice * (selectedModel.riskMin + rand() * (selectedModel.riskMax - selectedModel.riskMin)),
+      entryPrice *
+        (chartSignalModel.riskMin + rand() * (chartSignalModel.riskMax - chartSignalModel.riskMin)),
       atr * (0.75 + rand() * 1.1)
     );
 
@@ -4957,11 +4978,62 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       progressPct: clamp(progressRaw * 100, 0, 100),
       rr
     };
-  }, [dollarsPerMove, referenceNowMs, selectedCandles, selectedModel, selectedSymbol]);
+  }, [chartSignalModel, dollarsPerMove, referenceNowMs, selectedCandles, selectedSymbol]);
 
   const [historyRows, setHistoryRows] = useState<HistoryItem[]>([]);
   const deferredHistoryRows = useDeferredValue(historyRows);
   const backtestHistoryJobIdRef = useRef(0);
+  const chronologicalHistoryRows = useMemo(() => {
+    return [...deferredHistoryRows].sort(
+      (a, b) => Number(a.exitTime) - Number(b.exitTime) || a.id.localeCompare(b.id)
+    );
+  }, [deferredHistoryRows]);
+  const chartPanelHistoryRows = useMemo(() => {
+    const startMs = getUtcDayStartMs(statsDateStart);
+    const endExclusiveMs = getUtcDayEndExclusiveMs(statsDateEnd);
+
+    return chronologicalHistoryRows
+      .filter((trade) => {
+        const tradeMs = Number(trade.entryTime) * 1000;
+
+        if (!Number.isFinite(tradeMs)) {
+          return false;
+        }
+
+        if (startMs !== null && tradeMs < startMs) {
+          return false;
+        }
+
+        if (endExclusiveMs !== null && tradeMs >= endExclusiveMs) {
+          return false;
+        }
+
+        const weekday = getWeekdayLabel(getTradeDayKey(trade.exitTime));
+        const session = getSessionLabel(trade.entryTime);
+        const monthIndex = getTradeMonthIndex(trade.exitTime);
+        const entryHour = getTradeHour(trade.entryTime);
+        const confidence = getTradeConfidenceScore(trade) * 100;
+
+        return (
+          enabledBacktestWeekdays.includes(weekday) &&
+          enabledBacktestSessions.includes(session) &&
+          enabledBacktestMonths.includes(monthIndex) &&
+          enabledBacktestHours.includes(entryHour) &&
+          (!aiFilterEnabled || confidence >= confidenceThreshold)
+        );
+      })
+      .sort((a, b) => Number(b.exitTime) - Number(a.exitTime) || b.id.localeCompare(a.id));
+  }, [
+    aiFilterEnabled,
+    chronologicalHistoryRows,
+    confidenceThreshold,
+    enabledBacktestHours,
+    enabledBacktestMonths,
+    enabledBacktestSessions,
+    enabledBacktestWeekdays,
+    statsDateEnd,
+    statsDateStart
+  ]);
 
   const backtestHistorySeriesBySymbol = useMemo(() => {
     const next: Record<string, Candle[]> = {};
@@ -5155,12 +5227,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return null;
     }
 
-    return historyRows.find((row) => row.id === selectedHistoryId) ?? null;
-  }, [historyRows, selectedHistoryId]);
+    return chartPanelHistoryRows.find((row) => row.id === selectedHistoryId) ?? null;
+  }, [chartPanelHistoryRows, selectedHistoryId]);
 
   const currentSymbolHistoryRows = useMemo(() => {
-    return historyRows.filter((row) => row.symbol === selectedSymbol);
-  }, [historyRows, selectedSymbol]);
+    return chartPanelHistoryRows.filter((row) => row.symbol === selectedSymbol);
+  }, [chartPanelHistoryRows, selectedSymbol]);
 
   const candleIndexByUnix = useMemo(() => {
     const map = new Map<number, number>();
@@ -5232,7 +5304,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const rows: ActionItem[] = [];
     const stepSeconds = timeframeMinutes[selectedTimeframe] * 60;
 
-    for (const trade of deferredHistoryRows) {
+    for (const trade of chartPanelHistoryRows) {
       rows.push({
         id: `${trade.id}-entry`,
         tradeId: trade.id,
@@ -5280,7 +5352,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return rows.sort(
       (a, b) => Number(b.timestamp) - Number(a.timestamp) || b.id.localeCompare(a.id)
     );
-  }, [deferredHistoryRows, selectedTimeframe]);
+  }, [chartPanelHistoryRows, selectedTimeframe]);
 
   const notificationItems = useMemo<NotificationItem[]>(() => {
     const items: NotificationItem[] = [];
@@ -5362,10 +5434,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return;
     }
 
-    if (!historyRows.some((row) => row.id === selectedHistoryId)) {
+    if (!chartPanelHistoryRows.some((row) => row.id === selectedHistoryId)) {
       setSelectedHistoryId(null);
     }
-  }, [historyRows, selectedHistoryId]);
+  }, [chartPanelHistoryRows, selectedHistoryId]);
 
   useEffect(() => {
     setSelectedHistoryId(null);
@@ -5373,7 +5445,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setShowActiveTradeOnChart(false);
     setActiveBacktestTradeDetails(null);
     focusTradeIdRef.current = null;
-  }, [selectedModelId]);
+  }, [selectedBacktestModelNames]);
 
   useEffect(() => {
     if (!notificationsOpen) {
@@ -6448,8 +6520,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   ]);
 
   const backtestSourceTrades = useMemo(() => {
-    return [...deferredHistoryRows].sort((a, b) => Number(a.exitTime) - Number(b.exitTime));
-  }, [deferredHistoryRows]);
+    return chronologicalHistoryRows;
+  }, [chronologicalHistoryRows]);
 
   const backtestDateFilteredTrades = useMemo(() => {
     const startMs = getUtcDayStartMs(statsDateStart);
@@ -8992,24 +9064,79 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   return (
     <main className="terminal">
-      <nav className="surface-strip" aria-label="primary views">
-        {surfaceTabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            className={`surface-tab ${selectedSurfaceTab === tab.id ? "active" : ""}`}
-            onClick={() => {
-              if (tab.id === "backtest" && selectedSurfaceTab !== "backtest") {
-                setIsBacktestSurfaceSettled(false);
-              }
+      <div className="surface-strip">
+        <span className="site-tag surface-brand">korra.space</span>
+        <nav className="surface-tabs" aria-label="primary views">
+          {surfaceTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`surface-tab ${selectedSurfaceTab === tab.id ? "active" : ""}`}
+              onClick={() => {
+                if (tab.id === "backtest" && selectedSurfaceTab !== "backtest") {
+                  setIsBacktestSurfaceSettled(false);
+                }
 
-              setSelectedSurfaceTab(tab.id);
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
+                setSelectedSurfaceTab(tab.id);
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+        <div className="top-utility surface-actions">
+          <div className="notif-wrap" ref={notificationRef}>
+            <button
+              type="button"
+              className="notif-btn"
+              aria-label="notifications"
+              onClick={() => setNotificationsOpen((open) => !open)}
+            >
+              <svg className="notif-icon" viewBox="0 0 24 24" aria-hidden>
+                <path
+                  d="M7 10.5a5 5 0 0 1 10 0v4.3l1.5 2.2H5.5L7 14.8v-4.3z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M10 19a2 2 0 0 0 4 0"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                />
+              </svg>
+              {unreadNotificationCount > 0 ? (
+                <span className="notif-badge">{Math.min(9, unreadNotificationCount)}</span>
+              ) : null}
+            </button>
+
+            {notificationsOpen ? (
+              <div className="notif-popover">
+                <div className="notif-head">
+                  <strong>Live Activity</strong>
+                  <span>{notificationItems.length} events</span>
+                </div>
+                <ul className="notif-list">
+                  {notificationItems.map((item) => (
+                    <li key={item.id} className="notif-item">
+                      <span className={`notif-dot ${item.tone}`} aria-hidden />
+                      <div className="notif-copy">
+                        <span className="notif-title">{item.title}</span>
+                        <span className="notif-details">{item.details}</span>
+                      </div>
+                      <span className="notif-time">{item.time}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
 
       <header className="topbar">
         <div className="brand-area">
@@ -9045,59 +9172,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               </button>
             ))}
           </nav>
-          <div className="top-utility">
-            <span className="site-tag">korra.space</span>
-            <div className="notif-wrap" ref={notificationRef}>
-              <button
-                type="button"
-                className="notif-btn"
-                aria-label="notifications"
-                onClick={() => setNotificationsOpen((open) => !open)}
-              >
-                <svg className="notif-icon" viewBox="0 0 24 24" aria-hidden>
-                  <path
-                    d="M7 10.5a5 5 0 0 1 10 0v4.3l1.5 2.2H5.5L7 14.8v-4.3z"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d="M10 19a2 2 0 0 0 4 0"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                  />
-                </svg>
-                {unreadNotificationCount > 0 ? (
-                  <span className="notif-badge">{Math.min(9, unreadNotificationCount)}</span>
-                ) : null}
-              </button>
-
-              {notificationsOpen ? (
-                <div className="notif-popover">
-                  <div className="notif-head">
-                    <strong>Live Activity</strong>
-                    <span>{notificationItems.length} events</span>
-                  </div>
-                  <ul className="notif-list">
-                    {notificationItems.map((item) => (
-                      <li key={item.id} className="notif-item">
-                        <span className={`notif-dot ${item.tone}`} aria-hidden />
-                        <div className="notif-copy">
-                          <span className="notif-title">{item.title}</span>
-                          <span className="notif-details">{item.details}</span>
-                        </div>
-                        <span className="notif-time">{item.time}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-            </div>
-          </div>
         </div>
       </header>
 
@@ -9172,7 +9246,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <div className="watchlist-head with-action">
                         <div>
                           <h2>Active Trade</h2>
-                          <p>Current open position · {selectedModel.name}</p>
+                          <p>Current open position · {backtestModelSelectionSummary}</p>
                         </div>
                         <button
                           type="button"
@@ -9272,7 +9346,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         </div>
                       ) : (
                         <div className="ai-placeholder">
-                          <p>No active trade data yet.</p>
+                          <p>
+                            {chartSignalModel
+                              ? "No active trade data yet."
+                              : "Select at least one Main Settings model in Backtest."}
+                          </p>
                         </div>
                       )}
                     </div>
@@ -9326,60 +9404,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     </div>
                   ) : null}
 
-                  {activePanelTab === "models" ? (
-                    <div className="tab-view">
-                      <div className="watchlist-head">
-                        <div>
-                          <h2>Models / People</h2>
-                          <p>Select one profile to drive history and actions</p>
-                        </div>
-                      </div>
-                      <ul className="model-list">
-                        {modelProfiles.map((model) => {
-                          const selected = model.id === selectedModelId;
-
-                          return (
-                            <li key={model.id}>
-                              <button
-                                type="button"
-                                className={`model-row ${selected ? "selected" : ""}`}
-                                onClick={() => setSelectedModelId(model.id)}
-                              >
-                                <span className="model-main">
-                                  <span className="model-name">{model.name}</span>
-                                  <span className="model-kind">{model.kind}</span>
-                                </span>
-                                {model.accountNumber ? (
-                                  <span className="model-account">
-                                    Korra Account #{model.accountNumber}
-                                  </span>
-                                ) : null}
-                                <span className="model-state">
-                                  {selected ? "Selected" : "Select"}
-                                </span>
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  ) : null}
-
                   {activePanelTab === "mt5" ? (
                     <div className="tab-view copytrade-tab">
                       <div className="watchlist-head">
                         <div>
                           <h2>MT5 Copy Trade</h2>
-                          <p>Connect an MT5 account to mirror {selectedModel.name}</p>
+                          <p>Connect an MT5 account to mirror {backtestModelSelectionSummary}</p>
                         </div>
                       </div>
                       <div className="copytrade-body">
                         <div className="copytrade-source">
                           <span>Selected Source</span>
-                          <strong>{selectedModel.name}</strong>
+                          <strong>{backtestModelSelectionSummary}</strong>
                           <small>
-                            Pick the profile in Models / People, then enter the target MT5
-                            account details here.
+                            Source follows the Main Settings model selection in Backtest. Enter the
+                            target MT5 account details here.
                           </small>
                         </div>
 
@@ -9435,7 +9474,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <div className="watchlist-head with-action">
                         <div>
                           <h2>History</h2>
-                          <p>Simulated trade outcomes · {selectedModel.name}</p>
+                          <p>Filtered by current Backtest settings · {backtestModelSelectionSummary}</p>
                         </div>
                         <button
                           type="button"
@@ -9455,7 +9494,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         </button>
                       </div>
                       <ul className="history-list">
-                        {historyRows.map((item) => (
+                        {chartPanelHistoryRows.map((item) => (
                           <li key={item.id}>
                             <button
                               type="button"
@@ -9507,7 +9546,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <div className="watchlist-head">
                         <div>
                           <h2>Action</h2>
-                          <p>Entry, SL, TP, and exits · {selectedModel.name}</p>
+                          <p>Entry, SL, TP, and exits · {backtestModelSelectionSummary}</p>
                         </div>
                       </div>
                       <ul className="history-list">
@@ -9686,8 +9725,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <>
                       <h3>No Main Settings models selected</h3>
                       <p>
-                        Open Main Settings and enable at least one model in the MODELS panel.
-                        Backtest now uses that selection instead of Models / People in the Chart tab.
+                        Open Main Settings and enable at least one model in the MODELS panel. The
+                        Chart tab now follows that Backtest selection automatically.
                       </p>
                     </>
                   ) : !backtestHasRun ? (
@@ -13077,7 +13116,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       <footer className="statusbar">
         <span>{selectedAsset.symbol}</span>
         <span>{selectedTimeframe}</span>
-        <span>Model: {selectedModel.name}</span>
+        <span>Model: {backtestModelSelectionSummary}</span>
         <span>Feed: csv + live</span>
         <span>UTC</span>
       </footer>
