@@ -4184,6 +4184,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("active");
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
+  const [selectedHistoryInteractionTick, setSelectedHistoryInteractionTick] = useState(0);
   const [showAllTradesOnChart, setShowAllTradesOnChart] = useState(false);
   const [showActiveTradeOnChart, setShowActiveTradeOnChart] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -4394,6 +4395,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const requestChartVisibleRangeRef = useRef<(visibleRange: ChartDataWindow) => void>(() => {});
   const chartDataLengthRef = useRef(0);
   const [chartRenderWindow, setChartRenderWindow] = useState<ChartDataWindow>({ from: 0, to: -1 });
+
+  const selectTradeOnChart = (tradeId: string, symbol: string) => {
+    focusTradeIdRef.current = tradeId;
+    setSelectedHistoryId(tradeId);
+    setSelectedSymbol(symbol);
+    setShowAllTradesOnChart(false);
+    setShowActiveTradeOnChart(false);
+    setSelectedHistoryInteractionTick((current) => current + 1);
+  };
 
   liveBacktestSettingsRef.current = buildCurrentBacktestSettingsSnapshot();
 
@@ -6784,6 +6794,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [
     candleIndexByUnix,
     selectedChartCandles.length,
+    selectedHistoryInteractionTick,
     selectedHistoryTrade,
     selectedSymbol,
     selectedTimeframe
@@ -6939,13 +6950,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
 
     const getTradeOverlayGeometry = (trade: {
-      status: "closed" | "pending";
-      result: TradeResult;
       entryTime: UTCTimestamp;
       exitTime: UTCTimestamp;
-      targetPrice: number;
-      stopPrice: number;
-      outcomePrice: number;
     }) => {
       const stepSeconds = timeframeMinutes[selectedTimeframe] * 60;
       const entryMs = Number(trade.entryTime) * 1000;
@@ -6971,18 +6977,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           : exitIndex >= 0 && exitIndex + 1 < selectedChartCandles.length
             ? toUtcTimestamp(selectedChartCandles[exitIndex + 1]!.time)
             : ((startTime + stepSeconds) as UTCTimestamp);
-      const exitPrice =
-        trade.status === "pending"
-          ? trade.outcomePrice
-          : trade.result === "Win"
-            ? trade.targetPrice
-            : trade.stopPrice;
 
       return {
         startTime,
         exitTime,
-        rangeEndTime,
-        exitPrice
+        rangeEndTime
       };
     };
 
@@ -6997,7 +6996,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       shape: "circle",
       size: 0.1,
       color,
-      text: `x PnL: ${formatSignedUsd(pnlUsd)}`
+      text: formatSignedUsd(pnlUsd)
     });
 
     const createMultiTradeSeries = (): MultiTradeOverlaySeries => {
@@ -7080,7 +7079,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       outcomePrice: number;
       pnlUsd: number;
     }) => {
-      const { startTime, exitTime, rangeEndTime, exitPrice } = getTradeOverlayGeometry(trade);
+      const { startTime, exitTime, rangeEndTime } = getTradeOverlayGeometry({
+        entryTime: trade.entryTime,
+        exitTime: trade.exitTime
+      });
       const entryAction = trade.side === "Long" ? "Buy" : "Sell";
       const tradeZoneData = [
         { time: startTime, value: trade.targetPrice },
@@ -7120,7 +7122,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       tradeStopLine.setData(stopZoneData);
       tradePathLine.setData([
         { time: startTime, value: trade.entryPrice },
-        { time: exitTime, value: exitPrice }
+        { time: exitTime, value: trade.outcomePrice }
       ]);
 
       if (trade.side === "Long") {
@@ -7150,14 +7152,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       for (const trade of currentSymbolHistoryRows) {
         const tradeResult: TradeResult = trade.result;
-        const { startTime, exitTime, rangeEndTime, exitPrice } = getTradeOverlayGeometry({
-          status: "closed",
-          result: trade.result,
+        const { startTime, exitTime, rangeEndTime } = getTradeOverlayGeometry({
           entryTime: trade.entryTime,
-          exitTime: trade.exitTime,
-          targetPrice: trade.targetPrice,
-          stopPrice: trade.stopPrice,
-          outcomePrice: trade.outcomePrice
+          exitTime: trade.exitTime
         });
         const entryAction = trade.side === "Long" ? "Buy" : "Sell";
         const targetData = [
@@ -7185,7 +7182,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         seriesGroup.stopLine.setData(stopData);
         seriesGroup.pathLine.setData([
           { time: startTime, value: trade.entryPrice },
-          { time: exitTime, value: exitPrice }
+          { time: exitTime, value: trade.outcomePrice }
         ]);
 
         if (trade.side === "Long") {
@@ -7257,6 +7254,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     activeChartTrade,
     currentSymbolHistoryRows,
     selectedChartCandles,
+    selectedHistoryInteractionTick,
     selectedHistoryTrade,
     selectedSymbol,
     selectedTimeframe,
@@ -10324,13 +10322,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               className={`history-row ${
                                 selectedHistoryId === item.id ? "selected" : ""
                               }`}
-                              onClick={() => {
-                                focusTradeIdRef.current = item.id;
-                                setSelectedHistoryId(item.id);
-                                setSelectedSymbol(item.symbol);
-                                setShowAllTradesOnChart(false);
-                                setShowActiveTradeOnChart(false);
-                              }}
+                              onClick={() => selectTradeOnChart(item.id, item.symbol)}
                             >
                               <span className="history-info">
                                 <span className="history-main">
@@ -10380,13 +10372,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               className={`history-row ${
                                 selectedHistoryId === action.tradeId ? "selected" : ""
                               }`}
-                              onClick={() => {
-                                focusTradeIdRef.current = action.tradeId;
-                                setSelectedHistoryId(action.tradeId);
-                                setSelectedSymbol(action.symbol);
-                                setShowAllTradesOnChart(false);
-                                setShowActiveTradeOnChart(false);
-                              }}
+                              onClick={() => selectTradeOnChart(action.tradeId, action.symbol)}
                             >
                               <span className="history-info">
                                 <span className="history-main">
