@@ -571,10 +571,13 @@ button {
   padding: 0.75rem;
   display: grid;
   gap: 0.65rem;
+  content-visibility: auto;
+  contain-intrinsic-size: 320px;
 }
 
 .backtest-card.compact {
   gap: 0.55rem;
+  contain-intrinsic-size: 140px;
 }
 
 .backtest-card-head {

@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { startTransition, useEffect, useId, useMemo, useRef, useState } from "react";
 import type {
   CandlestickData,
   ColorType,
@@ -4091,6 +4091,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   );
   const [statsRefreshOverlayVisible, setStatsRefreshOverlayVisible] = useState(false);
   const [statsRefreshProgress, setStatsRefreshProgress] = useState(0);
+  const [isBacktestSurfaceSettled, setIsBacktestSurfaceSettled] = useState(true);
 
   useEffect(() => {
     setAiModelStates((current) => syncAiModelStates(current, availableAiModelNames));
@@ -4196,6 +4197,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   useEffect(() => {
     selectedSurfaceTabRef.current = selectedSurfaceTab;
+  }, [selectedSurfaceTab]);
+
+  useEffect(() => {
+    if (selectedSurfaceTab !== "backtest") {
+      setIsBacktestSurfaceSettled(true);
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      startTransition(() => {
+        setIsBacktestSurfaceSettled(true);
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
   }, [selectedSurfaceTab]);
 
   useEffect(() => {
@@ -6141,8 +6159,35 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return [...historyRows].sort((a, b) => Number(a.exitTime) - Number(b.exitTime));
   }, [historyRows]);
 
-  const backtestTimeFilteredTrades = useMemo(() => {
+  const backtestDateFilteredTrades = useMemo(() => {
+    const startMs = getUtcDayStartMs(statsDateStart);
+    const endExclusiveMs = getUtcDayEndExclusiveMs(statsDateEnd);
+
+    if (startMs === null && endExclusiveMs === null) {
+      return backtestSourceTrades;
+    }
+
     return backtestSourceTrades.filter((trade) => {
+      const tradeMs = Number(trade.entryTime) * 1000;
+
+      if (!Number.isFinite(tradeMs)) {
+        return false;
+      }
+
+      if (startMs !== null && tradeMs < startMs) {
+        return false;
+      }
+
+      if (endExclusiveMs !== null && tradeMs >= endExclusiveMs) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [backtestSourceTrades, statsDateEnd, statsDateStart]);
+
+  const backtestTimeFilteredTrades = useMemo(() => {
+    return backtestDateFilteredTrades.filter((trade) => {
       const weekday = getWeekdayLabel(getTradeDayKey(trade.exitTime));
       const session = getSessionLabel(trade.entryTime);
       const monthIndex = getTradeMonthIndex(trade.exitTime);
@@ -6155,7 +6200,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       );
     });
   }, [
-    backtestSourceTrades,
+    backtestDateFilteredTrades,
     enabledBacktestHours,
     enabledBacktestMonths,
     enabledBacktestSessions,
@@ -6169,51 +6214,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     });
   }, [aiFilterEnabled, backtestTimeFilteredTrades, confidenceThreshold]);
 
-  const mainStatsTrades = useMemo(() => {
-    const startMs = getUtcDayStartMs(statsDateStart);
-    const endExclusiveMs = getUtcDayEndExclusiveMs(statsDateEnd);
+  const mainStatsTrades = useMemo(() => backtestTrades, [backtestTrades]);
 
-    return backtestTrades.filter((trade) => {
-      const tradeMs = Number(trade.entryTime) * 1000;
-
-      if (!Number.isFinite(tradeMs)) {
-        return false;
-      }
-
-      if (startMs !== null && tradeMs < startMs) {
-        return false;
-      }
-
-      if (endExclusiveMs !== null && tradeMs >= endExclusiveMs) {
-        return false;
-      }
-
-      return true;
-    });
-  }, [backtestTrades, statsDateEnd, statsDateStart]);
-
-  const baselineMainStatsTrades = useMemo(() => {
-    const startMs = getUtcDayStartMs(statsDateStart);
-    const endExclusiveMs = getUtcDayEndExclusiveMs(statsDateEnd);
-
-    return backtestTimeFilteredTrades.filter((trade) => {
-      const tradeMs = Number(trade.entryTime) * 1000;
-
-      if (!Number.isFinite(tradeMs)) {
-        return false;
-      }
-
-      if (startMs !== null && tradeMs < startMs) {
-        return false;
-      }
-
-      if (endExclusiveMs !== null && tradeMs >= endExclusiveMs) {
-        return false;
-      }
-
-      return true;
-    });
-  }, [backtestTimeFilteredTrades, statsDateEnd, statsDateStart]);
+  const baselineMainStatsTrades = useMemo(
+    () => backtestTimeFilteredTrades,
+    [backtestTimeFilteredTrades]
+  );
 
   const backtestRange = useMemo(() => {
     if (selectedBacktestCandles.length > 0) {
@@ -6346,6 +6352,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const startLabel = statsDateStart ? formatStatsDateLabel(statsDateStart) : "Start";
     const endLabel = statsDateEnd ? formatStatsDateLabel(statsDateEnd) : "End";
     return `Stats (${startLabel} -> ${endLabel})`;
+  }, [statsDateEnd, statsDateStart]);
+
+  const backtestDateRangeLabel = useMemo(() => {
+    if (!statsDateStart && !statsDateEnd) {
+      return "All dates";
+    }
+
+    const startLabel = statsDateStart ? formatStatsDateLabel(statsDateStart) : "Start";
+    const endLabel = statsDateEnd ? formatStatsDateLabel(statsDateEnd) : "End";
+    return `${startLabel} -> ${endLabel}`;
   }, [statsDateEnd, statsDateStart]);
 
   const mainStatsSessionRows = useMemo(() => {
@@ -8891,7 +8907,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             key={tab.id}
             type="button"
             className={`surface-tab ${selectedSurfaceTab === tab.id ? "active" : ""}`}
-            onClick={() => setSelectedSurfaceTab(tab.id)}
+            onClick={() => {
+              if (tab.id === "backtest" && selectedSurfaceTab !== "backtest") {
+                setIsBacktestSurfaceSettled(false);
+              }
+
+              setSelectedSurfaceTab(tab.id);
+            }}
           >
             {tab.label}
           </button>
@@ -9452,67 +9474,131 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
         {selectedSurfaceTab === "backtest" ? (
           <section className="backtest-surface" aria-label="backtest workspace">
-          <div className="backtest-shell">
-            <section className="backtest-hero">
-              <div className="backtest-hero-copy">
-                <span className="backtest-kicker">Backtest Workspace</span>
-                <h2>
-                  {backtestModelSelectionSummary} on {selectedTimeframe}
-                </h2>
-                <p>
-                  AI.zip modules stay grouped here with the same core workflow: settings,
-                  statistics, trade review, calendar, clustering, graphs, and prop evaluation.
-                  Backtest now follows the Main Settings model selection instead of the Chart tab.
-                </p>
+            <div className="backtest-shell">
+              <div className="backtest-card compact">
+                <div className="backtest-card-head backtest-stats-head">
+                  <div>
+                    <h3>Backtest Date Range</h3>
+                    <p>
+                      This filter applies to every backtest module and keeps Chrome from painting
+                      more trade history than you need.
+                    </p>
+                  </div>
+
+                  <div className="backtest-stats-range" aria-label="global backtest date range">
+                    <input
+                      type="date"
+                      value={statsDateStart}
+                      onChange={(event) => setStatsDateStart(event.target.value)}
+                      className="backtest-date-input"
+                      aria-label="global backtest start date"
+                    />
+                    <span className="backtest-stats-range-arrow">-&gt;</span>
+                    <input
+                      type="date"
+                      value={statsDateEnd}
+                      onChange={(event) => setStatsDateEnd(event.target.value)}
+                      className="backtest-date-input"
+                      aria-label="global backtest end date"
+                    />
+                    {(statsDateStart || statsDateEnd) && (
+                      <button
+                        type="button"
+                        className="backtest-range-clear"
+                        onClick={() => {
+                          setStatsDateStart("");
+                          setStatsDateEnd("");
+                        }}
+                      >
+                        All
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="backtest-toolbar-note">
+                  Active range: <strong>{backtestDateRangeLabel}</strong> · Visible trades:{" "}
+                  <strong>{backtestTrades.length}</strong>
+                </div>
               </div>
 
-              <div className="backtest-summary-grid">
-                <article className="backtest-summary-card">
-                  <span>Net PnL</span>
-                  <strong className={backtestSummary.netPnl >= 0 ? "up" : "down"}>
-                    {formatSignedUsd(backtestSummary.netPnl)}
-                  </strong>
-                  <small>{backtestSummary.tradeCount} simulated trades</small>
-                </article>
-                <article className="backtest-summary-card">
-                  <span>Win Rate</span>
-                  <strong style={{ color: backtestSummary.winRate >= 55 ? "#34d399" : backtestSummary.winRate >= 45 ? "#facc15" : "#f87171" }}>{backtestSummary.winRate.toFixed(1)}%</strong>
-                  <small>{backtestSummary.avgR.toFixed(2)}R average reward profile</small>
-                </article>
-                <article className="backtest-summary-card">
-                  <span>Profit Factor</span>
-                  <strong style={{ color: backtestSummary.profitFactor > 1.5 ? "#34d399" : backtestSummary.profitFactor >= 1 ? "#60a5fa" : "#f87171" }}>{backtestSummary.profitFactor.toFixed(2)}</strong>
-                  <small>{Math.round(backtestSummary.avgHoldMinutes)}m average hold</small>
-                </article>
-                <article className="backtest-summary-card">
-                  <span>Worst Pullback</span>
-                  <strong className={backtestSummary.maxDrawdown >= 0 ? "up" : "down"}>
-                    {formatSignedUsd(backtestSummary.maxDrawdown)}
-                  </strong>
-                  <small>
-                    {backtestSummary.bestDay
-                      ? `Best day ${formatSignedUsd(backtestSummary.bestDay.pnl)}`
-                      : "Waiting for trade history"}
-                  </small>
-                </article>
-              </div>
-            </section>
+              <section className="backtest-hero">
+                <div className="backtest-hero-copy">
+                  <span className="backtest-kicker">Backtest Workspace</span>
+                  <h2>
+                    {backtestModelSelectionSummary} on {selectedTimeframe}
+                  </h2>
+                  <p>
+                    AI.zip modules stay grouped here with the same core workflow: settings,
+                    statistics, trade review, calendar, clustering, graphs, and prop evaluation.
+                    Backtest now follows the Main Settings model selection instead of the Chart tab.
+                  </p>
+                </div>
 
-            <nav className="backtest-tabs" aria-label="backtest modules">
-              {backtestTabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  className={`backtest-tab ${selectedBacktestTab === tab.id ? "active" : ""}`}
-                  onClick={() => setSelectedBacktestTab(tab.id)}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </nav>
+                <div className="backtest-summary-grid">
+                  <article className="backtest-summary-card">
+                    <span>Net PnL</span>
+                    <strong className={backtestSummary.netPnl >= 0 ? "up" : "down"}>
+                      {formatSignedUsd(backtestSummary.netPnl)}
+                    </strong>
+                    <small>{backtestSummary.tradeCount} simulated trades</small>
+                  </article>
+                  <article className="backtest-summary-card">
+                    <span>Win Rate</span>
+                    <strong style={{ color: backtestSummary.winRate >= 55 ? "#34d399" : backtestSummary.winRate >= 45 ? "#facc15" : "#f87171" }}>{backtestSummary.winRate.toFixed(1)}%</strong>
+                    <small>{backtestSummary.avgR.toFixed(2)}R average reward profile</small>
+                  </article>
+                  <article className="backtest-summary-card">
+                    <span>Profit Factor</span>
+                    <strong style={{ color: backtestSummary.profitFactor > 1.5 ? "#34d399" : backtestSummary.profitFactor >= 1 ? "#60a5fa" : "#f87171" }}>{backtestSummary.profitFactor.toFixed(2)}</strong>
+                    <small>{Math.round(backtestSummary.avgHoldMinutes)}m average hold</small>
+                  </article>
+                  <article className="backtest-summary-card">
+                    <span>Worst Pullback</span>
+                    <strong className={backtestSummary.maxDrawdown >= 0 ? "up" : "down"}>
+                      {formatSignedUsd(backtestSummary.maxDrawdown)}
+                    </strong>
+                    <small>
+                      {backtestSummary.bestDay
+                        ? `Best day ${formatSignedUsd(backtestSummary.bestDay.pnl)}`
+                        : "Waiting for trade history"}
+                    </small>
+                  </article>
+                </div>
+              </section>
 
-            <section className="backtest-panel">
-              {backtestSourceTrades.length === 0 ? (
+              <nav className="backtest-tabs" aria-label="backtest modules">
+                {backtestTabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={`backtest-tab ${selectedBacktestTab === tab.id ? "active" : ""}`}
+                    onClick={() => setSelectedBacktestTab(tab.id)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </nav>
+
+              <section className="backtest-panel">
+                {!isBacktestSurfaceSettled ? (
+                  <div className="backtest-empty">
+                    <h3>Preparing Backtest</h3>
+                    <p>
+                      Applying the selected date range and staging the heavier panels so Chrome
+                      stays responsive.
+                    </p>
+                    <div
+                      className="backtest-loading-progress-shell"
+                      role="progressbar"
+                      aria-label="Preparing backtest view"
+                      aria-valuetext="Preparing backtest modules"
+                    >
+                      <div className="backtest-loading-progress-bar" />
+                    </div>
+                  </div>
+                ) : (
+                  <>
+              {backtestDateFilteredTrades.length === 0 ? (
                 <div className="backtest-empty">
                   {backtestModelProfiles.length === 0 ? (
                     <>
@@ -9528,6 +9614,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <p>
                         Adjust Main Settings, then click Run Backtest at the bottom of the Main Settings
                         tab to load the simulated trade history.
+                      </p>
+                    </>
+                  ) : backtestSourceTrades.length > 0 ? (
+                    <>
+                      <h3>No trades in the selected date range</h3>
+                      <p>
+                        Move the Backtest Date Range above, or clear it to load the full simulated
+                        trade history again.
                       </p>
                     </>
                   ) : (
@@ -12887,8 +12981,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 ) : null}
                 </div>
               ) : null}
+                </>
+              )}
             </section>
-          </div>
+            </div>
           </section>
         ) : null}
       </section>
