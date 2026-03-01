@@ -36,9 +36,11 @@ button {
 
 .terminal {
   min-height: 100vh;
+  height: 100dvh;
   display: grid;
   grid-template-rows: 42px 50px 1fr 28px;
   background: linear-gradient(180deg, #080b10, #080b10);
+  overflow: hidden;
 }
 
 .surface-strip {
@@ -337,12 +339,14 @@ button {
 .surface-stage {
   min-height: 0;
   position: relative;
+  overflow: hidden;
 }
 
 .surface-view {
   min-height: 0;
   height: 100%;
   display: flex;
+  overflow: hidden;
 }
 
 .surface-view.hidden,

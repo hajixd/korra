@@ -1,38 +1,59 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import {
+import type {
+  CandlestickData,
   ColorType,
   CrosshairMode,
+  IChartApi,
+  ISeriesApi,
   LineStyle,
-  createChart,
-  type CandlestickData,
-  type IChartApi,
-  type ISeriesApi,
-  type MouseEventParams,
-  type SeriesMarker,
-  type Time,
-  type UTCTimestamp
+  MouseEventParams,
+  SeriesMarker,
+  Time,
+  UTCTimestamp
 } from "lightweight-charts";
-import {
-  Bar,
-  BarChart,
-  Cell,
-  ComposedChart,
-  Line,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis
-} from "recharts";
-import {
-  AIZipTradeDetailsModal,
-  ClusterMap as AIZipClusterMap,
-  ClusterMap3D as AIZipClusterMap3D,
-  displayIdForNode
-} from "./AIZipClusterModule";
+
+const loadRecharts = () => import("recharts");
+const ResponsiveContainer = dynamic<any>(() => loadRecharts().then((mod) => mod.ResponsiveContainer), {
+  ssr: false
+});
+const ComposedChart = dynamic<any>(() => loadRecharts().then((mod) => mod.ComposedChart), {
+  ssr: false
+});
+const BarChart = dynamic<any>(() => loadRecharts().then((mod) => mod.BarChart), {
+  ssr: false
+});
+const Bar = dynamic<any>(() => loadRecharts().then((mod) => mod.Bar), { ssr: false });
+const Cell = dynamic<any>(() => loadRecharts().then((mod) => mod.Cell), { ssr: false });
+const Line = dynamic<any>(() => loadRecharts().then((mod) => mod.Line), { ssr: false });
+const ReferenceLine = dynamic<any>(() => loadRecharts().then((mod) => mod.ReferenceLine), {
+  ssr: false
+});
+const Tooltip = dynamic<any>(() => loadRecharts().then((mod) => mod.Tooltip), { ssr: false });
+const XAxis = dynamic<any>(() => loadRecharts().then((mod) => mod.XAxis), { ssr: false });
+const YAxis = dynamic<any>(() => loadRecharts().then((mod) => mod.YAxis), { ssr: false });
+
+const loadAiZipClusterModule = () => import("./AIZipClusterModule");
+const AIZipTradeDetailsModal = dynamic<any>(
+  () => loadAiZipClusterModule().then((mod) => mod.AIZipTradeDetailsModal),
+  { ssr: false }
+);
+const AIZipClusterMap = dynamic<any>(
+  () => loadAiZipClusterModule().then((mod) => mod.ClusterMap),
+  { ssr: false }
+);
+const AIZipClusterMap3D = dynamic<any>(
+  () => loadAiZipClusterModule().then((mod) => mod.ClusterMap3D),
+  { ssr: false }
+);
+
+const LIGHTWEIGHT_CHART_SOLID_BACKGROUND: ColorType = "solid" as ColorType;
+const LIGHTWEIGHT_CHART_CROSSHAIR_NORMAL: CrosshairMode = 0;
+const LIGHTWEIGHT_CHART_LINE_SOLID: LineStyle = 0;
+const LIGHTWEIGHT_CHART_LINE_DOTTED: LineStyle = 1;
 
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type SurfaceTab = "chart" | "backtest";
@@ -76,6 +97,10 @@ type MainStatisticsCard = {
   span: 1 | 2 | 4 | 6;
   valueClassName?: string;
   children?: MainStatisticsCard[];
+};
+type RechartsTooltipRenderProps = {
+  active?: boolean;
+  payload?: any[];
 };
 
 type FutureAsset = {
@@ -2841,7 +2866,7 @@ const BacktestPerTradeMiniChart = ({
           ) : null}
 
           <Tooltip
-            content={({ active, payload }) => {
+            content={({ active, payload }: RechartsTooltipRenderProps) => {
               if (!active || !payload?.length) {
                 return null;
               }
@@ -3877,12 +3902,23 @@ const TabIcon = ({ tab }: { tab: PanelTab }) => {
   );
 };
 
-const getAiZipTradeDisplayId = (trade: Pick<HistoryItem, "id" | "entryTime">) =>
-  displayIdForNode({
-    uid: trade.id,
-    kind: "trade",
-    entryTime: Number(trade.entryTime)
-  });
+const getAiZipTradeDisplayId = (trade: Pick<HistoryItem, "id" | "entryTime">) => {
+  const rawId = String(trade.id ?? "").trim();
+
+  if (!rawId) {
+    return "—";
+  }
+
+  const entryTime = Number(trade.entryTime);
+  const seedText = `live|${Number.isFinite(entryTime) ? Math.floor(entryTime) : "na"}|${rawId}`;
+  const shortCode = hashSeedFromText(seedText)
+    .toString(36)
+    .toUpperCase()
+    .padStart(6, "0")
+    .slice(-6);
+
+  return `live| ${shortCode}`;
+};
 
 export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProps) {
   const modelProfiles = useMemo(() => {
@@ -5108,266 +5144,289 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [notificationsOpen, notificationItems]);
 
   useEffect(() => {
-    const container = chartContainerRef.current;
+    let disposed = false;
+    let teardown: (() => void) | undefined;
 
-    if (!container || chartRef.current) {
-      return;
-    }
+    const initializeChart = async () => {
+      const container = chartContainerRef.current;
 
-    const initialWidth = Math.max(1, Math.floor(container.clientWidth));
-    const initialHeight = Math.max(1, Math.floor(container.clientHeight));
+      if (!container || chartRef.current) {
+        return;
+      }
 
-    const chart = createChart(container, {
-      width: initialWidth,
-      height: initialHeight,
-      layout: {
-        background: { type: ColorType.Solid, color: "#090d13" },
-        textColor: "#7f889d"
-      },
-      localization: {
-        priceFormatter: (price: number) => formatPrice(price)
-      },
-      grid: {
-        vertLines: { visible: false },
-        horzLines: { visible: false }
-      },
-      rightPriceScale: {
-        borderVisible: true,
-        borderColor: "#182131"
-      },
-      leftPriceScale: {
-        visible: false
-      },
-      timeScale: {
-        borderVisible: true,
-        borderColor: "#182131",
-        timeVisible: true,
-        secondsVisible: false,
-        rightOffset: 3
-      },
-      crosshair: {
-        mode: CrosshairMode.Normal,
-        vertLine: {
-          color: "rgba(198, 208, 228, 0.28)",
-          width: 1,
-          style: 3,
-          labelBackgroundColor: "#141c2a"
+      const { createChart } = await import("lightweight-charts");
+
+      if (disposed || chartRef.current) {
+        return;
+      }
+
+      const initialWidth = Math.max(1, Math.floor(container.clientWidth));
+      const initialHeight = Math.max(1, Math.floor(container.clientHeight));
+
+      const chart = createChart(container, {
+        width: initialWidth,
+        height: initialHeight,
+        layout: {
+          background: { type: LIGHTWEIGHT_CHART_SOLID_BACKGROUND, color: "#090d13" },
+          textColor: "#7f889d"
         },
-        horzLine: {
-          color: "rgba(198, 208, 228, 0.28)",
-          width: 1,
-          style: 3,
-          labelBackgroundColor: "#141c2a"
+        localization: {
+          priceFormatter: (price: number) => formatPrice(price)
+        },
+        grid: {
+          vertLines: { visible: false },
+          horzLines: { visible: false }
+        },
+        rightPriceScale: {
+          borderVisible: true,
+          borderColor: "#182131"
+        },
+        leftPriceScale: {
+          visible: false
+        },
+        timeScale: {
+          borderVisible: true,
+          borderColor: "#182131",
+          timeVisible: true,
+          secondsVisible: false,
+          rightOffset: 3
+        },
+        crosshair: {
+          mode: LIGHTWEIGHT_CHART_CROSSHAIR_NORMAL,
+          vertLine: {
+            color: "rgba(198, 208, 228, 0.28)",
+            width: 1,
+            style: 3,
+            labelBackgroundColor: "#141c2a"
+          },
+          horzLine: {
+            color: "rgba(198, 208, 228, 0.28)",
+            width: 1,
+            style: 3,
+            labelBackgroundColor: "#141c2a"
+          }
+        },
+        handleScroll: {
+          mouseWheel: true,
+          pressedMouseMove: true,
+          horzTouchDrag: true,
+          vertTouchDrag: false
+        },
+        handleScale: {
+          axisPressedMouseMove: true,
+          mouseWheel: true,
+          pinch: true
         }
-      },
-      handleScroll: {
-        mouseWheel: true,
-        pressedMouseMove: true,
-        horzTouchDrag: true,
-        vertTouchDrag: false
-      },
-      handleScale: {
-        axisPressedMouseMove: true,
-        mouseWheel: true,
-        pinch: true
-      }
-    });
-    chartSizeRef.current = { width: initialWidth, height: initialHeight };
-
-    const candleSeries = chart.addCandlestickSeries({
-      upColor: "#1bae8a",
-      downColor: "#f0455a",
-      wickUpColor: "#1bae8a",
-      wickDownColor: "#f0455a",
-      borderUpColor: "#1bae8a",
-      borderDownColor: "#f0455a",
-      priceLineVisible: false,
-      lastValueVisible: true
-    });
-
-    const tradeEntryLine = chart.addLineSeries({
-      color: "rgba(232, 238, 250, 0.72)",
-      lineWidth: 1,
-      lineStyle: LineStyle.Solid,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false
-    });
-    const tradeTargetLine = chart.addLineSeries({
-      color: "rgba(53, 201, 113, 0.95)",
-      lineWidth: 1,
-      lineStyle: LineStyle.Solid,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false
-    });
-    const tradeStopLine = chart.addLineSeries({
-      color: "rgba(255, 76, 104, 0.95)",
-      lineWidth: 1,
-      lineStyle: LineStyle.Solid,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false
-    });
-    const tradePathLine = chart.addLineSeries({
-      color: "rgba(220, 230, 248, 0.82)",
-      lineWidth: 2,
-      lineStyle: LineStyle.Dotted,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false
-    });
-    const tradeProfitZone = chart.addBaselineSeries({
-      baseValue: { type: "price", price: 0 },
-      topLineColor: "rgba(0,0,0,0)",
-      topFillColor1: "rgba(53, 201, 113, 0.22)",
-      topFillColor2: "rgba(53, 201, 113, 0.05)",
-      bottomLineColor: "rgba(0,0,0,0)",
-      bottomFillColor1: "rgba(0,0,0,0)",
-      bottomFillColor2: "rgba(0,0,0,0)",
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false
-    });
-    const tradeLossZone = chart.addBaselineSeries({
-      baseValue: { type: "price", price: 0 },
-      topLineColor: "rgba(0,0,0,0)",
-      topFillColor1: "rgba(0,0,0,0)",
-      topFillColor2: "rgba(0,0,0,0)",
-      bottomLineColor: "rgba(0,0,0,0)",
-      bottomFillColor1: "rgba(240, 69, 90, 0.24)",
-      bottomFillColor2: "rgba(240, 69, 90, 0.07)",
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false
-    });
-
-    const onCrosshairMove = (param: MouseEventParams<Time>) => {
-      if (!param.point || !param.time) {
-        setHoveredTime(null);
-        return;
-      }
-
-      setHoveredTime(parseTimeFromCrosshair(param.time));
-    };
-
-    chart.subscribeCrosshairMove(onCrosshairMove);
-    let resizeRaf = 0;
-
-    const applyChartSize = (rawWidth: number, rawHeight: number, force = false) => {
-      if (!Number.isFinite(rawWidth) || !Number.isFinite(rawHeight)) {
-        return;
-      }
-
-      const width = Math.max(1, Math.floor(rawWidth));
-      const height = Math.max(1, Math.floor(rawHeight));
-
-      if (
-        !force &&
-        chartSizeRef.current.width === width &&
-        chartSizeRef.current.height === height
-      ) {
-        return;
-      }
-
-      chartSizeRef.current = { width, height };
-      chart.applyOptions({ width, height });
-    };
-
-    const queueResizeFromContainer = () => {
-      if (selectedSurfaceTabRef.current !== "chart") {
-        return;
-      }
-
-      const rawWidth = container.clientWidth;
-      const rawHeight = container.clientHeight;
-
-      if (rawWidth <= 0 || rawHeight <= 0) {
-        return;
-      }
-
-      if (resizeRaf) {
-        window.cancelAnimationFrame(resizeRaf);
-      }
-
-      resizeRaf = window.requestAnimationFrame(() => {
-        resizeRaf = 0;
-        applyChartSize(rawWidth, rawHeight);
       });
-    };
+      chartSizeRef.current = { width: initialWidth, height: initialHeight };
 
-    const resizeObserver = new ResizeObserver((entries) => {
-      const entry = entries[0];
-
-      if (!entry) {
-        return;
-      }
-
-      if (selectedSurfaceTabRef.current !== "chart") {
-        return;
-      }
-
-      const width = entry.contentRect.width;
-      const height = entry.contentRect.height;
-
-      if (width <= 0 || height <= 0) {
-        return;
-      }
-
-      if (resizeRaf) {
-        window.cancelAnimationFrame(resizeRaf);
-      }
-
-      resizeRaf = window.requestAnimationFrame(() => {
-        resizeRaf = 0;
-        applyChartSize(width, height);
+      const candleSeries = chart.addCandlestickSeries({
+        upColor: "#1bae8a",
+        downColor: "#f0455a",
+        wickUpColor: "#1bae8a",
+        wickDownColor: "#f0455a",
+        borderUpColor: "#1bae8a",
+        borderDownColor: "#f0455a",
+        priceLineVisible: false,
+        lastValueVisible: true
       });
-    });
 
-    resizeObserver.observe(container);
-    window.addEventListener("resize", queueResizeFromContainer);
-    document.addEventListener("fullscreenchange", queueResizeFromContainer);
+      const tradeEntryLine = chart.addLineSeries({
+        color: "rgba(232, 238, 250, 0.72)",
+        lineWidth: 1,
+        lineStyle: LIGHTWEIGHT_CHART_LINE_SOLID,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      const tradeTargetLine = chart.addLineSeries({
+        color: "rgba(53, 201, 113, 0.95)",
+        lineWidth: 1,
+        lineStyle: LIGHTWEIGHT_CHART_LINE_SOLID,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      const tradeStopLine = chart.addLineSeries({
+        color: "rgba(255, 76, 104, 0.95)",
+        lineWidth: 1,
+        lineStyle: LIGHTWEIGHT_CHART_LINE_SOLID,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      const tradePathLine = chart.addLineSeries({
+        color: "rgba(220, 230, 248, 0.82)",
+        lineWidth: 2,
+        lineStyle: LIGHTWEIGHT_CHART_LINE_DOTTED,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      const tradeProfitZone = chart.addBaselineSeries({
+        baseValue: { type: "price", price: 0 },
+        topLineColor: "rgba(0,0,0,0)",
+        topFillColor1: "rgba(53, 201, 113, 0.22)",
+        topFillColor2: "rgba(53, 201, 113, 0.05)",
+        bottomLineColor: "rgba(0,0,0,0)",
+        bottomFillColor1: "rgba(0,0,0,0)",
+        bottomFillColor2: "rgba(0,0,0,0)",
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      const tradeLossZone = chart.addBaselineSeries({
+        baseValue: { type: "price", price: 0 },
+        topLineColor: "rgba(0,0,0,0)",
+        topFillColor1: "rgba(0,0,0,0)",
+        topFillColor2: "rgba(0,0,0,0)",
+        bottomLineColor: "rgba(0,0,0,0)",
+        bottomFillColor1: "rgba(240, 69, 90, 0.24)",
+        bottomFillColor2: "rgba(240, 69, 90, 0.07)",
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
 
-    const settleResize = () => {
-      queueResizeFromContainer();
+      const onCrosshairMove = (param: MouseEventParams<Time>) => {
+        if (!param.point || !param.time) {
+          setHoveredTime(null);
+          return;
+        }
+
+        setHoveredTime(parseTimeFromCrosshair(param.time));
+      };
+
+      chart.subscribeCrosshairMove(onCrosshairMove);
+      let resizeRaf = 0;
+
+      const applyChartSize = (rawWidth: number, rawHeight: number, force = false) => {
+        if (!Number.isFinite(rawWidth) || !Number.isFinite(rawHeight)) {
+          return;
+        }
+
+        const width = Math.max(1, Math.floor(rawWidth));
+        const height = Math.max(1, Math.floor(rawHeight));
+
+        if (
+          !force &&
+          chartSizeRef.current.width === width &&
+          chartSizeRef.current.height === height
+        ) {
+          return;
+        }
+
+        chartSizeRef.current = { width, height };
+        chart.applyOptions({ width, height });
+      };
+
+      const queueResizeFromContainer = () => {
+        if (selectedSurfaceTabRef.current !== "chart") {
+          return;
+        }
+
+        const rawWidth = container.clientWidth;
+        const rawHeight = container.clientHeight;
+
+        if (rawWidth <= 0 || rawHeight <= 0) {
+          return;
+        }
+
+        if (resizeRaf) {
+          window.cancelAnimationFrame(resizeRaf);
+        }
+
+        resizeRaf = window.requestAnimationFrame(() => {
+          resizeRaf = 0;
+          applyChartSize(rawWidth, rawHeight);
+        });
+      };
+
+      const resizeObserver = new ResizeObserver((entries) => {
+        const entry = entries[0];
+
+        if (!entry) {
+          return;
+        }
+
+        if (selectedSurfaceTabRef.current !== "chart") {
+          return;
+        }
+
+        const width = entry.contentRect.width;
+        const height = entry.contentRect.height;
+
+        if (width <= 0 || height <= 0) {
+          return;
+        }
+
+        if (resizeRaf) {
+          window.cancelAnimationFrame(resizeRaf);
+        }
+
+        resizeRaf = window.requestAnimationFrame(() => {
+          resizeRaf = 0;
+          applyChartSize(width, height);
+        });
+      });
+
+      resizeObserver.observe(container);
+      window.addEventListener("resize", queueResizeFromContainer);
+      document.addEventListener("fullscreenchange", queueResizeFromContainer);
+
+      const settleResize = () => {
+        queueResizeFromContainer();
+      };
+      const resizeFrameA = window.requestAnimationFrame(settleResize);
+      const resizeFrameB = window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(settleResize);
+      });
+
+      chartRef.current = chart;
+      candleSeriesRef.current = candleSeries;
+      tradeProfitZoneRef.current = tradeProfitZone;
+      tradeLossZoneRef.current = tradeLossZone;
+      tradeEntryLineRef.current = tradeEntryLine;
+      tradeTargetLineRef.current = tradeTargetLine;
+      tradeStopLineRef.current = tradeStopLine;
+      tradePathLineRef.current = tradePathLine;
+
+      teardown = () => {
+        window.cancelAnimationFrame(resizeFrameA);
+        window.cancelAnimationFrame(resizeFrameB);
+        if (resizeRaf) {
+          window.cancelAnimationFrame(resizeRaf);
+        }
+        window.removeEventListener("resize", queueResizeFromContainer);
+        document.removeEventListener("fullscreenchange", queueResizeFromContainer);
+        resizeObserver.disconnect();
+        chart.unsubscribeCrosshairMove(onCrosshairMove);
+        chart.remove();
+        chartRef.current = null;
+        candleSeriesRef.current = null;
+        tradeProfitZoneRef.current = null;
+        tradeLossZoneRef.current = null;
+        tradeEntryLineRef.current = null;
+        tradeTargetLineRef.current = null;
+        tradeStopLineRef.current = null;
+        tradePathLineRef.current = null;
+        chartSizeRef.current = { width: 0, height: 0 };
+        multiTradeSeriesRef.current = [];
+        chartDataLengthRef.current = 0;
+        chartSyncedLastTimeRef.current = null;
+      };
+
+      if (disposed) {
+        teardown();
+        teardown = undefined;
+      }
     };
-    const resizeFrameA = window.requestAnimationFrame(settleResize);
-    const resizeFrameB = window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(settleResize);
-    });
 
-    chartRef.current = chart;
-    candleSeriesRef.current = candleSeries;
-    tradeProfitZoneRef.current = tradeProfitZone;
-    tradeLossZoneRef.current = tradeLossZone;
-    tradeEntryLineRef.current = tradeEntryLine;
-    tradeTargetLineRef.current = tradeTargetLine;
-    tradeStopLineRef.current = tradeStopLine;
-    tradePathLineRef.current = tradePathLine;
+    void initializeChart();
 
     return () => {
-      window.cancelAnimationFrame(resizeFrameA);
-      window.cancelAnimationFrame(resizeFrameB);
-      if (resizeRaf) {
-        window.cancelAnimationFrame(resizeRaf);
-      }
-      window.removeEventListener("resize", queueResizeFromContainer);
-      document.removeEventListener("fullscreenchange", queueResizeFromContainer);
-      resizeObserver.disconnect();
-      chart.unsubscribeCrosshairMove(onCrosshairMove);
-      chart.remove();
-      chartRef.current = null;
-      candleSeriesRef.current = null;
-      tradeProfitZoneRef.current = null;
-      tradeLossZoneRef.current = null;
-      tradeEntryLineRef.current = null;
-      tradeTargetLineRef.current = null;
-      tradeStopLineRef.current = null;
-      tradePathLineRef.current = null;
-      chartSizeRef.current = { width: 0, height: 0 };
-      multiTradeSeriesRef.current = [];
-      chartDataLengthRef.current = 0;
-      chartSyncedLastTimeRef.current = null;
+      disposed = true;
+      teardown?.();
     };
   }, []);
 
@@ -5666,7 +5725,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const chart = chartRef.current;
     const container = chartContainerRef.current;
 
-    if (!chart || !container || selectedSurfaceTab !== "chart") {
+    if (!chart) {
+      return;
+    }
+
+    if (selectedSurfaceTab !== "chart") {
+      if (chartSizeRef.current.width !== 1 || chartSizeRef.current.height !== 1) {
+        chartSizeRef.current = { width: 1, height: 1 };
+        chart.applyOptions({ width: 1, height: 1 });
+      }
+      return;
+    }
+
+    if (!container) {
       return;
     }
 
@@ -5803,7 +5874,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const entryLine = chart.addLineSeries({
         color: "rgba(232, 238, 250, 0.62)",
         lineWidth: 1,
-        lineStyle: LineStyle.Solid,
+        lineStyle: LIGHTWEIGHT_CHART_LINE_SOLID,
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false
@@ -5811,7 +5882,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const targetLine = chart.addLineSeries({
         color: "rgba(53, 201, 113, 0.7)",
         lineWidth: 1,
-        lineStyle: LineStyle.Solid,
+        lineStyle: LIGHTWEIGHT_CHART_LINE_SOLID,
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false
@@ -5819,7 +5890,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const stopLine = chart.addLineSeries({
         color: "rgba(255, 76, 104, 0.7)",
         lineWidth: 1,
-        lineStyle: LineStyle.Solid,
+        lineStyle: LIGHTWEIGHT_CHART_LINE_SOLID,
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false
@@ -5827,7 +5898,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const pathLine = chart.addLineSeries({
         color: "rgba(220, 230, 248, 0.64)",
         lineWidth: 1,
-        lineStyle: LineStyle.Dotted,
+        lineStyle: LIGHTWEIGHT_CHART_LINE_DOTTED,
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false
@@ -9379,10 +9450,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           </section>
         </div>
 
-        <section
-          className={`backtest-surface ${selectedSurfaceTab === "backtest" ? "" : "hidden"}`}
-          aria-label="backtest workspace"
-        >
+        {selectedSurfaceTab === "backtest" ? (
+          <section className="backtest-surface" aria-label="backtest workspace">
           <div className="backtest-shell">
             <section className="backtest-hero">
               <div className="backtest-hero-copy">
@@ -11757,7 +11826,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 }}
                                 axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
                                 tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
-                                tickFormatter={(value) => formatChartUsd(Number(value)).replace("$", "")}
+                                tickFormatter={(value: number) =>
+                                  formatChartUsd(Number(value)).replace("$", "")
+                                }
                               />
                               <ReferenceLine
                                 y={0}
@@ -12760,7 +12831,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             );
                           })}
                           <Tooltip
-                            content={({ active, payload }) => {
+                            content={({ active, payload }: RechartsTooltipRenderProps) => {
                               if (!active || !payload || payload.length === 0) return null;
                               const isMonteCarlo = propProjectionMethod === "montecarlo";
                               const wrapperStyle: CSSProperties = {
@@ -12818,7 +12889,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ) : null}
             </section>
           </div>
-        </section>
+          </section>
+        ) : null}
       </section>
 
       {statsRefreshOverlayVisible ? (
