@@ -85,7 +85,6 @@ type BacktestTab =
   | "entryExit"
   | "dimensions"
   | "propFirm";
-type EntryExitChartMode = "Entry" | "Exit";
 type PerformanceStatsRange = "Years" | "Months" | "Days of the Week" | "Hours";
 type PanelTab = "active" | "assets" | "mt5" | "history" | "actions" | "ai";
 type MainStatisticsCard = {
@@ -4306,8 +4305,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [propDailyMaxLoss, setPropDailyMaxLoss] = useState(5_000);
   const [propTotalMaxLoss, setPropTotalMaxLoss] = useState(10_000);
   const [propProfitTarget, setPropProfitTarget] = useState(10_000);
-  const [entryExitChartMode, setEntryExitChartMode] = useState<EntryExitChartMode>("Entry");
-  const [hoveredEntryExitBucket, setHoveredEntryExitBucket] = useState<string | null>(null);
   const [dimSearch, setDimSearch] = useState("");
   const [dimScope, setDimScope] = useState<DimensionScope>("active");
   const [dimSortCol, setDimSortCol] = useState<DimensionSortColumn>("corr");
@@ -9468,28 +9465,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [deferredBacktestAnalyticsTrades, isEntryExitBacktestTabActive]);
 
   const entryExitChartData = useMemo(() => {
-    const source = entryExitChartMode === "Entry" ? entryExitStats.entry : entryExitStats.exit;
-
-    return source.map(([bucket, count]) => ({
-      bucket,
-      count
-    }));
-  }, [entryExitChartMode, entryExitStats]);
-
-  const hoveredEntryExitRow = useMemo(() => {
-    if (!hoveredEntryExitBucket) {
-      return null;
-    }
-
-    return entryExitChartData.find((row) => row.bucket === hoveredEntryExitBucket) ?? null;
-  }, [entryExitChartData, hoveredEntryExitBucket]);
-
-  const entryExitChartMetrics = useMemo(() => {
-    return {
-      total: entryExitChartData.reduce((sum, row) => sum + row.count, 0),
-      maxCount: Math.max(1, ...entryExitChartData.map((row) => row.count))
+    const toRows = (source: Array<[string, number]>) => {
+      const total = source.reduce((sum, [, count]) => sum + count, 0);
+      return source.map(([bucket, count]) => ({
+        bucket,
+        count,
+        share: total > 0 ? (count / total) * 100 : 0
+      }));
     };
-  }, [entryExitChartData]);
+
+    return {
+      entry: toRows(entryExitStats.entry),
+      exit: toRows(entryExitStats.exit)
+    };
+  }, [entryExitStats]);
 
   const runPropFirm = () => {
     if (backtestTrades.length === 0) {
@@ -12917,7 +12906,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
                       <div
                         style={{
-                          height: 290,
+                          height: 380,
                           borderRadius: 18,
                           border: "1px solid rgba(255,255,255,0.10)",
                           background:
@@ -13086,229 +13075,182 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ) : null}
 
               {selectedBacktestTab === "entryExit" ? (
-                <div className="backtest-card">
-                  <div className="backtest-card-head">
-                    <div>
-                      <h3>Entry / Exit Stats</h3>
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 8,
-                      alignItems: "center",
-                      marginBottom: 10,
-                      flexWrap: "wrap"
-                    }}
-                  >
-                    <div
+                <div
+                  style={{
+                    marginTop: 14,
+                    background: "#0b0b0b",
+                    borderRadius: 16,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    boxShadow: "0 18px 45px rgba(0,0,0,0.75)",
+                    padding: 16
+                  }}
+                >
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <h2
                       style={{
-                        fontSize: 11,
-                        fontWeight: 900,
-                        opacity: 0.8,
-                        letterSpacing: "0.04em"
+                        margin: 0,
+                        fontSize: "1.125rem",
+                        fontWeight: 600,
+                        color: "rgba(245,245,245,0.98)"
                       }}
                     >
-                      Mode
-                    </div>
-                    <select
-                      value={entryExitChartMode}
-                      onChange={(event) => {
-                        setEntryExitChartMode(event.target.value as EntryExitChartMode);
-                        setHoveredEntryExitBucket(null);
-                      }}
-                      style={{
-                        height: 34,
-                        padding: "0 10px",
-                        borderRadius: 12,
-                        border: "1px solid rgba(255,255,255,0.14)",
-                        background: "rgba(255,255,255,0.04)",
-                        color: "rgba(255,255,255,0.92)",
-                        fontWeight: 900,
-                        cursor: "pointer",
-                        outline: "none",
-                        appearance: "none",
-                        minWidth: 140
-                      }}
-                    >
-                      <option value="Entry">Entry</option>
-                      <option value="Exit">Exit</option>
-                    </select>
-                    <div style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>
-                      Hover bars for count &amp; share
-                    </div>
+                      Entry / Exit Stats
+                    </h2>
                   </div>
 
-                  <div
-                    onMouseLeave={() => setHoveredEntryExitBucket(null)}
-                    style={{
-                      position: "relative",
-                      height: 260,
-                      borderRadius: 18,
-                      border: "1px solid rgba(255,255,255,0.10)",
-                      background:
-                        "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.15))",
-                      padding: 12
-                    }}
-                  >
-                    {hoveredEntryExitRow ? (
-                      <div
-                        style={{
-                          position: "absolute",
-                          top: 12,
-                          left: 12,
-                          zIndex: 1,
-                          background: "rgba(255,255,255,0.96)",
-                          border: "1px solid rgba(15,23,42,0.12)",
-                          borderRadius: 12,
-                          padding: "8px 10px",
-                          boxShadow: "0 10px 30px rgba(0,0,0,0.28)",
-                          color: "rgba(15,23,42,0.95)",
-                          fontSize: 12,
-                          minWidth: 160
-                        }}
-                      >
-                        <div style={{ fontWeight: 900, marginBottom: 6 }}>{hoveredEntryExitRow.bucket}</div>
+                  <div style={{ marginTop: 12, display: "grid", gap: 16 }}>
+                    {([
+                      { key: "entry", label: "Entry", data: entryExitChartData.entry },
+                      { key: "exit", label: "Exit", data: entryExitChartData.exit }
+                    ] as const).map((chart) => (
+                      <div key={chart.key} style={{ display: "grid", gap: 8 }}>
                         <div
                           style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            gap: 12
+                            fontSize: 11,
+                            fontWeight: 900,
+                            opacity: 0.82,
+                            letterSpacing: "0.06em",
+                            textTransform: "uppercase"
                           }}
                         >
-                          <span style={{ opacity: 0.7 }}>Count</span>
-                          <span style={{ fontWeight: 900, color: "rgba(15,23,42,0.92)" }}>
-                            {hoveredEntryExitRow.count}
-                          </span>
+                          {chart.label}
                         </div>
                         <div
                           style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            gap: 12,
-                            marginTop: 4
+                            height: 340,
+                            borderRadius: 18,
+                            border: "1px solid rgba(255,255,255,0.10)",
+                            background:
+                              "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.15))",
+                            padding: 12
                           }}
                         >
-                          <span style={{ opacity: 0.7 }}>Share</span>
-                          <span style={{ fontWeight: 900, color: "rgba(15,23,42,0.92)" }}>
-                            {entryExitChartMetrics.total > 0
-                              ? ((hoveredEntryExitRow.count / entryExitChartMetrics.total) * 100).toFixed(1)
-                              : "0.0"}
-                            %
-                          </span>
-                        </div>
-                      </div>
-                    ) : null}
+                          {chart.data.length === 0 ? (
+                            <div
+                              style={{
+                                height: "100%",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: 12,
+                                opacity: 0.75
+                              }}
+                            >
+                              No trades in the selected range.
+                            </div>
+                          ) : (
+                            <div style={{ width: "100%", height: "100%", overflowX: "auto" }}>
+                              <div style={{ minWidth: `${Math.max(chart.data.length * 88, 420)}px`, height: "100%" }}>
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <BarChart data={chart.data} margin={{ top: 8, right: 10, left: 0, bottom: 6 }}>
+                                    <XAxis
+                                      dataKey="bucket"
+                                      tick={{
+                                        fontSize: 11,
+                                        fill: "rgba(255,255,255,0.70)"
+                                      }}
+                                      axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                      tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                    />
+                                    <YAxis
+                                      allowDecimals={false}
+                                      tick={{
+                                        fontSize: 11,
+                                        fill: "rgba(255,255,255,0.70)"
+                                      }}
+                                      axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                      tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                    />
+                                    <Tooltip
+                                      content={(props: any) => {
+                                        const { active, payload, label } = props;
 
-                    {entryExitChartData.length === 0 ? (
-                      <div
-                        style={{
-                          height: "100%",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: 12,
-                          opacity: 0.75
-                        }}
-                      >
-                        No trades in the selected range.
-                      </div>
-                    ) : (
-                      <div
-                        style={{
-                          height: "100%",
-                          overflowX: "auto",
-                          paddingTop: hoveredEntryExitRow ? 58 : 20
-                        }}
-                      >
-                        <div
-                          style={{
-                            minWidth: `${Math.max(entryExitChartData.length * 88, 320)}px`,
-                            height: "100%",
-                            display: "flex",
-                            alignItems: "flex-end",
-                            gap: 10,
-                            padding: "0 4px"
-                          }}
-                        >
-                          {entryExitChartData.map((row) => {
-                            const share =
-                              entryExitChartMetrics.total > 0
-                                ? (row.count / entryExitChartMetrics.total) * 100
-                                : 0;
-                            const isActive = hoveredEntryExitBucket === row.bucket;
+                                        if (!active || !Array.isArray(payload) || payload.length === 0) {
+                                          return null;
+                                        }
 
-                            return (
-                              <button
-                                key={row.bucket}
-                                type="button"
-                                onMouseEnter={() => setHoveredEntryExitBucket(row.bucket)}
-                                onFocus={() => setHoveredEntryExitBucket(row.bucket)}
-                                onBlur={() => {
-                                  setHoveredEntryExitBucket((current) =>
-                                    current === row.bucket ? null : current
-                                  );
-                                }}
-                                title={`${row.bucket}: ${row.count} trades (${share.toFixed(1)}%)`}
-                                style={{
-                                  flex: "1 0 0",
-                                  minWidth: 46,
-                                  height: "100%",
-                                  border: "none",
-                                  background: "transparent",
-                                  padding: 0,
-                                  cursor: "pointer",
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  justifyContent: "flex-end",
-                                  alignItems: "stretch"
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    flex: 1,
-                                    display: "flex",
-                                    alignItems: "flex-end"
-                                  }}
-                                >
-                                  <div
-                                    style={{
-                                      width: "100%",
-                                      minHeight: 6,
-                                      height: `${Math.max(
-                                        6,
-                                        (row.count / entryExitChartMetrics.maxCount) * 100
-                                      )}%`,
-                                      borderRadius: "10px 10px 0 0",
-                                      background: getEntryExitBarFill(row.bucket),
-                                      opacity: isActive ? 1 : 0.88,
-                                      boxShadow: isActive
-                                        ? `0 0 0 2px ${getEntryExitBarFill(row.bucket)}`
-                                        : "none",
-                                      transition: "opacity 120ms ease, box-shadow 120ms ease"
-                                    }}
-                                  />
-                                </div>
-                                <div
-                                  style={{
-                                    marginTop: 8,
-                                    fontSize: 11,
-                                    lineHeight: 1.2,
-                                    fontWeight: 700,
-                                    color: "rgba(255,255,255,0.78)",
-                                    textAlign: "center",
-                                    wordBreak: "break-word"
-                                  }}
-                                >
-                                  {row.bucket}
-                                </div>
-                              </button>
-                            );
-                          })}
+                                        const count = Number(payload[0]?.value ?? 0);
+                                        const share = Number(payload[0]?.payload?.share ?? 0);
+                                        return (
+                                          <div
+                                            style={{
+                                              background: "rgba(255,255,255,0.96)",
+                                              border: "1px solid rgba(15,23,42,0.12)",
+                                              borderRadius: 12,
+                                              padding: "8px 10px",
+                                              boxShadow: "0 10px 30px rgba(0,0,0,0.28)",
+                                              color: "rgba(15,23,42,0.95)",
+                                              fontSize: 12,
+                                              minWidth: 160
+                                            }}
+                                          >
+                                            <div style={{ fontWeight: 900, marginBottom: 6 }}>
+                                              {String(label ?? "")}
+                                            </div>
+                                            <div
+                                              style={{
+                                                display: "flex",
+                                                justifyContent: "space-between",
+                                                gap: 12
+                                              }}
+                                            >
+                                              <span style={{ opacity: 0.7 }}>Count</span>
+                                              <span style={{ fontWeight: 900, color: "rgba(15,23,42,0.92)" }}>
+                                                {count}
+                                              </span>
+                                            </div>
+                                            <div
+                                              style={{
+                                                display: "flex",
+                                                justifyContent: "space-between",
+                                                gap: 12,
+                                                marginTop: 4
+                                              }}
+                                            >
+                                              <span style={{ opacity: 0.7 }}>Share</span>
+                                              <span style={{ fontWeight: 900, color: "rgba(15,23,42,0.92)" }}>
+                                                {share.toFixed(1)}%
+                                              </span>
+                                            </div>
+                                          </div>
+                                        );
+                                      }}
+                                    />
+                                    <Bar
+                                      dataKey="count"
+                                      radius={0}
+                                      isAnimationActive={false}
+                                      shape={(props: any) => {
+                                        const { x, y, width, height, payload } = props;
+                                        const resolvedWidth = Number(width);
+                                        const resolvedHeight = Number(height);
+
+                                        if (
+                                          !Number.isFinite(resolvedWidth) ||
+                                          !Number.isFinite(resolvedHeight)
+                                        ) {
+                                          return null;
+                                        }
+
+                                        return (
+                                          <rect
+                                            x={x}
+                                            y={y}
+                                            width={Math.max(0, resolvedWidth)}
+                                            height={Math.max(0, resolvedHeight)}
+                                            fill={getEntryExitBarFill(String(payload?.bucket ?? ""))}
+                                          />
+                                        );
+                                      }}
+                                    />
+                                  </BarChart>
+                                </ResponsiveContainer>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
-                    )}
+                    ))}
                   </div>
                 </div>
               ) : null}

@@ -134,7 +134,7 @@ const resolveTradePnlSnapshot = (trade, dollarsPerMove, candles, tpDist, slDist)
     entryCandle?.close
   );
 
-  const takeProfitPrice = pickTradeNum(
+  let takeProfitPrice = pickTradeNum(
     (safeTrade as any).tpPrice,
     (safeTrade as any).tp,
     (safeTrade as any).takeProfitPrice,
@@ -143,7 +143,7 @@ const resolveTradePnlSnapshot = (trade, dollarsPerMove, candles, tpDist, slDist)
       ? entryPrice + dir * Math.abs(tradeNum(tpDist))
       : null
   );
-  const stopLossPrice = pickTradeNum(
+  let stopLossPrice = pickTradeNum(
     (safeTrade as any).slPrice,
     (safeTrade as any).sl,
     (safeTrade as any).stopLossPrice,
@@ -192,6 +192,12 @@ const resolveTradePnlSnapshot = (trade, dollarsPerMove, candles, tpDist, slDist)
         ? stopLossPrice
         : explicitExitPrice;
 
+  // Keep TP/SL visuals aligned with the exact executed exit pricing path.
+  if (!(safeTrade as any).isOpen && exitPrice != null) {
+    if (isTpExitReason(exitReason)) takeProfitPrice = exitPrice;
+    if (isStopExitReason(exitReason)) stopLossPrice = exitPrice;
+  }
+
   const storedPnl = pickTradeNum(
     (safeTrade as any).isOpen ? (safeTrade as any).unrealizedPnl : null,
     (safeTrade as any).pnl,
@@ -209,6 +215,8 @@ const resolveTradePnlSnapshot = (trade, dollarsPerMove, candles, tpDist, slDist)
 
   return {
     dir,
+    entryIndex,
+    exitIndex,
     entryPrice,
     exitPrice,
     tpPrice: takeProfitPrice,
@@ -310,28 +318,8 @@ function TradeDetailsModalImpl({
   const isWin = Number.isFinite(pnl) ? pnl >= 0 : false;
   const accent = isWin ? "rgba(52,211,153,0.95)" : "rgba(248,113,113,0.95)";
 
-  let tpPrice = num(
-    (trade as any).tpPrice ??
-      (trade as any).tp ??
-      (trade as any).takeProfitPrice
-  );
-  let slPrice = num(
-    (trade as any).slPrice ?? (trade as any).sl ?? (trade as any).stopLossPrice
-  );
-  if (
-    !Number.isFinite(tpPrice) &&
-    Number.isFinite(entryPrice) &&
-    Number.isFinite(tpDist)
-  ) {
-    tpPrice = entryPrice + dir * Number(tpDist);
-  }
-  if (
-    !Number.isFinite(slPrice) &&
-    Number.isFinite(entryPrice) &&
-    Number.isFinite(slDist)
-  ) {
-    slPrice = entryPrice - dir * Number(slDist);
-  }
+  const tpPrice = pnlSnapshot.tpPrice;
+  const slPrice = pnlSnapshot.slPrice;
 
   const durationMin = useMemo(() => {
     const nowT = (trade as any).isOpen ? Date.now() : null;
@@ -899,21 +887,11 @@ function TradeCandlestickChartSVG({
   const baseData = Array.isArray(candles) ? candles : [];
   const N = baseData.length;
 
-  // Trade direction (best-effort)
-  const dirRaw =
-    (trade as any)?.dir ??
-    (trade as any)?.direction ??
-    (trade as any)?.sideNum ??
-    (trade as any)?.side ??
-    (trade as any)?.sideText ??
-    (trade as any)?.longShort ??
-    (trade as any)?.positionSide;
-  const dirNum = num(dirRaw);
-  const dirStr = typeof dirRaw === "string" ? dirRaw.toLowerCase() : "";
-  const isLong =
-    dirNum != null
-      ? dirNum > 0
-      : dirStr.includes("long") || dirStr.includes("buy");
+  const priceSnapshot = React.useMemo(
+    () => resolveTradePnlSnapshot(trade, 1, baseData, tpDist, slDist),
+    [trade, baseData, tpDist, slDist]
+  );
+  const isLong = priceSnapshot.dir !== -1;
   const entrySide = isLong ? "Buy" : "Sell";
   const exitSide = isLong ? "Sell" : "Buy";
 
@@ -991,12 +969,23 @@ function TradeCandlestickChartSVG({
     exitIdxDirect ?? (exitT != null ? findNearestIdxByTime(exitT) : null);
 
   // Prices
-  const entryPrice = num(
-    (trade as any)?.entryPrice ??
-      (trade as any)?.entry ??
-      (trade as any)?.openPrice
-  );
+  const entryPrice =
+    priceSnapshot.entryPrice ??
+    num(
+      (trade as any)?.entryPrice ??
+        (trade as any)?.entry ??
+        (trade as any)?.openPrice
+    ) ??
+    (entryIdx != null
+      ? num(
+          baseData[entryIdx]?.o ??
+            baseData[entryIdx]?.open ??
+            baseData[entryIdx]?.c ??
+            baseData[entryIdx]?.close
+        )
+      : null);
   const exitPrice =
+    priceSnapshot.exitPrice ??
     num(
       (trade as any)?.exitPrice ??
         (trade as any)?.exit ??
@@ -1007,23 +996,8 @@ function TradeCandlestickChartSVG({
       ? num(baseData[exitIdx]?.c ?? baseData[exitIdx]?.close)
       : null);
 
-  // TP/SL levels (best-effort)
-  const tp =
-    num(
-      (trade as any)?.tp ??
-        (trade as any)?.takeProfit ??
-        (trade as any)?.tpPrice
-    ) ??
-    (entryPrice != null && tpDist != null
-      ? entryPrice + (isLong ? tpDist : -tpDist)
-      : null);
-  const sl =
-    num(
-      (trade as any)?.sl ?? (trade as any)?.stopLoss ?? (trade as any)?.slPrice
-    ) ??
-    (entryPrice != null && slDist != null
-      ? entryPrice - (isLong ? slDist : -slDist)
-      : null);
+  const tp = priceSnapshot.tpPrice;
+  const sl = priceSnapshot.slPrice;
 
   // Initial window: tradeLen*3, but allow zoom out to full history
   const tradeLenRaw =
@@ -1845,25 +1819,17 @@ function TradeCandlestickChartLightweight({
     return out;
   }, [baseData, N, hasTimes, entryTimeSec, entryIdx, intervalSec]);
 
-  const dirRaw =
-    (trade as any)?.dir ??
-    (trade as any)?.direction ??
-    (trade as any)?.sideNum ??
-    (trade as any)?.side ??
-    (trade as any)?.sideText ??
-    (trade as any)?.longShort ??
-    (trade as any)?.positionSide;
-  const dirNum = num(dirRaw);
-  const dirStr = typeof dirRaw === "string" ? dirRaw.toLowerCase() : "";
-  const isLong =
-    dirNum != null
-      ? dirNum > 0
-      : dirStr.includes("long") || dirStr.includes("buy");
+  const priceSnapshot = React.useMemo(
+    () => resolveTradePnlSnapshot(trade, 1, baseData, tpDist, slDist),
+    [trade, baseData, tpDist, slDist]
+  );
+  const isLong = priceSnapshot.dir !== -1;
 
   const entrySide = isLong ? "Buy" : "Sell";
   const exitSide = isLong ? "Sell" : "Buy";
 
   const entryPrice =
+    priceSnapshot.entryPrice ??
     num(
       (trade as any)?.entryPrice ??
         (trade as any)?.entry ??
@@ -1874,6 +1840,7 @@ function TradeCandlestickChartLightweight({
       : null);
 
   const exitPrice =
+    priceSnapshot.exitPrice ??
     num(
       (trade as any)?.exitPrice ??
         (trade as any)?.exit ??
@@ -1883,22 +1850,8 @@ function TradeCandlestickChartLightweight({
       ? num(data[Math.min(exitIdx, data.length - 1)].close)
       : null);
 
-  const tp =
-    num(
-      (trade as any)?.tp ??
-        (trade as any)?.takeProfit ??
-        (trade as any)?.tpPrice
-    ) ??
-    (entryPrice != null && tpDist != null
-      ? entryPrice + (isLong ? tpDist : -tpDist)
-      : null);
-  const sl =
-    num(
-      (trade as any)?.sl ?? (trade as any)?.stopLoss ?? (trade as any)?.slPrice
-    ) ??
-    (entryPrice != null && slDist != null
-      ? entryPrice - (isLong ? slDist : -slDist)
-      : null);
+  const tp = priceSnapshot.tpPrice;
+  const sl = priceSnapshot.slPrice;
 
   const tradeLenRaw =
     num(
@@ -2542,28 +2495,12 @@ function TradeMiniChart({
     return Number.isFinite(n) ? n : null;
   };
 
-  // side normalization for the mini chart
-  const side = (() => {
-    const s =
-      (trade as any).side ??
-      (trade as any).Side ??
-      (trade as any).dirText ??
-      (trade as any).directionText;
-    if (typeof s === "string") {
-      const up = s.toUpperCase();
-      if (up.includes("BUY") || up === "LONG") return "BUY";
-      if (up.includes("SELL") || up === "SHORT") return "SELL";
-    }
-    const dirRaw =
-      (trade as any).dir ??
-      (trade as any).direction ??
-      (trade as any).sideNum ??
-      (trade as any).side;
-    const d = Number(dirRaw);
-    return d === -1 ? "SELL" : "BUY";
-  })() as "BUY" | "SELL";
-
-  const dir = side === "BUY" ? 1 : -1;
+  const snapshot = useMemo(
+    () => resolveTradePnlSnapshot(trade, dollarsPerMove, candles, tpDist, slDist),
+    [trade, dollarsPerMove, candles, tpDist, slDist]
+  );
+  const dir = snapshot.dir === -1 ? -1 : 1;
+  const side = (dir === 1 ? "BUY" : "SELL") as "BUY" | "SELL";
 
   const entryIdx =
     (trade as any).entryIdx ??
@@ -2599,6 +2536,7 @@ function TradeMiniChart({
   const exitC = candles?.[exitIndex];
 
   const entryPrice =
+    snapshot.entryPrice ??
     num((trade as any).entryPrice) ??
     num((trade as any).openPrice) ??
     num(entryC?.open) ??
@@ -2613,6 +2551,7 @@ function TradeMiniChart({
       (trade as any).netPnl
   );
   const exitPrice =
+    snapshot.exitPrice ??
     num((trade as any).exitPrice) ??
     num((trade as any).closePrice) ??
     num(exitC?.close) ??
@@ -2621,19 +2560,8 @@ function TradeMiniChart({
       : null) ??
     entryPrice;
 
-  const tpPrice =
-    num((trade as any).tpPrice) ??
-    num((trade as any).takeProfit) ??
-    (tpDist != null && Number.isFinite(Number(tpDist))
-      ? entryPrice + dir * Number(tpDist)
-      : null);
-
-  const slPrice =
-    num((trade as any).slPrice) ??
-    num((trade as any).stopLoss) ??
-    (slDist != null && Number.isFinite(Number(slDist))
-      ? entryPrice - dir * Number(slDist)
-      : null);
+  const tpPrice = snapshot.tpPrice;
+  const slPrice = snapshot.slPrice;
 
   // Build line-series data (minutes since entry). First point is a pre-bar at bar=-1.
   const data = useMemo(() => {
@@ -27498,6 +27426,13 @@ export default function App() {
     };
   }, []);
   const openTrade = useMemo(() => uiTrades.find((t) => t.isOpen), [uiTrades]);
+  const openTradeSnapshot = useMemo(
+    () =>
+      openTrade
+        ? resolveTradePnlSnapshot(openTrade, dollarsPerMove, candles, tpDist, slDist)
+        : null,
+    [openTrade, dollarsPerMove, candles, tpDist, slDist]
+  );
   const openTradeKey = useMemo(() => {
     if (!openTrade) return "";
     return String(
@@ -31423,8 +31358,8 @@ export default function App() {
                     <Row
                       k="Entry"
                       v={
-                        openTrade?.entryPrice != null
-                          ? formatNumber(openTrade.entryPrice, 2)
+                        openTradeSnapshot?.entryPrice != null
+                          ? formatNumber(openTradeSnapshot.entryPrice, 2)
                           : "—"
                       }
                       tone={
@@ -31443,8 +31378,8 @@ export default function App() {
                     <Row
                       k="Take Profit"
                       v={
-                        isActive && openTrade?.tpPrice != null
-                          ? formatNumber(openTrade.tpPrice, 2)
+                        isActive && openTradeSnapshot?.tpPrice != null
+                          ? formatNumber(openTradeSnapshot.tpPrice, 2)
                           : "—"
                       }
                       tone="green"
@@ -31452,8 +31387,8 @@ export default function App() {
                     <Row
                       k="Stop Loss"
                       v={
-                        isActive && openTrade?.slPrice != null
-                          ? formatNumber(openTrade.slPrice, 2)
+                        isActive && openTradeSnapshot?.slPrice != null
+                          ? formatNumber(openTradeSnapshot.slPrice, 2)
                           : "—"
                       }
                       tone="red"
@@ -31464,11 +31399,11 @@ export default function App() {
                       v={
                         isActive &&
                         lastPrice != null &&
-                        openTrade?.tpPrice != null &&
+                        openTradeSnapshot?.tpPrice != null &&
                         dollarsPerMove != null
                           ? fmtUSD(
-                              (openTrade.tpPrice - lastPrice) *
-                                (openTrade.direction === 1 ? 1 : -1) *
+                              (openTradeSnapshot.tpPrice - lastPrice) *
+                                (openTradeSnapshot.dir === 1 ? 1 : -1) *
                                 dollarsPerMove
                             )
                           : "—"
@@ -31480,11 +31415,11 @@ export default function App() {
                       v={
                         isActive &&
                         lastPrice != null &&
-                        openTrade?.slPrice != null &&
+                        openTradeSnapshot?.slPrice != null &&
                         dollarsPerMove != null
                           ? fmtUSD(
-                              (lastPrice - openTrade.slPrice) *
-                                (openTrade.direction === 1 ? 1 : -1) *
+                              (lastPrice - openTradeSnapshot.slPrice) *
+                                (openTradeSnapshot.dir === 1 ? 1 : -1) *
                                 dollarsPerMove
                             )
                           : "—"
@@ -37687,6 +37622,17 @@ export default function App() {
                       const pnlVal = t.isOpen
                         ? t.unrealizedPnl ?? 0
                         : t.pnl ?? 0;
+                      const tradeSnapshot = resolveTradePnlSnapshot(
+                        t,
+                        dollarsPerMove,
+                        candles,
+                        tpDist,
+                        slDist
+                      );
+                      const entryPriceView = tradeSnapshot.entryPrice;
+                      const exitPriceView = tradeSnapshot.exitPrice;
+                      const tpPriceView = tradeSnapshot.tpPrice;
+                      const slPriceView = tradeSnapshot.slPrice;
                       return (
                         <div
                           key={k}
@@ -37719,7 +37665,10 @@ export default function App() {
                                 </span>{" "}
                                 {formatDateTime(t.entryTime, parseMode)}{" "}
                                 <span className="text-neutral-500">
-                                  @ {t.entryPrice?.toFixed?.(2)}
+                                  @{" "}
+                                  {Number.isFinite(Number(entryPriceView))
+                                    ? Number(entryPriceView).toFixed(2)
+                                    : "-"}
                                 </span>
                               </div>
                               <div className="hidden md:block text-neutral-400">
@@ -37733,8 +37682,8 @@ export default function App() {
                                   : "-"}{" "}
                                 <span className="text-neutral-500">
                                   @{" "}
-                                  {t.exitPrice != null
-                                    ? t.exitPrice.toFixed?.(2)
+                                  {exitPriceView != null
+                                    ? Number(exitPriceView).toFixed(2)
                                     : "-"}
                                 </span>
                               </div>
@@ -37789,24 +37738,9 @@ export default function App() {
                                       TP Price
                                     </div>
                                     <div className="text-base font-semibold text-neutral-200">
-                                      {(() => {
-                                        const ep = Number(
-                                          (t as any).entryPrice
-                                        );
-                                        const dirS =
-                                          (t as any).direction === 1 ? 1 : -1;
-                                        const raw = Number((t as any).tpPrice);
-                                        const v =
-                                          Number.isFinite(raw) && raw > 0
-                                            ? raw
-                                            : Number.isFinite(ep) &&
-                                              Number.isFinite(Number(tpDist))
-                                            ? ep + dirS * Number(tpDist)
-                                            : NaN;
-                                        return Number.isFinite(v)
-                                          ? v.toFixed(2)
-                                          : "-";
-                                      })()}
+                                      {tpPriceView != null
+                                        ? Number(tpPriceView).toFixed(2)
+                                        : "-"}
                                     </div>
                                   </div>
                                   <div
@@ -37817,24 +37751,9 @@ export default function App() {
                                       SL Price
                                     </div>
                                     <div className="text-base font-semibold text-neutral-200">
-                                      {(() => {
-                                        const ep = Number(
-                                          (t as any).entryPrice
-                                        );
-                                        const dirS =
-                                          (t as any).direction === 1 ? 1 : -1;
-                                        const raw = Number((t as any).slPrice);
-                                        const v =
-                                          Number.isFinite(raw) && raw > 0
-                                            ? raw
-                                            : Number.isFinite(ep) &&
-                                              Number.isFinite(Number(slDist))
-                                            ? ep - dirS * Number(slDist)
-                                            : NaN;
-                                        return Number.isFinite(v)
-                                          ? v.toFixed(2)
-                                          : "-";
-                                      })()}
+                                      {slPriceView != null
+                                        ? Number(slPriceView).toFixed(2)
+                                        : "-"}
                                     </div>
                                   </div>
                                 </div>
