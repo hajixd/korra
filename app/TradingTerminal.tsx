@@ -10979,20 +10979,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <>
                     {(() => {
                       const display = hoveredTime ? hoveredCandle : latestCandle ?? hoveredCandle;
-                      const bullish = display.close >= display.open;
-                      const cls = bullish ? "ohlc-up" : "ohlc-down";
+                      const displayIndex = selectedCandles.indexOf(display);
+                      const prevCandle = displayIndex > 0 ? selectedCandles[displayIndex - 1] : null;
+                      const prevBullish = prevCandle ? prevCandle.close >= prevCandle.open : display.close >= display.open;
+                      const currentBullish = display.close >= display.open;
+                      const openCls = prevBullish ? "ohlc-up" : "ohlc-down";
+                      const closeCls = currentBullish ? "ohlc-up" : "ohlc-down";
                       return (
                         <>
-                          <span className={cls}>
+                          <span className={openCls}>
                             O <strong>{formatPrice(display.open)}</strong>
                           </span>
-                          <span className={cls}>
+                          <span className="ohlc-up">
                             H <strong>{formatPrice(display.high)}</strong>
                           </span>
-                          <span className={cls}>
+                          <span className="ohlc-down">
                             L <strong>{formatPrice(display.low)}</strong>
                           </span>
-                          <span className={cls}>
+                          <span className={closeCls}>
                             C <strong>{formatPrice(display.close)}</strong>
                           </span>
                         </>
