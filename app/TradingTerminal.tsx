@@ -14370,45 +14370,37 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         )
       ) : null}
 
-      <footer className={`statusbar ${selectedSurfaceTab === "backtest" ? "backtest-statusbar" : ""}`}>
-        {selectedSurfaceTab === "backtest" ? (
-          <div className="backtest-footer-ticker" aria-label="backtest rolling statistics">
-            <div className="backtest-footer-ticker-track">
-              {[0, 1].map((sequenceIndex) => (
-                <div
-                  key={sequenceIndex}
-                  className="backtest-footer-ticker-sequence"
-                  aria-hidden={sequenceIndex === 1}
-                >
-                  {backtestHeroStats.map((item) => (
-                    <div
-                      key={`status-${sequenceIndex}-${item.label}`}
-                      className="backtest-footer-pill"
+      <footer className="statusbar backtest-statusbar">
+        <div
+          className="backtest-summary-strip backtest-summary-strip-compact"
+          aria-label="backtest rolling statistics"
+        >
+          <div className="backtest-summary-strip-track">
+            {[0, 1].map((sequenceIndex) => (
+              <div
+                key={sequenceIndex}
+                className="backtest-summary-strip-sequence"
+                aria-hidden={sequenceIndex === 1}
+              >
+                {backtestHeroStats.map((item) => (
+                  <article
+                    key={`status-${sequenceIndex}-${item.label}`}
+                    className="backtest-summary-card backtest-summary-card-animated"
+                  >
+                    <span>{item.label}</span>
+                    <strong
+                      className={item.tone === "neutral" ? "" : item.tone}
+                      style={item.valueStyle}
                     >
-                      <span className="backtest-footer-pill-label">{item.label}</span>
-                      <strong
-                        className={`backtest-footer-pill-value ${
-                          item.tone === "neutral" ? "" : item.tone
-                        }`}
-                        style={item.valueStyle}
-                      >
-                        {item.value}
-                      </strong>
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
+                      {item.value}
+                    </strong>
+                    <small>{item.meta}</small>
+                  </article>
+                ))}
+              </div>
+            ))}
           </div>
-        ) : (
-          <>
-            <span>{selectedAsset.symbol}</span>
-            <span>{selectedTimeframe}</span>
-            <span>Model: {backtestModelSelectionSummary}</span>
-            <span>Feed: csv + live</span>
-            <span>UTC</span>
-          </>
-        )}
+        </div>
       </footer>
 
       {activeBacktestTradeDetails ? (
