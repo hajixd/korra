@@ -4429,7 +4429,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const appliedBacktestBreakEvenTriggerPctRef = useRef(50);
   const appliedBacktestTrailingStartPctRef = useRef(50);
   const appliedBacktestTrailingDistPctRef = useRef(30);
-  const appliedBacktestStatsDateStartRef = useRef("");
   const chartSizeRef = useRef({ width: 0, height: 0 });
   const chartRenderWindowRef = useRef<ChartDataWindow>({ from: 0, to: -1 });
   const chartVisibleGlobalRangeRef = useRef<ChartDataWindow | null>(null);
@@ -4540,10 +4539,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     updateStatsRefreshOverlayMode("loading");
     setStatsRefreshProgress(0);
     setStatsRefreshLoadingDisplayProgress(0);
-    const statsStartMs = getUtcDayStartMs(nextSettings.statsDateStart);
+    const rangeStartMs = backtestBlueprintRangeRef.current.startMs;
     setStatsRefreshProgressLabel(
       formatStatsRefreshDateLabel(
-        statsStartMs ?? nextRefreshMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000
+        Number.isFinite(rangeStartMs) && rangeStartMs > 0
+          ? rangeStartMs
+          : nextRefreshMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000
       )
     );
     setPropResult(null);
@@ -6038,7 +6039,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   appliedBacktestBreakEvenTriggerPctRef.current = appliedBacktestSettings.breakEvenTriggerPct;
   appliedBacktestTrailingStartPctRef.current = appliedBacktestSettings.trailingStartPct;
   appliedBacktestTrailingDistPctRef.current = appliedBacktestSettings.trailingDistPct;
-  appliedBacktestStatsDateStartRef.current = appliedBacktestSettings.statsDateStart;
 
   useEffect(() => {
     if (!backtestHasRun || !backtestHistorySeedReady) {
@@ -6061,7 +6061,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const breakEvenTriggerPctSnapshot = appliedBacktestBreakEvenTriggerPctRef.current;
     const trailingStartPctSnapshot = appliedBacktestTrailingStartPctRef.current;
     const trailingDistPctSnapshot = appliedBacktestTrailingDistPctRef.current;
-    const statsDateStartSnapshot = appliedBacktestStatsDateStartRef.current;
 
     if (tradeBlueprintsSnapshot.length === 0 || backtestTargetTradesSnapshot <= 0) {
       startTransition(() => {
@@ -6099,15 +6098,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const firstChronologicalBlueprint = chronologicalTradeBlueprints[0] ?? null;
     const lastChronologicalBlueprint =
       chronologicalTradeBlueprints[chronologicalTradeBlueprints.length - 1] ?? null;
-    const statsDateStartOverrideMs = getUtcDayStartMs(statsDateStartSnapshot);
-    const analysisStartMsRaw = firstChronologicalBlueprint
-      ? Math.min(firstChronologicalBlueprint.entryMs, firstChronologicalBlueprint.exitMs)
-      : timelineStartMs;
     const analysisEndMsRaw = lastChronologicalBlueprint
       ? Math.max(lastChronologicalBlueprint.entryMs, lastChronologicalBlueprint.exitMs)
       : timelineEndMs;
-    const analysisStartMs = statsDateStartOverrideMs
-      ?? (Number.isFinite(analysisStartMsRaw) ? analysisStartMsRaw : timelineStartMs);
+    const analysisStartMs = timelineStartMs;
     const analysisEndMs = Math.max(
       analysisStartMs + 60_000,
       Number.isFinite(analysisEndMsRaw) ? analysisEndMsRaw : timelineEndMs

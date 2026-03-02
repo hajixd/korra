@@ -735,8 +735,8 @@ button {
   display: flex;
   width: max-content;
   will-change: transform;
-  transform: translateX(calc(-1 * var(--backtest-summary-cycle-width)));
-  animation: backtest-summary-scroll-right var(--backtest-summary-scroll-duration) linear infinite;
+  transform: translateX(0);
+  animation: backtest-summary-scroll-left var(--backtest-summary-scroll-duration) linear infinite;
 }
 
 .backtest-summary-strip-sequence {
@@ -847,13 +847,13 @@ button {
   font-size: 0.64rem;
 }
 
-@keyframes backtest-summary-scroll-right {
+@keyframes backtest-summary-scroll-left {
   from {
-    transform: translateX(calc(-1 * var(--backtest-summary-cycle-width)));
+    transform: translateX(0);
   }
 
   to {
-    transform: translateX(0);
+    transform: translateX(calc(-1 * var(--backtest-summary-cycle-width)));
   }
 }
 
