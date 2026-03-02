@@ -5220,6 +5220,143 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     selectedBacktestCandles.length
   ]);
 
+  const everyCandleTradeBlueprints = useMemo(() => {
+    if (appliedBacktestModelProfiles.length === 0) {
+      return [] as TradeBlueprint[];
+    }
+
+    const candles = selectedBacktestCandles;
+    if (candles.length < 2) {
+      return [] as TradeBlueprint[];
+    }
+
+    const seedKey = `ai-model-every-candle-${backtestRefreshNowMs}-${appliedBacktestModelProfiles
+      .map((model) => model.id)
+      .join("|")}`;
+    const rand = createSeededRng(hashString(seedKey));
+    const blueprints: TradeBlueprint[] = [];
+    const modelCount = appliedBacktestModelProfiles.length;
+    const maxEntryIndex = Math.max(0, candles.length - 2);
+    const fallbackExitOffsetMs = Math.max(60_000, getTimeframeMs(appliedBacktestSettings.timeframe));
+    const unitsPerMove = Math.max(
+      1,
+      Number.isFinite(appliedBacktestSettings.dollarsPerMove)
+        ? appliedBacktestSettings.dollarsPerMove
+        : 1
+    );
+
+    for (let candleIndex = 0; candleIndex <= maxEntryIndex; candleIndex += 1) {
+      const modelIndex = (candleIndex + Math.floor(rand() * modelCount)) % Math.max(1, modelCount);
+      const model = appliedBacktestModelProfiles[modelIndex]!;
+      const symbol = futuresAssets[Math.floor(rand() * futuresAssets.length)]?.symbol ?? selectedSymbol;
+      const side: TradeSide = rand() <= model.longBias ? "Long" : "Short";
+      const result: TradeResult = rand() <= model.winRate ? "Win" : "Loss";
+      const rr = model.rrMin + rand() * (model.rrMax - model.rrMin);
+      const riskPct = model.riskMin + rand() * (model.riskMax - model.riskMin);
+      const entryMs = Number(candles[candleIndex]?.time);
+      const remainingBars = Math.max(1, candles.length - 1 - candleIndex);
+      const holdBars = 1 + Math.floor(rand() * Math.min(96, remainingBars));
+      const exitIndex = Math.min(candles.length - 1, candleIndex + holdBars);
+      const exitMsRaw = Number(candles[exitIndex]?.time);
+      const exitMs = Number.isFinite(exitMsRaw) ? exitMsRaw : entryMs + fallbackExitOffsetMs;
+
+      if (!Number.isFinite(entryMs) || !Number.isFinite(exitMs) || exitMs <= entryMs) {
+        continue;
+      }
+
+      blueprints.push({
+        id: `${model.id}-ec-${String(candleIndex).padStart(6, "0")}`,
+        modelId: model.id,
+        symbol,
+        side,
+        result,
+        entryMs,
+        exitMs,
+        riskPct,
+        rr,
+        units: unitsPerMove
+      });
+    }
+
+    return blueprints.sort((left, right) => right.exitMs - left.exitMs);
+  }, [
+    appliedBacktestModelProfiles,
+    appliedBacktestSettings.dollarsPerMove,
+    appliedBacktestSettings.timeframe,
+    backtestRefreshNowMs,
+    selectedBacktestCandles,
+    selectedSymbol
+  ]);
+
+  const sharedLibraryCandidateTrades = useMemo(() => {
+    if (everyCandleTradeBlueprints.length === 0) {
+      return [] as HistoryItem[];
+    }
+
+    const modelNamesById: Record<string, string> = {};
+    for (const blueprint of everyCandleTradeBlueprints) {
+      if (!modelNamesById[blueprint.modelId]) {
+        modelNamesById[blueprint.modelId] =
+          modelProfileById[blueprint.modelId]?.name ?? "Settings";
+      }
+    }
+
+    const candleSeriesBySymbol: Record<string, Candle[]> = {};
+    const oneMinuteCandlesBySymbol: Record<string, Candle[]> = {};
+    for (const blueprint of everyCandleTradeBlueprints) {
+      if (!candleSeriesBySymbol[blueprint.symbol]) {
+        const timeframeKey = symbolTimeframeKey(
+          blueprint.symbol,
+          appliedBacktestSettings.timeframe
+        );
+        candleSeriesBySymbol[blueprint.symbol] =
+          backtestSeriesMap[timeframeKey] ?? seriesMap[timeframeKey] ?? EMPTY_CANDLES;
+      }
+      if (
+        appliedBacktestSettings.timeframe !== "1m" &&
+        !oneMinuteCandlesBySymbol[blueprint.symbol]
+      ) {
+        const minuteKey = symbolTimeframeKey(blueprint.symbol, "1m");
+        const minuteCandles = backtestOneMinuteSeriesMap[minuteKey] ?? EMPTY_CANDLES;
+        if (minuteCandles.length > 0) {
+          oneMinuteCandlesBySymbol[blueprint.symbol] = minuteCandles;
+        }
+      }
+    }
+
+    const rows = finalizeBacktestHistoryRows(
+      computeBacktestHistoryRowsChunk({
+        blueprints: everyCandleTradeBlueprints,
+        candleSeriesBySymbol,
+        oneMinuteCandlesBySymbol:
+          appliedBacktestSettings.timeframe === "1m" ? undefined : oneMinuteCandlesBySymbol,
+        modelNamesById,
+        tpDollars: appliedBacktestSettings.tpDollars,
+        slDollars: appliedBacktestSettings.slDollars,
+        stopMode: appliedBacktestSettings.stopMode,
+        breakEvenTriggerPct: appliedBacktestSettings.breakEvenTriggerPct,
+        trailingStartPct: appliedBacktestSettings.trailingStartPct,
+        trailingDistPct: appliedBacktestSettings.trailingDistPct
+      }),
+      everyCandleTradeBlueprints.length
+    );
+
+    return normalizeBacktestHistoryRows(rows);
+  }, [
+    everyCandleTradeBlueprints,
+    modelProfileById,
+    appliedBacktestSettings.timeframe,
+    appliedBacktestSettings.tpDollars,
+    appliedBacktestSettings.slDollars,
+    appliedBacktestSettings.stopMode,
+    appliedBacktestSettings.breakEvenTriggerPct,
+    appliedBacktestSettings.trailingStartPct,
+    appliedBacktestSettings.trailingDistPct,
+    backtestSeriesMap,
+    backtestOneMinuteSeriesMap,
+    seriesMap
+  ]);
+
   const deepChartCandles = backtestSeriesMap[selectedKey] ?? null;
   const usesDeepChartHistory = (deepChartCandles?.length ?? 0) > 0;
   const selectedChartCandles = useMemo(() => {
@@ -5515,63 +5652,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     if (appliedAiModelEveryCandleMode) {
-      const candles = selectedBacktestCandles;
-      if (candles.length < 2) {
-        return [];
-      }
-
-      const seedKey = `ai-model-every-candle-${backtestRefreshNowMs}-${appliedBacktestModelProfiles
-        .map((model) => model.id)
-        .join("|")}`;
-      const rand = createSeededRng(hashString(seedKey));
-      const blueprints: TradeBlueprint[] = [];
-      const modelCount = appliedBacktestModelProfiles.length;
-      const maxEntryIndex = Math.max(0, candles.length - 2);
-      const fallbackExitOffsetMs = Math.max(60_000, getTimeframeMs(appliedBacktestSettings.timeframe));
-
-      for (let candleIndex = 0; candleIndex <= maxEntryIndex; candleIndex += 1) {
-        const modelIndex =
-          (candleIndex + Math.floor(rand() * modelCount)) % Math.max(1, modelCount);
-        const model = appliedBacktestModelProfiles[modelIndex]!;
-        const symbol = futuresAssets[Math.floor(rand() * futuresAssets.length)]?.symbol ?? selectedSymbol;
-        const side: TradeSide = rand() <= model.longBias ? "Long" : "Short";
-        const result: TradeResult = rand() <= model.winRate ? "Win" : "Loss";
-        const rr = model.rrMin + rand() * (model.rrMax - model.rrMin);
-        const riskPct = model.riskMin + rand() * (model.riskMax - model.riskMin);
-        const entryMs = Number(candles[candleIndex]?.time);
-        const remainingBars = Math.max(1, candles.length - 1 - candleIndex);
-        const holdBars = 1 + Math.floor(rand() * Math.min(96, remainingBars));
-        const exitIndex = Math.min(candles.length - 1, candleIndex + holdBars);
-        const exitMsRaw = Number(candles[exitIndex]?.time);
-        const exitMs = Number.isFinite(exitMsRaw) ? exitMsRaw : entryMs + fallbackExitOffsetMs;
-        const units = Math.max(
-          1,
-          Number.isFinite(appliedBacktestSettings.dollarsPerMove)
-            ? appliedBacktestSettings.dollarsPerMove
-            : 1
-        );
-
-        if (!Number.isFinite(entryMs) || !Number.isFinite(exitMs) || exitMs <= entryMs) {
-          continue;
-        }
-
-        blueprints.push({
-          id: `${model.id}-ec-${String(candleIndex).padStart(6, "0")}`,
-          modelId: model.id,
-          symbol,
-          side,
-          result,
-          entryMs,
-          exitMs,
-          riskPct,
-          rr,
-          units
-        });
-      }
-
-      return blueprints
-        .sort((left, right) => right.exitMs - left.exitMs)
-        .slice(0, backtestTargetTrades);
+      return everyCandleTradeBlueprints.slice(0, backtestTargetTrades);
     }
 
     const perModelBase = Math.floor(backtestTargetTrades / appliedBacktestModelProfiles.length);
@@ -5603,12 +5684,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedAiModelEveryCandleMode,
     appliedBacktestModelProfiles,
     appliedBacktestSettings.dollarsPerMove,
-    appliedBacktestSettings.timeframe,
     backtestBlueprintRange,
-    backtestRefreshNowMs,
+    everyCandleTradeBlueprints,
     backtestTargetTrades,
-    selectedBacktestCandles,
-    selectedSymbol
+    backtestRefreshNowMs
   ]);
 
   const [historyRows, setHistoryRows] = useState<HistoryItem[]>([]);
@@ -8241,12 +8320,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   const aiLibraryInsights = useMemo(() => {
     const executedTradeIds = new Set(backtestTrades.map((trade) => trade.id));
-    const suppressedTradePool = backtestTimeFilteredTrades.filter(
-      (trade) => !executedTradeIds.has(trade.id)
-    );
+    const libraryPoolSource =
+      sharedLibraryCandidateTrades.length > 0
+        ? sharedLibraryCandidateTrades
+        : backtestTimeFilteredTrades;
+    const suppressedTradePool = libraryPoolSource.filter((trade) => !executedTradeIds.has(trade.id));
     // Keep library construction mode-agnostic: AI Filter vs AI Model should not
     // change which historical neighbor pool is loaded, only when confidence is checked.
-    const libraryCandidatePool = backtestTimeFilteredTrades;
+    const libraryCandidatePool = libraryPoolSource;
     const maxSignalIndex = Math.max(0, selectedChartCandles.length - 1);
 
     const getSettings = (definition: AiLibraryDef) => {
@@ -8444,6 +8525,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     aiLibraryDefs,
     candleIndexByUnix,
     selectedChartCandles.length,
+    sharedLibraryCandidateTrades,
     backtestTimeFilteredTrades,
     backtestTrades
   ]);
