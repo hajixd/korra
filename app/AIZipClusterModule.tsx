@@ -25068,9 +25068,6 @@ export default function App() {
     setAntiCheatEnabled(false);
     setPreventAiLeak(false);
     setStaticLibrariesClusters(false);
-    try {
-      fullUpdateRef.current();
-    } catch {}
   };
   const chunkDistribution = useMemo(() => {
     if (!candles.length) return [];
@@ -26316,7 +26313,6 @@ export default function App() {
       return next;
     });
   }, [availableYearsKey]);
-  const pendingComputeRef = useRef(false);
   const isComputingStateRef = useRef(false);
   function stableStringify(v) {
     if (v === null || v === undefined) return String(v);
@@ -27615,7 +27611,6 @@ export default function App() {
   const applyAntiCheatRef = useRef(applyAntiCheat);
   const [isComputing, setIsComputing] = useState(false);
   const [isComputePending, setIsComputePending] = useState(false);
-  const computeDebounceRef = useRef(null);
   const [ctrlHoldCountdown, setSpaceHoldCountdown] = useState(null);
   const ctrlHoldRef = useRef({
     active: false,
@@ -27844,19 +27839,6 @@ export default function App() {
         isComputingStateRef.current = false;
         setIsComputing(false);
         setComputeProgress({ phase: "", pct: 0 });
-        if (pendingComputeRef.current) {
-          pendingComputeRef.current = false;
-          if (computeDebounceRef.current)
-            clearTimeout(computeDebounceRef.current);
-          setIsComputePending(true);
-          setComputeProgress({ phase: "Parsing", pct: 0.01 });
-          try {
-            bootProgressRef.current.label = "Embedding";
-          } catch {}
-          computeDebounceRef.current = setTimeout(() => {
-            requestCompute();
-          }, 1500);
-        }
         return;
       }
       if (msg.type === "error") {
@@ -27871,19 +27853,6 @@ export default function App() {
         } catch {}
         setIsComputePending(false);
         setError(msg.message || "Compute error.");
-        if (pendingComputeRef.current) {
-          pendingComputeRef.current = false;
-          if (computeDebounceRef.current)
-            clearTimeout(computeDebounceRef.current);
-          setIsComputePending(true);
-          setComputeProgress({ phase: "Parsing", pct: 0.01 });
-          try {
-            bootProgressRef.current.label = "Embedding";
-          } catch {}
-          computeDebounceRef.current = setTimeout(() => {
-            requestCompute();
-          }, 1500);
-        }
         return;
       }
     };
@@ -28087,40 +28056,16 @@ export default function App() {
   useEffect(() => {
     if (!candles.length) return;
     const cfgChanged = computeCfgKeyRef.current !== computeCfgKey;
-    if (cfgChanged) {
-      computeCfgKeyRef.current = computeCfgKey;
-      if (!isComputingStateRef.current) {
-        restartWorker();
-        setComputeProgress({ phase: "", pct: 0 });
-      }
-    }
+    if (!cfgChanged) return;
+    computeCfgKeyRef.current = computeCfgKey;
+    restartWorker();
     if (isComputingStateRef.current) {
-      pendingComputeRef.current = false;
-      restartWorker();
       isComputingStateRef.current = false;
       setIsComputing(false);
-      setComputeProgress({ phase: "", pct: 0 });
     }
-    if (computeDebounceRef.current) clearTimeout(computeDebounceRef.current);
-    computeDebounceRef.current = setTimeout(() => {
-      requestCompute();
-    }, 1500);
-    return () => {
-      if (computeDebounceRef.current) clearTimeout(computeDebounceRef.current);
-    };
+    setIsComputePending(false);
+    setComputeProgress({ phase: "", pct: 0 });
   }, [candles, computeCfgKey, restartWorker]);
-  // When the HDB domain distinction changes, force a quick recompute so historical trades + stats reflect it.
-  useEffect(() => {
-    if (!candles.length) return;
-    if (aiMethod !== "hdbscan") return;
-    if (computeDebounceRef.current) clearTimeout(computeDebounceRef.current);
-    computeDebounceRef.current = setTimeout(() => {
-      requestCompute();
-    }, 120);
-    return () => {
-      if (computeDebounceRef.current) clearTimeout(computeDebounceRef.current);
-    };
-  }, [hdbDomainDistinction, aiMethod]);
 
   useEffect(() => {
     const isEditableTarget = (t) => {
