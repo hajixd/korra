@@ -10424,7 +10424,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   return (
     <main className="terminal">
       <div className="surface-strip">
-        <span className="site-tag surface-brand">Korra's Space</span>
+        <span className="site-tag surface-brand">Korra&apos;s Space</span>
         <nav className="surface-tabs" aria-label="primary views">
           {surfaceTabs.map((tab) => (
             <button
