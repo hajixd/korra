@@ -4416,6 +4416,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const chartFocusedPriceRangeRef = useRef<PriceRange | null>(null);
   const chartFocusedPriceRangeResetRafRef = useRef(0);
   const chartIsApplyingVisibleRangeRef = useRef(false);
+  const settingsFileInputRef = useRef<HTMLInputElement | null>(null);
   const chartSourceLengthRef = useRef(0);
   const previousChartSourceLengthRef = useRef(0);
   const requestChartVisibleRangeRef = useRef<(visibleRange: ChartDataWindow) => void>(() => {});
@@ -6456,7 +6457,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     statsDateStart, statsDateEnd,
   ]);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const applySettings = useCallback((s: Record<string, any>) => {
     if (s.selectedSymbol != null) setSelectedSymbol(s.selectedSymbol);
     if (s.selectedTimeframe != null) setSelectedTimeframe(s.selectedTimeframe);
