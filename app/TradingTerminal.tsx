@@ -6800,6 +6800,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       close: candle.close
     }));
 
+    const targetVisibleRange =
+      chartPendingVisibleGlobalRangeRef.current ?? chartVisibleGlobalRangeRef.current;
+
+    chartIsApplyingVisibleRangeRef.current = true;
     candleSeries.setData(candleData);
     chartDataLengthRef.current = candleData.length;
 
@@ -6812,26 +6816,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       });
     }
 
-    const targetVisibleRange =
-      chartPendingVisibleGlobalRangeRef.current ?? chartVisibleGlobalRangeRef.current;
-
     if (targetVisibleRange) {
-      chartIsApplyingVisibleRangeRef.current = true;
       chart.timeScale().setVisibleLogicalRange({
         from: targetVisibleRange.from - chartRenderWindow.from,
         to: targetVisibleRange.to - chartRenderWindow.from
       });
       chartPendingVisibleGlobalRangeRef.current = null;
-
-      if (chartVisibleRangeSyncRafRef.current) {
-        window.cancelAnimationFrame(chartVisibleRangeSyncRafRef.current);
-      }
-
-      chartVisibleRangeSyncRafRef.current = window.requestAnimationFrame(() => {
-        chartIsApplyingVisibleRangeRef.current = false;
-        chartVisibleRangeSyncRafRef.current = 0;
-      });
     }
+
+    if (chartVisibleRangeSyncRafRef.current) {
+      window.cancelAnimationFrame(chartVisibleRangeSyncRafRef.current);
+    }
+
+    chartVisibleRangeSyncRafRef.current = window.requestAnimationFrame(() => {
+      chartIsApplyingVisibleRangeRef.current = false;
+      chartVisibleRangeSyncRafRef.current = 0;
+    });
   }, [chartRenderCandles, chartRenderWindow]);
 
   useEffect(() => {
@@ -6871,7 +6871,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       if (y !== null && Number.isFinite(y)) {
         overlay.style.top = `${y + 10}px`;
-        overlay.style.display = "";
+        overlay.style.display = "block";
       } else {
         overlay.style.display = "none";
       }
@@ -10605,9 +10605,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       className={`tf-change ${change === null ? "neutral" : change >= 0 ? "up" : "down"}${timeframe === selectedTimeframe ? " tf-active" : ""}`}
                     >
                       <span className="tf-label">{timeframe}</span>
-                      {change !== null
-                        ? `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`
-                        : "\u2014"}
+                      <span className={change === null ? "" : change >= 0 ? "up" : "down"}>
+                        {change !== null
+                          ? `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`
+                          : "\u2014"}
+                      </span>
                     </span>
                   ))}
                 </div>
@@ -10684,6 +10686,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     aria-label={tab.label}
                   >
                     <TabIcon tab={tab.id} />
+                    <span className="rail-label">{tab.label}</span>
                   </button>
                 ))}
               </nav>

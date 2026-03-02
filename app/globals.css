@@ -158,11 +158,10 @@ button {
 
 .tf-change.tf-active {
   background: rgba(212, 175, 55, 0.18);
-  color: #d4af37;
 }
 
 .tf-change.tf-active .tf-label {
-  color: rgba(212, 175, 55, 0.7);
+  color: rgba(212, 175, 55, 0.72);
 }
 
 .tf-change.neutral {
@@ -3303,7 +3302,7 @@ button {
 }
 
 .workspace.panel-collapsed {
-  grid-template-columns: minmax(0, 1fr) 52px;
+  grid-template-columns: minmax(0, 1fr) 64px;
 }
 
 .chart-wrap {
@@ -3387,7 +3386,7 @@ button {
   top: 0;
   right: 0;
   bottom: 0;
-  width: 52px;
+  width: 64px;
   border-left: 1px solid var(--line-soft);
   background: #0b1017;
   display: flex;
@@ -3398,8 +3397,9 @@ button {
 }
 
 .rail-btn {
-  width: 34px;
-  height: 34px;
+  width: 52px;
+  height: auto;
+  padding: 6px 2px 4px;
   border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
@@ -3408,8 +3408,10 @@ button {
   font-size: 0.68rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
   letter-spacing: 0.02em;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
 }
 
 .rail-icon {
@@ -3417,6 +3419,15 @@ button {
   height: 16px;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.rail-label {
+  font-size: 0.56rem;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  opacity: 0.72;
 }
 
 .rail-btn:hover {
@@ -3432,7 +3443,7 @@ button {
 
 .panel-content {
   position: absolute;
-  inset: 0 52px 0 0;
+  inset: 0 64px 0 0;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -4063,7 +4074,7 @@ button {
   }
 
   .workspace.panel-collapsed {
-    grid-template-columns: minmax(0, 1fr) 50px;
+    grid-template-columns: minmax(0, 1fr) 64px;
   }
 
   .watchlist-labels,
