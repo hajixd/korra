@@ -4552,11 +4552,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setStatsRefreshProgress(0);
     setStatsRefreshLoadingDisplayProgress(0);
     const rangeStartMs = backtestBlueprintRangeRef.current.startMs;
+    const baseStartMs =
+      Number.isFinite(rangeStartMs) && rangeStartMs > 0
+        ? rangeStartMs
+        : nextRefreshMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000;
+    const filterStartMs = nextSettings.statsDateStart
+      ? new Date(nextSettings.statsDateStart).getTime()
+      : NaN;
     setStatsRefreshProgressLabel(
       formatStatsRefreshDateLabel(
-        Number.isFinite(rangeStartMs) && rangeStartMs > 0
-          ? rangeStartMs
-          : nextRefreshMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000
+        Number.isFinite(filterStartMs) ? Math.max(baseStartMs, filterStartMs) : baseStartMs
       )
     );
     setPropResult(null);
@@ -4605,7 +4610,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }, {});
   }, [modelProfiles]);
   const aiDisabled = aiMode === "off";
-  const confidenceGateDisabled = aiMode === "off" || !aiFilterEnabled;
+  const confidenceGateDisabled = aiMode === "off";
   const effectiveConfidenceThreshold = confidenceGateDisabled ? 0 : confidenceThreshold;
   const selectedAiModelCount = useMemo(() => {
     return Object.values(aiModelStates).filter((state) => state > 0).length;
@@ -6083,10 +6088,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const analysisEndMsRaw = lastChronologicalBlueprint
       ? Math.max(lastChronologicalBlueprint.entryMs, lastChronologicalBlueprint.exitMs)
       : timelineEndMs;
-    const analysisStartMs = timelineStartMs;
+    const filterStartMs = appliedBacktestSettings.statsDateStart
+      ? new Date(appliedBacktestSettings.statsDateStart).getTime()
+      : NaN;
+    const filterEndMs = appliedBacktestSettings.statsDateEnd
+      ? new Date(appliedBacktestSettings.statsDateEnd + "T23:59:59.999").getTime()
+      : NaN;
+    const analysisStartMs = Number.isFinite(filterStartMs)
+      ? Math.max(timelineStartMs, filterStartMs)
+      : timelineStartMs;
+    const rawEndMs = Number.isFinite(analysisEndMsRaw) ? analysisEndMsRaw : timelineEndMs;
     const analysisEndMs = Math.max(
       analysisStartMs + 60_000,
-      Number.isFinite(analysisEndMsRaw) ? analysisEndMsRaw : timelineEndMs
+      Number.isFinite(filterEndMs) ? Math.min(rawEndMs, filterEndMs) : rawEndMs
     );
     let lastLoadingProgressRatio = 0;
     const setLoadingProgress = (ratio: number) => {
@@ -12374,18 +12388,51 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         <button
                           type="button"
                           className={`ai-zip-button ${antiCheatEnabled ? "active" : ""}`}
-                          onClick={() => setAntiCheatEnabled((value) => !value)}
+                          onClick={() => {
+                            const next = !antiCheatEnabled;
+                            setAntiCheatEnabled(next);
+                            if (!next) setRealismLevel(0);
+                          }}
                         >
                           Anti-Cheat {antiCheatEnabled ? "· ON" : "· OFF"}
                         </button>
 
+                        <div className="ai-zip-section-divider" />
+
                         <button
                           type="button"
-                          className={`ai-zip-button ${antiCheatEnabled ? "active" : ""}`}
+                          className={`ai-zip-button ${validationMode === "off" ? "active" : ""}`}
                           disabled={!antiCheatEnabled}
-                          onClick={cycleValidationMode}
+                          onClick={() => setValidationMode("off")}
                         >
-                          Validation · {AI_VALIDATION_LABELS[validationMode]}
+                          Normal
+                        </button>
+
+                        <button
+                          type="button"
+                          className={`ai-zip-button ${validationMode === "split" ? "active" : ""}`}
+                          disabled={!antiCheatEnabled}
+                          onClick={() => setValidationMode("split")}
+                        >
+                          Test / Split
+                        </button>
+
+                        <button
+                          type="button"
+                          className={`ai-zip-button ${validationMode === "online" ? "active" : ""}`}
+                          disabled={!antiCheatEnabled}
+                          onClick={() => setValidationMode("online")}
+                        >
+                          Online
+                        </button>
+
+                        <button
+                          type="button"
+                          className={`ai-zip-button ${validationMode === "synthetic" ? "active" : ""}`}
+                          disabled={!antiCheatEnabled}
+                          onClick={() => setValidationMode("synthetic")}
+                        >
+                          Synthetic
                         </button>
                       </div>
                     </div>
@@ -12393,20 +12440,32 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="backtest-card" style={{ padding: "0.85rem" }}>
                       <div className="ai-zip-section">
                         <div className="ai-zip-section-title">Realism</div>
-                        <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
-                          {(["None", "Low", "Medium", "High", "Max"] as const).map((label, idx) => (
+
+                        <button
+                          type="button"
+                          className={`ai-zip-button ${realismLevel > 0 ? "active" : ""}`}
+                          disabled={!antiCheatEnabled}
+                          onClick={() => setRealismLevel((current) => (current > 0 ? 0 : 1))}
+                        >
+                          Realism {realismLevel > 0 ? "· ON" : "· OFF"}
+                        </button>
+
+                        <div className="ai-zip-section-divider" />
+
+                        {(["Low", "Medium", "High", "Max"] as const).map((label, i) => {
+                          const idx = i + 1;
+                          return (
                             <button
                               key={label}
                               type="button"
                               className={`ai-zip-button ${realismLevel === idx ? "active" : ""}`}
-                              disabled={!antiCheatEnabled}
+                              disabled={!antiCheatEnabled || realismLevel === 0}
                               onClick={() => setRealismLevel(idx)}
-                              style={{ width: "100%", opacity: antiCheatEnabled ? 1 : 0.38 }}
                             >
                               {label}
                             </button>
-                          ))}
-                        </div>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>

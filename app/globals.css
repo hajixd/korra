@@ -2889,6 +2889,12 @@ button {
   box-shadow: none;
 }
 
+.ai-zip-section-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 3px 0;
+}
+
 .ai-zip-control {
   display: grid;
   gap: 4px;
