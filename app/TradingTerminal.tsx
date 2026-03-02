@@ -6867,6 +6867,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         lastText = text;
       }
 
+      const isUp = latestCandle.close >= latestCandle.open;
+      overlay.style.background = isUp ? "rgba(27, 174, 138, 0.85)" : "rgba(240, 69, 90, 0.85)";
+
       const y = candleSeries.priceToCoordinate(latestCandle.close);
 
       if (y !== null && Number.isFinite(y)) {

@@ -3348,10 +3348,11 @@ button {
   right: 0;
   pointer-events: none;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-  font-size: 0.62rem;
-  color: var(--text-dim);
-  opacity: 0.72;
-  text-align: center;
+  font-size: 0.6rem;
+  color: #fff;
+  text-align: left;
+  padding: 1px 4px;
+  border-radius: 2px;
   width: 55px;
   z-index: 4;
   letter-spacing: 0.01em;
@@ -3422,7 +3423,7 @@ button {
 }
 
 .rail-label {
-  font-size: 0.56rem;
+  font-size: 0.48rem;
   line-height: 1;
   letter-spacing: 0.04em;
   text-transform: uppercase;
