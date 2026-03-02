@@ -12790,17 +12790,9 @@ export function ClusterMap({
       const inferredExitTime =
         exitTimeFromP || candles?.[inferredExitIndex]?.time || "";
 
-      // Always include Trades library points in the embedding so MIT can be computed consistently
-      // even when the Cluster Map view filters are restricting what's visible.
-      // Other libraries can still respect the current view filters.
-      const libIdLower = String(libId || "").toLowerCase();
-      const isTradesLibrary =
-        libIdLower === "trades" || libIdLower.includes("trade");
-      if (
-        !isTradesLibrary &&
-        !passesViewFilter(pseudo.direction, entryTime, modelKey)
-      )
-        continue;
+      // Keep libraries visible regardless of Cluster Map dropdown filters.
+      // These points represent loaded neighbor memory; filtering them out can make the
+      // map look broken ("neighbors loaded" but zero library nodes shown).
 
       const tod = timeOfDayUnit(entryTime, parseMode);
       const timeFeature = (tod - 0.5) * 2 * TIME_FEATURE_STRENGTH;
@@ -13299,6 +13291,26 @@ export function ClusterMap({
       return changed ? next : prev;
     });
   }, [activeLibraries]);
+
+  // Safety recovery: if all currently-loaded library toggles are OFF, turn them back ON.
+  // This avoids a persistent "Library 0" state after accidental toggles.
+  useEffect(() => {
+    const ids = new Set<string>();
+    for (const lp of (libraryPoints as any[]) || []) {
+      if (!lp) continue;
+      const lid = String((lp as any).libId ?? (lp as any).metaLib ?? "").trim();
+      if (lid) ids.add(lid);
+    }
+    if (!ids.size) return;
+    setLegendToggles((prev: any) => {
+      const keys = Array.from(ids).map((lid) => `lib:${lid}`);
+      const allOff = keys.every((k) => (prev as any)?.[k] === false);
+      if (!allOff) return prev;
+      const next: any = { ...(prev || {}) };
+      for (const k of keys) next[k] = true;
+      return next;
+    });
+  }, [libraryPoints]);
 
   const mapSelectStyle: React.CSSProperties = useMemo(
     () => ({
@@ -21849,14 +21861,7 @@ export function ClusterMap3D({
       const pnl = Number(lp.metaPnl ?? lp.pnl ?? 0);
       const win = Number(lp.label ?? (pnl >= 0 ? 1 : -1)) >= 0;
 
-      if (
-        !passesViewFilter(
-          dir,
-          tRaw,
-          mRaw
-        )
-      )
-        continue;
+      // Keep libraries visible regardless of Cluster Map dropdown filters.
 
       const v = Array.isArray(lp.v)
         ? lp.v
