@@ -5320,6 +5320,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       ? ((latestCandle.close - previousCandle.close) / previousCandle.close) * 100
       : 0;
 
+  const timeframeChanges = useMemo(() => {
+    const result: Record<string, number> = {};
+    const latest = selectedCandles[selectedCandles.length - 1];
+    if (!latest) return result;
+    const currentTfMin = timeframeMinutes[selectedTimeframe];
+    for (const tf of timeframes) {
+      const lookback = Math.round(timeframeMinutes[tf] / currentTfMin);
+      if (lookback < 1) continue;
+      const refIdx = selectedCandles.length - 1 - lookback;
+      if (refIdx < 0) continue;
+      const ref = selectedCandles[refIdx];
+      if (ref && ref.close > 0) {
+        result[tf] = ((latest.close - ref.close) / ref.close) * 100;
+      }
+    }
+    return result;
+  }, [selectedCandles, selectedTimeframe]);
+
   const hoveredCandle =
     latestCandle && hoveredTime ? candleByUnix.get(hoveredTime) ?? latestCandle : latestCandle;
 
@@ -10408,7 +10426,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   return (
     <main className="terminal">
       <div className="surface-strip">
-        <span className="site-tag surface-brand">korra.space</span>
+        <span className="site-tag surface-brand">Korra's Space</span>
         <nav className="surface-tabs" aria-label="primary views">
           {surfaceTabs.map((tab) => (
             <button
@@ -10491,10 +10509,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             {latestCandle ? (
               <>
                 <span>${formatPrice(latestCandle.close)}</span>
-                <span className={quoteChange >= 0 ? "up" : "down"}>
-                  {quoteChange >= 0 ? "+" : ""}
-                  {quoteChange.toFixed(2)}%
-                </span>
+                <div className="tf-changes">
+                  {timeframes.map((tf) => {
+                    const pct = timeframeChanges[tf];
+                    if (pct === undefined) return null;
+                    return (
+                      <span key={tf} className="tf-change-item">
+                        <span className="tf-change-label">{tf}</span>
+                        <span className={pct >= 0 ? "up" : "down"}>
+                          {pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
+                        </span>
+                      </span>
+                    );
+                  })}
+                </div>
               </>
             ) : (
               <span>No market data</span>

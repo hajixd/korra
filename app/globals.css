@@ -133,9 +133,28 @@ button {
 .live-quote {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.6rem;
   font-size: 0.78rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  flex-wrap: wrap;
+}
+
+.tf-changes {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.tf-change-item {
+  display: flex;
+  align-items: center;
+  gap: 0.18rem;
+}
+
+.tf-change-label {
+  color: var(--text-dim);
+  font-size: 0.68rem;
 }
 
 .up {
@@ -187,7 +206,6 @@ button {
   font-size: 0.72rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
   letter-spacing: 0.04em;
-  text-transform: lowercase;
   white-space: nowrap;
 }
 
