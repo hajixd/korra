@@ -96,6 +96,12 @@ type MainStatisticsCard = {
   labelEmphasis?: boolean;
   children?: MainStatisticsCard[];
 };
+type BacktestHeroStatCard = {
+  label: string;
+  value: string;
+  tone: "up" | "down" | "neutral";
+  meta: string;
+};
 type RechartsTooltipRenderProps = {
   active?: boolean;
   payload?: any[];
@@ -7824,6 +7830,146 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return `${startLabel} -> ${endLabel}`;
   }, [appliedBacktestSettings.statsDateEnd, appliedBacktestSettings.statsDateStart]);
 
+  const backtestHeroStats = useMemo<BacktestHeroStatCard[]>(() => {
+    const hasTrades = backtestSummary.tradeCount > 0;
+    const resolveTone = (tone: "up" | "down" | "neutral"): "up" | "down" | "neutral" =>
+      hasTrades ? tone : "neutral";
+
+    return [
+      {
+        label: "Net PnL",
+        value: formatSignedUsd(backtestSummary.netPnl),
+        tone: resolveTone(backtestSummary.netPnl >= 0 ? "up" : "down"),
+        meta: `${backtestSummary.tradeCount.toLocaleString("en-US")} simulated trades`
+      },
+      {
+        label: "Win Rate",
+        value: `${backtestSummary.winRate.toFixed(1)}%`,
+        tone: resolveTone(
+          backtestSummary.winRate >= 55
+            ? "up"
+            : backtestSummary.winRate >= 45
+              ? "neutral"
+              : "down"
+        ),
+        meta: `${backtestSummary.wins.toLocaleString("en-US")} wins · ${backtestSummary.losses.toLocaleString("en-US")} losses`
+      },
+      {
+        label: "Profit Factor",
+        value: backtestSummary.profitFactor.toFixed(2),
+        tone: resolveTone(
+          backtestSummary.profitFactor > 1.5
+            ? "up"
+            : backtestSummary.profitFactor >= 1
+              ? "neutral"
+              : "down"
+        ),
+        meta: `Gross wins ${formatSignedUsd(backtestSummary.grossWins)}`
+      },
+      {
+        label: "Worst Pullback",
+        value: formatSignedUsd(backtestSummary.maxDrawdown),
+        tone: resolveTone(backtestSummary.maxDrawdown >= 0 ? "up" : "down"),
+        meta: "Largest equity drawdown"
+      },
+      {
+        label: "Total Trades",
+        value: backtestSummary.tradeCount.toLocaleString("en-US"),
+        tone: "neutral",
+        meta: `${backtestSummary.tradesPerDay.toFixed(2)} / day`
+      },
+      {
+        label: "Winners",
+        value: backtestSummary.wins.toLocaleString("en-US"),
+        tone: resolveTone(backtestSummary.wins >= backtestSummary.losses ? "up" : "neutral"),
+        meta: `${backtestSummary.consistencyPerTrade.toFixed(1)}% consistency`
+      },
+      {
+        label: "Losers",
+        value: backtestSummary.losses.toLocaleString("en-US"),
+        tone: resolveTone(backtestSummary.losses > backtestSummary.wins ? "down" : "neutral"),
+        meta: `Gross losses ${formatSignedUsd(backtestSummary.grossLosses)}`
+      },
+      {
+        label: "Avg Hold",
+        value: formatMinutesCompact(backtestSummary.avgHoldMinutes),
+        tone: "neutral",
+        meta: `${formatMinutesCompact(backtestSummary.avgWinDurationMin)} win · ${formatMinutesCompact(backtestSummary.avgLossDurationMin)} loss`
+      },
+      {
+        label: "Avg PnL / Trade",
+        value: formatSignedUsd(backtestSummary.avgPnl),
+        tone: resolveTone(backtestSummary.avgPnl >= 0 ? "up" : "down"),
+        meta: "Expected value per trade"
+      },
+      {
+        label: "Average Win",
+        value: formatSignedUsd(backtestSummary.avgWin),
+        tone: resolveTone(backtestSummary.avgWin >= 0 ? "up" : "down"),
+        meta: "Mean positive trade result"
+      },
+      {
+        label: "Average Loss",
+        value: formatSignedUsd(backtestSummary.avgLoss),
+        tone: resolveTone(backtestSummary.avgLoss >= 0 ? "up" : "down"),
+        meta: "Mean negative trade result"
+      },
+      {
+        label: "Reward / Risk",
+        value: `${backtestSummary.avgR.toFixed(2)}R`,
+        tone: resolveTone(backtestSummary.avgR >= 1 ? "up" : "down"),
+        meta: "Average target-to-stop profile"
+      },
+      {
+        label: "Avg Confidence",
+        value: `${backtestSummary.averageConfidence.toFixed(1)}%`,
+        tone: resolveTone(
+          backtestSummary.averageConfidence >= 60
+            ? "up"
+            : backtestSummary.averageConfidence >= 40
+              ? "neutral"
+              : "down"
+        ),
+        meta: "AI confidence across executed trades"
+      },
+      {
+        label: "Sharpe",
+        value: backtestSummary.sharpe.toFixed(2),
+        tone: resolveTone(
+          backtestSummary.sharpe >= 1
+            ? "up"
+            : backtestSummary.sharpe >= 0
+              ? "neutral"
+              : "down"
+        ),
+        meta: "Return adjusted by total volatility"
+      },
+      {
+        label: "Sortino",
+        value: backtestSummary.sortino.toFixed(2),
+        tone: resolveTone(
+          backtestSummary.sortino >= 1
+            ? "up"
+            : backtestSummary.sortino >= 0
+              ? "neutral"
+              : "down"
+        ),
+        meta: "Return adjusted by downside volatility"
+      },
+      {
+        label: "Best Day",
+        value: backtestSummary.bestDay ? formatSignedUsd(backtestSummary.bestDay.pnl) : "—",
+        tone:
+          !hasTrades || !backtestSummary.bestDay
+            ? "neutral"
+            : backtestSummary.bestDay.pnl >= 0
+              ? "up"
+              : "down",
+        meta: backtestSummary.bestDay ? backtestSummary.bestDay.key : "Waiting for trade history"
+      }
+    ];
+  }, [backtestSummary]);
+
   const mainStatsSessionRows = useMemo(() => {
     const map = new Map<string, { label: string; total: number; trades: number }>();
 
@@ -10737,40 +10883,28 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 </div>
               </div>
 
-              <section className="backtest-hero">
-                <div className="backtest-hero-copy">
-                  <h2>Korra&#39;s Workspace</h2>
-                </div>
-
-                <div className="backtest-summary-grid">
-                  <article className="backtest-summary-card">
-                    <span>Net PnL</span>
-                    <strong className={backtestSummary.netPnl >= 0 ? "up" : "down"}>
-                      {formatSignedUsd(backtestSummary.netPnl)}
-                    </strong>
-                    <small>{backtestSummary.tradeCount} simulated trades</small>
-                  </article>
-                  <article className="backtest-summary-card">
-                    <span>Win Rate</span>
-                    <strong style={{ color: backtestSummary.winRate >= 55 ? "#34d399" : backtestSummary.winRate >= 45 ? "#facc15" : "#f87171" }}>{backtestSummary.winRate.toFixed(1)}%</strong>
-                    <small>{backtestSummary.avgR.toFixed(2)}R average reward profile</small>
-                  </article>
-                  <article className="backtest-summary-card">
-                    <span>Profit Factor</span>
-                    <strong style={{ color: backtestSummary.profitFactor > 1.5 ? "#34d399" : backtestSummary.profitFactor >= 1 ? "#60a5fa" : "#f87171" }}>{backtestSummary.profitFactor.toFixed(2)}</strong>
-                    <small>{Math.round(backtestSummary.avgHoldMinutes)}m average hold</small>
-                  </article>
-                  <article className="backtest-summary-card">
-                    <span>Worst Pullback</span>
-                    <strong className={backtestSummary.maxDrawdown >= 0 ? "up" : "down"}>
-                      {formatSignedUsd(backtestSummary.maxDrawdown)}
-                    </strong>
-                    <small>
-                      {backtestSummary.bestDay
-                        ? `Best day ${formatSignedUsd(backtestSummary.bestDay.pnl)}`
-                        : "Waiting for trade history"}
-                    </small>
-                  </article>
+              <section className="backtest-hero backtest-hero-strip">
+                <div className="backtest-summary-strip" aria-label="backtest rolling statistics">
+                  <div className="backtest-summary-strip-track">
+                    {[0, 1].map((sequenceIndex) => (
+                      <div
+                        key={sequenceIndex}
+                        className="backtest-summary-strip-sequence"
+                        aria-hidden={sequenceIndex === 1}
+                      >
+                        {backtestHeroStats.map((item) => (
+                          <article
+                            key={`${sequenceIndex}-${item.label}`}
+                            className="backtest-summary-card backtest-summary-card-animated"
+                          >
+                            <span>{item.label}</span>
+                            <strong className={item.tone === "neutral" ? "" : item.tone}>{item.value}</strong>
+                            <small>{item.meta}</small>
+                          </article>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </section>
 

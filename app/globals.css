@@ -397,6 +397,10 @@ button {
   gap: 0.9rem;
 }
 
+.backtest-hero.backtest-hero-strip {
+  grid-template-columns: 1fr;
+}
+
 .backtest-hero-copy,
 .backtest-card,
 .backtest-summary-card,
@@ -443,10 +447,59 @@ button {
   gap: 0.65rem;
 }
 
+.backtest-summary-strip {
+  --backtest-stat-gap: 0.65rem;
+  --backtest-visible-cards: 8;
+  --backtest-stat-card-width: 182px;
+  --backtest-summary-cycle-width: calc(
+    (16 * var(--backtest-stat-card-width)) + (16 * var(--backtest-stat-gap))
+  );
+  overflow: hidden;
+  container-type: inline-size;
+}
+
+.backtest-summary-strip-track {
+  display: flex;
+  width: max-content;
+  will-change: transform;
+  transform: translateX(calc(-1 * var(--backtest-summary-cycle-width)));
+  animation: backtest-summary-scroll-right 46s linear infinite;
+}
+
+.backtest-summary-strip-sequence {
+  flex: 0 0 auto;
+  display: flex;
+  gap: var(--backtest-stat-gap);
+  padding-right: var(--backtest-stat-gap);
+}
+
+.backtest-summary-strip-sequence .backtest-summary-card {
+  flex: 0 0 var(--backtest-stat-card-width);
+  min-width: 0;
+}
+
+@supports (width: 1cqw) {
+  .backtest-summary-strip {
+    --backtest-stat-card-width: calc(
+      (100cqw - ((var(--backtest-visible-cards) - 1) * var(--backtest-stat-gap))) /
+        var(--backtest-visible-cards)
+    );
+  }
+}
+
 .backtest-summary-card {
   padding: 0.72rem 0.78rem;
   display: grid;
   gap: 0.2rem;
+}
+
+.backtest-summary-card-animated {
+  min-height: 84px;
+  transition: transform 170ms ease;
+}
+
+.backtest-summary-card-animated:hover {
+  transform: translateY(-2px);
 }
 
 .backtest-summary-card span,
@@ -469,6 +522,27 @@ button {
 
 .backtest-summary-card small {
   font-size: 0.64rem;
+}
+
+@keyframes backtest-summary-scroll-right {
+  from {
+    transform: translateX(calc(-1 * var(--backtest-summary-cycle-width)));
+  }
+
+  to {
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backtest-summary-strip-track {
+    animation: none;
+    transform: translateX(0);
+  }
+
+  .backtest-summary-card-animated {
+    transition: none;
+  }
 }
 
 .backtest-tabs {
@@ -3763,6 +3837,10 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .backtest-summary-strip {
+    --backtest-visible-cards: 4;
+  }
+
   .main-settings-layout {
     grid-template-columns: 1fr;
   }
@@ -3904,6 +3982,10 @@ button {
 }
 
 @media (max-width: 760px) {
+  .backtest-summary-strip {
+    --backtest-visible-cards: 2;
+  }
+
   .backtest-summary-grid,
   .backtest-stats-grid,
   .backtest-metric-grid,
