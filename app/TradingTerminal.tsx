@@ -120,6 +120,7 @@ type Candle = {
 const EMPTY_CANDLES: Candle[] = [];
 const STATS_REFRESH_HOLD_MS = 3000;
 const STATS_REFRESH_COMPLETE_DELAY_MS = 1000;
+const STATS_REFRESH_VISUAL_FULL_THRESHOLD = 99.95;
 
 const AI_ZIP_MONO_FONT =
   "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace";
@@ -4384,6 +4385,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const selectedSurfaceTabRef = useRef<SurfaceTab>(selectedSurfaceTab);
   const statsRefreshOverlayModeRef = useRef<StatsRefreshOverlayMode>("idle");
   const statsRefreshResetTimeoutRef = useRef(0);
+  const statsRefreshVisualCompletionRafRef = useRef(0);
+  const statsRefreshLoadingDisplayProgressRef = useRef(0);
   const liveBacktestSettingsRef = useRef<BacktestSettingsSnapshot>(appliedBacktestSettings);
   const tradeBlueprintsRef = useRef<TradeBlueprint[]>([]);
   const backtestHistorySeriesBySymbolRef = useRef<Record<string, Candle[]>>({});
@@ -4431,6 +4434,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setStatsRefreshOverlayMode(mode);
   }, []);
   const clearStatsRefreshResetTimeout = useCallback(() => {
+    if (statsRefreshVisualCompletionRafRef.current) {
+      window.cancelAnimationFrame(statsRefreshVisualCompletionRafRef.current);
+      statsRefreshVisualCompletionRafRef.current = 0;
+    }
+
     if (!statsRefreshResetTimeoutRef.current) {
       return;
     }
@@ -4443,13 +4451,43 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       clearStatsRefreshResetTimeout();
       setStatsRefreshProgress(100);
       setStatsRefreshProgressLabel(label);
-      statsRefreshResetTimeoutRef.current = window.setTimeout(() => {
+
+      const closeOverlay = () => {
         updateStatsRefreshOverlayMode("idle");
         setStatsRefreshProgress(0);
         setStatsRefreshLoadingDisplayProgress(0);
         setStatsRefreshProgressLabel("");
         statsRefreshResetTimeoutRef.current = 0;
-      }, STATS_REFRESH_COMPLETE_DELAY_MS);
+      };
+
+      const scheduleClose = () => {
+        statsRefreshResetTimeoutRef.current = window.setTimeout(
+          closeOverlay,
+          STATS_REFRESH_COMPLETE_DELAY_MS
+        );
+      };
+
+      const waitUntilVisuallyFull = () => {
+        if (statsRefreshOverlayModeRef.current !== "loading") {
+          statsRefreshVisualCompletionRafRef.current = 0;
+          return;
+        }
+
+        if (
+          statsRefreshLoadingDisplayProgressRef.current >=
+          STATS_REFRESH_VISUAL_FULL_THRESHOLD
+        ) {
+          statsRefreshVisualCompletionRafRef.current = 0;
+          scheduleClose();
+          return;
+        }
+
+        statsRefreshVisualCompletionRafRef.current =
+          window.requestAnimationFrame(waitUntilVisuallyFull);
+      };
+
+      statsRefreshVisualCompletionRafRef.current =
+        window.requestAnimationFrame(waitUntilVisuallyFull);
     },
     [clearStatsRefreshResetTimeout, updateStatsRefreshOverlayMode]
   );
@@ -4481,6 +4519,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       clearStatsRefreshResetTimeout();
     };
   }, [clearStatsRefreshResetTimeout]);
+
+  useEffect(() => {
+    statsRefreshLoadingDisplayProgressRef.current = statsRefreshLoadingDisplayProgress;
+  }, [statsRefreshLoadingDisplayProgress]);
 
   useEffect(() => {
     const targetProgress = clamp(statsRefreshProgress, 0, 100);
@@ -6808,6 +6850,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       requestChartVisibleRangeRef.current({ from, to });
       focusTradeIdRef.current = null;
+
+      if (chartFocusedPriceRangeResetRafRef.current) {
+        window.cancelAnimationFrame(chartFocusedPriceRangeResetRafRef.current);
+        chartFocusedPriceRangeResetRafRef.current = 0;
+      }
+
+      chartFocusedPriceRangeRef.current = null;
+      chartRef.current?.applyOptions({
+        rightPriceScale: {
+          autoScale: true
+        }
+      });
     };
 
     window.addEventListener("keydown", onKeyDown);
