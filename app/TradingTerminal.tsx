@@ -4322,6 +4322,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [statsRefreshOverlayMode, setStatsRefreshOverlayMode] =
     useState<StatsRefreshOverlayMode>("idle");
   const [statsRefreshProgress, setStatsRefreshProgress] = useState(0);
+  const [statsRefreshLoadingDisplayProgress, setStatsRefreshLoadingDisplayProgress] = useState(0);
   const [statsRefreshProgressLabel, setStatsRefreshProgressLabel] = useState("");
   const [backtestHistorySeedReady, setBacktestHistorySeedReady] = useState(false);
   const [isBacktestSurfaceSettled, setIsBacktestSurfaceSettled] = useState(true);
@@ -4472,6 +4473,44 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [clearStatsRefreshResetTimeout]);
 
+  useEffect(() => {
+    const targetProgress = clamp(statsRefreshProgress, 0, 100);
+
+    if (statsRefreshOverlayMode !== "loading") {
+      setStatsRefreshLoadingDisplayProgress(targetProgress);
+      return;
+    }
+
+    let frameId = 0;
+
+    const step = () => {
+      let shouldContinue = false;
+
+      setStatsRefreshLoadingDisplayProgress((current) => {
+        const delta = targetProgress - current;
+
+        if (Math.abs(delta) <= 0.12) {
+          return targetProgress;
+        }
+
+        shouldContinue = true;
+        return current + delta * 0.18;
+      });
+
+      if (shouldContinue) {
+        frameId = window.requestAnimationFrame(step);
+      }
+    };
+
+    frameId = window.requestAnimationFrame(step);
+
+    return () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
+  }, [statsRefreshOverlayMode, statsRefreshProgress]);
+
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
   }, [selectedSymbol]);
@@ -4605,13 +4644,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const appliedEffectiveConfidenceThreshold = appliedConfidenceGateDisabled
     ? 0
     : appliedBacktestSettings.confidenceThreshold;
-  const backtestDisplayModelSelectionSummary = backtestHasRun
-    ? appliedBacktestModelSelectionSummary
-    : backtestModelSelectionSummary;
-  const backtestDisplayTimeframe = backtestHasRun
-    ? appliedBacktestSettings.timeframe
-    : selectedTimeframe;
-
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
 
   const cycleValidationMode = () => {
@@ -10056,6 +10088,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     0,
     ((100 - clamp(statsRefreshProgress, 0, 100)) / 100) * (STATS_REFRESH_HOLD_MS / 1000)
   );
+  const statsRefreshDisplayProgress = clamp(
+    statsRefreshOverlayMode === "loading"
+      ? statsRefreshLoadingDisplayProgress
+      : statsRefreshProgress,
+    0,
+    100
+  );
 
   return (
     <main className="terminal">
@@ -10632,10 +10671,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
               <section className="backtest-hero">
                 <div className="backtest-hero-copy">
-                  <span className="backtest-kicker">Backtest Workspace</span>
-                  <h2>
-                    {backtestDisplayModelSelectionSummary} on {backtestDisplayTimeframe}
-                  </h2>
+                  <h2>Korra&#39;s Workspace</h2>
                 </div>
 
                 <div className="backtest-summary-grid">
@@ -14083,11 +14119,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 aria-label="Updating backtest statistics"
                 aria-valuemin={0}
                 aria-valuemax={100}
-                aria-valuenow={Math.round(clamp(statsRefreshProgress, 0, 100))}
+                aria-valuenow={Math.round(statsRefreshDisplayProgress)}
               >
                 <div
                   className="stats-refresh-loading-fill"
-                  style={{ width: `${clamp(statsRefreshProgress, 0, 100)}%` }}
+                  style={{ width: `${statsRefreshDisplayProgress}%` }}
                 />
               </div>
               <div className="stats-refresh-loading-date">

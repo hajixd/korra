@@ -337,6 +337,9 @@ function TradeDetailsModalImpl({
 
     const ep = entryPrice;
     if (!Number.isFinite(ep)) return null;
+    const pnlPerMove = Number.isFinite(Number(dollarsPerMove))
+      ? Number(dollarsPerMove)
+      : 1;
 
     let maxFav = 0;
     let maxAdv = 0;
@@ -357,11 +360,11 @@ function TradeDetailsModalImpl({
       const adversePx = dir === 1 ? loPx : hiPx;
       const favorablePnl = Math.max(
         0,
-        (favorablePx - ep) * dir * (dollarsPerMove ?? 1)
+        (favorablePx - ep) * dir * pnlPerMove
       );
       const adversePnl = Math.max(
         0,
-        -((adversePx - ep) * dir * (dollarsPerMove ?? 1))
+        -((adversePx - ep) * dir * pnlPerMove)
       );
 
       if (favorablePnl > maxFav) maxFav = favorablePnl;
@@ -371,6 +374,17 @@ function TradeDetailsModalImpl({
       if (loPx < trough) trough = loPx;
     }
 
+    // By definition, favorable/adverse excursion cannot exceed configured TP/SL caps.
+    const tpCap = Number.isFinite(tpPrice)
+      ? Math.max(0, Math.abs((tpPrice as number) - ep) * pnlPerMove)
+      : null;
+    const slCap = Number.isFinite(slPrice)
+      ? Math.max(0, Math.abs((slPrice as number) - ep) * pnlPerMove)
+      : null;
+
+    if (tpCap != null) maxFav = Math.min(maxFav, tpCap);
+    if (slCap != null) maxAdv = Math.min(maxAdv, slCap);
+
     return {
       entryIndex: start,
       exitIndex: end,
@@ -379,7 +393,7 @@ function TradeDetailsModalImpl({
       peak,
       trough,
     };
-  }, [trade, candles, dollarsPerMove, entryPrice, dir]);
+  }, [trade, candles, dollarsPerMove, entryPrice, dir, tpPrice, slPrice]);
 
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -1033,7 +1047,7 @@ function TradeCandlestickChartSVG({
   const pad = 16;
   const W = 1040; // viewBox width
   const H = Math.max(320, Math.min(560, heightPx));
-  const plot = { x: pad, y: pad, w: W - pad * 2, h: H - pad * 2 - 22 }; // reserve bottom for labels
+  const plot = { x: pad, y: pad, w: W - pad * 2, h: H - pad * 2 - 30 }; // reserve bottom for x-axis labels
 
   const viewData = React.useMemo(() => {
     const a = Math.max(0, Math.min(N - 1, viewStart));
@@ -1308,6 +1322,49 @@ function TradeCandlestickChartSVG({
     })}`;
   };
 
+  const axisTimeLabel = (ms: number | null) => {
+    if (ms == null) return "";
+    const d = new Date(ms);
+    const baseOptions: Intl.DateTimeFormatOptions = {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    };
+    if (String(parseMode || "").toLowerCase() === "utc") {
+      baseOptions.timeZone = "UTC";
+    }
+    return d.toLocaleTimeString([], baseOptions);
+  };
+
+  const xAxisTicks = (() => {
+    if (!viewData.length) return [];
+    const maxTicks = Math.min(6, Math.max(3, Math.floor(viewData.length / 30) + 2));
+    const out: Array<{ key: string; x: number; label: string }> = [];
+    let lastX = -Infinity;
+
+    for (let k = 0; k < maxTicks; k++) {
+      const idxInView =
+        maxTicks <= 1
+          ? 0
+          : Math.round((k * (viewData.length - 1)) / (maxTicks - 1));
+      const point = viewData[idxInView];
+      if (!point) continue;
+      const ms = candleTimeMs(point.c);
+      const label = axisTimeLabel(ms);
+      if (!label) continue;
+      const x = xForIndex(point.i);
+      if (x - lastX < 64 && k !== maxTicks - 1) continue;
+
+      out.push({
+        key: `${point.i}-${ms ?? "na"}`,
+        x,
+        label,
+      });
+      lastX = x;
+    }
+    return out;
+  })();
+
   // Styling
   const bg = "rgba(0,0,0,0.92)";
   const grid = "rgba(255,255,255,0.10)";
@@ -1440,6 +1497,42 @@ function TradeCandlestickChartSVG({
             />
           );
         })}
+
+        {/* Bottom time axis */}
+        <line
+          x1={plot.x}
+          y1={plot.y + plot.h}
+          x2={plot.x + plot.w}
+          y2={plot.y + plot.h}
+          stroke="rgba(255,255,255,0.22)"
+        />
+        {xAxisTicks.map((tick, idx) => (
+          <g key={tick.key}>
+            <line
+              x1={tick.x}
+              y1={plot.y + plot.h}
+              x2={tick.x}
+              y2={plot.y + plot.h + 4}
+              stroke="rgba(255,255,255,0.30)"
+            />
+            <text
+              x={tick.x}
+              y={plot.y + plot.h + 17}
+              fill="rgba(255,255,255,0.68)"
+              fontSize={11}
+              fontFamily="ui-sans-serif, system-ui"
+              textAnchor={
+                idx === 0
+                  ? "start"
+                  : idx === xAxisTicks.length - 1
+                    ? "end"
+                    : "middle"
+              }
+            >
+              {tick.label}
+            </text>
+          </g>
+        ))}
 
         {/* Entry / TP / SL */}
         {entryPrice != null ? (
@@ -1731,6 +1824,11 @@ function TradeCandlestickChartLightweight({
   lw: any;
 }) {
   const containerRef = React.useRef<HTMLDivElement | null>(null);
+  const chartRef = React.useRef<any>(null);
+  const seriesRef = React.useRef<any>(null);
+  const resizeObserverRef = React.useRef<ResizeObserver | null>(null);
+  const priceLinesRef = React.useRef<any[]>([]);
+  const lastTradeViewKeyRef = React.useRef<string | null>(null);
 
   const num = (v: any) => {
     const n =
@@ -1853,6 +1951,10 @@ function TradeCandlestickChartLightweight({
   const tp = priceSnapshot.tpPrice;
   const sl = priceSnapshot.slPrice;
 
+  const height = Math.max(320, Math.min(560, heightPx));
+  const heightRef = React.useRef(height);
+  heightRef.current = height;
+
   const tradeLenRaw =
     num(
       (trade as any)?.bars ??
@@ -1867,24 +1969,34 @@ function TradeCandlestickChartLightweight({
     initialStart + initialWin - 1
   );
 
+  const tradeViewKey = React.useMemo(() => {
+    const id =
+      (trade as any)?.uid ??
+      (trade as any)?.id ??
+      (trade as any)?.tradeId ??
+      (trade as any)?.entryTime ??
+      (trade as any)?.time ??
+      "";
+    const exitKey =
+      (trade as any)?.exitTime ??
+      (trade as any)?.exitIndex ??
+      (trade as any)?.closeIndex ??
+      "open";
+    return `${String(id)}|${entryIdx}|${exitIdx ?? "open"}|${String(exitKey)}`;
+  }, [trade, entryIdx, exitIdx]);
+
   React.useEffect(() => {
     if (!containerRef.current) return;
     if (!lw?.createChart) return;
 
     const el = containerRef.current;
-
-    // wipe previous chart (if any) by clearing node
-    el.innerHTML = "";
-
     const { createChart } = lw;
     const CrosshairMode = lw?.CrosshairMode;
-    const LineStyle = lw?.LineStyle;
-
-    const height = Math.max(320, Math.min(560, heightPx));
+    el.innerHTML = "";
 
     const chart = createChart(el, {
       width: el.clientWidth || 900,
-      height,
+      height: heightRef.current,
       layout: {
         background: { type: "solid", color: "#000" },
         textColor: "rgba(255,255,255,0.70)",
@@ -1902,8 +2014,26 @@ function TradeCandlestickChartLightweight({
             horzLine: { color: "rgba(255,255,255,0.18)", width: 1 },
           }
         : undefined,
-      rightPriceScale: { borderColor: "rgba(255,255,255,0.10)" },
-      timeScale: { borderColor: "rgba(255,255,255,0.10)" },
+      rightPriceScale: {
+        borderColor: "rgba(255,255,255,0.10)",
+        scaleMargins: { top: 0.1, bottom: 0.1 },
+      },
+      timeScale: {
+        borderColor: "rgba(255,255,255,0.10)",
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      handleScale: {
+        axisPressedMouseMove: true,
+        mouseWheel: true,
+        pinch: true,
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
     });
 
     const series = chart.addCandlestickSeries({
@@ -1915,7 +2045,39 @@ function TradeCandlestickChartLightweight({
       priceLineVisible: false,
     });
 
-    series.setData(data);
+    chartRef.current = chart;
+    seriesRef.current = series;
+    priceLinesRef.current = [];
+
+    const ro = new ResizeObserver(() => {
+      chart.applyOptions({ width: el.clientWidth || 900, height: heightRef.current });
+    });
+    ro.observe(el);
+    resizeObserverRef.current = ro;
+
+    return () => {
+      resizeObserverRef.current?.disconnect();
+      resizeObserverRef.current = null;
+      priceLinesRef.current = [];
+      seriesRef.current = null;
+      chartRef.current = null;
+      chart.remove();
+    };
+  }, [lw]);
+
+  React.useEffect(() => {
+    chartRef.current?.applyOptions({ height });
+  }, [height]);
+
+  React.useEffect(() => {
+    if (!seriesRef.current) return;
+    seriesRef.current.setData(data);
+  }, [data]);
+
+  React.useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const LineStyle = lw?.LineStyle;
 
     const entryT = data[Math.min(entryIdx, Math.max(0, data.length - 1))]?.time;
     const exitT =
@@ -1942,74 +2104,60 @@ function TradeCandlestickChartLightweight({
         text: `Exit ${exitSide}`,
       });
     }
-    if (markers.length) series.setMarkers(markers);
-
-    if (entryPrice != null && series.createPriceLine) {
-      series.createPriceLine({
-        price: entryPrice,
-        color: "#ffffff",
-        lineWidth: 1,
-        lineStyle: LineStyle ? LineStyle.Solid : 0,
-        axisLabelVisible: true,
-        title: "Entry",
-      });
-    }
-    if (tp != null && series.createPriceLine) {
-      series.createPriceLine({
-        price: tp,
-        color: "#34d399",
-        lineWidth: 1,
-        lineStyle: LineStyle ? LineStyle.Dashed : 2,
-        axisLabelVisible: true,
-        title: "TP",
-      });
-    }
-    if (sl != null && series.createPriceLine) {
-      series.createPriceLine({
-        price: sl,
-        color: "#fb7185",
-        lineWidth: 1,
-        lineStyle: LineStyle ? LineStyle.Dashed : 2,
-        axisLabelVisible: true,
-        title: "SL",
-      });
+    if (typeof series.setMarkers === "function") {
+      series.setMarkers(markers);
     }
 
-    // focus around trade initially, but user can zoom/pan anywhere
-    const startT =
-      data[Math.min(initialStart, Math.max(0, data.length - 1))]?.time;
-    const endT = data[Math.min(initialEnd, Math.max(0, data.length - 1))]?.time;
+    if (typeof series.removePriceLine === "function") {
+      for (const line of priceLinesRef.current) {
+        series.removePriceLine(line);
+      }
+    }
+    priceLinesRef.current = [];
+
+    const addLine = (
+      price: number | null,
+      color: string,
+      title: string,
+      lineStyle: number
+    ) => {
+      if (price == null || typeof series.createPriceLine !== "function") return;
+      const line = series.createPriceLine({
+        price,
+        color,
+        lineWidth: 1,
+        lineStyle,
+        axisLabelVisible: true,
+        title,
+      });
+      if (line) priceLinesRef.current.push(line);
+    };
+
+    addLine(entryPrice, "#ffffff", "Entry", LineStyle ? LineStyle.Solid : 0);
+    addLine(tp, "#34d399", "TP", LineStyle ? LineStyle.Dashed : 2);
+    addLine(sl, "#fb7185", "SL", LineStyle ? LineStyle.Dashed : 2);
+  }, [lw, data, entryIdx, exitIdx, isLong, entrySide, exitSide, entryPrice, tp, sl]);
+
+  React.useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || data.length === 0) return;
+    if (lastTradeViewKeyRef.current === tradeViewKey) return;
+    lastTradeViewKeyRef.current = tradeViewKey;
+
+    const safeStart = Math.min(initialStart, Math.max(0, data.length - 1));
+    const safeEnd = Math.min(
+      Math.max(safeStart, initialEnd),
+      Math.max(0, data.length - 1)
+    );
+    const startT = data[safeStart]?.time;
+    const endT = data[safeEnd]?.time;
 
     if (startT != null && endT != null && chart.timeScale().setVisibleRange) {
       chart.timeScale().setVisibleRange({ from: startT, to: endT });
     } else {
       chart.timeScale().fitContent();
     }
-
-    const ro = new ResizeObserver(() => {
-      chart.applyOptions({ width: el.clientWidth || 900, height });
-    });
-    ro.observe(el);
-
-    return () => {
-      ro.disconnect();
-      chart.remove();
-    };
-  }, [
-    lw,
-    data,
-    heightPx,
-    entryPrice,
-    tp,
-    sl,
-    entryIdx,
-    exitIdx,
-    isLong,
-    entrySide,
-    exitSide,
-    initialStart,
-    initialEnd,
-  ]);
+  }, [data, initialStart, initialEnd, tradeViewKey]);
 
   return (
     <div
@@ -2056,7 +2204,7 @@ function TradeCandlestickChartLightweight({
       <div
         style={{
           width: "100%",
-          height: Math.max(320, Math.min(560, heightPx)),
+          height,
         }}
         ref={containerRef}
       />
