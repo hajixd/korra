@@ -3343,6 +3343,22 @@ button {
   color: var(--text-faint);
 }
 
+.candle-countdown-overlay {
+  position: absolute;
+  right: 0;
+  pointer-events: none;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  font-size: 0.6rem;
+  color: #fff;
+  text-align: left;
+  padding: 1px 4px;
+  border-radius: 2px;
+  width: 55px;
+  z-index: 4;
+  letter-spacing: 0.01em;
+  display: none;
+}
+
 .chart-stage {
   min-height: 0;
   height: 100%;
