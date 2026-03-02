@@ -8170,6 +8170,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const suppressedTradePool = backtestTimeFilteredTrades.filter(
       (trade) => !executedTradeIds.has(trade.id)
     );
+    // Keep library construction mode-agnostic: AI Filter vs AI Model should not
+    // change which historical neighbor pool is loaded, only when confidence is checked.
+    const libraryCandidatePool = backtestTimeFilteredTrades;
     const maxSignalIndex = Math.max(0, selectedChartCandles.length - 1);
 
     const getSettings = (definition: AiLibraryDef) => {
@@ -8198,10 +8201,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const buildRawSource = (definition: AiLibraryDef) => {
       const settings = getSettings(definition);
       const normalizedId = definition.id.toLowerCase();
-      let source: HistoryItem[] = backtestLibraryCandidateTrades;
+      let source: HistoryItem[] = libraryCandidatePool;
 
       if (normalizedId === "core") {
-        source = backtestTrades;
+        source = libraryCandidatePool;
       } else if (normalizedId === "suppressed") {
         source = suppressedTradePool;
       } else if (normalizedId === "recent") {
@@ -8210,21 +8213,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           0,
           5000
         );
-        source = windowTrades > 0 ? backtestTrades.slice(-windowTrades) : [];
+        source = windowTrades > 0 ? libraryCandidatePool.slice(-windowTrades) : [];
       } else if (normalizedId === "tokyo") {
-        source = backtestLibraryCandidateTrades.filter(
+        source = libraryCandidatePool.filter(
           (trade) => getSessionLabel(trade.entryTime) === "Tokyo"
         );
       } else if (normalizedId === "sydney") {
-        source = backtestLibraryCandidateTrades.filter(
+        source = libraryCandidatePool.filter(
           (trade) => getSessionLabel(trade.entryTime) === "Sydney"
         );
       } else if (normalizedId === "london") {
-        source = backtestLibraryCandidateTrades.filter(
+        source = libraryCandidatePool.filter(
           (trade) => getSessionLabel(trade.entryTime) === "London"
         );
       } else if (normalizedId === "newyork") {
-        source = backtestLibraryCandidateTrades.filter(
+        source = libraryCandidatePool.filter(
           (trade) => getSessionLabel(trade.entryTime) === "New York"
         );
       } else if (normalizedId === "terrific") {
@@ -8233,7 +8236,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           0,
           100000
         );
-        source = [...backtestLibraryCandidateTrades]
+        source = [...libraryCandidatePool]
           .sort((left, right) => right.pnlUsd - left.pnlUsd)
           .slice(0, count);
       } else if (normalizedId === "terrible") {
@@ -8242,12 +8245,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           0,
           100000
         );
-        source = [...backtestLibraryCandidateTrades]
+        source = [...libraryCandidatePool]
           .sort((left, right) => left.pnlUsd - right.pnlUsd)
           .slice(0, count);
       } else if (settings.kind === "model_sim") {
         const targetModel = String(settings.model ?? "");
-        source = backtestLibraryCandidateTrades.filter(
+        source = libraryCandidatePool.filter(
           (trade) => trade.entrySource === targetModel
         );
       }
@@ -8368,7 +8371,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [
     appliedBacktestSettings.selectedAiLibrarySettings,
     aiLibraryDefs,
-    backtestLibraryCandidateTrades,
     candleIndexByUnix,
     selectedChartCandles.length,
     backtestTimeFilteredTrades,
