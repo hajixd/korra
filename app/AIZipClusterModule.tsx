@@ -12696,16 +12696,31 @@ export function ClusterMap({
       const p: any = (libraryPoints as any[])[li];
       if (!p) continue;
 
+      const modelKey = String((p as any).model ?? (p as any).chunkType ?? "-");
+      const rawVec = Array.isArray((p as any).v)
+        ? (p as any).v
+        : Array.isArray((p as any).vec)
+        ? (p as any).vec
+        : Array.isArray((p as any).chunk)
+        ? (p as any).chunk
+        : null;
+
       const sIdxRaw =
         (p as any).signalIndex ??
         (p as any).metaSignalIndex ??
         (p as any).metaEntryIndex ??
-        -1;
-      const sIdx = Number(sIdxRaw);
-      if (!Number.isFinite(sIdx) || sIdx < 0) continue;
+        null;
+      const sIdxNum = Number(sIdxRaw);
+      const hasSIdx = Number.isFinite(sIdxNum);
+      const sIdxClamped = hasSIdx
+        ? Math.min(Math.max(0, Math.floor(sIdxNum)), Math.max(0, candles.length - 1))
+        : 0;
 
-      const modelKey = String((p as any).model ?? (p as any).chunkType ?? "-");
-      if (!modelKey || modelKey === "-") continue;
+      // Require either a usable candle-based descriptor (signal index + model)
+      // or a direct vector payload from the neighbor store.
+      const hasDirectVector = Array.isArray(rawVec) && rawVec.length >= 2;
+      const canBuildFromCandle = hasSIdx && !!modelKey && modelKey !== "-";
+      if (!hasDirectVector && !canBuildFromCandle) continue;
 
       const libId = String((p as any).libId ?? (p as any).metaLib ?? "unknown");
 
@@ -12724,7 +12739,13 @@ export function ClusterMap({
         isOpen: false,
       };
 
-      const entryTime = (p as any).entryTime ?? (p as any).metaTime ?? "";
+      const entryTime =
+        (p as any).entryTime ??
+        (p as any).metaTime ??
+        candles?.[Math.min(candles.length - 1, Math.max(0, sIdxClamped + 1))]
+          ?.time ??
+        candles?.[sIdxClamped]?.time ??
+        "";
       // Try to preserve real exit info for library points when available.
       const exitIdxFromP =
         typeof (p as any).exitIndex === "number"
@@ -12747,8 +12768,11 @@ export function ClusterMap({
         exitIdxFromP != null
           ? exitIdxFromP
           : holdBarsFromP > 0
-          ? sIdx + holdBarsFromP
-          : Math.min(sIdx + 1, (candles?.length ?? sIdx + 2) - 1);
+          ? sIdxClamped + holdBarsFromP
+          : Math.min(
+              sIdxClamped + 1,
+              (candles?.length ?? sIdxClamped + 2) - 1
+            );
 
       const exitTimeFromP =
         (p as any).exitTime ??
@@ -12778,20 +12802,28 @@ export function ClusterMap({
       )
         continue;
 
-      const baseV = buildMapVector(
-        candles,
-        sIdx,
-        chunkBarsDeb,
-        modelKey,
-        pseudo,
-        pnlScale,
-        parseMode
-      );
-
       const tod = timeOfDayUnit(entryTime, parseMode);
       const timeFeature = (tod - 0.5) * 2 * TIME_FEATURE_STRENGTH;
-      const meta = baseV.slice(-6);
-      const chunk = baseV.slice(0, Math.max(0, baseV.length - 6));
+
+      let chunk: number[] = [];
+      let meta: number[] = [];
+      if (hasDirectVector) {
+        // Accept vector-backed library points even when candle/model metadata is partial.
+        chunk = (rawVec as number[]).slice();
+        meta = [0, 0, 0, 0, 0, 0];
+      } else {
+        const baseV = buildMapVector(
+          candles,
+          sIdxClamped,
+          chunkBarsDeb,
+          modelKey,
+          pseudo,
+          pnlScale,
+          parseMode
+        );
+        meta = baseV.slice(-6);
+        chunk = baseV.slice(0, Math.max(0, baseV.length - 6));
+      }
       const baseR = 6.4;
 
       const dtStr = (entryTime || "") as any;
@@ -12821,15 +12853,15 @@ export function ClusterMap({
         id:
           (p as any).id ??
           (p as any).uid ??
-          `lib-${libId}-${modelKey}-${String(sIdx)}-${String(li)}`,
+          `lib-${libId}-${modelKey}-${String(sIdxClamped)}-${String(li)}`,
         chunk,
         meta,
         timeFeature,
         baseR,
         kind: "library",
         libId,
-        signalIndex: sIdx,
-        entryIndex: sIdx,
+        signalIndex: sIdxClamped,
+        entryIndex: sIdxClamped,
         exitIndex: inferredExitIndex,
         dir: pseudo.direction,
         pnl,
@@ -21798,11 +21830,28 @@ export function ClusterMap3D({
     for (let li = 0; li < (libraryPoints || []).length; li++) {
       const lp: any = libraryPoints[li];
       const lid = String(lp.metaLib ?? lp.libId ?? lp.metaLibrary ?? "");
-      const tRaw = String(lp.metaTime ?? lp.entryTime ?? "");
       const mRaw = String(lp.metaModel ?? lp.model ?? lp.chunkType ?? "");
+      const sIdxRaw =
+        lp.signalIndex ?? lp.metaSignalIndex ?? lp.metaEntryIndex ?? -1;
+      const sIdx = Number(sIdxRaw);
+      const sIdxOk = Number.isFinite(sIdx) && sIdx >= 0;
+
+      const fallbackTime = sIdxOk
+        ? String(
+            candles[Math.min(candles.length - 1, Math.max(0, sIdx + 1))]
+              ?.time ??
+              candles[Math.min(candles.length - 1, Math.max(0, sIdx))]?.time ??
+              ""
+          )
+        : "";
+      const tRaw = String(lp.metaTime ?? lp.entryTime ?? fallbackTime ?? "");
+      const dir = Number(lp.metaDir ?? lp.dir ?? lp.metaDirection ?? lp.direction ?? 0);
+      const pnl = Number(lp.metaPnl ?? lp.pnl ?? 0);
+      const win = Number(lp.label ?? (pnl >= 0 ? 1 : -1)) >= 0;
+
       if (
         !passesViewFilter(
-          lp.metaDir ?? lp.dir ?? lp.metaDirection ?? lp.direction,
+          dir,
           tRaw,
           mRaw
         )
@@ -21816,18 +21865,41 @@ export function ClusterMap3D({
         : Array.isArray(lp.chunk)
         ? lp.chunk
         : null;
-      if (!v || v.length < 2) continue;
-
-      const dir = Number(lp.metaDir ?? lp.dir ?? lp.direction ?? 0);
-      const pnl = Number(lp.metaPnl ?? lp.pnl ?? 0);
-      const win = Number(lp.label ?? (pnl >= 0 ? 1 : -1)) >= 0;
 
       const tod = timeOfDayUnit(tRaw, parseMode);
       const timeFeature = (tod - 0.5) * 2 * TIME_FEATURE_STRENGTH;
 
-      // Library vectors might not include the 6 meta tail; keep shape consistent for UMAP worker
-      const chunk = v.slice();
-      const meta = [0, 0, 0, 0, 0, 0];
+      let chunk: any[] = [];
+      let meta: any[] = [];
+
+      if (Array.isArray(v) && v.length >= 2) {
+        // Library vectors might not include the 6 meta tail; keep shape consistent for UMAP worker.
+        chunk = v.slice();
+        meta = [0, 0, 0, 0, 0, 0];
+      } else {
+        // Fallback: derive a comparable vector from candle context when only metadata is available.
+        // This matches how the 2D Cluster Map constructs library points.
+        if (!sIdxOk || !mRaw || mRaw === "-") continue;
+        const pseudo: any = {
+          direction: Number.isFinite(dir) ? dir : 0,
+          result: win ? "TP" : "SL",
+          pnl,
+          isOpen: false,
+        };
+        const baseV = buildMapVector(
+          candles,
+          sIdx,
+          chunkBarsDeb,
+          mRaw,
+          pseudo,
+          pnlScale,
+          parseMode
+        );
+        chunk = baseV.slice(0, Math.max(0, baseV.length - 6));
+        meta = baseV.slice(-6);
+      }
+
+      if (!Array.isArray(chunk) || chunk.length < 2) continue;
 
       entries.push({
         id: `lib-${lid || "lib"}-${String(lp.uid ?? li)}`,
@@ -21851,6 +21923,8 @@ export function ClusterMap3D({
         label: win ? 1 : -1,
         metaTrainingOnly: !!lp.metaTrainingOnly,
         metaWeight: lp.weight ?? lp.metaWeight ?? 1,
+        signalIndex: sIdxOk ? sIdx : null,
+        entryIndex: sIdxOk ? sIdx : null,
       });
     }
 
