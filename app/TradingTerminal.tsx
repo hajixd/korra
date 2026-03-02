@@ -7088,6 +7088,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       candleSeries.update(lastBar);
     } else {
       chartIsApplyingVisibleRangeRef.current = true;
+      const savedLogicalRange = !pendingRange ? chart.timeScale().getVisibleLogicalRange() : null;
       candleSeries.setData(candleData);
 
       if (pendingRange) {
@@ -7096,6 +7097,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           to: pendingRange.to - chartRenderWindow.from
         });
         chartPendingVisibleGlobalRangeRef.current = null;
+      } else if (savedLogicalRange) {
+        chart.timeScale().setVisibleLogicalRange(savedLogicalRange);
       }
 
       if (chartVisibleRangeSyncRafRef.current) {
