@@ -515,33 +515,86 @@ button {
   letter-spacing: 0.01em;
 }
 
-.backtest-summary-strip.backtest-summary-strip-compact {
-  --backtest-stat-gap: 0.38rem;
-  --backtest-visible-cards: 8;
-  --backtest-stat-card-width: 150px;
+.backtest-footer-ticker {
+  --backtest-footer-gap: 0.34rem;
+  --backtest-footer-visible-cards: 8;
+  --backtest-footer-pill-width: 154px;
+  --backtest-footer-cycle-width: calc(
+    (16 * var(--backtest-footer-pill-width)) + (16 * var(--backtest-footer-gap))
+  );
   width: 100%;
+  overflow: hidden;
+  container-type: inline-size;
 }
 
-.backtest-summary-strip-compact .backtest-summary-card {
-  min-height: 0;
-  padding: 0.3rem 0.42rem;
-  gap: 0.1rem;
-  border-radius: 10px;
+.backtest-footer-ticker-track {
+  display: flex;
+  width: max-content;
+  will-change: transform;
+  transform: translateX(calc(-1 * var(--backtest-footer-cycle-width)));
+  animation: backtest-footer-scroll-right var(--backtest-summary-scroll-duration) linear infinite;
 }
 
-.backtest-summary-strip-compact .backtest-summary-card span {
-  font-size: 0.49rem;
+.backtest-footer-ticker-sequence {
+  flex: 0 0 auto;
+  display: flex;
+  gap: var(--backtest-footer-gap);
+  padding-right: var(--backtest-footer-gap);
+}
+
+.backtest-footer-pill {
+  flex: 0 0 var(--backtest-footer-pill-width);
+  min-width: 0;
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.28rem;
+  padding: 0 0.44rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.backtest-footer-pill-label {
+  min-width: 0;
+  font-size: 0.5rem;
   letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.backtest-summary-strip-compact .backtest-summary-card strong {
-  font-size: 0.72rem;
-  line-height: 1.05;
+.backtest-footer-pill-value {
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.9);
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
   letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 
-.backtest-summary-strip-compact .backtest-summary-card small {
-  display: none;
+@supports (width: 1cqw) {
+  .backtest-footer-ticker {
+    --backtest-footer-pill-width: calc(
+      (100cqw - ((var(--backtest-footer-visible-cards) - 1) * var(--backtest-footer-gap))) /
+        var(--backtest-footer-visible-cards)
+    );
+  }
+}
+
+@keyframes backtest-footer-scroll-right {
+  from {
+    transform: translateX(calc(-1 * var(--backtest-footer-cycle-width)));
+  }
+
+  to {
+    transform: translateX(0);
+  }
 }
 
 .backtest-summary-card span,
@@ -583,6 +636,11 @@ button {
   }
 
   .main-settings-kpi-strip-track {
+    animation: none;
+    transform: translateX(0);
+  }
+
+  .backtest-footer-ticker-track {
     animation: none;
     transform: translateX(0);
   }
@@ -3935,8 +3993,9 @@ button {
 
 .statusbar.backtest-statusbar {
   gap: 0;
-  padding: 0.22rem 0.38rem;
-  align-items: stretch;
+  padding: 0.14rem 0.34rem;
+  align-items: center;
+  overflow: hidden;
 }
 
 @media (max-width: 1120px) {
@@ -3951,6 +4010,10 @@ button {
 
   .main-settings-kpi-strip {
     --main-kpi-visible-cards: 3;
+  }
+
+  .backtest-footer-ticker {
+    --backtest-footer-visible-cards: 4;
   }
 
   .main-settings-layout {
@@ -4100,6 +4163,10 @@ button {
 
   .main-settings-kpi-strip {
     --main-kpi-visible-cards: 2;
+  }
+
+  .backtest-footer-ticker {
+    --backtest-footer-visible-cards: 2;
   }
 
   .backtest-summary-grid,
