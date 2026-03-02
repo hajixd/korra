@@ -1223,6 +1223,69 @@ const rebalanceItemsToTargetWinRate = <T,>(
     .map((entry) => entry.item);
 };
 
+const collectCappedItems = <T,>(
+  items: readonly T[],
+  options: {
+    cap: number;
+    stride?: number;
+    predicate?: (item: T, index: number) => boolean;
+    startIndex?: number;
+    endIndex?: number;
+  }
+): T[] => {
+  const cap = Math.max(0, Math.floor(Number(options.cap) || 0));
+  if (cap <= 0 || items.length === 0) {
+    return [];
+  }
+
+  const stride = Math.max(1, Math.floor(Number(options.stride) || 1));
+  const startIndex = clamp(
+    Math.floor(Number(options.startIndex ?? 0) || 0),
+    0,
+    items.length
+  );
+  const endIndex = clamp(
+    Math.floor(Number(options.endIndex ?? items.length) || items.length),
+    startIndex,
+    items.length
+  );
+  const predicate = options.predicate ?? (() => true);
+  const out: T[] = [];
+  let matchedCount = 0;
+
+  for (let index = startIndex; index < endIndex; index += 1) {
+    const item = items[index]!;
+    if (!predicate(item, index)) {
+      continue;
+    }
+
+    if (matchedCount % stride === 0) {
+      out.push(item);
+      if (out.length >= cap) {
+        break;
+      }
+    }
+
+    matchedCount += 1;
+  }
+
+  return out;
+};
+
+const applyStrideToItems = <T,>(items: readonly T[], strideRaw: number): T[] => {
+  const stride = Math.max(1, Math.floor(Number(strideRaw) || 1));
+  if (stride <= 1) {
+    return [...items];
+  }
+
+  const out: T[] = [];
+  for (let index = 0; index < items.length; index += stride) {
+    out.push(items[index]!);
+  }
+
+  return out;
+};
+
 const AI_DOMAIN_OPTIONS = [
   "Direction",
   "Model",
@@ -5907,54 +5970,90 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     ) => {
       const settings = getLibrarySettings(libraryId);
       const normalizedId = libraryId.toLowerCase();
-      let source = pool;
+      const maxSamples = getLibraryMaxSamples(libraryId, 96);
+      const stride = getLibraryStride(libraryId);
+      let source: HistoryItem[] = [];
 
       if (normalizedId === "suppressed") {
-        source = pool.filter((trade) => trade.result === "Loss");
+        source = collectCappedItems(pool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => trade.result === "Loss"
+        });
       } else if (normalizedId === "recent") {
         const windowTrades = clamp(
           Math.floor(Number(settings.windowTrades ?? 150) || 150),
           0,
           5000
         );
-        source = windowTrades > 0 ? pool.slice(-windowTrades) : [];
+        const startIndex = Math.max(0, pool.length - windowTrades);
+        source =
+          windowTrades > 0
+            ? collectCappedItems(pool, {
+                cap: maxSamples,
+                stride,
+                startIndex,
+                endIndex: pool.length
+              })
+            : [];
       } else if (normalizedId === "tokyo") {
-        source = pool.filter(
-          (trade) => getSessionLabel(trade.entryTime) === "Tokyo"
-        );
+        source = collectCappedItems(pool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => getSessionLabel(trade.entryTime) === "Tokyo"
+        });
       } else if (normalizedId === "sydney") {
-        source = pool.filter(
-          (trade) => getSessionLabel(trade.entryTime) === "Sydney"
-        );
+        source = collectCappedItems(pool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => getSessionLabel(trade.entryTime) === "Sydney"
+        });
       } else if (normalizedId === "london") {
-        source = pool.filter(
-          (trade) => getSessionLabel(trade.entryTime) === "London"
-        );
+        source = collectCappedItems(pool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => getSessionLabel(trade.entryTime) === "London"
+        });
       } else if (normalizedId === "newyork") {
-        source = pool.filter(
-          (trade) => getSessionLabel(trade.entryTime) === "New York"
-        );
+        source = collectCappedItems(pool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => getSessionLabel(trade.entryTime) === "New York"
+        });
       } else if (normalizedId === "terrific") {
         const count = getLibraryCount(libraryId, 96);
-        source = [...pool]
-          .sort((left, right) => right.pnlUsd - left.pnlUsd)
-          .slice(0, count);
+        const effectiveCap = Math.min(maxSamples, count);
+        const capped = collectCappedItems(pool, {
+          cap: effectiveCap
+        });
+        source = applyStrideToItems(
+          [...capped].sort((left, right) => right.pnlUsd - left.pnlUsd),
+          stride
+        );
       } else if (normalizedId === "terrible") {
         const count = getLibraryCount(libraryId, 96);
-        source = [...pool]
-          .sort((left, right) => left.pnlUsd - right.pnlUsd)
-          .slice(0, count);
+        const effectiveCap = Math.min(maxSamples, count);
+        const capped = collectCappedItems(pool, {
+          cap: effectiveCap
+        });
+        source = applyStrideToItems(
+          [...capped].sort((left, right) => left.pnlUsd - right.pnlUsd),
+          stride
+        );
       } else if ((settings.kind as string | undefined) === "model_sim") {
         const targetModel = String(settings.model ?? currentTrade.entrySource);
-        source = pool.filter((trade) => trade.entrySource === targetModel);
+        source = collectCappedItems(pool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => trade.entrySource === targetModel
+        });
+      } else {
+        source = collectCappedItems(pool, {
+          cap: maxSamples,
+          stride
+        });
       }
 
-      const stride = getLibraryStride(libraryId);
-      if (stride > 1) {
-        source = source.filter((_, index) => index % stride === 0);
-      }
-
-      const maxSamples = getLibraryMaxSamples(libraryId, 96);
       const baselineWinRate = getOutcomeWinRatePercent(
         source,
         (candidate) => candidate.result === "Win"
@@ -8418,63 +8517,100 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const buildRawSource = (definition: AiLibraryDef) => {
       const settings = getSettings(definition);
       const normalizedId = definition.id.toLowerCase();
-      let source: HistoryItem[] = libraryCandidatePool;
+      const maxSamples = getMaxSamples(definition, 96);
+      const stride = getStride(definition);
+      let source: HistoryItem[] = [];
 
       if (normalizedId === "core") {
-        source = libraryCandidatePool;
+        source = collectCappedItems(libraryCandidatePool, {
+          cap: maxSamples,
+          stride
+        });
       } else if (normalizedId === "suppressed") {
-        source = suppressedTradePool;
+        source = collectCappedItems(suppressedTradePool, {
+          cap: maxSamples,
+          stride
+        });
       } else if (normalizedId === "recent") {
         const windowTrades = clamp(
           Math.floor(Number(settings.windowTrades ?? 1500) || 1500),
           0,
           5000
         );
-        source = windowTrades > 0 ? libraryCandidatePool.slice(-windowTrades) : [];
+        const startIndex = Math.max(0, libraryCandidatePool.length - windowTrades);
+        source =
+          windowTrades > 0
+            ? collectCappedItems(libraryCandidatePool, {
+                cap: maxSamples,
+                stride,
+                startIndex,
+                endIndex: libraryCandidatePool.length
+              })
+            : [];
       } else if (normalizedId === "tokyo") {
-        source = libraryCandidatePool.filter(
-          (trade) => getSessionLabel(trade.entryTime) === "Tokyo"
-        );
+        source = collectCappedItems(libraryCandidatePool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => getSessionLabel(trade.entryTime) === "Tokyo"
+        });
       } else if (normalizedId === "sydney") {
-        source = libraryCandidatePool.filter(
-          (trade) => getSessionLabel(trade.entryTime) === "Sydney"
-        );
+        source = collectCappedItems(libraryCandidatePool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => getSessionLabel(trade.entryTime) === "Sydney"
+        });
       } else if (normalizedId === "london") {
-        source = libraryCandidatePool.filter(
-          (trade) => getSessionLabel(trade.entryTime) === "London"
-        );
+        source = collectCappedItems(libraryCandidatePool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => getSessionLabel(trade.entryTime) === "London"
+        });
       } else if (normalizedId === "newyork") {
-        source = libraryCandidatePool.filter(
-          (trade) => getSessionLabel(trade.entryTime) === "New York"
-        );
+        source = collectCappedItems(libraryCandidatePool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => getSessionLabel(trade.entryTime) === "New York"
+        });
       } else if (normalizedId === "terrific") {
         const count = clamp(
           Math.floor(Number(settings.count ?? 96) || 96),
           0,
           100000
         );
-        source = [...libraryCandidatePool]
-          .sort((left, right) => right.pnlUsd - left.pnlUsd)
-          .slice(0, count);
+        const effectiveCap = Math.min(maxSamples, count);
+        const capped = collectCappedItems(libraryCandidatePool, {
+          cap: effectiveCap
+        });
+        source = applyStrideToItems(
+          [...capped].sort((left, right) => right.pnlUsd - left.pnlUsd),
+          stride
+        );
       } else if (normalizedId === "terrible") {
         const count = clamp(
           Math.floor(Number(settings.count ?? 96) || 96),
           0,
           100000
         );
-        source = [...libraryCandidatePool]
-          .sort((left, right) => left.pnlUsd - right.pnlUsd)
-          .slice(0, count);
+        const effectiveCap = Math.min(maxSamples, count);
+        const capped = collectCappedItems(libraryCandidatePool, {
+          cap: effectiveCap
+        });
+        source = applyStrideToItems(
+          [...capped].sort((left, right) => left.pnlUsd - right.pnlUsd),
+          stride
+        );
       } else if (settings.kind === "model_sim") {
         const targetModel = String(settings.model ?? "");
-        source = libraryCandidatePool.filter(
-          (trade) => trade.entrySource === targetModel
-        );
-      }
-
-      const stride = getStride(definition);
-      if (stride > 1) {
-        source = source.filter((_, index) => index % stride === 0);
+        source = collectCappedItems(libraryCandidatePool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => trade.entrySource === targetModel
+        });
+      } else {
+        source = collectCappedItems(libraryCandidatePool, {
+          cap: maxSamples,
+          stride
+        });
       }
 
       return source;
@@ -8495,7 +8631,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         baselineWinRate,
         source.length
       );
-      const maxSamples = getMaxSamples(definition, Math.max(96, source.length));
+      const maxSamples = getMaxSamples(definition, 96);
       const balanced = rebalanceItemsToTargetWinRate(
         source,
         maxSamples,
