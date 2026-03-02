@@ -4209,6 +4209,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [statsDateStart, setStatsDateStart] = useState("");
   const [statsDateEnd, setStatsDateEnd] = useState("");
   const [performanceStatsCollapsed, setPerformanceStatsCollapsed] = useState(false);
+  const [performanceStatsModel, setPerformanceStatsModel] = useState("All");
   const [mainStatsModelPnlIndex, setMainStatsModelPnlIndex] = useState(0);
   const [mainStatsSessionPnlIndex, setMainStatsSessionPnlIndex] = useState(0);
   const [mainStatsMonthPnlIndex, setMainStatsMonthPnlIndex] = useState(-1);
@@ -9037,6 +9038,32 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setAiZipClusterTimelineIdx(Math.max(0, aiZipClusterCandles.length - 1));
   }, [aiZipClusterCandles.length, isClusterBacktestTabActive]);
 
+  const performanceStatsModelOptions = useMemo(() => {
+    if (!isPerformanceStatsBacktestTabActive) {
+      return ["All"];
+    }
+
+    const models = Array.from(
+      new Set(
+        deferredBacktestAnalyticsTrades
+          .map((trade) => trade.entrySource.trim())
+          .filter((name) => name.length > 0)
+      )
+    );
+
+    return ["All", ...models];
+  }, [deferredBacktestAnalyticsTrades, isPerformanceStatsBacktestTabActive]);
+
+  useEffect(() => {
+    if (!isPerformanceStatsBacktestTabActive) {
+      return;
+    }
+
+    if (!performanceStatsModelOptions.includes(performanceStatsModel)) {
+      setPerformanceStatsModel("All");
+    }
+  }, [isPerformanceStatsBacktestTabActive, performanceStatsModel, performanceStatsModelOptions]);
+
   const performanceStatsTemporalCharts = useMemo(() => {
     if (!isPerformanceStatsBacktestTabActive) {
       return {
@@ -9048,9 +9075,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       };
     }
 
-    const modelTrades = deferredBacktestAnalyticsTrades.filter(
-      (trade) => trade.entrySource.trim().length > 0
-    );
+    const modelTrades = deferredBacktestAnalyticsTrades.filter((trade) => {
+      const modelName = trade.entrySource.trim();
+
+      if (!modelName) {
+        return false;
+      }
+
+      if (performanceStatsModel === "All") {
+        return true;
+      }
+
+      return modelName === performanceStatsModel;
+    });
 
     const buildSeries = (range: "hours" | "weekday" | "month" | "year") => {
       const buckets = new Map<string, { pnl: number; count: number }>();
@@ -9117,7 +9154,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     );
 
     return { hours, weekday, month, year, hasData };
-  }, [deferredBacktestAnalyticsTrades, isPerformanceStatsBacktestTabActive]);
+  }, [
+    deferredBacktestAnalyticsTrades,
+    isPerformanceStatsBacktestTabActive,
+    performanceStatsModel
+  ]);
   const performanceStatsTemporalSections = useMemo(
     () => [
       { key: "hours", label: "Hours", data: performanceStatsTemporalCharts.hours },
@@ -13172,8 +13213,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               Model
                             </div>
                             <select
-                              value="Model"
-                              disabled
+                              value={performanceStatsModel}
+                              onChange={(event) => setPerformanceStatsModel(event.target.value)}
                               style={{
                                 height: 34,
                                 padding: "0 10px",
@@ -13182,14 +13223,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 background: "rgba(255,255,255,0.04)",
                                 color: "rgba(255,255,255,0.92)",
                                 fontWeight: 800,
-                                cursor: "not-allowed",
+                                cursor: "pointer",
                                 outline: "none",
                                 appearance: "none",
-                                minWidth: 170,
-                                opacity: 0.85
+                                minWidth: 170
                               }}
                             >
-                              <option value="Model">Model</option>
+                              {performanceStatsModelOptions.map((modelName) => (
+                                <option key={modelName} value={modelName}>
+                                  {modelName}
+                                </option>
+                              ))}
                             </select>
                           </div>
                         </div>
