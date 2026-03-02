@@ -4391,6 +4391,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const statsRefreshOverlayModeRef = useRef<StatsRefreshOverlayMode>("idle");
   const statsRefreshResetTimeoutRef = useRef(0);
   const statsRefreshVisualCompletionRafRef = useRef(0);
+  const statsRefreshProgressRef = useRef(0);
   const statsRefreshLoadingDisplayProgressRef = useRef(0);
   const liveBacktestSettingsRef = useRef<BacktestSettingsSnapshot>(appliedBacktestSettings);
   const tradeBlueprintsRef = useRef<TradeBlueprint[]>([]);
@@ -4530,34 +4531,41 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [statsRefreshLoadingDisplayProgress]);
 
   useEffect(() => {
-    const targetProgress = clamp(statsRefreshProgress, 0, 100);
+    statsRefreshProgressRef.current = statsRefreshProgress;
+  }, [statsRefreshProgress]);
 
+  useEffect(() => {
     if (statsRefreshOverlayMode !== "loading") {
-      setStatsRefreshLoadingDisplayProgress(targetProgress);
+      setStatsRefreshLoadingDisplayProgress(clamp(statsRefreshProgressRef.current, 0, 100));
       return;
     }
 
     let frameId = 0;
+    let previousTimestamp = 0;
 
-    const step = () => {
-      let shouldContinue = false;
+    const step = (timestamp: number) => {
+      const elapsedMs = previousTimestamp > 0 ? timestamp - previousTimestamp : 16.67;
+      previousTimestamp = timestamp;
+      const blend = 1 - Math.exp(-elapsedMs / 180);
 
       setStatsRefreshLoadingDisplayProgress((current) => {
-        const delta = targetProgress - current;
+        const target = clamp(statsRefreshProgressRef.current, 0, 100);
+        const delta = target - current;
 
         if (delta <= 0) {
           return current;
         }
 
-        if (delta <= 0.12) {
-          return targetProgress;
+        const next = current + delta * blend;
+
+        if (target - next <= 0.015) {
+          return target;
         }
 
-        shouldContinue = true;
-        return current + delta * 0.18;
+        return next;
       });
 
-      if (shouldContinue) {
+      if (statsRefreshOverlayModeRef.current === "loading") {
         frameId = window.requestAnimationFrame(step);
       }
     };
@@ -4569,7 +4577,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         window.cancelAnimationFrame(frameId);
       }
     };
-  }, [statsRefreshOverlayMode, statsRefreshProgress]);
+  }, [statsRefreshOverlayMode]);
 
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
@@ -5933,8 +5941,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         left.entryMs - right.entryMs ||
         left.id.localeCompare(right.id)
     );
+    const firstChronologicalBlueprint = chronologicalTradeBlueprints[0] ?? null;
+    const lastChronologicalBlueprint =
+      chronologicalTradeBlueprints[chronologicalTradeBlueprints.length - 1] ?? null;
+    const analysisStartMsRaw = firstChronologicalBlueprint
+      ? Math.min(firstChronologicalBlueprint.entryMs, firstChronologicalBlueprint.exitMs)
+      : timelineStartMs;
+    const analysisEndMsRaw = lastChronologicalBlueprint
+      ? Math.max(lastChronologicalBlueprint.entryMs, lastChronologicalBlueprint.exitMs)
+      : timelineEndMs;
+    const analysisStartMs = Number.isFinite(analysisStartMsRaw)
+      ? analysisStartMsRaw
+      : timelineStartMs;
+    const analysisEndMs = Math.max(
+      analysisStartMs + 60_000,
+      Number.isFinite(analysisEndMsRaw) ? analysisEndMsRaw : timelineEndMs
+    );
     let lastLoadingProgressRatio = 0;
-    const setLoadingProgress = (ratio: number, cursorMs?: number) => {
+    const setLoadingProgress = (ratio: number) => {
       const normalizedRatio = clamp(ratio, 0, 1);
 
       if (normalizedRatio < lastLoadingProgressRatio) {
@@ -5942,15 +5966,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       lastLoadingProgressRatio = normalizedRatio;
-      const timelineSpanMs = Math.max(60_000, timelineEndMs - timelineStartMs);
-      const timelineMsFromRatio = timelineStartMs + timelineSpanMs * normalizedRatio;
-      const clampedCursorMs =
-        typeof cursorMs === "number" && Number.isFinite(cursorMs)
-          ? clamp(cursorMs, timelineStartMs, timelineEndMs)
-          : timelineMsFromRatio;
+      const analysisSpanMs = Math.max(60_000, analysisEndMs - analysisStartMs);
+      const currentMs = analysisStartMs + analysisSpanMs * normalizedRatio;
 
       setStatsRefreshProgress(normalizedRatio * 100);
-      setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(clampedCursorMs));
+      setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(currentMs));
     };
 
     const computeSynchronously = (): HistoryItem[] => {
@@ -5999,7 +6019,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       startTransition(() => {
         setHistoryRows(rows);
       });
-      finishStatsRefreshLoading(formatStatsRefreshDateLabel(timelineEndMs));
+      finishStatsRefreshLoading(formatStatsRefreshDateLabel(analysisEndMs));
     };
 
     const handleFallback = () => {
@@ -6019,7 +6039,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     setStatsRefreshProgress(0);
     setStatsRefreshLoadingDisplayProgress(0);
-    setLoadingProgress(0, timelineStartMs);
+    setLoadingProgress(0);
 
     if (typeof Worker === "undefined") {
       handleFallback();
@@ -6050,19 +6070,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       if (message.type === "progress") {
         const total = Math.max(1, message.total);
-        setLoadingProgress(message.processed / total, message.cursorMs);
+        setLoadingProgress(message.processed / total);
         return;
       }
 
       worker.terminate();
-      commitRows(
-        normalizeBacktestHistoryRows(
-          finalizeBacktestHistoryRows(
-            message.rows,
-            backtestTargetTradesSnapshot
+      setLoadingProgress(1);
+      window.requestAnimationFrame(() => {
+        commitRows(
+          normalizeBacktestHistoryRows(
+            finalizeBacktestHistoryRows(
+              message.rows,
+              backtestTargetTradesSnapshot
+            )
           )
-        )
-      );
+        );
+      });
     };
 
     worker.onerror = () => {
@@ -10929,36 +10952,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 </div>
               </div>
 
-              <section className="backtest-hero backtest-hero-strip">
-                <div className="backtest-summary-strip" aria-label="backtest rolling statistics">
-                  <div className="backtest-summary-strip-track">
-                    {[0, 1].map((sequenceIndex) => (
-                      <div
-                        key={sequenceIndex}
-                        className="backtest-summary-strip-sequence"
-                        aria-hidden={sequenceIndex === 1}
-                      >
-                        {backtestHeroStats.map((item) => (
-                          <article
-                            key={`${sequenceIndex}-${item.label}`}
-                            className="backtest-summary-card backtest-summary-card-animated"
-                          >
-                            <span>{item.label}</span>
-                            <strong
-                              className={item.tone === "neutral" ? "" : item.tone}
-                              style={item.valueStyle}
-                            >
-                              {item.value}
-                            </strong>
-                            <small>{item.meta}</small>
-                          </article>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </section>
-
               <nav className="backtest-tabs" aria-label="backtest modules">
                 {backtestTabs.map((tab) => (
                   <button
@@ -10999,14 +10992,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <p>
                         Open Main Settings and enable at least one model in the MODELS panel. The
                         Chart tab now follows that Backtest selection automatically.
-                      </p>
-                    </>
-                  ) : !backtestHasRun ? (
-                    <>
-                      <h3>Backtest is ready to run</h3>
-                      <p>
-                        Adjust Main Settings, then hold CTRL for 3 seconds to apply the update.
-                        Stats stay frozen until that hold completes.
                       </p>
                     </>
                   ) : backtestSourceTrades.length > 0 ? (
@@ -14385,12 +14370,47 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         )
       ) : null}
 
-      <footer className="statusbar">
-        <span>{selectedAsset.symbol}</span>
-        <span>{selectedTimeframe}</span>
-        <span>Model: {backtestModelSelectionSummary}</span>
-        <span>Feed: csv + live</span>
-        <span>UTC</span>
+      <footer className={`statusbar ${selectedSurfaceTab === "backtest" ? "backtest-statusbar" : ""}`}>
+        {selectedSurfaceTab === "backtest" ? (
+          <div
+            className="backtest-summary-strip backtest-summary-strip-compact"
+            aria-label="backtest rolling statistics"
+          >
+            <div className="backtest-summary-strip-track">
+              {[0, 1].map((sequenceIndex) => (
+                <div
+                  key={sequenceIndex}
+                  className="backtest-summary-strip-sequence"
+                  aria-hidden={sequenceIndex === 1}
+                >
+                  {backtestHeroStats.map((item) => (
+                    <article
+                      key={`status-${sequenceIndex}-${item.label}`}
+                      className="backtest-summary-card backtest-summary-card-animated"
+                    >
+                      <span>{item.label}</span>
+                      <strong
+                        className={item.tone === "neutral" ? "" : item.tone}
+                        style={item.valueStyle}
+                      >
+                        {item.value}
+                      </strong>
+                      <small>{item.meta}</small>
+                    </article>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <>
+            <span>{selectedAsset.symbol}</span>
+            <span>{selectedTimeframe}</span>
+            <span>Model: {backtestModelSelectionSummary}</span>
+            <span>Feed: csv + live</span>
+            <span>UTC</span>
+          </>
+        )}
       </footer>
 
       {activeBacktestTradeDetails ? (

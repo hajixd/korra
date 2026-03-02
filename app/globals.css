@@ -451,7 +451,7 @@ button {
   --backtest-stat-gap: 0.65rem;
   --backtest-visible-cards: 8;
   --backtest-stat-card-width: 182px;
-  --backtest-summary-scroll-duration: 54s;
+  --backtest-summary-scroll-duration: 68s;
   --backtest-summary-cycle-width: calc(
     (16 * var(--backtest-stat-card-width)) + (16 * var(--backtest-stat-gap))
   );
@@ -513,6 +513,35 @@ button {
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
   font-stretch: normal;
   letter-spacing: 0.01em;
+}
+
+.backtest-summary-strip.backtest-summary-strip-compact {
+  --backtest-stat-gap: 0.38rem;
+  --backtest-visible-cards: 8;
+  --backtest-stat-card-width: 150px;
+  width: 100%;
+}
+
+.backtest-summary-strip-compact .backtest-summary-card {
+  min-height: 0;
+  padding: 0.3rem 0.42rem;
+  gap: 0.1rem;
+  border-radius: 10px;
+}
+
+.backtest-summary-strip-compact .backtest-summary-card span {
+  font-size: 0.49rem;
+  letter-spacing: 0.03em;
+}
+
+.backtest-summary-strip-compact .backtest-summary-card strong {
+  font-size: 0.72rem;
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+}
+
+.backtest-summary-strip-compact .backtest-summary-card small {
+  display: none;
 }
 
 .backtest-summary-card span,
@@ -2434,7 +2463,7 @@ button {
   border-radius: 0;
   background: linear-gradient(90deg, #00cf7a 0%, #00ff9d 52%, #75ffcd 100%);
   box-shadow: 0 0 22px rgba(0, 255, 157, 0.55);
-  transition: width 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: width 0.1s linear;
   will-change: width;
 }
 
@@ -2549,7 +2578,7 @@ button {
   --main-kpi-gap: 0.6rem;
   --main-kpi-visible-cards: 6;
   --main-kpi-card-width: 198px;
-  --main-kpi-scroll-duration: 54s;
+  --main-kpi-scroll-duration: 68s;
   --main-kpi-cycle-width: calc((12 * var(--main-kpi-card-width)) + (12 * var(--main-kpi-gap)));
   overflow: hidden;
   container-type: inline-size;
@@ -3902,6 +3931,12 @@ button {
   color: var(--text-faint);
   font-size: 0.66rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.statusbar.backtest-statusbar {
+  gap: 0;
+  padding: 0.22rem 0.38rem;
+  align-items: stretch;
 }
 
 @media (max-width: 1120px) {
