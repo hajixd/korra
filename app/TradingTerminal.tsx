@@ -4728,8 +4728,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return `${appliedBacktestModelProfiles.length} models`;
   }, [appliedBacktestModelProfiles]);
-  const appliedConfidenceGateDisabled =
-    appliedBacktestSettings.aiMode === "off" || !appliedBacktestSettings.aiFilterEnabled;
+  const appliedConfidenceGateDisabled = appliedBacktestSettings.aiMode === "off";
   const appliedEffectiveConfidenceThreshold = appliedConfidenceGateDisabled
     ? 0
     : appliedBacktestSettings.confidenceThreshold;
@@ -5905,14 +5904,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       .filter((trade) => {
         const confidence = getEffectiveTradeConfidenceScore(trade) * 100;
         return (
-          !appliedBacktestSettings.aiFilterEnabled ||
-          confidence >= appliedBacktestSettings.confidenceThreshold
+          appliedConfidenceGateDisabled ||
+          confidence >= appliedEffectiveConfidenceThreshold
         );
       })
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime) || b.id.localeCompare(a.id));
   }, [
-    appliedBacktestSettings.aiFilterEnabled,
-    appliedBacktestSettings.confidenceThreshold,
+    appliedConfidenceGateDisabled,
+    appliedEffectiveConfidenceThreshold,
     antiCheatBacktestContext,
     getEffectiveTradeConfidenceScore
   ]);
@@ -8101,13 +8100,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return backtestTimeFilteredTrades.filter((trade) => {
       const confidence = getEffectiveTradeConfidenceScore(trade) * 100;
       return (
-        !appliedBacktestSettings.aiFilterEnabled ||
-        confidence >= appliedBacktestSettings.confidenceThreshold
+        appliedConfidenceGateDisabled ||
+        confidence >= appliedEffectiveConfidenceThreshold
       );
     });
   }, [
-    appliedBacktestSettings.aiFilterEnabled,
-    appliedBacktestSettings.confidenceThreshold,
+    appliedConfidenceGateDisabled,
+    appliedEffectiveConfidenceThreshold,
     backtestTimeFilteredTrades,
     getEffectiveTradeConfidenceScore
   ]);
@@ -8171,6 +8170,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const suppressedTradePool = backtestTimeFilteredTrades.filter(
       (trade) => !executedTradeIds.has(trade.id)
     );
+    const maxSignalIndex = Math.max(0, selectedChartCandles.length - 1);
 
     const getSettings = (definition: AiLibraryDef) => {
       return {
@@ -8261,7 +8261,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
 
     const baselineWinRates: Record<string, number> = {};
-    const counts = aiLibraryDefs.reduce<Record<string, number>>((accumulator, definition) => {
+    const counts: Record<string, number> = {};
+    const balancedByLibrary: Record<string, HistoryItem[]> = {};
+    for (const definition of aiLibraryDefs) {
       const source = buildRawSource(definition);
       const settings = getSettings(definition);
       const baselineWinRate = getOutcomeWinRatePercent(
@@ -8282,23 +8284,99 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       );
 
       baselineWinRates[definition.id] = baselineWinRate;
-      accumulator[definition.id] = balanced.length;
-      return accumulator;
-    }, {});
+      counts[definition.id] = balanced.length;
+      balancedByLibrary[definition.id] = balanced;
+    }
+
+    const resolveSignalIndex = (trade: HistoryItem, ordinal: number, total: number) => {
+      const entryIndex = candleIndexByUnix.get(Number(trade.entryTime));
+      if (typeof entryIndex === "number") {
+        return clamp(entryIndex, 0, maxSignalIndex);
+      }
+      const exitIndex = candleIndexByUnix.get(Number(trade.exitTime));
+      if (typeof exitIndex === "number") {
+        return clamp(exitIndex, 0, maxSignalIndex);
+      }
+      if (maxSignalIndex <= 0 || total <= 1) {
+        return 0;
+      }
+      return clamp(
+        Math.round((ordinal / Math.max(1, total - 1)) * maxSignalIndex),
+        0,
+        maxSignalIndex
+      );
+    };
+
+    const totalLibrarySamples = Object.values(counts).reduce((sum, value) => sum + value, 0);
+    const maxRenderableLibraryPoints = 4000;
+    const points: any[] = [];
+
+    for (const definition of aiLibraryDefs) {
+      const source = balancedByLibrary[definition.id] ?? [];
+      if (source.length === 0) {
+        continue;
+      }
+
+      const pointBudgetForLibrary =
+        totalLibrarySamples > maxRenderableLibraryPoints
+          ? Math.max(
+              1,
+              Math.floor((source.length / totalLibrarySamples) * maxRenderableLibraryPoints)
+            )
+          : source.length;
+      const step = Math.max(1, Math.ceil(source.length / pointBudgetForLibrary));
+
+      for (
+        let sourceIndex = 0;
+        sourceIndex < source.length && points.length < maxRenderableLibraryPoints;
+        sourceIndex += step
+      ) {
+        const trade = source[sourceIndex]!;
+        const modelName = trade.entrySource.trim() || "Momentum";
+        const signalIndex = resolveSignalIndex(trade, sourceIndex, source.length);
+        const entryTimeRaw = Number(trade.entryTime);
+        const entryTime =
+          Number.isFinite(entryTimeRaw) && entryTimeRaw > 0 ? entryTimeRaw : trade.entryAt || trade.time;
+
+        points.push({
+          id: `lib|${definition.id}|${trade.id}|${sourceIndex}`,
+          uid: `lib|${definition.id}|${trade.id}|${sourceIndex}`,
+          libId: definition.id,
+          metaLib: definition.id,
+          model: modelName,
+          metaModel: modelName,
+          signalIndex,
+          metaSignalIndex: signalIndex,
+          entryTime,
+          metaTime: entryTime,
+          dir: trade.side === "Long" ? 1 : -1,
+          label: trade.result === "Win" ? 1 : -1,
+          result: trade.result === "Win" ? "TP" : "SL",
+          pnl: trade.pnlUsd,
+          metaPnl: trade.pnlUsd,
+          trainingOnly: true,
+          metaTrainingOnly: true
+        });
+      }
+    }
 
     return {
       counts,
-      baselineWinRates
+      baselineWinRates,
+      points
     };
   }, [
     appliedBacktestSettings.selectedAiLibrarySettings,
     aiLibraryDefs,
     backtestLibraryCandidateTrades,
+    candleIndexByUnix,
+    selectedChartCandles.length,
     backtestTimeFilteredTrades,
     backtestTrades
   ]);
   const aiLibraryCounts = aiLibraryInsights.counts;
   const aiLibraryBaselineWinRates = aiLibraryInsights.baselineWinRates;
+  const aiLibraryPoints = aiLibraryInsights.points;
   const selectedAiLibraryConfig: Record<string, AiLibrarySettingValue> | null = selectedAiLibrary
     ? ({
         ...selectedAiLibrary.defaults,
@@ -8491,7 +8569,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const applied = appliedBacktestSettings;
     const appliedAiMode = applied.aiMode;
     const appliedAiFilter = applied.aiFilterEnabled;
-    const appliedConfGateDisabled = appliedAiMode === "off" || !appliedAiFilter;
+    const appliedAiModelEnabled = appliedAiMode !== "off" && !appliedAiFilter;
+    const appliedConfGateDisabled =
+      appliedAiMode === "off" || (!appliedAiFilter && !appliedAiModelEnabled);
     const appliedEffConfThreshold = appliedConfGateDisabled ? 0 : applied.confidenceThreshold;
     const appliedAntiCheat = applied.antiCheatEnabled;
     const appliedStaticLibClusters = applied.staticLibrariesClusters;
@@ -8499,7 +8579,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const appliedModelCount = Object.values(applied.aiModelStates).filter((s) => s > 0).length;
     const appliedFeatureCount = Object.values(applied.aiFeatureLevels).filter((l) => l > 0).length;
     const appliedDimCount = countConfiguredAiFeatureDimensions(applied.aiFeatureLevels, applied.aiFeatureModes, applied.chunkBars);
-    const appliedAiModelEnabled = !appliedAiFilter && appliedAiMode !== "off";
 
     return [
       {
@@ -8736,7 +8815,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const mainStatsAiEffectivenessPct = useMemo(() => {
     if (
       appliedBacktestSettings.aiMode === "off" ||
-      !appliedBacktestSettings.aiFilterEnabled
+      appliedConfidenceGateDisabled
     ) {
       return null;
     }
@@ -8747,7 +8826,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return mainStatsSummary.winRate - baselineMainStatsSummary.winRate;
   }, [
-    appliedBacktestSettings.aiFilterEnabled,
+    appliedConfidenceGateDisabled,
     appliedBacktestSettings.aiMode,
     baselineMainStatsSummary.winRate,
     baselineMainStatsTrades.length,
@@ -8758,7 +8837,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const mainStatsAiEfficacyPct = useMemo(() => {
     if (
       appliedBacktestSettings.aiMode === "off" ||
-      !appliedBacktestSettings.aiFilterEnabled
+      appliedConfidenceGateDisabled
     ) {
       return null;
     }
@@ -8776,7 +8855,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return ((currentPnl - baselinePnl) / denominator) * 100;
   }, [
-    appliedBacktestSettings.aiFilterEnabled,
+    appliedConfidenceGateDisabled,
     appliedBacktestSettings.aiMode,
     baselineMainStatsSummary.totalPnl,
     baselineMainStatsTrades.length,
@@ -13732,9 +13811,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         candles={aiZipClusterCandles}
                         trades={aiZipClusterTrades}
                         ghostEntries={[]}
-                        libraryPoints={[]}
+                        libraryPoints={aiLibraryPoints}
                         activeLibraries={appliedBacktestSettings.selectedAiLibraries}
-                        libraryCounts={{}}
+                        libraryCounts={aiLibraryCounts}
                         chunkBars={appliedBacktestSettings.chunkBars}
                         potential={null}
                         parseMode="utc"
@@ -13767,7 +13846,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         candles={aiZipClusterCandles}
                         trades={aiZipClusterTrades}
                         ghostEntries={[]}
-                        libraryPoints={[]}
+                        libraryPoints={aiLibraryPoints}
                         chunkBarsDeb={appliedBacktestSettings.chunkBars}
                         potential={null}
                         parseMode="utc"
