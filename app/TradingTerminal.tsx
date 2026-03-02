@@ -4439,6 +4439,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       statsRefreshResetTimeoutRef.current = window.setTimeout(() => {
         updateStatsRefreshOverlayMode("idle");
         setStatsRefreshProgress(0);
+        setStatsRefreshLoadingDisplayProgress(0);
         setStatsRefreshProgressLabel("");
         statsRefreshResetTimeoutRef.current = 0;
       }, 280);
@@ -4455,7 +4456,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setBacktestRefreshNowMs(nextRefreshMs);
     setBacktestHistorySeedReady(false);
     updateStatsRefreshOverlayMode("loading");
-    setStatsRefreshProgress(5);
+    setStatsRefreshProgress(0);
+    setStatsRefreshLoadingDisplayProgress(0);
     setStatsRefreshProgressLabel(
       formatStatsRefreshDateLabel(
         nextRefreshMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000
@@ -4489,7 +4491,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       setStatsRefreshLoadingDisplayProgress((current) => {
         const delta = targetProgress - current;
 
-        if (Math.abs(delta) <= 0.12) {
+        if (delta <= 0) {
+          return current;
+        }
+
+        if (delta <= 0.12) {
           return targetProgress;
         }
 
