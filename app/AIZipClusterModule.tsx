@@ -10577,29 +10577,59 @@ function flushSuppressedNeighbors(uptoIndex){
           if ((perLib[lid] || 0) >= perLibCap) continue;
           if (libraryPoints.length >= totalCap) break;
 
-          const sIdx =
+          let sIdx =
             p.metaSignalIndex != null
               ? p.metaSignalIndex
               : p.metaEntryIndex != null
               ? p.metaEntryIndex
               : null;
-          if (sIdx == null) continue;
+
+          // Some imported/legacy neighbor points may not carry signal/entry index metadata.
+          // Try to infer from timestamp so they can still render on the Cluster Map.
+          if (sIdx == null) {
+            const tKey = String(
+              p.metaTime ?? p.time ?? p.entryTime ?? p.entry ?? p.t ?? ""
+            );
+            if (tKey) {
+              const inferred = CANDLE_INDEX_BY_TIME.get(tKey);
+              if (Number.isFinite(inferred)) sIdx = inferred;
+            }
+          }
+
+          const vec = Array.isArray(p.v)
+            ? p.v
+            : Array.isArray(p.v0)
+            ? p.v0
+            : Array.isArray(p.vec)
+            ? p.vec
+            : Array.isArray(p.chunk)
+            ? p.chunk
+            : null;
+          const hasVec = Array.isArray(vec) && vec.length >= 2;
+
+          // Keep points if they have either timeline index metadata OR a usable vector.
+          // As a final fallback, pin to index 0 so loaded libraries never vanish from the map.
+          if (sIdx == null && !hasVec) sIdx = 0;
 
           const pnl = typeof p.metaPnl === "number" ? p.metaPnl : 0;
           const lb = typeof p.label === "number" ? p.label : 0;
           const label = lb > 0 ? 1 : -1;
+          const sIdxId = sIdx == null ? "na" : String(sIdx);
 
           libraryPoints.push({
-            id: "lib|" + lid + "|" + mk + "|" + String(sIdx) + "|" + String(i),
+            id: "lib|" + lid + "|" + mk + "|" + sIdxId + "|" + String(i),
             libId: lid,
             model: mk,
             signalIndex: sIdx,
-            entryTime: p.metaTime,
+            entryTime: p.metaTime ?? "",
+            metaTime: p.metaTime ?? "",
             dir: p.dir,
             label,
             pnl,
             result: label > 0 ? "TP" : "SL",
             trainingOnly: true,
+            // Preserve vector so UI can render even when signalIndex metadata is unavailable.
+            v: hasVec ? vec : undefined,
           });
 
           perLib[lid] = (perLib[lid] || 0) + 1;
@@ -12699,6 +12729,8 @@ export function ClusterMap({
       const modelKey = String((p as any).model ?? (p as any).chunkType ?? "-");
       const rawVec = Array.isArray((p as any).v)
         ? (p as any).v
+        : Array.isArray((p as any).v0)
+        ? (p as any).v0
         : Array.isArray((p as any).vec)
         ? (p as any).vec
         : Array.isArray((p as any).chunk)
@@ -21871,6 +21903,8 @@ export function ClusterMap3D({
 
       const v = Array.isArray(lp.v)
         ? lp.v
+        : Array.isArray(lp.v0)
+        ? lp.v0
         : Array.isArray(lp.vec)
         ? lp.vec
         : Array.isArray(lp.chunk)
