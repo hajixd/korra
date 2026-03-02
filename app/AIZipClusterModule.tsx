@@ -5229,8 +5229,8 @@ function createComputeWorker() {
   let COUNT_SUPPRESSED_NEIGHBORS = false;
   let SUPPRESSED_NEIGHBOR_WEIGHT = 0.85;
   let REMAP_OPPOSITE_OUTCOMES = true;
-  let MODALITIES = [];
-  let MODALITY_SET = null;
+  let DOMAINS = [];
+  let DOMAIN_SET = null;
   let CHRONOLOGICAL_NEIGHBOR_FILTER = false;
   let CANDLE_INDEX_BY_TIME = new Map();
 
@@ -5244,11 +5244,11 @@ let HDB_MIN_SAMPLES = 12;
 let HDB_EPS_QUANTILE = 0.85;
 let HDB_SAMPLE_CAP = 3000;
 
-// HDBSCAN modality distinction
-// - conceptual: keep the same clusters, but when "Direction" modality is enabled, evaluate BUY vs SELL by using
+// HDBSCAN domain distinction
+// - conceptual: keep the same clusters, but when "Direction" domain is enabled, evaluate BUY vs SELL by using
 //   direction-specific win-rates within the same cluster (no cluster rebuild)
-// - real: when "Direction" modality is enabled, rebuild clusters per direction (BUY ignores SELL nodes, and vice-versa)
-let HDB_MODALITY_DISTINCTION = "real"; // "conceptual" | "real"
+// - real: when "Direction" domain is enabled, rebuild clusters per direction (BUY ignores SELL nodes, and vice-versa)
+let HDB_DOMAIN_DISTINCTION = "real"; // "conceptual" | "real"
 // Probability calibration (turn raw neighbor-based scores into calibrated probabilities)
   let CALIBRATION_MODE = "none"; // "none" | "platt" | "isotonic"
   let CALIBRATION_MAX_SAMPLES = 1200;
@@ -6226,19 +6226,19 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
     return p.__tparts;
   }
 
-  function passesModalities(p, qMeta){
-    if(!MODALITY_SET || !qMeta) return true;
+  function passesDomains(p, qMeta){
+    if(!DOMAIN_SET || !qMeta) return true;
 
-    if(MODALITY_SET.has("Session")){
+    if(DOMAIN_SET.has("Session")){
       const sess = p.metaSession || sessionFromTime(p.metaTime, PARSE_MODE);
       if(sess !== qMeta.session) return false;
     }
 
-    if(MODALITY_SET.has("Month") || MODALITY_SET.has("Weekday") || MODALITY_SET.has("Hour")){
+    if(DOMAIN_SET.has("Month") || DOMAIN_SET.has("Weekday") || DOMAIN_SET.has("Hour")){
       const tp = getTimePartsCached(p);
-      if(MODALITY_SET.has("Month") && qMeta.month != null && tp.month != null && tp.month !== qMeta.month) return false;
-      if(MODALITY_SET.has("Weekday") && qMeta.dow != null && tp.dow != null && tp.dow !== qMeta.dow) return false;
-      if(MODALITY_SET.has("Hour") && qMeta.hour != null && tp.hour != null && tp.hour !== qMeta.hour) return false;
+      if(DOMAIN_SET.has("Month") && qMeta.month != null && tp.month != null && tp.month !== qMeta.month) return false;
+      if(DOMAIN_SET.has("Weekday") && qMeta.dow != null && tp.dow != null && tp.dow !== qMeta.dow) return false;
+      if(DOMAIN_SET.has("Hour") && qMeta.hour != null && tp.hour != null && tp.hour !== qMeta.hour) return false;
     }
 
     return true;
@@ -6303,8 +6303,8 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
   function knnMargin(points, q, k, dirFilter, excludeTime, modelKey, qMeta, queryDir){
     let usable = filterUsableNeighbors(points, excludeTime);
     if(!COUNT_SUPPRESSED_NEIGHBORS) usable = usable.filter(p=>!p.metaSuppressed);
-    if(MODALITY_SET && qMeta) usable = usable.filter(p=>passesModalities(p, qMeta));
-    if(MODALITY_SET && MODALITY_SET.has("Direction") && dirFilter){
+    if(DOMAIN_SET && qMeta) usable = usable.filter(p=>passesDomains(p, qMeta));
+    if(DOMAIN_SET && DOMAIN_SET.has("Direction") && dirFilter){
       const df = Number(dirFilter);
       usable = usable.filter(p=>{
         const pd = Number(p.dir);
@@ -6312,7 +6312,7 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
       });
     }
 
-    if(MODALITY_SET && MODALITY_SET.has("Model") && modelKey){
+    if(DOMAIN_SET && DOMAIN_SET.has("Model") && modelKey){
       usable = usable.filter(p=>{
         const pm = p.metaModel || p.metaModelKey || (p.uid ? String(p.uid).split("|")[2] : "");
         return pm === modelKey;
@@ -6345,7 +6345,7 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
       const w = (KNN_VOTE_MODE === "distance") ? (1/(nb.d + AI_EPS)) : 1;
       const base = (nb.p && nb.p.label) || -1;
       const effLabel =
-        (MODALITY_SET && MODALITY_SET.has("Direction") && dirFilter)
+        (DOMAIN_SET && DOMAIN_SET.has("Direction") && dirFilter)
           ? base
           : ((REMAP_OPPOSITE_OUTCOMES && queryDir) ? ((nb.p.dir === queryDir) ? base : -base) : base);
       const wt = w * (nb.p.weight || 1);
@@ -6438,8 +6438,8 @@ function dbscan(pointsZ, eps, minSamples){
 }
 
 function buildHdbCache(usable, phase, modelKey, datasetKey){
-  // One cache per (phase, modelKey, hyperparams). Modalities never rebuild clusters;
-  // modalities only affect how we read win-rates from a chosen cluster.
+  // One cache per (phase, modelKey, hyperparams). Domains never rebuild clusters;
+  // domains only affect how we read win-rates from a chosen cluster.
   const key =
     "hdb|" + String(phase||"") + "|" + String(modelKey||"") + "|" +
     String(HDB_MIN_CLUSTER_SIZE) + "|" + String(HDB_MIN_SAMPLES) + "|" +
@@ -6451,8 +6451,8 @@ function buildHdbCache(usable, phase, modelKey, datasetKey){
 
   let pts = usable || [];
 
-  // If "Model" modality is enabled, restrict the clustering dataset to the active modelKey.
-  if(MODALITY_SET && MODALITY_SET.has("Model") && modelKey){
+  // If "Model" domain is enabled, restrict the clustering dataset to the active modelKey.
+  if(DOMAIN_SET && DOMAIN_SET.has("Model") && modelKey){
     const mk = String(modelKey || "");
     pts = pts.filter(p => {
       const pm = String(p?.metaModel ?? p?.metaModelKey ?? p?.metaModelName ?? p?.modelKey ?? p?.model ?? "");
@@ -6657,43 +6657,43 @@ function assignHdbCluster(cache, qz){
 
 
 function hdbMetaMatches(meta, qMeta, queryDir){
-  if(!MODALITY_SET) return true;
+  if(!DOMAIN_SET) return true;
 
   // Direction
   const qd = Number(queryDir);
-  if(MODALITY_SET.has("Direction") && (qd === 1 || qd === -1)){
+  if(DOMAIN_SET.has("Direction") && (qd === 1 || qd === -1)){
     if(Number(meta?.dir) !== qd) return false;
   }
 
   // Model
-  if(MODALITY_SET.has("Model")){
+  if(DOMAIN_SET.has("Model")){
     const mk = String(qMeta?.modelKey ?? qMeta?.model ?? "");
     if(mk && String(meta?.model || "") !== mk) return false;
   }
 
-  // Remaining modalities depend on qMeta
+  // Remaining domains depend on qMeta
   if(!qMeta) return true;
 
-  if(MODALITY_SET.has("Session")){
+  if(DOMAIN_SET.has("Session")){
     const s = qMeta.session ?? qMeta.metaSession;
     if(s != null && String(s) !== "" && String(s) !== "All"){
       if(String(meta?.session || "") !== String(s)) return false;
     }
   }
 
-  if(MODALITY_SET.has("Month")){
+  if(DOMAIN_SET.has("Month")){
     if(qMeta.month != null && meta?.month != null){
       if(Number(meta.month) !== Number(qMeta.month)) return false;
     }
   }
 
-  if(MODALITY_SET.has("Weekday")){
+  if(DOMAIN_SET.has("Weekday")){
     if(qMeta.dow != null && meta?.dow != null){
       if(Number(meta.dow) !== Number(qMeta.dow)) return false;
     }
   }
 
-  if(MODALITY_SET.has("Hour")){
+  if(DOMAIN_SET.has("Hour")){
     if(qMeta.hour != null && meta?.hour != null){
       if(Number(meta.hour) !== Number(qMeta.hour)) return false;
     }
@@ -6734,9 +6734,9 @@ function hdbscanMargin(points, q, phase, dirFilter, excludeTime, modelKey, qMeta
   let usable = filterUsableNeighbors(points, excludeTime);
   if(!COUNT_SUPPRESSED_NEIGHBORS) usable = usable.filter(p=>!p.metaSuppressed);
 
-  const modSet = MODALITY_SET || null;
+  const modSet = DOMAIN_SET || null;
 
-  // If Model modality is active, restrict the clustering dataset to the active model.
+  // If Model domain is active, restrict the clustering dataset to the active model.
   const cacheModelKey = (modSet && modSet.has("Model")) ? String(modelKey || "") : "";
   if(cacheModelKey){
     usable = usable.filter(p=>{
@@ -6747,7 +6747,7 @@ function hdbscanMargin(points, q, phase, dirFilter, excludeTime, modelKey, qMeta
 
   if(!usable.length) return NaN;
 
-  // Build one cluster cache (no modality-based rebuilds)
+  // Build one cluster cache (no domain-based rebuilds)
   const datasetKey =
     CHRONOLOGICAL_NEIGHBOR_FILTER
       ? String(resolveChronologyCutoffIndex(excludeTime) ?? "na")
@@ -6802,8 +6802,8 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
   function knnNeighbors(points, q, k, dirFilter, excludeTime, modelKey, qMeta, queryDir){
     let usable = filterUsableNeighbors(points, excludeTime);
     if(!COUNT_SUPPRESSED_NEIGHBORS) usable = usable.filter(p=>!p.metaSuppressed);
-    if(MODALITY_SET && qMeta) usable = usable.filter(p=>passesModalities(p, qMeta));
-    if(MODALITY_SET && MODALITY_SET.has("Direction") && dirFilter){
+    if(DOMAIN_SET && qMeta) usable = usable.filter(p=>passesDomains(p, qMeta));
+    if(DOMAIN_SET && DOMAIN_SET.has("Direction") && dirFilter){
       const df = Number(dirFilter);
       usable = usable.filter(p=>{
         const pd = Number(p.dir);
@@ -6836,7 +6836,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
       const nb = nbs[i];
       const baseLabel = (nb.p && nb.p.label) || -1;
       const effLabel =
-        (MODALITY_SET && MODALITY_SET.has("Direction") && dirFilter)
+        (DOMAIN_SET && DOMAIN_SET.has("Direction") && dirFilter)
           ? baseLabel
           : ((REMAP_OPPOSITE_OUTCOMES && queryDir) ? ((nb.p.dir === queryDir) ? baseLabel : -baseLabel) : baseLabel);
 
@@ -6860,8 +6860,8 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
   function closestPointLabel(points, q, dir, modelKey, excludeTime, qMeta, queryDir){
     let usable = filterUsableNeighbors(points, excludeTime);
     if(!COUNT_SUPPRESSED_NEIGHBORS) usable = usable.filter(p=>!p.metaSuppressed);
-    if(MODALITY_SET && qMeta) usable = usable.filter(p=>passesModalities(p, qMeta));
-    const wantDir = (MODALITY_SET && MODALITY_SET.has("Direction") && dir) ? dir : 0;
+    if(DOMAIN_SET && qMeta) usable = usable.filter(p=>passesDomains(p, qMeta));
+    const wantDir = (DOMAIN_SET && DOMAIN_SET.has("Direction") && dir) ? dir : 0;
     if(wantDir){
       const df = Number(wantDir);
       usable = usable.filter(p=>{
@@ -6883,7 +6883,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
     const qd = queryDir || dir || 1;
 
     let out = baseOut;
-    if(REMAP_OPPOSITE_OUTCOMES && !(MODALITY_SET && MODALITY_SET.has("Direction") && dir)){
+    if(REMAP_OPPOSITE_OUTCOMES && !(DOMAIN_SET && DOMAIN_SET.has("Direction") && dir)){
       if(best.p.dir !== qd) out = (baseOut === "Win") ? "Loss" : "Win";
     }
 
@@ -6896,8 +6896,8 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
   function closestPointUid(points, q, dir, excludeTime, modelKey, qMeta, queryDir){
     let usable = filterUsableNeighbors(points, excludeTime);
     if(!COUNT_SUPPRESSED_NEIGHBORS) usable = usable.filter(p=>!p.metaSuppressed);
-    if(MODALITY_SET && qMeta) usable = usable.filter(p=>passesModalities(p, qMeta));
-    const wantDir = (MODALITY_SET && MODALITY_SET.has("Direction") && dir) ? dir : 0;
+    if(DOMAIN_SET && qMeta) usable = usable.filter(p=>passesDomains(p, qMeta));
+    const wantDir = (DOMAIN_SET && DOMAIN_SET.has("Direction") && dir) ? dir : 0;
     if(wantDir){
       const df = Number(wantDir);
       usable = usable.filter(p=>{
@@ -6921,8 +6921,8 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
   function closestPointPnl(points, q, dir, excludeTime, modelKey, qMeta, queryDir){
     let usable = filterUsableNeighbors(points, excludeTime);
     if(!COUNT_SUPPRESSED_NEIGHBORS) usable = usable.filter(p=>!p.metaSuppressed);
-    if(MODALITY_SET && qMeta) usable = usable.filter(p=>passesModalities(p, qMeta));
-    const wantDir = (MODALITY_SET && MODALITY_SET.has("Direction") && dir) ? dir : 0;
+    if(DOMAIN_SET && qMeta) usable = usable.filter(p=>passesDomains(p, qMeta));
+    const wantDir = (DOMAIN_SET && DOMAIN_SET.has("Direction") && dir) ? dir : 0;
     if(wantDir){
       const df = Number(wantDir);
       usable = usable.filter(p=>{
@@ -6942,7 +6942,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
     if(!(v!=null && Number.isFinite(v))) v = null;
 
     const qd = queryDir || dir || 1;
-    if(v!=null && REMAP_OPPOSITE_OUTCOMES && !(MODALITY_SET && MODALITY_SET.has("Direction") && dir)){
+    if(v!=null && REMAP_OPPOSITE_OUTCOMES && !(DOMAIN_SET && DOMAIN_SET.has("Direction") && dir)){
       if(best.p.dir !== qd) v = -v;
     }
     return v;
@@ -7805,8 +7805,8 @@ const _nA = candles.length;
     HDB_MIN_SAMPLES = clampInt(Number(settings.hdbMinSamples || 0) || 12, 2, 200);
     HDB_EPS_QUANTILE = clamp(Number(settings.hdbEpsQuantile || 0) || 0.85, 0.5, 0.99);
     HDB_SAMPLE_CAP = clampInt(Number(settings.hdbSampleCap || 0) || 3000, 200, 200000);
-    HDB_MODALITY_DISTINCTION =
-      settings.hdbModalityDistinction === "conceptual" ? "conceptual" : "real";
+    HDB_DOMAIN_DISTINCTION =
+      settings.hdbDomainDistinction === "conceptual" ? "conceptual" : "real";
 
     KNN_VOTE_MODE = (settings.knnVoteMode === "majority") ? "majority" : "distance";
     DIST_METRIC = (settings.distanceMetric === "cosine" || settings.distanceMetric === "manhattan" || settings.distanceMetric === "chebyshev" || settings.distanceMetric === "mahalanobis")
@@ -7816,8 +7816,8 @@ const _nA = candles.length;
     DIM_WEIGHT_MODE = (settings.dimWeightMode === "proportional") ? "proportional" : "uniform";
     DIM_WEIGHTS = Array.isArray(settings.dimWeights) ? settings.dimWeights : null;
     REMAP_OPPOSITE_OUTCOMES = (settings.remapOppositeOutcomes === false) ? false : true;
-    MODALITIES = Array.isArray(settings.modalities) ? settings.modalities.map((s)=>String(s)) : [];
-    MODALITY_SET = (MODALITIES && MODALITIES.length) ? new Set(MODALITIES) : null;
+    DOMAINS = Array.isArray(settings.domains) ? settings.domains.map((s)=>String(s)) : [];
+    DOMAIN_SET = (DOMAINS && DOMAINS.length) ? new Set(DOMAINS) : null;
 
 
     CALIBRATION_MODE =
@@ -9204,7 +9204,7 @@ function flushSuppressedNeighbors(uptoIndex){
 
           const q = buildChunkVector(candles, i, chunkBars, m, parseMode);
           const qMeta = queryMetaFromTime(excludeTime, parseMode);
-          const enforceDir = !!(MODALITY_SET && MODALITY_SET.has("Direction"));
+          const enforceDir = !!(DOMAIN_SET && DOMAIN_SET.has("Direction"));
 
           const mbRaw = aiMargin(lib, q, kEntryEff, "entry",
             enforceDir ? 1 : 0,
@@ -9302,7 +9302,7 @@ function flushSuppressedNeighbors(uptoIndex){
 
         const q = buildChunkVector(candles, i, chunkBars, best.model, parseMode);
         const qMeta = queryMetaFromTime(excludeTime, parseMode);
-        const enforceDir = !!(MODALITY_SET && MODALITY_SET.has("Direction"));
+        const enforceDir = !!(DOMAIN_SET && DOMAIN_SET.has("Direction"));
 
         const mbRaw = aiMargin(lib, q, kEntryEff, "entry",
           enforceDir ? 1 : 0,
@@ -9488,7 +9488,7 @@ function flushSuppressedNeighbors(uptoIndex){
         const q = buildChunkVector(candles, i, chunkBars, entryModelUsed, parseMode);
         const exitEvalTime = (candles[i] && candles[i].time) || null;
         const qMeta = queryMetaFromTime(exitEvalTime || "", parseMode);
-        const enforceDir = !!(MODALITY_SET && MODALITY_SET.has("Direction"));
+        const enforceDir = !!(DOMAIN_SET && DOMAIN_SET.has("Direction"));
         const m = aiMargin(
           libs[entryModelUsed],
           q,
@@ -9553,7 +9553,7 @@ function flushSuppressedNeighbors(uptoIndex){
       const q = buildChunkVector(candles, i, chunkBars, entryModelUsed, parseMode);
       const exitEvalTime = (candles[i] && candles[i].time) || null;
       const qMeta = queryMetaFromTime(exitEvalTime || "", parseMode);
-      const enforceDir = !!(MODALITY_SET && MODALITY_SET.has("Direction"));
+      const enforceDir = !!(DOMAIN_SET && DOMAIN_SET.has("Direction"));
       const m = aiMargin(
         lib,
         q,
@@ -9581,7 +9581,7 @@ function flushSuppressedNeighbors(uptoIndex){
         const q = buildChunkVector(candles, i, chunkBars, entryModelUsed, parseMode);
         const exitEvalTime = (candles[i] && candles[i].time) || null;
         const qMeta = queryMetaFromTime(exitEvalTime || "", parseMode);
-        const enforceDir = !!(MODALITY_SET && MODALITY_SET.has("Direction"));
+        const enforceDir = !!(DOMAIN_SET && DOMAIN_SET.has("Direction"));
         const m = aiMargin(
           libs[entryModelUsed],
           q,
@@ -9691,7 +9691,7 @@ function flushSuppressedNeighbors(uptoIndex){
           if(!lib || lib.length < 40) continue;
           const q = buildChunkVector(candles, i, chunkBars, m, parseMode);
           const qMeta = queryMetaFromTime(excludeTime, parseMode);
-          const enforceDir = !!(MODALITY_SET && MODALITY_SET.has("Direction"));
+          const enforceDir = !!(DOMAIN_SET && DOMAIN_SET.has("Direction"));
           const mBuyRaw = aiMargin(lib, q, kEntryEff, "entry", enforceDir ? 1 : 0, excludeTime, m, qMeta, 1);
           const mSellRaw = aiMargin(lib, q, kEntryEff, "entry", enforceDir ? -1 : 0, excludeTime, m, qMeta, -1);
           const mBuy = marginToProb(mBuyRaw) ?? 0;
@@ -9733,7 +9733,7 @@ function flushSuppressedNeighbors(uptoIndex){
         }
 
         const qMetaBest = queryMetaFromTime(excludeTime, parseMode);
-        const enforceDirBest = !!(MODALITY_SET && MODALITY_SET.has("Direction"));
+        const enforceDirBest = !!(DOMAIN_SET && DOMAIN_SET.has("Direction"));
         const entryNeighbors = (bestModel && libs[bestModel] && libs[bestModel].length && bestQ)
           ? knnNeighbors(libs[bestModel], bestQ, kEntryEff, enforceDirBest ? bestDir : 0, excludeTime, bestModel, qMetaBest, bestDir)
           : [];
@@ -9792,7 +9792,7 @@ function flushSuppressedNeighbors(uptoIndex){
         if (lib && lib.length >= 10) {
           const q = buildChunkVector(candles, i, chunkBars, m, parseMode);
           const qMeta = queryMetaFromTime(excludeTime, parseMode);
-          const enforceDir = !!(MODALITY_SET && MODALITY_SET.has("Direction"));
+          const enforceDir = !!(DOMAIN_SET && DOMAIN_SET.has("Direction"));
           entryNeighbors = knnNeighbors(lib, q, kEntryEff, enforceDir ? picked.dir : 0, excludeTime, m, qMeta, picked.dir);
         }
       } catch (e) {
@@ -10265,7 +10265,7 @@ function flushSuppressedNeighbors(uptoIndex){
             const q = buildChunkVector(candles, sigI, chunkBars, m, parseMode);
             const excludeTime = (candles[entryIndex] && candles[entryIndex].time) || null;
             const qMeta = queryMetaFromTime(excludeTime, parseMode);
-            const enforceDir = !!(MODALITY_SET && MODALITY_SET.has("Direction"));
+            const enforceDir = !!(DOMAIN_SET && DOMAIN_SET.has("Direction"));
             const nbs = knnNeighbors(
               lib,
               q,
@@ -11589,8 +11589,8 @@ export function ClusterMap({
   onPostHocProgress,
   onMitMap,
   aiMethod,
-  aiModalities,
-  hdbModalityDistinction,
+  aiDomains,
+  hdbDomainDistinction,
   hdbMinClusterSize,
   hdbMinSamples,
   hdbEpsQuantile,
@@ -11663,11 +11663,11 @@ export function ClusterMap({
   // Track whether the mouse is currently over the map so WASD/arrow panning doesn't steal keys elsewhere.
   const mapFocusRef = useRef(false);
 
-  // Active AI modalities selected by the user (UI-side).
-  // NOTE: The backtest/runtime engine also has its own modality set, but that one is not in scope here.
+  // Active AI domains selected by the user (UI-side).
+  // NOTE: The backtest/runtime engine also has its own domain set, but that one is not in scope here.
   const activeModSet = useMemo(
-    () => new Set<string>((aiModalities as any) || []),
-    [aiModalities]
+    () => new Set<string>((aiDomains as any) || []),
+    [aiDomains]
   );
 
   const nodeChronologyValue = React.useCallback(
@@ -13303,7 +13303,7 @@ export function ClusterMap({
     const modSet = new Set<string>();
     const wantFilterClusters = false;
     const wantFilterStats = false;
-    // Query context for modality matching.
+    // Query context for domain matching.
     // IMPORTANT: Keep this overlay independent of selection/hover/slider so post-hoc does not recompute on node clicks.
     const ctxNode: any = null;
     const ctxTime = "";
@@ -13382,7 +13382,7 @@ export function ClusterMap({
       return m;
     };
 
-    const passesModalityForViz = (n: any) => {
+    const passesDomainForViz = (n: any) => {
       if (modSet.size === 0) return true;
       const m = nodeMeta(n);
 
@@ -13450,7 +13450,7 @@ export function ClusterMap({
       const n: any = (basisNodes as any[])[i];
       if (!n) continue;
       if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) continue;
-      if (wantFilterClusters && !passesModalityForViz(n)) continue;
+      if (wantFilterClusters && !passesDomainForViz(n)) continue;
       if (n.isPotential || n.isOpen || n.isLive) continue;
       pts.push([n.x, n.y]);
       nodeRefs.push(n);
@@ -13640,7 +13640,7 @@ export function ClusterMap({
       clusterMembers[key].push(i);
 
       const n: any = nodeRefs[i];
-      if (wantFilterStats && !passesModalityForViz(n)) {
+      if (wantFilterStats && !passesDomainForViz(n)) {
         continue;
       }
       const pnl =
@@ -13838,7 +13838,7 @@ export function ClusterMap({
     viewMonth,
     viewWeekday,
     viewHour,
-    hdbModalityDistinction,
+    hdbDomainDistinction,
     hdbMinSamples,
     hdbEpsQuantile,
     hdbMinClusterSize,
@@ -14335,7 +14335,7 @@ export function ClusterMap({
         };
       }
 
-      // Fallback: infer by polygon membership in world coords (no modality filtering).
+      // Fallback: infer by polygon membership in world coords (no domain filtering).
       const x = Number((node as any).x);
       const y = Number((node as any).y);
       if (!Number.isFinite(x) || !Number.isFinite(y))
@@ -16469,24 +16469,24 @@ export function ClusterMap({
     };
   }, [displayNodes]);
 
-  const hdbModalitiesForNode = React.useCallback(
+  const hdbDomainsForNode = React.useCallback(
     (n: any) => {
       if (!n || aiMethod !== "hdbscan") return "";
       const parts: string[] = [];
 
-      // Show whether we're in REAL vs CONCEPTUAL (how modalities affect clustering).
+      // Show whether we're in REAL vs CONCEPTUAL (how domains affect clustering).
       if (
-        typeof HDB_MODALITY_DISTINCTION === "string" &&
-        HDB_MODALITY_DISTINCTION.length
+        typeof HDB_DOMAIN_DISTINCTION === "string" &&
+        HDB_DOMAIN_DISTINCTION.length
       ) {
-        parts.push(`Distinction=${HDB_MODALITY_DISTINCTION}`);
+        parts.push(`Distinction=${HDB_DOMAIN_DISTINCTION}`);
       }
       // Trade direction (informational)
       const dir = Number((n as any).dir ?? (n as any).direction ?? 0);
       if (dir === 1) parts.push("Dir=Buy");
       else if (dir === -1) parts.push("Dir=Sell");
 
-      // Active modalities (only what the user enabled)
+      // Active domains (only what the user enabled)
       if (activeModSet && activeModSet.size) {
         parts.push("Mods=" + Array.from(activeModSet).sort().join(","));
       }
@@ -17150,8 +17150,8 @@ export function ClusterMap({
             lines.push(
               `Confidence: ${Math.round((n.potentialMargin ?? 0) * 100)}%`
             );
-            const mods = hdbModalitiesForNode(n);
-            if (mods) lines.push(`Modalities: ${mods}`);
+            const mods = hdbDomainsForNode(n);
+            if (mods) lines.push(`Domains: ${mods}`);
             if (n.closestCluster) lines.push(`Closest: ${n.closestCluster}`);
           } else if (kind === "ghost") {
             const sess =
@@ -17183,8 +17183,8 @@ export function ClusterMap({
               lines.push(`Confidence: ${Math.round(c * 100)}%`);
             }
 
-            const mods = hdbModalitiesForNode(n);
-            if (mods) lines.push(`Modalities: ${mods}`);
+            const mods = hdbDomainsForNode(n);
+            if (mods) lines.push(`Domains: ${mods}`);
             lines.push(`Entry: ${formatDateTime(n.entryTime, parseMode)}`);
           } else {
             const isLiveNode = kind === "close";
@@ -17234,8 +17234,8 @@ export function ClusterMap({
                   lines.push(`Confidence: ${Math.round(conf * 100)}%`);
                 }
 
-                const mods = hdbModalitiesForNode(n);
-                if (mods) lines.push(`Modalities: ${mods}`);
+                const mods = hdbDomainsForNode(n);
+                if (mods) lines.push(`Domains: ${mods}`);
               }
             }
             if (n.closestCluster) lines.push(`Closest: ${n.closestCluster}`);
@@ -19872,10 +19872,10 @@ export function ClusterMap({
                     {(() => {
                       const parts: string[] = [];
                       if (
-                        typeof HDB_MODALITY_DISTINCTION === "string" &&
-                        HDB_MODALITY_DISTINCTION.length
+                        typeof HDB_DOMAIN_DISTINCTION === "string" &&
+                        HDB_DOMAIN_DISTINCTION.length
                       ) {
-                        parts.push(`Distinction: ${HDB_MODALITY_DISTINCTION}`);
+                        parts.push(`Distinction: ${HDB_DOMAIN_DISTINCTION}`);
                       }
                       const mods = activeModSet
                         ? Array.from(activeModSet).sort()
@@ -21143,11 +21143,11 @@ export function ClusterMap3D({
 
   // Strict parity inputs (same as 2D)
   aiMethod,
-  aiModalities,
+  aiDomains,
   hdbMinClusterSize,
   hdbMinSamples,
   hdbEpsQuantile,
-  hdbModalityDistinction,
+  hdbDomainDistinction,
   clusterGroupStatsMode,
 }: any) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -23939,7 +23939,7 @@ export default function App() {
     hdbMinSamples,
     hdbEpsQuantile,
     hdbSampleCap,
-    hdbModalityDistinction,
+    hdbDomainDistinction,
     confidenceThreshold,
     aiExitStrict,
     aiExitLossTol,
@@ -23973,7 +23973,7 @@ export default function App() {
     dimManualAmount,
     compressionMethod,
     distanceMetric,
-    modalities: aiModalities,
+    domains: aiDomains,
     remapOppositeOutcomes,
     dimWeightMode,
     dimWeightsBump,
@@ -24047,9 +24047,9 @@ export default function App() {
       );
     if (typeof (data as any).hdbSampleCap === "number")
       setHdbSampleCap(clampInt((data as any).hdbSampleCap, 200, 200000));
-    if (typeof (data as any).hdbModalityDistinction === "string")
-      setHdbModalityDistinction(
-        (data as any).hdbModalityDistinction === "conceptual"
+    if (typeof (data as any).hdbDomainDistinction === "string")
+      setHdbDomainDistinction(
+        (data as any).hdbDomainDistinction === "conceptual"
           ? "conceptual"
           : "real"
       );
@@ -24158,11 +24158,11 @@ export default function App() {
     }
     if (typeof data.remapOppositeOutcomes === "boolean")
       setRemapOppositeOutcomes(!!data.remapOppositeOutcomes);
-    if (Array.isArray(data.modalities) || Array.isArray(data.aiModalities)) {
-      const arr = Array.isArray(data.modalities)
-        ? data.modalities
-        : data.aiModalities;
-      setAiModalities((arr || []).map((x) => String(x)));
+    if (Array.isArray(data.domains) || Array.isArray(data.aiDomains)) {
+      const arr = Array.isArray(data.domains)
+        ? data.domains
+        : data.aiDomains;
+      setAiDomains((arr || []).map((x) => String(x)));
     }
 
     if (typeof data.dimWeightMode === "string") {
@@ -24512,7 +24512,7 @@ export default function App() {
   const [hdbMinSamples, setHdbMinSamples] = useState(12);
   const [hdbEpsQuantile, setHdbEpsQuantile] = useState(0.85); // 0.50..0.99 (k-distance quantile)
   const [hdbSampleCap, setHdbSampleCap] = useState(3000);
-  const [hdbModalityDistinction, setHdbModalityDistinction] = useState<
+  const [hdbDomainDistinction, setHdbDomainDistinction] = useState<
     "conceptual" | "real"
   >("real");
 
@@ -25419,12 +25419,12 @@ export default function App() {
 
   // kNN neighbor pool controls
   useState(false);
-  const [aiModalities, setAiModalities] = useState<string[]>(["Direction"]); // multi-select filters for neighbor candidates
+  const [aiDomains, setAiDomains] = useState<string[]>(["Direction"]); // multi-select filters for neighbor candidates
   const [remapOppositeOutcomes, setRemapOppositeOutcomes] = useState(true);
   useState(0.85);
 
-  const toggleAiModality = React.useCallback((key: string) => {
-    setAiModalities((prev) => {
+  const toggleAiDomain = React.useCallback((key: string) => {
+    setAiDomains((prev) => {
       const has = prev.includes(key);
       if (has) return prev.filter((k) => k !== key);
       return [...prev, key];
@@ -25732,7 +25732,7 @@ export default function App() {
         hdbMinSamples,
         hdbEpsQuantile,
         hdbSampleCap,
-        hdbModalityDistinction,
+        hdbDomainDistinction,
         confidenceThreshold,
         aiExitStrict,
         aiExitLossTol,
@@ -25760,7 +25760,7 @@ export default function App() {
 
         remapOppositeOutcomes,
 
-        modalities: aiModalities,
+        domains: aiDomains,
         dimWeightMode,
         dimWeightsBump,
         calibrationMode,
@@ -25790,7 +25790,7 @@ export default function App() {
       hdbMinSamples,
       hdbEpsQuantile,
       hdbSampleCap,
-      hdbModalityDistinction,
+      hdbDomainDistinction,
       confidenceThreshold,
       aiExitStrict,
       aiExitLossTol,
@@ -25817,7 +25817,7 @@ export default function App() {
 
       remapOppositeOutcomes,
 
-      aiModalities,
+      aiDomains,
       dimWeightMode,
       dimWeightsBump,
       calibrationMode,
@@ -25878,7 +25878,7 @@ export default function App() {
 
         remapOppositeOutcomes,
 
-        modalities: aiModalities,
+        domains: aiDomains,
         dimWeightMode,
         dimWeightsBump,
         calibrationMode,
@@ -25927,7 +25927,7 @@ export default function App() {
 
       remapOppositeOutcomes,
 
-      aiModalities,
+      aiDomains,
       dimWeightMode,
       dimWeightsBump,
       calibrationMode,
@@ -26334,7 +26334,7 @@ export default function App() {
     compressionMethod,
     distanceMetric,
     remapOppositeOutcomes,
-    aiModalities,
+    aiDomains,
     dimWeightMode,
     dimWeightsBump,
     calibrationMode,
@@ -27347,7 +27347,7 @@ export default function App() {
         hdbMinSamples,
         hdbEpsQuantile,
         hdbSampleCap,
-        hdbModalityDistinction,
+        hdbDomainDistinction,
         confidenceThreshold: confidenceThreshold,
         aiExitStrict: aiExitStrict,
         aiExitLossTol: aiExitLossTol,
@@ -27396,10 +27396,10 @@ export default function App() {
         distanceMetric,
         dimWeightMode,
         dimWeights: dimWeightsForWorker,
-        // Neighbor pool / modalities / confidence calibration
+        // Neighbor pool / domains / confidence calibration
 
         remapOppositeOutcomes,
-        modalities: aiModalities,
+        domains: aiDomains,
         calibrationMode,
         realismLevel,
         staticLibrariesClusters,
@@ -27479,7 +27479,7 @@ export default function App() {
       if (computeDebounceRef.current) clearTimeout(computeDebounceRef.current);
     };
   }, [candles, computeCfgKey, restartWorker]);
-  // When the HDB modality distinction changes, force a quick recompute so historical trades + stats reflect it.
+  // When the HDB domain distinction changes, force a quick recompute so historical trades + stats reflect it.
   useEffect(() => {
     if (!candles.length) return;
     if (aiMethod !== "hdbscan") return;
@@ -27490,7 +27490,7 @@ export default function App() {
     return () => {
       if (computeDebounceRef.current) clearTimeout(computeDebounceRef.current);
     };
-  }, [hdbModalityDistinction, aiMethod]);
+  }, [hdbDomainDistinction, aiMethod]);
 
   useEffect(() => {
     const isEditableTarget = (t) => {
@@ -30513,7 +30513,7 @@ export default function App() {
     live: dataMode === "Live",
     useAI,
     kEntry,
-    aiModalities,
+    aiDomains,
   };
 
   const PotentialOrActiveCard = useMemo(
@@ -30535,7 +30535,7 @@ export default function App() {
         const live = ctx.live;
         const useAI = ctx.useAI;
         const kEntry = ctx.kEntry;
-        const aiModalities = ctx.aiModalities || [];
+        const aiDomains = ctx.aiDomains || [];
         const isActive = !!openTrade;
         const isAIFilter = !!useAI && !checkEveryBar;
         // "displayModel" isn't defined in this codebase; keep model selection grounded in
@@ -31213,7 +31213,7 @@ export default function App() {
           openTradePotential,
           potential,
           kEntry,
-          aiModalities,
+          aiDomains,
           openTrade,
         ]);
 
@@ -35027,7 +35027,7 @@ export default function App() {
 
                 <div style={{ height: 10 }} />
                 <div style={{ ...ui.label, marginBottom: 8 }}>
-                  Modality (multi-select)
+                  Domain (multi-select)
                 </div>
 
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -35039,11 +35039,11 @@ export default function App() {
                     "Weekday",
                     "Hour",
                   ].map((k) => {
-                    const on = aiModalities.includes(k);
+                    const on = aiDomains.includes(k);
                     return (
                       <button
                         key={k}
-                        onClick={() => toggleAiModality(k)}
+                        onClick={() => toggleAiDomain(k)}
                         disabled={aiAllOff}
                         style={{
                           padding: "8px 10px",
@@ -35371,7 +35371,7 @@ export default function App() {
 
                         <div>
                           <div style={ui.label}>
-                            Direction Modality Distinction
+                            Direction Domain Distinction
                           </div>
                           <div
                             style={{
@@ -35388,7 +35388,7 @@ export default function App() {
                                 { k: "real", label: "Real" },
                               ] as const
                             ).map((opt, idx) => {
-                              const active = hdbModalityDistinction === opt.k;
+                              const active = hdbDomainDistinction === opt.k;
                               const bg =
                                 opt.k === "real"
                                   ? "linear-gradient(135deg, rgba(200,50,50,0.22), rgba(230,80,80,0.16))"
@@ -35397,7 +35397,7 @@ export default function App() {
                                 <button
                                   key={opt.k}
                                   onClick={() =>
-                                    setHdbModalityDistinction(opt.k)
+                                    setHdbDomainDistinction(opt.k)
                                   }
                                   style={{
                                     fontSize: 11,
@@ -37945,8 +37945,8 @@ export default function App() {
                 libraryPoints={aiLibraryPoints}
                 activeLibraries={aiActiveLibraries}
                 libraryCounts={aiLibraryCounts}
-                aiModalities={aiModalities}
-                hdbModalityDistinction={hdbModalityDistinction}
+                aiDomains={aiDomains}
+                hdbDomainDistinction={hdbDomainDistinction}
                 onResetClusterMap={() => {}}
                 clusterMapView={"2d"}
                 onToggleClusterMapView={() => {}}
@@ -37990,8 +37990,8 @@ export default function App() {
                       libraryPoints={aiLibraryPoints}
                       activeLibraries={aiActiveLibraries}
                       libraryCounts={aiLibraryCounts}
-                      aiModalities={aiModalities}
-                      hdbModalityDistinction={hdbModalityDistinction}
+                      aiDomains={aiDomains}
+                      hdbDomainDistinction={hdbDomainDistinction}
                       onResetClusterMap={() => setClusterResetKey((k) => k + 1)}
                       clusterMapView={clusterMapView}
                       onToggleClusterMapView={() =>
@@ -38026,11 +38026,11 @@ export default function App() {
                     activeLibraries={aiActiveLibraries}
                     staticLibrariesClusters={staticLibrariesClusters}
                     aiMethod={aiMethod}
-                    aiModalities={aiModalities}
+                    aiDomains={aiDomains}
                     hdbMinClusterSize={hdbMinClusterSize}
                     hdbMinSamples={hdbMinSamples}
                     hdbEpsQuantile={hdbEpsQuantile}
-                    hdbModalityDistinction={hdbModalityDistinction}
+                    hdbDomainDistinction={hdbDomainDistinction}
                     clusterGroupStatsMode={clusterGroupStatsMode}
                   />
                 )}

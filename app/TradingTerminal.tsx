@@ -428,13 +428,17 @@ type BacktestSettingsSnapshot = {
   tpDollars: number;
   slDollars: number;
   dollarsPerMove: number;
+  stopMode: number;
+  breakEvenTriggerPct: number;
+  trailingStartPct: number;
+  trailingDistPct: number;
   aiModelStates: Record<string, AiModelState>;
   aiFeatureLevels: Record<string, AiFeatureLevel>;
   aiFeatureModes: Record<string, AiFeatureMode>;
   selectedAiLibraries: string[];
   selectedAiLibrarySettings: AiLibrarySettings;
   chunkBars: number;
-  selectedAiModalities: string[];
+  selectedAiDomains: string[];
   dimensionAmount: number;
   compressionMethod: AiCompressionMethod;
   hdbMinClusterSize: number;
@@ -1162,7 +1166,7 @@ const rebalanceItemsToTargetWinRate = <T,>(
     .map((entry) => entry.item);
 };
 
-const AI_MODALITY_OPTIONS = [
+const AI_DOMAIN_OPTIONS = [
   "Direction",
   "Model",
   "Session",
@@ -2330,21 +2334,21 @@ const normalizeBacktestExitReason = (reason?: string | null): string => {
     return "Take Profit";
   }
 
-  if (upper === "SL" || upper.includes("STOP")) {
-    return "Stop Loss";
-  }
-
   if (
     upper === "BE" ||
     upper === "BREAKEVEN" ||
     upper === "BREAK-EVEN" ||
-    upper.includes("BREAK")
+    upper.includes("BREAK EVEN")
   ) {
     return "Break Even";
   }
 
   if (upper === "TSL" || upper.includes("TRAIL")) {
     return "Trailing Stop";
+  }
+
+  if (upper === "SL" || upper.includes("STOP")) {
+    return "Stop Loss";
   }
 
   if (upper.includes("MIM") || upper.includes("MIT")) {
@@ -4251,21 +4255,25 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [enabledBacktestHours, setEnabledBacktestHours] = useState<number[]>(
     Array.from({ length: 24 }, (_, index) => index)
   );
-  const [aiMode, setAiMode] = useState<"off" | "knn" | "hdbscan">("knn");
-  const [aiModelEnabled, setAiModelEnabled] = useState(true);
-  const [aiFilterEnabled, setAiFilterEnabled] = useState(true);
+  const [aiMode, setAiMode] = useState<"off" | "knn" | "hdbscan">("off");
+  const [aiModelEnabled, setAiModelEnabled] = useState(false);
+  const [aiFilterEnabled, setAiFilterEnabled] = useState(false);
   const [staticLibrariesClusters, setStaticLibrariesClusters] = useState(false);
-  const [confidenceThreshold, setConfidenceThreshold] = useState(42);
-  const [aiExitStrictness, setAiExitStrictness] = useState(18);
+  const [confidenceThreshold, setConfidenceThreshold] = useState(0);
+  const [aiExitStrictness, setAiExitStrictness] = useState(0);
   const [aiExitLossTolerance, setAiExitLossTolerance] = useState(0);
   const [aiExitWinTolerance, setAiExitWinTolerance] = useState(0);
   const [useMitExit, setUseMitExit] = useState(false);
-  const [complexity, setComplexity] = useState(58);
-  const [volatilityPercentile, setVolatilityPercentile] = useState(30);
-  const [tpDollars, setTpDollars] = useState(220);
-  const [slDollars, setSlDollars] = useState(120);
-  const [dollarsPerMove, setDollarsPerMove] = useState(100);
-  const [maxBarsInTrade, setMaxBarsInTrade] = useState(32);
+  const [complexity, setComplexity] = useState(50);
+  const [volatilityPercentile, setVolatilityPercentile] = useState(50);
+  const [tpDollars, setTpDollars] = useState(1000);
+  const [slDollars, setSlDollars] = useState(1000);
+  const [dollarsPerMove, setDollarsPerMove] = useState(25);
+  const [maxBarsInTrade, setMaxBarsInTrade] = useState(0);
+  const [stopMode, setStopMode] = useState(0); // 0=Off, 1=Break-Even, 2=Trailing
+  const [breakEvenTriggerPct, setBreakEvenTriggerPct] = useState(50);
+  const [trailingStartPct, setTrailingStartPct] = useState(50);
+  const [trailingDistPct, setTrailingDistPct] = useState(30);
   const [methodSettingsOpen, setMethodSettingsOpen] = useState(false);
   const [modelsModalOpen, setModelsModalOpen] = useState(false);
   const [featuresModalOpen, setFeaturesModalOpen] = useState(false);
@@ -4294,7 +4302,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [aiBulkMaxSamples, setAiBulkMaxSamples] = useState(10000);
   const [chunkBars, setChunkBars] = useState(24);
   const [distanceMetric, setDistanceMetric] = useState<AiDistanceMetric>("euclidean");
-  const [selectedAiModalities, setSelectedAiModalities] = useState<string[]>([
+  const [selectedAiDomains, setSelectedAiDomains] = useState<string[]>([
     "Direction",
     "Model"
   ]);
@@ -4355,13 +4363,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     tpDollars,
     slDollars,
     dollarsPerMove,
+    stopMode,
+    breakEvenTriggerPct,
+    trailingStartPct,
+    trailingDistPct,
     aiModelStates: { ...aiModelStates },
     aiFeatureLevels: { ...aiFeatureLevels },
     aiFeatureModes: { ...aiFeatureModes },
     selectedAiLibraries: [...selectedAiLibraries],
     selectedAiLibrarySettings: cloneAiLibrarySettings(selectedAiLibrarySettings),
     chunkBars,
-    selectedAiModalities: [...selectedAiModalities],
+    selectedAiDomains: [...selectedAiDomains],
     dimensionAmount,
     compressionMethod,
     hdbMinClusterSize,
@@ -4413,6 +4425,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const modelProfileByIdRef = useRef<Record<string, ModelProfile>>({});
   const appliedBacktestTpDollarsRef = useRef(0);
   const appliedBacktestSlDollarsRef = useRef(0);
+  const appliedBacktestStopModeRef = useRef(0);
+  const appliedBacktestBreakEvenTriggerPctRef = useRef(50);
+  const appliedBacktestTrailingStartPctRef = useRef(50);
+  const appliedBacktestTrailingDistPctRef = useRef(30);
   const chartSizeRef = useRef({ width: 0, height: 0 });
   const chartRenderWindowRef = useRef<ChartDataWindow>({ from: 0, to: -1 });
   const chartVisibleGlobalRangeRef = useRef<ChartDataWindow | null>(null);
@@ -4428,6 +4444,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const requestChartVisibleRangeRef = useRef<(visibleRange: ChartDataWindow) => void>(() => {});
   const chartDataLengthRef = useRef(0);
   const chartLastBarTimeRef = useRef(0);
+  const chartViewCenterTimeMsRef = useRef<number | null>(null);
+  const selectedChartCandlesRef = useRef<Candle[]>([]);
   const [chartRenderWindow, setChartRenderWindow] = useState<ChartDataWindow>({ from: 0, to: -1 });
 
   const selectTradeOnChart = (tradeId: string, symbol: string) => {
@@ -4636,7 +4654,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [modelProfileById, selectedBacktestModelNames]);
   const backtestModelSelectionSummary = useMemo(() => {
     if (backtestModelProfiles.length === 0) {
-      return "No Main Settings models selected";
+      return "No models selected";
     }
 
     if (backtestModelProfiles.length === 1) {
@@ -4647,7 +4665,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return `${backtestModelProfiles[0]!.name} + ${backtestModelProfiles[1]!.name}`;
     }
 
-    return `${backtestModelProfiles.length} Main Settings models`;
+    return `${backtestModelProfiles.length} models`;
   }, [backtestModelProfiles]);
   const chartSignalModel = useMemo<ModelProfile | null>(() => {
     if (backtestModelProfiles.length === 0) {
@@ -4707,7 +4725,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [appliedBacktestModelNames, modelProfileById]);
   const appliedBacktestModelSelectionSummary = useMemo(() => {
     if (appliedBacktestModelProfiles.length === 0) {
-      return "No Main Settings models selected";
+      return "No models selected";
     }
 
     if (appliedBacktestModelProfiles.length === 1) {
@@ -4718,7 +4736,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return `${appliedBacktestModelProfiles[0]!.name} + ${appliedBacktestModelProfiles[1]!.name}`;
     }
 
-    return `${appliedBacktestModelProfiles.length} Main Settings models`;
+    return `${appliedBacktestModelProfiles.length} models`;
   }, [appliedBacktestModelProfiles]);
   const appliedConfidenceGateDisabled =
     appliedBacktestSettings.aiMode === "off" || !appliedBacktestSettings.aiFilterEnabled;
@@ -5223,6 +5241,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     );
   }, [deepChartCandles, selectedCandles, usesDeepChartHistory]);
 
+  selectedChartCandlesRef.current = selectedChartCandles;
+
   const gaplessTimeMap = useMemo(() => {
     const realToGapless = new Map<number, number>();
     const gaplessToReal = new Map<number, number>();
@@ -5261,6 +5281,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const selectionChanged = selectionRef.current !== selection;
     const previousTotalBars = previousChartSourceLengthRef.current;
 
+    const previousSelection = selectionRef.current;
+    const previousSelectionDash = previousSelection.lastIndexOf("-");
+    const previousSymbol = previousSelectionDash > 0 ? previousSelection.substring(0, previousSelectionDash) : "";
+    const symbolChanged = selectionChanged && previousSymbol !== selectedSymbol;
+
     selectionRef.current = selection;
     previousChartSourceLengthRef.current = totalBars;
     chartSourceLengthRef.current = totalBars;
@@ -5291,8 +5316,43 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       );
     };
 
-    if (selectionChanged || previousTotalBars <= 0) {
+    const restoreSavedPosition = () => {
+      const centerTimeMs = chartViewCenterTimeMsRef.current;
+
+      if (centerTimeMs === null || selectedChartCandles.length === 0) {
+        moveToLatest();
+        return;
+      }
+
+      const centerIndex = findCandleIndexAtOrBefore(selectedChartCandles, centerTimeMs);
+
+      if (centerIndex < 0) {
+        moveToLatest();
+        return;
+      }
+
+      const visibleCount = timeframeVisibleCount[selectedTimeframe];
+      const halfVisible = Math.floor(visibleCount / 2);
+      const visibleFrom = Math.max(0, centerIndex - halfVisible);
+      const visibleTo = visibleFrom + visibleCount;
+      const visibleRange = { from: visibleFrom, to: visibleTo };
+      const nextWindow = buildChartDataWindow(totalBars, visibleFrom, Math.min(visibleTo, totalBars - 1));
+
+      chartVisibleGlobalRangeRef.current = visibleRange;
+      chartPendingVisibleGlobalRangeRef.current = visibleRange;
+      chartRenderWindowRef.current = nextWindow;
+      setChartRenderWindow((current) =>
+        current.from === nextWindow.from && current.to === nextWindow.to ? current : nextWindow
+      );
+    };
+
+    if (symbolChanged) {
       moveToLatest();
+      return;
+    }
+
+    if (selectionChanged || previousTotalBars <= 0) {
+      restoreSavedPosition();
       return;
     }
 
@@ -5872,6 +5932,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     const trade = chartPanelHistoryRows[0];
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    if (Number(trade.exitTime) <= nowSec) {
+      return null;
+    }
+
     const riskDist = Math.abs(trade.entryPrice - trade.stopPrice);
     const rewardDist = Math.abs(trade.targetPrice - trade.entryPrice);
     const rr = riskDist > 0 ? rewardDist / riskDist : 0;
@@ -5965,6 +6031,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   modelProfileByIdRef.current = modelProfileById;
   appliedBacktestTpDollarsRef.current = appliedBacktestSettings.tpDollars;
   appliedBacktestSlDollarsRef.current = appliedBacktestSettings.slDollars;
+  appliedBacktestStopModeRef.current = appliedBacktestSettings.stopMode;
+  appliedBacktestBreakEvenTriggerPctRef.current = appliedBacktestSettings.breakEvenTriggerPct;
+  appliedBacktestTrailingStartPctRef.current = appliedBacktestSettings.trailingStartPct;
+  appliedBacktestTrailingDistPctRef.current = appliedBacktestSettings.trailingDistPct;
 
   useEffect(() => {
     if (!backtestHasRun || !backtestHistorySeedReady) {
@@ -5983,6 +6053,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const modelProfileByIdSnapshot = modelProfileByIdRef.current;
     const tpDollarsSnapshot = appliedBacktestTpDollarsRef.current;
     const slDollarsSnapshot = appliedBacktestSlDollarsRef.current;
+    const stopModeSnapshot = appliedBacktestStopModeRef.current;
+    const breakEvenTriggerPctSnapshot = appliedBacktestBreakEvenTriggerPctRef.current;
+    const trailingStartPctSnapshot = appliedBacktestTrailingStartPctRef.current;
+    const trailingDistPctSnapshot = appliedBacktestTrailingDistPctRef.current;
 
     if (tradeBlueprintsSnapshot.length === 0 || backtestTargetTradesSnapshot <= 0) {
       startTransition(() => {
@@ -5997,7 +6071,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     for (const blueprint of tradeBlueprintsSnapshot) {
       if (!modelNamesById[blueprint.modelId]) {
         modelNamesById[blueprint.modelId] =
-          modelProfileByIdSnapshot[blueprint.modelId]?.name ?? "Main Settings";
+          modelProfileByIdSnapshot[blueprint.modelId]?.name ?? "Settings";
       }
     }
 
@@ -6058,7 +6132,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             oneMinuteCandlesBySymbol: backtestOneMinuteCandlesBySymbolSnapshot,
             modelNamesById,
             tpDollars: tpDollarsSnapshot,
-            slDollars: slDollarsSnapshot
+            slDollars: slDollarsSnapshot,
+            stopMode: stopModeSnapshot,
+            breakEvenTriggerPct: breakEvenTriggerPctSnapshot,
+            trailingStartPct: trailingStartPctSnapshot,
+            trailingDistPct: trailingDistPctSnapshot
           }),
           backtestTargetTradesSnapshot
         )
@@ -6178,7 +6256,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         oneMinuteCandlesBySymbol: backtestOneMinuteCandlesBySymbolSnapshot,
         modelNamesById,
         tpDollars: tpDollarsSnapshot,
-        slDollars: slDollarsSnapshot
+        slDollars: slDollarsSnapshot,
+        stopMode: stopModeSnapshot,
+        breakEvenTriggerPct: breakEvenTriggerPctSnapshot,
+        trailingStartPct: trailingStartPctSnapshot,
+        trailingDistPct: trailingDistPctSnapshot
       });
     } catch {
       worker.terminate();
@@ -6427,6 +6509,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     slDollars,
     dollarsPerMove,
     maxBarsInTrade,
+    stopMode,
+    breakEvenTriggerPct,
+    trailingStartPct,
+    trailingDistPct,
     aiModelStates,
     aiFeatureLevels,
     aiFeatureModes,
@@ -6439,7 +6525,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     aiBulkMaxSamples,
     chunkBars,
     distanceMetric,
-    selectedAiModalities,
+    selectedAiDomains,
     embeddingCompression,
     dimensionAmount,
     compressionMethod,
@@ -6465,10 +6551,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     enabledBacktestMonths, enabledBacktestHours, aiMode, aiModelEnabled, aiFilterEnabled,
     staticLibrariesClusters, confidenceThreshold, aiExitStrictness, aiExitLossTolerance,
     aiExitWinTolerance, useMitExit, complexity, volatilityPercentile, tpDollars, slDollars,
-    dollarsPerMove, maxBarsInTrade, aiModelStates, aiFeatureLevels, aiFeatureModes,
+    dollarsPerMove, maxBarsInTrade, stopMode, breakEvenTriggerPct, trailingStartPct,
+    trailingDistPct, aiModelStates, aiFeatureLevels, aiFeatureModes,
     selectedAiLibraries, selectedAiLibrarySettings, selectedAiLibraryId, aiBulkScope,
     aiBulkWeight, aiBulkStride, aiBulkMaxSamples, chunkBars, distanceMetric,
-    selectedAiModalities, embeddingCompression, dimensionAmount, compressionMethod,
+    selectedAiDomains, embeddingCompression, dimensionAmount, compressionMethod,
     kEntry, kExit, knnVoteMode, hdbMinClusterSize, hdbMinSamples, hdbEpsQuantile,
     hdbSampleCap, antiCheatEnabled, validationMode, realismLevel, propInitialBalance,
     propDailyMaxLoss, propTotalMaxLoss, propProfitTarget, propProjectionMethod,
@@ -6497,6 +6584,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (s.slDollars != null) setSlDollars(s.slDollars);
     if (s.dollarsPerMove != null) setDollarsPerMove(s.dollarsPerMove);
     if (s.maxBarsInTrade != null) setMaxBarsInTrade(s.maxBarsInTrade);
+    if (s.stopMode != null) setStopMode(s.stopMode);
+    if (s.breakEvenTriggerPct != null) setBreakEvenTriggerPct(s.breakEvenTriggerPct);
+    if (s.trailingStartPct != null) setTrailingStartPct(s.trailingStartPct);
+    if (s.trailingDistPct != null) setTrailingDistPct(s.trailingDistPct);
     if (s.aiModelStates != null) setAiModelStates(s.aiModelStates);
     if (s.aiFeatureLevels != null) setAiFeatureLevels(s.aiFeatureLevels);
     if (s.aiFeatureModes != null) setAiFeatureModes(s.aiFeatureModes);
@@ -6509,7 +6600,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (s.aiBulkMaxSamples != null) setAiBulkMaxSamples(s.aiBulkMaxSamples);
     if (s.chunkBars != null) setChunkBars(s.chunkBars);
     if (s.distanceMetric != null) setDistanceMetric(s.distanceMetric);
-    if (s.selectedAiModalities != null) setSelectedAiModalities(s.selectedAiModalities);
+    if (s.selectedAiDomains != null) setSelectedAiDomains(s.selectedAiDomains);
     if (s.embeddingCompression != null) setEmbeddingCompression(s.embeddingCompression);
     if (s.dimensionAmount != null) setDimensionAmount(s.dimensionAmount);
     if (s.compressionMethod != null) setCompressionMethod(s.compressionMethod);
@@ -6555,21 +6646,25 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setEnabledBacktestSessions([...backtestSessionLabels]);
     setEnabledBacktestMonths(Array.from({ length: 12 }, (_, i) => i));
     setEnabledBacktestHours(Array.from({ length: 24 }, (_, i) => i));
-    setAiMode("knn");
-    setAiModelEnabled(true);
-    setAiFilterEnabled(true);
+    setAiMode("off");
+    setAiModelEnabled(false);
+    setAiFilterEnabled(false);
     setStaticLibrariesClusters(false);
-    setConfidenceThreshold(42);
-    setAiExitStrictness(18);
+    setConfidenceThreshold(0);
+    setAiExitStrictness(0);
     setAiExitLossTolerance(0);
     setAiExitWinTolerance(0);
     setUseMitExit(false);
-    setComplexity(58);
-    setVolatilityPercentile(30);
-    setTpDollars(220);
-    setSlDollars(120);
-    setDollarsPerMove(100);
-    setMaxBarsInTrade(32);
+    setComplexity(50);
+    setVolatilityPercentile(50);
+    setTpDollars(1000);
+    setSlDollars(1000);
+    setDollarsPerMove(25);
+    setMaxBarsInTrade(0);
+    setStopMode(0);
+    setBreakEvenTriggerPct(50);
+    setTrailingStartPct(50);
+    setTrailingDistPct(30);
     setAiModelStates(buildInitialAiModelStates(availableAiModelNames));
     setAiFeatureLevels(buildInitialAiFeatureLevels());
     setAiFeatureModes(buildInitialAiFeatureModes());
@@ -6582,7 +6677,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setAiBulkMaxSamples(10000);
     setChunkBars(24);
     setDistanceMetric("euclidean");
-    setSelectedAiModalities(["Direction", "Model"]);
+    setSelectedAiDomains(["Direction", "Model"]);
     setEmbeddingCompression(35);
     setDimensionAmount(32);
     setCompressionMethod("jl");
@@ -6966,6 +7061,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         };
 
         chartVisibleGlobalRangeRef.current = visibleGlobalRange;
+
+        const candles = selectedChartCandlesRef.current;
+        if (candles.length > 0) {
+          const centerIndex = Math.round((visibleGlobalRange.from + visibleGlobalRange.to) / 2);
+          const clampedIndex = Math.max(0, Math.min(centerIndex, candles.length - 1));
+          chartViewCenterTimeMsRef.current = candles[clampedIndex].time;
+        }
       };
 
       chart.subscribeCrosshairMove(onCrosshairMove);
@@ -8472,7 +8574,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         value: selectedAiModelCount.toLocaleString("en-US"),
         tone: selectedAiModelCount > 0 ? "up" : "neutral",
         valueStyle: { color: selectedAiModelCount > 0 ? "#34d399" : "rgba(255,255,255,0.4)" },
-        meta: "Enabled models in Main Settings"
+        meta: "Enabled models"
       },
       {
         label: "Active Features",
@@ -11599,9 +11701,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <>
               {backtestDateFilteredTrades.length === 0 && backtestModelProfiles.length === 0 ? (
                 <div className="backtest-empty">
-                  <h3>No Main Settings models selected</h3>
+                  <h3>No models selected</h3>
                   <p>
-                    Open Main Settings and enable at least one model in the MODELS panel. The
+                    Open Settings and enable at least one model in the MODELS panel. The
                     Chart tab now follows that Backtest selection automatically.
                   </p>
                 </div>
@@ -12042,23 +12144,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <div className="ai-zip-section-title">Dimensionality</div>
                       <div style={{ display: "grid", gap: "0.55rem" }}>
                         <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
-                          <div className="ai-zip-label">Modality</div>
+                          <div className="ai-zip-label">Domain</div>
                           <div className="ai-zip-toggle-grid tiles compact">
-                            {AI_MODALITY_OPTIONS.map((modality) => (
+                            {AI_DOMAIN_OPTIONS.map((domain) => (
                               <button
-                                key={modality}
+                                key={domain}
                                 type="button"
                                 className={`ai-zip-button pill ${
-                                  selectedAiModalities.includes(modality) ? "active" : ""
+                                  selectedAiDomains.includes(domain) ? "active" : ""
                                 }`}
                                 disabled={aiDisabled}
                                 onClick={() => {
-                                  setSelectedAiModalities((current) =>
-                                    toggleListValue(current, modality)
+                                  setSelectedAiDomains((current) =>
+                                    toggleListValue(current, domain)
                                   );
                                 }}
                               >
-                                {modality}
+                                {domain}
                               </button>
                             ))}
                           </div>
@@ -12167,6 +12269,66 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             />
                           </label>
                         </div>
+
+                        <div style={{ marginTop: "0.5rem" }}>
+                          <button
+                            type="button"
+                            className={`ai-zip-button ${stopMode !== 0 ? "active" : ""}`}
+                            onClick={() => {
+                              const next = ((stopMode || 0) + 1) % 3;
+                              setStopMode(next);
+                            }}
+                            style={{ width: "100%", marginBottom: "0.5rem" }}
+                          >
+                            Stop Mode · {stopMode === 0 ? "Off" : stopMode === 1 ? "Break‑Even" : "Trailing"}
+                          </button>
+
+                          <div style={{ opacity: stopMode === 1 ? 1 : 0.38, pointerEvents: stopMode === 1 ? "auto" : "none", marginBottom: "0.35rem" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.78)" }}>
+                              <span>Break‑Even Trigger</span>
+                              <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>{Math.round(breakEvenTriggerPct)}%</span>
+                            </div>
+                            <input
+                              type="range" min={0} max={100} step={1}
+                              value={breakEvenTriggerPct}
+                              disabled={stopMode !== 1}
+                              onChange={(e) => setBreakEvenTriggerPct(clamp(Number(e.target.value) || 0, 0, 100))}
+                              className="theme-slider"
+                              style={{ width: "100%", height: 6, cursor: stopMode === 1 ? "pointer" : "not-allowed" }}
+                            />
+                          </div>
+
+                          <div style={{ opacity: stopMode === 2 ? 1 : 0.38, pointerEvents: stopMode === 2 ? "auto" : "none", marginBottom: "0.35rem" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.78)" }}>
+                              <span>Trailing Start</span>
+                              <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>{Math.round(trailingStartPct)}%</span>
+                            </div>
+                            <input
+                              type="range" min={0} max={100} step={1}
+                              value={trailingStartPct}
+                              disabled={stopMode !== 2}
+                              onChange={(e) => setTrailingStartPct(clamp(Number(e.target.value) || 0, 0, 100))}
+                              className="theme-slider"
+                              style={{ width: "100%", height: 6, cursor: stopMode === 2 ? "pointer" : "not-allowed" }}
+                            />
+                          </div>
+
+                          <div style={{ opacity: stopMode === 2 ? 1 : 0.38, pointerEvents: stopMode === 2 ? "auto" : "none" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.78)" }}>
+                              <span>Trailing Distance</span>
+                              <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>{Math.round(trailingDistPct)}%</span>
+                            </div>
+                            <input
+                              type="range" min={1} max={100} step={1}
+                              value={trailingDistPct}
+                              disabled={stopMode !== 2}
+                              onChange={(e) => setTrailingDistPct(clamp(Number(e.target.value) || 30, 1, 100))}
+                              className="theme-slider"
+                              style={{ width: "100%", height: 6, cursor: stopMode === 2 ? "pointer" : "not-allowed" }}
+                            />
+                          </div>
+                        </div>
+
                       </div>
                     </div>
 
@@ -13476,8 +13638,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         onPostHocProgress={() => {}}
                         onMitMap={() => {}}
                         aiMethod={appliedBacktestSettings.aiMode}
-                        aiModalities={appliedBacktestSettings.selectedAiModalities}
-                        hdbModalityDistinction="conceptual"
+                        aiModalities={appliedBacktestSettings.selectedAiDomains}
+                        hdbDomainDistinction="conceptual"
                         hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}
                         hdbMinSamples={appliedBacktestSettings.hdbMinSamples}
                         hdbEpsQuantile={appliedBacktestSettings.hdbEpsQuantile}
@@ -13508,11 +13670,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         activeLibraries={appliedBacktestSettings.selectedAiLibraries}
                         staticLibrariesClusters={appliedBacktestSettings.staticLibrariesClusters}
                         aiMethod={appliedBacktestSettings.aiMode}
-                        aiModalities={appliedBacktestSettings.selectedAiModalities}
+                        aiModalities={appliedBacktestSettings.selectedAiDomains}
                         hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}
                         hdbMinSamples={appliedBacktestSettings.hdbMinSamples}
                         hdbEpsQuantile={appliedBacktestSettings.hdbEpsQuantile}
-                        hdbModalityDistinction="conceptual"
+                        hdbDomainDistinction="conceptual"
                         clusterGroupStatsMode="All"
                         antiCheatEnabled={appliedBacktestSettings.antiCheatEnabled}
                       />

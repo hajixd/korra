@@ -16,7 +16,11 @@ self.onmessage = (event: MessageEvent<BacktestHistoryWorkerRequest>) => {
     oneMinuteCandlesBySymbol,
     modelNamesById,
     tpDollars,
-    slDollars
+    slDollars,
+    stopMode,
+    breakEvenTriggerPct,
+    trailingStartPct,
+    trailingDistPct
   } = event.data;
   const rows = computeBacktestHistoryRowsChunk({
     blueprints,
@@ -25,6 +29,10 @@ self.onmessage = (event: MessageEvent<BacktestHistoryWorkerRequest>) => {
     modelNamesById,
     tpDollars,
     slDollars,
+    stopMode,
+    breakEvenTriggerPct,
+    trailingStartPct,
+    trailingDistPct,
     onProgress: (processed, total, cursorMs) => {
       self.postMessage({
         requestId,
