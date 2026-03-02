@@ -22189,6 +22189,11 @@ export function ClusterMap3D({
 
   // ---- 3D Scene init + update ----
   const frameRef = useRef<number | null>(null);
+  const hasAutoFramedRef = useRef(false);
+
+  useEffect(() => {
+    hasAutoFramedRef.current = false;
+  }, [resetKey]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -22203,13 +22208,20 @@ export function ClusterMap3D({
       antialias: true,
       alpha: true,
       preserveDrawingBuffer: true,
+      powerPreference: "high-performance",
     });
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.setSize(w, h, false);
+    renderer.outputColorSpace = (THREE as any).SRGBColorSpace;
+    renderer.toneMapping = (THREE as any).ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.08;
+    renderer.setClearColor(0x040914, 0.92);
 
     const scene = new (THREE as any).Scene();
-    const camera = new (THREE as any).PerspectiveCamera(55, w / h, 0.01, 5000);
-    camera.position.set(0, 0, 2.8);
+    scene.fog = new (THREE as any).FogExp2(0x040914, 0.28);
+
+    const camera = new (THREE as any).PerspectiveCamera(52, w / h, 0.01, 5000);
+    camera.position.set(1.2, 0.95, 3.05);
 
     // Controls
     const controls = new (OrbitControls as any)(
@@ -22217,79 +22229,153 @@ export function ClusterMap3D({
       renderer.domElement
     );
     controls.enableDamping = true;
-    controls.dampingFactor = 0.09;
-    controls.rotateSpeed = 0.6;
-    controls.zoomSpeed = 0.8;
-    controls.panSpeed = 0.8;
+    controls.dampingFactor = 0.08;
+    controls.rotateSpeed = 0.62;
+    controls.zoomSpeed = 0.85;
+    controls.panSpeed = 0.75;
+    controls.minDistance = 0.42;
+    controls.maxDistance = 24;
+    controls.target.set(0, 0, 0);
 
     // Lights
-    scene.add(new (THREE as any).AmbientLight(0xffffff, 0.9));
-    const dirLight = new (THREE as any).DirectionalLight(0xffffff, 0.7);
-    dirLight.position.set(2, 3, 4);
-    scene.add(dirLight);
+    scene.add(new (THREE as any).HemisphereLight(0xbfd9ff, 0x061024, 0.95));
+    const keyLight = new (THREE as any).DirectionalLight(0xf2f7ff, 1.2);
+    keyLight.position.set(2.8, 3.4, 2.2);
+    scene.add(keyLight);
+    const rimLight = new (THREE as any).DirectionalLight(0x65c3ff, 0.75);
+    rimLight.position.set(-2.4, 1.6, -2.9);
+    scene.add(rimLight);
+    const fillLight = new (THREE as any).PointLight(0x73bbff, 0.52, 7, 2.2);
+    fillLight.position.set(0, -1.1, 1.8);
+    scene.add(fillLight);
 
-    // Axes + grid
+    // Axes + grid + atmosphere
     const axes = new (THREE as any).AxesHelper(1.2);
     (axes as any).material.transparent = true;
-    (axes as any).material.opacity = 0.55;
+    (axes as any).material.opacity = 0.32;
     scene.add(axes);
 
-    const grid = new (THREE as any).GridHelper(4, 20, 0x444444, 0x222222);
+    const grid = new (THREE as any).PolarGridHelper(
+      2.8,
+      28,
+      10,
+      64,
+      0x35557e,
+      0x15263f
+    );
     (grid as any).material.transparent = true;
-    (grid as any).material.opacity = 0.25;
+    (grid as any).material.opacity = 0.26;
     scene.add(grid);
 
+    const auraGeo = new (THREE as any).SphereGeometry(3.8, 32, 20);
+    const auraMat = new (THREE as any).MeshBasicMaterial({
+      color: 0x0e2b55,
+      transparent: true,
+      opacity: 0.17,
+      side: (THREE as any).BackSide,
+      depthWrite: false,
+    });
+    const aura = new (THREE as any).Mesh(auraGeo, auraMat);
+    scene.add(aura);
+
+    const starCount = 1300;
+    const starPos = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      const u = Math.random();
+      const v = Math.random();
+      const theta = 2 * Math.PI * u;
+      const phi = Math.acos(2 * v - 1);
+      const radius = 3.4 + Math.random() * 4.8;
+      starPos[i * 3 + 0] = Math.sin(phi) * Math.cos(theta) * radius;
+      starPos[i * 3 + 1] = Math.cos(phi) * radius;
+      starPos[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * radius;
+    }
+    const starGeo = new (THREE as any).BufferGeometry();
+    starGeo.setAttribute(
+      "position",
+      new (THREE as any).BufferAttribute(starPos, 3)
+    );
+    const starMat = new (THREE as any).PointsMaterial({
+      color: 0xa8cbff,
+      size: 0.028,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false,
+      blending: (THREE as any).AdditiveBlending,
+    });
+    const stars = new (THREE as any).Points(starGeo, starMat);
+    scene.add(stars);
+
     // Base sphere geometry
-    const baseGeo = new (THREE as any).IcosahedronGeometry(1, 1);
+    const baseGeo = new (THREE as any).IcosahedronGeometry(1, 2);
 
     const makeMat = (col: number, op: number) => {
-      const m = new (THREE as any).MeshStandardMaterial({
-        color: col,
-        roughness: 0.35,
-        metalness: 0.15,
+      const c = new (THREE as any).Color(col);
+      const m = new (THREE as any).MeshPhysicalMaterial({
+        color: c,
+        emissive: c.clone().multiplyScalar(0.24),
+        emissiveIntensity: 1.1,
+        roughness: 0.24,
+        metalness: 0.08,
+        clearcoat: 0.55,
+        clearcoatRoughness: 0.24,
         transparent: op < 0.999,
         opacity: op,
-        depthWrite: true,
+        depthWrite: op >= 0.65,
       });
       return m;
     };
 
+    const MAX_INSTANCES = 24000;
+
     // Instanced buckets
     const instPotential = new (THREE as any).InstancedMesh(
       baseGeo,
-      makeMat(0xb57dff, 0.95),
-      6000
+      makeMat(0xffc568, 0.94),
+      MAX_INSTANCES
     );
     const instActive = new (THREE as any).InstancedMesh(
       baseGeo,
-      makeMat(0x33ccff, 0.95),
-      6000
+      makeMat(0x57ceff, 0.94),
+      MAX_INSTANCES
     );
     const instClose = new (THREE as any).InstancedMesh(
       baseGeo,
-      makeMat(0xffaa44, 0.95),
-      6000
+      makeMat(0xff9d66, 0.94),
+      MAX_INSTANCES
     );
     const instGhost = new (THREE as any).InstancedMesh(
       baseGeo,
-      makeMat(0xb0b0b0, 0.55),
-      6000
+      makeMat(0xbac2cf, 0.52),
+      MAX_INSTANCES
     );
     const instWin = new (THREE as any).InstancedMesh(
       baseGeo,
-      makeMat(0x3ddc78, 0.95),
-      6000
+      makeMat(0x33e592, 0.95),
+      MAX_INSTANCES
     );
     const instLoss = new (THREE as any).InstancedMesh(
       baseGeo,
-      makeMat(0xe65050, 0.95),
-      6000
+      makeMat(0xff6f74, 0.95),
+      MAX_INSTANCES
     );
     const instHighlight = new (THREE as any).InstancedMesh(
       baseGeo,
-      makeMat(0xffe066, 0.98),
-      6000
+      makeMat(0xfff1b0, 0.99),
+      MAX_INSTANCES
     );
+    for (const inst of [
+      instPotential,
+      instActive,
+      instClose,
+      instGhost,
+      instWin,
+      instLoss,
+      instHighlight,
+    ]) {
+      (inst as any).userData.maxCount = MAX_INSTANCES;
+    }
 
     scene.add(instPotential);
     scene.add(instActive);
@@ -22301,11 +22387,16 @@ export function ClusterMap3D({
 
     // Cluster overlay spheres (one per cluster)
     const clusterGeo = new (THREE as any).SphereGeometry(1, 18, 18);
-    const clusterMat = new (THREE as any).MeshStandardMaterial({
-      color: 0x66aaff,
+    const clusterMat = new (THREE as any).MeshPhysicalMaterial({
+      color: 0x7db9ff,
+      emissive: 0x2d5f98,
+      emissiveIntensity: 0.9,
       transparent: true,
-      opacity: 0.13,
+      opacity: 0.14,
       depthWrite: false,
+      roughness: 0.32,
+      metalness: 0.04,
+      clearcoat: 0.4,
     });
     const clusterGroup = new (THREE as any).Group();
     scene.add(clusterGroup);
@@ -22332,14 +22423,24 @@ export function ClusterMap3D({
 
     const applyBucket = (inst: any, list: any[], scaleMul: number) => {
       let idx = 0;
+      const maxCount =
+        Number(inst?.userData?.maxCount) > 0
+          ? Number(inst.userData.maxCount)
+          : MAX_INSTANCES;
       for (let i = 0; i < list.length; i++) {
+        if (idx >= maxCount) break;
         const p = list[i];
         tmpObj.position.set(
           Number(p.x) || 0,
           Number(p.y) || 0,
           Number(p.z) || 0
         );
-        const r = Math.max(0.6, (Number(p.baseR) || 6.0) * 0.04) * scaleMul;
+        const pnlAbs = Math.abs(Number(p.pnl ?? p.unrealizedPnl ?? 0));
+        const pnlBoost = clamp(Math.log10(1 + pnlAbs) * 0.12, 0, 0.9);
+        const r =
+          Math.max(0.6, (Number(p.baseR) || 6.0) * 0.04) *
+          scaleMul *
+          (1 + pnlBoost);
         tmpObj.scale.set(r, r, r);
         tmpObj.updateMatrix();
         inst.setMatrixAt(idx, tmpObj.matrix);
@@ -22405,6 +22506,45 @@ export function ClusterMap3D({
       applyBucket(instWin, win, scaleMul);
       applyBucket(instLoss, los, scaleMul);
       applyBucket(instHighlight, hi, scaleMul * 1.1);
+
+      if (!hasAutoFramedRef.current && pts.length > 8) {
+        let minX = Infinity,
+          minY = Infinity,
+          minZ = Infinity;
+        let maxX = -Infinity,
+          maxY = -Infinity,
+          maxZ = -Infinity;
+        for (const p of pts) {
+          const x = Number(p.x) || 0;
+          const y = Number(p.y) || 0;
+          const z = Number(p.z) || 0;
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (z < minZ) minZ = z;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+          if (z > maxZ) maxZ = z;
+        }
+        const cx = (minX + maxX) * 0.5;
+        const cy = (minY + maxY) * 0.5;
+        const cz = (minZ + maxZ) * 0.5;
+        const span = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 0.25);
+        const radius = Math.max(0.25, span * 0.72);
+        const fovRad = (camera.fov * Math.PI) / 180;
+        const dist = Math.max(
+          0.85,
+          (radius / Math.tan(Math.max(0.15, fovRad * 0.5))) * 1.28
+        );
+        const v = new (THREE as any).Vector3(0.96, 0.72, 1).normalize();
+        camera.position.set(
+          cx + v.x * dist,
+          cy + v.y * dist * 0.88,
+          cz + v.z * dist
+        );
+        controls.target.set(cx, cy, cz);
+        controls.update();
+        hasAutoFramedRef.current = true;
+      }
     };
 
     (canvas as any).__updatePoints3D = updatePoints;
@@ -22425,9 +22565,15 @@ export function ClusterMap3D({
     };
     resize();
     window.addEventListener("resize", resize);
+    const clock = new (THREE as any).Clock();
 
     const animate = () => {
       frameRef.current = requestAnimationFrame(animate);
+      const t = clock.getElapsedTime();
+      stars.rotation.y = t * 0.018;
+      stars.rotation.x = Math.sin(t * 0.11) * 0.03;
+      aura.rotation.y = t * 0.03;
+      auraMat.opacity = 0.15 + Math.sin(t * 0.75) * 0.03;
       controls.update();
       renderer.render(scene, camera);
       drawOverlay();
@@ -22466,13 +22612,15 @@ export function ClusterMap3D({
       // Box selection rectangle
       if (boxSelectMode && boxStart && boxEnd) {
         ctx.save();
-        ctx.strokeStyle = "rgba(140,230,255,0.95)";
+        ctx.strokeStyle = "rgba(142,246,255,0.95)";
         ctx.lineWidth = 2 * dpr;
         ctx.setLineDash([6 * dpr, 6 * dpr]);
         const x0 = Math.min(boxStart.x, boxEnd.x) * dpr;
         const y0 = Math.min(boxStart.y, boxEnd.y) * dpr;
         const x1 = Math.max(boxStart.x, boxEnd.x) * dpr;
         const y1 = Math.max(boxStart.y, boxEnd.y) * dpr;
+        ctx.fillStyle = "rgba(118,219,255,0.14)";
+        ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
         ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
         ctx.restore();
       }
@@ -22488,6 +22636,13 @@ export function ClusterMap3D({
       try {
         controls.dispose();
       } catch {}
+      while (clusterGroup.children.length) {
+        const child = clusterGroup.children.pop() as any;
+        if (!child) continue;
+        try {
+          child.material?.dispose?.();
+        } catch {}
+      }
       try {
         renderer.dispose();
       } catch {}
@@ -22496,6 +22651,42 @@ export function ClusterMap3D({
       } catch {}
       try {
         clusterGeo.dispose();
+      } catch {}
+      try {
+        auraGeo.dispose();
+      } catch {}
+      try {
+        auraMat.dispose();
+      } catch {}
+      try {
+        starGeo.dispose();
+      } catch {}
+      try {
+        starMat.dispose();
+      } catch {}
+      try {
+        (instPotential.material as any)?.dispose?.();
+        (instActive.material as any)?.dispose?.();
+        (instClose.material as any)?.dispose?.();
+        (instGhost.material as any)?.dispose?.();
+        (instWin.material as any)?.dispose?.();
+        (instLoss.material as any)?.dispose?.();
+        (instHighlight.material as any)?.dispose?.();
+      } catch {}
+      try {
+        clusterMat.dispose();
+      } catch {}
+
+      try {
+        delete (canvas as any).__renderer3D;
+        delete (canvas as any).__scene3D;
+        delete (canvas as any).__camera3D;
+        delete (canvas as any).__controls3D;
+        delete (canvas as any).__instBuckets3D;
+        delete (canvas as any).__clusterGroup3D;
+        delete (canvas as any).__clusterGeo3D;
+        delete (canvas as any).__clusterMat3D;
+        delete (canvas as any).__updatePoints3D;
       } catch {}
     };
   }, []);
@@ -23225,7 +23416,13 @@ export function ClusterMap3D({
       const canvas = canvasRef.current as any;
       const group = canvas?.__clusterGroup3D;
       if (group) {
-        while (group.children.length) group.remove(group.children[0]);
+        while (group.children.length) {
+          const child = group.children.pop() as any;
+          if (!child) continue;
+          try {
+            child.material?.dispose?.();
+          } catch {}
+        }
       }
       return;
     }
@@ -23240,7 +23437,13 @@ export function ClusterMap3D({
     const matBase = canvas?.__clusterMat3D;
     if (!group || !geo || !matBase) return;
 
-    while (group.children.length) group.remove(group.children[0]);
+    while (group.children.length) {
+      const child = group.children.pop() as any;
+      if (!child) continue;
+      try {
+        child.material?.dispose?.();
+      } catch {}
+    }
 
     const clusters = (hdb3d?.clusters as any[]) || [];
     const wrToCol = (wr: number) => {
@@ -23293,12 +23496,12 @@ export function ClusterMap3D({
   // ---- UI ----
   const legendItems = useMemo(() => {
     const items: any[] = [
-      { key: "potential", label: "Potential", dot: "rgba(210,170,255,0.95)" },
-      { key: "active", label: "Active", dot: "rgba(140,230,255,0.95)" },
-      { key: "close", label: "Close", dot: "rgba(255,200,120,0.95)" },
-      { key: "win", label: "Win", dot: "rgba(60,220,120,0.95)" },
-      { key: "loss", label: "Loss", dot: "rgba(230,80,80,0.95)" },
-      { key: "ghost", label: "Suppressed", dot: "rgba(200,200,200,0.85)" },
+      { key: "potential", label: "Potential", dot: "rgba(255,197,104,0.95)" },
+      { key: "active", label: "Active", dot: "rgba(87,206,255,0.95)" },
+      { key: "close", label: "Close", dot: "rgba(255,157,102,0.95)" },
+      { key: "win", label: "Win", dot: "rgba(51,229,146,0.95)" },
+      { key: "loss", label: "Loss", dot: "rgba(255,111,116,0.95)" },
+      { key: "ghost", label: "Suppressed", dot: "rgba(186,194,207,0.85)" },
       { key: "buy", label: "Buy outline", isDirection: true },
       { key: "sell", label: "Sell outline", isDirection: true },
     ];
@@ -23308,7 +23511,7 @@ export function ClusterMap3D({
       items.push({
         key,
         label: `Lib: ${String(lid)}`,
-        dot: "rgba(140,230,255,0.60)",
+        dot: "rgba(121,214,255,0.70)",
         span: 2,
       });
     }
@@ -23335,18 +23538,30 @@ export function ClusterMap3D({
   }, [hdb3d]);
 
   return (
-    <div style={{ position: "relative", width: "100%", height: 720 }}>
+    <div style={{ position: "relative", width: "100%", height: "auto" }}>
       <div
         style={{
           position: "relative",
           width: "100%",
-          height: 520,
-          borderRadius: 18,
+          height: "clamp(420px, 62vh, 760px)",
+          borderRadius: 22,
           overflow: "hidden",
-          border: "1px solid rgba(255,255,255,0.10)",
-          background: "rgba(0,0,0,0.45)",
+          border: "1px solid rgba(132,196,255,0.26)",
+          background:
+            "radial-gradient(circle at 12% 16%, rgba(32,84,152,0.42), rgba(6,14,28,0.95) 58%), linear-gradient(140deg, rgba(8,16,31,0.98), rgba(7,10,20,0.98))",
+          boxShadow:
+            "0 28px 70px rgba(2,7,16,0.68), inset 0 0 50px rgba(118,188,255,0.10)",
         }}
       >
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            pointerEvents: "none",
+            background:
+              "radial-gradient(700px 300px at 20% -10%, rgba(148,208,255,0.20), rgba(148,208,255,0) 60%), radial-gradient(560px 280px at 96% 105%, rgba(126,198,255,0.20), rgba(126,198,255,0) 64%)",
+          }}
+        />
         <canvas
           ref={canvasRef}
           style={{
@@ -23376,16 +23591,19 @@ export function ClusterMap3D({
             display: "flex",
             flexDirection: "column",
             gap: 8,
-            width: 360,
+            width: "min(360px, calc(100% - 24px))",
           }}
         >
           <div
             style={{
-              padding: 10,
+              padding: 11,
               borderRadius: 14,
-              background: "rgba(0,0,0,0.66)",
-              border: "1px solid rgba(255,255,255,0.10)",
-              boxShadow: "0 18px 40px rgba(0,0,0,0.55)",
+              background:
+                "linear-gradient(160deg, rgba(10,22,40,0.86), rgba(6,14,28,0.76))",
+              border: "1px solid rgba(144,216,255,0.26)",
+              boxShadow:
+                "0 18px 44px rgba(0,0,0,0.50), inset 0 1px 0 rgba(205,236,255,0.14)",
+              backdropFilter: "blur(9px)",
             }}
           >
             <div
@@ -23400,12 +23618,13 @@ export function ClusterMap3D({
                 style={{
                   fontSize: 11,
                   fontWeight: 800,
-                  color: "rgba(255,255,255,0.92)",
+                  color: "rgba(227,245,255,0.97)",
+                  letterSpacing: 0.35,
                 }}
               >
                 3D Cluster Map
               </div>
-              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.65)" }}>
+              <div style={{ fontSize: 10, color: "rgba(173,212,244,0.78)" }}>
                 {embedProgress.pct < 1
                   ? `${embedProgress.phase || "Embedding"} ${Math.round(
                       embedProgress.pct * 100
@@ -23427,11 +23646,11 @@ export function ClusterMap3D({
                 style={{
                   padding: "6px 10px",
                   borderRadius: 12,
-                  border: "1px solid rgba(255,255,255,0.14)",
+                  border: "1px solid rgba(141,211,255,0.28)",
                   background: heatmapOn
-                    ? "rgba(255,255,255,0.10)"
-                    : "rgba(255,255,255,0.06)",
-                  color: "rgba(255,255,255,0.92)",
+                    ? "linear-gradient(140deg, rgba(61,136,197,0.56), rgba(26,96,150,0.40))"
+                    : "linear-gradient(140deg, rgba(67,117,168,0.20), rgba(35,69,108,0.16))",
+                  color: "rgba(228,245,255,0.96)",
                   cursor: "pointer",
                   fontSize: 11,
                   fontWeight: 800,
@@ -23446,11 +23665,11 @@ export function ClusterMap3D({
                 style={{
                   padding: "6px 10px",
                   borderRadius: 12,
-                  border: "1px solid rgba(255,255,255,0.14)",
+                  border: "1px solid rgba(141,211,255,0.28)",
                   background: boxSelectMode
-                    ? "rgba(255,255,255,0.10)"
-                    : "rgba(255,255,255,0.06)",
-                  color: "rgba(255,255,255,0.92)",
+                    ? "linear-gradient(140deg, rgba(72,153,214,0.54), rgba(28,103,160,0.42))"
+                    : "linear-gradient(140deg, rgba(67,117,168,0.20), rgba(35,69,108,0.16))",
+                  color: "rgba(228,245,255,0.96)",
                   cursor: "pointer",
                   fontSize: 11,
                   fontWeight: 800,
@@ -23468,11 +23687,11 @@ export function ClusterMap3D({
                 style={{
                   padding: "6px 10px",
                   borderRadius: 12,
-                  border: "1px solid rgba(255,255,255,0.14)",
+                  border: "1px solid rgba(141,211,255,0.28)",
                   background: pinned
-                    ? "rgba(255,255,255,0.10)"
-                    : "rgba(255,255,255,0.06)",
-                  color: "rgba(255,255,255,0.92)",
+                    ? "linear-gradient(140deg, rgba(120,210,255,0.42), rgba(58,138,194,0.36))"
+                    : "linear-gradient(140deg, rgba(67,117,168,0.20), rgba(35,69,108,0.16))",
+                  color: "rgba(228,245,255,0.96)",
                   cursor: "pointer",
                   fontSize: 11,
                   fontWeight: 800,
@@ -23487,7 +23706,7 @@ export function ClusterMap3D({
               <div
                 style={{
                   fontSize: 10,
-                  color: "rgba(255,255,255,0.65)",
+                  color: "rgba(168,209,242,0.78)",
                   marginBottom: 6,
                 }}
               >
@@ -23504,7 +23723,7 @@ export function ClusterMap3D({
                 }
                 style={{
                   width: "100%",
-                  accentColor: "rgba(140,230,255,0.95)",
+                  accentColor: "rgba(121,214,255,1)",
                   ...(sliderVars(sliderValue, 0, 100) as any),
                 }}
               />
@@ -23514,11 +23733,14 @@ export function ClusterMap3D({
           {selectedStats && (
             <div
               style={{
-                padding: 10,
+                padding: 11,
                 borderRadius: 14,
-                background: "rgba(0,0,0,0.66)",
-                border: "1px solid rgba(255,255,255,0.10)",
-                boxShadow: "0 18px 40px rgba(0,0,0,0.55)",
+                background:
+                  "linear-gradient(160deg, rgba(9,20,37,0.84), rgba(6,13,25,0.77))",
+                border: "1px solid rgba(144,216,255,0.24)",
+                boxShadow:
+                  "0 18px 42px rgba(0,0,0,0.50), inset 0 1px 0 rgba(205,236,255,0.14)",
+                backdropFilter: "blur(9px)",
               }}
             >
               <div
@@ -23533,7 +23755,7 @@ export function ClusterMap3D({
                   style={{
                     fontSize: 11,
                     fontWeight: 800,
-                    color: "rgba(255,255,255,0.92)",
+                    color: "rgba(226,244,255,0.96)",
                   }}
                 >
                   Selected
@@ -23548,9 +23770,10 @@ export function ClusterMap3D({
                   style={{
                     padding: "4px 8px",
                     borderRadius: 10,
-                    border: "1px solid rgba(255,255,255,0.14)",
-                    background: "rgba(255,255,255,0.06)",
-                    color: "rgba(255,255,255,0.86)",
+                    border: "1px solid rgba(141,211,255,0.26)",
+                    background:
+                      "linear-gradient(140deg, rgba(67,117,168,0.20), rgba(35,69,108,0.16))",
+                    color: "rgba(220,241,255,0.90)",
                     cursor: "pointer",
                     fontSize: 10,
                     fontWeight: 800,
@@ -23636,9 +23859,12 @@ export function ClusterMap3D({
               ),
               padding: 10,
               borderRadius: 14,
-              background: "rgba(0,0,0,0.70)",
-              border: "1px solid rgba(255,255,255,0.12)",
-              boxShadow: "0 18px 40px rgba(0,0,0,0.55)",
+              background:
+                "linear-gradient(160deg, rgba(7,19,35,0.90), rgba(4,12,24,0.84))",
+              border: "1px solid rgba(150,220,255,0.28)",
+              boxShadow:
+                "0 18px 40px rgba(0,0,0,0.55), inset 0 1px 0 rgba(205,236,255,0.14)",
+              backdropFilter: "blur(8px)",
               width: 250,
               pointerEvents: "none",
             }}
@@ -23646,7 +23872,7 @@ export function ClusterMap3D({
             <div
               style={{
                 fontSize: 10,
-                color: "rgba(255,255,255,0.90)",
+                color: "rgba(223,244,255,0.95)",
                 lineHeight: 1.5,
                 whiteSpace: "pre-wrap",
               }}
@@ -23661,7 +23887,7 @@ export function ClusterMap3D({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1fr 1fr",
+          gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
           gap: 12,
           marginTop: 12,
         }}
@@ -23670,15 +23896,18 @@ export function ClusterMap3D({
           style={{
             padding: 12,
             borderRadius: 16,
-            border: "1px solid rgba(255,255,255,0.10)",
-            background: "rgba(0,0,0,0.55)",
+            border: "1px solid rgba(144,216,255,0.18)",
+            background:
+              "linear-gradient(150deg, rgba(10,21,39,0.80), rgba(6,13,25,0.74))",
+            boxShadow: "inset 0 1px 0 rgba(205,236,255,0.12)",
           }}
         >
           <div
             style={{
               fontSize: 11,
               fontWeight: 900,
-              color: "rgba(255,255,255,0.92)",
+              color: "rgba(226,244,255,0.96)",
+              letterSpacing: 0.3,
             }}
           >
             Settings (parity)
@@ -23690,7 +23919,7 @@ export function ClusterMap3D({
                 display: "flex",
                 justifyContent: "space-between",
                 fontSize: 10,
-                color: "rgba(255,255,255,0.70)",
+                color: "rgba(168,209,242,0.82)",
               }}
             >
               <span>Node size</span>
@@ -23846,15 +24075,18 @@ export function ClusterMap3D({
           style={{
             padding: 12,
             borderRadius: 16,
-            border: "1px solid rgba(255,255,255,0.10)",
-            background: "rgba(0,0,0,0.55)",
+            border: "1px solid rgba(144,216,255,0.18)",
+            background:
+              "linear-gradient(150deg, rgba(10,21,39,0.80), rgba(6,13,25,0.74))",
+            boxShadow: "inset 0 1px 0 rgba(205,236,255,0.12)",
           }}
         >
           <div
             style={{
               fontSize: 11,
               fontWeight: 900,
-              color: "rgba(255,255,255,0.92)",
+              color: "rgba(226,244,255,0.96)",
+              letterSpacing: 0.3,
             }}
           >
             Legend
@@ -23881,10 +24113,10 @@ export function ClusterMap3D({
                     gap: 8,
                     padding: 10,
                     borderRadius: 12,
-                    border: "1px solid rgba(255,255,255,0.10)",
+                    border: "1px solid rgba(145,214,255,0.20)",
                     background: enabled
-                      ? "rgba(255,255,255,0.06)"
-                      : "rgba(255,255,255,0.03)",
+                      ? "linear-gradient(140deg, rgba(68,127,181,0.28), rgba(32,68,108,0.20))"
+                      : "rgba(255,255,255,0.02)",
                     cursor: "pointer",
                     userSelect: "none",
                     gridColumn: it.span ? `span ${it.span}` : undefined,
@@ -23916,8 +24148,8 @@ export function ClusterMap3D({
                       fontSize: 11,
                       fontWeight: 800,
                       color: enabled
-                        ? "rgba(255,255,255,0.92)"
-                        : "rgba(255,255,255,0.55)",
+                        ? "rgba(225,244,255,0.95)"
+                        : "rgba(154,190,220,0.60)",
                     }}
                   >
                     {it.label}
@@ -23935,7 +24167,7 @@ export function ClusterMap3D({
                   style={{
                     fontSize: 11,
                     fontWeight: 900,
-                    color: "rgba(255,255,255,0.92)",
+                    color: "rgba(226,244,255,0.96)",
                   }}
                 >
                   HDB Groups (3D)
@@ -23981,10 +24213,10 @@ export function ClusterMap3D({
                             style={{
                               cursor: "pointer",
                               background: isSel
-                                ? "rgba(140,230,255,0.10)"
+                                ? "rgba(110,201,255,0.14)"
                                 : "transparent",
-                              borderTop: "1px solid rgba(255,255,255,0.06)",
-                              color: "rgba(255,255,255,0.88)",
+                              borderTop: "1px solid rgba(148,214,255,0.12)",
+                              color: "rgba(222,243,255,0.90)",
                             }}
                           >
                             <td style={{ padding: "6px 6px" }}>{r.id}</td>
@@ -24034,15 +24266,18 @@ export function ClusterMap3D({
           marginTop: 12,
           padding: 12,
           borderRadius: 16,
-          border: "1px solid rgba(255,255,255,0.10)",
-          background: "rgba(0,0,0,0.55)",
+          border: "1px solid rgba(144,216,255,0.18)",
+          background:
+            "linear-gradient(150deg, rgba(10,21,39,0.80), rgba(6,13,25,0.74))",
+          boxShadow: "inset 0 1px 0 rgba(205,236,255,0.12)",
         }}
       >
         <div
           style={{
             fontSize: 11,
             fontWeight: 900,
-            color: "rgba(255,255,255,0.92)",
+            color: "rgba(226,244,255,0.96)",
+            letterSpacing: 0.3,
           }}
         >
           Filters
@@ -24051,7 +24286,7 @@ export function ClusterMap3D({
           style={{
             marginTop: 10,
             display: "grid",
-            gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(165px, 1fr))",
             gap: 10,
           }}
         >
@@ -24061,9 +24296,9 @@ export function ClusterMap3D({
             style={{
               padding: 8,
               borderRadius: 12,
-              background: "rgba(255,255,255,0.06)",
-              border: "1px solid rgba(255,255,255,0.10)",
-              color: "rgba(255,255,255,0.92)",
+              background: "rgba(33,58,86,0.46)",
+              border: "1px solid rgba(145,214,255,0.20)",
+              color: "rgba(226,244,255,0.95)",
             }}
           >
             <option value="All">Direction: All</option>
@@ -24077,9 +24312,9 @@ export function ClusterMap3D({
             style={{
               padding: 8,
               borderRadius: 12,
-              background: "rgba(255,255,255,0.06)",
-              border: "1px solid rgba(255,255,255,0.10)",
-              color: "rgba(255,255,255,0.92)",
+              background: "rgba(33,58,86,0.46)",
+              border: "1px solid rgba(145,214,255,0.20)",
+              color: "rgba(226,244,255,0.95)",
             }}
           >
             <option value="All">Session: All</option>
@@ -24094,9 +24329,9 @@ export function ClusterMap3D({
             style={{
               padding: 8,
               borderRadius: 12,
-              background: "rgba(255,255,255,0.06)",
-              border: "1px solid rgba(255,255,255,0.10)",
-              color: "rgba(255,255,255,0.92)",
+              background: "rgba(33,58,86,0.46)",
+              border: "1px solid rgba(145,214,255,0.20)",
+              color: "rgba(226,244,255,0.95)",
             }}
           >
             <option value="All">Month: All</option>
@@ -24111,9 +24346,9 @@ export function ClusterMap3D({
             style={{
               padding: 8,
               borderRadius: 12,
-              background: "rgba(255,255,255,0.06)",
-              border: "1px solid rgba(255,255,255,0.10)",
-              color: "rgba(255,255,255,0.92)",
+              background: "rgba(33,58,86,0.46)",
+              border: "1px solid rgba(145,214,255,0.20)",
+              color: "rgba(226,244,255,0.95)",
             }}
           >
             <option value="All">Weekday: All</option>
@@ -24128,9 +24363,9 @@ export function ClusterMap3D({
             style={{
               padding: 8,
               borderRadius: 12,
-              background: "rgba(255,255,255,0.06)",
-              border: "1px solid rgba(255,255,255,0.10)",
-              color: "rgba(255,255,255,0.92)",
+              background: "rgba(33,58,86,0.46)",
+              border: "1px solid rgba(145,214,255,0.20)",
+              color: "rgba(226,244,255,0.95)",
             }}
           >
             <option value="All">Model: All</option>
@@ -24151,13 +24386,15 @@ function Stat({ label, value, color }) {
     <div
       style={{
         borderRadius: 14,
-        border: "1px solid rgba(255,255,255,0.10)",
-        background: "rgba(255,255,255,0.03)",
+        border: "1px solid rgba(145,214,255,0.18)",
+        background:
+          "linear-gradient(150deg, rgba(14,29,51,0.55), rgba(8,19,35,0.42))",
+        boxShadow: "inset 0 1px 0 rgba(205,236,255,0.10)",
         padding: 10,
         minWidth: 0,
       }}
     >
-      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.65)" }}>
+      <div style={{ fontSize: 10, color: "rgba(168,209,242,0.82)" }}>
         {label}
       </div>
       <div

@@ -12669,9 +12669,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           type="button"
                           className={`ai-zip-button ${antiCheatEnabled ? "active" : ""}`}
                           onClick={() => {
-                            const next = !antiCheatEnabled;
-                            setAntiCheatEnabled(next);
-                            if (!next) setRealismLevel(0);
+                            setAntiCheatEnabled((current) => !current);
                           }}
                         >
                           Anti-Cheat {antiCheatEnabled ? "· ON" : "· OFF"}
@@ -12724,7 +12722,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         <button
                           type="button"
                           className={`ai-zip-button ${realismLevel > 0 ? "active" : ""}`}
-                          disabled={!antiCheatEnabled}
                           onClick={() => setRealismLevel((current) => (current > 0 ? 0 : 1))}
                         >
                           Realism {realismLevel > 0 ? "· ON" : "· OFF"}
@@ -12739,7 +12736,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               key={label}
                               type="button"
                               className={`ai-zip-button ${realismLevel === idx ? "active" : ""}`}
-                              disabled={!antiCheatEnabled || realismLevel === 0}
+                              disabled={realismLevel === 0}
                               onClick={() => setRealismLevel(idx)}
                             >
                               {label}
