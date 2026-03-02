@@ -4198,7 +4198,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [seenNotificationIds, setSeenNotificationIds] = useState<string[]>([]);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
-  const [candleCountdown, setCandleCountdown] = useState("");
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>({});
   const [backtestSeriesMap, setBacktestSeriesMap] = useState<Record<string, Candle[]>>({});
   const [backtestHistoryQuery, setBacktestHistoryQuery] = useState("");
@@ -4374,6 +4373,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const countdownOverlayRef = useRef<HTMLDivElement | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const tradeProfitZoneRef = useRef<ISeriesApi<"Baseline"> | null>(null);
   const tradeLossZoneRef = useRef<ISeriesApi<"Baseline"> | null>(null);
@@ -5377,38 +5377,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     hoveredCandle && hoveredCandle.open > 0
       ? ((hoveredCandle.close - hoveredCandle.open) / hoveredCandle.open) * 100
       : 0;
-
-  useEffect(() => {
-    if (!latestCandle) {
-      setCandleCountdown("");
-      return;
-    }
-
-    const candleMs = getTimeframeMs(selectedTimeframe);
-
-    const tick = () => {
-      const candleEndMs = latestCandle.time * 1000 + candleMs;
-      const remaining = Math.max(0, Math.floor((candleEndMs - Date.now()) / 1000));
-
-      if (remaining <= 0) {
-        setCandleCountdown("00:00");
-        return;
-      }
-
-      const h = Math.floor(remaining / 3600);
-      const m = Math.floor((remaining % 3600) / 60);
-      const s = remaining % 60;
-
-      const pad = (n: number) => String(n).padStart(2, "0");
-
-      setCandleCountdown(h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`);
-    };
-
-    tick();
-    const id = window.setInterval(tick, 1000);
-
-    return () => window.clearInterval(id);
-  }, [latestCandle, selectedTimeframe]);
 
   const watchlistRows = useMemo(() => {
     return futuresAssets.map((asset) => {
@@ -6873,6 +6841,50 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       });
     }
   }, [chartRenderCandles, chartRenderWindow]);
+
+  useEffect(() => {
+    const overlay = countdownOverlayRef.current;
+    const candleSeries = candleSeriesRef.current;
+
+    if (!overlay || !candleSeries || !latestCandle) {
+      if (overlay) overlay.style.display = "none";
+      return;
+    }
+
+    const candleMs = getTimeframeMs(selectedTimeframe);
+    let raf = 0;
+    let lastText = "";
+
+    const update = () => {
+      const candleEndMs = latestCandle.time * 1000 + candleMs;
+      const remaining = Math.max(0, Math.floor((candleEndMs - Date.now()) / 1000));
+      const h = Math.floor(remaining / 3600);
+      const m = Math.floor((remaining % 3600) / 60);
+      const s = remaining % 60;
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const text = h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+
+      if (text !== lastText) {
+        overlay.textContent = text;
+        lastText = text;
+      }
+
+      const y = candleSeries.priceToCoordinate(latestCandle.close);
+
+      if (y !== null && Number.isFinite(y)) {
+        overlay.style.top = `${y + 10}px`;
+        overlay.style.display = "";
+      } else {
+        overlay.style.display = "none";
+      }
+
+      raf = window.requestAnimationFrame(update);
+    };
+
+    raf = window.requestAnimationFrame(update);
+
+    return () => window.cancelAnimationFrame(raf);
+  }, [latestCandle, selectedTimeframe, chartRenderCandles]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -10641,9 +10653,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <span>
                       C <strong>{formatPrice(hoveredCandle.close)}</strong>
                     </span>
-                    {candleCountdown && (
-                      <span className="candle-countdown">{candleCountdown}</span>
-                    )}
                   </>
                 ) : (
                   <span>No market data loaded</span>
@@ -10651,6 +10660,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               </div>
               <div className="chart-stage">
                 <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
+                <div ref={countdownOverlayRef} className="candle-countdown-overlay" />
               </div>
             </section>
 
