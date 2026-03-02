@@ -28,8 +28,28 @@ import {
   Legend,
   Customized,
 } from "recharts";
-import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+
+let THREE: any = null;
+let OrbitControls: any = null;
+let threeRuntimeLoadPromise: Promise<void> | null = null;
+
+const ensureThreeRuntimeLoaded = async () => {
+  if (THREE && OrbitControls) {
+    return;
+  }
+
+  if (!threeRuntimeLoadPromise) {
+    threeRuntimeLoadPromise = Promise.all([
+      import("three"),
+      import("three/examples/jsm/controls/OrbitControls.js"),
+    ]).then(([threeModule, controlsModule]) => {
+      THREE = threeModule;
+      OrbitControls = (controlsModule as any).OrbitControls;
+    });
+  }
+
+  await threeRuntimeLoadPromise;
+};
 
 const tradeNum = (value) => {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -21692,6 +21712,36 @@ export function ClusterMap3D({
 }: any) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
+  const [threeRuntimeReady, setThreeRuntimeReady] = useState(() =>
+    Boolean(THREE && OrbitControls)
+  );
+  const [threeRuntimeError, setThreeRuntimeError] = useState<string | null>(
+    null
+  );
+
+  useEffect(() => {
+    if (threeRuntimeReady) {
+      return;
+    }
+
+    let cancelled = false;
+    ensureThreeRuntimeLoaded()
+      .then(() => {
+        if (cancelled) return;
+        setThreeRuntimeError(null);
+        setThreeRuntimeReady(true);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setThreeRuntimeError(
+          error instanceof Error ? error.message : String(error)
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [threeRuntimeReady]);
 
   // ---- Shared UI state (parity with 2D) ----
   const [heatmapOn, setHeatmapOn] = useState(false);
@@ -22267,6 +22317,10 @@ export function ClusterMap3D({
   const embedWorkerRef = useRef<Worker | null>(null);
 
   useEffect(() => {
+    if (!threeRuntimeReady) {
+      return;
+    }
+
     const w = createUMAP3DWorker();
     embedWorkerRef.current = w;
     w.onmessage = (ev: any) => {
@@ -22307,9 +22361,13 @@ export function ClusterMap3D({
       } catch {}
       embedWorkerRef.current = null;
     };
-  }, []);
+  }, [threeRuntimeReady]);
 
   useEffect(() => {
+    if (!threeRuntimeReady) {
+      return;
+    }
+
     const w = embedWorkerRef.current;
     if (!w) return;
     const vectors = points.map((e: any) => {
@@ -22325,7 +22383,7 @@ export function ClusterMap3D({
         Math.min(160, Math.floor((Number(sliderValue) || 50) * 2))
       ),
     });
-  }, [points, sliderValue, resetKey, mapSpreadMul]);
+  }, [threeRuntimeReady, points, sliderValue, resetKey, mapSpreadMul]);
 
   // ---- Visible points after legend filters ----
   const visiblePts = useMemo(() => {
@@ -22383,6 +22441,10 @@ export function ClusterMap3D({
   }, [resetKey]);
 
   useEffect(() => {
+    if (!threeRuntimeReady || !THREE || !OrbitControls) {
+      return;
+    }
+
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -22876,7 +22938,7 @@ export function ClusterMap3D({
         delete (canvas as any).__updatePoints3D;
       } catch {}
     };
-  }, []);
+  }, [threeRuntimeReady]);
 
   // Disable orbit controls while box selecting (parity)
   useEffect(() => {
@@ -22888,6 +22950,8 @@ export function ClusterMap3D({
 
   // ---- Heatmap build (screen-space) ----
   const buildHeatmap = React.useCallback(() => {
+    if (!threeRuntimeReady || !THREE) return;
+
     const canvas = canvasRef.current as any;
     const renderer = canvas?.__renderer3D;
     const camera = canvas?.__camera3D;
@@ -23009,7 +23073,7 @@ export function ClusterMap3D({
     sctx.drawImage(img, 0, 0, W, H);
 
     heatmapRef.current = { gw, gh, cellStats, w: ww, h: hh, img: scaled };
-  }, [visiblePts, heatmapInterp, heatmapSmoothness]);
+  }, [threeRuntimeReady, visiblePts, heatmapInterp, heatmapSmoothness]);
 
   useEffect(() => {
     if (!heatmapOn) return;
@@ -23018,6 +23082,8 @@ export function ClusterMap3D({
 
   // ---- Hover + selection handlers on the 3D canvas ----
   const projectToScreen = React.useCallback((p: any) => {
+    if (!threeRuntimeReady || !THREE) return null;
+
     const canvas = canvasRef.current as any;
     const camera = canvas?.__camera3D;
     if (!camera || !canvas) return null;
@@ -23032,7 +23098,7 @@ export function ClusterMap3D({
     const sx = (v.x * 0.5 + 0.5) * ww;
     const sy = (-v.y * 0.5 + 0.5) * hh;
     return { sx, sy, depth: v.z };
-  }, []);
+  }, [threeRuntimeReady]);
 
   const recomputeSelectedStats = React.useCallback(
     (ids: string[]) => {
@@ -23618,6 +23684,8 @@ export function ClusterMap3D({
 
   // Update 3D cluster spheres when clusters computed
   useEffect(() => {
+    if (!threeRuntimeReady || !THREE) return;
+
     const canvas = canvasRef.current as any;
     const group = canvas?.__clusterGroup3D;
     const geo = canvas?.__clusterGeo3D;
@@ -23655,7 +23723,7 @@ export function ClusterMap3D({
       mesh.scale.set(r, r, r);
       group.add(mesh);
     }
-  }, [hdb3d, groupOverlayOpacity]);
+  }, [threeRuntimeReady, hdb3d, groupOverlayOpacity]);
 
   // Highlight selected cluster members
   const highlightSet = useMemo(() => {
@@ -23812,13 +23880,28 @@ export function ClusterMap3D({
                 3D Cluster Map
               </div>
               <div style={{ fontSize: 10, color: "rgba(173,212,244,0.78)" }}>
-                {embedProgress.pct < 1
+                {threeRuntimeError
+                  ? "3D engine failed"
+                  : !threeRuntimeReady
+                  ? "Loading 3D engine..."
+                  : embedProgress.pct < 1
                   ? `${embedProgress.phase || "Embedding"} ${Math.round(
                       embedProgress.pct * 100
                     )}%`
                   : "Ready"}
               </div>
             </div>
+            {threeRuntimeError ? (
+              <div
+                style={{
+                  marginTop: 8,
+                  fontSize: 10,
+                  color: "rgba(255,140,140,0.92)",
+                }}
+              >
+                {String(threeRuntimeError)}
+              </div>
+            ) : null}
 
             <div
               style={{

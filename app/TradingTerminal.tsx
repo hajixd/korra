@@ -8509,6 +8509,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       balancedByLibrary[definition.id] = balanced;
     }
 
+    if (!isClusterBacktestTabActive) {
+      return {
+        counts,
+        baselineWinRates,
+        points: [] as any[]
+      };
+    }
+
     const resolveSignalIndex = (trade: HistoryItem, ordinal: number, total: number) => {
       const entryIndex = candleIndexByUnix.get(Number(trade.entryTime));
       if (typeof entryIndex === "number") {
@@ -8592,7 +8600,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     selectedChartCandles.length,
     sharedLibraryCandidateTrades,
     backtestTimeFilteredTrades,
-    backtestTrades
+    backtestTrades,
+    isClusterBacktestTabActive
   ]);
   const aiLibraryCounts = aiLibraryInsights.counts;
   const aiLibraryBaselineWinRates = aiLibraryInsights.baselineWinRates;
