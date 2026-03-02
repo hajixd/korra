@@ -4732,6 +4732,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const appliedEffectiveConfidenceThreshold = appliedConfidenceGateDisabled
     ? 0
     : appliedBacktestSettings.confidenceThreshold;
+  const appliedAiModelEveryCandleMode =
+    appliedBacktestSettings.aiMode !== "off" && !appliedBacktestSettings.aiFilterEnabled;
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
 
   const cycleValidationMode = () => {
@@ -5200,8 +5202,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const rangeDays = Math.max(1, Math.ceil(rangeMs / (24 * 60 * 60_000)));
     const densityTarget = rangeDays * BACKTEST_TARGET_TRADES_PER_DAY;
 
+    if (appliedAiModelEveryCandleMode) {
+      // AI Model mode checks every bar, so candidate entries should be available
+      // at candle cadence rather than sparse per-day trade density.
+      const everyCandleTarget = Math.max(1, availableSlots - 1);
+      return Math.max(appliedBacktestModelProfiles.length, everyCandleTarget);
+    }
+
     return Math.max(appliedBacktestModelProfiles.length, Math.min(availableSlots, densityTarget));
   }, [
+    appliedAiModelEveryCandleMode,
     appliedBacktestModelProfiles.length,
     appliedBacktestSettings.timeframe,
     backtestHasRun,
@@ -5504,6 +5514,66 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return [];
     }
 
+    if (appliedAiModelEveryCandleMode) {
+      const candles = selectedBacktestCandles;
+      if (candles.length < 2) {
+        return [];
+      }
+
+      const seedKey = `ai-model-every-candle-${backtestRefreshNowMs}-${appliedBacktestModelProfiles
+        .map((model) => model.id)
+        .join("|")}`;
+      const rand = createSeededRng(hashString(seedKey));
+      const blueprints: TradeBlueprint[] = [];
+      const modelCount = appliedBacktestModelProfiles.length;
+      const maxEntryIndex = Math.max(0, candles.length - 2);
+      const fallbackExitOffsetMs = Math.max(60_000, getTimeframeMs(appliedBacktestSettings.timeframe));
+
+      for (let candleIndex = 0; candleIndex <= maxEntryIndex; candleIndex += 1) {
+        const modelIndex =
+          (candleIndex + Math.floor(rand() * modelCount)) % Math.max(1, modelCount);
+        const model = appliedBacktestModelProfiles[modelIndex]!;
+        const symbol = futuresAssets[Math.floor(rand() * futuresAssets.length)]?.symbol ?? selectedSymbol;
+        const side: TradeSide = rand() <= model.longBias ? "Long" : "Short";
+        const result: TradeResult = rand() <= model.winRate ? "Win" : "Loss";
+        const rr = model.rrMin + rand() * (model.rrMax - model.rrMin);
+        const riskPct = model.riskMin + rand() * (model.riskMax - model.riskMin);
+        const entryMs = Number(candles[candleIndex]?.time);
+        const remainingBars = Math.max(1, candles.length - 1 - candleIndex);
+        const holdBars = 1 + Math.floor(rand() * Math.min(96, remainingBars));
+        const exitIndex = Math.min(candles.length - 1, candleIndex + holdBars);
+        const exitMsRaw = Number(candles[exitIndex]?.time);
+        const exitMs = Number.isFinite(exitMsRaw) ? exitMsRaw : entryMs + fallbackExitOffsetMs;
+        const units = Math.max(
+          1,
+          Number.isFinite(appliedBacktestSettings.dollarsPerMove)
+            ? appliedBacktestSettings.dollarsPerMove
+            : 1
+        );
+
+        if (!Number.isFinite(entryMs) || !Number.isFinite(exitMs) || exitMs <= entryMs) {
+          continue;
+        }
+
+        blueprints.push({
+          id: `${model.id}-ec-${String(candleIndex).padStart(6, "0")}`,
+          modelId: model.id,
+          symbol,
+          side,
+          result,
+          entryMs,
+          exitMs,
+          riskPct,
+          rr,
+          units
+        });
+      }
+
+      return blueprints
+        .sort((left, right) => right.exitMs - left.exitMs)
+        .slice(0, backtestTargetTrades);
+    }
+
     const perModelBase = Math.floor(backtestTargetTrades / appliedBacktestModelProfiles.length);
     const remainder = backtestTargetTrades % appliedBacktestModelProfiles.length;
     const blueprints: TradeBlueprint[] = [];
@@ -5530,11 +5600,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       .sort((left, right) => right.exitMs - left.exitMs)
       .slice(0, backtestTargetTrades);
   }, [
+    appliedAiModelEveryCandleMode,
     appliedBacktestModelProfiles,
     appliedBacktestSettings.dollarsPerMove,
+    appliedBacktestSettings.timeframe,
     backtestBlueprintRange,
     backtestRefreshNowMs,
-    backtestTargetTrades
+    backtestTargetTrades,
+    selectedBacktestCandles,
+    selectedSymbol
   ]);
 
   const [historyRows, setHistoryRows] = useState<HistoryItem[]>([]);
@@ -8310,8 +8384,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       );
     };
 
-    const totalLibrarySamples = Object.values(counts).reduce((sum, value) => sum + value, 0);
-    const maxRenderableLibraryPoints = 4000;
     const points: any[] = [];
 
     for (const definition of aiLibraryDefs) {
@@ -8320,26 +8392,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         continue;
       }
 
-      const pointBudgetForLibrary =
-        totalLibrarySamples > maxRenderableLibraryPoints
-          ? Math.max(
-              1,
-              Math.floor((source.length / totalLibrarySamples) * maxRenderableLibraryPoints)
-            )
-          : source.length;
-      const step = Math.max(1, Math.ceil(source.length / pointBudgetForLibrary));
-
-      for (
-        let sourceIndex = 0;
-        sourceIndex < source.length && points.length < maxRenderableLibraryPoints;
-        sourceIndex += step
-      ) {
+      for (let sourceIndex = 0; sourceIndex < source.length; sourceIndex += 1) {
         const trade = source[sourceIndex]!;
         const modelName = trade.entrySource.trim() || "Momentum";
         const signalIndex = resolveSignalIndex(trade, sourceIndex, source.length);
         const entryTimeRaw = Number(trade.entryTime);
         const entryTime =
           Number.isFinite(entryTimeRaw) && entryTimeRaw > 0 ? entryTimeRaw : trade.entryAt || trade.time;
+        const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
+        const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
+        const holdMinutes = Math.max(1, Number(trade.exitTime) - Number(trade.entryTime));
+        const shapeVector = [
+          trade.side === "Long" ? 1 : -1,
+          clamp(Number(trade.pnlPct) / 100, -8, 8),
+          clamp(Number(trade.pnlUsd) / 1000, -8, 8),
+          clamp(rewardDistance / riskDistance, 0, 12),
+          clamp(holdMinutes / 60, 0, 96),
+          ((Number(trade.entryTime) % 86_400) + 86_400) % 86_400 / 86_400
+        ];
 
         points.push({
           id: `lib|${definition.id}|${trade.id}|${sourceIndex}`,
@@ -8357,6 +8427,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           result: trade.result === "Win" ? "TP" : "SL",
           pnl: trade.pnlUsd,
           metaPnl: trade.pnlUsd,
+          v: shapeVector,
           trainingOnly: true,
           metaTrainingOnly: true
         });
