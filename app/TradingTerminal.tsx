@@ -6541,7 +6541,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       const countdownSeries = chart.addLineSeries({
         color: "#1bae8a",
-        lineWidth: 0,
+        lineWidth: 1,
+        visible: false,
         priceLineVisible: false,
         lastValueVisible: true,
         crosshairMarkerVisible: false,
