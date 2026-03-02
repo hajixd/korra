@@ -6526,7 +6526,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         wickDownColor: "#f0455a",
         borderUpColor: "#1bae8a",
         borderDownColor: "#f0455a",
-        priceLineVisible: false,
+        priceLineVisible: true,
+        priceLineStyle: LIGHTWEIGHT_CHART_LINE_DOTTED,
+        priceLineColor: "rgba(198, 208, 228, 0.55)",
+        priceLineWidth: 1,
         lastValueVisible: true,
         autoscaleInfoProvider: (original: () => AutoscaleInfo | null): AutoscaleInfo | null => {
           const focusedPriceRange = chartFocusedPriceRangeRef.current;
@@ -10594,21 +10597,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <span>
                       C <strong>{formatPrice(hoveredCandle.close)}</strong>
                     </span>
-                    <span className={hoveredChange >= 0 ? "up" : "down"}>
-                      {hoveredChange >= 0 ? "+" : ""}
-                      {hoveredChange.toFixed(2)}%
-                    </span>
                   </>
                 ) : (
                   <span>No market data loaded</span>
                 )}
-                <span>
-                  Type <strong>{selectedAsset.funding}</strong>
-                </span>
-                <span>
-                  Feed <strong>{selectedAsset.openInterest}</strong>
-                </span>
-                <span className="chart-hint">Scroll: zoom | Drag: pan | Opt+R: latest</span>
               </div>
               <div className="chart-stage">
                 <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
