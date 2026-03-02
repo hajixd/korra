@@ -119,6 +119,7 @@ type Candle = {
 
 const EMPTY_CANDLES: Candle[] = [];
 const STATS_REFRESH_HOLD_MS = 3000;
+const STATS_REFRESH_COMPLETE_DELAY_MS = 1000;
 
 const AI_ZIP_MONO_FONT =
   "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace";
@@ -4409,6 +4410,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [chartRenderWindow, setChartRenderWindow] = useState<ChartDataWindow>({ from: 0, to: -1 });
 
   const selectTradeOnChart = (tradeId: string, symbol: string) => {
+    if (selectedHistoryId === tradeId) {
+      setSelectedHistoryId(null);
+      focusTradeIdRef.current = null;
+      return;
+    }
+
     focusTradeIdRef.current = tradeId;
     setSelectedHistoryId(tradeId);
     setSelectedSymbol(symbol);
@@ -4442,7 +4449,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         setStatsRefreshLoadingDisplayProgress(0);
         setStatsRefreshProgressLabel("");
         statsRefreshResetTimeoutRef.current = 0;
-      }, 280);
+      }, STATS_REFRESH_COMPLETE_DELAY_MS);
     },
     [clearStatsRefreshResetTimeout, updateStatsRefreshOverlayMode]
   );
@@ -6780,7 +6787,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!event.altKey || event.key.toLowerCase() !== "r") {
+      const isOptionR =
+        event.altKey &&
+        (event.code === "KeyR" || event.key.toLowerCase() === "r" || event.key === "®");
+
+      if (!isOptionR) {
         return;
       }
 
