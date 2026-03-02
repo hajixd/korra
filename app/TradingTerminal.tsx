@@ -4843,7 +4843,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     ? 0
     : appliedBacktestSettings.confidenceThreshold;
   const appliedAiModelEveryCandleMode =
-    appliedBacktestSettings.aiMode !== "off" && !appliedBacktestSettings.aiFilterEnabled;
+    !appliedBacktestSettings.aiFilterEnabled;
+  const shouldSkipBacktestHistoryFetch =
+    appliedBacktestSettings.aiMode === "off" &&
+    !appliedBacktestSettings.antiCheatEnabled &&
+    appliedBacktestModelProfiles.length === 0;
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
 
   const cycleValidationMode = () => {
@@ -5198,6 +5202,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return;
     }
 
+    if (shouldSkipBacktestHistoryFetch) {
+      setStatsRefreshProgress((current) => Math.max(current, 32));
+      setBacktestHistorySeedReady(true);
+      return;
+    }
+
     let cancelled = false;
     const key = appliedBacktestKey;
     const oneMinuteKey = symbolTimeframeKey(appliedBacktestSettings.symbol, "1m");
@@ -5252,7 +5262,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedBacktestSettings.timeframe,
     backtestHasRun,
     backtestRefreshNowMs,
-    backtestRunCount
+    backtestRunCount,
+    shouldSkipBacktestHistoryFetch
   ]);
 
   const selectedCandles = useMemo(() => {
@@ -12614,7 +12625,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           <button
                             type="button"
                             className={`ai-zip-button ${selectedAiModelCount > 0 ? "active" : ""}`}
-                            disabled={aiDisabled}
                             onClick={() => setModelsModalOpen(true)}
                           >
                             Models ({selectedAiModelCount})
