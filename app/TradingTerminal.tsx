@@ -7147,7 +7147,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const pad = (n: number) => String(n).padStart(2, "0");
       const timer = h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
       const price = formatPrice(latestCandle.close);
-      const text = `${price} ${timer}`;
+      const text = `${price}\n${timer}`;
 
       if (text !== lastText) {
         overlay.textContent = text;
