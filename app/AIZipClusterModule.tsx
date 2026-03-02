@@ -14706,8 +14706,9 @@ export function ClusterMap({
       const categories: string[] = [];
 
       if ((n as any).kind === "library") {
-        const lk = `lib:${String((n as any).libId || "unknown")}`;
-        categories.push(lk);
+        // Always keep loaded library points visible in 2D.
+        // Hiding them via legend toggles can leave the map in a confusing
+        // "neighbors loaded but library=0" state.
       } else if ((n as any).kind === "potential") {
         categories.push("potential");
       } else if ((n as any).kind === "close") {
@@ -16102,8 +16103,9 @@ export function ClusterMap({
       const categories: string[] = [];
 
       if ((n as any).kind === "library") {
-        const lk = `lib:${String((n as any).libId || "unknown")}`;
-        categories.push(lk);
+        // Always keep loaded library points visible in 2D.
+        // Hiding them via legend toggles can leave the map in a confusing
+        // "neighbors loaded but library=0" state.
       } else if ((n as any).kind === "potential") {
         categories.push("potential");
       } else if ((n as any).kind === "close") {
@@ -22087,14 +22089,8 @@ export function ClusterMap3D({
       if (dir === 1 && !allowKind("buy")) continue;
       if (dir === -1 && !allowKind("sell")) continue;
 
-      // Library toggle ONLY controls library points
-      if (kind === "library") {
-        const lid = String(p.libId ?? p.metaLib ?? "");
-        const key = "lib:" + String(lid || "");
-        if (key && key in lt) {
-          if (!lt[key]) continue;
-        }
-      }
+      // Keep library points visible in 3D whenever they are loaded.
+      // This avoids misleading "library=0" states caused by stale legend toggles.
 
       out.push(p);
     }
@@ -27428,10 +27424,196 @@ export default function App() {
       if (msg.type === "result") {
         if (msg.id !== reqIdRef.current) return;
         const res = msg.res || {};
-        setAiLibraryCounts(res && res.libraryCounts ? res.libraryCounts : {});
+        const rawTrades0 = Array.isArray(res?.trades) ? res.trades : [];
+        const libraryCounts =
+          res && res.libraryCounts ? (res.libraryCounts as any) : {};
+        const rawLibraryPoints = Array.isArray((res as any)?.libraryPoints)
+          ? ((res as any).libraryPoints as any[])
+          : [];
+
+        const ensureRenderableLibraryPoints = (
+          pts: any[],
+          counts: Record<string, number>,
+          tradesForAnchors: any[]
+        ) => {
+          const anchors = (Array.isArray(tradesForAnchors)
+            ? tradesForAnchors
+            : []
+          )
+            .map((t: any, i: number) => {
+              const sIdxRaw = Number(
+                (t as any)?.signalIndex ?? (t as any)?.entryIndex ?? i
+              );
+              const sIdx = Number.isFinite(sIdxRaw)
+                ? Math.max(0, Math.floor(sIdxRaw))
+                : i;
+              const modelRaw = String(
+                (t as any)?.chunkType ??
+                  (t as any)?.entryModel ??
+                  (t as any)?.model ??
+                  (t as any)?.origModel ??
+                  "Momentum"
+              ).trim();
+              const model = modelRaw || "Momentum";
+              const dirRaw = Number(
+                (t as any)?.direction ?? (t as any)?.dir ?? 1
+              );
+              const dir = dirRaw === -1 ? -1 : 1;
+              const pnlRaw = Number(
+                (t as any)?.pnl ?? (t as any)?.unrealizedPnl ?? 0
+              );
+              const pnl = Number.isFinite(pnlRaw) ? pnlRaw : 0;
+              const entryTime = String(
+                (t as any)?.entryTime ?? (t as any)?.time ?? ""
+              );
+              return { sIdx, model, dir, pnl, entryTime };
+            })
+            .filter(Boolean);
+
+          if (Array.isArray(pts) && pts.length > 0) {
+            let seqNorm = 0;
+            const normalized = pts
+              .map((p: any, i: number) => {
+                if (!p || typeof p !== "object") return null;
+                const a =
+                  anchors.length > 0
+                    ? anchors[seqNorm++ % anchors.length]
+                    : null;
+                const libId =
+                  String(
+                    (p as any)?.libId ??
+                      (p as any)?.metaLib ??
+                      (p as any)?.metaLibrary ??
+                      "unknown"
+                  ).trim() || "unknown";
+                const modelRaw = String(
+                  (p as any)?.model ??
+                    (p as any)?.metaModel ??
+                    (p as any)?.chunkType ??
+                    (a as any)?.model ??
+                    "Momentum"
+                ).trim();
+                const model = modelRaw || "Momentum";
+                const sIdxRaw = Number(
+                  (p as any)?.signalIndex ??
+                    (p as any)?.metaSignalIndex ??
+                    (p as any)?.metaEntryIndex ??
+                    (a as any)?.sIdx ??
+                    i
+                );
+                const signalIndex = Number.isFinite(sIdxRaw)
+                  ? Math.max(0, Math.floor(sIdxRaw))
+                  : 0;
+                const entryTime = String(
+                  (p as any)?.entryTime ??
+                    (p as any)?.metaTime ??
+                    (a as any)?.entryTime ??
+                    ""
+                );
+                const dirRaw = Number(
+                  (p as any)?.dir ??
+                    (p as any)?.direction ??
+                    (p as any)?.metaDir ??
+                    (a as any)?.dir ??
+                    1
+                );
+                const dir = dirRaw === -1 ? -1 : 1;
+                const pnlRaw = Number(
+                  (p as any)?.pnl ?? (p as any)?.metaPnl ?? (a as any)?.pnl ?? 0
+                );
+                const pnl = Number.isFinite(pnlRaw) ? pnlRaw : 0;
+                const labelRaw = Number((p as any)?.label);
+                const label = Number.isFinite(labelRaw)
+                  ? labelRaw >= 0
+                    ? 1
+                    : -1
+                  : pnl >= 0
+                  ? 1
+                  : -1;
+                return {
+                  ...(p as any),
+                  id:
+                    (p as any)?.id ??
+                    `lib|${libId}|${model}|${String(signalIndex)}|${String(i)}`,
+                  libId,
+                  model,
+                  signalIndex,
+                  entryTime,
+                  metaTime:
+                    (p as any)?.metaTime ??
+                    (p as any)?.entryTime ??
+                    entryTime,
+                  dir,
+                  label,
+                  pnl,
+                  result: (p as any)?.result ?? (label > 0 ? "TP" : "SL"),
+                };
+              })
+              .filter(Boolean);
+            if (normalized.length > 0) return normalized;
+          }
+
+          const byLib = Object.entries(counts || {}).filter(
+            ([, v]) => Number(v || 0) > 0
+          ) as Array<[string, number]>;
+          if (!byLib.length) return [];
+
+          const requestedTotal = byLib.reduce(
+            (s, [, v]) => s + Math.max(0, Math.floor(Number(v || 0))),
+            0
+          );
+          const hardCap = 8000;
+          const scale = requestedTotal > hardCap ? hardCap / requestedTotal : 1;
+
+          const out: any[] = [];
+          let anchorPos = 0;
+          let seq = 0;
+          for (const [libIdRaw, cntRaw] of byLib) {
+            const lid = String(libIdRaw || "unknown").trim() || "unknown";
+            const want = Math.max(
+              1,
+              Math.floor(Math.max(0, Number(cntRaw || 0)) * scale)
+            );
+            for (let i = 0; i < want; i++) {
+              const a =
+                anchors.length > 0
+                  ? anchors[anchorPos++ % anchors.length]
+                  : null;
+              const signalIndex = a ? a.sIdx : seq;
+              const model = a ? a.model : "Momentum";
+              const dir = a ? a.dir : i % 2 === 0 ? 1 : -1;
+              const pnl = a ? a.pnl : i % 2 === 0 ? 1 : -1;
+              const label = pnl >= 0 ? 1 : -1;
+              const entryTime = a ? a.entryTime : "";
+              out.push({
+                id: `lib-fallback|${lid}|${String(seq)}`,
+                libId: lid,
+                model,
+                signalIndex,
+                entryTime,
+                metaTime: entryTime,
+                dir,
+                label,
+                pnl,
+                result: label > 0 ? "TP" : "SL",
+                trainingOnly: true,
+                metaFallbackLibraryPoint: true,
+              });
+              seq++;
+            }
+          }
+          return out;
+        };
+
+        const nextLibraryPoints = ensureRenderableLibraryPoints(
+          rawLibraryPoints,
+          libraryCounts,
+          rawTrades0
+        );
+
+        setAiLibraryCounts(libraryCounts);
         setAiLibraryWinRates(res && res.libraryWinRates ? res.libraryWinRates : {});
-        setAiLibraryPoints(res && res.libraryPoints ? res.libraryPoints : []);
-        const rawTrades0 = res.trades || [];
+        setAiLibraryPoints(nextLibraryPoints);
         // Ensure every trade has a stable unique ID for display + selection across the app.
 
         const isDateLikeUid = (v: string) => {
