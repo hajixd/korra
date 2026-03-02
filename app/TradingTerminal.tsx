@@ -5320,6 +5320,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       ? ((latestCandle.close - previousCandle.close) / previousCandle.close) * 100
       : 0;
 
+  const timeframeChanges = useMemo(() => {
+    const changes: Partial<Record<Timeframe, number>> = {};
+    for (const tf of timeframes) {
+      const key = symbolTimeframeKey(selectedAsset.symbol, tf);
+      const list = seriesMap[key] ?? [];
+      const last = list[list.length - 1];
+      const prev = list[list.length - 2] ?? last;
+      if (last && prev && prev.close > 0) {
+        changes[tf] = ((last.close - prev.close) / prev.close) * 100;
+      } else {
+        changes[tf] = 0;
+      }
+    }
+    return changes;
+  }, [selectedAsset.symbol, seriesMap]);
+
   const hoveredCandle =
     latestCandle && hoveredTime ? candleByUnix.get(hoveredTime) ?? latestCandle : latestCandle;
 
@@ -10408,7 +10424,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   return (
     <main className="terminal">
       <div className="surface-strip">
-        <span className="site-tag surface-brand">korra.space</span>
+        <span className="site-tag surface-brand">Korra's Space</span>
         <nav className="surface-tabs" aria-label="primary views">
           {surfaceTabs.map((tab) => (
             <button
@@ -10491,10 +10507,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             {latestCandle ? (
               <>
                 <span>${formatPrice(latestCandle.close)}</span>
-                <span className={quoteChange >= 0 ? "up" : "down"}>
-                  {quoteChange >= 0 ? "+" : ""}
-                  {quoteChange.toFixed(2)}%
-                </span>
+                <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.8em", marginLeft: "0.5rem", alignItems: "center" }}>
+                  {timeframes.map((tf) => {
+                    const change = timeframeChanges[tf] ?? 0;
+                    return (
+                      <div key={tf} style={{ display: "flex", alignItems: "baseline", gap: "0.2rem" }}>
+                        <span style={{ color: "rgba(255, 255, 255, 0.4)", fontSize: "0.75em", fontWeight: 600 }}>{tf}</span>
+                        <span className={change >= 0 ? "up" : "down"}>
+                          {change >= 0 ? "+" : ""}
+                          {change.toFixed(2)}%
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               </>
             ) : (
               <span>No market data</span>
