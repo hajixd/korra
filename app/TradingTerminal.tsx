@@ -5289,6 +5289,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   ]);
 
   const sharedLibraryCandidateTrades = useMemo(() => {
+    if (!backtestHasRun || !backtestHistorySeedReady) {
+      return [] as HistoryItem[];
+    }
+
     if (everyCandleTradeBlueprints.length === 0) {
       return [] as HistoryItem[];
     }
@@ -5343,6 +5347,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return normalizeBacktestHistoryRows(rows);
   }, [
+    backtestHasRun,
+    backtestHistorySeedReady,
     everyCandleTradeBlueprints,
     modelProfileById,
     appliedBacktestSettings.timeframe,
@@ -8319,6 +8325,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [backtestTrades, getEffectiveTradeConfidenceScore]);
 
   const aiLibraryInsights = useMemo(() => {
+    if (!backtestHasRun || !backtestHistorySeedReady) {
+      return {
+        counts: {} as Record<string, number>,
+        baselineWinRates: {} as Record<string, number>,
+        points: [] as any[]
+      };
+    }
+
     const executedTradeIds = new Set(backtestTrades.map((trade) => trade.id));
     const libraryPoolSource =
       sharedLibraryCandidateTrades.length > 0
@@ -8521,6 +8535,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       points
     };
   }, [
+    backtestHasRun,
+    backtestHistorySeedReady,
     appliedBacktestSettings.selectedAiLibrarySettings,
     aiLibraryDefs,
     candleIndexByUnix,
