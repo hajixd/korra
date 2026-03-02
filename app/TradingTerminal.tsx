@@ -83,7 +83,6 @@ type BacktestTab =
   | "entryExit"
   | "dimensions"
   | "propFirm";
-type PerformanceStatsRange = "Years" | "Months" | "Days of the Week" | "Hours";
 type PanelTab = "active" | "assets" | "mt5" | "history" | "actions" | "ai";
 type MainStatisticsCard = {
   label: string;
@@ -4210,9 +4209,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [statsDateStart, setStatsDateStart] = useState("");
   const [statsDateEnd, setStatsDateEnd] = useState("");
   const [performanceStatsCollapsed, setPerformanceStatsCollapsed] = useState(false);
-  const [performanceStatsRange, setPerformanceStatsRange] =
-    useState<PerformanceStatsRange>("Months");
-  const [performanceStatsModel, setPerformanceStatsModel] = useState("All");
   const [mainStatsModelPnlIndex, setMainStatsModelPnlIndex] = useState(0);
   const [mainStatsSessionPnlIndex, setMainStatsSessionPnlIndex] = useState(0);
   const [mainStatsMonthPnlIndex, setMainStatsMonthPnlIndex] = useState(-1);
@@ -9041,107 +9037,96 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setAiZipClusterTimelineIdx(Math.max(0, aiZipClusterCandles.length - 1));
   }, [aiZipClusterCandles.length, isClusterBacktestTabActive]);
 
-  const performanceStatsModelOptions = useMemo(() => {
+  const performanceStatsTemporalCharts = useMemo(() => {
     if (!isPerformanceStatsBacktestTabActive) {
-      return ["All"];
+      return {
+        hours: [] as { bucket: string; pnl: number; count: number }[],
+        weekday: [] as { bucket: string; pnl: number; count: number }[],
+        month: [] as { bucket: string; pnl: number; count: number }[],
+        year: [] as { bucket: string; pnl: number; count: number }[],
+        hasData: false
+      };
     }
 
-    const models = Array.from(
-      new Set(
-        backtestSourceTrades
-          .map((trade) => trade.entrySource.trim())
-          .filter((name) => name.length > 0)
-      )
+    const modelTrades = deferredBacktestAnalyticsTrades.filter(
+      (trade) => trade.entrySource.trim().length > 0
     );
 
-    for (const modelName of appliedBacktestModelNames) {
-      if (!models.includes(modelName)) {
-        models.push(modelName);
-      }
-    }
+    const buildSeries = (range: "hours" | "weekday" | "month" | "year") => {
+      const buckets = new Map<string, { pnl: number; count: number }>();
 
-    return ["All", ...models];
-  }, [appliedBacktestModelNames, backtestSourceTrades, isPerformanceStatsBacktestTabActive]);
+      for (const trade of modelTrades) {
+        const timestampSeconds = Number(trade.entryTime ?? trade.exitTime);
 
-  useEffect(() => {
-    if (!isPerformanceStatsBacktestTabActive) {
-      return;
-    }
+        if (!Number.isFinite(timestampSeconds)) {
+          continue;
+        }
 
-    if (!performanceStatsModelOptions.includes(performanceStatsModel)) {
-      setPerformanceStatsModel("All");
-    }
-  }, [isPerformanceStatsBacktestTabActive, performanceStatsModel, performanceStatsModelOptions]);
+        const date = new Date(timestampSeconds * 1000);
+        let key = "";
 
-  const performanceStatsTemporalData = useMemo(() => {
-    if (!isPerformanceStatsBacktestTabActive) {
-      return [];
-    }
+        if (range === "hours") {
+          key = backtestHourLabels[date.getUTCHours()] ?? String(date.getUTCHours());
+        } else if (range === "weekday") {
+          key = backtestWeekdayLabels[date.getUTCDay()] ?? String(date.getUTCDay());
+        } else if (range === "month") {
+          key = backtestMonthLabels[date.getUTCMonth()] ?? String(date.getUTCMonth() + 1);
+        } else {
+          key = String(date.getUTCFullYear());
+        }
 
-    const filteredTrades =
-      performanceStatsModel === "All"
-        ? deferredBacktestAnalyticsTrades
-        : deferredBacktestAnalyticsTrades.filter((trade) => trade.entrySource === performanceStatsModel);
-    const buckets = new Map<string, { pnl: number; count: number }>();
-
-    for (const trade of filteredTrades) {
-      const timestampSeconds = Number(trade.entryTime ?? trade.exitTime);
-
-      if (!Number.isFinite(timestampSeconds)) {
-        continue;
+        const current = buckets.get(key) ?? { pnl: 0, count: 0 };
+        buckets.set(key, {
+          pnl: current.pnl + trade.pnlUsd,
+          count: current.count + 1
+        });
       }
 
-      const date = new Date(timestampSeconds * 1000);
-      let key = "";
+      let orderedBuckets: string[] = [];
 
-      if (performanceStatsRange === "Years") {
-        key = String(date.getUTCFullYear());
-      } else if (performanceStatsRange === "Months") {
-        key = backtestMonthLabels[date.getUTCMonth()] ?? String(date.getUTCMonth() + 1);
-      } else if (performanceStatsRange === "Days of the Week") {
-        key = backtestWeekdayLabels[date.getUTCDay()] ?? String(date.getUTCDay());
+      if (range === "hours") {
+        orderedBuckets = [...backtestHourLabels];
+      } else if (range === "weekday") {
+        orderedBuckets = [...backtestWeekdayLabels];
+      } else if (range === "month") {
+        orderedBuckets = [...backtestMonthLabels];
       } else {
-        key = backtestHourLabels[date.getUTCHours()] ?? String(date.getUTCHours());
+        orderedBuckets = Array.from(buckets.keys())
+          .map((bucket) => Number(bucket))
+          .filter((value) => Number.isFinite(value))
+          .sort((left, right) => left - right)
+          .map((value) => String(value));
       }
 
-      const current = buckets.get(key) ?? { pnl: 0, count: 0 };
-      buckets.set(key, {
-        pnl: current.pnl + trade.pnlUsd,
-        count: current.count + 1
+      return orderedBuckets.map((bucket) => {
+        const record = buckets.get(bucket) ?? { pnl: 0, count: 0 };
+        return {
+          bucket,
+          pnl: Number(record.pnl.toFixed(2)),
+          count: record.count
+        };
       });
-    }
+    };
 
-    let orderedBuckets: string[] = [];
+    const hours = buildSeries("hours");
+    const weekday = buildSeries("weekday");
+    const month = buildSeries("month");
+    const year = buildSeries("year");
+    const hasData = [hours, weekday, month, year].some((series) =>
+      series.some((row) => row.count > 0)
+    );
 
-    if (performanceStatsRange === "Years") {
-      orderedBuckets = Array.from(buckets.keys())
-        .map((bucket) => Number(bucket))
-        .filter((value) => Number.isFinite(value))
-        .sort((left, right) => left - right)
-        .map((value) => String(value));
-    } else if (performanceStatsRange === "Months") {
-      orderedBuckets = [...backtestMonthLabels];
-    } else if (performanceStatsRange === "Days of the Week") {
-      orderedBuckets = [...backtestWeekdayLabels];
-    } else {
-      orderedBuckets = [...backtestHourLabels];
-    }
-
-    return orderedBuckets.map((bucket) => {
-      const record = buckets.get(bucket) ?? { pnl: 0, count: 0 };
-
-      return {
-        bucket,
-        pnl: Number(record.pnl.toFixed(2)),
-        count: record.count
-      };
-    });
-  }, [
-    deferredBacktestAnalyticsTrades,
-    isPerformanceStatsBacktestTabActive,
-    performanceStatsModel,
-    performanceStatsRange
-  ]);
+    return { hours, weekday, month, year, hasData };
+  }, [deferredBacktestAnalyticsTrades, isPerformanceStatsBacktestTabActive]);
+  const performanceStatsTemporalSections = useMemo(
+    () => [
+      { key: "hours", label: "Hours", data: performanceStatsTemporalCharts.hours },
+      { key: "weekday", label: "Weekday", data: performanceStatsTemporalCharts.weekday },
+      { key: "month", label: "Month", data: performanceStatsTemporalCharts.month },
+      { key: "year", label: "Year", data: performanceStatsTemporalCharts.year }
+    ],
+    [performanceStatsTemporalCharts]
+  );
 
   const backtestClusterData = useMemo(() => {
     if (!isClusterBacktestTabActive) {
@@ -13184,47 +13169,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 letterSpacing: "0.04em"
                               }}
                             >
-                              Range
-                            </div>
-                            <select
-                              value={performanceStatsRange}
-                              onChange={(event) =>
-                                setPerformanceStatsRange(event.target.value as PerformanceStatsRange)
-                              }
-                              style={{
-                                height: 34,
-                                padding: "0 10px",
-                                borderRadius: 12,
-                                border: "1px solid rgba(255,255,255,0.14)",
-                                background: "rgba(255,255,255,0.04)",
-                                color: "rgba(255,255,255,0.92)",
-                                fontWeight: 800,
-                                cursor: "pointer",
-                                outline: "none",
-                                appearance: "none"
-                              }}
-                            >
-                              <option value="Years">Years</option>
-                              <option value="Months">Months</option>
-                              <option value="Days of the Week">Days of the Week</option>
-                              <option value="Hours">Hours</option>
-                            </select>
-                          </div>
-
-                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                            <div
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 900,
-                                opacity: 0.8,
-                                letterSpacing: "0.04em"
-                              }}
-                            >
                               Model
                             </div>
                             <select
-                              value={performanceStatsModel}
-                              onChange={(event) => setPerformanceStatsModel(event.target.value)}
+                              value="Model"
+                              disabled
                               style={{
                                 height: 34,
                                 padding: "0 10px",
@@ -13233,33 +13182,30 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 background: "rgba(255,255,255,0.04)",
                                 color: "rgba(255,255,255,0.92)",
                                 fontWeight: 800,
-                                cursor: "pointer",
+                                cursor: "not-allowed",
                                 outline: "none",
                                 appearance: "none",
-                                minWidth: 170
+                                minWidth: 170,
+                                opacity: 0.85
                               }}
                             >
-                              {performanceStatsModelOptions.map((modelName) => (
-                                <option key={modelName} value={modelName}>
-                                  {modelName}
-                                </option>
-                              ))}
+                              <option value="Model">Model</option>
                             </select>
                           </div>
                         </div>
                       </div>
 
-                      <div
-                        style={{
-                          height: 380,
-                          borderRadius: 18,
-                          border: "1px solid rgba(255,255,255,0.10)",
-                          background:
-                            "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.15))",
-                          padding: 12
-                        }}
-                      >
-                        {!performanceStatsTemporalData || performanceStatsTemporalData.length === 0 ? (
+                      {!performanceStatsTemporalCharts.hasData ? (
+                        <div
+                          style={{
+                            height: 220,
+                            borderRadius: 18,
+                            border: "1px solid rgba(255,255,255,0.10)",
+                            background:
+                              "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.15))",
+                            padding: 12
+                          }}
+                        >
                           <div
                             style={{
                               height: "100%",
@@ -13270,150 +13216,175 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               opacity: 0.75
                             }}
                           >
-                            No trades in the selected range.
+                            No model trades in the selected range.
                           </div>
-                        ) : (
-                          <ResponsiveContainer width="100%" height="100%">
-                            <BarChart
-                              data={performanceStatsTemporalData}
-                              margin={{ top: 8, right: 10, left: 0, bottom: 6 }}
+                        </div>
+                      ) : (
+                        <div style={{ display: "grid", gap: 10 }}>
+                          {performanceStatsTemporalSections.map((section) => (
+                            <div
+                              key={section.key}
+                              style={{
+                                borderRadius: 18,
+                                border: "1px solid rgba(255,255,255,0.10)",
+                                background:
+                                  "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.15))",
+                                padding: 12
+                              }}
                             >
-                              <XAxis
-                                dataKey="bucket"
-                                tick={{
+                              <div
+                                style={{
                                   fontSize: 11,
-                                  fill: "rgba(255,255,255,0.70)"
+                                  fontWeight: 900,
+                                  opacity: 0.85,
+                                  letterSpacing: "0.04em",
+                                  marginBottom: 8
                                 }}
-                                axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
-                                tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
-                              />
-                              <YAxis
-                                tick={{
-                                  fontSize: 11,
-                                  fill: "rgba(255,255,255,0.70)"
-                                }}
-                                axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
-                                tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
-                                tickFormatter={(value: number) =>
-                                  formatChartUsd(Number(value)).replace("$", "")
-                                }
-                              />
-                              <ReferenceLine
-                                y={0}
-                                stroke="rgba(255,255,255,0.78)"
-                                strokeWidth={1}
-                              />
-                              <Tooltip
-                                content={(props: any) => {
-                                  const { active, payload, label } = props;
-
-                                  if (!active || !Array.isArray(payload) || payload.length === 0) {
-                                    return null;
-                                  }
-
-                                  const value = Number(payload[0]?.value ?? 0);
-                                  const count = Number(payload[0]?.payload?.count ?? 0);
-                                  return (
-                                    <div
-                                      style={{
-                                        background: "rgba(255,255,255,0.96)",
-                                        border: "1px solid rgba(15,23,42,0.12)",
-                                        borderRadius: 12,
-                                        padding: "8px 10px",
-                                        boxShadow: "0 10px 30px rgba(0,0,0,0.28)",
-                                        color: "rgba(15,23,42,0.95)",
-                                        fontSize: 12,
-                                        minWidth: 140
+                              >
+                                {section.label}
+                              </div>
+                              <div style={{ height: 180 }}>
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <BarChart data={section.data} margin={{ top: 8, right: 10, left: 0, bottom: 6 }}>
+                                    <XAxis
+                                      dataKey="bucket"
+                                      tick={{
+                                        fontSize: 11,
+                                        fill: "rgba(255,255,255,0.70)"
                                       }}
-                                    >
-                                      <div style={{ fontWeight: 900, marginBottom: 6 }}>
-                                        {String(label ?? "")}
-                                      </div>
-                                      <div
-                                        style={{
-                                          display: "flex",
-                                          justifyContent: "space-between",
-                                          gap: 12
-                                        }}
-                                      >
-                                        <span style={{ opacity: 0.7 }}>PnL</span>
-                                        <span
-                                          style={{
-                                            fontWeight: 900,
-                                            color: getPerformanceStatsBarFill(value, 1)
-                                          }}
-                                        >
-                                          {formatChartUsd(value)}
-                                        </span>
-                                      </div>
-                                      <div
-                                        style={{
-                                          display: "flex",
-                                          justifyContent: "space-between",
-                                          gap: 12,
-                                          marginTop: 4
-                                        }}
-                                      >
-                                        <span style={{ opacity: 0.7 }}>Avg</span>
-                                        <span
-                                          style={{
-                                            fontWeight: 900,
-                                            color: getPerformanceStatsBarFill(value, 1)
-                                          }}
-                                        >
-                                          {formatChartUsd(count > 0 ? value / count : 0)}
-                                        </span>
-                                      </div>
-                                      <div
-                                        style={{
-                                          display: "flex",
-                                          justifyContent: "space-between",
-                                          gap: 12,
-                                          marginTop: 4
-                                        }}
-                                      >
-                                        <span style={{ opacity: 0.7 }}>Trades</span>
-                                        <span
-                                          style={{
-                                            fontWeight: 900,
-                                            color: "rgba(15,23,42,0.92)"
-                                          }}
-                                        >
-                                          {count}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  );
-                                }}
-                              />
-                              <Bar
-                                dataKey="pnl"
-                                radius={0}
-                                isAnimationActive={false}
-                                shape={(props: any) => {
-                                  const { x, y, width, height, payload } = props;
-                                  const resolvedWidth = Number(width);
-                                  const resolvedHeight = Number(height);
-
-                                  if (!Number.isFinite(resolvedWidth) || !Number.isFinite(resolvedHeight)) {
-                                    return null;
-                                  }
-
-                                  return (
-                                    <rect
-                                      x={x}
-                                      y={y}
-                                      width={Math.max(0, resolvedWidth)}
-                                      height={Math.max(0, resolvedHeight)}
-                                      fill={getPerformanceStatsBarFill(Number(payload?.pnl ?? 0))}
+                                      axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                      tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
                                     />
-                                  );
-                                }}
-                              />
-                            </BarChart>
-                          </ResponsiveContainer>
-                        )}
-                      </div>
+                                    <YAxis
+                                      tick={{
+                                        fontSize: 11,
+                                        fill: "rgba(255,255,255,0.70)"
+                                      }}
+                                      axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                      tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                      tickFormatter={(value: number) =>
+                                        formatChartUsd(Number(value)).replace("$", "")
+                                      }
+                                    />
+                                    <ReferenceLine
+                                      y={0}
+                                      stroke="rgba(255,255,255,0.78)"
+                                      strokeWidth={1}
+                                    />
+                                    <Tooltip
+                                      content={(props: any) => {
+                                        const { active, payload, label } = props;
+
+                                        if (!active || !Array.isArray(payload) || payload.length === 0) {
+                                          return null;
+                                        }
+
+                                        const value = Number(payload[0]?.value ?? 0);
+                                        const count = Number(payload[0]?.payload?.count ?? 0);
+                                        return (
+                                          <div
+                                            style={{
+                                              background: "rgba(255,255,255,0.96)",
+                                              border: "1px solid rgba(15,23,42,0.12)",
+                                              borderRadius: 12,
+                                              padding: "8px 10px",
+                                              boxShadow: "0 10px 30px rgba(0,0,0,0.28)",
+                                              color: "rgba(15,23,42,0.95)",
+                                              fontSize: 12,
+                                              minWidth: 140
+                                            }}
+                                          >
+                                            <div style={{ fontWeight: 900, marginBottom: 6 }}>
+                                              {String(label ?? "")}
+                                            </div>
+                                            <div
+                                              style={{
+                                                display: "flex",
+                                                justifyContent: "space-between",
+                                                gap: 12
+                                              }}
+                                            >
+                                              <span style={{ opacity: 0.7 }}>PnL</span>
+                                              <span
+                                                style={{
+                                                  fontWeight: 900,
+                                                  color: getPerformanceStatsBarFill(value, 1)
+                                                }}
+                                              >
+                                                {formatChartUsd(value)}
+                                              </span>
+                                            </div>
+                                            <div
+                                              style={{
+                                                display: "flex",
+                                                justifyContent: "space-between",
+                                                gap: 12,
+                                                marginTop: 4
+                                              }}
+                                            >
+                                              <span style={{ opacity: 0.7 }}>Avg</span>
+                                              <span
+                                                style={{
+                                                  fontWeight: 900,
+                                                  color: getPerformanceStatsBarFill(value, 1)
+                                                }}
+                                              >
+                                                {formatChartUsd(count > 0 ? value / count : 0)}
+                                              </span>
+                                            </div>
+                                            <div
+                                              style={{
+                                                display: "flex",
+                                                justifyContent: "space-between",
+                                                gap: 12,
+                                                marginTop: 4
+                                              }}
+                                            >
+                                              <span style={{ opacity: 0.7 }}>Trades</span>
+                                              <span
+                                                style={{
+                                                  fontWeight: 900,
+                                                  color: "rgba(15,23,42,0.92)"
+                                                }}
+                                              >
+                                                {count}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        );
+                                      }}
+                                    />
+                                    <Bar
+                                      dataKey="pnl"
+                                      radius={0}
+                                      isAnimationActive={false}
+                                      shape={(props: any) => {
+                                        const { x, y, width, height, payload } = props;
+                                        const resolvedWidth = Number(width);
+                                        const resolvedHeight = Number(height);
+
+                                        if (!Number.isFinite(resolvedWidth) || !Number.isFinite(resolvedHeight)) {
+                                          return null;
+                                        }
+
+                                        return (
+                                          <rect
+                                            x={x}
+                                            y={y}
+                                            width={Math.max(0, resolvedWidth)}
+                                            height={Math.max(0, resolvedHeight)}
+                                            fill={getPerformanceStatsBarFill(Number(payload?.pnl ?? 0))}
+                                          />
+                                        );
+                                      }}
+                                    />
+                                  </BarChart>
+                                </ResponsiveContainer>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ) : null}
                 </div>
