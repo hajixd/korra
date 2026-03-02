@@ -11002,23 +11002,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         trade history again.
                       </p>
                     </>
-                  ) : (
-                    <>
-                      <h3>Backtest data is still loading</h3>
-                      <p>
-                        The Backtest modules populate from the simulated history feed. Once candles
-                        load, these tabs will fill in automatically.
-                      </p>
-                      <div
-                        className="backtest-loading-progress-shell"
-                        role="progressbar"
-                        aria-label="Loading backtest data"
-                        aria-valuetext="Waiting for simulated history candles"
-                      >
-                        <div className="backtest-loading-progress-bar" />
-                      </div>
-                    </>
-                  )}
+                  ) : null}
                 </div>
               ) : null}
 

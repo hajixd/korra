@@ -26568,8 +26568,6 @@ export default function App() {
   const [isTradesCollapsed, setIsTradesCollapsed] = useState(true);
   const [isTemporalStatsCollapsed, setIsTemporalStatsCollapsed] =
     useState(true);
-  const [temporalRange, setTemporalRange] = useState("Months");
-  const [temporalModel, setTemporalModel] = useState("All");
   const [entryExitStatsMode, setEntryExitStatsMode] = useState("Entry");
   const [isEntryExitCollapsed, setIsEntryExitCollapsed] = useState(true);
   const [hoverPointId, setHoverPointId] = useState(null);
@@ -27874,99 +27872,98 @@ export default function App() {
       months: entries.length,
     };
   }, [uiTrades, parseMode]);
-  const temporalModelOptions = useMemo(() => {
-    // This dropdown is used to filter time-based stats by "entry method" (what the trade is labeled as),
-    // which lives on `chunkType` (e.g. "Momentum", "Seasons", or the wrapper "AI Model").
-    const allBase = Object.keys(modelStates);
-    const activeBase = allBase.filter((m) => (modelStates as any)[m] > 0);
-    let list = activeBase.length ? activeBase : allBase;
-
-    // If any trade is labeled as the AI wrapper, include it as an option.
-    const hasAIWrapper = uiTrades.some(
-      (t: any) => String(t?.chunkType) === "AI Model"
-    );
-    if (hasAIWrapper && !list.includes("AI Model"))
-      list = [...list, "AI Model"];
-
-    return ["All", ...list];
-  }, [modelStates, uiTrades]);
-  const temporalData = useMemo(() => {
+  const temporalStats = useMemo(() => {
     const closedAll = uiTrades.filter(
       (t) => !t.isOpen && t.pnl !== null && t.pnl !== undefined
     );
-    const closed = filterTradesByDateRange(
+    const modelTrades = filterTradesByDateRange(
       closedAll,
       statsDateStart,
       statsDateEnd,
       parseMode
-    );
-    const filtered =
-      temporalModel === "All"
-        ? closed
-        : closed.filter((t: any) => {
-            const k = String(t?.chunkType ?? t?.model ?? "");
-            return k === temporalModel;
-          });
-    const acc = new Map();
-    const add = (k, v) => {
-      const prev = acc.get(k) ?? { pnl: 0, count: 0 };
-      acc.set(k, { pnl: prev.pnl + v, count: prev.count + 1 });
-    };
-    for (const t of filtered) {
-      const raw = t?.entryTime ?? t?.exitTime ?? t?.time;
-      const d = raw ? parseDateFromString(raw, parseMode) : null;
-      if (!d) continue;
-      let key = "";
-      if (temporalRange === "Years") {
-        key = String(
-          parseMode === "utc" ? d.getUTCFullYear() : d.getFullYear()
-        );
-      } else if (temporalRange === "Months") {
-        const mi = parseMode === "utc" ? d.getUTCMonth() : d.getMonth();
-        key = MONTH_LABELS[mi] ?? String(mi + 1);
-      } else if (temporalRange === "Days of the Week") {
-        const di = parseMode === "utc" ? d.getUTCDay() : d.getDay();
-        key = DOW_LABELS[di] ?? String(di);
-      } else {
-        const hi = parseMode === "utc" ? d.getUTCHours() : d.getHours();
-        key = HOUR_LABELS[hi] ?? String(hi);
-      }
-      const pnl = Number(t.pnl);
-      if (!Number.isFinite(pnl)) continue;
-      add(key, pnl);
-    }
-    let buckets = [];
-    if (temporalRange === "Years") {
-      const years = Array.from(acc.keys())
-        .map((k) => Number(k))
-        .filter((n) => Number.isFinite(n))
-        .sort((a, b) => a - b)
-        .map((n) => String(n));
-      buckets = years;
-    } else if (temporalRange === "Months") {
-      buckets = [...MONTH_LABELS];
-    } else if (temporalRange === "Days of the Week") {
-      buckets = [...DOW_LABELS];
-    } else {
-      buckets = [...HOUR_LABELS];
-    }
-    return buckets.map((b) => {
-      const rec = acc.get(b) ?? { pnl: 0, count: 0 };
-      return {
-        bucket: b,
-        pnl: Number(rec.pnl.toFixed(2)),
-        count: rec.count,
-      };
+    ).filter((t: any) => {
+      const modelKey = String(t?.origModel ?? t?.chunkType ?? t?.model ?? "").trim();
+      return modelKey.length > 0;
     });
+
+    const buildSeries = (rangeKey: "hours" | "weekday" | "month" | "year") => {
+      const acc = new Map();
+      const add = (k, v) => {
+        const prev = acc.get(k) ?? { pnl: 0, count: 0 };
+        acc.set(k, { pnl: prev.pnl + v, count: prev.count + 1 });
+      };
+
+      for (const t of modelTrades) {
+        const raw = t?.entryTime ?? t?.exitTime ?? t?.time;
+        const d = raw ? parseDateFromString(raw, parseMode) : null;
+        if (!d) continue;
+        let key = "";
+        if (rangeKey === "hours") {
+          const hi = parseMode === "utc" ? d.getUTCHours() : d.getHours();
+          key = HOUR_LABELS[hi] ?? String(hi);
+        } else if (rangeKey === "weekday") {
+          const di = parseMode === "utc" ? d.getUTCDay() : d.getDay();
+          key = DOW_LABELS[di] ?? String(di);
+        } else if (rangeKey === "month") {
+          const mi = parseMode === "utc" ? d.getUTCMonth() : d.getMonth();
+          key = MONTH_LABELS[mi] ?? String(mi + 1);
+        } else {
+          key = String(parseMode === "utc" ? d.getUTCFullYear() : d.getFullYear());
+        }
+        const pnl = Number(t.pnl);
+        if (!Number.isFinite(pnl)) continue;
+        add(key, pnl);
+      }
+
+      let buckets = [];
+      if (rangeKey === "hours") {
+        buckets = [...HOUR_LABELS];
+      } else if (rangeKey === "weekday") {
+        buckets = [...DOW_LABELS];
+      } else if (rangeKey === "month") {
+        buckets = [...MONTH_LABELS];
+      } else {
+        buckets = Array.from(acc.keys())
+          .map((k) => Number(k))
+          .filter((n) => Number.isFinite(n))
+          .sort((a, b) => a - b)
+          .map((n) => String(n));
+      }
+
+      return buckets.map((bucket) => {
+        const rec = acc.get(bucket) ?? { pnl: 0, count: 0 };
+        return {
+          bucket,
+          pnl: Number(rec.pnl.toFixed(2)),
+          count: rec.count,
+        };
+      });
+    };
+
+    const hours = buildSeries("hours");
+    const weekday = buildSeries("weekday");
+    const month = buildSeries("month");
+    const year = buildSeries("year");
+    const hasData = [hours, weekday, month, year].some((series) =>
+      series.some((row) => Number(row.count) > 0)
+    );
+
+    return { hours, weekday, month, year, hasData };
   }, [
     uiTrades,
     statsDateStart,
     statsDateEnd,
     parseMode,
-    temporalModel,
-    temporalRange,
-    modelStates,
   ]);
+  const temporalChartSections = useMemo(
+    () => [
+      { key: "hours", label: "Hours", data: temporalStats.hours },
+      { key: "weekday", label: "Weekday", data: temporalStats.weekday },
+      { key: "month", label: "Month", data: temporalStats.month },
+      { key: "year", label: "Year", data: temporalStats.year },
+    ],
+    [temporalStats]
+  );
   const tradeFrequency = useMemo(() => {
     const closed = uiTrades.filter((t) => !t.isOpen);
     const n = closed.length;
@@ -38154,49 +38151,11 @@ export default function App() {
                           letterSpacing: "0.04em",
                         }}
                       >
-                        Range
-                      </div>
-                      <select
-                        value={temporalRange}
-                        onChange={(e) => setTemporalRange(e.target.value)}
-                        style={{
-                          height: 34,
-                          padding: "0 10px",
-                          borderRadius: 12,
-                          border: "1px solid rgba(255,255,255,0.14)",
-                          background: "rgba(255,255,255,0.04)",
-                          color: "rgba(255,255,255,0.92)",
-                          fontWeight: 800,
-                          cursor: "pointer",
-                          outline: "none",
-                          appearance: "none",
-                        }}
-                      >
-                        <option value="Years">Years</option>
-                        <option value="Months">Months</option>
-                        <option value="Days of the Week">
-                          Days of the Week
-                        </option>
-                        <option value="Hours">Hours</option>
-                      </select>
-                    </div>
-
-                    <div
-                      style={{ display: "flex", gap: 8, alignItems: "center" }}
-                    >
-                      <div
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 900,
-                          opacity: 0.8,
-                          letterSpacing: "0.04em",
-                        }}
-                      >
                         Model
                       </div>
                       <select
-                        value={temporalModel}
-                        onChange={(e) => setTemporalModel(e.target.value)}
+                        value="Model"
+                        disabled
                         style={{
                           height: 34,
                           padding: "0 10px",
@@ -38205,33 +38164,30 @@ export default function App() {
                           background: "rgba(255,255,255,0.04)",
                           color: "rgba(255,255,255,0.92)",
                           fontWeight: 800,
-                          cursor: "pointer",
+                          cursor: "not-allowed",
                           outline: "none",
                           appearance: "none",
                           minWidth: 170,
+                          opacity: 0.85,
                         }}
                       >
-                        {temporalModelOptions.map((m) => (
-                          <option key={String(m)} value={String(m)}>
-                            {String(m)}
-                          </option>
-                        ))}
+                        <option value="Model">Model</option>
                       </select>
                     </div>
                   </div>
                 </div>
 
-                <div
-                  style={{
-                    height: 290,
-                    borderRadius: 18,
-                    border: "1px solid rgba(255,255,255,0.10)",
-                    background:
-                      "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.15))",
-                    padding: 12,
-                  }}
-                >
-                  {!temporalData || temporalData.length === 0 ? (
+                {!temporalStats.hasData ? (
+                  <div
+                    style={{
+                      height: 220,
+                      borderRadius: 18,
+                      border: "1px solid rgba(255,255,255,0.10)",
+                      background:
+                        "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.15))",
+                      padding: 12,
+                    }}
+                  >
                     <div
                       style={{
                         height: "100%",
@@ -38242,142 +38198,170 @@ export default function App() {
                         opacity: 0.75,
                       }}
                     >
-                      No trades in the selected range.
+                      No model trades in the selected range.
                     </div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={temporalData}
-                        margin={{ top: 8, right: 10, left: 0, bottom: 6 }}
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {temporalChartSections.map((section) => (
+                      <div
+                        key={section.key}
+                        style={{
+                          borderRadius: 18,
+                          border: "1px solid rgba(255,255,255,0.10)",
+                          background:
+                            "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.15))",
+                          padding: 12,
+                        }}
                       >
-                        <XAxis
-                          dataKey="bucket"
-                          tick={{
+                        <div
+                          style={{
                             fontSize: 11,
-                            fill: "rgba(255,255,255,0.70)",
+                            fontWeight: 900,
+                            opacity: 0.85,
+                            letterSpacing: "0.04em",
+                            marginBottom: 8,
                           }}
-                          axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
-                          tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
-                        />
-                        <YAxis
-                          tick={{
-                            fontSize: 11,
-                            fill: "rgba(255,255,255,0.70)",
-                          }}
-                          axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
-                          tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
-                          tickFormatter={(v) =>
-                            fmtUSD(Number(v)).replace("$", "")
-                          }
-                        />
-                        <ReferenceLine
-                          y={0}
-                          stroke="rgba(255,255,255,0.78)"
-                          strokeWidth={1}
-                        />
-                        <Tooltip
-                          content={({ active, payload, label }) => {
-                            if (!active || !payload?.length) return null;
-                            const v = Number(payload[0]?.value ?? 0);
-                            const count = Number(
-                              payload[0]?.payload?.count ?? 0
-                            );
-                            const pos = v >= 0;
-                            return (
-                              <div
-                                style={{
-                                  background: "rgba(255,255,255,0.96)",
-                                  border: "1px solid rgba(15,23,42,0.12)",
-                                  borderRadius: 12,
-                                  padding: "8px 10px",
-                                  boxShadow: "0 10px 30px rgba(0,0,0,0.28)",
-                                  color: "rgba(15,23,42,0.95)",
-                                  fontSize: 12,
-                                  minWidth: 140,
+                        >
+                          {section.label}
+                        </div>
+                        <div style={{ height: 180 }}>
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                              data={section.data}
+                              margin={{ top: 8, right: 10, left: 0, bottom: 6 }}
+                            >
+                              <XAxis
+                                dataKey="bucket"
+                                tick={{
+                                  fontSize: 11,
+                                  fill: "rgba(255,255,255,0.70)",
                                 }}
-                              >
-                                <div
-                                  style={{ fontWeight: 900, marginBottom: 6 }}
-                                >
-                                  {String(label ?? "")}
-                                </div>
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    justifyContent: "space-between",
-                                    gap: 12,
-                                  }}
-                                >
-                                  <span style={{ opacity: 0.7 }}>PnL</span>
-                                  <span
-                                    style={{
-                                      fontWeight: 900,
-                                      color: pos
-                                        ? "rgba(34,197,94,1)"
-                                        : "rgba(239,68,68,1)",
-                                    }}
-                                  >
-                                    {fmtUSD(v)}
-                                  </span>
-                                </div>
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    justifyContent: "space-between",
-                                    gap: 12,
-                                    marginTop: 4,
-                                  }}
-                                >
-                                  <span style={{ opacity: 0.7 }}>Avg</span>
-                                  <span
-                                    style={{
-                                      fontWeight: 900,
-                                      color: pos
-                                        ? "rgba(34,197,94,1)"
-                                        : "rgba(239,68,68,1)",
-                                    }}
-                                  >
-                                    {fmtUSD(count ? v / count : 0)}
-                                  </span>
-                                </div>
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    justifyContent: "space-between",
-                                    gap: 12,
-                                    marginTop: 4,
-                                  }}
-                                >
-                                  <span style={{ opacity: 0.7 }}>Trades</span>
-                                  <span
-                                    style={{
-                                      fontWeight: 900,
-                                      color: "rgba(15,23,42,0.92)",
-                                    }}
-                                  >
-                                    {count}
-                                  </span>
-                                </div>
-                              </div>
-                            );
-                          }}
-                        />
-                        <Bar dataKey="pnl" radius={0} isAnimationActive={false}>
-                          {temporalData.map((d, i) => (
-                            <Cell
-                              key={`cell-${i}`}
-                              fill={
-                                Number(d.pnl) >= 0
-                                  ? "rgba(34,197,94,0.88)"
-                                  : "rgba(239,68,68,0.88)"
-                              }
-                            />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
+                                axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                              />
+                              <YAxis
+                                tick={{
+                                  fontSize: 11,
+                                  fill: "rgba(255,255,255,0.70)",
+                                }}
+                                axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                tickFormatter={(v) =>
+                                  fmtUSD(Number(v)).replace("$", "")
+                                }
+                              />
+                              <ReferenceLine
+                                y={0}
+                                stroke="rgba(255,255,255,0.78)"
+                                strokeWidth={1}
+                              />
+                              <Tooltip
+                                content={({ active, payload, label }) => {
+                                  if (!active || !payload?.length) return null;
+                                  const v = Number(payload[0]?.value ?? 0);
+                                  const count = Number(
+                                    payload[0]?.payload?.count ?? 0
+                                  );
+                                  const pos = v >= 0;
+                                  return (
+                                    <div
+                                      style={{
+                                        background: "rgba(255,255,255,0.96)",
+                                        border: "1px solid rgba(15,23,42,0.12)",
+                                        borderRadius: 12,
+                                        padding: "8px 10px",
+                                        boxShadow: "0 10px 30px rgba(0,0,0,0.28)",
+                                        color: "rgba(15,23,42,0.95)",
+                                        fontSize: 12,
+                                        minWidth: 140,
+                                      }}
+                                    >
+                                      <div
+                                        style={{ fontWeight: 900, marginBottom: 6 }}
+                                      >
+                                        {String(label ?? "")}
+                                      </div>
+                                      <div
+                                        style={{
+                                          display: "flex",
+                                          justifyContent: "space-between",
+                                          gap: 12,
+                                        }}
+                                      >
+                                        <span style={{ opacity: 0.7 }}>PnL</span>
+                                        <span
+                                          style={{
+                                            fontWeight: 900,
+                                            color: pos
+                                              ? "rgba(34,197,94,1)"
+                                              : "rgba(239,68,68,1)",
+                                          }}
+                                        >
+                                          {fmtUSD(v)}
+                                        </span>
+                                      </div>
+                                      <div
+                                        style={{
+                                          display: "flex",
+                                          justifyContent: "space-between",
+                                          gap: 12,
+                                          marginTop: 4,
+                                        }}
+                                      >
+                                        <span style={{ opacity: 0.7 }}>Avg</span>
+                                        <span
+                                          style={{
+                                            fontWeight: 900,
+                                            color: pos
+                                              ? "rgba(34,197,94,1)"
+                                              : "rgba(239,68,68,1)",
+                                          }}
+                                        >
+                                          {fmtUSD(count ? v / count : 0)}
+                                        </span>
+                                      </div>
+                                      <div
+                                        style={{
+                                          display: "flex",
+                                          justifyContent: "space-between",
+                                          gap: 12,
+                                          marginTop: 4,
+                                        }}
+                                      >
+                                        <span style={{ opacity: 0.7 }}>Trades</span>
+                                        <span
+                                          style={{
+                                            fontWeight: 900,
+                                            color: "rgba(15,23,42,0.92)",
+                                          }}
+                                        >
+                                          {count}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                }}
+                              />
+                              <Bar dataKey="pnl" radius={0} isAnimationActive={false}>
+                                {section.data.map((d, i) => (
+                                  <Cell
+                                    key={`temporal-${section.key}-${i}`}
+                                    fill={
+                                      Number(d.pnl) >= 0
+                                        ? "rgba(34,197,94,0.88)"
+                                        : "rgba(239,68,68,0.88)"
+                                    }
+                                  />
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
