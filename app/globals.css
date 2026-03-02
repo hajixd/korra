@@ -1070,6 +1070,79 @@ button {
   cursor: pointer;
 }
 
+.stats-timeframe-wrap {
+  position: relative;
+}
+
+.stats-timeframe-trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 32px;
+  padding: 0 0.72rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: border-color 0.15s;
+}
+
+.stats-timeframe-trigger:hover {
+  border-color: rgba(255, 255, 255, 0.26);
+}
+
+.stats-timeframe-chevron {
+  font-size: 0.55rem;
+  opacity: 0.55;
+  line-height: 1;
+}
+
+.stats-timeframe-dd {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 200;
+  min-width: 164px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(6, 12, 12, 0.97);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 255, 157, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.stats-timeframe-option {
+  width: 100%;
+  padding: 0.48rem 0.72rem;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.71rem;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.stats-timeframe-option:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.stats-timeframe-option.active {
+  background: rgba(0, 255, 157, 0.09);
+  color: #00ff9d;
+}
+
 .backtest-search,
 .backtest-input-field input,
 .ai-zip-input {

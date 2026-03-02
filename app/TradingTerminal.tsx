@@ -130,6 +130,16 @@ const STATS_REFRESH_HOLD_MS = 3000;
 const STATS_REFRESH_COMPLETE_DELAY_MS = 1000;
 const STATS_REFRESH_VISUAL_FULL_THRESHOLD = 99.95;
 
+const TIMEFRAME_DISPLAY_LABELS: Record<Timeframe, string> = {
+  "1m": "1 Minute",
+  "5m": "5 Minutes",
+  "15m": "15 Minutes",
+  "1H": "1 Hour",
+  "4H": "4 Hours",
+  "1D": "Daily",
+  "1W": "Weekly",
+};
+
 const AI_ZIP_MONO_FONT =
   "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace";
 
@@ -4218,6 +4228,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   >(null);
   const [statsDateStart, setStatsDateStart] = useState("");
   const [statsDateEnd, setStatsDateEnd] = useState("");
+  const [statsTimeframeDdOpen, setStatsTimeframeDdOpen] = useState(false);
   const [performanceStatsCollapsed, setPerformanceStatsCollapsed] = useState(false);
   const [performanceStatsModel, setPerformanceStatsModel] = useState("All");
   const [mainStatsModelPnlIndex, setMainStatsModelPnlIndex] = useState(0);
@@ -4446,6 +4457,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const chartLastBarTimeRef = useRef(0);
   const chartViewCenterTimeMsRef = useRef<number | null>(null);
   const selectedChartCandlesRef = useRef<Candle[]>([]);
+  const statsTimeframeDdRef = useRef<HTMLDivElement>(null);
   const [chartRenderWindow, setChartRenderWindow] = useState<ChartDataWindow>({ from: 0, to: -1 });
 
   const selectTradeOnChart = (tradeId: string, symbol: string) => {
@@ -4553,6 +4565,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   const statsRefreshOverlayVisible = statsRefreshOverlayMode !== "idle";
 
+
+  useEffect(() => {
+    if (!statsTimeframeDdOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (statsTimeframeDdRef.current && !statsTimeframeDdRef.current.contains(e.target as Node)) {
+        setStatsTimeframeDdOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [statsTimeframeDdOpen]);
+
   useEffect(() => {
     return () => {
       clearStatsRefreshResetTimeout();
@@ -4568,50 +4592,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [statsRefreshProgress]);
 
   useEffect(() => {
-    if (statsRefreshOverlayMode !== "loading") {
-      setStatsRefreshLoadingDisplayProgress(clamp(statsRefreshProgressRef.current, 0, 100));
-      return;
-    }
-
-    let frameId = 0;
-    const startTime = performance.now();
-    let previousTimestamp = 0;
-    let lastValue = 0;
-
-    const step = (timestamp: number) => {
-      const dt = previousTimestamp > 0 ? timestamp - previousTimestamp : 16.67;
-      previousTimestamp = timestamp;
-      const elapsed = timestamp - startTime;
-      const isDone = statsRefreshProgressRef.current >= 100;
-
-      let next: number;
-
-      if (isDone) {
-        const blend = 1 - Math.exp(-dt / 200);
-        next = lastValue + (100 - lastValue) * blend;
-        if (next >= 99.95) next = 100;
-      } else {
-        next = 92 * (1 - Math.exp(-elapsed / 8000));
-      }
-
-      next = Math.max(lastValue, next);
-      lastValue = next;
-
-      setStatsRefreshLoadingDisplayProgress(next);
-
-      if (statsRefreshOverlayModeRef.current === "loading") {
-        frameId = window.requestAnimationFrame(step);
-      }
-    };
-
-    frameId = window.requestAnimationFrame(step);
-
-    return () => {
-      if (frameId) {
-        window.cancelAnimationFrame(frameId);
-      }
-    };
-  }, [statsRefreshOverlayMode]);
+    setStatsRefreshLoadingDisplayProgress(statsRefreshProgress);
+  }, [statsRefreshProgress]);
 
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
@@ -11018,13 +11000,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     0,
     ((100 - clamp(statsRefreshProgress, 0, 100)) / 100) * (STATS_REFRESH_HOLD_MS / 1000)
   );
-  const statsRefreshDisplayProgress = clamp(
-    statsRefreshOverlayMode === "loading"
-      ? statsRefreshLoadingDisplayProgress
-      : statsRefreshProgress,
-    0,
-    100
-  );
+  const statsRefreshDisplayProgress = clamp(statsRefreshProgress, 0, 100);
 
   return (
     <main className="terminal">
@@ -11773,33 +11749,42 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         <h3>{mainStatsTitle}</h3>
                       </div>
 
-                      <div className="backtest-stats-range" aria-label="main statistics date range">
-                        <input
-                          type="date"
-                          value={statsDateStart}
-                          onChange={(event) => setStatsDateStart(event.target.value)}
-                          className="backtest-date-input"
-                          aria-label="main statistics start date"
-                        />
-                        <span className="backtest-stats-range-arrow">-&gt;</span>
-                        <input
-                          type="date"
-                          value={statsDateEnd}
-                          onChange={(event) => setStatsDateEnd(event.target.value)}
-                          className="backtest-date-input"
-                          aria-label="main statistics end date"
-                        />
-                        {(statsDateStart || statsDateEnd) && (
-                          <button
-                            type="button"
-                            className="backtest-range-clear"
-                            onClick={() => {
-                              setStatsDateStart("");
-                              setStatsDateEnd("");
-                            }}
+                      <div ref={statsTimeframeDdRef} className="stats-timeframe-wrap">
+                        <button
+                          type="button"
+                          className="stats-timeframe-trigger"
+                          onClick={() => setStatsTimeframeDdOpen((o) => !o)}
+                          aria-haspopup="listbox"
+                          aria-expanded={statsTimeframeDdOpen}
+                          aria-label="Select backtest timeframe"
+                        >
+                          {TIMEFRAME_DISPLAY_LABELS[selectedTimeframe]}
+                          <span className="stats-timeframe-chevron" aria-hidden="true">
+                            {statsTimeframeDdOpen ? "▴" : "▾"}
+                          </span>
+                        </button>
+                        {statsTimeframeDdOpen && (
+                          <div
+                            className="stats-timeframe-dd"
+                            role="listbox"
+                            aria-label="Backtest timeframe options"
                           >
-                            Clear
-                          </button>
+                            {timeframes.map((tf) => (
+                              <button
+                                key={tf}
+                                type="button"
+                                role="option"
+                                aria-selected={selectedTimeframe === tf}
+                                className={`stats-timeframe-option${selectedTimeframe === tf ? " active" : ""}`}
+                                onClick={() => {
+                                  setSelectedTimeframe(tf);
+                                  setStatsTimeframeDdOpen(false);
+                                }}
+                              >
+                                {TIMEFRAME_DISPLAY_LABELS[tf]}
+                              </button>
+                            ))}
+                          </div>
                         )}
                       </div>
                     </div>
