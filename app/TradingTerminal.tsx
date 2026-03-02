@@ -8377,6 +8377,41 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const aiLibraryCounts = aiLibraryInsights.counts;
   const aiLibraryBaselineWinRates = aiLibraryInsights.baselineWinRates;
   const aiLibraryPoints = aiLibraryInsights.points;
+  const aiClusterActiveLibraryIdSet = useMemo(() => {
+    return new Set(
+      (appliedBacktestSettings.selectedAiLibraries ?? []).map((libraryId) =>
+        String(libraryId).trim()
+      )
+    );
+  }, [appliedBacktestSettings.selectedAiLibraries]);
+  const aiClusterLibraryPoints = useMemo(() => {
+    if (aiClusterActiveLibraryIdSet.size === 0) {
+      return [] as any[];
+    }
+
+    return (aiLibraryPoints as any[]).filter((point) => {
+      const libraryId = String(point?.libId ?? point?.metaLib ?? "").trim();
+      return libraryId.length > 0 && aiClusterActiveLibraryIdSet.has(libraryId);
+    });
+  }, [aiClusterActiveLibraryIdSet, aiLibraryPoints]);
+  const aiClusterLibraryCounts = useMemo(() => {
+    if (aiClusterActiveLibraryIdSet.size === 0) {
+      return {} as Record<string, number>;
+    }
+
+    const filtered: Record<string, number> = {};
+    for (const [libraryId, rawCount] of Object.entries(aiLibraryCounts ?? {})) {
+      const normalizedLibraryId = String(libraryId).trim();
+      if (!normalizedLibraryId || !aiClusterActiveLibraryIdSet.has(normalizedLibraryId)) {
+        continue;
+      }
+      const count = Math.max(0, Number(rawCount) || 0);
+      if (count > 0) {
+        filtered[normalizedLibraryId] = count;
+      }
+    }
+    return filtered;
+  }, [aiClusterActiveLibraryIdSet, aiLibraryCounts]);
   const selectedAiLibraryConfig: Record<string, AiLibrarySettingValue> | null = selectedAiLibrary
     ? ({
         ...selectedAiLibrary.defaults,
@@ -13811,9 +13846,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         candles={aiZipClusterCandles}
                         trades={aiZipClusterTrades}
                         ghostEntries={[]}
-                        libraryPoints={aiLibraryPoints}
+                        libraryPoints={aiClusterLibraryPoints}
                         activeLibraries={appliedBacktestSettings.selectedAiLibraries}
-                        libraryCounts={aiLibraryCounts}
+                        libraryCounts={aiClusterLibraryCounts}
                         chunkBars={appliedBacktestSettings.chunkBars}
                         potential={null}
                         parseMode="utc"
@@ -13846,7 +13881,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         candles={aiZipClusterCandles}
                         trades={aiZipClusterTrades}
                         ghostEntries={[]}
-                        libraryPoints={aiLibraryPoints}
+                        libraryPoints={aiClusterLibraryPoints}
                         chunkBarsDeb={appliedBacktestSettings.chunkBars}
                         potential={null}
                         parseMode="utc"
