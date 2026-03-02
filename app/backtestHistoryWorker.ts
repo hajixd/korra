@@ -22,11 +22,21 @@ self.onmessage = (event: MessageEvent<BacktestHistoryWorkerRequest>) => {
     candleSeriesBySymbol,
     modelNamesById,
     tpDollars,
-    slDollars
+    slDollars,
+    onProgress: (processed, total, cursorMs) => {
+      self.postMessage({
+        requestId,
+        type: "progress",
+        processed,
+        total,
+        cursorMs
+      } satisfies BacktestHistoryWorkerResponse);
+    }
   });
 
   self.postMessage({
     requestId,
+    type: "result",
     rows
   } satisfies BacktestHistoryWorkerResponse);
 };

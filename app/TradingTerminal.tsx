@@ -70,8 +70,6 @@ const LIGHTWEIGHT_CHART_SOLID_BACKGROUND: ColorType = "solid" as ColorType;
 const LIGHTWEIGHT_CHART_CROSSHAIR_NORMAL: CrosshairMode = 0;
 const LIGHTWEIGHT_CHART_LINE_SOLID: LineStyle = 0;
 const LIGHTWEIGHT_CHART_LINE_DOTTED: LineStyle = 1;
-const BACKTEST_HISTORY_WORKER_LIMIT = 2;
-const BACKTEST_HISTORY_PARALLEL_THRESHOLD = 120;
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type SurfaceTab = "chart" | "backtest";
 type BacktestTab =
@@ -101,6 +99,7 @@ type BacktestHeroStatCard = {
   value: string;
   tone: "up" | "down" | "neutral";
   meta: string;
+  valueStyle?: CSSProperties;
 };
 type RechartsTooltipRenderProps = {
   active?: boolean;
@@ -5928,25 +5927,37 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       ? backtestBlueprintRangeSnapshot.endMs
       : fallbackEndMs;
     const timelineEndMs = Math.max(timelineStartMs + 60_000, timelineEndMsRaw);
-    const setLoadingProgress = (ratio: number) => {
+    const chronologicalTradeBlueprints = [...tradeBlueprintsSnapshot].sort(
+      (left, right) =>
+        left.exitMs - right.exitMs ||
+        left.entryMs - right.entryMs ||
+        left.id.localeCompare(right.id)
+    );
+    let lastLoadingProgressRatio = 0;
+    const setLoadingProgress = (ratio: number, cursorMs?: number) => {
       const normalizedRatio = clamp(ratio, 0, 1);
-      const progressPct = 35 + normalizedRatio * 65;
-      const currentMs =
-        Number.isFinite(timelineStartMs) &&
-        Number.isFinite(timelineEndMs) &&
-        timelineEndMs >= timelineStartMs
-          ? timelineStartMs + (timelineEndMs - timelineStartMs) * normalizedRatio
-          : timelineEndMs;
 
-      setStatsRefreshProgress((current) => Math.max(current, progressPct));
-      setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(currentMs));
+      if (normalizedRatio < lastLoadingProgressRatio) {
+        return;
+      }
+
+      lastLoadingProgressRatio = normalizedRatio;
+      const timelineSpanMs = Math.max(60_000, timelineEndMs - timelineStartMs);
+      const timelineMsFromRatio = timelineStartMs + timelineSpanMs * normalizedRatio;
+      const clampedCursorMs =
+        typeof cursorMs === "number" && Number.isFinite(cursorMs)
+          ? clamp(cursorMs, timelineStartMs, timelineEndMs)
+          : timelineMsFromRatio;
+
+      setStatsRefreshProgress(normalizedRatio * 100);
+      setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(clampedCursorMs));
     };
 
     const computeSynchronously = (): HistoryItem[] => {
       return normalizeBacktestHistoryRows(
         finalizeBacktestHistoryRows(
           computeBacktestHistoryRowsChunk({
-            blueprints: tradeBlueprintsSnapshot,
+            blueprints: chronologicalTradeBlueprints,
             candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
             modelNamesById,
             tpDollars: tpDollarsSnapshot,
@@ -6006,7 +6017,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
     };
 
-    setLoadingProgress(0);
+    setStatsRefreshProgress(0);
+    setStatsRefreshLoadingDisplayProgress(0);
+    setLoadingProgress(0, timelineStartMs);
 
     if (typeof Worker === "undefined") {
       handleFallback();
@@ -6016,149 +6029,65 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       };
     }
 
-    const workerCap =
-      typeof navigator === "undefined"
-        ? 1
-        : Math.max(1, Math.min(BACKTEST_HISTORY_WORKER_LIMIT, navigator.hardwareConcurrency || 1));
-    const workerCount =
-      tradeBlueprintsSnapshot.length >= BACKTEST_HISTORY_PARALLEL_THRESHOLD
-        ? workerCap
-        : 1;
-    const chunkSize = Math.ceil(
-      tradeBlueprintsSnapshot.length / Math.max(1, workerCount)
-    );
-    const chunks: TradeBlueprint[][] = [];
-
-    for (let i = 0; i < tradeBlueprintsSnapshot.length; i += chunkSize) {
-      const chunk = tradeBlueprintsSnapshot.slice(i, i + chunkSize);
-
-      if (chunk.length > 0) {
-        chunks.push(chunk);
-      }
-    }
-
-    if (chunks.length <= 1) {
-      let worker: Worker;
-      try {
-        worker = new Worker(new URL("./backtestHistoryWorker.ts", import.meta.url));
-      } catch {
-        handleFallback();
-        return () => {
-          cancelled = true;
-          clearFallbackTimeout();
-        };
-      }
-      workers.push(worker);
-
-      worker.onmessage = (event: MessageEvent<BacktestHistoryWorkerResponse>) => {
-        worker.terminate();
-
-        if (failed || cancelled || event.data.requestId !== nextJobId) {
-          return;
-        }
-
-        commitRows(
-          normalizeBacktestHistoryRows(
-            finalizeBacktestHistoryRows(
-              event.data.rows,
-              backtestTargetTradesSnapshot
-            )
-          )
-        );
-      };
-
-      worker.onerror = () => {
-        worker.terminate();
-        handleFallback();
-      };
-
-      try {
-        worker.postMessage({
-          requestId: nextJobId,
-          blueprints: tradeBlueprintsSnapshot,
-          candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
-          modelNamesById,
-          tpDollars: tpDollarsSnapshot,
-          slDollars: slDollarsSnapshot
-        });
-      } catch {
-        worker.terminate();
-        handleFallback();
-      }
-
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL("./backtestHistoryWorker.ts", import.meta.url));
+    } catch {
+      handleFallback();
       return () => {
         cancelled = true;
         clearFallbackTimeout();
-        worker.terminate();
       };
     }
+    workers.push(worker);
 
-    const rowChunks: BacktestHistoryRow[][] = new Array(chunks.length);
-    let completedChunks = 0;
+    worker.onmessage = (event: MessageEvent<BacktestHistoryWorkerResponse>) => {
+      const message = event.data;
 
-    chunks.forEach((chunk, index) => {
-      if (failed || cancelled || settled) {
+      if (failed || cancelled || message.requestId !== nextJobId) {
         return;
       }
 
-      let worker: Worker;
-      try {
-        worker = new Worker(new URL("./backtestHistoryWorker.ts", import.meta.url));
-      } catch {
-        handleFallback();
+      if (message.type === "progress") {
+        const total = Math.max(1, message.total);
+        setLoadingProgress(message.processed / total, message.cursorMs);
         return;
       }
-      workers.push(worker);
 
-      worker.onmessage = (event: MessageEvent<BacktestHistoryWorkerResponse>) => {
-        worker.terminate();
-
-        if (failed || cancelled || event.data.requestId !== nextJobId) {
-          return;
-        }
-
-        rowChunks[index] = event.data.rows;
-        completedChunks += 1;
-        setLoadingProgress(completedChunks / chunks.length);
-
-        if (completedChunks !== chunks.length) {
-          return;
-        }
-
-        commitRows(
-          normalizeBacktestHistoryRows(
-            finalizeBacktestHistoryRows(
-              rowChunks.flat(),
-              backtestTargetTradesSnapshot
-            )
+      worker.terminate();
+      commitRows(
+        normalizeBacktestHistoryRows(
+          finalizeBacktestHistoryRows(
+            message.rows,
+            backtestTargetTradesSnapshot
           )
-        );
-      };
+        )
+      );
+    };
 
-      worker.onerror = () => {
-        worker.terminate();
-        handleFallback();
-      };
+    worker.onerror = () => {
+      worker.terminate();
+      handleFallback();
+    };
 
-      try {
-        worker.postMessage({
-          requestId: nextJobId,
-          blueprints: chunk,
-          candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
-          modelNamesById,
-          tpDollars: tpDollarsSnapshot,
-          slDollars: slDollarsSnapshot
-        });
-      } catch {
-        worker.terminate();
-        handleFallback();
-      }
-    });
+    try {
+      worker.postMessage({
+        requestId: nextJobId,
+        blueprints: chronologicalTradeBlueprints,
+        candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
+        modelNamesById,
+        tpDollars: tpDollarsSnapshot,
+        slDollars: slDollarsSnapshot
+      });
+    } catch {
+      worker.terminate();
+      handleFallback();
+    }
 
     return () => {
       cancelled = true;
       clearFallbackTimeout();
-      workers.forEach((worker) => worker.terminate());
+      worker.terminate();
     };
   }, [
     backtestHasRun,
@@ -7969,6 +7898,123 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
     ];
   }, [backtestSummary]);
+
+  const mainSettingsAiStats = useMemo<BacktestHeroStatCard[]>(() => {
+    return [
+      {
+        label: "AI Method",
+        value: aiMode === "off" ? "OFF" : aiMode.toUpperCase(),
+        tone: aiMode === "off" ? "neutral" : "up",
+        valueStyle: { color: aiMode !== "off" ? "#60a5fa" : "rgba(255,255,255,0.4)" },
+        meta: aiMode === "off" ? "Decision engine disabled" : "Primary AI decision mode"
+      },
+      {
+        label: "Confidence Gate",
+        value: `${effectiveConfidenceThreshold}%`,
+        tone: confidenceGateDisabled ? "neutral" : "up",
+        valueStyle: { color: confidenceGateDisabled ? "rgba(255,255,255,0.4)" : "#facc15" },
+        meta: confidenceGateDisabled ? "Gate disabled" : "Minimum confidence threshold"
+      },
+      {
+        label: "Avg Confidence",
+        value: `${backtestSummary.averageConfidence.toFixed(1)}%`,
+        tone:
+          backtestSummary.averageConfidence >= 60
+            ? "up"
+            : backtestSummary.averageConfidence >= 40
+              ? "neutral"
+              : "down",
+        valueStyle: {
+          color:
+            backtestSummary.averageConfidence >= 60
+              ? "#34d399"
+              : backtestSummary.averageConfidence >= 40
+                ? "#facc15"
+                : "#f87171"
+        },
+        meta: "Mean confidence across executed trades"
+      },
+      {
+        label: "Visible Trades",
+        value: backtestTrades.length.toLocaleString("en-US"),
+        tone: "neutral",
+        valueStyle: { color: "#60a5fa" },
+        meta: "Trades after current filters"
+      },
+      {
+        label: "Anti-Cheat",
+        value: antiCheatEnabled ? "ON" : "OFF",
+        tone: antiCheatEnabled ? "up" : "down",
+        valueStyle: { color: antiCheatEnabled ? "#34d399" : "#f87171" },
+        meta: "Spoof/invalid pattern checks"
+      },
+      {
+        label: "Libraries",
+        value: selectedAiLibraryCount > 0 ? `${selectedAiLibraryCount} Active` : "OFF",
+        tone: selectedAiLibraryCount > 0 ? "up" : "neutral",
+        valueStyle: { color: selectedAiLibraryCount > 0 ? "#34d399" : "rgba(255,255,255,0.4)" },
+        meta: "Loaded AI data libraries"
+      },
+      {
+        label: "AI Model",
+        value: aiModelEnabled && aiMode !== "off" ? "ON" : "OFF",
+        tone: aiModelEnabled && aiMode !== "off" ? "up" : "neutral",
+        valueStyle: { color: aiModelEnabled && aiMode !== "off" ? "#34d399" : "rgba(255,255,255,0.4)" },
+        meta: "Model-driven entry module"
+      },
+      {
+        label: "AI Filter",
+        value: aiFilterEnabled && aiMode !== "off" ? "ON" : "OFF",
+        tone: aiFilterEnabled && aiMode !== "off" ? "up" : "neutral",
+        valueStyle: { color: aiFilterEnabled && aiMode !== "off" ? "#34d399" : "rgba(255,255,255,0.4)" },
+        meta: "Confidence filtering module"
+      },
+      {
+        label: "Static Lib + Cluster",
+        value: staticLibrariesClusters ? "ON" : "OFF",
+        tone: staticLibrariesClusters ? "up" : "neutral",
+        valueStyle: { color: staticLibrariesClusters ? "#34d399" : "rgba(255,255,255,0.4)" },
+        meta: "Static AI data mode"
+      },
+      {
+        label: "Active Models",
+        value: selectedAiModelCount.toLocaleString("en-US"),
+        tone: selectedAiModelCount > 0 ? "up" : "neutral",
+        valueStyle: { color: selectedAiModelCount > 0 ? "#34d399" : "rgba(255,255,255,0.4)" },
+        meta: "Enabled models in Main Settings"
+      },
+      {
+        label: "Active Features",
+        value: selectedAiFeatureCount.toLocaleString("en-US"),
+        tone: selectedAiFeatureCount > 0 ? "up" : "neutral",
+        valueStyle: { color: selectedAiFeatureCount > 0 ? "#60a5fa" : "rgba(255,255,255,0.4)" },
+        meta: "Enabled feature groups"
+      },
+      {
+        label: "Feature Dimensions",
+        value: configuredAiFeatureDimensionCount.toLocaleString("en-US"),
+        tone: configuredAiFeatureDimensionCount > 0 ? "up" : "neutral",
+        valueStyle: {
+          color: configuredAiFeatureDimensionCount > 0 ? "#60a5fa" : "rgba(255,255,255,0.4)"
+        },
+        meta: "Configured feature dimensions"
+      }
+    ];
+  }, [
+    aiFilterEnabled,
+    aiMode,
+    aiModelEnabled,
+    antiCheatEnabled,
+    backtestSummary.averageConfidence,
+    backtestTrades.length,
+    confidenceGateDisabled,
+    configuredAiFeatureDimensionCount,
+    effectiveConfidenceThreshold,
+    selectedAiFeatureCount,
+    selectedAiLibraryCount,
+    selectedAiModelCount,
+    staticLibrariesClusters
+  ]);
 
   const mainStatsSessionRows = useMemo(() => {
     const map = new Map<string, { label: string; total: number; trades: number }>();
@@ -10898,7 +10944,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             className="backtest-summary-card backtest-summary-card-animated"
                           >
                             <span>{item.label}</span>
-                            <strong className={item.tone === "neutral" ? "" : item.tone}>{item.value}</strong>
+                            <strong
+                              className={item.tone === "neutral" ? "" : item.tone}
+                              style={item.valueStyle}
+                            >
+                              {item.value}
+                            </strong>
                             <small>{item.meta}</small>
                           </article>
                         ))}
@@ -11104,34 +11155,26 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
               {selectedBacktestTab === "mainSettings" ? (
                 <div className="backtest-grid" style={{ gap: "0.75rem" }}>
-                  <div className="main-settings-kpi-grid" style={{ gridTemplateColumns: "repeat(6, 1fr)", gap: "0.6rem" }}>
-                    <div className="main-settings-kpi-card">
-                      <span>AI Method</span>
-                      <strong style={{ color: aiMode !== "off" ? "#60a5fa" : "rgba(255,255,255,0.4)" }}>{aiMode === "off" ? "OFF" : aiMode.toUpperCase()}</strong>
-                    </div>
-                    <div className="main-settings-kpi-card">
-                      <span>Confidence Gate</span>
-                      <strong style={{ color: confidenceGateDisabled ? "rgba(255,255,255,0.4)" : "#facc15" }}>
-                        {effectiveConfidenceThreshold}%
-                      </strong>
-                    </div>
-                    <div className="main-settings-kpi-card">
-                      <span>Avg Confidence</span>
-                      <strong style={{ color: backtestSummary.averageConfidence >= 60 ? "#34d399" : backtestSummary.averageConfidence >= 40 ? "#facc15" : "#f87171" }}>{backtestSummary.averageConfidence.toFixed(1)}%</strong>
-                    </div>
-                    <div className="main-settings-kpi-card">
-                      <span>Visible Trades</span>
-                      <strong style={{ color: "#60a5fa" }}>{backtestTrades.length}</strong>
-                    </div>
-                    <div className="main-settings-kpi-card">
-                      <span>Anti-Cheat</span>
-                      <strong style={{ color: antiCheatEnabled ? "#34d399" : "#f87171" }}>{antiCheatEnabled ? "ON" : "OFF"}</strong>
-                    </div>
-                    <div className="main-settings-kpi-card">
-                      <span>Libraries</span>
-                      <strong style={{ color: selectedAiLibraryCount > 0 ? "#34d399" : "rgba(255,255,255,0.4)" }}>
-                        {selectedAiLibraryCount > 0 ? `${selectedAiLibraryCount} Active` : "OFF"}
-                      </strong>
+                  <div className="main-settings-kpi-strip" aria-label="AI rolling statistics">
+                    <div className="main-settings-kpi-strip-track">
+                      {[0, 1].map((sequenceIndex) => (
+                        <div
+                          key={sequenceIndex}
+                          className="main-settings-kpi-strip-sequence"
+                          aria-hidden={sequenceIndex === 1}
+                        >
+                          {mainSettingsAiStats.map((item) => (
+                            <article
+                              key={`${sequenceIndex}-${item.label}`}
+                              className="main-settings-kpi-card backtest-summary-card-animated"
+                            >
+                              <span>{item.label}</span>
+                              <strong style={item.valueStyle}>{item.value}</strong>
+                              <small>{item.meta}</small>
+                            </article>
+                          ))}
+                        </div>
+                      ))}
                     </div>
                   </div>
 

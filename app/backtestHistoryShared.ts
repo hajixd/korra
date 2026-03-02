@@ -52,10 +52,23 @@ export type BacktestHistoryWorkerRequest = {
   slDollars: number;
 };
 
-export type BacktestHistoryWorkerResponse = {
+export type BacktestHistoryWorkerProgressResponse = {
   requestId: number;
+  type: "progress";
+  processed: number;
+  total: number;
+  cursorMs: number;
+};
+
+export type BacktestHistoryWorkerResultResponse = {
+  requestId: number;
+  type: "result";
   rows: BacktestHistoryRow[];
 };
+
+export type BacktestHistoryWorkerResponse =
+  | BacktestHistoryWorkerProgressResponse
+  | BacktestHistoryWorkerResultResponse;
 
 const hashString = (value: string) => {
   let hash = 0;
@@ -179,134 +192,152 @@ const formatDateTime = (timestampMs: number): string => {
   });
 };
 
+type ComputeBacktestHistoryRowsChunkArgs = Omit<BacktestHistoryWorkerRequest, "requestId"> & {
+  onProgress?: (processed: number, total: number, cursorMs: number) => void;
+};
+
 export const computeBacktestHistoryRowsChunk = ({
   blueprints,
   candleSeriesBySymbol,
   modelNamesById,
   tpDollars,
-  slDollars
-}: Omit<BacktestHistoryWorkerRequest, "requestId">): BacktestHistoryRow[] => {
+  slDollars,
+  onProgress
+}: ComputeBacktestHistoryRowsChunkArgs): BacktestHistoryRow[] => {
   const rows: BacktestHistoryRow[] = [];
+  const totalBlueprints = blueprints.length;
 
-  for (const blueprint of blueprints) {
-    const entryModel = modelNamesById[blueprint.modelId] ?? "Main Settings";
-    const list = candleSeriesBySymbol[blueprint.symbol] ?? [];
+  for (let index = 0; index < blueprints.length; index += 1) {
+    const blueprint = blueprints[index]!;
 
-    if (list.length < 16) {
-      continue;
-    }
+    try {
+      const entryModel = modelNamesById[blueprint.modelId] ?? "Main Settings";
+      const list = candleSeriesBySymbol[blueprint.symbol] ?? [];
 
-    const entryIndex = findCandleIndexAtOrBefore(list, blueprint.entryMs);
-    const rawExitIndex = findCandleIndexAtOrBefore(list, blueprint.exitMs);
-
-    if (entryIndex < 0 || rawExitIndex < 0) {
-      continue;
-    }
-
-    const exitIndex = Math.min(list.length - 1, Math.max(entryIndex + 1, rawExitIndex));
-
-    if (exitIndex <= entryIndex) {
-      continue;
-    }
-
-    const entryPrice = list[entryIndex].close;
-    const units = Math.max(0.000001, Math.abs(blueprint.units) || 0.000001);
-    const tpDistance =
-      Number.isFinite(tpDollars) && tpDollars > 0
-        ? Math.max(0.000001, tpDollars / units)
-        : null;
-    const slDistance =
-      Number.isFinite(slDollars) && slDollars > 0
-        ? Math.max(0.000001, slDollars / units)
-        : null;
-
-    let riskPerUnit = 0;
-    if (tpDistance == null || slDistance == null) {
-      const rand = createSeededRng(hashString(`mapped-${blueprint.id}`));
-      let atr = 0;
-      let atrCount = 0;
-
-      for (let i = Math.max(1, entryIndex - 20); i <= entryIndex; i += 1) {
-        atr += list[i].high - list[i].low;
-        atrCount += 1;
+      if (list.length < 16) {
+        continue;
       }
 
-      atr /= Math.max(1, atrCount);
-      riskPerUnit = Math.max(
-        entryPrice * blueprint.riskPct,
-        atr * (0.6 + rand() * 0.6),
-        entryPrice * 0.0009
+      const entryIndex = findCandleIndexAtOrBefore(list, blueprint.entryMs);
+      const rawExitIndex = findCandleIndexAtOrBefore(list, blueprint.exitMs);
+
+      if (entryIndex < 0 || rawExitIndex < 0) {
+        continue;
+      }
+
+      const exitIndex = Math.min(list.length - 1, Math.max(entryIndex + 1, rawExitIndex));
+
+      if (exitIndex <= entryIndex) {
+        continue;
+      }
+
+      const entryPrice = list[entryIndex].close;
+      const units = Math.max(0.000001, Math.abs(blueprint.units) || 0.000001);
+      const tpDistance =
+        Number.isFinite(tpDollars) && tpDollars > 0
+          ? Math.max(0.000001, tpDollars / units)
+          : null;
+      const slDistance =
+        Number.isFinite(slDollars) && slDollars > 0
+          ? Math.max(0.000001, slDollars / units)
+          : null;
+
+      let riskPerUnit = 0;
+      if (tpDistance == null || slDistance == null) {
+        const rand = createSeededRng(hashString(`mapped-${blueprint.id}`));
+        let atr = 0;
+        let atrCount = 0;
+
+        for (let i = Math.max(1, entryIndex - 20); i <= entryIndex; i += 1) {
+          atr += list[i].high - list[i].low;
+          atrCount += 1;
+        }
+
+        atr /= Math.max(1, atrCount);
+        riskPerUnit = Math.max(
+          entryPrice * blueprint.riskPct,
+          atr * (0.6 + rand() * 0.6),
+          entryPrice * 0.0009
+        );
+      }
+
+      const effectiveTpDistance =
+        tpDistance ?? Math.max(0.000001, riskPerUnit * Math.max(0.25, blueprint.rr));
+      const effectiveSlDistance =
+        slDistance ?? Math.max(0.000001, riskPerUnit);
+
+      const stopPrice =
+        blueprint.side === "Long"
+          ? Math.max(0.000001, entryPrice - effectiveSlDistance)
+          : entryPrice + effectiveSlDistance;
+      const targetPrice =
+        blueprint.side === "Long"
+          ? entryPrice + effectiveTpDistance
+          : Math.max(0.000001, entryPrice - effectiveTpDistance);
+      const path = evaluateTpSlPath(
+        list,
+        blueprint.side,
+        entryIndex,
+        targetPrice,
+        stopPrice,
+        exitIndex
       );
+
+      const resolvedExitIndex = path.hit ? path.hitIndex : exitIndex;
+      const rawOutcomePrice = path.hit ? path.outcomePrice : list[resolvedExitIndex].close;
+      const outcomePrice = Math.max(0.000001, rawOutcomePrice);
+      const exitReason = path.hit
+        ? path.result === "Loss"
+          ? "Stop Loss"
+          : "Take Profit"
+        : "Model Exit";
+      const result: BacktestHistoryTradeResult = path.hit
+        ? (path.result ?? "Loss")
+        : blueprint.side === "Long"
+          ? outcomePrice >= entryPrice
+            ? "Win"
+            : "Loss"
+          : outcomePrice <= entryPrice
+            ? "Win"
+            : "Loss";
+      const pnlPct =
+        blueprint.side === "Long"
+          ? ((outcomePrice - entryPrice) / entryPrice) * 100
+          : ((entryPrice - outcomePrice) / entryPrice) * 100;
+      const pnlUsd =
+        blueprint.side === "Long"
+          ? (outcomePrice - entryPrice) * units
+          : (entryPrice - outcomePrice) * units;
+
+      rows.push({
+        id: blueprint.id,
+        symbol: blueprint.symbol,
+        side: blueprint.side,
+        result,
+        entrySource: entryModel,
+        exitReason,
+        pnlPct,
+        pnlUsd,
+        entryTime: toUtcTimestamp(list[entryIndex].time),
+        exitTime: toUtcTimestamp(list[resolvedExitIndex].time),
+        entryPrice,
+        targetPrice,
+        stopPrice,
+        outcomePrice,
+        units,
+        entryAt: formatDateTime(list[entryIndex].time),
+        exitAt: formatDateTime(list[resolvedExitIndex].time),
+        time: formatDateTime(list[resolvedExitIndex].time)
+      });
+    } finally {
+      if (onProgress) {
+        onProgress(
+          index + 1,
+          totalBlueprints,
+          Math.max(blueprint.entryMs, blueprint.exitMs)
+        );
+      }
     }
-
-    const effectiveTpDistance =
-      tpDistance ?? Math.max(0.000001, riskPerUnit * Math.max(0.25, blueprint.rr));
-    const effectiveSlDistance =
-      slDistance ?? Math.max(0.000001, riskPerUnit);
-
-    const stopPrice =
-      blueprint.side === "Long"
-        ? Math.max(0.000001, entryPrice - effectiveSlDistance)
-        : entryPrice + effectiveSlDistance;
-    const targetPrice =
-      blueprint.side === "Long"
-        ? entryPrice + effectiveTpDistance
-        : Math.max(0.000001, entryPrice - effectiveTpDistance);
-    const path = evaluateTpSlPath(
-      list,
-      blueprint.side,
-      entryIndex,
-      targetPrice,
-      stopPrice,
-      exitIndex
-    );
-
-    const resolvedExitIndex = path.hit ? path.hitIndex : exitIndex;
-    const rawOutcomePrice = path.hit ? path.outcomePrice : list[resolvedExitIndex].close;
-    const outcomePrice = Math.max(0.000001, rawOutcomePrice);
-    const exitReason = path.hit
-      ? path.result === "Loss"
-        ? "Stop Loss"
-        : "Take Profit"
-      : "Model Exit";
-    const result: BacktestHistoryTradeResult = path.hit
-      ? (path.result ?? "Loss")
-      : blueprint.side === "Long"
-        ? outcomePrice >= entryPrice
-          ? "Win"
-          : "Loss"
-        : outcomePrice <= entryPrice
-          ? "Win"
-          : "Loss";
-    const pnlPct =
-      blueprint.side === "Long"
-        ? ((outcomePrice - entryPrice) / entryPrice) * 100
-        : ((entryPrice - outcomePrice) / entryPrice) * 100;
-    const pnlUsd =
-      blueprint.side === "Long"
-        ? (outcomePrice - entryPrice) * units
-        : (entryPrice - outcomePrice) * units;
-
-    rows.push({
-      id: blueprint.id,
-      symbol: blueprint.symbol,
-      side: blueprint.side,
-      result,
-      entrySource: entryModel,
-      exitReason,
-      pnlPct,
-      pnlUsd,
-      entryTime: toUtcTimestamp(list[entryIndex].time),
-      exitTime: toUtcTimestamp(list[resolvedExitIndex].time),
-      entryPrice,
-      targetPrice,
-      stopPrice,
-      outcomePrice,
-      units,
-      entryAt: formatDateTime(list[entryIndex].time),
-      exitAt: formatDateTime(list[resolvedExitIndex].time),
-      time: formatDateTime(list[resolvedExitIndex].time)
-    });
   }
 
   return rows;

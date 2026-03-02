@@ -451,6 +451,7 @@ button {
   --backtest-stat-gap: 0.65rem;
   --backtest-visible-cards: 8;
   --backtest-stat-card-width: 182px;
+  --backtest-summary-scroll-duration: 54s;
   --backtest-summary-cycle-width: calc(
     (16 * var(--backtest-stat-card-width)) + (16 * var(--backtest-stat-gap))
   );
@@ -463,7 +464,7 @@ button {
   width: max-content;
   will-change: transform;
   transform: translateX(calc(-1 * var(--backtest-summary-cycle-width)));
-  animation: backtest-summary-scroll-right 46s linear infinite;
+  animation: backtest-summary-scroll-right var(--backtest-summary-scroll-duration) linear infinite;
 }
 
 .backtest-summary-strip-sequence {
@@ -502,6 +503,18 @@ button {
   transform: translateY(-2px);
 }
 
+.backtest-summary-strip .backtest-summary-card span,
+.backtest-summary-strip .backtest-summary-card small {
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  letter-spacing: 0.035em;
+}
+
+.backtest-summary-strip .backtest-summary-card strong {
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-stretch: normal;
+  letter-spacing: 0.01em;
+}
+
 .backtest-summary-card span,
 .backtest-summary-card small {
   color: rgba(255, 255, 255, 0.65);
@@ -536,6 +549,11 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
   .backtest-summary-strip-track {
+    animation: none;
+    transform: translateX(0);
+  }
+
+  .main-settings-kpi-strip-track {
     animation: none;
     transform: translateX(0);
   }
@@ -2527,6 +2545,45 @@ button {
   grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
+.main-settings-kpi-strip {
+  --main-kpi-gap: 0.6rem;
+  --main-kpi-visible-cards: 6;
+  --main-kpi-card-width: 198px;
+  --main-kpi-scroll-duration: 54s;
+  --main-kpi-cycle-width: calc((12 * var(--main-kpi-card-width)) + (12 * var(--main-kpi-gap)));
+  overflow: hidden;
+  container-type: inline-size;
+}
+
+.main-settings-kpi-strip-track {
+  display: flex;
+  width: max-content;
+  will-change: transform;
+  transform: translateX(calc(-1 * var(--main-kpi-cycle-width)));
+  animation: main-settings-kpi-scroll-right var(--main-kpi-scroll-duration) linear infinite;
+}
+
+.main-settings-kpi-strip-sequence {
+  flex: 0 0 auto;
+  display: flex;
+  gap: var(--main-kpi-gap);
+  padding-right: var(--main-kpi-gap);
+}
+
+.main-settings-kpi-strip-sequence .main-settings-kpi-card {
+  flex: 0 0 var(--main-kpi-card-width);
+  min-width: 0;
+}
+
+@supports (width: 1cqw) {
+  .main-settings-kpi-strip {
+    --main-kpi-card-width: calc(
+      (100cqw - ((var(--main-kpi-visible-cards) - 1) * var(--main-kpi-gap))) /
+        var(--main-kpi-visible-cards)
+    );
+  }
+}
+
 .main-settings-kpi-card {
   padding: 0.55rem 0.62rem;
   border-radius: 12px;
@@ -2550,6 +2607,12 @@ button {
   line-height: 1.1;
 }
 
+.main-settings-kpi-card small {
+  font-size: 0.62rem;
+  color: rgba(255, 255, 255, 0.62);
+  line-height: 1.25;
+}
+
 .main-settings-core-grid {
   display: grid;
   gap: 0.7rem;
@@ -2559,6 +2622,16 @@ button {
 
 .main-settings-core-grid.single {
   grid-template-columns: minmax(0, 1fr);
+}
+
+@keyframes main-settings-kpi-scroll-right {
+  from {
+    transform: translateX(calc(-1 * var(--main-kpi-cycle-width)));
+  }
+
+  to {
+    transform: translateX(0);
+  }
 }
 
 .main-settings-panel {
@@ -3841,6 +3914,10 @@ button {
     --backtest-visible-cards: 4;
   }
 
+  .main-settings-kpi-strip {
+    --main-kpi-visible-cards: 3;
+  }
+
   .main-settings-layout {
     grid-template-columns: 1fr;
   }
@@ -3984,6 +4061,10 @@ button {
 @media (max-width: 760px) {
   .backtest-summary-strip {
     --backtest-visible-cards: 2;
+  }
+
+  .main-settings-kpi-strip {
+    --main-kpi-visible-cards: 2;
   }
 
   .backtest-summary-grid,
