@@ -9650,75 +9650,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     selectedChartCandles.length
   ]);
 
-  const aiZipClusterLibraryPoints = useMemo(() => {
-    if (!isClusterBacktestTabActive) return [];
-    const maxIndex = Math.max(0, selectedChartCandles.length - 1);
-    const selectedLibIds = appliedBacktestSettings.selectedAiLibraries;
-    const executedTradeIds = new Set(backtestTrades.map((t) => t.id));
-    const suppressedPool = backtestTimeFilteredTrades.filter((t) => !executedTradeIds.has(t.id));
-    const points: any[] = [];
-    for (const libId of selectedLibIds) {
-      const def = aiLibraryDefs.find((d) => d.id === libId);
-      if (!def) continue;
-      const settings = { ...def.defaults, ...(appliedBacktestSettings.selectedAiLibrarySettings[libId] ?? {}) };
-      const normalizedId = libId.toLowerCase();
-      let source: HistoryItem[] = backtestLibraryCandidateTrades;
-      if (normalizedId === "core") source = backtestTrades;
-      else if (normalizedId === "suppressed") source = suppressedPool;
-      else if (normalizedId === "recent") {
-        const w = clamp(Math.floor(Number(settings.windowTrades ?? 1500) || 1500), 0, 5000);
-        source = w > 0 ? backtestTrades.slice(-w) : [];
-      } else if (normalizedId === "tokyo") source = backtestLibraryCandidateTrades.filter((t) => getSessionLabel(t.entryTime) === "Tokyo");
-      else if (normalizedId === "sydney") source = backtestLibraryCandidateTrades.filter((t) => getSessionLabel(t.entryTime) === "Sydney");
-      else if (normalizedId === "london") source = backtestLibraryCandidateTrades.filter((t) => getSessionLabel(t.entryTime) === "London");
-      else if (normalizedId === "newyork") source = backtestLibraryCandidateTrades.filter((t) => getSessionLabel(t.entryTime) === "New York");
-      else if (normalizedId === "terrific") {
-        const count = clamp(Math.floor(Number(settings.count ?? 96) || 96), 0, 100000);
-        source = [...backtestLibraryCandidateTrades].sort((a, b) => b.pnlUsd - a.pnlUsd).slice(0, count);
-      } else if (normalizedId === "terrible") {
-        const count = clamp(Math.floor(Number(settings.count ?? 96) || 96), 0, 100000);
-        source = [...backtestLibraryCandidateTrades].sort((a, b) => a.pnlUsd - b.pnlUsd).slice(0, count);
-      } else if ((settings as any).kind === "model_sim") {
-        const targetModel = String((settings as any).model ?? "");
-        source = backtestLibraryCandidateTrades.filter((t) => t.entrySource === targetModel);
-      }
-      const stride = clamp(Math.floor(Number((settings as any).stride ?? 0) || 0), 0, 5000);
-      if (stride > 1) source = source.filter((_, i) => i % stride === 0);
-      const baselineWinRate = getOutcomeWinRatePercent(source, (t) => t.result === "Win");
-      const rawTargetWinRate = Number(settings[AI_LIBRARY_TARGET_WIN_RATE_KEY]);
-      const targetWinRate = Number.isFinite(rawTargetWinRate) ? clamp(rawTargetWinRate, 0, 100) : baselineWinRate;
-      const maxSamples = clamp(Math.floor(Number((settings as any).maxSamples ?? Math.max(96, source.length)) || Math.max(96, source.length)), 0, 100000);
-      const balanced = rebalanceItemsToTargetWinRate(source, maxSamples, targetWinRate, (t) => t.result === "Win", def.id === "terrific" || def.id === "terrible");
-      balanced.forEach((trade, i) => {
-        const fallbackIndex = maxIndex > 0 ? Math.round((i / Math.max(1, balanced.length - 1)) * maxIndex) : 0;
-        const signalIndex = clamp(candleIndexByUnix.get(Number(trade.entryTime)) ?? fallbackIndex, 0, maxIndex);
-        const label = trade.result === "Win" ? 1 : -1;
-        points.push({
-          id: `lib|${libId}|${trade.entrySource}|${signalIndex}|${i}`,
-          libId,
-          model: trade.entrySource,
-          signalIndex,
-          entryTime: Number(trade.entryTime),
-          dir: trade.side === "Long" ? 1 : -1,
-          pnl: trade.pnlUsd,
-          label,
-          result: label > 0 ? "TP" : "SL",
-        });
-      });
-    }
-    return points;
-  }, [
-    isClusterBacktestTabActive,
-    appliedBacktestSettings.selectedAiLibraries,
-    appliedBacktestSettings.selectedAiLibrarySettings,
-    aiLibraryDefs,
-    backtestLibraryCandidateTrades,
-    backtestTrades,
-    backtestTimeFilteredTrades,
-    candleIndexByUnix,
-    selectedChartCandles.length,
-  ]);
-
   useEffect(() => {
     if (!isClusterBacktestTabActive) {
       return;
@@ -13801,7 +13732,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         candles={aiZipClusterCandles}
                         trades={aiZipClusterTrades}
                         ghostEntries={[]}
-                        libraryPoints={aiZipClusterLibraryPoints}
+                        libraryPoints={[]}
                         activeLibraries={appliedBacktestSettings.selectedAiLibraries}
                         libraryCounts={{}}
                         chunkBars={appliedBacktestSettings.chunkBars}
@@ -13836,7 +13767,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         candles={aiZipClusterCandles}
                         trades={aiZipClusterTrades}
                         ghostEntries={[]}
-                        libraryPoints={aiZipClusterLibraryPoints}
+                        libraryPoints={[]}
                         chunkBarsDeb={appliedBacktestSettings.chunkBars}
                         potential={null}
                         parseMode="utc"
