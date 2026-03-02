@@ -21479,6 +21479,193 @@ export function ClusterMap({
   );
 }
 
+function createUMAP3DWorker(): Worker {
+  const workerCode = `
+    const EPS = 1e-9;
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, Number(v) || 0));
+    const hashToUnit = (seed) => {
+      const x = Math.sin((Number(seed) || 0) * 12.9898 + 78.233) * 43758.5453;
+      return x - Math.floor(x);
+    };
+    const dot = (a, b) => {
+      let s = 0;
+      const n = Math.min(a.length, b.length);
+      for (let i = 0; i < n; i++) s += (a[i] || 0) * (b[i] || 0);
+      return s;
+    };
+    const normalize = (v) => {
+      let n2 = 0;
+      for (let i = 0; i < v.length; i++) n2 += v[i] * v[i];
+      const inv = 1 / Math.sqrt(Math.max(EPS, n2));
+      for (let i = 0; i < v.length; i++) v[i] *= inv;
+      return v;
+    };
+    const covMul = (data, n, d, w, out) => {
+      out.fill(0);
+      for (let i = 0; i < n; i++) {
+        const rowOffset = i * d;
+        let rowDot = 0;
+        for (let j = 0; j < d; j++) rowDot += data[rowOffset + j] * w[j];
+        for (let j = 0; j < d; j++) out[j] += data[rowOffset + j] * rowDot;
+      }
+      const invN = 1 / Math.max(1, n);
+      for (let j = 0; j < d; j++) out[j] *= invN;
+      return out;
+    };
+
+    self.onmessage = (ev) => {
+      const msg = ev.data || {};
+      const vectors = Array.isArray(msg.vectors) ? msg.vectors : [];
+      const kRaw = Number(msg.k || 12);
+      const k = clamp(Math.round(kRaw), 5, 160);
+
+      try {
+        const n = vectors.length;
+        if (n <= 0) {
+          self.postMessage({ type: "result", res: { coords: [] } });
+          return;
+        }
+
+        let d = 0;
+        for (let i = 0; i < n; i++) {
+          const row = Array.isArray(vectors[i]) ? vectors[i] : [];
+          if (row.length > d) d = row.length;
+        }
+        d = Math.max(2, d);
+
+        self.postMessage({ type: "progress", phase: "Standardizing", pct: 0.12 });
+
+        const data = new Float64Array(n * d);
+        const means = new Float64Array(d);
+        const vars = new Float64Array(d);
+
+        for (let i = 0; i < n; i++) {
+          const row = Array.isArray(vectors[i]) ? vectors[i] : [];
+          const off = i * d;
+          for (let j = 0; j < d; j++) {
+            const value = Number(row[j]);
+            const finite = Number.isFinite(value) ? value : 0;
+            data[off + j] = finite;
+            means[j] += finite;
+          }
+        }
+
+        for (let j = 0; j < d; j++) means[j] /= Math.max(1, n);
+
+        for (let i = 0; i < n; i++) {
+          const off = i * d;
+          for (let j = 0; j < d; j++) {
+            const centered = data[off + j] - means[j];
+            vars[j] += centered * centered;
+          }
+        }
+
+        for (let j = 0; j < d; j++) {
+          vars[j] = Math.sqrt(Math.max(EPS, vars[j] / Math.max(1, n - 1)));
+        }
+
+        for (let i = 0; i < n; i++) {
+          const off = i * d;
+          for (let j = 0; j < d; j++) {
+            data[off + j] = (data[off + j] - means[j]) / vars[j];
+          }
+        }
+
+        self.postMessage({ type: "progress", phase: "Projecting", pct: 0.34 });
+
+        const components = [];
+        const iterations = Math.max(14, Math.min(28, Math.round(12 + k * 0.08)));
+        const tmp = new Float64Array(d);
+
+        for (let axis = 0; axis < 3; axis++) {
+          const w = new Float64Array(d);
+          for (let j = 0; j < d; j++) {
+            w[j] = hashToUnit((axis + 1) * 1000003 + (j + 1) * 9176) * 2 - 1;
+          }
+          normalize(w);
+
+          for (let iter = 0; iter < iterations; iter++) {
+            covMul(data, n, d, w, tmp);
+            for (let p = 0; p < components.length; p++) {
+              const prev = components[p];
+              const proj = dot(tmp, prev);
+              for (let j = 0; j < d; j++) tmp[j] -= proj * prev[j];
+            }
+            normalize(tmp);
+            for (let j = 0; j < d; j++) w[j] = tmp[j];
+          }
+
+          components.push(w.slice(0));
+          self.postMessage({
+            type: "progress",
+            phase: "Projecting",
+            pct: 0.34 + ((axis + 1) / 3) * 0.45
+          });
+        }
+
+        self.postMessage({ type: "progress", phase: "Packing", pct: 0.86 });
+
+        const axisScores = [new Float64Array(n), new Float64Array(n), new Float64Array(n)];
+        const axisMeans = new Float64Array(3);
+        const axisStds = new Float64Array(3);
+
+        for (let i = 0; i < n; i++) {
+          const off = i * d;
+          for (let axis = 0; axis < 3; axis++) {
+            const comp = components[axis];
+            let score = 0;
+            for (let j = 0; j < d; j++) score += data[off + j] * comp[j];
+            axisScores[axis][i] = score;
+            axisMeans[axis] += score;
+          }
+        }
+
+        for (let axis = 0; axis < 3; axis++) {
+          axisMeans[axis] /= Math.max(1, n);
+        }
+
+        for (let axis = 0; axis < 3; axis++) {
+          let varSum = 0;
+          for (let i = 0; i < n; i++) {
+            const c = axisScores[axis][i] - axisMeans[axis];
+            varSum += c * c;
+          }
+          axisStds[axis] = Math.sqrt(Math.max(EPS, varSum / Math.max(1, n - 1)));
+        }
+
+        const coords = new Array(n);
+        const range = 2.85;
+
+        for (let i = 0; i < n; i++) {
+          const x0 = (axisScores[0][i] - axisMeans[0]) / axisStds[0];
+          const y0 = (axisScores[1][i] - axisMeans[1]) / axisStds[1];
+          const z0 = (axisScores[2][i] - axisMeans[2]) / axisStds[2];
+
+          const jitter = (hashToUnit(3719 * (i + 1)) - 0.5) * 0.02;
+          const x = clamp(x0 + jitter, -range, range) / range;
+          const y = clamp(y0 - jitter, -range, range) / range;
+          const z = clamp(z0, -range, range) / range;
+          coords[i] = [x, y, z];
+        }
+
+        self.postMessage({ type: "progress", phase: "Ready", pct: 1 });
+        self.postMessage({ type: "result", res: { coords } });
+      } catch (error) {
+        self.postMessage({
+          type: "error",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    };
+  `;
+
+  const blob = new Blob([workerCode], { type: "application/javascript" });
+  const url = URL.createObjectURL(blob);
+  const worker = new Worker(url);
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  return worker;
+}
+
 export function ClusterMap3D({
   candles,
   trades,
