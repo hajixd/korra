@@ -4373,7 +4373,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const countdownOverlayRef = useRef<HTMLDivElement | null>(null);
+  const countdownSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const countdownTextRef = useRef("");
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const tradeProfitZoneRef = useRef<ISeriesApi<"Baseline"> | null>(null);
   const tradeLossZoneRef = useRef<ISeriesApi<"Baseline"> | null>(null);
@@ -6524,7 +6525,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         priceLineStyle: LIGHTWEIGHT_CHART_LINE_SPARSE_DOTTED,
         priceLineColor: "rgba(27, 174, 138, 0.72)",
         priceLineWidth: 1,
-        lastValueVisible: true,
+        lastValueVisible: false,
         autoscaleInfoProvider: (original: () => AutoscaleInfo | null): AutoscaleInfo | null => {
           const focusedPriceRange = chartFocusedPriceRangeRef.current;
 
@@ -6535,6 +6536,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           return {
             priceRange: focusedPriceRange
           };
+        }
+      });
+
+      const countdownSeries = chart.addLineSeries({
+        color: "#1bae8a",
+        lineWidth: 0,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        crosshairMarkerVisible: false,
+        priceFormat: {
+          type: "custom" as const,
+          formatter: (price: number) => {
+            const cd = countdownTextRef.current;
+            return cd ? `${formatPrice(price)}\n${cd}` : formatPrice(price);
+          },
+          minMove: 0.001
         }
       });
 
@@ -6719,6 +6736,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       chartRef.current = chart;
       candleSeriesRef.current = candleSeries;
+      countdownSeriesRef.current = countdownSeries;
       tradeProfitZoneRef.current = tradeProfitZone;
       tradeLossZoneRef.current = tradeLossZone;
       tradeEntryLineRef.current = tradeEntryLine;
@@ -6740,6 +6758,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         chart.remove();
         chartRef.current = null;
         candleSeriesRef.current = null;
+        countdownSeriesRef.current = null;
         tradeProfitZoneRef.current = null;
         tradeLossZoneRef.current = null;
         tradeEntryLineRef.current = null;
@@ -6814,6 +6833,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       candleSeries.applyOptions({
         priceLineColor: isUp ? "rgba(27, 174, 138, 0.72)" : "rgba(240, 69, 90, 0.72)"
       });
+
+      const countdownSeries = countdownSeriesRef.current;
+
+      if (countdownSeries) {
+        countdownSeries.applyOptions({
+          color: isUp ? "#1bae8a" : "#f0455a"
+        });
+        countdownSeries.setData([{ time: lastBar.time, value: lastBar.close }]);
+      }
     }
 
     if (targetVisibleRange) {
@@ -6835,57 +6863,40 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [chartRenderCandles, chartRenderWindow]);
 
   useEffect(() => {
-    const overlay = countdownOverlayRef.current;
-
-    if (!overlay || !latestCandle) {
-      if (overlay) overlay.style.display = "none";
+    if (!latestCandle) {
+      countdownTextRef.current = "";
       return;
     }
 
     const candleMs = getTimeframeMs(selectedTimeframe);
-    let raf = 0;
-    let lastText = "";
 
-    const update = () => {
-      const candleSeries = candleSeriesRef.current;
-
-      if (!candleSeries) {
-        raf = window.requestAnimationFrame(update);
-        return;
-      }
-
+    const tick = () => {
+      const countdownSeries = countdownSeriesRef.current;
       const candleEndMs = latestCandle.time + candleMs;
       const remaining = Math.max(0, Math.floor((candleEndMs - Date.now()) / 1000));
       const h = Math.floor(remaining / 3600);
       const m = Math.floor((remaining % 3600) / 60);
       const s = remaining % 60;
       const pad = (n: number) => String(n).padStart(2, "0");
-      const text = h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+      countdownTextRef.current = h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
 
-      if (text !== lastText) {
-        overlay.textContent = text;
-        lastText = text;
+      if (countdownSeries) {
+        const isUp = latestCandle.close >= latestCandle.open;
+        countdownSeries.applyOptions({
+          color: isUp ? "#1bae8a" : "#f0455a"
+        });
+        countdownSeries.update({
+          time: toUtcTimestamp(latestCandle.time) as UTCTimestamp,
+          value: latestCandle.close
+        });
       }
-
-      const isUp = latestCandle.close >= latestCandle.open;
-      overlay.style.background = isUp ? "rgba(27, 174, 138, 0.85)" : "rgba(240, 69, 90, 0.85)";
-
-      const y = candleSeries.priceToCoordinate(latestCandle.close);
-
-      if (y !== null && Number.isFinite(y)) {
-        overlay.style.top = `${y + 10}px`;
-        overlay.style.display = "block";
-      } else {
-        overlay.style.display = "none";
-      }
-
-      raf = window.requestAnimationFrame(update);
     };
 
-    raf = window.requestAnimationFrame(update);
+    tick();
+    const id = window.setInterval(tick, 1000);
 
-    return () => window.cancelAnimationFrame(raf);
-  }, [latestCandle, selectedTimeframe, chartRenderCandles]);
+    return () => window.clearInterval(id);
+  }, [latestCandle, selectedTimeframe]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -10665,7 +10676,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               </div>
               <div className="chart-stage">
                 <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
-                <div ref={countdownOverlayRef} className="candle-countdown-overlay" />
               </div>
             </section>
 
