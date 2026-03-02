@@ -281,15 +281,15 @@ button {
 
 .settings-io-btn {
   position: relative;
-  height: 17px;
+  height: 26px;
   border: 1px solid #273247;
-  border-radius: 3px;
+  border-radius: 4px;
   background: #101726;
   color: #c4cee2;
   display: flex;
   align-items: center;
-  gap: 0.18rem;
-  padding: 0 0.6rem;
+  gap: 0.3rem;
+  padding: 0 0.85rem;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.12s, border-color 0.12s, color 0.12s;
@@ -301,13 +301,13 @@ button {
 }
 
 .settings-io-icon {
-  width: 9px;
-  height: 9px;
+  width: 14px;
+  height: 14px;
   flex: 0 0 auto;
 }
 
 .settings-io-label {
-  font-size: 0.42rem;
+  font-size: 0.62rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
   letter-spacing: 0.06em;
   text-transform: uppercase;

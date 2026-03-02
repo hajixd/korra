@@ -5276,7 +5276,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   );
 
   useEffect(() => {
-    const totalBars = selectedChartCandles.length;
+    const candles = selectedChartCandlesRef.current;
+    const totalBars = candles.length;
     const selection = `${selectedSymbol}-${selectedTimeframe}`;
     const selectionChanged = selectionRef.current !== selection;
     const previousTotalBars = previousChartSourceLengthRef.current;
@@ -5319,12 +5320,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const restoreSavedPosition = () => {
       const centerTimeMs = chartViewCenterTimeMsRef.current;
 
-      if (centerTimeMs === null || selectedChartCandles.length === 0) {
+      if (centerTimeMs === null || candles.length === 0) {
         moveToLatest();
         return;
       }
 
-      const centerIndex = findCandleIndexAtOrBefore(selectedChartCandles, centerTimeMs);
+      const centerIndex = findCandleIndexAtOrBefore(candles, centerTimeMs);
 
       if (centerIndex < 0) {
         moveToLatest();
@@ -7777,10 +7778,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           : trade.exitTime > trade.entryTime
             ? toGaplessUtc(floorToTimeframe(rawExitMs, selectedTimeframe))
             : startTime;
-      const rangeStartTime =
-        entryIndex > 0
-          ? toGaplessUtc(selectedChartCandles[entryIndex - 1]!.time)
-          : ((startTime - stepSeconds) as UTCTimestamp);
+      const rangeStartTime = startTime;
       const rangeEndTime =
         exitIndex >= 0 && exitIndex + 1 < selectedChartCandles.length
           ? toGaplessUtc(selectedChartCandles[exitIndex + 1]!.time)
@@ -12269,70 +12267,72 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             />
                           </label>
                         </div>
-
-                        <div style={{ marginTop: "0.5rem" }}>
-                          <button
-                            type="button"
-                            className={`ai-zip-button ${stopMode !== 0 ? "active" : ""}`}
-                            onClick={() => {
-                              const next = ((stopMode || 0) + 1) % 3;
-                              setStopMode(next);
-                            }}
-                            style={{ width: "100%", marginBottom: "0.5rem" }}
-                          >
-                            Stop Mode · {stopMode === 0 ? "Off" : stopMode === 1 ? "Break‑Even" : "Trailing"}
-                          </button>
-
-                          <div style={{ opacity: stopMode === 1 ? 1 : 0.38, pointerEvents: stopMode === 1 ? "auto" : "none", marginBottom: "0.35rem" }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.78)" }}>
-                              <span>Break‑Even Trigger</span>
-                              <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>{Math.round(breakEvenTriggerPct)}%</span>
-                            </div>
-                            <input
-                              type="range" min={0} max={100} step={1}
-                              value={breakEvenTriggerPct}
-                              disabled={stopMode !== 1}
-                              onChange={(e) => setBreakEvenTriggerPct(clamp(Number(e.target.value) || 0, 0, 100))}
-                              className="theme-slider"
-                              style={{ width: "100%", height: 6, cursor: stopMode === 1 ? "pointer" : "not-allowed" }}
-                            />
-                          </div>
-
-                          <div style={{ opacity: stopMode === 2 ? 1 : 0.38, pointerEvents: stopMode === 2 ? "auto" : "none", marginBottom: "0.35rem" }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.78)" }}>
-                              <span>Trailing Start</span>
-                              <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>{Math.round(trailingStartPct)}%</span>
-                            </div>
-                            <input
-                              type="range" min={0} max={100} step={1}
-                              value={trailingStartPct}
-                              disabled={stopMode !== 2}
-                              onChange={(e) => setTrailingStartPct(clamp(Number(e.target.value) || 0, 0, 100))}
-                              className="theme-slider"
-                              style={{ width: "100%", height: 6, cursor: stopMode === 2 ? "pointer" : "not-allowed" }}
-                            />
-                          </div>
-
-                          <div style={{ opacity: stopMode === 2 ? 1 : 0.38, pointerEvents: stopMode === 2 ? "auto" : "none" }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.78)" }}>
-                              <span>Trailing Distance</span>
-                              <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>{Math.round(trailingDistPct)}%</span>
-                            </div>
-                            <input
-                              type="range" min={1} max={100} step={1}
-                              value={trailingDistPct}
-                              disabled={stopMode !== 2}
-                              onChange={(e) => setTrailingDistPct(clamp(Number(e.target.value) || 30, 1, 100))}
-                              className="theme-slider"
-                              style={{ width: "100%", height: 6, cursor: stopMode === 2 ? "pointer" : "not-allowed" }}
-                            />
-                          </div>
-                        </div>
-
                       </div>
                     </div>
 
-                    <div className="backtest-card">
+                    <div className="backtest-card" style={{ padding: "0.85rem" }}>
+                      <div className="ai-zip-section">
+                        <div className="ai-zip-section-title">Stop Mode</div>
+                        <button
+                          type="button"
+                          className={`ai-zip-button ${stopMode !== 0 ? "active" : ""}`}
+                          onClick={() => {
+                            const next = ((stopMode || 0) + 1) % 3;
+                            setStopMode(next);
+                          }}
+                          style={{ width: "100%", marginBottom: "0.5rem" }}
+                        >
+                          {stopMode === 0 ? "Off" : stopMode === 1 ? "Break‑Even" : "Trailing"}
+                        </button>
+
+                        <div style={{ opacity: stopMode === 1 ? 1 : 0.38, pointerEvents: stopMode === 1 ? "auto" : "none", marginBottom: "0.35rem" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.78)" }}>
+                            <span>Break‑Even Trigger</span>
+                            <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>{Math.round(breakEvenTriggerPct)}%</span>
+                          </div>
+                          <input
+                            type="range" min={0} max={100} step={1}
+                            value={breakEvenTriggerPct}
+                            disabled={stopMode !== 1}
+                            onChange={(e) => setBreakEvenTriggerPct(clamp(Number(e.target.value) || 0, 0, 100))}
+                            className="theme-slider"
+                            style={{ width: "100%", height: 6, cursor: stopMode === 1 ? "pointer" : "not-allowed" }}
+                          />
+                        </div>
+
+                        <div style={{ opacity: stopMode === 2 ? 1 : 0.38, pointerEvents: stopMode === 2 ? "auto" : "none", marginBottom: "0.35rem" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.78)" }}>
+                            <span>Trailing Start</span>
+                            <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>{Math.round(trailingStartPct)}%</span>
+                          </div>
+                          <input
+                            type="range" min={0} max={100} step={1}
+                            value={trailingStartPct}
+                            disabled={stopMode !== 2}
+                            onChange={(e) => setTrailingStartPct(clamp(Number(e.target.value) || 0, 0, 100))}
+                            className="theme-slider"
+                            style={{ width: "100%", height: 6, cursor: stopMode === 2 ? "pointer" : "not-allowed" }}
+                          />
+                        </div>
+
+                        <div style={{ opacity: stopMode === 2 ? 1 : 0.38, pointerEvents: stopMode === 2 ? "auto" : "none" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.78)" }}>
+                            <span>Trailing Distance</span>
+                            <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>{Math.round(trailingDistPct)}%</span>
+                          </div>
+                          <input
+                            type="range" min={1} max={100} step={1}
+                            value={trailingDistPct}
+                            disabled={stopMode !== 2}
+                            onChange={(e) => setTrailingDistPct(clamp(Number(e.target.value) || 30, 1, 100))}
+                            className="theme-slider"
+                            style={{ width: "100%", height: 6, cursor: stopMode === 2 ? "pointer" : "not-allowed" }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="backtest-card" style={{ padding: "0.85rem" }}>
                       <div className="ai-zip-section">
                         <div className="ai-zip-section-title">Anti-Cheat</div>
 
@@ -12352,18 +12352,26 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         >
                           Validation · {AI_VALIDATION_LABELS[validationMode]}
                         </button>
+                      </div>
+                    </div>
 
-                        <button
-                          type="button"
-                          className={`ai-zip-button ${antiCheatEnabled ? "active" : ""}`}
-                          disabled={!antiCheatEnabled}
-                          onClick={() => {
-                            setRealismLevel((value) => (value + 1) % AI_REALISM_LABELS.length);
-                          }}
-                        >
-                          Realism · {AI_REALISM_LABELS[clamp(realismLevel, 0, 4)]}
-                        </button>
-
+                    <div className="backtest-card" style={{ padding: "0.85rem" }}>
+                      <div className="ai-zip-section">
+                        <div className="ai-zip-section-title">Realism</div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+                          {(["None", "Low", "Medium", "High", "Max"] as const).map((label, idx) => (
+                            <button
+                              key={label}
+                              type="button"
+                              className={`ai-zip-button ${realismLevel === idx ? "active" : ""}`}
+                              disabled={!antiCheatEnabled}
+                              onClick={() => setRealismLevel(idx)}
+                              style={{ width: "100%", opacity: antiCheatEnabled ? 1 : 0.38 }}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
                   </div>
