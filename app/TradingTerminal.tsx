@@ -5213,10 +5213,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     const moveToLatest = () => {
-      const visibleTo = totalBars - 1;
-      const visibleFrom = Math.max(0, visibleTo - timeframeVisibleCount[selectedTimeframe]);
+      const visibleCount = timeframeVisibleCount[selectedTimeframe];
+      const rightPadding = Math.round(visibleCount * 0.4);
+      const visibleFrom = Math.max(0, totalBars - 1 - (visibleCount - rightPadding));
+      const visibleTo = visibleFrom + visibleCount;
       const visibleRange = { from: visibleFrom, to: visibleTo };
-      const nextWindow = buildChartDataWindow(totalBars, visibleFrom, visibleTo);
+      const nextWindow = buildChartDataWindow(totalBars, visibleFrom, Math.min(visibleTo, totalBars - 1));
 
       chartVisibleGlobalRangeRef.current = visibleRange;
       chartPendingVisibleGlobalRangeRef.current = visibleRange;
@@ -5253,24 +5255,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     if (totalBars > previousTotalBars) {
-      const currentVisible = chartVisibleGlobalRangeRef.current;
+      const nextWindow = buildChartDataWindow(
+        totalBars,
+        chartRenderWindowRef.current.from,
+        totalBars - 1
+      );
 
-      if (currentVisible && currentVisible.to >= previousTotalBars - 3) {
-        const shift = totalBars - previousTotalBars;
-        const nextVisible = clampChartDataWindow(
-          totalBars,
-          currentVisible.from + shift,
-          currentVisible.to + shift
-        );
-        const nextWindow = buildChartDataWindow(totalBars, nextVisible.from, nextVisible.to);
-
-        chartVisibleGlobalRangeRef.current = nextVisible;
-        chartPendingVisibleGlobalRangeRef.current = nextVisible;
-        chartRenderWindowRef.current = nextWindow;
-        setChartRenderWindow((current) =>
-          current.from === nextWindow.from && current.to === nextWindow.to ? current : nextWindow
-        );
-      }
+      chartRenderWindowRef.current = nextWindow;
+      setChartRenderWindow((current) =>
+        current.from === nextWindow.from && current.to === nextWindow.to ? current : nextWindow
+      );
     }
   }, [selectedChartCandles.length, selectedSymbol, selectedTimeframe]);
 
@@ -5289,15 +5283,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return;
     }
 
-    const nextVisibleRange = clampChartDataWindow(
-      totalBars,
-      visibleRange.from,
-      visibleRange.to
-    );
+    const clampedFrom = Math.min(totalBars - 1, Math.max(0, Math.floor(visibleRange.from)));
+    const nextVisibleRange = { from: clampedFrom, to: Math.max(clampedFrom, visibleRange.to) };
     const nextWindow = buildChartDataWindow(
       totalBars,
-      nextVisibleRange.from,
-      nextVisibleRange.to
+      clampedFrom,
+      Math.min(nextVisibleRange.to, totalBars - 1)
     );
     const currentWindow = chartRenderWindowRef.current;
 
@@ -6490,7 +6481,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           borderColor: "#182131",
           timeVisible: true,
           secondsVisible: false,
-          rightOffset: 3
+          rightOffset: 3,
+          shiftVisibleRangeOnNewBar: false
         },
         crosshair: {
           mode: LIGHTWEIGHT_CHART_CROSSHAIR_NORMAL,
@@ -6844,9 +6836,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   useEffect(() => {
     const overlay = countdownOverlayRef.current;
-    const candleSeries = candleSeriesRef.current;
 
-    if (!overlay || !candleSeries || !latestCandle) {
+    if (!overlay || !latestCandle) {
       if (overlay) overlay.style.display = "none";
       return;
     }
@@ -6856,7 +6847,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     let lastText = "";
 
     const update = () => {
-      const candleEndMs = latestCandle.time * 1000 + candleMs;
+      const candleSeries = candleSeriesRef.current;
+
+      if (!candleSeries) {
+        raf = window.requestAnimationFrame(update);
+        return;
+      }
+
+      const candleEndMs = latestCandle.time + candleMs;
       const remaining = Math.max(0, Math.floor((candleEndMs - Date.now()) / 1000));
       const h = Math.floor(remaining / 3600);
       const m = Math.floor((remaining % 3600) / 60);
@@ -6904,8 +6902,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         return;
       }
 
-      const to = totalBars - 1;
-      const from = Math.max(0, to - timeframeVisibleCount[selectedTimeframe]);
+      const visibleCount = timeframeVisibleCount[selectedTimeframe];
+      const rightPadding = Math.round(visibleCount * 0.4);
+      const from = Math.max(0, totalBars - 1 - (visibleCount - rightPadding));
+      const to = from + visibleCount;
 
       requestChartVisibleRangeRef.current({ from, to });
       focusTradeIdRef.current = null;
@@ -10597,7 +10597,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           <div className="live-quote">
             {latestCandle ? (
               <>
-                <span>${formatPrice(latestCandle.close)}</span>
+                <span className={quoteChange >= 0 ? "up" : "down"}>${formatPrice(latestCandle.close)}</span>
                 <div className="tf-changes">
                   {timeframeChanges.map(({ timeframe, change }) => (
                     <span
