@@ -1041,6 +1041,8 @@ const buildModelAiLibraryDefs = (modelNames: readonly string[]): AiLibraryDef[] 
 };
 
 const AI_LIBRARY_TARGET_WIN_RATE_KEY = "targetWinRate";
+const AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY = "targetWinRateMode";
+type AiLibraryTargetWinRateMode = "natural" | "artificial";
 const AI_LIBRARY_TARGET_WIN_RATE_FIELD: AiLibraryField = {
   key: AI_LIBRARY_TARGET_WIN_RATE_KEY,
   label: "Target Win Rate (%)",
@@ -1051,9 +1053,53 @@ const AI_LIBRARY_TARGET_WIN_RATE_FIELD: AiLibraryField = {
   help: "Trim this library's loaded neighbors toward the requested win ratio."
 };
 
+const getAiLibraryTargetWinRateMode = (
+  value: AiLibrarySettingValue | undefined
+): AiLibraryTargetWinRateMode => {
+  return value === "artificial" ? "artificial" : "natural";
+};
+
+const getNaturalAiLibraryTargetWinRate = (
+  baselineWinRate: number,
+  loadedNeighborCount: number
+): number => {
+  if (loadedNeighborCount <= 0 || !Number.isFinite(baselineWinRate)) {
+    return 50;
+  }
+
+  return clamp(baselineWinRate, 0, 100);
+};
+
+const resolveAiLibraryTargetWinRate = (
+  settings: Record<string, AiLibrarySettingValue>,
+  baselineWinRate: number,
+  loadedNeighborCount: number
+): number => {
+  const mode = getAiLibraryTargetWinRateMode(settings[AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY]);
+
+  if (mode === "natural") {
+    return getNaturalAiLibraryTargetWinRate(baselineWinRate, loadedNeighborCount);
+  }
+
+  const rawTargetWinRate = Number(settings[AI_LIBRARY_TARGET_WIN_RATE_KEY]);
+  return Number.isFinite(rawTargetWinRate)
+    ? clamp(rawTargetWinRate, 0, 100)
+    : clamp(baselineWinRate, 0, 100);
+};
+
 const withAiLibraryTargetWinRateField = (definition: AiLibraryDef): AiLibraryDef => {
+  const defaults = {
+    ...definition.defaults,
+    [AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY]: getAiLibraryTargetWinRateMode(
+      definition.defaults[AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY]
+    )
+  };
+
   if (definition.fields.some((field) => field.key === AI_LIBRARY_TARGET_WIN_RATE_KEY)) {
-    return definition;
+    return {
+      ...definition,
+      defaults
+    };
   }
 
   const fields = [...definition.fields];
@@ -1062,6 +1108,7 @@ const withAiLibraryTargetWinRateField = (definition: AiLibraryDef): AiLibraryDef
   fields.splice(insertAt, 0, AI_LIBRARY_TARGET_WIN_RATE_FIELD);
   return {
     ...definition,
+    defaults,
     fields
   };
 };
@@ -5908,14 +5955,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       const maxSamples = getLibraryMaxSamples(libraryId, 96);
-      const defaultTargetWinRate = getOutcomeWinRatePercent(
+      const baselineWinRate = getOutcomeWinRatePercent(
         source,
         (candidate) => candidate.result === "Win"
       );
-      const rawTargetWinRate = Number(settings[AI_LIBRARY_TARGET_WIN_RATE_KEY]);
-      const targetWinRate = Number.isFinite(rawTargetWinRate)
-        ? clamp(rawTargetWinRate, 0, 100)
-        : defaultTargetWinRate;
+      const targetWinRate = resolveAiLibraryTargetWinRate(
+        settings,
+        baselineWinRate,
+        source.length
+      );
 
       return rebalanceItemsToTargetWinRate(
         source,
@@ -8442,10 +8490,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         source,
         (trade) => trade.result === "Win"
       );
-      const rawTargetWinRate = Number(settings[AI_LIBRARY_TARGET_WIN_RATE_KEY]);
-      const targetWinRate = Number.isFinite(rawTargetWinRate)
-        ? clamp(rawTargetWinRate, 0, 100)
-        : baselineWinRate;
+      const targetWinRate = resolveAiLibraryTargetWinRate(
+        settings,
+        baselineWinRate,
+        source.length
+      );
       const maxSamples = getMaxSamples(definition, Math.max(96, source.length));
       const balanced = rebalanceItemsToTargetWinRate(
         source,
@@ -8587,6 +8636,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     ? ({
         ...selectedAiLibrary.defaults,
         ...(selectedAiLibrarySettings[selectedAiLibrary.id] ?? {}),
+        [AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY]: getAiLibraryTargetWinRateMode(
+          selectedAiLibrarySettings[selectedAiLibrary.id]?.[AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY]
+        ),
         [AI_LIBRARY_TARGET_WIN_RATE_KEY]:
           selectedAiLibrarySettings[selectedAiLibrary.id]?.[AI_LIBRARY_TARGET_WIN_RATE_KEY] ??
           aiLibraryBaselineWinRates[selectedAiLibrary.id] ??
@@ -8594,6 +8646,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       } as Record<string, AiLibrarySettingValue>)
     : null;
   const selectedAiLibraryLoadedCount = selectedAiLibrary ? aiLibraryCounts[selectedAiLibrary.id] ?? 0 : 0;
+  const selectedAiLibraryTargetWinRateMode: AiLibraryTargetWinRateMode = selectedAiLibraryConfig
+    ? getAiLibraryTargetWinRateMode(
+        selectedAiLibraryConfig[AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY]
+      )
+    : "natural";
+  const selectedAiLibraryNaturalTargetWinRate = selectedAiLibrary
+    ? getNaturalAiLibraryTargetWinRate(
+        aiLibraryBaselineWinRates[selectedAiLibrary.id] ?? 50,
+        selectedAiLibraryLoadedCount
+      )
+    : 50;
 
   const baselineMainStatsSummary = useMemo(() => {
     return summarizeBacktestTrades(baselineMainStatsTrades, getEffectiveTradeConfidenceScore);
@@ -13281,20 +13344,63 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             const step = typeof field.step === "number" ? field.step : 1;
                             const parsedValue = Number(fieldValue ?? 0);
                             const numericValue = Number.isFinite(parsedValue) ? parsedValue : 0;
+                            const isTargetWinRateField =
+                              field.key === AI_LIBRARY_TARGET_WIN_RATE_KEY;
+                            const isNaturalTargetWinRateMode =
+                              isTargetWinRateField &&
+                              selectedAiLibraryTargetWinRateMode === "natural";
+                            const displayedNumericValue = isNaturalTargetWinRateMode
+                              ? selectedAiLibraryNaturalTargetWinRate
+                              : numericValue;
                             const canRange =
                               min != null &&
                               max != null &&
                               (field.key === "maxSamples" || max - min <= 50000);
+                            const sliderPercent =
+                              min != null && max != null && max > min
+                                ? ((displayedNumericValue - min) / (max - min)) * 100
+                                : 50;
 
                             return (
                               <label key={field.key} className="ai-zip-library-field-block">
                                 <span className="ai-zip-library-field-label">{field.label}</span>
+                                {isTargetWinRateField ? (
+                                  <div className="ai-zip-library-actions">
+                                    <button
+                                      type="button"
+                                      className={`ai-zip-library-action ${selectedAiLibraryTargetWinRateMode === "natural" ? "primary" : ""}`}
+                                      onClick={() => {
+                                        updateAiLibrarySetting(
+                                          selectedAiLibrary.id,
+                                          AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY,
+                                          "natural"
+                                        );
+                                      }}
+                                    >
+                                      Natural
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`ai-zip-library-action ${selectedAiLibraryTargetWinRateMode === "artificial" ? "primary" : ""}`}
+                                      onClick={() => {
+                                        updateAiLibrarySetting(
+                                          selectedAiLibrary.id,
+                                          AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY,
+                                          "artificial"
+                                        );
+                                      }}
+                                    >
+                                      Artificial
+                                    </button>
+                                  </div>
+                                ) : null}
                                 <input
                                   type="number"
-                                  value={numericValue}
+                                  value={displayedNumericValue}
                                   min={min}
                                   max={max}
                                   step={step}
+                                  disabled={isNaturalTargetWinRateMode}
                                   onChange={(event) => {
                                     const raw = Number(event.target.value);
                                     const nextValue = Number.isFinite(raw) ? raw : 0;
@@ -13314,6 +13420,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     );
                                   }}
                                   className="ai-zip-library-input"
+                                  style={
+                                    isNaturalTargetWinRateMode
+                                      ? ({
+                                          opacity: 0.55,
+                                          cursor: "not-allowed"
+                                        } as React.CSSProperties)
+                                      : undefined
+                                  }
                                 />
                                 {canRange ? (
                                   <input
@@ -13321,7 +13435,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     min={min}
                                     max={max}
                                     step={step}
-                                    value={numericValue}
+                                    value={displayedNumericValue}
+                                    disabled={isNaturalTargetWinRateMode}
                                     onChange={(event) => {
                                       updateAiLibrarySetting(
                                         selectedAiLibrary.id,
@@ -13330,21 +13445,32 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                       );
                                     }}
                                     className="backtest-slider"
-                                    style={{ "--p": `${min != null && max != null && max > min ? ((numericValue - min) / (max - min)) * 100 : 50}%` } as React.CSSProperties}
+                                    style={
+                                      {
+                                        "--p": `${sliderPercent}%`,
+                                        ...(isNaturalTargetWinRateMode
+                                          ? ({
+                                              opacity: 0.4,
+                                              filter: "grayscale(0.9)",
+                                              cursor: "not-allowed"
+                                            } as React.CSSProperties)
+                                          : {})
+                                      } as React.CSSProperties
+                                    }
                                   />
                                 ) : null}
                                 {field.help ? (
                                   <p className="ai-zip-library-field-help">{field.help}</p>
                                 ) : null}
-                                {field.key === AI_LIBRARY_TARGET_WIN_RATE_KEY ? (
+                                {isTargetWinRateField ? (
                                   <p className="ai-zip-library-field-help">
-                                    {Number.isFinite(
-                                      aiLibraryBaselineWinRates[selectedAiLibrary.id]
-                                    )
-                                      ? `Natural win rate: ${aiLibraryBaselineWinRates[
-                                          selectedAiLibrary.id
-                                        ]!.toFixed(1)}% before target trimming.`
-                                      : "Natural win rate appears here once source trades are available."}
+                                    {isNaturalTargetWinRateMode
+                                      ? selectedAiLibraryLoadedCount > 0
+                                        ? `Natural mode auto-uses ${selectedAiLibraryNaturalTargetWinRate.toFixed(
+                                            1
+                                          )}% from loaded neighbors.`
+                                        : "Natural mode locks to 50% until neighbors are loaded."
+                                      : "Artificial mode lets you set the target manually."}
                                   </p>
                                 ) : null}
                               </label>
