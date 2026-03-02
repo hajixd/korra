@@ -72,6 +72,8 @@ const LIGHTWEIGHT_CHART_LINE_SOLID: LineStyle = 0;
 const LIGHTWEIGHT_CHART_LINE_DOTTED: LineStyle = 1;
 const LIGHTWEIGHT_CHART_LINE_SPARSE_DOTTED: LineStyle = 4;
 const SETTINGS_STORAGE_KEY = "korra-settings";
+const PRESETS_STORAGE_KEY = "korra-presets";
+type SavedPreset = { name: string; settings: Record<string, any>; savedAt: number };
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type SurfaceTab = "chart" | "backtest";
 type BacktestTab =
@@ -4334,6 +4336,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [statsRefreshProgressLabel, setStatsRefreshProgressLabel] = useState("");
   const [backtestHistorySeedReady, setBacktestHistorySeedReady] = useState(false);
   const [isBacktestSurfaceSettled, setIsBacktestSurfaceSettled] = useState(true);
+  const [savedPresets, setSavedPresets] = useState<SavedPreset[]>([]);
+  const [presetMenuOpen, setPresetMenuOpen] = useState<"save" | "load" | null>(null);
+  const [presetNameInput, setPresetNameInput] = useState("");
 
   const buildCurrentBacktestSettingsSnapshot = (): BacktestSettingsSnapshot => ({
     symbol: selectedSymbol,
@@ -4417,6 +4422,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const chartFocusedPriceRangeResetRafRef = useRef(0);
   const chartIsApplyingVisibleRangeRef = useRef(false);
   const settingsFileInputRef = useRef<HTMLInputElement | null>(null);
+  const presetMenuRef = useRef<HTMLDivElement | null>(null);
   const chartSourceLengthRef = useRef(0);
   const previousChartSourceLengthRef = useRef(0);
   const requestChartVisibleRangeRef = useRef<(visibleRange: ChartDataWindow) => void>(() => {});
@@ -4547,29 +4553,30 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     let frameId = 0;
+    const startTime = performance.now();
     let previousTimestamp = 0;
+    let lastValue = 0;
 
     const step = (timestamp: number) => {
-      const elapsedMs = previousTimestamp > 0 ? timestamp - previousTimestamp : 16.67;
+      const dt = previousTimestamp > 0 ? timestamp - previousTimestamp : 16.67;
       previousTimestamp = timestamp;
-      const blend = 1 - Math.exp(-elapsedMs / 180);
+      const elapsed = timestamp - startTime;
+      const isDone = statsRefreshProgressRef.current >= 100;
 
-      setStatsRefreshLoadingDisplayProgress((current) => {
-        const target = clamp(statsRefreshProgressRef.current, 0, 100);
-        const delta = target - current;
+      let next: number;
 
-        if (delta <= 0) {
-          return current;
-        }
+      if (isDone) {
+        const blend = 1 - Math.exp(-dt / 200);
+        next = lastValue + (100 - lastValue) * blend;
+        if (next >= 99.95) next = 100;
+      } else {
+        next = 92 * (1 - Math.exp(-elapsed / 8000));
+      }
 
-        const next = current + delta * blend;
+      next = Math.max(lastValue, next);
+      lastValue = next;
 
-        if (target - next <= 0.015) {
-          return target;
-        }
-
-        return next;
-      });
+      setStatsRefreshLoadingDisplayProgress(next);
 
       if (statsRefreshOverlayModeRef.current === "loading") {
         frameId = window.requestAnimationFrame(step);
@@ -5892,6 +5899,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [chartPanelHistoryRows, referenceNowMs]);
 
+  const latestTradeBarsAgo = useMemo(() => {
+    if (deferredHistoryRows.length === 0) return null;
+    const latestExitTime = deferredHistoryRows.reduce(
+      (max, row) => Math.max(max, Number(row.exitTime)),
+      0
+    );
+    if (latestExitTime === 0) return null;
+    const barSeconds = timeframeMinutes[appliedBacktestSettings.timeframe] * 60;
+    return Math.max(0, Math.floor((referenceNowMs / 1000 - latestExitTime) / barSeconds));
+  }, [deferredHistoryRows, referenceNowMs, appliedBacktestSettings.timeframe]);
+
   const backtestHistorySeriesBySymbol = useMemo(() => {
     const next: Record<string, Candle[]> = {};
 
@@ -6528,29 +6546,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     } catch { /* storage full – ignore */ }
   }, [collectSettings]);
 
-  const handleSaveSettings = useCallback(() => {
-    const settings = collectSettings();
-    const blob = new Blob([JSON.stringify(settings, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `korra-settings-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [collectSettings]);
-
-  const handleLoadSettings = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        applySettings(JSON.parse(evt.target?.result as string));
-      } catch { /* invalid file */ }
-    };
-    reader.readAsText(file);
-    e.target.value = "";
-  }, [applySettings]);
 
   const handleResetSettings = useCallback(() => {
     localStorage.removeItem(SETTINGS_STORAGE_KEY);
@@ -6560,21 +6555,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setEnabledBacktestSessions([...backtestSessionLabels]);
     setEnabledBacktestMonths(Array.from({ length: 12 }, (_, i) => i));
     setEnabledBacktestHours(Array.from({ length: 24 }, (_, i) => i));
-    setAiMode("off");
-    setAiModelEnabled(false);
-    setAiFilterEnabled(false);
+    setAiMode("knn");
+    setAiModelEnabled(true);
+    setAiFilterEnabled(true);
     setStaticLibrariesClusters(false);
-    setConfidenceThreshold(0);
-    setAiExitStrictness(0);
+    setConfidenceThreshold(42);
+    setAiExitStrictness(18);
     setAiExitLossTolerance(0);
     setAiExitWinTolerance(0);
     setUseMitExit(false);
-    setComplexity(0);
-    setVolatilityPercentile(0);
-    setTpDollars(0);
-    setSlDollars(0);
-    setDollarsPerMove(0);
-    setMaxBarsInTrade(0);
+    setComplexity(58);
+    setVolatilityPercentile(30);
+    setTpDollars(220);
+    setSlDollars(120);
+    setDollarsPerMove(100);
+    setMaxBarsInTrade(32);
     setAiModelStates(buildInitialAiModelStates(availableAiModelNames));
     setAiFeatureLevels(buildInitialAiFeatureLevels());
     setAiFeatureModes(buildInitialAiFeatureModes());
@@ -6600,7 +6595,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setHdbSampleCap(5000);
     setAntiCheatEnabled(false);
     setValidationMode("off");
-    setRealismLevel(0);
+    setRealismLevel(1);
     setPropInitialBalance(100_000);
     setPropDailyMaxLoss(5_000);
     setPropTotalMaxLoss(10_000);
@@ -6609,6 +6604,81 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setStatsDateStart("");
     setStatsDateEnd("");
   }, [availableAiModelNames, aiLibraryDefs]);
+
+  const persistPresets = useCallback((presets: SavedPreset[]) => {
+    setSavedPresets(presets);
+    try { localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(presets)); } catch { /* full */ }
+  }, []);
+
+  const handleSavePreset = useCallback(() => {
+    const name = presetNameInput.trim();
+    if (!name) return;
+    const settings = collectSettings();
+    const next = [
+      ...savedPresets.filter((p) => p.name !== name),
+      { name, settings, savedAt: Date.now() }
+    ];
+    persistPresets(next);
+    setPresetNameInput("");
+    setPresetMenuOpen(null);
+  }, [presetNameInput, collectSettings, savedPresets, persistPresets]);
+
+  const handleLoadPreset = useCallback((preset: SavedPreset) => {
+    applySettings(preset.settings);
+    setPresetMenuOpen(null);
+  }, [applySettings]);
+
+  const handleDeletePreset = useCallback((name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    persistPresets(savedPresets.filter((p) => p.name !== name));
+  }, [savedPresets, persistPresets]);
+
+  const handleSaveToFile = useCallback(() => {
+    const settings = collectSettings();
+    const blob = new Blob([JSON.stringify(settings, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `korra-settings-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [collectSettings]);
+
+  const handleLoadFromFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try { applySettings(JSON.parse(evt.target?.result as string)); } catch { /* invalid */ }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }, [applySettings]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PRESETS_STORAGE_KEY);
+      if (raw) setSavedPresets(JSON.parse(raw));
+    } catch { /* corrupt */ }
+  }, []);
+
+  useEffect(() => {
+    if (!presetMenuOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (presetMenuRef.current && !presetMenuRef.current.contains(event.target as Node)) {
+        setPresetMenuOpen(null);
+      }
+    };
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPresetMenuOpen(null);
+    };
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onEscape);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onEscape);
+    };
+  }, [presetMenuOpen]);
 
   useEffect(() => {
     if (!selectedHistoryId) {
@@ -10834,32 +10904,74 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             type="file"
             accept=".json"
             style={{ display: "none" }}
-            onChange={handleLoadSettings}
+            onChange={handleLoadFromFile}
           />
-          <button
-            type="button"
-            className="settings-io-btn"
-            aria-label="Save settings"
-            onClick={handleSaveSettings}
-          >
-            <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M12 3v12m0 0l-4-4m4 4l4-4" />
-              <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
-            </svg>
-            <span className="settings-io-label">Save</span>
-          </button>
-          <button
-            type="button"
-            className="settings-io-btn"
-            aria-label="Load settings"
-            onClick={() => settingsFileInputRef.current?.click()}
-          >
-            <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M12 15V3m0 0l-4 4m4-4l4 4" />
-              <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
-            </svg>
-            <span className="settings-io-label">Load</span>
-          </button>
+          <div ref={presetMenuRef} style={{ display: "contents" }}>
+            <div className="preset-wrap">
+              <button
+                type="button"
+                className="settings-io-btn"
+                aria-label="Save preset"
+                onClick={() => setPresetMenuOpen((v) => (v === "save" ? null : "save"))}
+              >
+                <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M12 3v12m0 0l-4-4m4 4l4-4" />
+                  <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+                </svg>
+                <span className="settings-io-label">Save</span>
+              </button>
+              {presetMenuOpen === "save" ? (
+                <div className="preset-popover">
+                  <div className="preset-popover-header">Save Preset</div>
+                  <div className="preset-save-row">
+                    <input
+                      className="preset-name-input"
+                      placeholder="Preset name…"
+                      value={presetNameInput}
+                      onChange={(e) => setPresetNameInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleSavePreset(); }}
+                      autoFocus
+                    />
+                    <button type="button" className="preset-confirm-btn" onClick={handleSavePreset}>Save</button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div className="preset-wrap">
+              <button
+                type="button"
+                className="settings-io-btn"
+                aria-label="Load preset"
+                onClick={() => setPresetMenuOpen((v) => (v === "load" ? null : "load"))}
+              >
+                <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M12 15V3m0 0l-4 4m4-4l4 4" />
+                  <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+                </svg>
+                <span className="settings-io-label">Load</span>
+              </button>
+              {presetMenuOpen === "load" ? (
+                <div className="preset-popover">
+                  <div className="preset-popover-header">Load Preset</div>
+                  {savedPresets.length === 0 ? (
+                    <div className="preset-empty">No saved presets</div>
+                  ) : (
+                    <div className="preset-list">
+                      {savedPresets.map((p) => (
+                        <div key={p.name} className="preset-item">
+                          <button type="button" className="preset-item-btn" onClick={() => handleLoadPreset(p)}>
+                            <span className="preset-item-name">{p.name}</span>
+                            <span className="preset-item-date">{new Date(p.savedAt).toLocaleDateString()}</span>
+                          </button>
+                          <button type="button" className="preset-delete-btn" onClick={(e) => handleDeletePreset(p.name, e)} aria-label={`Delete ${p.name}`}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </div>
           <button
             type="button"
             className="settings-io-btn settings-io-reset"
@@ -10871,6 +10983,35 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               <path d="M3 21v-6h6" />
             </svg>
             <span className="settings-io-label">Reset</span>
+          </button>
+          <div className="settings-io-divider" />
+          <button
+            type="button"
+            className="settings-io-btn settings-io-file"
+            aria-label="Save to file"
+            onClick={handleSaveToFile}
+          >
+            <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="12" y1="18" x2="12" y2="12" />
+              <polyline points="9 15 12 18 15 15" />
+            </svg>
+            <span className="settings-io-label">File ↓</span>
+          </button>
+          <button
+            type="button"
+            className="settings-io-btn settings-io-file"
+            aria-label="Load from file"
+            onClick={() => settingsFileInputRef.current?.click()}
+          >
+            <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="12" y1="12" x2="12" y2="18" />
+              <polyline points="9 15 12 12 15 15" />
+            </svg>
+            <span className="settings-io-label">File ↑</span>
           </button>
           <div className="notif-wrap" ref={notificationRef}>
             <button
@@ -11149,9 +11290,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       ) : (
                         <div className="ai-placeholder">
                           <p>
-                            {backtestModelProfiles.length > 0
-                              ? "No active trade. Waiting for the backtest pipeline to produce trades."
-                              : "Select at least one Main Settings model in Backtest."}
+                            No current active trade.
+                            {latestTradeBarsAgo !== null
+                              ? ` The latest trade was ${latestTradeBarsAgo} bar${latestTradeBarsAgo !== 1 ? "s" : ""} ago.`
+                              : ""}
                           </p>
                         </div>
                       )}
@@ -11622,9 +11764,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
                     <div className="backtest-card" style={{ padding: "0.85rem" }}>
                       <div className="ai-zip-section main-settings-panel">
-                        <div className="main-settings-panel-title">
-                          <strong>Core AI Controls</strong>
-                        </div>
+                        <div className="ai-zip-section-title">Core AI Controls</div>
 
                         <button
                           type="button"
@@ -11819,154 +11959,155 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       </div>
                     </div>
 
-                    <div className="backtest-card" style={{ gridColumn: "1 / -1", padding: "0.85rem" }}>
-                      <div className="ai-zip-section-title">Advanced AI</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
-                        <div style={{ display: "grid", gap: "0.55rem", alignContent: "start" }}>
-                          <div className="ai-zip-toggle-grid">
-                            <button
-                              type="button"
-                              className={`ai-zip-button ${selectedAiModelCount > 0 ? "active" : ""}`}
-                              disabled={aiDisabled}
-                              onClick={() => setModelsModalOpen(true)}
-                            >
-                              Models ({selectedAiModelCount})
-                            </button>
-                            <button
-                              type="button"
-                              className={`ai-zip-button ${selectedAiFeatureCount > 0 ? "active" : ""}`}
-                              disabled={aiDisabled}
-                              onClick={() => setFeaturesModalOpen(true)}
-                            >
-                              Features ({selectedAiFeatureCount})
-                            </button>
-                            <button
-                              type="button"
-                              className={`ai-zip-button ${selectedAiLibraryCount > 0 ? "active" : ""}`}
-                              disabled={aiDisabled}
-                              onClick={() => setLibrariesModalOpen(true)}
-                            >
-                              Libraries ({selectedAiLibraryCount})
-                            </button>
-                          </div>
-
-                          <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
-                            <div className="ai-zip-label">Chunk Size (bars)</div>
-                            <input
-                              type="number"
-                              min={2}
-                              step={1}
-                              value={chunkBars}
-                              disabled={aiDisabled}
-                              onChange={(event) => {
-                                setChunkBars(Math.max(2, Math.floor(Number(event.target.value) || 2)));
-                              }}
-                              className="ai-zip-input"
-                            />
-                          </div>
-
-                          <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
-                            <span className="ai-zip-label">Distance Metric</span>
-                            <select
-                              value={distanceMetric}
-                              disabled={aiDisabled}
-                              onChange={(event) => {
-                                setDistanceMetric(event.target.value as AiDistanceMetric);
-                              }}
-                              className="ai-zip-input"
-                            >
-                              <option value="euclidean">Euclidean</option>
-                              <option value="cosine">Cosine similarity</option>
-                              <option value="manhattan">Manhattan (L1)</option>
-                              <option value="chebyshev">Chebyshev (L-infinity)</option>
-                            </select>
-                          </label>
-
-                          <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
-                            <span className="ai-zip-label">Compression</span>
-                            <input
-                              type="range"
-                              min={0}
-                              max={100}
-                              step={1}
-                              value={embeddingCompression}
-                              disabled={aiDisabled}
-                              onChange={(event) => {
-                                setEmbeddingCompression(
-                                  clamp(Number(event.target.value) || 0, 0, 100)
-                                );
-                              }}
-                              className="backtest-slider"
-                              style={{ "--p": `${embeddingCompression}%` } as React.CSSProperties}
-                            />
-                            <span className="ai-zip-note">{embeddingCompression}%</span>
-                          </label>
+                    <div className="backtest-card" style={{ padding: "0.85rem" }}>
+                      <div className="ai-zip-section-title">AI Data &amp; Embedding</div>
+                      <div style={{ display: "grid", gap: "0.55rem" }}>
+                        <div className="ai-zip-toggle-grid">
+                          <button
+                            type="button"
+                            className={`ai-zip-button ${selectedAiModelCount > 0 ? "active" : ""}`}
+                            disabled={aiDisabled}
+                            onClick={() => setModelsModalOpen(true)}
+                          >
+                            Models ({selectedAiModelCount})
+                          </button>
+                          <button
+                            type="button"
+                            className={`ai-zip-button ${selectedAiFeatureCount > 0 ? "active" : ""}`}
+                            disabled={aiDisabled}
+                            onClick={() => setFeaturesModalOpen(true)}
+                          >
+                            Features ({selectedAiFeatureCount})
+                          </button>
+                          <button
+                            type="button"
+                            className={`ai-zip-button ${selectedAiLibraryCount > 0 ? "active" : ""}`}
+                            disabled={aiDisabled}
+                            onClick={() => setLibrariesModalOpen(true)}
+                          >
+                            Libraries ({selectedAiLibraryCount})
+                          </button>
                         </div>
 
-                        <div style={{ display: "grid", gap: "0.55rem", alignContent: "start" }}>
-                          <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
-                            <div className="ai-zip-label">Modality</div>
-                            <div className="ai-zip-toggle-grid tiles compact">
-                              {AI_MODALITY_OPTIONS.map((modality) => (
-                                <button
-                                  key={modality}
-                                  type="button"
-                                  className={`ai-zip-button pill ${
-                                    selectedAiModalities.includes(modality) ? "active" : ""
-                                  }`}
-                                  disabled={aiDisabled}
-                                  onClick={() => {
-                                    setSelectedAiModalities((current) =>
-                                      toggleListValue(current, modality)
-                                    );
-                                  }}
-                                >
-                                  {modality}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-
-                          <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
-                            <span className="ai-zip-label">Dimension Amount</span>
-                            <input
-                              type="number"
-                              min={2}
-                              max={Math.max(2, configuredAiFeatureDimensionCount)}
-                              step={1}
-                              value={dimensionAmount}
-                              disabled={aiDisabled}
-                              onChange={(event) => {
-                                setDimensionAmount(
-                                  clamp(
-                                    Math.floor(Number(event.target.value) || 2),
-                                    2,
-                                    Math.max(2, configuredAiFeatureDimensionCount)
-                                  )
-                                );
-                              }}
-                              className="ai-zip-input"
-                            />
-                          </label>
-
-                          <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
-                            <span className="ai-zip-label">Compression Method</span>
-                            <select
-                              value={compressionMethod}
-                              disabled={aiDisabled}
-                              onChange={(event) => {
-                                setCompressionMethod(event.target.value as AiCompressionMethod);
-                              }}
-                              className="ai-zip-input"
-                            >
-                              <option value="pca">PCA</option>
-                              <option value="jl">Random Projection</option>
-                              <option value="hash">Feature Hashing</option>
-                              <option value="variance">Top Variance</option>
-                              <option value="subsample">Uniform Subsample</option>
-                            </select>
-                          </label>
+                        <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
+                          <div className="ai-zip-label">Chunk Size (bars)</div>
+                          <input
+                            type="number"
+                            min={2}
+                            step={1}
+                            value={chunkBars}
+                            disabled={aiDisabled}
+                            onChange={(event) => {
+                              setChunkBars(Math.max(2, Math.floor(Number(event.target.value) || 2)));
+                            }}
+                            className="ai-zip-input"
+                          />
                         </div>
+
+                        <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
+                          <span className="ai-zip-label">Distance Metric</span>
+                          <select
+                            value={distanceMetric}
+                            disabled={aiDisabled}
+                            onChange={(event) => {
+                              setDistanceMetric(event.target.value as AiDistanceMetric);
+                            }}
+                            className="ai-zip-input"
+                          >
+                            <option value="euclidean">Euclidean</option>
+                            <option value="cosine">Cosine similarity</option>
+                            <option value="manhattan">Manhattan (L1)</option>
+                            <option value="chebyshev">Chebyshev (L-infinity)</option>
+                          </select>
+                        </label>
+
+                        <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
+                          <span className="ai-zip-label">Compression</span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={embeddingCompression}
+                            disabled={aiDisabled}
+                            onChange={(event) => {
+                              setEmbeddingCompression(
+                                clamp(Number(event.target.value) || 0, 0, 100)
+                              );
+                            }}
+                            className="backtest-slider"
+                            style={{ "--p": `${embeddingCompression}%` } as React.CSSProperties}
+                          />
+                          <span className="ai-zip-note">{embeddingCompression}%</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="backtest-card" style={{ padding: "0.85rem" }}>
+                      <div className="ai-zip-section-title">Dimensionality</div>
+                      <div style={{ display: "grid", gap: "0.55rem" }}>
+                        <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
+                          <div className="ai-zip-label">Modality</div>
+                          <div className="ai-zip-toggle-grid tiles compact">
+                            {AI_MODALITY_OPTIONS.map((modality) => (
+                              <button
+                                key={modality}
+                                type="button"
+                                className={`ai-zip-button pill ${
+                                  selectedAiModalities.includes(modality) ? "active" : ""
+                                }`}
+                                disabled={aiDisabled}
+                                onClick={() => {
+                                  setSelectedAiModalities((current) =>
+                                    toggleListValue(current, modality)
+                                  );
+                                }}
+                              >
+                                {modality}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
+                          <span className="ai-zip-label">Dimension Amount</span>
+                          <input
+                            type="number"
+                            min={2}
+                            max={Math.max(2, configuredAiFeatureDimensionCount)}
+                            step={1}
+                            value={dimensionAmount}
+                            disabled={aiDisabled}
+                            onChange={(event) => {
+                              setDimensionAmount(
+                                clamp(
+                                  Math.floor(Number(event.target.value) || 2),
+                                  2,
+                                  Math.max(2, configuredAiFeatureDimensionCount)
+                                )
+                              );
+                            }}
+                            className="ai-zip-input"
+                          />
+                        </label>
+
+                        <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
+                          <span className="ai-zip-label">Compression Method</span>
+                          <select
+                            value={compressionMethod}
+                            disabled={aiDisabled}
+                            onChange={(event) => {
+                              setCompressionMethod(event.target.value as AiCompressionMethod);
+                            }}
+                            className="ai-zip-input"
+                          >
+                            <option value="pca">PCA</option>
+                            <option value="jl">Random Projection</option>
+                            <option value="hash">Feature Hashing</option>
+                            <option value="variance">Top Variance</option>
+                            <option value="subsample">Uniform Subsample</option>
+                          </select>
+                        </label>
                       </div>
                     </div>
                   </div>
