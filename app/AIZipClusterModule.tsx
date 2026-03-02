@@ -1036,6 +1036,11 @@ function TradeCandlestickChartSVG({
   const [mouseXY, setMouseXY] = React.useState<{ x: number; y: number } | null>(
     null
   );
+  const [ctxMenu, setCtxMenu] = React.useState<{
+    clientX: number;
+    clientY: number;
+    candle: { o: number | null; h: number | null; l: number | null; c: number | null; tm: number | null; idx: number };
+  } | null>(null);
   const dragRef = React.useRef<{
     dragging: boolean;
     startX: number;
@@ -1152,6 +1157,7 @@ function TradeCandlestickChartSVG({
   };
 
   const onMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 2) return;
     const r = (e.currentTarget as any).getBoundingClientRect();
     const x = ((e.clientX - r.left) / r.width) * W;
     dragRef.current = {
@@ -1198,10 +1204,39 @@ function TradeCandlestickChartSVG({
   };
 
   const onDoubleClick = () => {
-    // reset back to initial window around entry
     setViewStart(initialStart);
     setViewEnd(Math.max(initialStart, initialEnd));
   };
+
+  const onContextMenu = (e: React.MouseEvent) => {
+    const r = (e.currentTarget as any).getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W;
+    const idx = idxFromMouseX(x);
+    if (idx < 0 || idx >= N) return;
+    const c = baseData[idx];
+    if (!c) return;
+    e.preventDefault();
+    const { o, h, l, c: cl } = ohlc(c);
+    const tm = candleTimeMs(c);
+    setCtxMenu({ clientX: e.clientX, clientY: e.clientY, candle: { o, h, l, c: cl, tm: tm ?? null, idx } });
+  };
+
+  React.useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    const onDown = (e: MouseEvent) => { if (e.button !== 2) close(); };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("wheel", close, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("wheel", close, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [ctxMenu]);
 
   const candleWidth = React.useMemo(() => {
     const n = Math.max(1, viewData.length);
@@ -1440,7 +1475,7 @@ function TradeCandlestickChartSVG({
               color: "rgba(255,255,255,0.62)",
             }}
           >
-            drag to pan • scroll to zoom • double-click to reset
+            drag to pan • scroll to zoom • double-click to reset • right-click info
           </span>
         </div>
         <div style={{ color: "rgba(255,255,255,0.62)", fontSize: 12 }}>
@@ -1464,6 +1499,7 @@ function TradeCandlestickChartSVG({
         onMouseUp={onMouseUp}
         onWheel={onWheel}
         onDoubleClick={onDoubleClick}
+        onContextMenu={onContextMenu}
       >
         {/* Plot background */}
         <rect x={0} y={0} width={W} height={H} fill={bg} />
@@ -1772,6 +1808,61 @@ function TradeCandlestickChartSVG({
             })()
           : null}
       </svg>
+      {ctxMenu && (() => {
+        const cd = ctxMenu.candle;
+        const bullish = (cd.c ?? 0) >= (cd.o ?? 0);
+        const chg = (cd.c ?? 0) - (cd.o ?? 0);
+        const chgPct = (cd.o ?? 0) !== 0 ? (chg / (cd.o ?? 1)) * 100 : 0;
+        const rng = (cd.h ?? 0) - (cd.l ?? 0);
+        const bod = Math.abs(chg);
+        const fp = (v: number | null) => v == null ? "—" : v.toFixed(2);
+        const fs = (v: number) => (v >= 0 ? "+" : "") + v.toFixed(2);
+        const dt = cd.tm != null ? new Date(cd.tm) : null;
+        const dateStr = dt ? dt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+        const timeStr = dt ? dt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : "";
+        let lx = ctxMenu.clientX + 4, ly = ctxMenu.clientY + 4;
+        if (lx + 250 > window.innerWidth - 8) lx = ctxMenu.clientX - 254;
+        if (ly + 290 > window.innerHeight - 8) ly = ctxMenu.clientY - 294;
+        const rw = (label: string, val: string, col: string) => (
+          <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0" }}>
+            <span style={{ color: "rgba(255,255,255,0.45)", fontSize: 11, fontFamily: "ui-sans-serif,system-ui,sans-serif", fontWeight: 500 }}>{label}</span>
+            <span style={{ color: col, fontWeight: 700, fontSize: 13, fontVariantNumeric: "tabular-nums", letterSpacing: "0.02em" }}>{val}</span>
+          </div>
+        );
+        return (
+          <div
+            style={{
+              position: "fixed", left: lx, top: ly, zIndex: 99999,
+              background: "rgba(10,10,14,0.97)", border: "1px solid rgba(255,255,255,0.10)",
+              borderRadius: 14, padding: "14px 18px", minWidth: 230,
+              boxShadow: "0 16px 48px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.05)",
+              backdropFilter: "blur(20px)",
+              fontFamily: "ui-monospace,'SF Mono',Menlo,monospace", fontSize: 12,
+            }}
+            onContextMenu={e => e.preventDefault()}
+          >
+            {(dateStr || timeStr) && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, paddingBottom: 8, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                <span style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, fontFamily: "ui-sans-serif,system-ui,sans-serif" }}>{dateStr}</span>
+                <span style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, fontFamily: "ui-sans-serif,system-ui,sans-serif" }}>{timeStr}</span>
+              </div>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: bullish ? "#34d399" : "#fb7185" }} />
+              <span style={{ color: bullish ? "#34d399" : "#fb7185", fontWeight: 700, fontSize: 12, fontFamily: "ui-sans-serif,system-ui,sans-serif" }}>{bullish ? "Bullish" : "Bearish"}</span>
+            </div>
+            {rw("Open", fp(cd.o), "rgba(255,255,255,0.85)")}
+            {rw("High", fp(cd.h), "#34d399")}
+            {rw("Low", fp(cd.l), "#fb7185")}
+            {rw("Close", fp(cd.c), bullish ? "#34d399" : "#fb7185")}
+            <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", margin: "8px 0" }} />
+            {rw("Change", `${fs(chg)} (${fs(chgPct)}%)`, bullish ? "#34d399" : "#fb7185")}
+            {rw("Range", fp(rng), "#fbbf24")}
+            {rw("Body", fp(bod), "rgba(255,255,255,0.50)")}
+            {rw("Bar #", String(cd.idx), "rgba(255,255,255,0.35)")}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -1829,6 +1920,12 @@ function TradeCandlestickChartLightweight({
   const resizeObserverRef = React.useRef<ResizeObserver | null>(null);
   const priceLinesRef = React.useRef<any[]>([]);
   const lastTradeViewKeyRef = React.useRef<string | null>(null);
+  const [ctxMenu, setCtxMenu] = React.useState<{
+    clientX: number;
+    clientY: number;
+    candle: { time: number; open: number; high: number; low: number; close: number };
+  } | null>(null);
+  const hoveredCandleRef = React.useRef<any>(null);
 
   const num = (v: any) => {
     const n =
@@ -2055,7 +2152,26 @@ function TradeCandlestickChartLightweight({
     ro.observe(el);
     resizeObserverRef.current = ro;
 
+    chart.subscribeCrosshairMove((param: any) => {
+      if (!param?.seriesData) { hoveredCandleRef.current = null; return; }
+      const bar = param.seriesData.get(series);
+      hoveredCandleRef.current = bar ?? null;
+    });
+
+    const onCtxMenu = (ev: MouseEvent) => {
+      const c = hoveredCandleRef.current;
+      if (!c) return;
+      ev.preventDefault();
+      setCtxMenu({
+        clientX: ev.clientX,
+        clientY: ev.clientY,
+        candle: { time: c.time, open: c.open, high: c.high, low: c.low, close: c.close },
+      });
+    };
+    el.addEventListener("contextmenu", onCtxMenu);
+
     return () => {
+      el.removeEventListener("contextmenu", onCtxMenu);
       resizeObserverRef.current?.disconnect();
       resizeObserverRef.current = null;
       priceLinesRef.current = [];
@@ -2159,6 +2275,23 @@ function TradeCandlestickChartLightweight({
     }
   }, [data, initialStart, initialEnd, tradeViewKey]);
 
+  React.useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    const onDown = (e: MouseEvent) => { if (e.button !== 2) close(); };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("wheel", close, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("wheel", close, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [ctxMenu]);
+
   return (
     <div
       style={{
@@ -2194,7 +2327,7 @@ function TradeCandlestickChartLightweight({
               opacity: 0.65,
             }}
           >
-            drag to pan · scroll to zoom · double-click to reset
+            drag to pan · scroll to zoom · double-click to reset · right-click info
           </span>
         </div>
         <div style={{ fontSize: 12, opacity: 0.65 }}>
@@ -2208,6 +2341,58 @@ function TradeCandlestickChartLightweight({
         }}
         ref={containerRef}
       />
+      {ctxMenu && (() => {
+        const { candle } = ctxMenu;
+        const bullish = candle.close >= candle.open;
+        const chg = candle.close - candle.open;
+        const chgPct = candle.open !== 0 ? (chg / candle.open) * 100 : 0;
+        const rng = candle.high - candle.low;
+        const bod = Math.abs(chg);
+        const fp = (v: number) => v.toFixed(2);
+        const fs = (v: number) => (v >= 0 ? "+" : "") + v.toFixed(2);
+        const dt = new Date(candle.time * 1000);
+        const dateStr = dt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+        const timeStr = dt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+        let lx = ctxMenu.clientX + 4, ly = ctxMenu.clientY + 4;
+        if (lx + 250 > window.innerWidth - 8) lx = ctxMenu.clientX - 254;
+        if (ly + 270 > window.innerHeight - 8) ly = ctxMenu.clientY - 274;
+        const rw = (label: string, val: string, col: string) => (
+          <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0" }}>
+            <span style={{ color: "rgba(255,255,255,0.45)", fontSize: 11, fontFamily: "ui-sans-serif,system-ui,sans-serif", fontWeight: 500 }}>{label}</span>
+            <span style={{ color: col, fontWeight: 700, fontSize: 13, fontVariantNumeric: "tabular-nums", letterSpacing: "0.02em" }}>{val}</span>
+          </div>
+        );
+        return (
+          <div
+            style={{
+              position: "fixed", left: lx, top: ly, zIndex: 99999,
+              background: "rgba(10,10,14,0.97)", border: "1px solid rgba(255,255,255,0.10)",
+              borderRadius: 14, padding: "14px 18px", minWidth: 230,
+              boxShadow: "0 16px 48px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.05)",
+              backdropFilter: "blur(20px)",
+              fontFamily: "ui-monospace,'SF Mono',Menlo,monospace", fontSize: 12,
+            }}
+            onContextMenu={e => e.preventDefault()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, paddingBottom: 8, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+              <span style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, fontFamily: "ui-sans-serif,system-ui,sans-serif" }}>{dateStr}</span>
+              <span style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, fontFamily: "ui-sans-serif,system-ui,sans-serif" }}>{timeStr}</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: bullish ? "#34d399" : "#fb7185" }} />
+              <span style={{ color: bullish ? "#34d399" : "#fb7185", fontWeight: 700, fontSize: 12, fontFamily: "ui-sans-serif,system-ui,sans-serif" }}>{bullish ? "Bullish" : "Bearish"}</span>
+            </div>
+            {rw("Open", fp(candle.open), "rgba(255,255,255,0.85)")}
+            {rw("High", fp(candle.high), "#34d399")}
+            {rw("Low", fp(candle.low), "#fb7185")}
+            {rw("Close", fp(candle.close), bullish ? "#34d399" : "#fb7185")}
+            <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", margin: "8px 0" }} />
+            {rw("Change", `${fs(chg)} (${fs(chgPct)}%)`, bullish ? "#34d399" : "#fb7185")}
+            {rw("Range", fp(rng), "#fbbf24")}
+            {rw("Body", fp(bod), "rgba(255,255,255,0.50)")}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -34197,10 +34382,10 @@ export default function App() {
                       }
                     }}
                     style={{
-                      fontSize: 12,
-                      padding: "8px 18px",
-                      minWidth: 108,
-                      borderRadius: 12,
+                      fontSize: 15,
+                      padding: "10px 22px",
+                      minWidth: 128,
+                      borderRadius: 14,
                       border: "1px solid rgba(90,170,255,0.40)",
                       background: "rgba(90,170,255,0.15)",
                       color: "rgba(90,170,255,0.90)",
@@ -34220,16 +34405,16 @@ export default function App() {
                       }
                     }}
                     style={{
-                      fontSize: 12,
-                      padding: "8px 18px",
-                      minWidth: 108,
-                      borderRadius: 12,
+                      fontSize: 15,
+                      padding: "10px 22px",
+                      minWidth: 128,
+                      borderRadius: 14,
                       border: "1px solid rgba(90,170,255,0.40)",
                       background: "rgba(90,170,255,0.15)",
                       color: "rgba(90,170,255,0.90)",
                       fontWeight: 700,
                       cursor: "pointer",
-                      width: 116,
+                      width: 136,
                       appearance: "none",
                     }}
                   >
@@ -34247,10 +34432,10 @@ export default function App() {
                     }}
                     disabled={!selectedSettingName}
                     style={{
-                      fontSize: 12,
-                      padding: "8px 18px",
-                      minWidth: 108,
-                      borderRadius: 12,
+                      fontSize: 15,
+                      padding: "10px 22px",
+                      minWidth: 128,
+                      borderRadius: 14,
                       border: "1px solid rgba(240,80,80,0.45)",
                       background: selectedSettingName
                         ? "rgba(240,80,80,0.16)"
@@ -34273,10 +34458,10 @@ export default function App() {
                   <button
                     onClick={() => exportSettingsFile()}
                     style={{
-                      fontSize: 12,
-                      padding: "8px 18px",
-                      minWidth: 108,
-                      borderRadius: 12,
+                      fontSize: 15,
+                      padding: "10px 22px",
+                      minWidth: 128,
+                      borderRadius: 14,
                       border: "1px solid rgba(90,170,255,0.50)",
                       background:
                         "linear-gradient(180deg, rgba(90,170,255,0.22), rgba(90,170,255,0.10))",
@@ -34292,10 +34477,10 @@ export default function App() {
                   <button
                     onClick={() => importSettingsInputRef.current?.click()}
                     style={{
-                      fontSize: 12,
-                      padding: "8px 18px",
-                      minWidth: 108,
-                      borderRadius: 12,
+                      fontSize: 15,
+                      padding: "10px 22px",
+                      minWidth: 128,
+                      borderRadius: 14,
                       border: "1px solid rgba(90,170,255,0.50)",
                       background:
                         "linear-gradient(180deg, rgba(90,170,255,0.22), rgba(90,170,255,0.10))",
@@ -34323,10 +34508,10 @@ export default function App() {
                   <button
                     onClick={() => resetStoredPreferences()}
                     style={{
-                      fontSize: 12,
-                      padding: "8px 18px",
-                      minWidth: 108,
-                      borderRadius: 12,
+                      fontSize: 15,
+                      padding: "10px 22px",
+                      minWidth: 128,
+                      borderRadius: 14,
                       border: "1px solid rgba(255,255,255,0.18)",
                       background:
                         "linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04))",
