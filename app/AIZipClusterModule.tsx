@@ -30189,6 +30189,8 @@ export default function App() {
                 height: "100%",
                 background: fill,
                 boxShadow: "0 0 18px rgba(90,170,255,0.35)",
+                transition: "width 0.45s cubic-bezier(0.4, 0, 0.2, 1)",
+                willChange: "width",
               }}
             />
           </div>
@@ -32515,6 +32517,8 @@ export default function App() {
                                 height: "100%",
                                 background: fill,
                                 boxShadow: "0 0 18px rgba(90,170,255,0.25)",
+                                transition: "width 0.45s cubic-bezier(0.4, 0, 0.2, 1)",
+                                willChange: "width",
                               }}
                             />
                           </div>
@@ -34193,10 +34197,10 @@ export default function App() {
                       }
                     }}
                     style={{
-                      fontSize: 10,
-                      padding: "6px 14px",
-                      minWidth: 92,
-                      borderRadius: 10,
+                      fontSize: 12,
+                      padding: "8px 18px",
+                      minWidth: 108,
+                      borderRadius: 12,
                       border: "1px solid rgba(90,170,255,0.40)",
                       background: "rgba(90,170,255,0.15)",
                       color: "rgba(90,170,255,0.90)",
@@ -34216,16 +34220,16 @@ export default function App() {
                       }
                     }}
                     style={{
-                      fontSize: 10,
-                      padding: "6px 14px",
-                      minWidth: 92,
-                      borderRadius: 10,
+                      fontSize: 12,
+                      padding: "8px 18px",
+                      minWidth: 108,
+                      borderRadius: 12,
                       border: "1px solid rgba(90,170,255,0.40)",
                       background: "rgba(90,170,255,0.15)",
                       color: "rgba(90,170,255,0.90)",
                       fontWeight: 700,
                       cursor: "pointer",
-                      width: 100,
+                      width: 116,
                       appearance: "none",
                     }}
                   >
@@ -34243,10 +34247,10 @@ export default function App() {
                     }}
                     disabled={!selectedSettingName}
                     style={{
-                      fontSize: 10,
-                      padding: "6px 14px",
-                      minWidth: 92,
-                      borderRadius: 10,
+                      fontSize: 12,
+                      padding: "8px 18px",
+                      minWidth: 108,
+                      borderRadius: 12,
                       border: "1px solid rgba(240,80,80,0.45)",
                       background: selectedSettingName
                         ? "rgba(240,80,80,0.16)"
@@ -34269,10 +34273,10 @@ export default function App() {
                   <button
                     onClick={() => exportSettingsFile()}
                     style={{
-                      fontSize: 10,
-                      padding: "6px 14px",
-                      minWidth: 92,
-                      borderRadius: 10,
+                      fontSize: 12,
+                      padding: "8px 18px",
+                      minWidth: 108,
+                      borderRadius: 12,
                       border: "1px solid rgba(90,170,255,0.50)",
                       background:
                         "linear-gradient(180deg, rgba(90,170,255,0.22), rgba(90,170,255,0.10))",
@@ -34288,10 +34292,10 @@ export default function App() {
                   <button
                     onClick={() => importSettingsInputRef.current?.click()}
                     style={{
-                      fontSize: 10,
-                      padding: "6px 14px",
-                      minWidth: 92,
-                      borderRadius: 10,
+                      fontSize: 12,
+                      padding: "8px 18px",
+                      minWidth: 108,
+                      borderRadius: 12,
                       border: "1px solid rgba(90,170,255,0.50)",
                       background:
                         "linear-gradient(180deg, rgba(90,170,255,0.22), rgba(90,170,255,0.10))",
@@ -34319,10 +34323,10 @@ export default function App() {
                   <button
                     onClick={() => resetStoredPreferences()}
                     style={{
-                      fontSize: 10,
-                      padding: "6px 14px",
-                      minWidth: 92,
-                      borderRadius: 10,
+                      fontSize: 12,
+                      padding: "8px 18px",
+                      minWidth: 108,
+                      borderRadius: 12,
                       border: "1px solid rgba(255,255,255,0.18)",
                       background:
                         "linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04))",

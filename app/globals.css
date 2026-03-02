@@ -2742,7 +2742,7 @@ button {
   border-radius: 0;
   background: linear-gradient(90deg, #00cf7a 0%, #00ff9d 52%, #75ffcd 100%);
   box-shadow: 0 0 22px rgba(0, 255, 157, 0.55);
-  transition: width 0.1s linear;
+  transition: width 0.45s cubic-bezier(0.4, 0, 0.2, 1);
   will-change: width;
 }
 
@@ -3899,6 +3899,8 @@ button {
   height: 100%;
   border-radius: 999px;
   background: linear-gradient(90deg, #1bae8a 0%, #2f81ff 100%);
+  transition: width 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: width;
 }
 
 .watchlist-labels,

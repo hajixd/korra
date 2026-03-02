@@ -14107,12 +14107,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                           return null;
                                         }
 
+                                        const barY = resolvedHeight < 0 ? y + resolvedHeight : y;
+                                        const barHeight = Math.abs(resolvedHeight);
+
                                         return (
                                           <rect
                                             x={x}
-                                            y={y}
+                                            y={barY}
                                             width={Math.max(0, resolvedWidth)}
-                                            height={Math.max(0, resolvedHeight)}
+                                            height={barHeight}
                                             fill={getPerformanceStatsBarFill(Number(payload?.pnl ?? 0))}
                                           />
                                         );
