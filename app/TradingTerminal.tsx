@@ -5026,6 +5026,39 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [selectedKey, selectedTimeframe]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const prefetchTimeframeChanges = async () => {
+      const promises = timeframes.map(async (tf) => {
+        const key = symbolTimeframeKey(selectedSymbol, tf);
+        if (tf === selectedTimeframe) return;
+
+        try {
+          const candles = await fetchMarketCandles(tf, 3);
+
+          if (!cancelled && candles.length > 0) {
+            setSeriesMap((prev) => {
+              if ((prev[key]?.length ?? 0) >= candles.length) return prev;
+              return { ...prev, [key]: candles };
+            });
+          }
+        } catch {
+          // Non-critical prefetch; ignore failures.
+        }
+      });
+
+      await Promise.allSettled(promises);
+    };
+
+    prefetchTimeframeChanges();
+
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSymbol]);
+
+  useEffect(() => {
     if (!backtestHasRun) {
       return;
     }
@@ -5321,20 +5354,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       : 0;
 
   const timeframeChanges = useMemo(() => {
-    const changes: Partial<Record<Timeframe, number>> = {};
-    for (const tf of timeframes) {
-      const key = symbolTimeframeKey(selectedAsset.symbol, tf);
+    return timeframes.map((tf) => {
+      const key = symbolTimeframeKey(selectedSymbol, tf);
       const list = seriesMap[key] ?? [];
       const last = list[list.length - 1];
-      const prev = list[list.length - 2] ?? last;
-      if (last && prev && prev.close > 0) {
-        changes[tf] = ((last.close - prev.close) / prev.close) * 100;
-      } else {
-        changes[tf] = 0;
-      }
-    }
-    return changes;
-  }, [selectedAsset.symbol, seriesMap]);
+      const prev = list.length > 1 ? list[list.length - 2] : null;
+      const change =
+        last && prev && prev.close > 0
+          ? ((last.close - prev.close) / prev.close) * 100
+          : null;
+
+      return { timeframe: tf, change };
+    });
+  }, [selectedSymbol, seriesMap]);
 
   const hoveredCandle =
     latestCandle && hoveredTime ? candleByUnix.get(hoveredTime) ?? latestCandle : latestCandle;
@@ -10507,19 +10539,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             {latestCandle ? (
               <>
                 <span>${formatPrice(latestCandle.close)}</span>
-                <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.8em", marginLeft: "0.5rem", alignItems: "center" }}>
-                  {timeframes.map((tf) => {
-                    const change = timeframeChanges[tf] ?? 0;
-                    return (
-                      <div key={tf} style={{ display: "flex", alignItems: "baseline", gap: "0.2rem" }}>
-                        <span style={{ color: "rgba(255, 255, 255, 0.4)", fontSize: "0.75em", fontWeight: 600 }}>{tf}</span>
-                        <span className={change >= 0 ? "up" : "down"}>
-                          {change >= 0 ? "+" : ""}
-                          {change.toFixed(2)}%
-                        </span>
-                      </div>
-                    );
-                  })}
+                <div className="tf-changes">
+                  {timeframeChanges.map(({ timeframe, change }) => (
+                    <span
+                      key={timeframe}
+                      className={`tf-change ${change === null ? "neutral" : change >= 0 ? "up" : "down"}${timeframe === selectedTimeframe ? " tf-active" : ""}`}
+                    >
+                      <span className="tf-label">{timeframe}</span>
+                      {change !== null
+                        ? `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`
+                        : "\u2014"}
+                    </span>
+                  ))}
                 </div>
               </>
             ) : (

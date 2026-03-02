@@ -133,9 +133,41 @@ button {
 .live-quote {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.6rem;
   font-size: 0.78rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.tf-changes {
+  display: flex;
+  align-items: center;
+  gap: 0.05rem;
+}
+
+.tf-change {
+  display: flex;
+  align-items: center;
+  gap: 0.18rem;
+  font-size: 0.68rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  white-space: nowrap;
+  padding: 0.15rem 0.38rem;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.tf-change.tf-active {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.tf-change.neutral {
+  color: var(--text-dim);
+}
+
+.tf-label {
+  color: var(--text-dim);
+  font-size: 0.62rem;
+  margin-right: 0.08rem;
 }
 
 .up {
