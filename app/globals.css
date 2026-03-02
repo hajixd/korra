@@ -3706,6 +3706,31 @@ button {
   overflow: hidden;
 }
 
+.chart-reset-btn {
+  position: absolute;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  padding: 4px 12px;
+  background: rgba(20, 26, 36, 0.85);
+  color: var(--text-muted, #8899aa);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  pointer-events: all;
+}
+
+.chart-reset-btn:hover {
+  color: var(--text-base, #ccd6e0);
+  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(30, 38, 52, 0.95);
+}
+
 .side-panel {
   min-width: 0;
   min-height: 0;

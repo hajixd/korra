@@ -7344,6 +7344,34 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return () => window.cancelAnimationFrame(raf);
   }, [latestCandle, selectedTimeframe, chartRenderCandles]);
 
+  const resetChart = useCallback(() => {
+    const totalBars = chartSourceLengthRef.current;
+
+    if (totalBars === 0) {
+      return;
+    }
+
+    const visibleCount = timeframeVisibleCount[selectedTimeframe];
+    const rightPadding = Math.round(visibleCount * 0.4);
+    const from = Math.max(0, totalBars - 1 - (visibleCount - rightPadding));
+    const to = from + visibleCount;
+
+    requestChartVisibleRangeRef.current({ from, to });
+    focusTradeIdRef.current = null;
+
+    if (chartFocusedPriceRangeResetRafRef.current) {
+      window.cancelAnimationFrame(chartFocusedPriceRangeResetRafRef.current);
+      chartFocusedPriceRangeResetRafRef.current = 0;
+    }
+
+    chartFocusedPriceRangeRef.current = null;
+    chartRef.current?.applyOptions({
+      rightPriceScale: {
+        autoScale: true
+      }
+    });
+  }, [selectedTimeframe]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const isOptionR =
@@ -7355,32 +7383,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       event.preventDefault();
-
-      const totalBars = chartSourceLengthRef.current;
-
-      if (totalBars === 0) {
-        return;
-      }
-
-      const visibleCount = timeframeVisibleCount[selectedTimeframe];
-      const rightPadding = Math.round(visibleCount * 0.4);
-      const from = Math.max(0, totalBars - 1 - (visibleCount - rightPadding));
-      const to = from + visibleCount;
-
-      requestChartVisibleRangeRef.current({ from, to });
-      focusTradeIdRef.current = null;
-
-      if (chartFocusedPriceRangeResetRafRef.current) {
-        window.cancelAnimationFrame(chartFocusedPriceRangeResetRafRef.current);
-        chartFocusedPriceRangeResetRafRef.current = 0;
-      }
-
-      chartFocusedPriceRangeRef.current = null;
-      chartRef.current?.applyOptions({
-        rightPriceScale: {
-          autoScale: true
-        }
-      });
+      resetChart();
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -7388,7 +7391,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [selectedTimeframe]);
+  }, [resetChart]);
 
   useEffect(() => {
     let frameId = 0;
@@ -11294,6 +11297,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               <div className="chart-stage">
                 <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
                 <div ref={countdownOverlayRef} className="candle-countdown-overlay" />
+                <button
+                  type="button"
+                  className="chart-reset-btn"
+                  onClick={resetChart}
+                  title="Reset chart view (⌥R)"
+                >
+                  Reset Chart
+                </button>
               </div>
             </section>
 
