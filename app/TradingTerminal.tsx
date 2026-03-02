@@ -1555,12 +1555,12 @@ const timeframeVisibleCount: Record<Timeframe, number> = {
 };
 
 const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
-  { id: "active", label: "Active" },
   { id: "assets", label: "Assets" },
-  { id: "mt5", label: "MT5" },
+  { id: "active", label: "Active" },
   { id: "history", label: "History" },
   { id: "actions", label: "Action" },
-  { id: "ai", label: "AI" }
+  { id: "ai", label: "AI" },
+  { id: "mt5", label: "Copy Trade" }
 ];
 
 const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
@@ -11352,8 +11352,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="tab-view copytrade-tab">
                       <div className="watchlist-head">
                         <div>
-                          <h2>MT5 Copy Trade</h2>
-                          <p>Connect an MT5 account to mirror {backtestModelSelectionSummary}</p>
+                          <h2>Copy Trade</h2>
                         </div>
                       </div>
                       <div className="copytrade-body">
@@ -11396,10 +11395,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           Connect MT5
                         </button>
 
-                        <p className="copytrade-note">
-                          Placeholder only. Copy-trading logic and credential handling are not wired
-                          yet.
-                        </p>
                       </div>
                     </div>
                   ) : null}
