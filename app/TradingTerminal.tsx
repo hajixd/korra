@@ -4429,6 +4429,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const appliedBacktestBreakEvenTriggerPctRef = useRef(50);
   const appliedBacktestTrailingStartPctRef = useRef(50);
   const appliedBacktestTrailingDistPctRef = useRef(30);
+  const appliedBacktestStatsDateStartRef = useRef("");
   const chartSizeRef = useRef({ width: 0, height: 0 });
   const chartRenderWindowRef = useRef<ChartDataWindow>({ from: 0, to: -1 });
   const chartVisibleGlobalRangeRef = useRef<ChartDataWindow | null>(null);
@@ -4539,9 +4540,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     updateStatsRefreshOverlayMode("loading");
     setStatsRefreshProgress(0);
     setStatsRefreshLoadingDisplayProgress(0);
+    const statsStartMs = getUtcDayStartMs(nextSettings.statsDateStart);
     setStatsRefreshProgressLabel(
       formatStatsRefreshDateLabel(
-        nextRefreshMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000
+        statsStartMs ?? nextRefreshMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000
       )
     );
     setPropResult(null);
@@ -6036,6 +6038,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   appliedBacktestBreakEvenTriggerPctRef.current = appliedBacktestSettings.breakEvenTriggerPct;
   appliedBacktestTrailingStartPctRef.current = appliedBacktestSettings.trailingStartPct;
   appliedBacktestTrailingDistPctRef.current = appliedBacktestSettings.trailingDistPct;
+  appliedBacktestStatsDateStartRef.current = appliedBacktestSettings.statsDateStart;
 
   useEffect(() => {
     if (!backtestHasRun || !backtestHistorySeedReady) {
@@ -6058,6 +6061,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const breakEvenTriggerPctSnapshot = appliedBacktestBreakEvenTriggerPctRef.current;
     const trailingStartPctSnapshot = appliedBacktestTrailingStartPctRef.current;
     const trailingDistPctSnapshot = appliedBacktestTrailingDistPctRef.current;
+    const statsDateStartSnapshot = appliedBacktestStatsDateStartRef.current;
 
     if (tradeBlueprintsSnapshot.length === 0 || backtestTargetTradesSnapshot <= 0) {
       startTransition(() => {
@@ -6095,15 +6099,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const firstChronologicalBlueprint = chronologicalTradeBlueprints[0] ?? null;
     const lastChronologicalBlueprint =
       chronologicalTradeBlueprints[chronologicalTradeBlueprints.length - 1] ?? null;
+    const statsDateStartOverrideMs = getUtcDayStartMs(statsDateStartSnapshot);
     const analysisStartMsRaw = firstChronologicalBlueprint
       ? Math.min(firstChronologicalBlueprint.entryMs, firstChronologicalBlueprint.exitMs)
       : timelineStartMs;
     const analysisEndMsRaw = lastChronologicalBlueprint
       ? Math.max(lastChronologicalBlueprint.entryMs, lastChronologicalBlueprint.exitMs)
       : timelineEndMs;
-    const analysisStartMs = Number.isFinite(analysisStartMsRaw)
-      ? analysisStartMsRaw
-      : timelineStartMs;
+    const analysisStartMs = statsDateStartOverrideMs
+      ?? (Number.isFinite(analysisStartMsRaw) ? analysisStartMsRaw : timelineStartMs);
     const analysisEndMs = Math.max(
       analysisStartMs + 60_000,
       Number.isFinite(analysisEndMsRaw) ? analysisEndMsRaw : timelineEndMs
@@ -8490,21 +8494,34 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     ];
   }, [backtestSummary]);
 
-  const mainSettingsAiStats = useMemo<BacktestHeroStatCard[]>(() => {
+  const appliedMainSettingsAiStats = useMemo<BacktestHeroStatCard[]>(() => {
+    const applied = appliedBacktestSettings;
+    const appliedAiMode = applied.aiMode;
+    const appliedAiFilter = applied.aiFilterEnabled;
+    const appliedConfGateDisabled = appliedAiMode === "off" || !appliedAiFilter;
+    const appliedEffConfThreshold = appliedConfGateDisabled ? 0 : applied.confidenceThreshold;
+    const appliedAntiCheat = applied.antiCheatEnabled;
+    const appliedStaticLibClusters = applied.staticLibrariesClusters;
+    const appliedLibCount = applied.selectedAiLibraries.length;
+    const appliedModelCount = Object.values(applied.aiModelStates).filter((s) => s > 0).length;
+    const appliedFeatureCount = Object.values(applied.aiFeatureLevels).filter((l) => l > 0).length;
+    const appliedDimCount = countConfiguredAiFeatureDimensions(applied.aiFeatureLevels, applied.aiFeatureModes, applied.chunkBars);
+    const appliedAiModelEnabled = !appliedAiFilter && appliedAiMode !== "off";
+
     return [
       {
         label: "AI Method",
-        value: aiMode === "off" ? "OFF" : aiMode.toUpperCase(),
-        tone: aiMode === "off" ? "neutral" : "up",
-        valueStyle: { color: aiMode !== "off" ? "#60a5fa" : "rgba(255,255,255,0.4)" },
-        meta: aiMode === "off" ? "Decision engine disabled" : "Primary AI decision mode"
+        value: appliedAiMode === "off" ? "OFF" : appliedAiMode.toUpperCase(),
+        tone: appliedAiMode === "off" ? "neutral" : "up",
+        valueStyle: { color: appliedAiMode !== "off" ? "#60a5fa" : "rgba(255,255,255,0.4)" },
+        meta: appliedAiMode === "off" ? "Decision engine disabled" : "Primary AI decision mode"
       },
       {
         label: "Confidence Gate",
-        value: `${effectiveConfidenceThreshold}%`,
-        tone: confidenceGateDisabled ? "neutral" : "up",
-        valueStyle: { color: confidenceGateDisabled ? "rgba(255,255,255,0.4)" : "#facc15" },
-        meta: confidenceGateDisabled ? "Gate disabled" : "Minimum confidence threshold"
+        value: `${appliedEffConfThreshold}%`,
+        tone: appliedConfGateDisabled ? "neutral" : "up",
+        valueStyle: { color: appliedConfGateDisabled ? "rgba(255,255,255,0.4)" : "#facc15" },
+        meta: appliedConfGateDisabled ? "Gate disabled" : "Minimum confidence threshold"
       },
       {
         label: "Avg Confidence",
@@ -8534,78 +8551,64 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       },
       {
         label: "Anti-Cheat",
-        value: antiCheatEnabled ? "ON" : "OFF",
-        tone: antiCheatEnabled ? "up" : "down",
-        valueStyle: { color: antiCheatEnabled ? "#34d399" : "#f87171" },
+        value: appliedAntiCheat ? "ON" : "OFF",
+        tone: appliedAntiCheat ? "up" : "down",
+        valueStyle: { color: appliedAntiCheat ? "#34d399" : "#f87171" },
         meta: "Spoof/invalid pattern checks"
       },
       {
         label: "Libraries",
-        value: selectedAiLibraryCount > 0 ? `${selectedAiLibraryCount} Active` : "OFF",
-        tone: selectedAiLibraryCount > 0 ? "up" : "neutral",
-        valueStyle: { color: selectedAiLibraryCount > 0 ? "#34d399" : "rgba(255,255,255,0.4)" },
+        value: appliedLibCount > 0 ? `${appliedLibCount} Active` : "OFF",
+        tone: appliedLibCount > 0 ? "up" : "neutral",
+        valueStyle: { color: appliedLibCount > 0 ? "#34d399" : "rgba(255,255,255,0.4)" },
         meta: "Loaded AI data libraries"
       },
       {
         label: "AI Model",
-        value: aiModelEnabled && aiMode !== "off" ? "ON" : "OFF",
-        tone: aiModelEnabled && aiMode !== "off" ? "up" : "neutral",
-        valueStyle: { color: aiModelEnabled && aiMode !== "off" ? "#34d399" : "rgba(255,255,255,0.4)" },
+        value: appliedAiModelEnabled ? "ON" : "OFF",
+        tone: appliedAiModelEnabled ? "up" : "neutral",
+        valueStyle: { color: appliedAiModelEnabled ? "#34d399" : "rgba(255,255,255,0.4)" },
         meta: "Model-driven entry module"
       },
       {
         label: "AI Filter",
-        value: aiFilterEnabled && aiMode !== "off" ? "ON" : "OFF",
-        tone: aiFilterEnabled && aiMode !== "off" ? "up" : "neutral",
-        valueStyle: { color: aiFilterEnabled && aiMode !== "off" ? "#34d399" : "rgba(255,255,255,0.4)" },
+        value: appliedAiFilter && appliedAiMode !== "off" ? "ON" : "OFF",
+        tone: appliedAiFilter && appliedAiMode !== "off" ? "up" : "neutral",
+        valueStyle: { color: appliedAiFilter && appliedAiMode !== "off" ? "#34d399" : "rgba(255,255,255,0.4)" },
         meta: "Confidence filtering module"
       },
       {
         label: "Static Lib + Cluster",
-        value: staticLibrariesClusters ? "ON" : "OFF",
-        tone: staticLibrariesClusters ? "up" : "neutral",
-        valueStyle: { color: staticLibrariesClusters ? "#34d399" : "rgba(255,255,255,0.4)" },
+        value: appliedStaticLibClusters ? "ON" : "OFF",
+        tone: appliedStaticLibClusters ? "up" : "neutral",
+        valueStyle: { color: appliedStaticLibClusters ? "#34d399" : "rgba(255,255,255,0.4)" },
         meta: "Static AI data mode"
       },
       {
         label: "Active Models",
-        value: selectedAiModelCount.toLocaleString("en-US"),
-        tone: selectedAiModelCount > 0 ? "up" : "neutral",
-        valueStyle: { color: selectedAiModelCount > 0 ? "#34d399" : "rgba(255,255,255,0.4)" },
+        value: appliedModelCount.toLocaleString("en-US"),
+        tone: appliedModelCount > 0 ? "up" : "neutral",
+        valueStyle: { color: appliedModelCount > 0 ? "#34d399" : "rgba(255,255,255,0.4)" },
         meta: "Enabled models"
       },
       {
         label: "Active Features",
-        value: selectedAiFeatureCount.toLocaleString("en-US"),
-        tone: selectedAiFeatureCount > 0 ? "up" : "neutral",
-        valueStyle: { color: selectedAiFeatureCount > 0 ? "#60a5fa" : "rgba(255,255,255,0.4)" },
+        value: appliedFeatureCount.toLocaleString("en-US"),
+        tone: appliedFeatureCount > 0 ? "up" : "neutral",
+        valueStyle: { color: appliedFeatureCount > 0 ? "#60a5fa" : "rgba(255,255,255,0.4)" },
         meta: "Enabled feature groups"
       },
       {
         label: "Feature Dimensions",
-        value: configuredAiFeatureDimensionCount.toLocaleString("en-US"),
-        tone: configuredAiFeatureDimensionCount > 0 ? "up" : "neutral",
+        value: appliedDimCount.toLocaleString("en-US"),
+        tone: appliedDimCount > 0 ? "up" : "neutral",
         valueStyle: {
-          color: configuredAiFeatureDimensionCount > 0 ? "#60a5fa" : "rgba(255,255,255,0.4)"
+          color: appliedDimCount > 0 ? "#60a5fa" : "rgba(255,255,255,0.4)"
         },
         meta: "Configured feature dimensions"
       }
     ];
-  }, [
-    aiFilterEnabled,
-    aiMode,
-    aiModelEnabled,
-    antiCheatEnabled,
-    backtestSummary.averageConfidence,
-    backtestTrades.length,
-    confidenceGateDisabled,
-    configuredAiFeatureDimensionCount,
-    effectiveConfidenceThreshold,
-    selectedAiFeatureCount,
-    selectedAiLibraryCount,
-    selectedAiModelCount,
-    staticLibrariesClusters
-  ]);
+  }, [appliedBacktestSettings, backtestSummary.averageConfidence, backtestTrades.length]);
 
   const mainStatsSessionRows = useMemo(() => {
     const map = new Map<string, { label: string; total: number; trades: number }>();
@@ -9360,6 +9363,59 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     mainStatsSessionRows,
     mainStatsSummary
   ]);
+
+  const footerHeroStats = useMemo<BacktestHeroStatCard[]>(() => {
+    const stats: BacktestHeroStatCard[] = [];
+
+    for (const card of mainStatisticsCards) {
+      if (card.label === "Model PnL") {
+        for (const row of mainStatsModelRows) {
+          stats.push({
+            label: row.label,
+            value: formatSignedUsd(row.total),
+            tone: row.total >= 0 ? "up" : "down",
+            meta: `${row.trades} trades`
+          });
+        }
+      } else if (card.label === "Session PnL") {
+        for (const row of mainStatsSessionRows) {
+          stats.push({
+            label: row.label,
+            value: formatSignedUsd(row.total),
+            tone: row.total >= 0 ? "up" : "down",
+            meta: `${row.trades} trades`
+          });
+        }
+      } else if (card.label === "Monthly PnL") {
+        for (const row of mainStatsMonthRows) {
+          stats.push({
+            label: getMonthLabel(row.key),
+            value: formatSignedUsd(row.total),
+            tone: row.total >= 0 ? "up" : "down",
+            meta: `${row.trades} trades`
+          });
+        }
+      } else if (card.children) {
+        for (const child of card.children) {
+          stats.push({
+            label: child.label,
+            value: String(child.value),
+            tone: child.tone,
+            meta: ""
+          });
+        }
+      } else {
+        stats.push({
+          label: card.label,
+          value: String(card.value),
+          tone: card.tone,
+          meta: ""
+        });
+      }
+    }
+
+    return stats;
+  }, [mainStatisticsCards, mainStatsModelRows, mainStatsSessionRows, mainStatsMonthRows]);
 
   const availableBacktestMonths = useMemo(() => {
     if (!isCalendarBacktestTabActive) {
@@ -11841,7 +11897,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           className="main-settings-kpi-strip-sequence"
                           aria-hidden={sequenceIndex === 1}
                         >
-                          {mainSettingsAiStats.map((item) => (
+                          {appliedMainSettingsAiStats.map((item) => (
                             <article
                               key={`${sequenceIndex}-${item.label}`}
                               className="main-settings-kpi-card backtest-summary-card-animated"
@@ -15080,6 +15136,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         <div
           className="backtest-summary-strip backtest-summary-strip-compact"
           aria-label="backtest rolling statistics"
+          style={{ "--backtest-stat-item-count": footerHeroStats.length } as React.CSSProperties}
         >
           <div className="backtest-summary-strip-track">
             {[0, 1].map((sequenceIndex) => (
@@ -15088,9 +15145,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 className="backtest-summary-strip-sequence"
                 aria-hidden={sequenceIndex === 1}
               >
-                {backtestHeroStats.map((item) => (
+                {footerHeroStats.map((item, itemIndex) => (
                   <article
-                    key={`status-${sequenceIndex}-${item.label}`}
+                    key={`status-${sequenceIndex}-${item.label}-${itemIndex}`}
                     className="backtest-summary-card backtest-summary-card-animated"
                   >
                     <span>{item.label}</span>

@@ -44,29 +44,30 @@ button {
 }
 
 .surface-strip {
+  position: relative;
   min-height: 42px;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
+  display: flex;
   align-items: center;
-  gap: 0.8rem;
   padding: 0 0.85rem;
   border-bottom: 1px solid var(--line);
   background: #0a0f16;
 }
 
 .surface-brand {
-  justify-self: start;
+  flex: 0 0 auto;
 }
 
 .surface-tabs {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   align-items: stretch;
-  justify-self: center;
   height: 100%;
 }
 
 .surface-actions {
-  justify-self: end;
+  margin-left: auto;
 }
 
 .surface-tab {
@@ -240,10 +241,10 @@ button {
 
 .notif-btn {
   position: relative;
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
   border: 1px solid #273247;
-  border-radius: 8px;
+  border-radius: 7px;
   background: #101726;
   color: #c4cee2;
   display: grid;
@@ -257,39 +258,39 @@ button {
 }
 
 .notif-icon {
-  width: 15px;
-  height: 15px;
+  width: 13px;
+  height: 13px;
 }
 
 .notif-badge {
   position: absolute;
-  top: -5px;
-  right: -5px;
-  min-width: 15px;
-  height: 15px;
+  top: -4px;
+  right: -4px;
+  min-width: 13px;
+  height: 13px;
   border-radius: 999px;
   background: #2d6cff;
   color: #f3f7ff;
   border: 1px solid #0c1118;
-  font-size: 0.56rem;
+  font-size: 0.5rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 0.2rem;
+  padding: 0 0.18rem;
 }
 
 .settings-io-btn {
   position: relative;
-  height: 26px;
+  height: 23px;
   border: 1px solid #273247;
   border-radius: 4px;
   background: #101726;
   color: #c4cee2;
   display: flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0 0.85rem;
+  gap: 0.25rem;
+  padding: 0 0.7rem;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.12s, border-color 0.12s, color 0.12s;
@@ -301,13 +302,13 @@ button {
 }
 
 .settings-io-icon {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   flex: 0 0 auto;
 }
 
 .settings-io-label {
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -721,9 +722,10 @@ button {
   --backtest-stat-gap: 0.65rem;
   --backtest-visible-cards: 8;
   --backtest-stat-card-width: 182px;
-  --backtest-summary-scroll-duration: 68s;
+  --backtest-stat-item-count: 16;
+  --backtest-summary-scroll-duration: calc(var(--backtest-stat-item-count) * 4.25s);
   --backtest-summary-cycle-width: calc(
-    (16 * var(--backtest-stat-card-width)) + (16 * var(--backtest-stat-gap))
+    (var(--backtest-stat-item-count) * var(--backtest-stat-card-width)) + (var(--backtest-stat-item-count) * var(--backtest-stat-gap))
   );
   overflow: hidden;
   container-type: inline-size;
@@ -4586,7 +4588,9 @@ button {
   }
 
   .surface-tabs {
-    justify-self: end;
+    position: static;
+    transform: none;
+    margin-left: auto;
   }
 
   .topbar {
