@@ -1570,10 +1570,10 @@ const backtestTabs: Array<{ id: BacktestTab; label: string }> = [
   { id: "mainSettings", label: "Main Settings" },
   { id: "timeSettings", label: "Time Settings" },
   { id: "mainStats", label: "Main Statistics" },
-  { id: "performanceStats", label: "Performance Statistics" },
   { id: "history", label: "Trading History" },
   { id: "calendar", label: "Calendar" },
   { id: "cluster", label: "Cluster Map" },
+  { id: "performanceStats", label: "Performance Statistics" },
   { id: "entryExit", label: "Entry / Exit Stats" },
   { id: "dimensions", label: "Dimension Statistics" },
   { id: "propFirm", label: "Prop Firm Tool" }
@@ -11460,25 +11460,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   </div>
                 ) : (
                   <>
-              {backtestDateFilteredTrades.length === 0 ? (
+              {backtestDateFilteredTrades.length === 0 && backtestModelProfiles.length === 0 ? (
                 <div className="backtest-empty">
-                  {backtestModelProfiles.length === 0 ? (
-                    <>
-                      <h3>No Main Settings models selected</h3>
-                      <p>
-                        Open Main Settings and enable at least one model in the MODELS panel. The
-                        Chart tab now follows that Backtest selection automatically.
-                      </p>
-                    </>
-                  ) : backtestSourceTrades.length > 0 ? (
-                    <>
-                      <h3>No trades in the selected date range</h3>
-                      <p>
-                        Move the Backtest Date Range above, or clear it to load the full simulated
-                        trade history again.
-                      </p>
-                    </>
-                  ) : null}
+                  <h3>No Main Settings models selected</h3>
+                  <p>
+                    Open Main Settings and enable at least one model in the MODELS panel. The
+                    Chart tab now follows that Backtest selection automatically.
+                  </p>
+                </div>
+              ) : backtestDateFilteredTrades.length === 0 && backtestSourceTrades.length > 0 ? (
+                <div className="backtest-empty">
+                  <h3>No trades in the selected date range</h3>
+                  <p>
+                    Move the Backtest Date Range above, or clear it to load the full simulated
+                    trade history again.
+                  </p>
                 </div>
               ) : null}
 
@@ -11681,6 +11677,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
                         <button
                           type="button"
+                          className="ai-zip-button"
+                          disabled={aiDisabled}
+                          onClick={() => setMethodSettingsOpen(true)}
+                        >
+                          Method Specific Settings
+                        </button>
+
+                        <button
+                          type="button"
                           className={`ai-zip-button toggle ${
                             staticLibrariesClusters ? "active success" : ""
                           }`}
@@ -11815,59 +11820,51 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     </div>
 
                     <div className="backtest-card" style={{ gridColumn: "1 / -1", padding: "0.85rem" }}>
-                      <div className="ai-zip-section">
-                        <div className="ai-zip-section-title">Advanced AI</div>
-                        <div className="ai-zip-toggle-grid">
-                          <button
-                            type="button"
-                            className="ai-zip-button"
-                            disabled={aiDisabled}
-                            onClick={() => setMethodSettingsOpen(true)}
-                          >
-                            Method Specific Settings
-                          </button>
-                          <button
-                            type="button"
-                            className={`ai-zip-button ${selectedAiModelCount > 0 ? "active" : ""}`}
-                            disabled={aiDisabled}
-                            onClick={() => setModelsModalOpen(true)}
-                          >
-                            Models ({selectedAiModelCount})
-                          </button>
-                          <button
-                            type="button"
-                            className={`ai-zip-button ${selectedAiFeatureCount > 0 ? "active" : ""}`}
-                            disabled={aiDisabled}
-                            onClick={() => setFeaturesModalOpen(true)}
-                          >
-                            Features ({selectedAiFeatureCount})
-                          </button>
-                          <button
-                            type="button"
-                            className={`ai-zip-button ${selectedAiLibraryCount > 0 ? "active" : ""}`}
-                            disabled={aiDisabled}
-                            onClick={() => setLibrariesModalOpen(true)}
-                          >
-                            Libraries ({selectedAiLibraryCount})
-                          </button>
-                        </div>
+                      <div className="ai-zip-section-title">Advanced AI</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+                        <div style={{ display: "grid", gap: "0.55rem", alignContent: "start" }}>
+                          <div className="ai-zip-toggle-grid">
+                            <button
+                              type="button"
+                              className={`ai-zip-button ${selectedAiModelCount > 0 ? "active" : ""}`}
+                              disabled={aiDisabled}
+                              onClick={() => setModelsModalOpen(true)}
+                            >
+                              Models ({selectedAiModelCount})
+                            </button>
+                            <button
+                              type="button"
+                              className={`ai-zip-button ${selectedAiFeatureCount > 0 ? "active" : ""}`}
+                              disabled={aiDisabled}
+                              onClick={() => setFeaturesModalOpen(true)}
+                            >
+                              Features ({selectedAiFeatureCount})
+                            </button>
+                            <button
+                              type="button"
+                              className={`ai-zip-button ${selectedAiLibraryCount > 0 ? "active" : ""}`}
+                              disabled={aiDisabled}
+                              onClick={() => setLibrariesModalOpen(true)}
+                            >
+                              Libraries ({selectedAiLibraryCount})
+                            </button>
+                          </div>
 
-                        <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
-                          <div className="ai-zip-label">Chunk Size (bars)</div>
-                          <input
-                            type="number"
-                            min={2}
-                            step={1}
-                            value={chunkBars}
-                            disabled={aiDisabled}
-                            onChange={(event) => {
-                              setChunkBars(Math.max(2, Math.floor(Number(event.target.value) || 2)));
-                            }}
-                            className="ai-zip-input"
-                          />
-                        </div>
+                          <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
+                            <div className="ai-zip-label">Chunk Size (bars)</div>
+                            <input
+                              type="number"
+                              min={2}
+                              step={1}
+                              value={chunkBars}
+                              disabled={aiDisabled}
+                              onChange={(event) => {
+                                setChunkBars(Math.max(2, Math.floor(Number(event.target.value) || 2)));
+                              }}
+                              className="ai-zip-input"
+                            />
+                          </div>
 
-                        <div className="ai-zip-input-grid">
                           <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
                             <span className="ai-zip-label">Distance Metric</span>
                             <select
@@ -11906,30 +11903,30 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           </label>
                         </div>
 
-                        <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
-                          <div className="ai-zip-label">Modality</div>
-                          <div className="ai-zip-toggle-grid tiles compact">
-                            {AI_MODALITY_OPTIONS.map((modality) => (
-                              <button
-                                key={modality}
-                                type="button"
-                                className={`ai-zip-button pill ${
-                                  selectedAiModalities.includes(modality) ? "active" : ""
-                                }`}
-                                disabled={aiDisabled}
-                                onClick={() => {
-                                  setSelectedAiModalities((current) =>
-                                    toggleListValue(current, modality)
-                                  );
-                                }}
-                              >
-                                {modality}
-                              </button>
-                            ))}
+                        <div style={{ display: "grid", gap: "0.55rem", alignContent: "start" }}>
+                          <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
+                            <div className="ai-zip-label">Modality</div>
+                            <div className="ai-zip-toggle-grid tiles compact">
+                              {AI_MODALITY_OPTIONS.map((modality) => (
+                                <button
+                                  key={modality}
+                                  type="button"
+                                  className={`ai-zip-button pill ${
+                                    selectedAiModalities.includes(modality) ? "active" : ""
+                                  }`}
+                                  disabled={aiDisabled}
+                                  onClick={() => {
+                                    setSelectedAiModalities((current) =>
+                                      toggleListValue(current, modality)
+                                    );
+                                  }}
+                                >
+                                  {modality}
+                                </button>
+                              ))}
+                            </div>
                           </div>
-                        </div>
 
-                        <div className="ai-zip-input-grid">
                           <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
                             <span className="ai-zip-label">Dimension Amount</span>
                             <input
@@ -12073,24 +12070,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     </div>
                   </div>
 
-                  <div className="backtest-card" style={{ padding: "0.95rem" }}>
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "0.85rem",
-                        flexWrap: "wrap"
-                      }}
-                    >
-                      <div style={{ fontSize: 11, lineHeight: 1.6, color: "rgba(255,255,255,0.72)" }}>
-                        {backtestModelProfiles.length === 0
-                          ? "Enable at least one model, then hold CTRL for 3 seconds to apply changes."
-                          : backtestHasRun
-                            ? "Stats never auto-update. Hold CTRL for 3 seconds to apply any changes."
-                            : "Hold CTRL for 3 seconds to apply the current settings and run the backtest."}
-                      </div>
-                    </div>
-                  </div>
                 </div>
               ) : null}
 
