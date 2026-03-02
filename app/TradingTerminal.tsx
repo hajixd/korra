@@ -70,6 +70,7 @@ const LIGHTWEIGHT_CHART_SOLID_BACKGROUND: ColorType = "solid" as ColorType;
 const LIGHTWEIGHT_CHART_CROSSHAIR_NORMAL: CrosshairMode = 0;
 const LIGHTWEIGHT_CHART_LINE_SOLID: LineStyle = 0;
 const LIGHTWEIGHT_CHART_LINE_DOTTED: LineStyle = 1;
+const LIGHTWEIGHT_CHART_LINE_SPARSE_DOTTED: LineStyle = 4;
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type SurfaceTab = "chart" | "backtest";
 type BacktestTab =
@@ -4197,6 +4198,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [seenNotificationIds, setSeenNotificationIds] = useState<string[]>([]);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
+  const [candleCountdown, setCandleCountdown] = useState("");
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>({});
   const [backtestSeriesMap, setBacktestSeriesMap] = useState<Record<string, Candle[]>>({});
   const [backtestHistoryQuery, setBacktestHistoryQuery] = useState("");
@@ -5376,6 +5378,38 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       ? ((hoveredCandle.close - hoveredCandle.open) / hoveredCandle.open) * 100
       : 0;
 
+  useEffect(() => {
+    if (!latestCandle) {
+      setCandleCountdown("");
+      return;
+    }
+
+    const candleMs = getTimeframeMs(selectedTimeframe);
+
+    const tick = () => {
+      const candleEndMs = latestCandle.time * 1000 + candleMs;
+      const remaining = Math.max(0, Math.floor((candleEndMs - Date.now()) / 1000));
+
+      if (remaining <= 0) {
+        setCandleCountdown("00:00");
+        return;
+      }
+
+      const h = Math.floor(remaining / 3600);
+      const m = Math.floor((remaining % 3600) / 60);
+      const s = remaining % 60;
+
+      const pad = (n: number) => String(n).padStart(2, "0");
+
+      setCandleCountdown(h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`);
+    };
+
+    tick();
+    const id = window.setInterval(tick, 1000);
+
+    return () => window.clearInterval(id);
+  }, [latestCandle, selectedTimeframe]);
+
   const watchlistRows = useMemo(() => {
     return futuresAssets.map((asset) => {
       const key = symbolTimeframeKey(asset.symbol, selectedTimeframe);
@@ -6527,8 +6561,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         borderUpColor: "#1bae8a",
         borderDownColor: "#f0455a",
         priceLineVisible: true,
-        priceLineStyle: LIGHTWEIGHT_CHART_LINE_DOTTED,
-        priceLineColor: "rgba(198, 208, 228, 0.55)",
+        priceLineStyle: LIGHTWEIGHT_CHART_LINE_SPARSE_DOTTED,
+        priceLineColor: "rgba(27, 174, 138, 0.72)",
         priceLineWidth: 1,
         lastValueVisible: true,
         autoscaleInfoProvider: (original: () => AutoscaleInfo | null): AutoscaleInfo | null => {
@@ -6808,6 +6842,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     candleSeries.setData(candleData);
     chartDataLengthRef.current = candleData.length;
+
+    const lastBar = candleData[candleData.length - 1];
+
+    if (lastBar) {
+      const isUp = lastBar.close >= lastBar.open;
+      candleSeries.applyOptions({
+        priceLineColor: isUp ? "rgba(27, 174, 138, 0.72)" : "rgba(240, 69, 90, 0.72)"
+      });
+    }
+
     const targetVisibleRange =
       chartPendingVisibleGlobalRangeRef.current ?? chartVisibleGlobalRangeRef.current;
 
@@ -10597,6 +10641,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <span>
                       C <strong>{formatPrice(hoveredCandle.close)}</strong>
                     </span>
+                    {candleCountdown && (
+                      <span className="candle-countdown">{candleCountdown}</span>
+                    )}
                   </>
                 ) : (
                   <span>No market data loaded</span>
