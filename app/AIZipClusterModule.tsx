@@ -13162,13 +13162,20 @@ export function ClusterMap({
   const viewNodes = useMemo(() => {
     // Apply the Cluster Map dropdown filters (Direction/Session/Month/Weekday/Hour) to the plotted nodes.
     // This was previously missing, which made the dropdowns appear "stuck".
-    return (nodes || []).filter((n: any) =>
-      passesViewFilter(
+    return (nodes || []).filter((n: any) => {
+      const kind = String((n as any)?.kind || "").toLowerCase();
+      const isLib =
+        kind === "library" ||
+        (n as any)?.libId != null ||
+        String((n as any)?.id || "").startsWith("lib|");
+      if (isLib) return true;
+
+      return passesViewFilter(
         (n as any)?.dir,
         (n as any)?.entryTime ?? (n as any)?.time ?? "",
         (n as any)?.entryModel ?? (n as any)?.chunkType ?? ""
-      )
-    );
+      );
+    });
   }, [nodes, passesViewFilter]);
 
   const sortedNodes = useMemo(() => {
@@ -13339,10 +13346,9 @@ export function ClusterMap({
         (n as any).kind === "library" ||
         String((n as any).id || "").startsWith("lib|");
 
-      // Timeline filter: normally hides "future" points; in Static Libraries mode,
-      // library points are always available from time 0.
-      if (idx < (n as any).signalIndex && !(staticLibrariesClusters && isLib))
-        continue;
+      // Timeline filter: hide future trade/potential points, but keep library points
+      // always available since they represent loaded neighbor memory.
+      if (idx < (n as any).signalIndex && !isLib) continue;
 
       let dKind = (n as any).kind;
       let dIsOpen = (n as any).isOpen;
