@@ -279,6 +279,51 @@ button {
   padding: 0 0.2rem;
 }
 
+.settings-io-btn {
+  position: relative;
+  height: 30px;
+  border: 1px solid #273247;
+  border-radius: 8px;
+  background: #101726;
+  color: #c4cee2;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0 0.5rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.settings-io-btn:hover {
+  background: #162137;
+  color: #dce5f6;
+}
+
+.settings-io-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.settings-io-label {
+  font-size: 0.6rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.settings-io-reset {
+  border-color: rgba(240, 69, 90, 0.3);
+  color: rgba(240, 69, 90, 0.85);
+}
+
+.settings-io-reset:hover {
+  background: rgba(240, 69, 90, 0.12);
+  border-color: rgba(240, 69, 90, 0.5);
+  color: #f0455a;
+}
+
 .notif-popover {
   position: absolute;
   top: calc(100% + 9px);
@@ -3334,9 +3379,24 @@ button {
 }
 
 .chart-toolbar strong {
-  color: var(--text);
   font-weight: 500;
   margin-left: 0.08rem;
+}
+
+.ohlc-up {
+  color: var(--up);
+}
+
+.ohlc-up strong {
+  color: var(--up);
+}
+
+.ohlc-down {
+  color: var(--down);
+}
+
+.ohlc-down strong {
+  color: var(--down);
 }
 
 .chart-hint {
@@ -3350,10 +3410,10 @@ button {
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
   font-size: 0.6rem;
   color: #fff;
-  text-align: left;
-  padding: 1px 4px;
+  text-align: center;
+  padding: 2px 6px;
   border-radius: 2px;
-  width: 55px;
+  white-space: nowrap;
   z-index: 4;
   letter-spacing: 0.01em;
   display: none;

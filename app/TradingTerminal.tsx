@@ -71,6 +71,7 @@ const LIGHTWEIGHT_CHART_CROSSHAIR_NORMAL: CrosshairMode = 0;
 const LIGHTWEIGHT_CHART_LINE_SOLID: LineStyle = 0;
 const LIGHTWEIGHT_CHART_LINE_DOTTED: LineStyle = 1;
 const LIGHTWEIGHT_CHART_LINE_SPARSE_DOTTED: LineStyle = 4;
+const SETTINGS_STORAGE_KEY = "korra-settings";
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type SurfaceTab = "chart" | "backtest";
 type BacktestTab =
@@ -1675,6 +1676,7 @@ const RECENT_ONE_MINUTE_WINDOW_MS = RECENT_ONE_MINUTE_LOOKBACK_DAYS * 24 * 60 * 
 const RECENT_ONE_MINUTE_FETCH_COUNT = 40_000;
 const BACKTEST_LOOKBACK_YEARS = 10;
 const BACKTEST_MAX_HISTORY_CANDLES = 400_000;
+const BACKTEST_ONE_MINUTE_FETCH_COUNT = 500_000;
 const BACKTEST_TARGET_TRADES_PER_DAY = 4;
 const BACKTEST_HISTORY_PAGE_SIZE = 250;
 
@@ -4200,6 +4202,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>({});
   const [backtestSeriesMap, setBacktestSeriesMap] = useState<Record<string, Candle[]>>({});
+  const [backtestOneMinuteSeriesMap, setBacktestOneMinuteSeriesMap] = useState<Record<string, Candle[]>>({});
   const [backtestHistoryQuery, setBacktestHistoryQuery] = useState("");
   const [backtestHistoryPage, setBacktestHistoryPage] = useState(1);
   const [backtestHistoryCollapsed, setBacktestHistoryCollapsed] = useState(false);
@@ -4373,6 +4376,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const gaplessToRealRef = useRef<Map<number, number>>(new Map());
   const countdownOverlayRef = useRef<HTMLDivElement | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const tradeProfitZoneRef = useRef<ISeriesApi<"Baseline"> | null>(null);
@@ -4395,6 +4399,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const liveBacktestSettingsRef = useRef<BacktestSettingsSnapshot>(appliedBacktestSettings);
   const tradeBlueprintsRef = useRef<TradeBlueprint[]>([]);
   const backtestHistorySeriesBySymbolRef = useRef<Record<string, Candle[]>>({});
+  const backtestOneMinuteCandlesBySymbolRef = useRef<Record<string, Candle[]>>({});
   const backtestTargetTradesRef = useRef(0);
   const backtestBlueprintRangeRef = useRef<{ startMs: number; endMs: number }>({
     startMs: 0,
@@ -4415,6 +4420,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const previousChartSourceLengthRef = useRef(0);
   const requestChartVisibleRangeRef = useRef<(visibleRange: ChartDataWindow) => void>(() => {});
   const chartDataLengthRef = useRef(0);
+  const chartLastBarTimeRef = useRef(0);
   const [chartRenderWindow, setChartRenderWindow] = useState<ChartDataWindow>({ from: 0, to: -1 });
 
   const selectTradeOnChart = (tradeId: string, symbol: string) => {
@@ -5067,21 +5073,37 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     let cancelled = false;
     const key = appliedBacktestKey;
+    const oneMinuteKey = symbolTimeframeKey(appliedBacktestSettings.symbol, "1m");
+    const isAlreadyOneMinute = appliedBacktestSettings.timeframe === "1m";
     const recentOneMinutePromise = fetchRecentOneMinuteCandles();
 
     setStatsRefreshProgress((current) => Math.max(current, 14));
 
     void (async () => {
       try {
-        const deepHistoryCandles = await fetchBacktestHistoryCandles(
-          appliedBacktestSettings.timeframe,
-          recentOneMinutePromise
-        );
+        const promises: [Promise<Candle[]>, Promise<Candle[]>] = [
+          fetchBacktestHistoryCandles(
+            appliedBacktestSettings.timeframe,
+            recentOneMinutePromise
+          ),
+          isAlreadyOneMinute
+            ? Promise.resolve([])
+            : fetchHistoryApiCandles("1m", BACKTEST_ONE_MINUTE_FETCH_COUNT).catch(() => [])
+        ];
+
+        const [deepHistoryCandles, oneMinuteCandles] = await Promise.all(promises);
 
         if (!cancelled && deepHistoryCandles.length >= MIN_SEED_CANDLES) {
           setBacktestSeriesMap((prev) => ({
             ...prev,
             [key]: deepHistoryCandles
+          }));
+        }
+
+        if (!cancelled && !isAlreadyOneMinute && oneMinuteCandles.length > 0) {
+          setBacktestOneMinuteSeriesMap((prev) => ({
+            ...prev,
+            [oneMinuteKey]: oneMinuteCandles
           }));
         }
       } catch {
@@ -5099,6 +5121,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [
     appliedBacktestKey,
+    appliedBacktestSettings.symbol,
     appliedBacktestSettings.timeframe,
     backtestHasRun,
     backtestRefreshNowMs,
@@ -5191,6 +5214,38 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       Math.max(deepHistory.length + selectedCandles.length, selectedCandles.length)
     );
   }, [deepChartCandles, selectedCandles, usesDeepChartHistory]);
+
+  const gaplessTimeMap = useMemo(() => {
+    const realToGapless = new Map<number, number>();
+    const gaplessToReal = new Map<number, number>();
+
+    if (selectedChartCandles.length === 0) {
+      return { realToGapless, gaplessToReal };
+    }
+
+    const stepSec = timeframeMinutes[selectedTimeframe] * 60;
+    const firstSec = Math.floor(selectedChartCandles[0].time / 1000);
+
+    for (let i = 0; i < selectedChartCandles.length; i++) {
+      const realSec = Math.floor(selectedChartCandles[i].time / 1000);
+      const gaplessSec = firstSec + i * stepSec;
+      realToGapless.set(realSec, gaplessSec);
+      gaplessToReal.set(gaplessSec, realSec);
+    }
+
+    return { realToGapless, gaplessToReal };
+  }, [selectedChartCandles, selectedTimeframe]);
+
+  gaplessToRealRef.current = gaplessTimeMap.gaplessToReal;
+
+  const toGaplessUtc = useCallback(
+    (ms: number): UTCTimestamp => {
+      const realSec = Math.floor(ms / 1000);
+      const mapped = gaplessTimeMap.realToGapless.get(realSec);
+      return (mapped ?? realSec) as UTCTimestamp;
+    },
+    [gaplessTimeMap]
+  );
 
   useEffect(() => {
     const totalBars = selectedChartCandles.length;
@@ -5331,11 +5386,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const map = new Map<number, Candle>();
 
     for (const candle of chartRenderCandles) {
-      map.set(toUtcTimestamp(candle.time), candle);
+      map.set(toGaplessUtc(candle.time) as number, candle);
     }
 
     return map;
-  }, [chartRenderCandles]);
+  }, [chartRenderCandles, toGaplessUtc]);
 
   const latestCandle = selectedCandles[selectedCandles.length - 1] ?? null;
   const previousCandle =
@@ -5423,106 +5478,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     backtestRefreshNowMs,
     backtestTargetTrades
   ]);
-
-  const activeTrade = useMemo<ActiveTrade | null>(() => {
-    if (!chartSignalModel || selectedCandles.length < 70) {
-      return null;
-    }
-
-    const latestIndex = selectedCandles.length - 1;
-    const latest = selectedCandles[latestIndex];
-    const rand = createSeededRng(hashString(`active-${chartSignalModel.id}-${selectedSymbol}`));
-    const nowMs = floorToTimeframe(referenceNowMs, "1m");
-    const lookbackMinutes = 28 + Math.floor(rand() * 520);
-    let entryIndex = findCandleIndexAtOrBefore(selectedCandles, nowMs - lookbackMinutes * 60_000);
-
-    if (entryIndex < 22 || entryIndex >= latestIndex - 4) {
-      const fallbackBars = 28 + Math.floor(rand() * Math.max(8, Math.min(220, latestIndex - 30)));
-      entryIndex = Math.max(20, latestIndex - fallbackBars);
-    }
-
-    const entryPrice = selectedCandles[entryIndex].close;
-    const side: TradeSide = rand() <= chartSignalModel.longBias ? "Long" : "Short";
-    const rr = chartSignalModel.rrMin + rand() * (chartSignalModel.rrMax - chartSignalModel.rrMin);
-
-    let atr = 0;
-    let atrCount = 0;
-
-    for (let i = Math.max(1, entryIndex - 28); i <= entryIndex; i += 1) {
-      atr += selectedCandles[i].high - selectedCandles[i].low;
-      atrCount += 1;
-    }
-
-    atr /= Math.max(1, atrCount);
-
-    let riskPerUnit = Math.max(
-      entryPrice *
-        (chartSignalModel.riskMin + rand() * (chartSignalModel.riskMax - chartSignalModel.riskMin)),
-      atr * (0.75 + rand() * 1.1)
-    );
-
-    let stopPrice = side === "Long" ? Math.max(0.000001, entryPrice - riskPerUnit) : entryPrice + riskPerUnit;
-    let targetPrice =
-      side === "Long"
-        ? entryPrice + riskPerUnit * rr
-        : Math.max(0.000001, entryPrice - riskPerUnit * rr);
-
-    for (let attempt = 0; attempt < 7; attempt += 1) {
-      const path = evaluateTpSlPath(
-        selectedCandles,
-        side,
-        entryIndex,
-        targetPrice,
-        stopPrice,
-        latestIndex
-      );
-
-      if (!path.hit) {
-        break;
-      }
-
-      riskPerUnit *= 1.22;
-      stopPrice =
-        side === "Long" ? Math.max(0.000001, entryPrice - riskPerUnit) : entryPrice + riskPerUnit;
-      targetPrice =
-        side === "Long"
-          ? entryPrice + riskPerUnit * rr
-          : Math.max(0.000001, entryPrice - riskPerUnit * rr);
-    }
-
-    const units = Math.max(1, Number.isFinite(dollarsPerMove) ? dollarsPerMove : 1);
-    const rawMarkPrice = latest.close;
-    const rawPnlValue =
-      side === "Long" ? (rawMarkPrice - entryPrice) * units : (entryPrice - rawMarkPrice) * units;
-    const pnlValue = clampTradePnlToRiskBounds(rawPnlValue, tpDollars, slDollars);
-    const markPrice =
-      Math.abs(pnlValue - rawPnlValue) <= 0.000001
-        ? rawMarkPrice
-        : getTradeOutcomePriceFromPnl(side, entryPrice, pnlValue, units);
-    const pnlPct = getTradePnlPctFromUsd(entryPrice, units, pnlValue);
-    const progressRaw =
-      side === "Long"
-        ? (markPrice - stopPrice) / Math.max(0.000001, targetPrice - stopPrice)
-        : (stopPrice - markPrice) / Math.max(0.000001, stopPrice - targetPrice);
-    const openedAt = toUtcTimestamp(selectedCandles[entryIndex].time);
-
-    return {
-      symbol: selectedSymbol,
-      side,
-      units,
-      entryPrice,
-      markPrice,
-      targetPrice,
-      stopPrice,
-      openedAt,
-      openedAtLabel: formatDateTime(selectedCandles[entryIndex].time),
-      elapsed: formatElapsed(Number(openedAt), Math.floor(referenceNowMs / 1000)),
-      pnlPct,
-      pnlValue,
-      progressPct: clamp(progressRaw * 100, 0, 100),
-      rr
-    };
-  }, [chartSignalModel, dollarsPerMove, referenceNowMs, selectedCandles, selectedSymbol, slDollars, tpDollars]);
 
   const [historyRows, setHistoryRows] = useState<HistoryItem[]>([]);
   const boundedHistoryRows = useMemo(() => {
@@ -5903,6 +5858,39 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     getEffectiveTradeConfidenceScore
   ]);
 
+  const activeTrade = useMemo<ActiveTrade | null>(() => {
+    if (chartPanelHistoryRows.length === 0) {
+      return null;
+    }
+
+    const trade = chartPanelHistoryRows[0];
+    const riskDist = Math.abs(trade.entryPrice - trade.stopPrice);
+    const rewardDist = Math.abs(trade.targetPrice - trade.entryPrice);
+    const rr = riskDist > 0 ? rewardDist / riskDist : 0;
+    const markPrice = trade.outcomePrice;
+    const progressRaw =
+      trade.side === "Long"
+        ? (markPrice - trade.stopPrice) / Math.max(0.000001, trade.targetPrice - trade.stopPrice)
+        : (trade.stopPrice - markPrice) / Math.max(0.000001, trade.stopPrice - trade.targetPrice);
+
+    return {
+      symbol: trade.symbol,
+      side: trade.side,
+      units: trade.units,
+      entryPrice: trade.entryPrice,
+      markPrice,
+      targetPrice: trade.targetPrice,
+      stopPrice: trade.stopPrice,
+      openedAt: trade.entryTime,
+      openedAtLabel: trade.entryAt,
+      elapsed: formatElapsed(Number(trade.entryTime), Math.floor(referenceNowMs / 1000)),
+      pnlPct: trade.pnlPct,
+      pnlValue: trade.pnlUsd,
+      progressPct: clamp(progressRaw * 100, 0, 100),
+      rr
+    };
+  }, [chartPanelHistoryRows, referenceNowMs]);
+
   const backtestHistorySeriesBySymbol = useMemo(() => {
     const next: Record<string, Candle[]> = {};
 
@@ -5922,8 +5910,37 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     seriesMap,
     tradeBlueprints
   ]);
+
+  const backtestOneMinuteCandlesBySymbol = useMemo(() => {
+    if (appliedBacktestSettings.timeframe === "1m") {
+      return {};
+    }
+
+    const next: Record<string, Candle[]> = {};
+
+    for (const blueprint of tradeBlueprints) {
+      if (next[blueprint.symbol]) {
+        continue;
+      }
+
+      const key = symbolTimeframeKey(blueprint.symbol, "1m");
+      const candles = backtestOneMinuteSeriesMap[key] ?? EMPTY_CANDLES;
+
+      if (candles.length > 0) {
+        next[blueprint.symbol] = candles;
+      }
+    }
+
+    return next;
+  }, [
+    appliedBacktestSettings.timeframe,
+    backtestOneMinuteSeriesMap,
+    tradeBlueprints
+  ]);
+
   tradeBlueprintsRef.current = tradeBlueprints;
   backtestHistorySeriesBySymbolRef.current = backtestHistorySeriesBySymbol;
+  backtestOneMinuteCandlesBySymbolRef.current = backtestOneMinuteCandlesBySymbol;
   backtestTargetTradesRef.current = backtestTargetTrades;
   backtestBlueprintRangeRef.current = backtestBlueprintRange;
   modelProfileByIdRef.current = modelProfileById;
@@ -5941,6 +5958,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const backtestTargetTradesSnapshot = backtestTargetTradesRef.current;
     const backtestHistorySeriesBySymbolSnapshot =
       backtestHistorySeriesBySymbolRef.current;
+    const backtestOneMinuteCandlesBySymbolSnapshot =
+      backtestOneMinuteCandlesBySymbolRef.current;
     const backtestBlueprintRangeSnapshot = backtestBlueprintRangeRef.current;
     const modelProfileByIdSnapshot = modelProfileByIdRef.current;
     const tpDollarsSnapshot = appliedBacktestTpDollarsRef.current;
@@ -6017,6 +6036,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           computeBacktestHistoryRowsChunk({
             blueprints: chronologicalTradeBlueprints,
             candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
+            oneMinuteCandlesBySymbol: backtestOneMinuteCandlesBySymbolSnapshot,
             modelNamesById,
             tpDollars: tpDollarsSnapshot,
             slDollars: slDollarsSnapshot
@@ -6136,6 +6156,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         requestId: nextJobId,
         blueprints: chronologicalTradeBlueprints,
         candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
+        oneMinuteCandlesBySymbol: backtestOneMinuteCandlesBySymbolSnapshot,
         modelNamesById,
         tpDollars: tpDollarsSnapshot,
         slDollars: slDollarsSnapshot
@@ -6365,6 +6386,230 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }, 0);
   }, [notificationItems, seenNotificationSet]);
 
+  const collectSettings = useCallback(() => ({
+    selectedSymbol,
+    selectedTimeframe,
+    enabledBacktestWeekdays,
+    enabledBacktestSessions,
+    enabledBacktestMonths,
+    enabledBacktestHours,
+    aiMode,
+    aiModelEnabled,
+    aiFilterEnabled,
+    staticLibrariesClusters,
+    confidenceThreshold,
+    aiExitStrictness,
+    aiExitLossTolerance,
+    aiExitWinTolerance,
+    useMitExit,
+    complexity,
+    volatilityPercentile,
+    tpDollars,
+    slDollars,
+    dollarsPerMove,
+    maxBarsInTrade,
+    aiModelStates,
+    aiFeatureLevels,
+    aiFeatureModes,
+    selectedAiLibraries,
+    selectedAiLibrarySettings,
+    selectedAiLibraryId,
+    aiBulkScope,
+    aiBulkWeight,
+    aiBulkStride,
+    aiBulkMaxSamples,
+    chunkBars,
+    distanceMetric,
+    selectedAiModalities,
+    embeddingCompression,
+    dimensionAmount,
+    compressionMethod,
+    kEntry,
+    kExit,
+    knnVoteMode,
+    hdbMinClusterSize,
+    hdbMinSamples,
+    hdbEpsQuantile,
+    hdbSampleCap,
+    antiCheatEnabled,
+    validationMode,
+    realismLevel,
+    propInitialBalance,
+    propDailyMaxLoss,
+    propTotalMaxLoss,
+    propProfitTarget,
+    propProjectionMethod,
+    statsDateStart,
+    statsDateEnd,
+  }), [
+    selectedSymbol, selectedTimeframe, enabledBacktestWeekdays, enabledBacktestSessions,
+    enabledBacktestMonths, enabledBacktestHours, aiMode, aiModelEnabled, aiFilterEnabled,
+    staticLibrariesClusters, confidenceThreshold, aiExitStrictness, aiExitLossTolerance,
+    aiExitWinTolerance, useMitExit, complexity, volatilityPercentile, tpDollars, slDollars,
+    dollarsPerMove, maxBarsInTrade, aiModelStates, aiFeatureLevels, aiFeatureModes,
+    selectedAiLibraries, selectedAiLibrarySettings, selectedAiLibraryId, aiBulkScope,
+    aiBulkWeight, aiBulkStride, aiBulkMaxSamples, chunkBars, distanceMetric,
+    selectedAiModalities, embeddingCompression, dimensionAmount, compressionMethod,
+    kEntry, kExit, knnVoteMode, hdbMinClusterSize, hdbMinSamples, hdbEpsQuantile,
+    hdbSampleCap, antiCheatEnabled, validationMode, realismLevel, propInitialBalance,
+    propDailyMaxLoss, propTotalMaxLoss, propProfitTarget, propProjectionMethod,
+    statsDateStart, statsDateEnd,
+  ]);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const applySettings = useCallback((s: Record<string, any>) => {
+    if (s.selectedSymbol != null) setSelectedSymbol(s.selectedSymbol);
+    if (s.selectedTimeframe != null) setSelectedTimeframe(s.selectedTimeframe);
+    if (s.enabledBacktestWeekdays != null) setEnabledBacktestWeekdays(s.enabledBacktestWeekdays);
+    if (s.enabledBacktestSessions != null) setEnabledBacktestSessions(s.enabledBacktestSessions);
+    if (s.enabledBacktestMonths != null) setEnabledBacktestMonths(s.enabledBacktestMonths);
+    if (s.enabledBacktestHours != null) setEnabledBacktestHours(s.enabledBacktestHours);
+    if (s.aiMode != null) setAiMode(s.aiMode);
+    if (s.aiModelEnabled != null) setAiModelEnabled(s.aiModelEnabled);
+    if (s.aiFilterEnabled != null) setAiFilterEnabled(s.aiFilterEnabled);
+    if (s.staticLibrariesClusters != null) setStaticLibrariesClusters(s.staticLibrariesClusters);
+    if (s.confidenceThreshold != null) setConfidenceThreshold(s.confidenceThreshold);
+    if (s.aiExitStrictness != null) setAiExitStrictness(s.aiExitStrictness);
+    if (s.aiExitLossTolerance != null) setAiExitLossTolerance(s.aiExitLossTolerance);
+    if (s.aiExitWinTolerance != null) setAiExitWinTolerance(s.aiExitWinTolerance);
+    if (s.useMitExit != null) setUseMitExit(s.useMitExit);
+    if (s.complexity != null) setComplexity(s.complexity);
+    if (s.volatilityPercentile != null) setVolatilityPercentile(s.volatilityPercentile);
+    if (s.tpDollars != null) setTpDollars(s.tpDollars);
+    if (s.slDollars != null) setSlDollars(s.slDollars);
+    if (s.dollarsPerMove != null) setDollarsPerMove(s.dollarsPerMove);
+    if (s.maxBarsInTrade != null) setMaxBarsInTrade(s.maxBarsInTrade);
+    if (s.aiModelStates != null) setAiModelStates(s.aiModelStates);
+    if (s.aiFeatureLevels != null) setAiFeatureLevels(s.aiFeatureLevels);
+    if (s.aiFeatureModes != null) setAiFeatureModes(s.aiFeatureModes);
+    if (s.selectedAiLibraries != null) setSelectedAiLibraries(s.selectedAiLibraries);
+    if (s.selectedAiLibrarySettings != null) setSelectedAiLibrarySettings(s.selectedAiLibrarySettings);
+    if (s.selectedAiLibraryId != null) setSelectedAiLibraryId(s.selectedAiLibraryId);
+    if (s.aiBulkScope != null) setAiBulkScope(s.aiBulkScope);
+    if (s.aiBulkWeight != null) setAiBulkWeight(s.aiBulkWeight);
+    if (s.aiBulkStride != null) setAiBulkStride(s.aiBulkStride);
+    if (s.aiBulkMaxSamples != null) setAiBulkMaxSamples(s.aiBulkMaxSamples);
+    if (s.chunkBars != null) setChunkBars(s.chunkBars);
+    if (s.distanceMetric != null) setDistanceMetric(s.distanceMetric);
+    if (s.selectedAiModalities != null) setSelectedAiModalities(s.selectedAiModalities);
+    if (s.embeddingCompression != null) setEmbeddingCompression(s.embeddingCompression);
+    if (s.dimensionAmount != null) setDimensionAmount(s.dimensionAmount);
+    if (s.compressionMethod != null) setCompressionMethod(s.compressionMethod);
+    if (s.kEntry != null) setKEntry(s.kEntry);
+    if (s.kExit != null) setKExit(s.kExit);
+    if (s.knnVoteMode != null) setKnnVoteMode(s.knnVoteMode);
+    if (s.hdbMinClusterSize != null) setHdbMinClusterSize(s.hdbMinClusterSize);
+    if (s.hdbMinSamples != null) setHdbMinSamples(s.hdbMinSamples);
+    if (s.hdbEpsQuantile != null) setHdbEpsQuantile(s.hdbEpsQuantile);
+    if (s.hdbSampleCap != null) setHdbSampleCap(s.hdbSampleCap);
+    if (s.antiCheatEnabled != null) setAntiCheatEnabled(s.antiCheatEnabled);
+    if (s.validationMode != null) setValidationMode(s.validationMode);
+    if (s.realismLevel != null) setRealismLevel(s.realismLevel);
+    if (s.propInitialBalance != null) setPropInitialBalance(s.propInitialBalance);
+    if (s.propDailyMaxLoss != null) setPropDailyMaxLoss(s.propDailyMaxLoss);
+    if (s.propTotalMaxLoss != null) setPropTotalMaxLoss(s.propTotalMaxLoss);
+    if (s.propProfitTarget != null) setPropProfitTarget(s.propProfitTarget);
+    if (s.propProjectionMethod != null) setPropProjectionMethod(s.propProjectionMethod);
+    if (s.statsDateStart != null) setStatsDateStart(s.statsDateStart);
+    if (s.statsDateEnd != null) setStatsDateEnd(s.statsDateEnd);
+  }, []);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (raw) applySettings(JSON.parse(raw));
+    } catch { /* corrupt data – ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(collectSettings()));
+    } catch { /* storage full – ignore */ }
+  }, [collectSettings]);
+
+  const handleSaveSettings = useCallback(() => {
+    const settings = collectSettings();
+    const blob = new Blob([JSON.stringify(settings, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `korra-settings-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [collectSettings]);
+
+  const handleLoadSettings = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        applySettings(JSON.parse(evt.target?.result as string));
+      } catch { /* invalid file */ }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }, [applySettings]);
+
+  const handleResetSettings = useCallback(() => {
+    localStorage.removeItem(SETTINGS_STORAGE_KEY);
+    setSelectedSymbol(futuresAssets[0].symbol);
+    setSelectedTimeframe("15m");
+    setEnabledBacktestWeekdays([...backtestWeekdayLabels]);
+    setEnabledBacktestSessions([...backtestSessionLabels]);
+    setEnabledBacktestMonths(Array.from({ length: 12 }, (_, i) => i));
+    setEnabledBacktestHours(Array.from({ length: 24 }, (_, i) => i));
+    setAiMode("off");
+    setAiModelEnabled(false);
+    setAiFilterEnabled(false);
+    setStaticLibrariesClusters(false);
+    setConfidenceThreshold(0);
+    setAiExitStrictness(0);
+    setAiExitLossTolerance(0);
+    setAiExitWinTolerance(0);
+    setUseMitExit(false);
+    setComplexity(0);
+    setVolatilityPercentile(0);
+    setTpDollars(0);
+    setSlDollars(0);
+    setDollarsPerMove(0);
+    setMaxBarsInTrade(0);
+    setAiModelStates(buildInitialAiModelStates(availableAiModelNames));
+    setAiFeatureLevels(buildInitialAiFeatureLevels());
+    setAiFeatureModes(buildInitialAiFeatureModes());
+    setSelectedAiLibraries(["core", "recent", "base"]);
+    setSelectedAiLibraryId("core");
+    setSelectedAiLibrarySettings(buildDefaultAiLibrarySettings(aiLibraryDefs));
+    setAiBulkScope("active");
+    setAiBulkWeight(100);
+    setAiBulkStride(0);
+    setAiBulkMaxSamples(10000);
+    setChunkBars(24);
+    setDistanceMetric("euclidean");
+    setSelectedAiModalities(["Direction", "Model"]);
+    setEmbeddingCompression(35);
+    setDimensionAmount(32);
+    setCompressionMethod("jl");
+    setKEntry(12);
+    setKExit(9);
+    setKnnVoteMode("distance");
+    setHdbMinClusterSize(35);
+    setHdbMinSamples(12);
+    setHdbEpsQuantile(0.85);
+    setHdbSampleCap(5000);
+    setAntiCheatEnabled(false);
+    setValidationMode("off");
+    setRealismLevel(0);
+    setPropInitialBalance(100_000);
+    setPropDailyMaxLoss(5_000);
+    setPropTotalMaxLoss(10_000);
+    setPropProfitTarget(10_000);
+    setPropProjectionMethod("montecarlo");
+    setStatsDateStart("");
+    setStatsDateEnd("");
+  }, [availableAiModelNames, aiLibraryDefs]);
+
   useEffect(() => {
     if (!selectedHistoryId) {
       return;
@@ -6463,7 +6708,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           textColor: "#7f889d"
         },
         localization: {
-          priceFormatter: (price: number) => formatPrice(price)
+          priceFormatter: (price: number) => formatPrice(price),
+          timeFormatter: (time: number) => {
+            const realSec = gaplessToRealRef.current.get(time) ?? time;
+            const d = new Date(realSec * 1000);
+            const hh = String(d.getUTCHours()).padStart(2, "0");
+            const mm = String(d.getUTCMinutes()).padStart(2, "0");
+            const mon = String(d.getUTCMonth() + 1).padStart(2, "0");
+            const day = String(d.getUTCDate()).padStart(2, "0");
+            return `${d.getUTCFullYear()}-${mon}-${day} ${hh}:${mm}`;
+          }
         },
         grid: {
           vertLines: { visible: false },
@@ -6482,7 +6736,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           timeVisible: true,
           secondsVisible: false,
           rightOffset: 3,
-          shiftVisibleRangeOnNewBar: false
+          shiftVisibleRangeOnNewBar: false,
+          tickMarkFormatter: (time: number) => {
+            const realSec = gaplessToRealRef.current.get(time) ?? time;
+            const d = new Date(realSec * 1000);
+            const hh = String(d.getUTCHours()).padStart(2, "0");
+            const mm = String(d.getUTCMinutes()).padStart(2, "0");
+            const day = String(d.getUTCDate()).padStart(2, "0");
+            const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+            const mon = months[d.getUTCMonth()];
+            if (hh === "00" && mm === "00") {
+              return `${day} ${mon}`;
+            }
+            return `${hh}:${mm}`;
+          }
         },
         crosshair: {
           mode: LIGHTWEIGHT_CHART_CROSSHAIR_NORMAL,
@@ -6524,7 +6791,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         priceLineStyle: LIGHTWEIGHT_CHART_LINE_SPARSE_DOTTED,
         priceLineColor: "rgba(27, 174, 138, 0.72)",
         priceLineWidth: 1,
-        lastValueVisible: true,
+        lastValueVisible: false,
         autoscaleInfoProvider: (original: () => AutoscaleInfo | null): AutoscaleInfo | null => {
           const focusedPriceRange = chartFocusedPriceRangeRef.current;
 
@@ -6757,6 +7024,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           chartFocusedPriceRangeResetRafRef.current = 0;
         }
         chartDataLengthRef.current = 0;
+        chartLastBarTimeRef.current = 0;
         chartRenderWindowRef.current = { from: 0, to: -1 };
         chartVisibleGlobalRangeRef.current = null;
         chartPendingVisibleGlobalRangeRef.current = null;
@@ -6789,25 +7057,59 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (chartRenderCandles.length === 0 || chartRenderWindow.to < chartRenderWindow.from) {
       candleSeries.setData([]);
       chartDataLengthRef.current = 0;
+      chartLastBarTimeRef.current = 0;
       return;
     }
 
     const candleData: CandlestickData<UTCTimestamp>[] = chartRenderCandles.map((candle) => ({
-      time: toUtcTimestamp(candle.time),
+      time: toGaplessUtc(candle.time),
       open: candle.open,
       high: candle.high,
       low: candle.low,
       close: candle.close
     }));
 
-    const targetVisibleRange =
-      chartPendingVisibleGlobalRangeRef.current ?? chartVisibleGlobalRangeRef.current;
+    const prevLength = chartDataLengthRef.current;
+    const prevLastTime = chartLastBarTimeRef.current;
+    const newLength = candleData.length;
+    const lastBar = candleData[newLength - 1];
+    const newLastTime = lastBar ? lastBar.time : 0;
+    const pendingRange = chartPendingVisibleGlobalRangeRef.current;
 
-    chartIsApplyingVisibleRangeRef.current = true;
-    candleSeries.setData(candleData);
-    chartDataLengthRef.current = candleData.length;
+    const canIncrement =
+      !pendingRange &&
+      prevLength > 0 &&
+      (
+        (newLength === prevLength && newLastTime === prevLastTime) ||
+        (newLength === prevLength + 1)
+      );
 
-    const lastBar = candleData[candleData.length - 1];
+    if (canIncrement && lastBar) {
+      candleSeries.update(lastBar);
+    } else {
+      chartIsApplyingVisibleRangeRef.current = true;
+      candleSeries.setData(candleData);
+
+      if (pendingRange) {
+        chart.timeScale().setVisibleLogicalRange({
+          from: pendingRange.from - chartRenderWindow.from,
+          to: pendingRange.to - chartRenderWindow.from
+        });
+        chartPendingVisibleGlobalRangeRef.current = null;
+      }
+
+      if (chartVisibleRangeSyncRafRef.current) {
+        window.cancelAnimationFrame(chartVisibleRangeSyncRafRef.current);
+      }
+
+      chartVisibleRangeSyncRafRef.current = window.requestAnimationFrame(() => {
+        chartIsApplyingVisibleRangeRef.current = false;
+        chartVisibleRangeSyncRafRef.current = 0;
+      });
+    }
+
+    chartDataLengthRef.current = newLength;
+    chartLastBarTimeRef.current = newLastTime;
 
     if (lastBar) {
       const isUp = lastBar.close >= lastBar.open;
@@ -6815,24 +7117,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         priceLineColor: isUp ? "rgba(27, 174, 138, 0.72)" : "rgba(240, 69, 90, 0.72)"
       });
     }
-
-    if (targetVisibleRange) {
-      chart.timeScale().setVisibleLogicalRange({
-        from: targetVisibleRange.from - chartRenderWindow.from,
-        to: targetVisibleRange.to - chartRenderWindow.from
-      });
-      chartPendingVisibleGlobalRangeRef.current = null;
-    }
-
-    if (chartVisibleRangeSyncRafRef.current) {
-      window.cancelAnimationFrame(chartVisibleRangeSyncRafRef.current);
-    }
-
-    chartVisibleRangeSyncRafRef.current = window.requestAnimationFrame(() => {
-      chartIsApplyingVisibleRangeRef.current = false;
-      chartVisibleRangeSyncRafRef.current = 0;
-    });
-  }, [chartRenderCandles, chartRenderWindow]);
+  }, [chartRenderCandles, chartRenderWindow, toGaplessUtc]);
 
   useEffect(() => {
     const overlay = countdownOverlayRef.current;
@@ -6860,7 +7145,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const m = Math.floor((remaining % 3600) / 60);
       const s = remaining % 60;
       const pad = (n: number) => String(n).padStart(2, "0");
-      const text = h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+      const timer = h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+      const price = formatPrice(latestCandle.close);
+      const text = `${price} ${timer}`;
 
       if (text !== lastText) {
         overlay.textContent = text;
@@ -6873,7 +7160,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const y = candleSeries.priceToCoordinate(latestCandle.close);
 
       if (y !== null && Number.isFinite(y)) {
-        overlay.style.top = `${y + 10}px`;
+        overlay.style.top = `${y - 9}px`;
         overlay.style.display = "block";
       } else {
         overlay.style.display = "none";
@@ -7304,24 +7591,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const entryIndex = findCandleIndexAtOrBefore(selectedChartCandles, entryMs);
       const startTime =
         entryIndex >= 0
-          ? toUtcTimestamp(selectedChartCandles[entryIndex]!.time)
-          : toUtcTimestamp(floorToTimeframe(entryMs, selectedTimeframe));
+          ? toGaplessUtc(selectedChartCandles[entryIndex]!.time)
+          : toGaplessUtc(floorToTimeframe(entryMs, selectedTimeframe));
       const rawExitIndex = findCandleIndexAtOrBefore(selectedChartCandles, rawExitMs);
       const exitIndex =
         rawExitIndex >= 0 && entryIndex >= 0 ? Math.max(entryIndex, rawExitIndex) : rawExitIndex;
       const exitTime =
         exitIndex >= 0
-          ? toUtcTimestamp(selectedChartCandles[exitIndex]!.time)
+          ? toGaplessUtc(selectedChartCandles[exitIndex]!.time)
           : trade.exitTime > trade.entryTime
-            ? toUtcTimestamp(floorToTimeframe(rawExitMs, selectedTimeframe))
+            ? toGaplessUtc(floorToTimeframe(rawExitMs, selectedTimeframe))
             : startTime;
       const rangeStartTime =
         entryIndex > 0
-          ? toUtcTimestamp(selectedChartCandles[entryIndex - 1]!.time)
+          ? toGaplessUtc(selectedChartCandles[entryIndex - 1]!.time)
           : ((startTime - stepSeconds) as UTCTimestamp);
       const rangeEndTime =
         exitIndex >= 0 && exitIndex + 1 < selectedChartCandles.length
-          ? toUtcTimestamp(selectedChartCandles[exitIndex + 1]!.time)
+          ? toGaplessUtc(selectedChartCandles[exitIndex + 1]!.time)
           : ((exitTime + stepSeconds) as UTCTimestamp);
 
       return {
@@ -7606,7 +7893,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     selectedSymbol,
     selectedTimeframe,
     showActiveTradeOnChart,
-    showAllTradesOnChart
+    showAllTradesOnChart,
+    toGaplessUtc
   ]);
 
   const backtestDateFilteredTrades = useMemo(() => {
@@ -10538,6 +10826,49 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           ))}
         </nav>
         <div className="top-utility surface-actions">
+          <input
+            ref={settingsFileInputRef}
+            type="file"
+            accept=".json"
+            style={{ display: "none" }}
+            onChange={handleLoadSettings}
+          />
+          <button
+            type="button"
+            className="settings-io-btn"
+            aria-label="Save settings"
+            onClick={handleSaveSettings}
+          >
+            <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M12 3v12m0 0l-4-4m4 4l4-4" />
+              <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+            </svg>
+            <span className="settings-io-label">Save</span>
+          </button>
+          <button
+            type="button"
+            className="settings-io-btn"
+            aria-label="Load settings"
+            onClick={() => settingsFileInputRef.current?.click()}
+          >
+            <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M12 15V3m0 0l-4 4m4-4l4 4" />
+              <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+            </svg>
+            <span className="settings-io-label">Load</span>
+          </button>
+          <button
+            type="button"
+            className="settings-io-btn settings-io-reset"
+            aria-label="Reset settings"
+            onClick={handleResetSettings}
+          >
+            <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M3 12a9 9 0 1 1 2.636 6.364" />
+              <path d="M3 21v-6h6" />
+            </svg>
+            <span className="settings-io-label">Reset</span>
+          </button>
           <div className="notif-wrap" ref={notificationRef}>
             <button
               type="button"
@@ -10646,18 +10977,27 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               <div className="chart-toolbar">
                 {hoveredCandle ? (
                   <>
-                    <span>
-                      O <strong>{formatPrice(hoveredCandle.open)}</strong>
-                    </span>
-                    <span>
-                      H <strong>{formatPrice(hoveredCandle.high)}</strong>
-                    </span>
-                    <span>
-                      L <strong>{formatPrice(hoveredCandle.low)}</strong>
-                    </span>
-                    <span>
-                      C <strong>{formatPrice(hoveredCandle.close)}</strong>
-                    </span>
+                    {(() => {
+                      const display = hoveredTime ? hoveredCandle : latestCandle ?? hoveredCandle;
+                      const bullish = display.close >= display.open;
+                      const cls = bullish ? "ohlc-up" : "ohlc-down";
+                      return (
+                        <>
+                          <span className={cls}>
+                            O <strong>{formatPrice(display.open)}</strong>
+                          </span>
+                          <span className={cls}>
+                            H <strong>{formatPrice(display.high)}</strong>
+                          </span>
+                          <span className={cls}>
+                            L <strong>{formatPrice(display.low)}</strong>
+                          </span>
+                          <span className={cls}>
+                            C <strong>{formatPrice(display.close)}</strong>
+                          </span>
+                        </>
+                      );
+                    })()}
                   </>
                 ) : (
                   <span>No market data loaded</span>
@@ -10701,7 +11041,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <div className="watchlist-head with-action">
                         <div>
                           <h2>Active Trade</h2>
-                          <p>Current open position · {backtestModelSelectionSummary}</p>
+                          <p>Latest position from backtest · {backtestModelSelectionSummary}</p>
                         </div>
                         <button
                           type="button"
@@ -10802,8 +11142,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       ) : (
                         <div className="ai-placeholder">
                           <p>
-                            {chartSignalModel
-                              ? "No active trade data yet."
+                            {backtestModelProfiles.length > 0
+                              ? "No active trade. Waiting for the backtest pipeline to produce trades."
                               : "Select at least one Main Settings model in Backtest."}
                           </p>
                         </div>
@@ -10868,15 +11208,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         </div>
                       </div>
                       <div className="copytrade-body">
-                        <div className="copytrade-source">
-                          <span>Selected Source</span>
-                          <strong>{backtestModelSelectionSummary}</strong>
-                          <small>
-                            Source follows the Main Settings model selection in Backtest. Enter the
-                            target MT5 account details here.
-                          </small>
-                        </div>
-
                         <div className="copytrade-form" aria-label="MT5 credentials form">
                           <label className="copytrade-field">
                             <span>MT5 Login</span>

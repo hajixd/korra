@@ -13,6 +13,7 @@ self.onmessage = (event: MessageEvent<BacktestHistoryWorkerRequest>) => {
     requestId,
     blueprints,
     candleSeriesBySymbol,
+    oneMinuteCandlesBySymbol,
     modelNamesById,
     tpDollars,
     slDollars
@@ -20,6 +21,7 @@ self.onmessage = (event: MessageEvent<BacktestHistoryWorkerRequest>) => {
   const rows = computeBacktestHistoryRowsChunk({
     blueprints,
     candleSeriesBySymbol,
+    oneMinuteCandlesBySymbol,
     modelNamesById,
     tpDollars,
     slDollars,

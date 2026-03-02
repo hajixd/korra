@@ -9,7 +9,7 @@ const DEFAULT_PAIR = LOCAL_XAU_PAIR;
 const DEFAULT_TIMEFRAME = "M15";
 const DEFAULT_COUNT = 2500;
 const MIN_COUNT = 10;
-const MAX_COUNT = 60000;
+const MAX_COUNT = 500_000;
 const ALLOWED_TIMEFRAMES = new Set(["M1", "M5", "M15", "M30", "H1", "H4", "D", "W", "M"]);
 
 const LOCAL_SOURCE_BARS_PER_CANDLE: Record<string, number> = {

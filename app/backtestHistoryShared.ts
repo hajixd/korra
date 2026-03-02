@@ -47,6 +47,7 @@ export type BacktestHistoryWorkerRequest = {
   requestId: number;
   blueprints: BacktestHistoryTradeBlueprint[];
   candleSeriesBySymbol: Record<string, BacktestHistoryCandle[]>;
+  oneMinuteCandlesBySymbol?: Record<string, BacktestHistoryCandle[]>;
   modelNamesById: Record<string, string>;
   tpDollars: number;
   slDollars: number;
@@ -94,13 +95,66 @@ const createSeededRng = (seed: number) => {
   };
 };
 
+const resolveWithOneMinuteCandles = (
+  oneMinuteCandles: BacktestHistoryCandle[],
+  side: BacktestHistoryTradeSide,
+  rangeStartMs: number,
+  rangeEndMs: number,
+  targetPrice: number,
+  stopPrice: number
+): { result: BacktestHistoryTradeResult; outcomePrice: number } | null => {
+  let startIdx = findCandleIndexAtOrBefore(oneMinuteCandles, rangeStartMs);
+
+  if (startIdx < 0) {
+    return null;
+  }
+
+  if (oneMinuteCandles[startIdx].time < rangeStartMs) {
+    startIdx += 1;
+  }
+
+  if (startIdx >= oneMinuteCandles.length || oneMinuteCandles[startIdx].time >= rangeEndMs) {
+    return null;
+  }
+
+  for (let j = startIdx; j < oneMinuteCandles.length; j += 1) {
+    const mc = oneMinuteCandles[j];
+
+    if (mc.time >= rangeEndMs) {
+      break;
+    }
+
+    const mcHitTarget = side === "Long" ? mc.high >= targetPrice : mc.low <= targetPrice;
+    const mcHitStop = side === "Long" ? mc.low <= stopPrice : mc.high >= stopPrice;
+
+    if (mcHitTarget && mcHitStop) {
+      const targetFirst = Math.abs(mc.open - targetPrice) <= Math.abs(mc.open - stopPrice);
+      return {
+        result: targetFirst ? "Win" : "Loss",
+        outcomePrice: targetFirst ? targetPrice : stopPrice
+      };
+    }
+
+    if (mcHitTarget) {
+      return { result: "Win", outcomePrice: targetPrice };
+    }
+
+    if (mcHitStop) {
+      return { result: "Loss", outcomePrice: stopPrice };
+    }
+  }
+
+  return null;
+};
+
 const evaluateTpSlPath = (
   candles: BacktestHistoryCandle[],
   side: BacktestHistoryTradeSide,
   entryIndex: number,
   targetPrice: number,
   stopPrice: number,
-  toIndex = candles.length - 1
+  toIndex = candles.length - 1,
+  oneMinuteCandles?: BacktestHistoryCandle[]
 ): { hit: boolean; hitIndex: number; outcomePrice: number; result: BacktestHistoryTradeResult | null } => {
   const safeEndIndex = Math.min(Math.max(entryIndex + 1, toIndex), candles.length - 1);
   let hitIndex = -1;
@@ -124,10 +178,36 @@ const evaluateTpSlPath = (
     hitIndex = i;
 
     if (hitTarget && hitStop) {
-      const targetFirst =
-        Math.abs(candle.open - targetPrice) <= Math.abs(candle.open - stopPrice);
-      result = targetFirst ? "Win" : "Loss";
-      outcomePrice = targetFirst ? targetPrice : stopPrice;
+      let resolved = false;
+
+      if (oneMinuteCandles && oneMinuteCandles.length > 0) {
+        const rangeStartMs = candle.time;
+        const rangeEndMs =
+          i + 1 < candles.length
+            ? candles[i + 1].time
+            : candle.time + (i > 0 ? candle.time - candles[i - 1].time : 60_000);
+        const oneMinResult = resolveWithOneMinuteCandles(
+          oneMinuteCandles,
+          side,
+          rangeStartMs,
+          rangeEndMs,
+          targetPrice,
+          stopPrice
+        );
+
+        if (oneMinResult) {
+          result = oneMinResult.result;
+          outcomePrice = oneMinResult.outcomePrice;
+          resolved = true;
+        }
+      }
+
+      if (!resolved) {
+        const targetFirst =
+          Math.abs(candle.open - targetPrice) <= Math.abs(candle.open - stopPrice);
+        result = targetFirst ? "Win" : "Loss";
+        outcomePrice = targetFirst ? targetPrice : stopPrice;
+      }
     } else if (hitTarget) {
       result = "Win";
       outcomePrice = targetPrice;
@@ -199,6 +279,7 @@ type ComputeBacktestHistoryRowsChunkArgs = Omit<BacktestHistoryWorkerRequest, "r
 export const computeBacktestHistoryRowsChunk = ({
   blueprints,
   candleSeriesBySymbol,
+  oneMinuteCandlesBySymbol,
   modelNamesById,
   tpDollars,
   slDollars,
@@ -274,13 +355,15 @@ export const computeBacktestHistoryRowsChunk = ({
         blueprint.side === "Long"
           ? entryPrice + effectiveTpDistance
           : Math.max(0.000001, entryPrice - effectiveTpDistance);
+      const oneMinuteCandles = oneMinuteCandlesBySymbol?.[blueprint.symbol];
       const path = evaluateTpSlPath(
         list,
         blueprint.side,
         entryIndex,
         targetPrice,
         stopPrice,
-        exitIndex
+        exitIndex,
+        oneMinuteCandles
       );
 
       const resolvedExitIndex = path.hit ? path.hitIndex : exitIndex;
