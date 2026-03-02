@@ -11634,54 +11634,49 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           type="button"
                           className={`ai-zip-button feature ${aiMode !== "off" ? "active" : ""}`}
                           onClick={() => {
-                            setAiMode((current) => {
-                              const next =
-                                current === "off" ? "knn" : current === "knn" ? "hdbscan" : "off";
-
-                              if (next === "off") {
-                                setAiModelEnabled(false);
-                                setAiFilterEnabled(false);
-                              } else if (!aiModelEnabled && !aiFilterEnabled) {
-                                setAiFilterEnabled(true);
-                              }
-
-                              return next;
-                            });
+                            if (aiMode === "off") {
+                              setAiMode("knn");
+                              setAiFilterEnabled(true);
+                              setAiModelEnabled(false);
+                            } else if (aiFilterEnabled && !aiModelEnabled) {
+                              setAiModelEnabled(true);
+                              setAiFilterEnabled(false);
+                            } else {
+                              setAiMode("off");
+                              setAiModelEnabled(false);
+                              setAiFilterEnabled(false);
+                              setConfidenceThreshold(0);
+                            }
                           }}
                         >
-                          Artificial Intelligence - {aiMode === "off" ? "OFF" : aiMode.toUpperCase()}
+                          Artificial Intelligence -{" "}
+                          {aiMode === "off"
+                            ? "OFF"
+                            : aiFilterEnabled && !aiModelEnabled
+                            ? "Filter"
+                            : "Model"}
                         </button>
 
                         <button
                           type="button"
-                          className={`ai-zip-button toggle ${
-                            aiMode !== "off" && aiModelEnabled ? "active" : ""
-                          }`}
-                          disabled={aiMode === "off"}
-                          onClick={() => setAiModelEnabled((value) => !value)}
-                        >
-                          AI Model {aiModelEnabled ? "· ON" : "· OFF"}
-                        </button>
-
-                        <button
-                          type="button"
-                          className={`ai-zip-button toggle ${
-                            aiMode !== "off" && aiFilterEnabled ? "active" : ""
-                          }`}
+                          className={`ai-zip-button toggle ${aiMode !== "off" ? "active" : ""}`}
                           disabled={aiMode === "off"}
                           onClick={() =>
-                            setAiFilterEnabled((value) => {
-                              const next = !value;
-
-                              if (!next) {
-                                setConfidenceThreshold(0);
-                              }
-
-                              return next;
-                            })
+                            setAiMode((current) =>
+                              current === "knn" ? "hdbscan" : "knn"
+                            )
                           }
                         >
-                          AI Filter {aiFilterEnabled ? "· ON" : "· OFF"}
+                          Artificial Intelligence Type -{" "}
+                          {aiMode === "off" ? "KNN" : aiMode.toUpperCase()}
+                        </button>
+
+                        <button
+                          type="button"
+                          className={`ai-zip-button toggle ${useMitExit ? "active" : ""}`}
+                          onClick={() => setUseMitExit((value) => !value)}
+                        >
+                          MIT Exit {useMitExit ? "· ON" : "· OFF"}
                         </button>
 
                         <button
@@ -11694,6 +11689,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         >
                           Static Libraries &amp; Clusters {staticLibrariesClusters ? "· ON" : "· OFF"}
                         </button>
+                      </div>
+                    </div>
+
+                    <div className="backtest-card" style={{ padding: "0.85rem" }}>
+                      <div className="ai-zip-section">
+                        <div className="ai-zip-section-title">Advanced AI Settings</div>
 
                         <div className={`ai-zip-control ${confidenceGateDisabled ? "disabled" : ""}`}>
                           <div className="ai-zip-label">AI Confidence Threshold</div>
@@ -11712,12 +11713,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           />
                           <div className="ai-zip-note">{effectiveConfidenceThreshold}</div>
                         </div>
-                      </div>
-                    </div>
-
-                    <div className="backtest-card" style={{ padding: "0.85rem" }}>
-                      <div className="ai-zip-section">
-                        <div className="ai-zip-section-title">Advanced AI Settings</div>
 
                         <div className={`ai-zip-control ${aiMode === "off" ? "disabled" : ""}`}>
                           <div className="ai-zip-label">AI Exit Strictness</div>
@@ -11738,32 +11733,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             {aiExitStrictness === 0
                               ? "0 (OFF)"
                               : `${aiExitStrictness} (1 = lenient · 100 = aggressive)`}
-                          </div>
-                        </div>
-
-                        <div
-                          className={`ai-zip-control ${aiExitStrictness === 0 ? "disabled" : ""}`}
-                        >
-                          <div className="ai-zip-label">Loss Tolerance</div>
-                          <input
-                            type="range"
-                            min={-100}
-                            max={100}
-                            step={1}
-                            value={aiExitLossTolerance}
-                            disabled={aiExitStrictness === 0}
-                            onChange={(event) => {
-                              setAiExitLossTolerance(
-                                clamp(Number(event.target.value) || 0, -100, 100)
-                              );
-                            }}
-                            className="backtest-slider"
-                            style={{ "--p": `${((aiExitLossTolerance + 100) / 200) * 100}%` } as React.CSSProperties}
-                          />
-                          <div className="ai-zip-note">
-                            {aiExitStrictness === 0
-                              ? "Set AI Exit Strictness > 0 to enable"
-                              : `${aiExitLossTolerance} (0 = neutral)`}
                           </div>
                         </div>
 
@@ -11793,30 +11762,30 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           </div>
                         </div>
 
-                        <button
-                          type="button"
-                          className={`ai-zip-button toggle ${useMitExit ? "active" : ""}`}
-                          onClick={() => setUseMitExit((value) => !value)}
+                        <div
+                          className={`ai-zip-control ${aiExitStrictness === 0 ? "disabled" : ""}`}
                         >
-                          MIT Exit {useMitExit ? "· ON" : "· OFF"}
-                        </button>
-
-                        <div className={`ai-zip-control ${aiMode === "off" ? "disabled" : ""}`}>
-                          <div className="ai-zip-label">Complexity</div>
+                          <div className="ai-zip-label">Loss Tolerance</div>
                           <input
                             type="range"
-                            min={1}
+                            min={-100}
                             max={100}
                             step={1}
-                            value={complexity}
-                            disabled={aiMode === "off"}
+                            value={aiExitLossTolerance}
+                            disabled={aiExitStrictness === 0}
                             onChange={(event) => {
-                              setComplexity(clamp(Number(event.target.value) || 1, 1, 100));
+                              setAiExitLossTolerance(
+                                clamp(Number(event.target.value) || 0, -100, 100)
+                              );
                             }}
                             className="backtest-slider"
-                            style={{ "--p": `${((complexity - 1) / 99) * 100}%` } as React.CSSProperties}
+                            style={{ "--p": `${((aiExitLossTolerance + 100) / 200) * 100}%` } as React.CSSProperties}
                           />
-                          <div className="ai-zip-note">{complexity}</div>
+                          <div className="ai-zip-note">
+                            {aiExitStrictness === 0
+                              ? "Set AI Exit Strictness > 0 to enable"
+                              : `${aiExitLossTolerance} (0 = neutral)`}
+                          </div>
                         </div>
 
                         <div className={`ai-zip-control ${aiMode === "off" ? "disabled" : ""}`}>

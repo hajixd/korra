@@ -34524,17 +34524,19 @@ export default function App() {
 
               <button
                 onClick={() => {
-                  setAiMethod((m0) => {
-                    const next =
-                      m0 === "off" ? "knn" : m0 === "knn" ? "hdbscan" : "off";
-                    if (next === "off") {
-                      setUseAI(false);
-                      setCheckEveryBar(false);
-                    } else {
-                      if (!useAI && !checkEveryBar) setUseAI(true);
-                    }
-                    return next;
-                  });
+                  if (aiMethod === "off") {
+                    setAiMethod("knn");
+                    setUseAI(true);
+                    setCheckEveryBar(false);
+                  } else if (useAI && !checkEveryBar) {
+                    setCheckEveryBar(true);
+                    setUseAI(false);
+                  } else {
+                    setAiMethod("off");
+                    setCheckEveryBar(false);
+                    setUseAI(false);
+                    setConfidenceThreshold(0);
+                  }
                 }}
                 style={{
                   width: "100%",
@@ -34562,23 +34564,23 @@ export default function App() {
                   justifyContent: "center",
                   gap: 8,
                 }}
-                title="Cycles AI method: OFF → KNN → HDBSCAN"
+                title="Cycles AI mode: OFF → Filter → Model"
               >
                 <span>
                   {"Artificial Intelligence - " +
                     (aiMethod === "off"
                       ? "OFF"
-                      : aiMethod === "knn"
-                      ? "KNN"
-                      : "HDBSCAN")}
+                      : useAI && !checkEveryBar
+                      ? "Filter"
+                      : "Model")}
                 </span>
               </button>
 
               <button
                 disabled={aiAllOff}
-                onClick={() => {
-                  setCheckEveryBar((v) => !v);
-                }}
+                onClick={() =>
+                  setAiMethod((m0) => (m0 === "knn" ? "hdbscan" : "knn"))
+                }
                 style={{
                   width: "100%",
                   fontSize: 11,
@@ -34587,75 +34589,48 @@ export default function App() {
                   border: "1px solid rgba(255,255,255,0.14)",
                   background: aiAllOff
                     ? "rgba(255,255,255,0.035)"
-                    : checkEveryBar
-                    ? "linear-gradient(135deg, rgba(160,90,255,0.22), rgba(90,170,255,0.16), rgba(60,220,120,0.10))"
-                    : "rgba(255,255,255,0.06)",
+                    : "linear-gradient(135deg, rgba(160,90,255,0.22), rgba(90,170,255,0.16), rgba(60,220,120,0.10))",
                   color: aiAllOff
                     ? "rgba(255,255,255,0.50)"
-                    : checkEveryBar
-                    ? "rgba(235,230,255,0.98)"
-                    : "rgba(255,255,255,0.85)",
+                    : "rgba(235,230,255,0.98)",
                   cursor: aiAllOff ? "not-allowed" : "pointer",
                   fontWeight: 900,
                   marginBottom: 10,
                   opacity: aiAllOff ? 0.55 : 1,
                   boxShadow: aiAllOff
                     ? "none"
-                    : checkEveryBar
-                    ? "0 14px 34px rgba(0,0,0,0.58)"
-                    : "0 10px 24px rgba(0,0,0,0.45)",
+                    : "0 14px 34px rgba(0,0,0,0.58)",
                 }}
-                title={
-                  checkEveryBar
-                    ? "AI Model entry evaluated every bar"
-                    : "AI Model entry evaluated only on chunk boundaries"
-                }
+                title="Toggle AI type: KNN ↔ HDBSCAN"
               >
-                AI Model {checkEveryBar ? "· ON" : "· OFF"}
+                {"Artificial Intelligence Type - " +
+                  (aiAllOff ? "KNN" : aiMethod === "knn" ? "KNN" : "HDBSCAN")}
               </button>
 
               <button
-                disabled={aiAllOff}
-                onClick={() =>
-                  setUseAI((v) => {
-                    const next = !v;
-
-                    if (!next) {
-                      setConfidenceThreshold(0);
-                    }
-
-                    return next;
-                  })
-                }
+                onClick={() => setUseMimExit((v) => !v)}
                 style={{
                   width: "100%",
                   fontSize: 11,
                   padding: "9px 10px",
                   borderRadius: 14,
                   border: "1px solid rgba(255,255,255,0.14)",
-                  background: aiAllOff
-                    ? "rgba(255,255,255,0.035)"
-                    : useAI
+                  background: useMimExit
                     ? "linear-gradient(135deg, rgba(160,90,255,0.22), rgba(90,170,255,0.16), rgba(60,220,120,0.10))"
                     : "rgba(255,255,255,0.06)",
-                  color: aiAllOff
-                    ? "rgba(255,255,255,0.50)"
-                    : useAI
+                  color: useMimExit
                     ? "rgba(235,230,255,0.98)"
-                    : "rgba(255,255,255,0.70)",
-                  cursor: aiAllOff ? "not-allowed" : "pointer",
+                    : "rgba(255,255,255,0.78)",
+                  cursor: "pointer",
                   fontWeight: 900,
                   marginBottom: 10,
-                  opacity: aiAllOff ? 0.55 : 1,
-                  boxShadow: aiAllOff
-                    ? "none"
-                    : useAI
+                  boxShadow: useMimExit
                     ? "0 14px 34px rgba(0,0,0,0.58)"
                     : "0 10px 24px rgba(0,0,0,0.45)",
                 }}
-                title="Toggle AI Filter (turning it off resets the confidence gate to 0)"
+                title="For AI Model entries: allow the underlying model's exit rules to close the trade (plus AI exit), but only if that model is set to BOTH (Entry+Exit)."
               >
-                AI Filter {useAI ? "· ON" : "· OFF"}
+                MIT Exit {useMimExit ? "· ON" : "· OFF"}
               </button>
 
               <button
@@ -34746,35 +34721,6 @@ export default function App() {
 
                 <div style={{ height: 10 }} />
 
-                <div style={{ height: 10 }} />
-
-                <div style={{ opacity: aiExitStrict > 0 ? 1 : 0.55 }}>
-                  <div style={ui.label}>Loss Tolerance</div>
-                  <input
-                    type="range"
-                    min={-100}
-                    max={100}
-                    step={1}
-                    value={aiExitLossTol}
-                    disabled={aiExitStrict === 0}
-                    onChange={(e) =>
-                      setAiExitLossTol(
-                        clamp(Number(e.target.value) || 0, -100, 100)
-                      )
-                    }
-                    className="theme-slider"
-                    style={{ ...sliderVars(aiExitLossTol, -100, 100) }}
-                    title="0 = no effect. Negative = exit sooner in losses. Positive = tolerate more loss before exiting."
-                  />
-                  <div style={{ ...ui.tiny, marginTop: 4 }}>
-                    {aiExitStrict === 0
-                      ? "Set AI Exit Strictness > 0 to enable"
-                      : `${aiExitLossTol} (0 = neutral)`}
-                  </div>
-                </div>
-
-                <div style={{ height: 8 }} />
-
                 <div style={{ opacity: aiExitStrict > 0 ? 1 : 0.55 }}>
                   <div style={ui.label}>Win Tolerance</div>
                   <input
@@ -34800,49 +34746,32 @@ export default function App() {
                   </div>
                 </div>
 
-                <div style={{ height: 12 }} />
+                <div style={{ height: 8 }} />
 
-                <button
-                  onClick={() => setUseMimExit((v) => !v)}
-                  style={{
-                    width: "100%",
-                    fontSize: 11,
-                    padding: "9px 10px",
-                    borderRadius: 14,
-                    border: "1px solid rgba(255,255,255,0.14)",
-                    background: useMimExit
-                      ? "linear-gradient(135deg, rgba(160,90,255,0.22), rgba(90,170,255,0.16), rgba(60,220,120,0.10))"
-                      : "rgba(255,255,255,0.06)",
-                    color: useMimExit
-                      ? "rgba(235,230,255,0.98)"
-                      : "rgba(255,255,255,0.78)",
-                    cursor: "pointer",
-                    fontWeight: 900,
-                    boxShadow: useMimExit
-                      ? "0 14px 34px rgba(0,0,0,0.58)"
-                      : "0 10px 24px rgba(0,0,0,0.45)",
-                  }}
-                  title="For AI Model entries: allow the underlying model's exit rules to close the trade (plus AI exit), but only if that model is set to BOTH (Entry+Exit)."
-                >
-                  MIT Exit {useMimExit ? "· ON" : "· OFF"}
-                </button>
-
-                <div style={{ height: 10 }} />
-                <div style={ui.label}>Complexity</div>
-                <input
-                  type="range"
-                  min={1}
-                  max={100}
-                  step={1}
-                  value={complexity}
-                  disabled={aiAllOff}
-                  onChange={(e) =>
-                    setComplexity(clamp(Number(e.target.value) || 1, 1, 100))
-                  }
-                  className="theme-slider"
-                  style={{ ...sliderVars(complexity, 1, 100) }}
-                />
-                <div style={{ ...ui.tiny, marginTop: 4 }}>{complexity}</div>
+                <div style={{ opacity: aiExitStrict > 0 ? 1 : 0.55 }}>
+                  <div style={ui.label}>Loss Tolerance</div>
+                  <input
+                    type="range"
+                    min={-100}
+                    max={100}
+                    step={1}
+                    value={aiExitLossTol}
+                    disabled={aiExitStrict === 0}
+                    onChange={(e) =>
+                      setAiExitLossTol(
+                        clamp(Number(e.target.value) || 0, -100, 100)
+                      )
+                    }
+                    className="theme-slider"
+                    style={{ ...sliderVars(aiExitLossTol, -100, 100) }}
+                    title="0 = no effect. Negative = exit sooner in losses. Positive = tolerate more loss before exiting."
+                  />
+                  <div style={{ ...ui.tiny, marginTop: 4 }}>
+                    {aiExitStrict === 0
+                      ? "Set AI Exit Strictness > 0 to enable"
+                      : `${aiExitLossTol} (0 = neutral)`}
+                  </div>
+                </div>
 
                 <div style={{ height: 10 }} />
 
