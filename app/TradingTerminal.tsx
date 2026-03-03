@@ -9767,10 +9767,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [antiCheatBacktestContext]);
 
   const backtestLibraryCandidateTrades = useMemo(() => {
-    return sharedLibraryCandidateTrades.length > 0
-      ? sharedLibraryCandidateTrades
-      : backtestTimeFilteredTrades;
-  }, [backtestTimeFilteredTrades, sharedLibraryCandidateTrades]);
+    return antiCheatBacktestContext.libraryCandidateTrades;
+  }, [antiCheatBacktestContext]);
 
   const backtestTrades = useMemo(() => {
     return backtestTimeFilteredTrades.filter((trade) => {
