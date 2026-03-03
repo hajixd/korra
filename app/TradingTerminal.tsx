@@ -449,6 +449,7 @@ type BacktestPresetRange = Exclude<BacktestDatePreset, "custom">;
 type BacktestSettingsSnapshot = {
   symbol: string;
   timeframe: Timeframe;
+  minutePreciseEnabled: boolean;
   statsDateStart: string;
   statsDateEnd: string;
   enabledBacktestWeekdays: string[];
@@ -4627,7 +4628,8 @@ const enforceMaxConcurrentTradeBlueprints = (
 
 const enforceMaxConcurrentHistoryRows = (
   rows: HistoryItem[],
-  maxConcurrentTrades: number
+  maxConcurrentTrades: number,
+  allowZeroDuration = false
 ): HistoryItem[] => {
   const limit = clamp(Math.floor(Number(maxConcurrentTrades) || 0), 0, 500);
   if (limit <= 0 || rows.length === 0) {
@@ -4638,7 +4640,11 @@ const enforceMaxConcurrentHistoryRows = (
     .filter((row) => {
       const entrySec = Number(row.entryTime);
       const exitSec = Number(row.exitTime);
-      return Number.isFinite(entrySec) && Number.isFinite(exitSec) && exitSec >= entrySec;
+      return (
+        Number.isFinite(entrySec) &&
+        Number.isFinite(exitSec) &&
+        (allowZeroDuration ? exitSec >= entrySec : exitSec > entrySec)
+      );
     })
     .sort(
       (left, right) =>
@@ -4956,6 +4962,7 @@ const doesBacktestHistoryGenerationInputChange = (
 ) => {
   if (previous.symbol !== next.symbol) return true;
   if (previous.timeframe !== next.timeframe) return true;
+  if (previous.minutePreciseEnabled !== next.minutePreciseEnabled) return true;
   if (previous.aiFilterEnabled !== next.aiFilterEnabled) return true;
   if (!areAiModelStatesEqual(previous.aiModelStates, next.aiModelStates)) return true;
   if (previous.dollarsPerMove !== next.dollarsPerMove) return true;
@@ -5096,6 +5103,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
   const [selectedBacktestTimeframe, setSelectedBacktestTimeframe] = useState<Timeframe>("15m");
+  const [minutePreciseEnabled, setMinutePreciseEnabled] = useState(false);
   const [selectedSurfaceTab, setSelectedSurfaceTab] = useState<SurfaceTab>("chart");
   const [selectedBacktestTab, setSelectedBacktestTab] = useState<BacktestTab>("mainSettings");
   const [panelExpanded, setPanelExpanded] = useState(false);
@@ -5267,6 +5275,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const buildCurrentBacktestSettingsSnapshot = (): BacktestSettingsSnapshot => ({
     symbol: selectedSymbol,
     timeframe: selectedBacktestTimeframe,
+    minutePreciseEnabled,
     statsDateStart,
     statsDateEnd,
     enabledBacktestWeekdays: [...enabledBacktestWeekdays],
@@ -5353,6 +5362,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const appliedBacktestBreakEvenTriggerPctRef = useRef(50);
   const appliedBacktestTrailingStartPctRef = useRef(50);
   const appliedBacktestTrailingDistPctRef = useRef(30);
+  const appliedBacktestMinutePreciseEnabledRef = useRef(false);
   const appliedBacktestAiModeRef = useRef<BacktestSettingsSnapshot["aiMode"]>("off");
   const appliedBacktestAntiCheatEnabledRef = useRef(false);
   const appliedBacktestSelectedAiLibraryCountRef = useRef(0);
@@ -6531,7 +6541,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         stopMode: appliedBacktestSettings.stopMode,
         breakEvenTriggerPct: appliedBacktestSettings.breakEvenTriggerPct,
         trailingStartPct: appliedBacktestSettings.trailingStartPct,
-        trailingDistPct: appliedBacktestSettings.trailingDistPct
+        trailingDistPct: appliedBacktestSettings.trailingDistPct,
+        minutePreciseEnabled: appliedBacktestSettings.minutePreciseEnabled
       }),
       everyCandleTradeBlueprints.length
     );
@@ -6549,6 +6560,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedBacktestSettings.breakEvenTriggerPct,
     appliedBacktestSettings.trailingStartPct,
     appliedBacktestSettings.trailingDistPct,
+    appliedBacktestSettings.minutePreciseEnabled,
     backtestSeriesMap,
     backtestOneMinuteSeriesMap,
     seriesMap,
@@ -6896,9 +6908,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const chronologicalHistoryRows = useMemo(() => {
     return enforceMaxConcurrentHistoryRows(
       deferredHistoryRows,
-      appliedBacktestSettings.maxConcurrentTrades
+      appliedBacktestSettings.maxConcurrentTrades,
+      appliedBacktestSettings.minutePreciseEnabled
     );
-  }, [appliedBacktestSettings.maxConcurrentTrades, deferredHistoryRows]);
+  }, [
+    appliedBacktestSettings.maxConcurrentTrades,
+    appliedBacktestSettings.minutePreciseEnabled,
+    deferredHistoryRows
+  ]);
   const backtestSourceTrades = useMemo(() => {
     return chronologicalHistoryRows;
   }, [chronologicalHistoryRows]);
@@ -7413,6 +7430,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   appliedBacktestBreakEvenTriggerPctRef.current = appliedBacktestSettings.breakEvenTriggerPct;
   appliedBacktestTrailingStartPctRef.current = appliedBacktestSettings.trailingStartPct;
   appliedBacktestTrailingDistPctRef.current = appliedBacktestSettings.trailingDistPct;
+  appliedBacktestMinutePreciseEnabledRef.current = appliedBacktestSettings.minutePreciseEnabled;
   appliedBacktestAiModeRef.current = appliedBacktestSettings.aiMode;
   appliedBacktestAntiCheatEnabledRef.current = appliedBacktestSettings.antiCheatEnabled;
   appliedBacktestStatsDateStartRef.current = appliedBacktestSettings.statsDateStart;
@@ -7441,6 +7459,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const breakEvenTriggerPctSnapshot = appliedBacktestBreakEvenTriggerPctRef.current;
     const trailingStartPctSnapshot = appliedBacktestTrailingStartPctRef.current;
     const trailingDistPctSnapshot = appliedBacktestTrailingDistPctRef.current;
+    const minutePreciseEnabledSnapshot = appliedBacktestMinutePreciseEnabledRef.current;
     const hasAiLibraryPass =
       appliedBacktestAiModeRef.current !== "off" &&
       (appliedBacktestAntiCheatEnabledRef.current ||
@@ -7536,7 +7555,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             stopMode: stopModeSnapshot,
             breakEvenTriggerPct: breakEvenTriggerPctSnapshot,
             trailingStartPct: trailingStartPctSnapshot,
-            trailingDistPct: trailingDistPctSnapshot
+            trailingDistPct: trailingDistPctSnapshot,
+            minutePreciseEnabled: minutePreciseEnabledSnapshot
           }),
           backtestTargetTradesSnapshot
         )
@@ -7690,7 +7710,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         stopMode: stopModeSnapshot,
         breakEvenTriggerPct: breakEvenTriggerPctSnapshot,
         trailingStartPct: trailingStartPctSnapshot,
-        trailingDistPct: trailingDistPctSnapshot
+        trailingDistPct: trailingDistPctSnapshot,
+        minutePreciseEnabled: minutePreciseEnabledSnapshot
       });
     } catch {
       worker.terminate();
@@ -7968,6 +7989,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     selectedSymbol,
     selectedTimeframe,
     selectedBacktestTimeframe,
+    minutePreciseEnabled,
     enabledBacktestWeekdays,
     enabledBacktestSessions,
     enabledBacktestMonths,
@@ -8027,7 +8049,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     statsDateStart,
     statsDateEnd,
   }), [
-    selectedSymbol, selectedTimeframe, selectedBacktestTimeframe,
+    selectedSymbol, selectedTimeframe, selectedBacktestTimeframe, minutePreciseEnabled,
     enabledBacktestWeekdays, enabledBacktestSessions,
     enabledBacktestMonths, enabledBacktestHours, aiMode, aiModelEnabled, aiFilterEnabled,
     staticLibrariesClusters, confidenceThreshold, aiExitStrictness, aiExitLossTolerance,
@@ -8052,6 +8074,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
     }
     if (s.selectedBacktestTimeframe != null) setSelectedBacktestTimeframe(s.selectedBacktestTimeframe);
+    if (s.minutePreciseEnabled != null) setMinutePreciseEnabled(Boolean(s.minutePreciseEnabled));
     if (s.enabledBacktestWeekdays != null) setEnabledBacktestWeekdays(s.enabledBacktestWeekdays);
     if (s.enabledBacktestSessions != null) setEnabledBacktestSessions(s.enabledBacktestSessions);
     if (s.enabledBacktestMonths != null) setEnabledBacktestMonths(s.enabledBacktestMonths);
@@ -8155,6 +8178,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setSelectedSymbol(futuresAssets[0].symbol);
     setSelectedTimeframe("15m");
     setSelectedBacktestTimeframe("15m");
+    setMinutePreciseEnabled(false);
     setEnabledBacktestWeekdays([...backtestWeekdayLabels]);
     setEnabledBacktestSessions([...backtestSessionLabels]);
     setEnabledBacktestMonths(Array.from({ length: 12 }, (_, i) => i));
@@ -13835,6 +13859,31 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           </div>
                         )}
                       </div>
+                      <div className="backtest-minute-precise-row" aria-label="Minute precise execution setting">
+                        <span className="backtest-minute-precise-label">Minute Precise</span>
+                        <div className="backtest-minute-precise-toggle" role="group" aria-label="Minute Precise">
+                          <button
+                            type="button"
+                            className={`backtest-minute-precise-btn${
+                              minutePreciseEnabled ? " active" : ""
+                            }`}
+                            onClick={() => setMinutePreciseEnabled(true)}
+                            aria-pressed={minutePreciseEnabled}
+                          >
+                            ON
+                          </button>
+                          <button
+                            type="button"
+                            className={`backtest-minute-precise-btn${
+                              !minutePreciseEnabled ? " active" : ""
+                            }`}
+                            onClick={() => setMinutePreciseEnabled(false)}
+                            aria-pressed={!minutePreciseEnabled}
+                          >
+                            OFF
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -15776,7 +15825,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             seriesMap[timeframeKey] ??
                             EMPTY_CANDLES;
                           const executionFrameLabel =
-                            appliedBacktestSettings.timeframe === "1m" ? "1m" : "1m exec";
+                            appliedBacktestSettings.minutePreciseEnabled
+                              ? appliedBacktestSettings.timeframe === "1m"
+                                ? "1m"
+                                : "1m exec"
+                              : appliedBacktestSettings.timeframe;
 
                           return (
                             <div

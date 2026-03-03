@@ -48,6 +48,7 @@ export type BacktestHistoryWorkerRequest = {
   blueprints: BacktestHistoryTradeBlueprint[];
   candleSeriesBySymbol: Record<string, BacktestHistoryCandle[]>;
   oneMinuteCandlesBySymbol?: Record<string, BacktestHistoryCandle[]>;
+  minutePreciseEnabled?: boolean;
   modelNamesById: Record<string, string>;
   tpDollars: number;
   slDollars: number;
@@ -302,6 +303,7 @@ export const computeBacktestHistoryRowsChunk = ({
   blueprints,
   candleSeriesBySymbol,
   oneMinuteCandlesBySymbol,
+  minutePreciseEnabled,
   modelNamesById,
   tpDollars,
   slDollars,
@@ -313,6 +315,7 @@ export const computeBacktestHistoryRowsChunk = ({
 }: ComputeBacktestHistoryRowsChunkArgs): BacktestHistoryRow[] => {
   const breakEvenOn = stopMode === 1;
   const trailingOn = stopMode === 2;
+  const minutePreciseOn = minutePreciseEnabled === true;
   const rows: BacktestHistoryRow[] = [];
   const totalBlueprints = blueprints.length;
 
@@ -344,7 +347,7 @@ export const computeBacktestHistoryRowsChunk = ({
       let resolvedEntryTimeMs = list[entryIndex].time;
       let entryPrice = list[entryIndex].close;
 
-      if (oneMinuteCandles && oneMinuteCandles.length > 0) {
+      if (minutePreciseOn && oneMinuteCandles && oneMinuteCandles.length > 0) {
         const entryBarStartMs = list[entryIndex].time;
         const entryBarEndMs =
           entryIndex + 1 < list.length
@@ -471,46 +474,95 @@ export const computeBacktestHistoryRowsChunk = ({
         const hitStop = direction === 1 ? bar.low <= currentStopPrice : bar.high >= currentStopPrice;
 
         if (hitTarget || hitStop) {
-          const rangeStartMs = Math.max(bar.time, resolvedEntryTimeMs);
-          const inferredStepMs =
-            i + 1 < list.length
-              ? Math.max(60_000, list[i + 1].time - bar.time)
-              : Math.max(60_000, i > 0 ? bar.time - list[i - 1].time : 60_000);
-          const rangeEndMs = rangeStartMs + inferredStepMs;
-          const oneMinuteExit =
-            oneMinuteCandles && oneMinuteCandles.length > 0
-              ? resolveWithOneMinuteCandles(
-                  oneMinuteCandles,
-                  blueprint.side,
-                  rangeStartMs,
-                  rangeEndMs,
-                  targetPrice,
-                  currentStopPrice
-                )
-              : null;
+          if (minutePreciseOn) {
+            const rangeStartMs = Math.max(bar.time, resolvedEntryTimeMs);
+            const inferredStepMs =
+              i + 1 < list.length
+                ? Math.max(60_000, list[i + 1].time - bar.time)
+                : Math.max(60_000, i > 0 ? bar.time - list[i - 1].time : 60_000);
+            const rangeEndMs = rangeStartMs + inferredStepMs;
+            const oneMinuteExit =
+              oneMinuteCandles && oneMinuteCandles.length > 0
+                ? resolveWithOneMinuteCandles(
+                    oneMinuteCandles,
+                    blueprint.side,
+                    rangeStartMs,
+                    rangeEndMs,
+                    targetPrice,
+                    currentStopPrice
+                  )
+                : null;
 
-          if (oneMinuteExit) {
-            tradeResult = oneMinuteExit.result;
-            outcomePrice = oneMinuteExit.outcomePrice;
-            resolvedExitTimeMs = oneMinuteExit.outcomeTimeMs;
-          } else if (hitTarget && hitStop) {
-            const targetFirst =
-              Math.abs(bar.open - targetPrice) <= Math.abs(bar.open - currentStopPrice);
-            tradeResult = targetFirst ? "Win" : "Loss";
-            outcomePrice = targetFirst ? targetPrice : currentStopPrice;
-            resolvedExitTimeMs = bar.time;
-          } else if (hitTarget) {
-            tradeResult = "Win";
-            outcomePrice = targetPrice;
-            resolvedExitTimeMs = bar.time;
-          } else {
-            tradeResult = "Loss";
-            outcomePrice = currentStopPrice;
-            resolvedExitTimeMs = bar.time;
+            if (oneMinuteExit) {
+              tradeResult = oneMinuteExit.result;
+              outcomePrice = oneMinuteExit.outcomePrice;
+              resolvedExitTimeMs = oneMinuteExit.outcomeTimeMs;
+            } else if (hitTarget && hitStop) {
+              const targetFirst =
+                Math.abs(bar.open - targetPrice) <= Math.abs(bar.open - currentStopPrice);
+              tradeResult = targetFirst ? "Win" : "Loss";
+              outcomePrice = targetFirst ? targetPrice : currentStopPrice;
+              resolvedExitTimeMs = bar.time;
+            } else if (hitTarget) {
+              tradeResult = "Win";
+              outcomePrice = targetPrice;
+              resolvedExitTimeMs = bar.time;
+            } else {
+              tradeResult = "Loss";
+              outcomePrice = currentStopPrice;
+              resolvedExitTimeMs = bar.time;
+            }
+
+            resolvedExitIndex = i;
+            exitReason = tradeResult === "Loss" ? resolveStopExitReason() : "Take Profit";
+            break;
           }
 
+          if (hitTarget && hitStop) {
+            let resolved = false;
+            if (oneMinuteCandles && oneMinuteCandles.length > 0) {
+              const rangeStartMs = bar.time;
+              const rangeEndMs = i + 1 < list.length ? list[i + 1].time : bar.time + 60_000;
+              const omResult = resolveWithOneMinuteCandles(
+                oneMinuteCandles,
+                blueprint.side,
+                rangeStartMs,
+                rangeEndMs,
+                targetPrice,
+                currentStopPrice
+              );
+              if (omResult) {
+                tradeResult = omResult.result;
+                outcomePrice = omResult.outcomePrice;
+                resolved = true;
+              }
+            }
+            if (!resolved) {
+              const targetFirst =
+                Math.abs(bar.open - targetPrice) <= Math.abs(bar.open - currentStopPrice);
+              tradeResult = targetFirst ? "Win" : "Loss";
+              outcomePrice = targetFirst ? targetPrice : currentStopPrice;
+            }
+            resolvedExitIndex = i;
+            resolvedExitTimeMs = bar.time;
+            exitReason = tradeResult === "Loss" ? resolveStopExitReason() : "Take Profit";
+            break;
+          }
+
+          if (hitTarget) {
+            tradeResult = "Win";
+            outcomePrice = targetPrice;
+            resolvedExitIndex = i;
+            resolvedExitTimeMs = bar.time;
+            exitReason = "Take Profit";
+            break;
+          }
+
+          tradeResult = "Loss";
+          outcomePrice = currentStopPrice;
           resolvedExitIndex = i;
-          exitReason = tradeResult === "Loss" ? resolveStopExitReason() : "Take Profit";
+          resolvedExitTimeMs = bar.time;
+          exitReason = resolveStopExitReason();
           break;
         }
       }
@@ -520,7 +572,7 @@ export const computeBacktestHistoryRowsChunk = ({
       if (tradeResult === null) {
         outcomePrice = Math.max(0.000001, list[resolvedExitIndex].close);
         resolvedExitTimeMs = list[resolvedExitIndex].time;
-        if (oneMinuteCandles && oneMinuteCandles.length > 0) {
+        if (minutePreciseOn && oneMinuteCandles && oneMinuteCandles.length > 0) {
           const exitBarStartMs = list[resolvedExitIndex].time;
           const exitBarStepMs =
             resolvedExitIndex + 1 < list.length
