@@ -26,7 +26,11 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { resolveGraphTemplate } from "../lib/assistant-tools";
+import AssistantChartAnimationModal from "./AssistantChartAnimationModal";
+import {
+  type AssistantChartAnimation,
+  resolveGraphTemplate
+} from "../lib/assistant-tools";
 
 export type AssistantPanelCandle = {
   time: number;
@@ -88,6 +92,7 @@ type AssistantChart = {
   template: string;
   title: string;
   subtitle?: string;
+  mode?: "static" | "dynamic";
   data: Array<Record<string, string | number>>;
   config?: Record<string, string | number | boolean>;
 };
@@ -104,6 +109,7 @@ type AssistantMessage = {
   bullets?: AssistantBullet[];
   charts?: AssistantChart[];
   chartActions?: Array<Record<string, unknown>>;
+  chartAnimations?: AssistantChartAnimation[];
   toolsUsed?: string[];
   cannotAnswer?: boolean;
 };
@@ -118,6 +124,7 @@ type AssistantApiResponse = {
     bullets: AssistantBullet[];
     charts: AssistantChart[];
     chartActions?: Array<Record<string, unknown>>;
+    chartAnimations?: AssistantChartAnimation[];
     toolsUsed?: string[];
   };
   modelTrace?: {
@@ -154,6 +161,15 @@ const normalizeToolPill = (value: string): string => {
     return "";
   }
   return text;
+};
+
+const formatAnimationDuration = (durationMs: number): string => {
+  const safe = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0;
+  const seconds = safe / 1000;
+  if (seconds < 10) {
+    return `${seconds.toFixed(1)}s`;
+  }
+  return `${Math.round(seconds)}s`;
 };
 
 const boldText = (text: string): ReactNode[] => {
@@ -240,6 +256,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
   const [input, setInput] = useState("");
   const [isPending, setIsPending] = useState(false);
   const [thinkingStage, setThinkingStage] = useState("Analyzing");
+  const [activeAnimation, setActiveAnimation] = useState<AssistantChartAnimation | null>(null);
 
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -252,8 +269,28 @@ export default function AssistantPanel(props: AssistantPanelProps) {
     messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
   }, [messages, isPending]);
 
-  const historySummary = useMemo(() => summarizeTrades(historyRows), [historyRows]);
   const backtestSummary = useMemo(() => summarizeTrades(backtestTrades), [backtestTrades]);
+
+  const resetAssistantThread = useCallback(() => {
+    setMessages([
+      {
+        id: `welcome-${Date.now()}`,
+        role: "assistant",
+        content: "How can I help you?"
+      }
+    ]);
+    setTurns([]);
+    setInput("");
+    setThinkingStage("Analyzing");
+    setIsPending(false);
+    setActiveAnimation(null);
+
+    if (typeof onRunChartActions === "function") {
+      onRunChartActions([{ type: "clear_annotations" }]);
+    }
+
+    window.requestAnimationFrame(() => inputRef.current?.focus());
+  }, [onRunChartActions]);
 
   const buildPayloadContext = useCallback(
     (includeBacktestData: boolean) => {
@@ -392,13 +429,21 @@ export default function AssistantPanel(props: AssistantPanelProps) {
           bullets: payload.response.bullets,
           charts: payload.response.charts,
           chartActions: payload.response.chartActions,
+          chartAnimations: Array.isArray(payload.response.chartAnimations)
+            ? payload.response.chartAnimations
+            : [],
           toolsUsed: Array.isArray(payload.response.toolsUsed)
             ? payload.response.toolsUsed.map(normalizeToolPill).filter((tool) => tool.length > 0)
             : [],
           cannotAnswer: payload.response.cannotAnswer
         };
 
+        const hasAnimationResponse =
+          Array.isArray(payload.response.chartAnimations) &&
+          payload.response.chartAnimations.length > 0;
+
         if (
+          !hasAnimationResponse &&
           Array.isArray(payload.response.chartActions) &&
           payload.response.chartActions.length > 0 &&
           typeof onRunChartActions === "function"
@@ -610,15 +655,43 @@ export default function AssistantPanel(props: AssistantPanelProps) {
     );
   };
 
+  const renderChartCards = (charts: AssistantChart[]) => (
+    <div className="ai-chart-grid">
+      {charts.map((chart) => {
+        const templateMeta = resolveGraphTemplate(chart.template);
+        const mode = chart.mode ?? templateMeta.mode;
+        return (
+          <section key={chart.id} className="ai-chart-card">
+            <div className="ai-chart-head">
+              <strong>{chart.title}</strong>
+              <div className="ai-chart-head-meta">
+                <span className={`ai-chart-mode-pill mode-${mode}`}>
+                  {mode === "dynamic" ? "Dynamic" : "Static"}
+                </span>
+                {chart.subtitle ? <small>{chart.subtitle}</small> : null}
+              </div>
+            </div>
+            <div className="ai-chart-body">{renderChart(chart)}</div>
+          </section>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div className="ai-tab-shell">
       <div className="watchlist-head ai-head">
         <div>
           <h2>AI Assistant</h2>
-          <p>
-            {symbol} · {timeframe} · Live candles {selectedCandles.length.toLocaleString("en-US")} · History {historySummary.totalTrades.toLocaleString("en-US")}
-          </p>
         </div>
+        <button
+          type="button"
+          className="panel-action-btn ai-reset-btn"
+          onClick={resetAssistantThread}
+          disabled={isPending}
+        >
+          Reset
+        </button>
       </div>
 
       <div className="ai-thread" ref={messageListRef} aria-live="polite">
@@ -658,17 +731,58 @@ export default function AssistantPanel(props: AssistantPanelProps) {
             ) : null}
 
             {message.charts && message.charts.length > 0 ? (
-              <div className="ai-chart-grid">
-                {message.charts.map((chart) => (
-                  <section key={chart.id} className="ai-chart-card">
-                    <div className="ai-chart-head">
-                      <strong>{chart.title}</strong>
-                      {chart.subtitle ? <small>{chart.subtitle}</small> : null}
-                    </div>
-                    <div className="ai-chart-body">{renderChart(chart)}</div>
+              <>
+                {message.charts.some((chart) => resolveGraphTemplate(chart.template).mode === "static") ? (
+                  <section className="ai-chart-group">
+                    <header className="ai-chart-group-head">
+                      <span>Static Charts</span>
+                    </header>
+                    {renderChartCards(
+                      message.charts.filter(
+                        (chart) => resolveGraphTemplate(chart.template).mode === "static"
+                      )
+                    )}
                   </section>
+                ) : null}
+
+                {message.charts.some((chart) => resolveGraphTemplate(chart.template).mode === "dynamic") ? (
+                  <section className="ai-chart-group">
+                    <header className="ai-chart-group-head">
+                      <span>Dynamic Indicators</span>
+                    </header>
+                    {renderChartCards(
+                      message.charts.filter(
+                        (chart) => resolveGraphTemplate(chart.template).mode === "dynamic"
+                      )
+                    )}
+                  </section>
+                ) : null}
+              </>
+            ) : null}
+
+            {message.chartAnimations && message.chartAnimations.length > 0 ? (
+              <section className="ai-animation-grid">
+                {message.chartAnimations.map((animation) => (
+                  <button
+                    key={animation.id}
+                    type="button"
+                    className={`ai-animation-thumb theme-${animation.theme}`}
+                    onClick={() => setActiveAnimation(animation)}
+                  >
+                    <span className="ai-animation-thumb-play" aria-hidden>
+                      ▶
+                    </span>
+                    <div className="ai-animation-thumb-copy">
+                      <strong>{animation.thumbnailTitle || animation.title}</strong>
+                      <span>{animation.thumbnailSubtitle || animation.summary}</span>
+                    </div>
+                    <div className="ai-animation-thumb-meta">
+                      <span>{animation.steps.length} steps</span>
+                      <span>{formatAnimationDuration(animation.durationMs)}</span>
+                    </div>
+                  </button>
                 ))}
-              </div>
+              </section>
             ) : null}
 
           </article>
@@ -699,6 +813,16 @@ export default function AssistantPanel(props: AssistantPanelProps) {
           className="ai-compose-input"
           value={input}
           onChange={(event) => setInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing
+            ) {
+              event.preventDefault();
+              void submit();
+            }
+          }}
           rows={3}
           placeholder="How can I help you?"
           disabled={isPending}
@@ -712,6 +836,13 @@ export default function AssistantPanel(props: AssistantPanelProps) {
           </button>
         </div>
       </form>
+
+      <AssistantChartAnimationModal
+        open={activeAnimation !== null}
+        animation={activeAnimation}
+        candles={selectedCandles}
+        onClose={() => setActiveAnimation(null)}
+      />
     </div>
   );
 }

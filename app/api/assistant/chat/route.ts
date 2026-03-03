@@ -8,10 +8,13 @@ import {
   type NebiusModelSelection
 } from "../../../../lib/nebiusTokenFactory";
 import {
+  buildFallbackChartAnimation,
+  chartAnimationsPromptSpec,
   chartActionsPromptSpec,
   detectDeterministicIntent,
   GRAPH_TEMPLATE_ID_SET,
   listGraphTemplatesForPrompt,
+  normalizeChartAnimationsFromCoding,
   normalizeChartActions,
   resolveGraphTemplate,
   summarizeMonthlyAggregates
@@ -148,6 +151,7 @@ type AssistantChart = {
   template: string;
   title: string;
   subtitle?: string;
+  mode?: "static" | "dynamic";
   data: Array<Record<string, string | number>>;
   config?: Record<string, string | number | boolean>;
 };
@@ -160,6 +164,7 @@ type ChartCodingOutput = {
     points?: number;
   }>;
   chartActions?: Array<Record<string, unknown>>;
+  chartAnimations?: Array<Record<string, unknown>>;
 };
 
 type ChatRequestBody = {
@@ -191,6 +196,7 @@ const HISTORICAL_WINDOW_RE =
 const DATE_LITERAL_RE = /\b\d{4}-\d{2}-\d{2}\b/;
 const DRAW_WORD_RE = /\bdraw\b/i;
 const VISUAL_REQUEST_RE = /\b(chart|graph|plot|visual|visualize|overview)\b/i;
+const ANIMATION_REQUEST_RE = /\b(animate|animation|video|replay|playback|walkthrough|demo)\b/i;
 const TECHNICAL_DRAW_RE =
   /\b(support|resistance|s\/r|trendline|trend line|horizontal line|vertical line|box|fvg|fair value gap|arrow|ruler|mark candlestick|draw)\b/i;
 
@@ -233,12 +239,14 @@ const buildCodingPrompt = (): string =>
   [
     "You are a chart-planning model.",
     "Return only JSON with this shape:",
-    '{"chartPlans":[{"template":string,"title":string,"source":"history|backtest|candles|clickhouse|actions","points":number}],"chartActions":[object]}',
+    '{"chartPlans":[{"template":string,"title":string,"source":"history|backtest|candles|clickhouse|actions","points":number}],"chartActions":[object],"chartAnimations":[object]}',
     "Pick up to 3 chart plans and up to 12 chart actions.",
     "Use only supported templates listed below.",
     listGraphTemplatesForPrompt(),
     "Use only supported chart actions listed below.",
     chartActionsPromptSpec(),
+    "Use chart animations only when user asks for animation/video/replay/demo.",
+    chartAnimationsPromptSpec(),
     "Only choose templates/actions relevant to the request."
   ].join("\n");
 
@@ -537,6 +545,318 @@ const formatTimeLabel = (timestampMs: number): string => {
   return `${month}/${day} ${hours}:${minutes} UTC`;
 };
 
+const extractTemplatePeriod = (templateId: string, fallback: number): number => {
+  const match = templateId.match(/_(\d{1,3})(?:_|$)/);
+  if (!match) {
+    return fallback;
+  }
+  const value = Number(match[1]);
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return clamp(Math.round(value), 2, 300);
+};
+
+const rollingMeanAt = (values: number[], index: number, period: number): number => {
+  const end = Math.max(0, Math.min(values.length - 1, index));
+  const start = Math.max(0, end - Math.max(1, period) + 1);
+  let sum = 0;
+  let count = 0;
+  for (let i = start; i <= end; i += 1) {
+    const value = values[i];
+    if (!Number.isFinite(value)) {
+      continue;
+    }
+    sum += value;
+    count += 1;
+  }
+  return count > 0 ? sum / count : 0;
+};
+
+const rollingStdAt = (values: number[], index: number, period: number): number => {
+  const mean = rollingMeanAt(values, index, period);
+  const end = Math.max(0, Math.min(values.length - 1, index));
+  const start = Math.max(0, end - Math.max(1, period) + 1);
+  let sumSq = 0;
+  let count = 0;
+  for (let i = start; i <= end; i += 1) {
+    const value = values[i];
+    if (!Number.isFinite(value)) {
+      continue;
+    }
+    const diff = value - mean;
+    sumSq += diff * diff;
+    count += 1;
+  }
+  if (count <= 1) {
+    return 0;
+  }
+  return Math.sqrt(sumSq / count);
+};
+
+const computeEmaSeries = (values: number[], period: number): number[] => {
+  if (values.length === 0) {
+    return [];
+  }
+  const alpha = 2 / (Math.max(2, period) + 1);
+  const output: number[] = new Array(values.length).fill(0);
+  output[0] = values[0] ?? 0;
+  for (let i = 1; i < values.length; i += 1) {
+    const prev = output[i - 1] ?? values[i - 1] ?? 0;
+    const next = values[i] ?? prev;
+    output[i] = prev + alpha * (next - prev);
+  }
+  return output;
+};
+
+const computeRsiSeries = (closes: number[], period: number): number[] => {
+  if (closes.length === 0) {
+    return [];
+  }
+
+  const normalizedPeriod = Math.max(2, period);
+  const gains: number[] = new Array(closes.length).fill(0);
+  const losses: number[] = new Array(closes.length).fill(0);
+
+  for (let i = 1; i < closes.length; i += 1) {
+    const diff = (closes[i] ?? 0) - (closes[i - 1] ?? 0);
+    gains[i] = diff > 0 ? diff : 0;
+    losses[i] = diff < 0 ? Math.abs(diff) : 0;
+  }
+
+  const rsi: number[] = new Array(closes.length).fill(50);
+  let avgGain = 0;
+  let avgLoss = 0;
+
+  for (let i = 1; i < closes.length; i += 1) {
+    avgGain = ((avgGain * (normalizedPeriod - 1)) + gains[i]!) / normalizedPeriod;
+    avgLoss = ((avgLoss * (normalizedPeriod - 1)) + losses[i]!) / normalizedPeriod;
+
+    if (avgLoss <= 1e-9) {
+      rsi[i] = 100;
+      continue;
+    }
+
+    const rs = avgGain / avgLoss;
+    rsi[i] = 100 - 100 / (1 + rs);
+  }
+
+  return rsi;
+};
+
+const buildDerivedPriceValues = (rows: CandleRow[], templateId: string): number[] => {
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const normalizedTemplate = templateId.toLowerCase();
+  const closes = rows.map((row) => row.close);
+  const highs = rows.map((row) => row.high);
+  const lows = rows.map((row) => row.low);
+  const volumes = rows.map((row) => row.volume);
+  const ranges = rows.map((row) => Math.max(0, row.high - row.low));
+  const period = extractTemplatePeriod(normalizedTemplate, 14);
+  const ema = computeEmaSeries(closes, period);
+  const fastEma = computeEmaSeries(closes, 12);
+  const slowEma = computeEmaSeries(closes, 26);
+  const signalEma = computeEmaSeries(
+    fastEma.map((value, index) => value - (slowEma[index] ?? value)),
+    9
+  );
+  const rsi = computeRsiSeries(closes, period);
+
+  if (normalizedTemplate.startsWith("sma_")) {
+    return closes.map((_, index) => rollingMeanAt(closes, index, period));
+  }
+
+  if (
+    normalizedTemplate.startsWith("ema_") ||
+    normalizedTemplate.startsWith("rma_") ||
+    normalizedTemplate.startsWith("kama_") ||
+    normalizedTemplate.startsWith("zlema_")
+  ) {
+    return ema;
+  }
+
+  if (normalizedTemplate.startsWith("wma_")) {
+    return closes.map((_, index) => {
+      const end = index;
+      const start = Math.max(0, end - period + 1);
+      let weightedSum = 0;
+      let weightTotal = 0;
+      let weight = 1;
+      for (let i = start; i <= end; i += 1) {
+        const close = closes[i] ?? 0;
+        weightedSum += close * weight;
+        weightTotal += weight;
+        weight += 1;
+      }
+      return weightTotal > 0 ? weightedSum / weightTotal : closes[end] ?? 0;
+    });
+  }
+
+  if (normalizedTemplate.startsWith("hma_")) {
+    return closes.map((_, index) => {
+      const half = Math.max(2, Math.floor(period / 2));
+      const sqrtPeriod = Math.max(2, Math.floor(Math.sqrt(period)));
+      const wmaHalf = rollingMeanAt(closes, index, half);
+      const wmaFull = rollingMeanAt(closes, index, period);
+      return rollingMeanAt([2 * wmaHalf - wmaFull], 0, sqrtPeriod);
+    });
+  }
+
+  if (normalizedTemplate.startsWith("vwma_")) {
+    return closes.map((_, index) => {
+      const end = index;
+      const start = Math.max(0, end - period + 1);
+      let weightedPrice = 0;
+      let weightedVolume = 0;
+      for (let i = start; i <= end; i += 1) {
+        const volume = volumes[i] ?? 0;
+        weightedPrice += (closes[i] ?? 0) * volume;
+        weightedVolume += volume;
+      }
+      return weightedVolume > 0 ? weightedPrice / weightedVolume : closes[end] ?? 0;
+    });
+  }
+
+  if (normalizedTemplate.includes("bollinger_upper")) {
+    return closes.map((_, index) => {
+      const mean = rollingMeanAt(closes, index, period);
+      return mean + 2 * rollingStdAt(closes, index, period);
+    });
+  }
+
+  if (normalizedTemplate.includes("bollinger_lower")) {
+    return closes.map((_, index) => {
+      const mean = rollingMeanAt(closes, index, period);
+      return mean - 2 * rollingStdAt(closes, index, period);
+    });
+  }
+
+  if (normalizedTemplate.includes("bollinger_mid")) {
+    return closes.map((_, index) => rollingMeanAt(closes, index, period));
+  }
+
+  if (normalizedTemplate.includes("keltner_upper")) {
+    return closes.map((_, index) => rollingMeanAt(closes, index, period) + 1.5 * rollingMeanAt(ranges, index, period));
+  }
+
+  if (normalizedTemplate.includes("keltner_lower")) {
+    return closes.map((_, index) => rollingMeanAt(closes, index, period) - 1.5 * rollingMeanAt(ranges, index, period));
+  }
+
+  if (normalizedTemplate.includes("keltner_mid")) {
+    return closes.map((_, index) => rollingMeanAt(closes, index, period));
+  }
+
+  if (normalizedTemplate.includes("donchian_upper")) {
+    return highs.map((_, index) => Math.max(...highs.slice(Math.max(0, index - period + 1), index + 1)));
+  }
+
+  if (normalizedTemplate.includes("donchian_lower")) {
+    return lows.map((_, index) => Math.min(...lows.slice(Math.max(0, index - period + 1), index + 1)));
+  }
+
+  if (normalizedTemplate.includes("donchian_mid")) {
+    return highs.map((_, index) => {
+      const start = Math.max(0, index - period + 1);
+      const localHigh = Math.max(...highs.slice(start, index + 1));
+      const localLow = Math.min(...lows.slice(start, index + 1));
+      return (localHigh + localLow) / 2;
+    });
+  }
+
+  if (normalizedTemplate.includes("vwap")) {
+    let cumulativePV = 0;
+    let cumulativeVolume = 0;
+    return closes.map((close, index) => {
+      const typicalPrice = ((highs[index] ?? close) + (lows[index] ?? close) + close) / 3;
+      const volume = volumes[index] ?? 0;
+      cumulativePV += typicalPrice * volume;
+      cumulativeVolume += volume;
+      return cumulativeVolume > 0 ? cumulativePV / cumulativeVolume : close;
+    });
+  }
+
+  if (normalizedTemplate.includes("rsi")) {
+    return rsi;
+  }
+
+  if (normalizedTemplate.includes("macd_hist")) {
+    return fastEma.map((value, index) => value - (slowEma[index] ?? value) - (signalEma[index] ?? 0));
+  }
+
+  if (normalizedTemplate.includes("macd_signal")) {
+    return signalEma;
+  }
+
+  if (normalizedTemplate.includes("macd_line")) {
+    return fastEma.map((value, index) => value - (slowEma[index] ?? value));
+  }
+
+  if (normalizedTemplate.includes("roc") || normalizedTemplate.includes("ppo")) {
+    return closes.map((close, index) => {
+      const priorIndex = Math.max(0, index - period);
+      const prior = closes[priorIndex] ?? close;
+      if (Math.abs(prior) <= 1e-9) {
+        return 0;
+      }
+      return ((close - prior) / prior) * 100;
+    });
+  }
+
+  if (
+    normalizedTemplate.includes("momentum") ||
+    normalizedTemplate.includes("mom_") ||
+    normalizedTemplate.includes("close_change")
+  ) {
+    return closes.map((close, index) => {
+      if (index === 0) {
+        return 0;
+      }
+      return close - (closes[index - 1] ?? close);
+    });
+  }
+
+  if (normalizedTemplate.includes("cumulative_volume")) {
+    let cumulative = 0;
+    return volumes.map((volume) => {
+      cumulative += volume;
+      return cumulative;
+    });
+  }
+
+  if (normalizedTemplate.includes("volume")) {
+    return volumes;
+  }
+
+  if (
+    normalizedTemplate.includes("atr") ||
+    normalizedTemplate.includes("volatility") ||
+    normalizedTemplate.includes("range")
+  ) {
+    return ranges.map((_, index) => rollingMeanAt(ranges, index, period));
+  }
+
+  if (normalizedTemplate.includes("percentile")) {
+    return closes.map((close, index) => {
+      const window = closes.slice(Math.max(0, index - period + 1), index + 1);
+      if (window.length === 0) {
+        return 0;
+      }
+      const sorted = [...window].sort((left, right) => left - right);
+      let rank = 0;
+      while (rank < sorted.length && sorted[rank]! <= close) {
+        rank += 1;
+      }
+      return (rank / sorted.length) * 100;
+    });
+  }
+
+  return closes;
+};
+
 const buildContextDigest = (context: AssistantContext): Record<string, unknown> => {
   const latestCandle = context.liveCandles[context.liveCandles.length - 1] ?? null;
   const earliestCandle = context.liveCandles[0] ?? null;
@@ -746,6 +1066,120 @@ const normalizeToolLabel = (value: string): string => {
   return text.length > 0 ? text : "tool";
 };
 
+const summarizeDrawnActions = (
+  actions: ReturnType<typeof normalizeChartActions>
+): string => {
+  if (!Array.isArray(actions) || actions.length === 0) {
+    return "";
+  }
+
+  const describeTime = (timeMs: number | undefined): string => {
+    if (!Number.isFinite(timeMs)) {
+      return "";
+    }
+    return formatTimeLabel(Number(timeMs));
+  };
+
+  const describePrice = (price: number | undefined): string => {
+    if (!Number.isFinite(price)) {
+      return "";
+    }
+    return Number(price).toFixed(4);
+  };
+
+  const descriptions: string[] = [];
+
+  for (const action of actions.slice(0, 6)) {
+    if (action.type === "draw_support_resistance") {
+      const support = describePrice(action.priceStart);
+      const resistance = describePrice(action.priceEnd);
+      descriptions.push(
+        support && resistance
+          ? `support ${support} / resistance ${resistance}`
+          : "support/resistance levels"
+      );
+      continue;
+    }
+
+    if (action.type === "draw_horizontal_line") {
+      const price = describePrice(action.price);
+      descriptions.push(price ? `horizontal level ${price}` : "horizontal level");
+      continue;
+    }
+
+    if (action.type === "draw_vertical_line") {
+      const time = describeTime(action.time);
+      descriptions.push(time ? `vertical marker at ${time}` : "vertical marker");
+      continue;
+    }
+
+    if (action.type === "draw_trend_line") {
+      const start = describePrice(action.priceStart);
+      const end = describePrice(action.priceEnd);
+      descriptions.push(
+        start && end ? `trend line ${start} -> ${end}` : "trend line"
+      );
+      continue;
+    }
+
+    if (action.type === "draw_box") {
+      descriptions.push(action.label ? `box (${action.label})` : "box zone");
+      continue;
+    }
+
+    if (action.type === "draw_fvg") {
+      descriptions.push("fair value gap zone");
+      continue;
+    }
+
+    if (action.type === "draw_arrow") {
+      descriptions.push(action.label ? `arrow (${action.label})` : "arrow marker");
+      continue;
+    }
+
+    if (action.type === "draw_long_position") {
+      const entry = describePrice(action.entryPrice);
+      descriptions.push(entry ? `long position (entry ${entry})` : "long position");
+      continue;
+    }
+
+    if (action.type === "draw_short_position") {
+      const entry = describePrice(action.entryPrice);
+      descriptions.push(entry ? `short position (entry ${entry})` : "short position");
+      continue;
+    }
+
+    if (action.type === "draw_ruler") {
+      descriptions.push("ruler measurement");
+      continue;
+    }
+
+    if (action.type === "mark_candlestick") {
+      descriptions.push(action.note ? `marked candle (${action.note})` : "marked candle");
+      continue;
+    }
+
+    if (action.type === "move_to_date") {
+      const time = describeTime(action.time);
+      descriptions.push(time ? `moved chart to ${time}` : "moved chart to target date");
+      continue;
+    }
+
+    if (action.type === "clear_annotations") {
+      descriptions.push("cleared existing annotations");
+      continue;
+    }
+  }
+
+  if (descriptions.length === 0) {
+    return "";
+  }
+
+  const preview = descriptions.slice(0, 3).join("; ");
+  const suffix = descriptions.length > 3 ? "; ..." : "";
+  return `Drew ${actions.length} item${actions.length === 1 ? "" : "s"}: ${preview}${suffix}.`;
+};
+
 const buildDrawActionsFromPrompt = (params: {
   prompt: string;
   candles: CandleRow[];
@@ -855,6 +1289,46 @@ const buildDrawActionsFromPrompt = (params: {
   }
 
   return actions.slice(0, 12);
+};
+
+const buildDefaultAnimationActions = (candles: CandleRow[]): Array<Record<string, unknown>> => {
+  if (candles.length === 0) {
+    return [];
+  }
+
+  const recent = candles.slice(-Math.min(candles.length, 220));
+  const first = recent[0]!;
+  const last = recent[recent.length - 1]!;
+  const lows = recent.map((row) => row.low);
+  const highs = recent.map((row) => row.high);
+  const support = getPriceQuantile(lows, 0.2) ?? Number(last.low.toFixed(4));
+  const resistance = getPriceQuantile(highs, 0.8) ?? Number(last.high.toFixed(4));
+
+  return [
+    { type: "clear_annotations" },
+    { type: "move_to_date", time: last.time },
+    {
+      type: "draw_support_resistance",
+      priceStart: support,
+      priceEnd: resistance,
+      label: "Range"
+    },
+    {
+      type: "draw_trend_line",
+      timeStart: first.time,
+      priceStart: first.close,
+      timeEnd: last.time,
+      priceEnd: last.close,
+      label: "Trend"
+    },
+    {
+      type: "draw_arrow",
+      time: last.time,
+      price: last.close,
+      markerShape: last.close >= first.close ? "arrowUp" : "arrowDown",
+      label: "Latest"
+    }
+  ];
 };
 
 const normalizeClickhousePair = (pair: string): string => {
@@ -1372,7 +1846,12 @@ const executeCodingStage = async (params: {
   reasoning: ReasoningOutput;
   context: AssistantContext;
   toolState: ToolState;
-}): Promise<{ chartPlans: ChartPlan[]; chartActions: ReturnType<typeof normalizeChartActions> }> => {
+  wantsAnimation: boolean;
+}): Promise<{
+  chartPlans: ChartPlan[];
+  chartActions: ReturnType<typeof normalizeChartActions>;
+  chartAnimations: ReturnType<typeof normalizeChartAnimationsFromCoding>;
+}> => {
   const { apiKey, baseUrl, models, reasoning, context, toolState } = params;
 
   const codingInput = {
@@ -1383,7 +1862,8 @@ const executeCodingStage = async (params: {
       candles: context.liveCandles.length,
       clickhouse: toolState.clickhouseCandles.length,
       actions: context.actionRows.length
-    }
+    },
+    wantsAnimation: params.wantsAnimation
   };
 
   const completion = await nebiusChatCompletion({
@@ -1414,11 +1894,16 @@ const executeCodingStage = async (params: {
 
   const plans = normalizeChartPlans(parsed);
   const chartActions = normalizeChartActions((parsed as ChartCodingOutput).chartActions);
+  const chartAnimations = normalizeChartAnimationsFromCoding(parsed);
   if (plans.length > 0) {
-    return { chartPlans: plans, chartActions };
+    return { chartPlans: plans, chartActions, chartAnimations };
   }
 
-  return { chartPlans: deriveFallbackChartPlans(context, reasoning), chartActions };
+  return {
+    chartPlans: deriveFallbackChartPlans(context, reasoning),
+    chartActions,
+    chartAnimations
+  };
 };
 
 const takeTail = <T>(rows: T[], count: number): T[] => {
@@ -1623,6 +2108,47 @@ const buildPriceActionChart = (
   };
 };
 
+const buildPriceValueSeriesChart = (
+  rows: CandleRow[],
+  title: string,
+  points: number,
+  templateId: string
+): AssistantChart | null => {
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const slicedRows = takeTail(rows, points);
+  const values = buildDerivedPriceValues(slicedRows, templateId);
+  if (values.length === 0) {
+    return null;
+  }
+
+  const data = slicedRows.map((row, index) => ({
+    x: formatTimeLabel(row.time),
+    value: Number((values[index] ?? 0).toFixed(6)),
+    close: Number(row.close.toFixed(6))
+  }));
+
+  return {
+    id: `series-${templateId}-${slicedRows[slicedRows.length - 1]?.time ?? "chart"}`,
+    template: templateId,
+    title,
+    subtitle: `${rows.length} candles`,
+    data,
+    config: {
+      xKey: "x",
+      yKey: "value"
+    }
+  };
+};
+
+const STATIC_PRICE_ACTION_TEMPLATE_SET = new Set<string>([
+  "price_action",
+  "close_with_range",
+  "equity_vs_price"
+]);
+
 const buildActionTimelineChart = (
   rows: ActionRow[],
   title: string,
@@ -1720,12 +2246,18 @@ const buildChartsFromPlans = (
           : candleRows.length > 0
             ? candleRows
             : recentWindowRows;
-      chart = buildPriceActionChart(sourceRows, chartTitle, points, templateId);
+
+      if (STATIC_PRICE_ACTION_TEMPLATE_SET.has(templateId)) {
+        chart = buildPriceActionChart(sourceRows, chartTitle, points, templateId);
+      } else {
+        chart = buildPriceValueSeriesChart(sourceRows, chartTitle, points, templateId);
+      }
     } else if (templateFamily === "action_timeline") {
       chart = buildActionTimelineChart(actionRows, chartTitle, templateId);
     }
 
     if (chart && chart.data.length > 0) {
+      chart.mode = resolvedTemplate.mode;
       charts.push(chart);
     }
   }
@@ -1792,6 +2324,7 @@ const buildDeterministicMonthlyResponse = async (params: {
         ],
         charts: [] as AssistantChart[],
         chartActions: [] as Array<Record<string, unknown>>,
+        chartAnimations: [] as Array<Record<string, unknown>>,
         toolsUsed: ["clickhouse analytics"]
       },
       modelTrace: null
@@ -1810,11 +2343,12 @@ const buildDeterministicMonthlyResponse = async (params: {
   const lowMonth = summary.lowestMonth?.month ?? "N/A";
 
   const chart: AssistantChart | null = includeVisualization
-    ? {
+      ? {
         id: `monthly-${Date.now()}`,
         template: metric === "monthly_volume" ? "monthly_volume" : "monthly_avg_close",
         title: metric === "monthly_volume" ? "Monthly Volume" : "Monthly Average Price",
         subtitle: `${rows.length} months`,
+        mode: "static",
         data: rows.map((row) => ({
           month: row.month,
           value: Number(row.metric_value.toFixed(4)),
@@ -1873,16 +2407,12 @@ const buildDeterministicMonthlyResponse = async (params: {
       ],
       charts: chart ? [chart] : [],
       chartActions: action ? [action] : [],
+      chartAnimations: [],
       toolsUsed: includeVisualization
         ? ["clickhouse analytics", "chart actions"]
         : ["clickhouse analytics"]
     },
-    modelTrace: {
-      instruction: "deterministic-analytics",
-      reasoning: "deterministic-analytics",
-      coding: "deterministic-analytics",
-      writer: "deterministic-analytics"
-    },
+    modelTrace: null,
     dataTrace: {
       usedClickhouse: true,
       mode: "monthly_aggregate",
@@ -1927,6 +2457,7 @@ export async function POST(request: Request) {
   const lastUserPrompt = getLastUserPrompt(turns);
   const explicitDrawRequest = DRAW_WORD_RE.test(lastUserPrompt);
   const wantsVisualization = VISUAL_REQUEST_RE.test(lastUserPrompt);
+  const wantsAnimation = ANIMATION_REQUEST_RE.test(lastUserPrompt);
   const deterministicIntent = detectDeterministicIntent(lastUserPrompt);
 
   if (deterministicIntent.type !== "none") {
@@ -1992,12 +2523,7 @@ export async function POST(request: Request) {
         response: {
           toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
         },
-        modelTrace: {
-          instruction: modelSelection.instruction,
-          reasoning: modelSelection.reasoning,
-          coding: modelSelection.coding,
-          writer: modelSelection.writer
-        }
+        modelTrace: null
       });
     }
 
@@ -2045,7 +2571,8 @@ export async function POST(request: Request) {
       models: modelSelection,
       reasoning,
       context,
-      toolState
+      toolState,
+      wantsAnimation
     });
 
     if (toolState.clickhouseCandles.length > 0) {
@@ -2067,17 +2594,44 @@ export async function POST(request: Request) {
       chartActions = normalizeChartActions(fallbackDrawActions);
     }
 
+    if (wantsAnimation && chartActions.length === 0) {
+      chartActions = normalizeChartActions(
+        buildDefaultAnimationActions(
+          getRecentWindowCandles({
+            context,
+            clickhouseCandles: toolState.clickhouseCandles
+          })
+        )
+      );
+    }
+
+    let chartAnimations = codingResult.chartAnimations;
+    if (wantsAnimation && chartAnimations.length === 0) {
+      const fallbackAnimation = buildFallbackChartAnimation({
+        title: "Chart Animation",
+        summary: "Sequential replay on chart with drawn tools and level annotations.",
+        actions: chartActions,
+        theme: "gold"
+      });
+      chartAnimations = fallbackAnimation ? [fallbackAnimation] : [];
+    }
+
     if (chartActions.length > 0) {
       toolsUsed.add("chart_actions");
     }
+    if (chartAnimations.length > 0) {
+      toolsUsed.add("chart_animation");
+    }
     const usedClickhouseData = toolState.clickhouseCandles.length > 0;
     const isDrawOnlyRequest = explicitDrawRequest && !wantsVisualization;
-    const shortAnswer = isDrawOnlyRequest
-      ? chartActions.length > 0
-        ? "Drawn on chart."
-        : reasoning.cannotAnswer
-          ? reasoning.cannotAnswerReason
-          : sanitizeAssistantText(reasoning.shortAnswer)
+    const drawSummary = summarizeDrawnActions(chartActions);
+    const shortAnswer = explicitDrawRequest
+      ? drawSummary ||
+        (isDrawOnlyRequest
+          ? reasoning.cannotAnswer
+            ? reasoning.cannotAnswerReason
+            : sanitizeAssistantText(reasoning.shortAnswer || "Draw request completed.")
+          : sanitizeAssistantText(reasoning.shortAnswer))
       : sanitizeAssistantText(reasoning.shortAnswer);
 
     const finalBullets = isDrawOnlyRequest
@@ -2100,14 +2654,10 @@ export async function POST(request: Request) {
         bullets: finalBullets,
         charts,
         chartActions,
+        chartAnimations,
         toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
       },
-      modelTrace: {
-        instruction: modelSelection.instruction,
-        reasoning: modelSelection.reasoning,
-        coding: modelSelection.coding,
-        writer: modelSelection.writer
-      },
+      modelTrace: null,
       dataTrace: {
         usedClickhouse: usedClickhouseData,
         clickhouseMeta: toolState.clickhouseMeta,
