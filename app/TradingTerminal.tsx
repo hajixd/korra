@@ -9955,19 +9955,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return `Stats (${startLabel} -> ${endLabel})`;
   }, [appliedBacktestSettings.statsDateEnd, appliedBacktestSettings.statsDateStart]);
 
-  const backtestDateRangeLabel = useMemo(() => {
-    if (!appliedBacktestSettings.statsDateStart && !appliedBacktestSettings.statsDateEnd) {
-      return "All dates";
-    }
-
-    const startLabel = appliedBacktestSettings.statsDateStart
+  const backtestDateRangeStartLabel = useMemo(() => {
+    return appliedBacktestSettings.statsDateStart
       ? formatStatsDateLabel(appliedBacktestSettings.statsDateStart)
       : "Start";
-    const endLabel = appliedBacktestSettings.statsDateEnd
+  }, [appliedBacktestSettings.statsDateStart]);
+
+  const backtestDateRangeEndLabel = useMemo(() => {
+    return appliedBacktestSettings.statsDateEnd
       ? formatStatsDateLabel(appliedBacktestSettings.statsDateEnd)
       : "End";
-    return `${startLabel} -> ${endLabel}`;
-  }, [appliedBacktestSettings.statsDateEnd, appliedBacktestSettings.statsDateStart]);
+  }, [appliedBacktestSettings.statsDateEnd]);
 
   const backtestHeroStats = useMemo<BacktestHeroStatCard[]>(() => {
     const hasTrades = backtestSummary.tradeCount > 0;
@@ -13398,9 +13396,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     </div>
                   </div>
                 </div>
-                <div className="backtest-toolbar-note">
-                  Active range: <strong>{backtestDateRangeLabel}</strong> · Visible trades:{" "}
-                  <strong>{backtestTrades.length}</strong>
+                <div className="backtest-toolbar-note backtest-toolbar-note-split">
+                  <span className="backtest-toolbar-note-range">
+                    Start Date: <strong>{backtestDateRangeStartLabel}</strong> · End Date:{" "}
+                    <strong>{backtestDateRangeEndLabel}</strong>
+                  </span>
+                  <span className="backtest-toolbar-note-count">
+                    Visible trades: <strong>{backtestTrades.length}</strong>
+                  </span>
                 </div>
               </div>
 
