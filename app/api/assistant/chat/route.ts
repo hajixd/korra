@@ -1364,6 +1364,95 @@ const buildDrawActionsFromPrompt = (params: {
   return actions.slice(0, 12);
 };
 
+const sanitizeDrawActionsAgainstCandles = (params: {
+  actions: ReturnType<typeof normalizeChartActions>;
+  candles: CandleRow[];
+}): ReturnType<typeof normalizeChartActions> => {
+  const { actions, candles } = params;
+  if (actions.length === 0) {
+    return [];
+  }
+
+  const recent = candles.slice(-Math.min(candles.length, 320));
+  if (recent.length < 4) {
+    return actions;
+  }
+
+  const lows = recent.map((row) => row.low);
+  const highs = recent.map((row) => row.high);
+  const closes = recent.map((row) => row.close);
+  const last = recent[recent.length - 1]!;
+  const minLow = Math.min(...lows);
+  const maxHigh = Math.max(...highs);
+  const span = Math.max(0.0001, maxHigh - minLow);
+  const lowerBound = minLow - span * 0.5;
+  const upperBound = maxHigh + span * 0.5;
+  const support = getPriceQuantile(lows, 0.2) ?? last.low;
+  const resistance = getPriceQuantile(highs, 0.8) ?? last.high;
+  const median = getPriceQuantile(closes, 0.5) ?? last.close;
+
+  const clampPriceToBand = (value: number | undefined, fallback: number): number => {
+    if (!Number.isFinite(value)) {
+      return Number(fallback.toFixed(4));
+    }
+    const numeric = Number(value);
+    if (numeric < lowerBound || numeric > upperBound) {
+      return Number(fallback.toFixed(4));
+    }
+    return Number(numeric.toFixed(4));
+  };
+
+  const patched = actions.map((action) => {
+    const next = { ...action };
+
+    if (next.type === "draw_support_resistance") {
+      next.priceStart = clampPriceToBand(next.priceStart, support);
+      next.priceEnd = clampPriceToBand(next.priceEnd, resistance);
+      return next;
+    }
+
+    if (next.type === "draw_horizontal_line") {
+      next.price = clampPriceToBand(next.price, median);
+      return next;
+    }
+
+    if (next.type === "draw_box" || next.type === "draw_fvg" || next.type === "draw_ruler") {
+      next.priceStart = clampPriceToBand(next.priceStart, support);
+      next.priceEnd = clampPriceToBand(next.priceEnd, resistance);
+      return next;
+    }
+
+    if (next.type === "draw_trend_line") {
+      next.priceStart = clampPriceToBand(next.priceStart, support);
+      next.priceEnd = clampPriceToBand(next.priceEnd, resistance);
+      return next;
+    }
+
+    if (next.type === "draw_arrow" || next.type === "mark_candlestick") {
+      next.price = clampPriceToBand(next.price, last.close);
+      return next;
+    }
+
+    if (next.type === "draw_long_position") {
+      next.entryPrice = clampPriceToBand(next.entryPrice, median);
+      next.stopPrice = clampPriceToBand(next.stopPrice, support);
+      next.targetPrice = clampPriceToBand(next.targetPrice, resistance);
+      return next;
+    }
+
+    if (next.type === "draw_short_position") {
+      next.entryPrice = clampPriceToBand(next.entryPrice, median);
+      next.stopPrice = clampPriceToBand(next.stopPrice, resistance);
+      next.targetPrice = clampPriceToBand(next.targetPrice, support);
+      return next;
+    }
+
+    return next;
+  });
+
+  return patched;
+};
+
 const buildDefaultAnimationActions = (candles: CandleRow[]): Array<Record<string, unknown>> => {
   if (candles.length === 0) {
     return [];
@@ -2647,14 +2736,22 @@ export async function POST(request: Request) {
       : [];
     let chartActions = codingResult.chartActions;
     if (explicitDrawRequest) {
+      const drawCandles = getDrawWindowCandles({
+        context,
+        clickhouseCandles: toolState.clickhouseCandles
+      });
       const dataAnchoredDrawActions = buildDrawActionsFromPrompt({
         prompt: lastUserPrompt,
-        candles: getDrawWindowCandles({
-          context,
-          clickhouseCandles: toolState.clickhouseCandles
-        })
+        candles: drawCandles
       });
-      chartActions = normalizeChartActions(dataAnchoredDrawActions);
+      chartActions = normalizeChartActions([
+        { type: "clear_annotations" },
+        ...dataAnchoredDrawActions
+      ]);
+      chartActions = sanitizeDrawActionsAgainstCandles({
+        actions: chartActions,
+        candles: drawCandles
+      });
     }
 
     if (wantsAnimation && chartActions.length === 0) {
