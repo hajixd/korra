@@ -399,8 +399,6 @@ export default function AssistantPanel(props: AssistantPanelProps) {
   const [input, setInput] = useState("");
   const [isPending, setIsPending] = useState(false);
   const [thinkingStage, setThinkingStage] = useState("Intent Parsing");
-  const [thinkingStagePlan, setThinkingStagePlan] = useState<string[]>([]);
-  const [thinkingStageIndex, setThinkingStageIndex] = useState(0);
   const [activeAnimation, setActiveAnimation] = useState<AssistantChartAnimation | null>(null);
   const [detailsExpandedByMessageId, setDetailsExpandedByMessageId] = useState<
     Record<string, boolean>
@@ -459,8 +457,6 @@ export default function AssistantPanel(props: AssistantPanelProps) {
     setTurns([]);
     setInput("");
     setThinkingStage("Intent Parsing");
-    setThinkingStagePlan([]);
-    setThinkingStageIndex(0);
     setIsPending(false);
     setActiveAnimation(null);
     setDetailsExpandedByMessageId({});
@@ -579,14 +575,11 @@ export default function AssistantPanel(props: AssistantPanelProps) {
         stagePlan.length > 0
           ? stagePlan
           : ["Intent Parsing", "Quantitative Reasoning", "Response Drafting"];
-      setThinkingStagePlan(safeStagePlan);
-      setThinkingStageIndex(0);
       setThinkingStage(safeStagePlan[0] ?? "Intent Parsing");
 
       const stageTimers = safeStagePlan.slice(1).map((stage, index) =>
         window.setTimeout(() => {
           setThinkingStage(stage);
-          setThinkingStageIndex(index + 1);
         }, 340 + index * 640)
       );
 
@@ -685,8 +678,6 @@ export default function AssistantPanel(props: AssistantPanelProps) {
         stageTimers.forEach((timerId) => window.clearTimeout(timerId));
         setIsPending(false);
         setThinkingStage("Intent Parsing");
-        setThinkingStagePlan([]);
-        setThinkingStageIndex(0);
       }
     },
     [input, isPending, onRunChartActions, runAssistantRequest, turns]
@@ -1040,24 +1031,6 @@ export default function AssistantPanel(props: AssistantPanelProps) {
               <span>Gideon</span>
               <small className="ai-stage">{thinkingStage}</small>
             </header>
-            {thinkingStagePlan.length > 0 ? (
-              <div className="ai-stage-track" aria-label="assistant execution stages">
-                {thinkingStagePlan.map((stage, index) => (
-                  <span
-                    key={`stage-${stage}-${index}`}
-                    className={`ai-stage-pill ${
-                      index < thinkingStageIndex
-                        ? "done"
-                        : index === thinkingStageIndex
-                          ? "active"
-                          : ""
-                    }`}
-                  >
-                    {stage}
-                  </span>
-                ))}
-              </div>
-            ) : null}
             <div className="ai-thinking" aria-label="assistant thinking">
               <span />
               <span />

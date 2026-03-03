@@ -312,6 +312,10 @@ const TRADING_REQUEST_RE =
   /\b(trade|trading|chart|graph|draw|support|resistance|trend|line|box|fvg|arrow|ruler|candle|candlestick|price|xau|xauusd|gold|rsi|macd|ema|sma|atr|indicator|backtest|history|pnl|risk|entry|stop|target|buy|sell|volume|volatility)\b/i;
 const INTERNET_CONTEXT_RE =
   /\b(news|headline|headlines|macro|calendar|event|cpi|nfp|fomc|fed|interest rate|yield|dxy|geopolitical|war|sanction|breaking|latest|today|internet|web)\b/i;
+const BROAD_NEWS_QUESTION_RE =
+  /\b(what(?:'s| is)\s+going\s+on|what\s+happened|current\s+events|latest\s+updates?|news\s+on|update\s+on|situation\s+in|what\s+is\s+happening)\b/i;
+const GLOBAL_EVENT_ENTITY_RE =
+  /\b(iran|iraq|israel|gaza|ukraine|russia|china|taiwan|middle east|europe|usa|u\.s\.|united states|president|election|earthquake|hurricane|wildfire|conflict|war)\b/i;
 
 const AI_SYSTEM_PROMPT = [
   "You are Gideon, a trading copilot.",
@@ -1773,6 +1777,28 @@ const buildAutoInternetQuery = (params: {
   };
 };
 
+const shouldHeuristicallyFetchInternetContext = (params: {
+  prompt: string;
+  socialOnlyRequest: boolean;
+}): boolean => {
+  const { prompt, socialOnlyRequest } = params;
+  const text = toText(prompt, "");
+  if (!text || socialOnlyRequest) {
+    return false;
+  }
+
+  if (INTERNET_CONTEXT_RE.test(text) || BROAD_NEWS_QUESTION_RE.test(text)) {
+    return true;
+  }
+
+  const isTradingPrompt = TRADING_REQUEST_RE.test(text);
+  if (!isTradingPrompt && GLOBAL_EVENT_ENTITY_RE.test(text)) {
+    return true;
+  }
+
+  return false;
+};
+
 const mergeCandleRowsPreferLive = (params: {
   clickhouse: CandleRow[];
   live: CandleRow[];
@@ -2644,8 +2670,35 @@ const fetchClickhouseCandles = async (
   };
 };
 
+const decodeHtmlEntities = (value: string): string => {
+  const decodeCodepoint = (input: string, radix: number): string => {
+    const parsed = Number.parseInt(input, radix);
+    if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 0x10ffff) {
+      return "";
+    }
+    try {
+      return String.fromCodePoint(parsed);
+    } catch {
+      return "";
+    }
+  };
+
+  return value
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => decodeCodepoint(hex, 16))
+    .replace(/&#([0-9]+);/g, (_, decimal: string) => decodeCodepoint(decimal, 10))
+    .replace(/&quot;/gi, "\"")
+    .replace(/&apos;/gi, "'")
+    .replace(/&#39;/gi, "'")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&nbsp;/gi, " ");
+};
+
 const stripHtmlTags = (value: string): string => {
-  return value.replace(/<[^>]+>/g, " ").replace(/\s{2,}/g, " ").trim();
+  return decodeHtmlEntities(value.replace(/<[^>]+>/g, " "))
+    .replace(/\s{2,}/g, " ")
+    .trim();
 };
 
 const sanitizeUrl = (value: string): string => {
@@ -2657,6 +2710,83 @@ const sanitizeUrl = (value: string): string => {
     return "";
   }
   return text.slice(0, 500);
+};
+
+const inferSourceFromUrl = (url: string): string => {
+  try {
+    return new URL(url).hostname.replace(/^www\./i, "").slice(0, 120);
+  } catch {
+    return "web";
+  }
+};
+
+const decodeDuckDuckGoResultUrl = (value: string): string => {
+  const raw = decodeHtmlEntities(toText(value, ""));
+  if (!raw) {
+    return "";
+  }
+
+  let candidate = raw;
+  if (candidate.startsWith("//")) {
+    candidate = `https:${candidate}`;
+  } else if (candidate.startsWith("/")) {
+    candidate = `https://duckduckgo.com${candidate}`;
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    const encodedTarget = parsed.searchParams.get("uddg");
+    if (encodedTarget) {
+      return sanitizeUrl(decodeURIComponent(encodedTarget));
+    }
+    return sanitizeUrl(parsed.toString());
+  } catch {
+    return "";
+  }
+};
+
+const parseDuckDuckGoHtmlResults = (html: string, maxResults: number): InternetResultItem[] => {
+  const rows: InternetResultItem[] = [];
+  const pattern =
+    /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]{0,2200}?(?:<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>|<div[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/div>)/gi;
+
+  let match: RegExpExecArray | null = pattern.exec(html);
+  while (match && rows.length < Math.max(2, maxResults * 2)) {
+    const url = decodeDuckDuckGoResultUrl(match[1] ?? "");
+    const title = sanitizeAssistantText(stripHtmlTags(match[2] ?? ""));
+    const snippet = sanitizeAssistantText(
+      stripHtmlTags((match[3] ?? match[4] ?? "").trim())
+    );
+    if (url && title && snippet) {
+      rows.push({
+        title: title.slice(0, 220),
+        url,
+        snippet: snippet.slice(0, 360),
+        source: inferSourceFromUrl(url)
+      });
+    }
+    match = pattern.exec(html);
+  }
+
+  return rows;
+};
+
+const fetchWithTimeout = async (
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<Response> => {
+  const controller = new AbortController();
+  const timerId = setTimeout(() => controller.abort(), clamp(timeoutMs, 1000, 20000));
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timerId);
+  }
 };
 
 const normalizeInternetResults = (
@@ -2714,19 +2844,23 @@ const fetchInternetContext = async (params: {
   const serperApiKey = process.env.SERPER_API_KEY || process.env.SERPAPI_KEY || "";
   if (serperApiKey) {
     try {
-      const response = await fetch("https://google.serper.dev/search", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-API-KEY": serperApiKey
+      const response = await fetchWithTimeout(
+        "https://google.serper.dev/search",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-KEY": serperApiKey
+          },
+          body: JSON.stringify({
+            q: query,
+            num: maxResults,
+            tbs: `qdr:d${recencyDays}`
+          }),
+          cache: "no-store"
         },
-        body: JSON.stringify({
-          q: query,
-          num: maxResults,
-          tbs: `qdr:d${recencyDays}`
-        }),
-        cache: "no-store"
-      });
+        9000
+      );
 
       if (response.ok) {
         const payload = (await response.json()) as Record<string, unknown>;
@@ -2745,12 +2879,14 @@ const fetchInternetContext = async (params: {
           maxResults
         );
 
-        return {
-          query,
-          provider: "serper",
-          fetchedAt: nowIso,
-          results
-        };
+        if (results.length > 0) {
+          return {
+            query,
+            provider: "serper",
+            fetchedAt: nowIso,
+            results
+          };
+        }
       }
     } catch {
       // Fallback below.
@@ -2765,88 +2901,143 @@ const fetchInternetContext = async (params: {
     url.searchParams.set("no_html", "1");
     url.searchParams.set("skip_disambig", "1");
 
-    const response = await fetch(url.toString(), {
-      method: "GET",
-      headers: {
-        Accept: "application/json"
+    const response = await fetchWithTimeout(
+      url.toString(),
+      {
+        method: "GET",
+        headers: {
+          Accept: "application/json"
+        },
+        cache: "no-store"
       },
-      cache: "no-store"
-    });
+      8000
+    );
 
-    if (!response.ok) {
-      return {
-        query,
-        provider: "duckduckgo",
-        fetchedAt: nowIso,
-        results: []
-      };
-    }
+    if (response.ok) {
+      const payload = (await response.json()) as Record<string, unknown>;
+      const relatedTopics = Array.isArray(payload.RelatedTopics) ? payload.RelatedTopics : [];
 
-    const payload = (await response.json()) as Record<string, unknown>;
-    const relatedTopics = Array.isArray(payload.RelatedTopics) ? payload.RelatedTopics : [];
-
-    const flatTopics: Array<Record<string, unknown>> = [];
-    for (const item of relatedTopics) {
-      if (!item || typeof item !== "object") {
-        continue;
-      }
-      const row = item as Record<string, unknown>;
-      if (Array.isArray(row.Topics)) {
-        for (const nested of row.Topics) {
-          if (nested && typeof nested === "object") {
-            flatTopics.push(nested as Record<string, unknown>);
-          }
+      const flatTopics: Array<Record<string, unknown>> = [];
+      for (const item of relatedTopics) {
+        if (!item || typeof item !== "object") {
+          continue;
         }
-      } else {
-        flatTopics.push(row);
+        const row = item as Record<string, unknown>;
+        if (Array.isArray(row.Topics)) {
+          for (const nested of row.Topics) {
+            if (nested && typeof nested === "object") {
+              flatTopics.push(nested as Record<string, unknown>);
+            }
+          }
+        } else {
+          flatTopics.push(row);
+        }
+      }
+
+      const abstractText = stripHtmlTags(toText(payload.AbstractText, ""));
+      const abstractUrl = sanitizeUrl(toText(payload.AbstractURL, ""));
+      const abstractSource = toText(payload.AbstractSource, "duckduckgo");
+      const instantResults: InternetResultItem[] = [];
+      if (abstractText && abstractUrl) {
+        instantResults.push({
+          title: toText(payload.Heading, query),
+          url: abstractUrl,
+          snippet: abstractText,
+          source: abstractSource
+        });
+      }
+
+      for (const item of flatTopics) {
+        const firstUrl = sanitizeUrl(toText(item.FirstURL, ""));
+        const text = stripHtmlTags(toText(item.Text, ""));
+        if (!firstUrl || !text) {
+          continue;
+        }
+        const [title] = text.split(" - ");
+        instantResults.push({
+          title: sanitizeAssistantText(title || text).slice(0, 220),
+          url: firstUrl,
+          snippet: sanitizeAssistantText(text).slice(0, 360),
+          source: inferSourceFromUrl(firstUrl)
+        });
+        if (instantResults.length >= maxResults * 2) {
+          break;
+        }
+      }
+
+      const normalizedInstantResults = normalizeInternetResults(instantResults, maxResults);
+      if (normalizedInstantResults.length > 0) {
+        return {
+          query,
+          provider: "duckduckgo",
+          fetchedAt: nowIso,
+          results: normalizedInstantResults
+        };
       }
     }
-
-    const abstractText = stripHtmlTags(toText(payload.AbstractText, ""));
-    const abstractUrl = sanitizeUrl(toText(payload.AbstractURL, ""));
-    const abstractSource = toText(payload.AbstractSource, "duckduckgo");
-    const results: InternetResultItem[] = [];
-    if (abstractText && abstractUrl) {
-      results.push({
-        title: toText(payload.Heading, query),
-        url: abstractUrl,
-        snippet: abstractText,
-        source: abstractSource
-      });
-    }
-
-    for (const item of flatTopics) {
-      const firstUrl = sanitizeUrl(toText(item.FirstURL, ""));
-      const text = stripHtmlTags(toText(item.Text, ""));
-      if (!firstUrl || !text) {
-        continue;
-      }
-      const [title] = text.split(" - ");
-      results.push({
-        title: sanitizeAssistantText(title || text).slice(0, 220),
-        url: firstUrl,
-        snippet: sanitizeAssistantText(text).slice(0, 360),
-        source: "duckduckgo"
-      });
-      if (results.length >= maxResults * 2) {
-        break;
-      }
-    }
-
-    return {
-      query,
-      provider: "duckduckgo",
-      fetchedAt: nowIso,
-      results: normalizeInternetResults(results, maxResults)
-    };
   } catch {
-    return {
-      query,
-      provider: "duckduckgo",
-      fetchedAt: nowIso,
-      results: []
-    };
+    // Continue to HTML fallback.
   }
+
+  try {
+    const htmlUrl = new URL("https://duckduckgo.com/html/");
+    htmlUrl.searchParams.set("q", query);
+    htmlUrl.searchParams.set("kl", "us-en");
+    if (recencyDays <= 1) {
+      htmlUrl.searchParams.set("df", "d");
+    } else if (recencyDays <= 7) {
+      htmlUrl.searchParams.set("df", "w");
+    } else {
+      htmlUrl.searchParams.set("df", "m");
+    }
+    if (
+      INTERNET_CONTEXT_RE.test(query) ||
+      BROAD_NEWS_QUESTION_RE.test(query) ||
+      GLOBAL_EVENT_ENTITY_RE.test(query)
+    ) {
+      htmlUrl.searchParams.set("ia", "news");
+      htmlUrl.searchParams.set("iar", "news");
+    }
+
+    const response = await fetchWithTimeout(
+      htmlUrl.toString(),
+      {
+        method: "GET",
+        headers: {
+          Accept: "text/html,application/xhtml+xml",
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+        },
+        cache: "no-store"
+      },
+      10000
+    );
+
+    if (response.ok) {
+      const html = await response.text();
+      const htmlResults = normalizeInternetResults(
+        parseDuckDuckGoHtmlResults(html, maxResults),
+        maxResults
+      );
+      if (htmlResults.length > 0) {
+        return {
+          query,
+          provider: "duckduckgo",
+          fetchedAt: nowIso,
+          results: htmlResults
+        };
+      }
+    }
+  } catch {
+    // Fall through to empty response.
+  }
+
+  return {
+    query,
+    provider: "duckduckgo",
+    fetchedAt: nowIso,
+    results: []
+  };
 };
 
 const executeRequestModeStage = async (params: {
@@ -5051,7 +5242,6 @@ export async function POST(request: Request) {
   const heuristicRequestMode = classifyRequestMode(lastUserPrompt);
   const indicatorComputationRequested = isIndicatorComputationRequest(lastUserPrompt);
   const requestedIndicators = extractRequestedIndicators(lastUserPrompt);
-  const internetContextRequested = INTERNET_CONTEXT_RE.test(lastUserPrompt);
 
   try {
     const toolsUsed = new Set<string>();
@@ -5078,6 +5268,10 @@ export async function POST(request: Request) {
       modePlan: requestMode
     });
     const socialOnlyPrompt = isSocialOnlyPrompt(lastUserPrompt);
+    const internetContextRequested = shouldHeuristicallyFetchInternetContext({
+      prompt: lastUserPrompt,
+      socialOnlyRequest: socialOnlyPrompt
+    });
     let explicitDrawRequest = socialOnlyPrompt
       ? false
       : requestMode.wantsDraw || executionPlan.drawNeeded;

@@ -223,9 +223,10 @@ const WORKSPACE_PANEL_MIN_WIDTH = 350;
 const WORKSPACE_PANEL_DEFAULT_WIDTH = 430;
 const WORKSPACE_PANEL_MAX_WIDTH = 980;
 const WORKSPACE_CHART_MIN_WIDTH = 360;
-const MOBILE_LAYOUT_MAX_WIDTH = 1024;
-const MOBILE_LAYOUT_MAX_DEVICE_EDGE = 1366;
-const MOBILE_LAYOUT_MAX_SHORT_EDGE = 900;
+const MOBILE_LAYOUT_BREAKPOINT_PX = 900;
+const TOUCH_LAYOUT_MAX_WIDTH_PX = 1180;
+const MOBILE_LAYOUT_USER_AGENT_RE =
+  /(android|iphone|ipod|ipad|mobile|iemobile|opera mini|blackberry|silk|kindle|tablet)/i;
 
 const buildMt5AccountRuntimeId = () => {
   return `mt5-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -6547,38 +6548,77 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     const root = document.documentElement;
     const navWithStandalone = window.navigator as Navigator & { standalone?: boolean };
-    const computeMobileLayout = (width: number, height: number): boolean => {
-      const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
-      const hoverNone = window.matchMedia("(hover: none)").matches;
-      const shortEdge = Math.min(width, height);
-      const longEdge = Math.max(width, height);
-      return (
-        width <= MOBILE_LAYOUT_MAX_WIDTH ||
-        shortEdge <= MOBILE_LAYOUT_MAX_SHORT_EDGE ||
-        ((coarsePointer || hoverNone) && longEdge <= MOBILE_LAYOUT_MAX_DEVICE_EDGE)
-      );
+    const mobileWidthQuery = window.matchMedia(
+      `(max-width: ${MOBILE_LAYOUT_BREAKPOINT_PX}px)`
+    );
+    const touchWidthQuery = window.matchMedia(
+      `(max-width: ${TOUCH_LAYOUT_MAX_WIDTH_PX}px) and (pointer: coarse)`
+    );
+    const coarsePointerQuery = window.matchMedia("(pointer: coarse)");
+    const hoverNoneQuery = window.matchMedia("(hover: none)");
+    const standaloneQuery = window.matchMedia("(display-mode: standalone)");
+
+    const addMediaListener = (query: MediaQueryList, callback: () => void) => {
+      if (typeof query.addEventListener === "function") {
+        query.addEventListener("change", callback);
+        return () => query.removeEventListener("change", callback);
+      }
+      const legacyCallback = callback as unknown as (this: MediaQueryList, ev: MediaQueryListEvent) => void;
+      query.addListener(legacyCallback);
+      return () => query.removeListener(legacyCallback);
     };
 
-    const updateViewportSignals = () => {
-      const width = Math.max(1, Math.floor(window.innerWidth));
-      const height = Math.max(1, Math.floor(window.innerHeight));
+    const updateLayoutMode = () => {
+      const width = Math.max(
+        1,
+        Math.floor(window.visualViewport?.width ?? window.innerWidth)
+      );
+      const height = Math.max(
+        1,
+        Math.floor(window.visualViewport?.height ?? window.innerHeight)
+      );
       root.style.setProperty("--app-vh", `${(height * 0.01).toFixed(4)}px`);
       root.style.setProperty("--app-vw", `${(width * 0.01).toFixed(4)}px`);
       root.style.setProperty("--app-height", `${height}px`);
       root.style.setProperty("--app-width", `${width}px`);
-      setIsMobileLayout(computeMobileLayout(width, height));
-      const standalone =
-        window.matchMedia("(display-mode: standalone)").matches ||
-        navWithStandalone.standalone === true;
-      setIsStandaloneDisplay(standalone);
+
+      const coarsePointer = coarsePointerQuery.matches;
+      const hoverNone = hoverNoneQuery.matches;
+      const touchCapable = (navWithStandalone.maxTouchPoints ?? 0) > 0;
+      const hasMobileUserAgent = MOBILE_LAYOUT_USER_AGENT_RE.test(
+        navWithStandalone.userAgent ?? ""
+      );
+
+      const mobileLayout =
+        mobileWidthQuery.matches ||
+        touchWidthQuery.matches ||
+        (hasMobileUserAgent && (touchCapable || coarsePointer || hoverNone));
+
+      setIsMobileLayout(mobileLayout);
+      setIsStandaloneDisplay(
+        standaloneQuery.matches || navWithStandalone.standalone === true
+      );
     };
 
-    updateViewportSignals();
-    window.addEventListener("resize", updateViewportSignals);
-    window.addEventListener("orientationchange", updateViewportSignals);
+    updateLayoutMode();
+    const removeMediaListeners = [
+      addMediaListener(mobileWidthQuery, updateLayoutMode),
+      addMediaListener(touchWidthQuery, updateLayoutMode),
+      addMediaListener(coarsePointerQuery, updateLayoutMode),
+      addMediaListener(hoverNoneQuery, updateLayoutMode),
+      addMediaListener(standaloneQuery, updateLayoutMode)
+    ];
+    window.addEventListener("resize", updateLayoutMode);
+    window.addEventListener("orientationchange", updateLayoutMode);
+    window.visualViewport?.addEventListener("resize", updateLayoutMode);
+
     return () => {
-      window.removeEventListener("resize", updateViewportSignals);
-      window.removeEventListener("orientationchange", updateViewportSignals);
+      for (const removeListener of removeMediaListeners) {
+        removeListener();
+      }
+      window.removeEventListener("resize", updateLayoutMode);
+      window.removeEventListener("orientationchange", updateLayoutMode);
+      window.visualViewport?.removeEventListener("resize", updateLayoutMode);
     };
   }, []);
 
