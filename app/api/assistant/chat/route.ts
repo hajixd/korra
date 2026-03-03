@@ -206,6 +206,15 @@ type IntentExecutionPlan = {
   strictToRequest: boolean;
 };
 
+type ChecklistArtifact = "natural" | "graph" | "draw" | "animation" | "data" | "scope";
+
+type RequestChecklistTemplateItem = {
+  id: string;
+  label: string;
+  required: boolean;
+  artifact: ChecklistArtifact;
+};
+
 type RequestChecklistPlan = {
   requestKind: "social" | "task";
   requiresNaturalResponse: boolean;
@@ -214,6 +223,8 @@ type RequestChecklistPlan = {
   requiresAnimation: boolean;
   shouldAvoidDataFetch: boolean;
   strictToRequest: boolean;
+  items: RequestChecklistTemplateItem[];
+  source: "instruction_model" | "fallback";
 };
 
 type RequestChecklistItem = {
@@ -221,6 +232,15 @@ type RequestChecklistItem = {
   label: string;
   required: boolean;
   satisfied: boolean;
+};
+
+type InstructionChecklistAudit = {
+  allowBullets: boolean;
+  allowCharts: boolean;
+  allowDrawings: boolean;
+  allowAnimations: boolean;
+  shortAnswer: string;
+  bullets: Array<{ tone: "green" | "red" | "gold" | "black"; text: string }>;
 };
 
 const MAX_CHAT_TURNS = 14;
@@ -309,6 +329,23 @@ const GRAPH_TOOLBOX_RESOLUTION_PROMPT = [
   "Set needsNewTooling=true only when no available template can reasonably fulfill intent."
 ].join("\n");
 
+const CHECKLIST_AUTHOR_PROMPT = [
+  "Return only JSON with this shape:",
+  '{"requestKind":"social|task","strictToRequest":boolean,"items":[{"id":string,"label":string,"required":boolean,"artifact":"natural|graph|draw|animation|data|scope"}]}',
+  "Author a concise checklist from the user's latest request intent.",
+  "Include only necessary items. Use 3 to 7 checklist items.",
+  "Set required=true only when the item is required for fulfilling the request."
+].join("\n");
+
+const CHECKLIST_AUDIT_PROMPT = [
+  "Return only JSON with this shape:",
+  '{"allowBullets":boolean,"allowCharts":boolean,"allowDrawings":boolean,"allowAnimations":boolean,"shortAnswer":string,"bullets":[{"tone":"green|red|gold|black","text":string}],"removeExtras":boolean,"reason":string}',
+  "Audit candidate response against checklist and user request.",
+  "If an artifact was not requested, set corresponding allow* to false.",
+  "ShortAnswer must be concise, direct, and free of extra details.",
+  "Bullets are optional; include only when they materially help the exact request."
+].join("\n");
+
 const REASONING_PROMPT = [
   "Return only JSON with this shape:",
   '{"cannotAnswer":boolean,"cannotAnswerReason":string,"shortAnswer":string,"bullets":[{"tone":"green|red|gold|black","text":string}],"chartHints":[{"template":"equity_curve|pnl_distribution|session_performance|trade_outcomes|price_action|action_timeline|auto","title":string,"reason":string,"source":"history|backtest|candles|clickhouse|actions","priority":number}]}',
@@ -322,6 +359,17 @@ const REASONING_PROMPT = [
   "Before setting cannotAnswer=true, attempt to answer using available context and indicator snapshots.",
   "If data is insufficient, set cannotAnswer=true and explain why.",
   "Do not include markdown code fences."
+].join("\n");
+
+const SPEAKER_PROMPT = [
+  "You are Gideon, the user-facing speaker.",
+  "Return plain text only (no JSON).",
+  "Style: natural, conversational, and direct.",
+  "Do not sound robotic.",
+  "Answer exactly what the user asked and keep it concise.",
+  "When the user asks broad guidance (for example, 'what should I do?'), give a clear immediate next step in plain language.",
+  "Use analysis inputs as facts; do not invent data.",
+  "Do not mention tools, models, prompts, or internal pipeline."
 ].join("\n");
 
 const buildCodingPrompt = (): string =>
@@ -360,6 +408,13 @@ const toText = (value: unknown, fallback = ""): string => {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : fallback;
+};
+
+const toBool = (value: unknown, fallback = false): boolean => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  return fallback;
 };
 
 const sanitizeAssistantText = (value: string): string => {
@@ -1121,6 +1176,67 @@ const buildRequestChecklistPlan = (params: {
     wantsAnimation
   } = params;
 
+  const items: RequestChecklistTemplateItem[] = [
+    {
+      id: "intent",
+      label: socialOnlyRequest ? "Intent: social conversation" : "Intent: task request",
+      required: true,
+      artifact: "scope"
+    },
+    {
+      id: "natural",
+      label: "Natural-language reply",
+      required: true,
+      artifact: "natural"
+    }
+  ];
+
+  if (socialOnlyRequest) {
+    items.push({
+      id: "social_scope",
+      label: "No market artifacts for social request",
+      required: true,
+      artifact: "scope"
+    });
+  } else {
+    if (wantsVisualization) {
+      items.push({
+        id: "graph",
+        label: "Provide requested panel graph",
+        required: true,
+        artifact: "graph"
+      });
+    }
+    if (explicitDrawRequest) {
+      items.push({
+        id: "draw",
+        label: "Provide requested chart drawings",
+        required: true,
+        artifact: "draw"
+      });
+    }
+    if (wantsAnimation) {
+      items.push({
+        id: "animation",
+        label: "Provide requested animation",
+        required: true,
+        artifact: "animation"
+      });
+    }
+    items.push({
+      id: "scope",
+      label: "No unrequested extras",
+      required: strictToRequest,
+      artifact: "scope"
+    });
+    items.push({
+      id: "data",
+      label: "Use only necessary data fetch",
+      required: true,
+      artifact: "data"
+    });
+  }
+
   return {
     requestKind: socialOnlyRequest ? "social" : "task",
     requiresNaturalResponse: true,
@@ -1130,7 +1246,9 @@ const buildRequestChecklistPlan = (params: {
     shouldAvoidDataFetch:
       socialOnlyRequest ||
       (wantsNaturalOnly && !wantsVisualization && !explicitDrawRequest && !wantsAnimation),
-    strictToRequest
+    strictToRequest,
+    items: items.slice(0, 7),
+    source: "fallback"
   };
 };
 
@@ -1151,77 +1269,40 @@ const buildResponseChecklist = (params: {
     (!plan.requiresGraph && charts.length > 0) ||
     (!plan.requiresDraw && chartActions.length > 0) ||
     (!plan.requiresAnimation && chartAnimations.length > 0);
-  const output: RequestChecklistItem[] = [
-    {
-      id: "intent",
-      label: plan.requestKind === "social" ? "Intent: social conversation" : "Intent: task request",
-      required: true,
-      satisfied: responseHasText
-    },
-    {
-      id: "reply",
-      label: "Reply generated",
-      required: true,
-      satisfied: responseHasText
+  const resolveArtifactSatisfied = (artifact: ChecklistArtifact): boolean => {
+    if (artifact === "natural") {
+      return responseHasText;
     }
-  ];
+    if (artifact === "graph") {
+      return plan.requiresGraph ? charts.length > 0 : charts.length === 0;
+    }
+    if (artifact === "draw") {
+      return plan.requiresDraw ? chartActions.length > 0 : chartActions.length === 0;
+    }
+    if (artifact === "animation") {
+      return plan.requiresAnimation ? chartAnimations.length > 0 : chartAnimations.length === 0;
+    }
+    if (artifact === "data") {
+      return !plan.shouldAvoidDataFetch || !usedDataTools;
+    }
+    return !plan.strictToRequest || (!unrequestedVisuals && (!plan.shouldAvoidDataFetch || !usedDataTools));
+  };
 
-  if (plan.requestKind === "social") {
-    output.push({
-      id: "social_scope",
-      label: "Skipped market analysis for social message",
-      required: true,
-      satisfied: charts.length === 0 && chartActions.length === 0 && chartAnimations.length === 0
-    });
-    return output;
-  }
+  const items = plan.items.length > 0 ? plan.items : buildRequestChecklistPlan({
+    socialOnlyRequest: plan.requestKind === "social",
+    strictToRequest: plan.strictToRequest,
+    wantsNaturalOnly: !plan.requiresGraph && !plan.requiresDraw && !plan.requiresAnimation,
+    wantsVisualization: plan.requiresGraph,
+    explicitDrawRequest: plan.requiresDraw,
+    wantsAnimation: plan.requiresAnimation
+  }).items;
 
-  if (charts.length > 0 || plan.requiresGraph) {
-    output.push({
-      id: "graph",
-      label: charts.length > 0 ? "Panel graph generated" : "Panel graph requested but missing",
-      required: plan.requiresGraph,
-      satisfied: plan.requiresGraph ? charts.length > 0 : charts.length === 0
-    });
-  }
-
-  if (chartActions.length > 0 || plan.requiresDraw) {
-    output.push({
-      id: "draw",
-      label: chartActions.length > 0 ? "Chart drawings applied" : "Chart drawing requested but missing",
-      required: plan.requiresDraw,
-      satisfied: plan.requiresDraw ? chartActions.length > 0 : chartActions.length === 0
-    });
-  }
-
-  if (chartAnimations.length > 0 || plan.requiresAnimation) {
-    output.push({
-      id: "animation",
-      label: chartAnimations.length > 0 ? "Animation prepared" : "Animation requested but missing",
-      required: plan.requiresAnimation,
-      satisfied: plan.requiresAnimation
-        ? chartAnimations.length > 0
-        : chartAnimations.length === 0
-    });
-  }
-
-  output.push({
-    id: "data",
-    label: usedDataTools ? "Fetched required data" : "No extra data fetch needed",
-    required: true,
-    satisfied: !plan.shouldAvoidDataFetch || !usedDataTools
-  });
-
-  output.push({
-    id: "scope",
-    label: "Scope matched your request",
-    required: true,
-    satisfied:
-      !plan.strictToRequest ||
-      (!unrequestedVisuals && (!plan.shouldAvoidDataFetch || !usedDataTools))
-  });
-
-  return output.slice(0, 7);
+  return items.slice(0, 7).map((item) => ({
+    id: item.id,
+    label: item.label,
+    required: item.required,
+    satisfied: item.required ? resolveArtifactSatisfied(item.artifact) : true
+  }));
 };
 
 const normalizeGraphTypeCandidate = (value: string): string => {
@@ -1250,6 +1331,33 @@ const resolveToolboxGraphTemplate = (value: string): string | null => {
     }
   }
 
+  return null;
+};
+
+const normalizeChecklistArtifact = (value: unknown): ChecklistArtifact | null => {
+  const token = toText(value, "").trim().toLowerCase();
+  if (!token) {
+    return null;
+  }
+
+  if (token === "natural" || token === "text" || token === "reply") {
+    return "natural";
+  }
+  if (token === "graph" || token === "chart" || token === "panel_graph") {
+    return "graph";
+  }
+  if (token === "draw" || token === "drawing" || token === "chart_draw") {
+    return "draw";
+  }
+  if (token === "animation" || token === "animate" || token === "replay") {
+    return "animation";
+  }
+  if (token === "data" || token === "fetch" || token === "data_fetch") {
+    return "data";
+  }
+  if (token === "scope" || token === "minimality" || token === "no_extras") {
+    return "scope";
+  }
   return null;
 };
 
@@ -2378,6 +2486,197 @@ const executeIntentExecutionStage = async (params: {
   }
 };
 
+const executeInstructionChecklistAuthorStage = async (params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  turns: ChatTurn[];
+  context: AssistantContext;
+  modePlan: RequestModePlan;
+  executionPlan: IntentExecutionPlan;
+  fallback: RequestChecklistPlan;
+}): Promise<RequestChecklistPlan> => {
+  const { apiKey, baseUrl, model, turns, context, modePlan, executionPlan, fallback } = params;
+
+  try {
+    const completion = await nebiusChatCompletion({
+      apiKey,
+      baseUrl,
+      model,
+      messages: [
+        {
+          role: "system",
+          content: `${AI_SYSTEM_PROMPT}\n${CHECKLIST_AUTHOR_PROMPT}`
+        },
+        {
+          role: "user",
+          content: `AUTHOR_CHECKLIST_JSON:\n${JSON.stringify({
+            latestPrompt: getLastUserPrompt(turns),
+            recentConversation: turns.slice(-6),
+            modePlan,
+            executionPlan,
+            context: {
+              symbol: context.symbol,
+              timeframe: context.timeframe,
+              liveCandleCount: context.liveCandles.length,
+              historyRows: context.historyRows.length,
+              actionRows: context.actionRows.length,
+              backtestHasRun: context.backtest.hasRun,
+              backtestRows: context.backtest.trades.length
+            }
+          })}`
+        }
+      ],
+      temperature: 0,
+      maxTokens: 520,
+      responseFormat: {
+        type: "json_object"
+      }
+    });
+
+    const parsed = safeJsonParse<Record<string, unknown>>(
+      extractNebiusMessageText(completion.message.content),
+      {}
+    );
+
+    const requestKindRaw = toText(parsed.requestKind, "").toLowerCase();
+    const requestKind =
+      requestKindRaw === "social" || requestKindRaw === "task"
+        ? (requestKindRaw as "social" | "task")
+        : fallback.requestKind;
+    const strictToRequest = toBool(parsed.strictToRequest, fallback.strictToRequest);
+    const itemsRaw = Array.isArray(parsed.items) ? parsed.items : [];
+
+    const items = itemsRaw
+      .map((row, index) => {
+        if (!row || typeof row !== "object") {
+          return null;
+        }
+        const raw = row as Record<string, unknown>;
+        const artifact = normalizeChecklistArtifact(raw.artifact);
+        const label = sanitizeAssistantText(toText(raw.label, ""));
+        if (!artifact || !label) {
+          return null;
+        }
+        const id = toText(raw.id, `item_${index + 1}`).toLowerCase().replace(/[^a-z0-9_]+/g, "_");
+        return {
+          id: id || `item_${index + 1}`,
+          label,
+          required: toBool(raw.required, false),
+          artifact
+        } satisfies RequestChecklistTemplateItem;
+      })
+      .filter((item): item is RequestChecklistTemplateItem => item !== null)
+      .slice(0, 7);
+
+    if (items.length === 0) {
+      return fallback;
+    }
+
+    const requiresGraph = items.some((item) => item.required && item.artifact === "graph");
+    const requiresDraw = items.some((item) => item.required && item.artifact === "draw");
+    const requiresAnimation = items.some((item) => item.required && item.artifact === "animation");
+    const requiresNaturalResponse = items.some((item) => item.required && item.artifact === "natural");
+    const shouldAvoidDataFetch =
+      items.some((item) => item.required && item.artifact === "data") || fallback.shouldAvoidDataFetch;
+
+    return {
+      requestKind,
+      requiresNaturalResponse: requiresNaturalResponse || fallback.requiresNaturalResponse,
+      requiresGraph,
+      requiresDraw,
+      requiresAnimation,
+      shouldAvoidDataFetch,
+      strictToRequest,
+      items,
+      source: "instruction_model"
+    };
+  } catch {
+    return fallback;
+  }
+};
+
+const executeInstructionChecklistAuditStage = async (params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  turns: ChatTurn[];
+  checklistPlan: RequestChecklistPlan;
+  candidate: {
+    shortAnswer: string;
+    cannotAnswer: boolean;
+    cannotAnswerReason: string;
+    bullets: Array<{ tone: "green" | "red" | "gold" | "black"; text: string }>;
+    chartsCount: number;
+    drawingsCount: number;
+    animationsCount: number;
+    toolsUsed: string[];
+  };
+}): Promise<InstructionChecklistAudit | null> => {
+  const { apiKey, baseUrl, model, turns, checklistPlan, candidate } = params;
+
+  try {
+    const completion = await nebiusChatCompletion({
+      apiKey,
+      baseUrl,
+      model,
+      messages: [
+        {
+          role: "system",
+          content: `${AI_SYSTEM_PROMPT}\n${CHECKLIST_AUDIT_PROMPT}`
+        },
+        {
+          role: "user",
+          content: `AUDIT_RESPONSE_JSON:\n${JSON.stringify({
+            latestPrompt: getLastUserPrompt(turns),
+            checklistPlan,
+            candidate
+          })}`
+        }
+      ],
+      temperature: 0,
+      maxTokens: 520,
+      responseFormat: {
+        type: "json_object"
+      }
+    });
+
+    const parsed = safeJsonParse<Record<string, unknown>>(
+      extractNebiusMessageText(completion.message.content),
+      {}
+    );
+    const bulletsRaw = Array.isArray(parsed.bullets) ? parsed.bullets : [];
+    const bullets = bulletsRaw
+      .map((row) => {
+        if (!row || typeof row !== "object") {
+          return null;
+        }
+        const raw = row as Record<string, unknown>;
+        const text = sanitizeAssistantText(toText(raw.text, ""));
+        if (!text) {
+          return null;
+        }
+        return {
+          tone: normalizeTone(raw.tone),
+          text
+        };
+      })
+      .filter((row): row is { tone: "green" | "red" | "gold" | "black"; text: string } => row !== null)
+      .slice(0, 3);
+
+    return {
+      allowBullets: toBool(parsed.allowBullets, true),
+      allowCharts: toBool(parsed.allowCharts, true),
+      allowDrawings: toBool(parsed.allowDrawings, true),
+      allowAnimations: toBool(parsed.allowAnimations, true),
+      shortAnswer: sanitizeAssistantText(toText(parsed.shortAnswer, candidate.shortAnswer)),
+      bullets
+    };
+  } catch {
+    return null;
+  }
+};
+
 const executeGraphToolboxResolutionStage = async (params: {
   apiKey: string;
   baseUrl: string;
@@ -2465,6 +2764,48 @@ const executeSocialReplyStage = async (params: {
     return sanitizeAssistantText(extractNebiusMessageText(completion.message.content));
   } catch {
     return sanitizeAssistantText(lastPrompt);
+  }
+};
+
+const executeSpeakerStage = async (params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  turns: ChatTurn[];
+  draftAnswer: string;
+  cannotAnswer: boolean;
+  cannotAnswerReason: string;
+}): Promise<string> => {
+  const { apiKey, baseUrl, model, turns, draftAnswer, cannotAnswer, cannotAnswerReason } = params;
+  const lastPrompt = getLastUserPrompt(turns);
+
+  try {
+    const completion = await nebiusChatCompletion({
+      apiKey,
+      baseUrl,
+      model,
+      messages: [
+        {
+          role: "system",
+          content: SPEAKER_PROMPT
+        },
+        {
+          role: "user",
+          content: `REWRITE_FOR_USER_JSON:\n${JSON.stringify({
+            userPrompt: lastPrompt,
+            draftAnswer,
+            cannotAnswer,
+            cannotAnswerReason
+          })}`
+        }
+      ],
+      temperature: 0.55,
+      maxTokens: 180
+    });
+
+    return sanitizeAssistantText(extractNebiusMessageText(completion.message.content));
+  } catch {
+    return sanitizeAssistantText(draftAnswer || cannotAnswerReason);
   }
 };
 
@@ -3439,11 +3780,120 @@ export async function POST(request: Request) {
       context,
       modePlan: requestMode
     });
-    const socialOnlyRequest = isSocialOnlyPrompt(lastUserPrompt);
+    const socialOnlyPrompt = isSocialOnlyPrompt(lastUserPrompt);
+    let explicitDrawRequest = socialOnlyPrompt
+      ? false
+      : requestMode.wantsDraw || executionPlan.drawNeeded;
+    let wantsVisualization = socialOnlyPrompt
+      ? false
+      : requestMode.wantsVisualization || executionPlan.graphNeeded;
+    let wantsAnimation = socialOnlyPrompt
+      ? false
+      : requestMode.wantsAnimation || executionPlan.animationNeeded;
+    let wantsNaturalOnly = socialOnlyPrompt
+      ? true
+      : requestMode.wantsNaturalOnly || executionPlan.naturalOnly;
+    let strictToRequest = socialOnlyPrompt
+      ? true
+      : requestMode.strictToRequest && executionPlan.strictToRequest;
+    let mergedBacktestHint = socialOnlyPrompt
+      ? false
+      : requestMode.needsBacktestHint || executionPlan.needsBacktest;
+    let mergedClickhouseHint = socialOnlyPrompt
+      ? false
+      : requestMode.needsClickhouseHint || executionPlan.needsClickhouse;
+    let mergedClickhouseCountHint = socialOnlyPrompt
+      ? 0
+      : Math.max(
+          toNumber(requestMode.clickhouseCountHint, 0),
+          toNumber(executionPlan.clickhouseCount, 0)
+        );
+
+    const fallbackChecklistPlan = buildRequestChecklistPlan({
+      socialOnlyRequest: socialOnlyPrompt,
+      strictToRequest,
+      wantsNaturalOnly,
+      wantsVisualization,
+      explicitDrawRequest,
+      wantsAnimation
+    });
+    let requestChecklistPlan = await executeInstructionChecklistAuthorStage({
+      apiKey,
+      baseUrl,
+      model: modelSelection.instruction,
+      turns,
+      context,
+      modePlan: requestMode,
+      executionPlan,
+      fallback: fallbackChecklistPlan
+    });
+
+    let socialOnlyRequest = socialOnlyPrompt || requestChecklistPlan.requestKind === "social";
+    if (socialOnlyRequest) {
+      explicitDrawRequest = false;
+      wantsVisualization = false;
+      wantsAnimation = false;
+      wantsNaturalOnly = true;
+      strictToRequest = true;
+      mergedBacktestHint = false;
+      mergedClickhouseHint = false;
+      mergedClickhouseCountHint = 0;
+      requestChecklistPlan = {
+        ...requestChecklistPlan,
+        requestKind: "social",
+        requiresNaturalResponse: true,
+        requiresGraph: false,
+        requiresDraw: false,
+        requiresAnimation: false,
+        shouldAvoidDataFetch: true,
+        strictToRequest: true,
+        items:
+          requestChecklistPlan.items.length > 0
+            ? requestChecklistPlan.items
+            : [
+                {
+                  id: "intent",
+                  label: "Intent: social conversation",
+                  required: true,
+                  artifact: "scope"
+                },
+                {
+                  id: "natural",
+                  label: "Natural-language reply",
+                  required: true,
+                  artifact: "natural"
+                },
+                {
+                  id: "social_scope",
+                  label: "No market artifacts for social request",
+                  required: true,
+                  artifact: "scope"
+                }
+              ],
+        source: requestChecklistPlan.source
+      };
+    } else {
+      explicitDrawRequest = explicitDrawRequest || requestChecklistPlan.requiresDraw;
+      wantsVisualization = wantsVisualization || requestChecklistPlan.requiresGraph;
+      wantsAnimation = wantsAnimation || requestChecklistPlan.requiresAnimation;
+      wantsNaturalOnly =
+        wantsNaturalOnly ||
+        (requestChecklistPlan.requiresNaturalResponse &&
+          !requestChecklistPlan.requiresGraph &&
+          !requestChecklistPlan.requiresDraw &&
+          !requestChecklistPlan.requiresAnimation);
+      strictToRequest = strictToRequest && requestChecklistPlan.strictToRequest;
+    }
+
     const requestedGraphType = socialOnlyRequest ? "" : toText(executionPlan.graphType, "");
     let forcedGraphTemplate = resolveToolboxGraphTemplate(requestedGraphType);
     let graphToolingNeedsNewTool = false;
-    if (!socialOnlyRequest && executionPlan.graphNeeded && requestedGraphType && !forcedGraphTemplate) {
+    if (
+      !socialOnlyRequest &&
+      (executionPlan.graphNeeded || requestChecklistPlan.requiresGraph) &&
+      requestedGraphType &&
+      !forcedGraphTemplate
+    ) {
       toolsUsed.add("coding_graph_tooling");
       const graphResolution = await executeGraphToolboxResolutionStage({
         apiKey,
@@ -3458,48 +3908,12 @@ export async function POST(request: Request) {
       toolsUsed.add("graph_template_resolution");
     }
 
-    const explicitDrawRequest = socialOnlyRequest
-      ? false
-      : requestMode.wantsDraw || executionPlan.drawNeeded;
-    const wantsVisualization = socialOnlyRequest
-      ? false
-      : requestMode.wantsVisualization || executionPlan.graphNeeded;
-    const wantsAnimation = socialOnlyRequest
-      ? false
-      : requestMode.wantsAnimation || executionPlan.animationNeeded;
-    const wantsNaturalOnly = socialOnlyRequest
-      ? true
-      : requestMode.wantsNaturalOnly || executionPlan.naturalOnly;
-    const strictToRequest = socialOnlyRequest
-      ? true
-      : requestMode.strictToRequest && executionPlan.strictToRequest;
-    const mergedBacktestHint = socialOnlyRequest
-      ? false
-      : requestMode.needsBacktestHint || executionPlan.needsBacktest;
-    const mergedClickhouseHint = socialOnlyRequest
-      ? false
-      : requestMode.needsClickhouseHint || executionPlan.needsClickhouse;
-    const mergedClickhouseCountHint = socialOnlyRequest
-      ? 0
-      : Math.max(
-          toNumber(requestMode.clickhouseCountHint, 0),
-          toNumber(executionPlan.clickhouseCount, 0)
-        );
-    const requestChecklistPlan = buildRequestChecklistPlan({
-      socialOnlyRequest,
-      strictToRequest,
-      wantsNaturalOnly,
-      wantsVisualization,
-      explicitDrawRequest,
-      wantsAnimation
-    });
-
     if (socialOnlyRequest) {
       const shortAnswer = sanitizeAssistantText(
         await executeSocialReplyStage({
           apiKey,
           baseUrl,
-          model: modelSelection.instruction,
+          model: modelSelection.writer,
           turns
         })
       );
@@ -3832,13 +4246,70 @@ export async function POST(request: Request) {
         : responseCannotAnswer
           ? [{ tone: "gold" as const, text: reasoning.cannotAnswerReason }]
           : [];
-    const finalBullets =
+    let finalBullets =
       strictToRequest && wantsNaturalOnly
         ? []
         : baseBullets;
-    const finalShortAnswer =
+    const rawFinalShortAnswer =
       shortAnswer ||
       (finalBullets.length > 0 ? sanitizeAssistantText(finalBullets[0]?.text ?? "") : "");
+    let finalShortAnswer = rawFinalShortAnswer;
+    const checklistAudit = await executeInstructionChecklistAuditStage({
+      apiKey,
+      baseUrl,
+      model: modelSelection.instruction,
+      turns,
+      checklistPlan: requestChecklistPlan,
+      candidate: {
+        shortAnswer: finalShortAnswer,
+        cannotAnswer: responseCannotAnswer,
+        cannotAnswerReason: responseCannotAnswerReason,
+        bullets: finalBullets,
+        chartsCount: charts.length,
+        drawingsCount: chartActions.length,
+        animationsCount: chartAnimations.length,
+        toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
+      }
+    });
+    if (checklistAudit) {
+      if (!checklistAudit.allowCharts) {
+        charts = [];
+        toolsUsed.delete("coding_graph_tooling");
+        toolsUsed.delete("graph_template_resolution");
+      }
+      if (!checklistAudit.allowDrawings) {
+        chartActions = [];
+        toolsUsed.delete("chart_actions");
+      }
+      if (!checklistAudit.allowAnimations) {
+        chartAnimations = [];
+        toolsUsed.delete("chart_animation");
+      }
+      if (!checklistAudit.allowBullets) {
+        finalBullets = [];
+      } else if (checklistAudit.bullets.length > 0) {
+        finalBullets = checklistAudit.bullets;
+      }
+      if (checklistAudit.shortAnswer) {
+        finalShortAnswer = checklistAudit.shortAnswer;
+      }
+    }
+
+    const shouldUseSpeakerRewrite = Boolean(finalShortAnswer || responseCannotAnswerReason);
+    if (shouldUseSpeakerRewrite && (finalShortAnswer || responseCannotAnswerReason)) {
+      const rewritten = await executeSpeakerStage({
+        apiKey,
+        baseUrl,
+        model: modelSelection.writer,
+        turns,
+        draftAnswer: finalShortAnswer || responseCannotAnswerReason,
+        cannotAnswer: responseCannotAnswer,
+        cannotAnswerReason: responseCannotAnswerReason
+      });
+      if (rewritten) {
+        finalShortAnswer = rewritten;
+      }
+    }
     const requestChecklist = buildResponseChecklist({
       plan: requestChecklistPlan,
       shortAnswer: finalShortAnswer,

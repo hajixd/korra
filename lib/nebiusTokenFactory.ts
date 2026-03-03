@@ -39,9 +39,10 @@ const MODEL_FALLBACKS = {
     "THUDM/GLM-4.5-Air"
   ],
   writer: [
-    "Qwen/Qwen3-235B-A22B-Instruct-2507",
-    "THUDM/GLM-4.5-Air",
-    "NousResearch/Hermes-3-Llama-3.1-70B"
+    "NousResearch/Hermes-4-70B",
+    "meta-llama/Llama-3.3-70B-Instruct",
+    "zai-org/GLM-4.5-Air",
+    "Qwen/Qwen3-235B-A22B-Instruct-2507"
   ]
 } as const;
 
@@ -234,8 +235,11 @@ const scoreModelForRole = (model: NebiusModelEntry, role: NebiusRole): number =>
   }
 
   if (role === "writer") {
-    if (/(hermes|chat|assistant|dialogue|instruct|qwen3|llama-3\.3|glm-4\.5)/.test(text)) {
+    if (/(hermes-4|hermes|chat|assistant|dialogue|instruct|llama-3\.3|glm-4\.5|kimi-k2|deepseek-v3\.2)/.test(text)) {
       score += 42;
+    }
+    if (/(qwen3\b|qwen2\.5\b)/.test(text)) {
+      score += 8;
     }
     if (/(reason|r1|thinking|qwq)/.test(text)) {
       score -= 10;
