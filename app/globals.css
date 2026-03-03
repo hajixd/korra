@@ -1123,33 +1123,34 @@ button {
   cursor: pointer;
 }
 
-.backtest-stats-range-main {
-  width: 100%;
-  margin-left: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: flex-end;
-  gap: 0.32rem;
+.main-settings-range-card {
+  gap: 0.52rem;
 }
 
-.backtest-date-input-row {
+.main-settings-range-row {
   width: 100%;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  gap: 0.36rem;
+  flex-wrap: wrap;
+}
+
+.main-settings-range-dates {
+  min-width: 280px;
+  flex: 1.6 1 340px;
+  display: flex;
+  align-items: center;
   gap: 0.32rem;
 }
 
-.backtest-date-preset-row {
-  width: 100%;
-  max-width: 272px;
-  margin-left: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: flex-end;
-  gap: 0.32rem;
+.main-settings-range-dates .backtest-date-input {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.main-settings-range-item {
+  min-width: 150px;
+  flex: 1 1 170px;
 }
 
 .backtest-date-preset-wrap {
@@ -1312,47 +1313,28 @@ button {
   color: #00ff9d;
 }
 
-.backtest-minute-precise-row {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-
-.backtest-minute-precise-label {
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 0.66rem;
-  font-weight: 800;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-}
-
-.backtest-minute-precise-toggle {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.28rem;
-  width: 132px;
-}
-
-.backtest-minute-precise-btn {
-  min-height: 24px;
+.main-settings-minute-precise-btn {
+  min-height: 28px;
+  min-width: 168px;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 9px;
+  border-radius: 10px;
   background: rgba(0, 0, 0, 0.25);
-  color: rgba(255, 255, 255, 0.74);
-  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.84);
+  padding: 0 0.72rem;
+  font-size: 0.68rem;
   font-weight: 900;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  text-transform: uppercase;
   cursor: pointer;
 }
 
-.backtest-minute-precise-btn:hover {
+.main-settings-minute-precise-btn:hover {
   border-color: rgba(255, 255, 255, 0.24);
   color: rgba(255, 255, 255, 0.9);
 }
 
-.backtest-minute-precise-btn.active {
+.main-settings-minute-precise-btn.active {
   border-color: rgba(0, 255, 157, 0.32);
   background: rgba(0, 255, 157, 0.09);
   color: #00ff9d;
@@ -4999,11 +4981,19 @@ button {
     align-items: stretch;
   }
 
-  .backtest-date-preset-row {
-    flex-direction: column;
+  .main-settings-range-row {
     align-items: stretch;
-    max-width: none;
-    gap: 0.32rem;
+  }
+
+  .main-settings-range-dates,
+  .main-settings-range-item,
+  .main-settings-minute-precise-btn {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+
+  .main-settings-minute-precise-btn {
+    width: 100%;
   }
 
   .backtest-date-preset-wrap {
