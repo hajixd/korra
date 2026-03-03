@@ -4745,6 +4745,38 @@ const formatStatsRefreshDateLabel = (timeMs: number) => {
   });
 };
 
+const normalizeTimestampMs = (value: number): number => {
+  if (!Number.isFinite(value)) {
+    return NaN;
+  }
+
+  return value > 1_000_000_000_000 ? value : value * 1000;
+};
+
+const getStatsRefreshPhaseDurationMs = (status: string): number => {
+  if (status === "Preparing Backtest Replay") {
+    return 900;
+  }
+
+  if (status === "Finalizing Statistics") {
+    return 800;
+  }
+
+  if (status === "Loading AI Libraries") {
+    return 1200;
+  }
+
+  if (status === "No Trades In Selected Range") {
+    return 1000;
+  }
+
+  return 2200;
+};
+
+const isStatsRefreshAutoFinishPhase = (status: string): boolean => {
+  return status === "Finalizing Statistics" || status === "No Trades In Selected Range";
+};
+
 export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProps) {
   const modelProfiles = useMemo(() => {
     return buildModelProfiles(aiZipModelNames);
@@ -4989,6 +5021,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const selectedSurfaceTabRef = useRef<SurfaceTab>(selectedSurfaceTab);
   const statsRefreshOverlayModeRef = useRef<StatsRefreshOverlayMode>("idle");
   const statsRefreshStatusRef = useRef(statsRefreshStatus);
+  const statsRefreshTimelineRangeRef = useRef<{ startMs: number; endMs: number }>({
+    startMs: backtestRefreshNowMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000,
+    endMs: backtestRefreshNowMs
+  });
   const statsRefreshResetTimeoutRef = useRef(0);
   const statsRefreshVisualCompletionRafRef = useRef(0);
   const statsRefreshProgressRef = useRef(0);
@@ -5157,19 +5193,32 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             ? "Replaying Backtest + AI Libraries"
             : "Replaying Backtest Trades"
       );
-      const rangeStartMs = backtestBlueprintRangeRef.current.startMs;
-      const baseStartMs =
-        Number.isFinite(rangeStartMs) && rangeStartMs > 0
-          ? rangeStartMs
-          : nextRefreshMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000;
+      const rangeStartMs = normalizeTimestampMs(backtestBlueprintRangeRef.current.startMs);
+      const rangeEndMs = normalizeTimestampMs(backtestBlueprintRangeRef.current.endMs);
+      const baseStartMs = Number.isFinite(rangeStartMs) && rangeStartMs > 0
+        ? rangeStartMs
+        : nextRefreshMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000;
+      const baseEndMs = Number.isFinite(rangeEndMs)
+        ? Math.max(baseStartMs + 60_000, rangeEndMs)
+        : nextRefreshMs;
       const filterStartMs = nextSettings.statsDateStart
         ? new Date(nextSettings.statsDateStart).getTime()
         : NaN;
-      setStatsRefreshProgressLabel(
-        formatStatsRefreshDateLabel(
-          Number.isFinite(filterStartMs) ? Math.max(baseStartMs, filterStartMs) : baseStartMs
-        )
+      const filterEndMs = nextSettings.statsDateEnd
+        ? new Date(nextSettings.statsDateEnd + "T23:59:59.999").getTime()
+        : NaN;
+      const phaseStartMs = Number.isFinite(filterStartMs)
+        ? Math.max(baseStartMs, filterStartMs)
+        : baseStartMs;
+      const phaseEndMs = Math.max(
+        phaseStartMs + 60_000,
+        Number.isFinite(filterEndMs) ? Math.min(baseEndMs, filterEndMs) : baseEndMs
       );
+      statsRefreshTimelineRangeRef.current = {
+        startMs: phaseStartMs,
+        endMs: phaseEndMs
+      };
+      setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(phaseStartMs));
     } else {
       updateStatsRefreshOverlayMode("idle");
       setStatsRefreshProgress(0);
@@ -5227,27 +5276,28 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return;
     }
 
-    if (
-      statsRefreshStatus === "Replaying Backtest Trades" ||
-      statsRefreshStatus === "No Trades In Selected Range"
-    ) {
+    if (statsRefreshStatus === "Replaying Backtest Trades") {
       return;
     }
 
-    const durationMs =
-      statsRefreshStatus === "Preparing Backtest Replay"
-        ? 900
-        : statsRefreshStatus === "Finalizing Statistics"
-          ? 800
-          : statsRefreshStatus === "Loading AI Libraries"
-            ? 1200
-            : 2200;
+    const durationMs = getStatsRefreshPhaseDurationMs(statsRefreshStatus);
     const statusSnapshot = statsRefreshStatus;
     const startedAt = performance.now();
+    const rangeSnapshot = statsRefreshTimelineRangeRef.current;
+    const rangeStartMs = Number.isFinite(rangeSnapshot.startMs)
+      ? rangeSnapshot.startMs
+      : backtestRefreshNowMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000;
+    const rangeEndMs = Number.isFinite(rangeSnapshot.endMs)
+      ? Math.max(rangeStartMs + 60_000, rangeSnapshot.endMs)
+      : backtestRefreshNowMs;
+    const spanMs = Math.max(60_000, rangeEndMs - rangeStartMs);
+    const autoFinish = isStatsRefreshAutoFinishPhase(statusSnapshot);
+    let completed = false;
     let rafId = 0;
 
     setStatsRefreshProgress(0);
     setStatsRefreshLoadingDisplayProgress(0);
+    setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(rangeStartMs));
 
     const tick = () => {
       if (statsRefreshOverlayModeRef.current !== "loading") {
@@ -5259,12 +5309,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       const ratio = clamp((performance.now() - startedAt) / durationMs, 0, 1);
-      setStatsRefreshProgress((current) =>
-        current >= 100 ? current : Math.max(current, ratio * 100)
-      );
+      const cursorMs = rangeStartMs + spanMs * ratio;
+      setStatsRefreshProgress(ratio * 100);
+      setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(cursorMs));
 
       if (ratio < 1) {
         rafId = window.requestAnimationFrame(tick);
+        return;
+      }
+
+      if (autoFinish && !completed) {
+        completed = true;
+        finishStatsRefreshLoading(formatStatsRefreshDateLabel(rangeEndMs));
       }
     };
 
@@ -5275,7 +5331,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         window.cancelAnimationFrame(rafId);
       }
     };
-  }, [statsRefreshOverlayMode, statsRefreshStatus]);
+  }, [
+    backtestRefreshNowMs,
+    finishStatsRefreshLoading,
+    statsRefreshOverlayMode,
+    statsRefreshStatus
+  ]);
 
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
@@ -6949,15 +7010,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       (appliedBacktestAntiCheatEnabledRef.current ||
         appliedBacktestSelectedAiLibraryCountRef.current > 0);
 
-    if (tradeBlueprintsSnapshot.length === 0 || backtestTargetTradesSnapshot <= 0) {
-      setStatsRefreshStatus("No Trades In Selected Range");
-      startTransition(() => {
-        setHistoryRows([]);
-      });
-      finishStatsRefreshLoading(formatStatsRefreshDateLabel(backtestRefreshNowMs));
-      return;
-    }
-
     const modelNamesById: Record<string, string> = {};
 
     for (const blueprint of tradeBlueprintsSnapshot) {
@@ -6970,13 +7022,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const fallbackEndMs = floorToTimeframe(backtestRefreshNowMs, "1m");
     const fallbackStartMs =
       fallbackEndMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000;
-    const normalizeTimestampMs = (value: number): number => {
-      if (!Number.isFinite(value)) {
-        return NaN;
-      }
-
-      return value > 1_000_000_000_000 ? value : value * 1000;
-    };
     const normalizedTimelineStartMs = normalizeTimestampMs(backtestBlueprintRangeSnapshot.startMs);
     const normalizedTimelineEndMs = normalizeTimestampMs(backtestBlueprintRangeSnapshot.endMs);
     const timelineStartMs = Number.isFinite(normalizedTimelineStartMs)
@@ -7015,6 +7060,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       analysisStartMs + 60_000,
       Number.isFinite(filterEndMs) ? Math.min(rawEndMs, filterEndMs) : rawEndMs
     );
+    statsRefreshTimelineRangeRef.current = {
+      startMs: analysisStartMs,
+      endMs: analysisEndMs
+    };
+
+    if (tradeBlueprintsSnapshot.length === 0 || backtestTargetTradesSnapshot <= 0) {
+      setStatsRefreshStatus("No Trades In Selected Range");
+      startTransition(() => {
+        setHistoryRows([]);
+      });
+      return;
+    }
+
     const analysisSpanMs = Math.max(60_000, analysisEndMs - analysisStartMs);
     let lastLoadingProgressRatio = 0;
     const setLoadingProgressFromCursorMs = (cursorMs: number) => {
@@ -7059,6 +7117,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     let failed = false;
     let settled = false;
     const workers: Worker[] = [];
+    let phaseTransitionTimeoutId = 0;
     let fallbackTimeoutId = window.setTimeout(() => {
       handleFallback();
     }, 45_000);
@@ -7070,6 +7129,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       window.clearTimeout(fallbackTimeoutId);
       fallbackTimeoutId = 0;
+    };
+    const clearPhaseTransitionTimeout = () => {
+      if (!phaseTransitionTimeoutId) {
+        return;
+      }
+
+      window.clearTimeout(phaseTransitionTimeoutId);
+      phaseTransitionTimeoutId = 0;
     };
 
     const commitRows = (rows: HistoryItem[]) => {
@@ -7083,11 +7150,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       settled = true;
       clearFallbackTimeout();
-      setStatsRefreshStatus("Finalizing Statistics");
+      clearPhaseTransitionTimeout();
       startTransition(() => {
         setHistoryRows(rows);
       });
-      finishStatsRefreshLoading(formatStatsRefreshDateLabel(analysisEndMs));
     };
 
     const handleFallback = () => {
@@ -7096,7 +7162,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       failed = true;
+      clearPhaseTransitionTimeout();
       workers.forEach((worker) => worker.terminate());
+      setStatsRefreshStatus("Finalizing Statistics");
 
       try {
         commitRows(computeSynchronously());
@@ -7115,6 +7183,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return () => {
         cancelled = true;
         clearFallbackTimeout();
+        clearPhaseTransitionTimeout();
       };
     }
 
@@ -7126,6 +7195,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return () => {
         cancelled = true;
         clearFallbackTimeout();
+        clearPhaseTransitionTimeout();
       };
     }
     workers.push(worker);
@@ -7144,20 +7214,31 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       worker.terminate();
-      setStatsRefreshStatus(
-        hasAiLibraryPass ? "Loading AI Libraries" : "Finalizing Statistics"
+      const finalizedRows = normalizeBacktestHistoryRows(
+        finalizeBacktestHistoryRows(
+          message.rows,
+          backtestTargetTradesSnapshot
+        )
       );
-      setLoadingProgressFromCursorMs(analysisEndMs);
-      window.requestAnimationFrame(() => {
-        commitRows(
-          normalizeBacktestHistoryRows(
-            finalizeBacktestHistoryRows(
-              message.rows,
-              backtestTargetTradesSnapshot
-            )
-          )
-        );
-      });
+      const commitFinalizingPhase = () => {
+        if (failed || cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
+          return;
+        }
+
+        setStatsRefreshStatus("Finalizing Statistics");
+        commitRows(finalizedRows);
+      };
+
+      if (hasAiLibraryPass) {
+        setStatsRefreshStatus("Loading AI Libraries");
+        clearPhaseTransitionTimeout();
+        phaseTransitionTimeoutId = window.setTimeout(() => {
+          commitFinalizingPhase();
+        }, getStatsRefreshPhaseDurationMs("Loading AI Libraries"));
+        return;
+      }
+
+      commitFinalizingPhase();
     };
 
     worker.onerror = () => {
@@ -7187,14 +7268,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return () => {
       cancelled = true;
       clearFallbackTimeout();
+      clearPhaseTransitionTimeout();
       worker.terminate();
     };
   }, [
     backtestHasRun,
     backtestHistorySeedReady,
     backtestRunCount,
-    backtestRefreshNowMs,
-    finishStatsRefreshLoading
+    backtestRefreshNowMs
   ]);
 
   const selectedHistoryTrade = useMemo(() => {
