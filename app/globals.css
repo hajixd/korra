@@ -1034,26 +1034,9 @@ button {
 }
 
 .backtest-date-range-card {
-  padding-top: 0.18rem;
-  padding-bottom: 0.22rem;
+  padding-top: 0.3rem;
+  padding-bottom: 0.3rem;
   transition: filter 0.18s ease, opacity 0.18s ease;
-}
-
-.backtest-date-range-card .backtest-card-head h3 {
-  margin-top: 0.12rem;
-  font-size: 1.04rem;
-  line-height: 1.16;
-}
-
-.backtest-date-range-card .backtest-stats-range-main {
-  width: auto;
-  gap: 0.24rem;
-}
-
-.backtest-date-range-card .backtest-date-input-row,
-.backtest-date-range-card .backtest-date-preset-row {
-  width: auto;
-  gap: 0.24rem;
 }
 
 .backtest-date-range-card.is-loading {
@@ -4959,12 +4942,6 @@ button {
     align-items: stretch;
     max-width: none;
     gap: 0.32rem;
-  }
-
-  .backtest-date-range-card .backtest-stats-range-main,
-  .backtest-date-range-card .backtest-date-input-row,
-  .backtest-date-range-card .backtest-date-preset-row {
-    width: 100%;
   }
 
   .backtest-date-preset-wrap {
