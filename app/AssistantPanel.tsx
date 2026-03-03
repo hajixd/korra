@@ -108,6 +108,7 @@ type AssistantMessage = {
   content: string;
   bullets?: AssistantBullet[];
   charts?: AssistantChart[];
+  chartActions?: Array<Record<string, unknown>>;
   cannotAnswer?: boolean;
   trace?: string;
 };
@@ -121,6 +122,7 @@ type AssistantApiResponse = {
     shortAnswer: string;
     bullets: AssistantBullet[];
     charts: AssistantChart[];
+    chartActions?: Array<Record<string, unknown>>;
   };
   modelTrace?: {
     instruction: string;
@@ -140,6 +142,7 @@ export type AssistantPanelProps = {
   backtestHasRun: boolean;
   backtestTimeframe: string;
   backtestTrades: AssistantPanelTrade[];
+  onRunChartActions?: (actions: Array<Record<string, unknown>>) => void;
 };
 
 const MAX_CONTEXT_CANDLES = 500;
@@ -218,20 +221,15 @@ export default function AssistantPanel(props: AssistantPanelProps) {
     actionRows,
     backtestHasRun,
     backtestTimeframe,
-    backtestTrades
+    backtestTrades,
+    onRunChartActions
   } = props;
 
   const [messages, setMessages] = useState<AssistantMessage[]>(() => [
     {
       id: "welcome",
       role: "assistant",
-      content: "Ask for trade context, risk checks, or chart-backed breakdowns and I will respond with concise bullets.",
-      bullets: [
-        {
-          tone: "black",
-          text: "I will only use available terminal data and will explicitly say when data is insufficient."
-        }
-      ]
+      content: "How can I help you?"
     }
   ]);
   const [turns, setTurns] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
@@ -393,9 +391,18 @@ export default function AssistantPanel(props: AssistantPanelProps) {
           content: assistantContent,
           bullets: payload.response.bullets,
           charts: payload.response.charts,
+          chartActions: payload.response.chartActions,
           cannotAnswer: payload.response.cannotAnswer,
           trace
         };
+
+        if (
+          Array.isArray(payload.response.chartActions) &&
+          payload.response.chartActions.length > 0 &&
+          typeof onRunChartActions === "function"
+        ) {
+          onRunChartActions(payload.response.chartActions);
+        }
 
         setMessages((current) => [...current, assistantMessage]);
         setTurns((current) => [
@@ -427,16 +434,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
         setThinkingStage("Analyzing");
       }
     },
-    [input, isPending, runAssistantRequest, turns]
-  );
-
-  const quickPrompts = useMemo(
-    () => [
-      "Summarize current risk using active trade + latest candles.",
-      "Show me session performance from recent history.",
-      "Compare live price action vs recent trade outcomes."
-    ],
-    []
+    [input, isPending, onRunChartActions, runAssistantRequest, turns]
   );
 
   const renderChart = (chart: AssistantChart) => {
@@ -584,23 +582,6 @@ export default function AssistantPanel(props: AssistantPanelProps) {
         </div>
       </div>
 
-      <div className="ai-quick-prompts" aria-label="assistant shortcuts">
-        {quickPrompts.map((prompt) => (
-          <button
-            key={prompt}
-            type="button"
-            className="ai-quick-btn"
-            onClick={() => {
-              if (isPending) return;
-              setInput(prompt);
-              inputRef.current?.focus();
-            }}
-          >
-            {prompt}
-          </button>
-        ))}
-      </div>
-
       <div className="ai-thread" ref={messageListRef} aria-live="polite">
         {messages.map((message) => (
           <article
@@ -671,7 +652,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
           value={input}
           onChange={(event) => setInput(event.target.value)}
           rows={3}
-          placeholder="Ask for trading analysis, chart-backed breakdowns, or risk checks..."
+          placeholder="How can I help you?"
           disabled={isPending}
         />
         <div className="ai-compose-meta">

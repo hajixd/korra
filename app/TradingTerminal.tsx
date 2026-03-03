@@ -18,6 +18,7 @@ import type {
   ColorType,
   CrosshairMode,
   IChartApi,
+  IPriceLine,
   ISeriesApi,
   LineStyle,
   MouseEventParams,
@@ -33,6 +34,12 @@ import {
   type BacktestHistoryWorkerResponse
 } from "./backtestHistoryShared";
 import AssistantPanel from "./AssistantPanel";
+import {
+  executeAssistantChartActions,
+  styleToLineStyle as assistantToolStyleToLineStyle,
+  type AssistantChartAction
+} from "./tools/chartActions";
+import { normalizeChartActions } from "../lib/assistant-tools";
 
 const loadRecharts = () => import("recharts");
 const ResponsiveContainer = dynamic<any>(() => loadRecharts().then((mod) => mod.ResponsiveContainer), {
@@ -5648,7 +5655,51 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const selectedChartCandlesRef = useRef<Candle[]>([]);
   const statsDatePresetDdRef = useRef<HTMLDivElement>(null);
   const statsTimeframeDdRef = useRef<HTMLDivElement>(null);
+  const aiChartOverlaySeriesRef = useRef<Array<ISeriesApi<"Line">>>([]);
+  const aiChartPriceLinesRef = useRef<IPriceLine[]>([]);
+  const aiChartMarkersRef = useRef<SeriesMarker<Time>[]>([]);
+  const baseChartMarkersRef = useRef<SeriesMarker<Time>[]>([]);
   const [chartRenderWindow, setChartRenderWindow] = useState<ChartDataWindow>({ from: 0, to: -1 });
+
+  const applyCombinedChartMarkers = useCallback((baseMarkers?: SeriesMarker<Time>[]) => {
+    const candleSeries = candleSeriesRef.current;
+    if (!candleSeries) {
+      return;
+    }
+
+    if (Array.isArray(baseMarkers)) {
+      baseChartMarkersRef.current = baseMarkers;
+    }
+
+    const merged = [...baseChartMarkersRef.current, ...aiChartMarkersRef.current];
+    merged.sort((left, right) => Number(left.time) - Number(right.time));
+    candleSeries.setMarkers(merged);
+  }, []);
+
+  const clearAiChartAnnotations = useCallback(() => {
+    const chart = chartRef.current;
+    const candleSeries = candleSeriesRef.current;
+
+    if (!chart || !candleSeries) {
+      aiChartOverlaySeriesRef.current = [];
+      aiChartPriceLinesRef.current = [];
+      aiChartMarkersRef.current = [];
+      return;
+    }
+
+    for (const series of aiChartOverlaySeriesRef.current) {
+      chart.removeSeries(series);
+    }
+    aiChartOverlaySeriesRef.current = [];
+
+    for (const priceLine of aiChartPriceLinesRef.current) {
+      candleSeries.removePriceLine(priceLine);
+    }
+    aiChartPriceLinesRef.current = [];
+
+    aiChartMarkersRef.current = [];
+    applyCombinedChartMarkers();
+  }, [applyCombinedChartMarkers]);
 
   const selectTradeOnChart = (tradeId: string, symbol: string) => {
     if (selectedHistoryId === tradeId) {
@@ -7326,6 +7377,56 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     },
     [gaplessTimeMap]
   );
+
+  const runAssistantChartActions = useCallback(
+    (actionsRaw: Array<Record<string, unknown>>) => {
+      const chart = chartRef.current;
+      const candleSeries = candleSeriesRef.current;
+
+      if (!chart || !candleSeries || selectedChartCandles.length === 0) {
+        return;
+      }
+
+      const normalizedActions = normalizeChartActions(actionsRaw) as AssistantChartAction[];
+      if (normalizedActions.length === 0) {
+        return;
+      }
+
+      const hasClearAction = normalizedActions.some(
+        (action) => action.type === "clear_annotations"
+      );
+      if (hasClearAction) {
+        clearAiChartAnnotations();
+      }
+
+      executeAssistantChartActions(normalizedActions, {
+        chart,
+        candleSeries,
+        candles: selectedChartCandles,
+        overlaySeries: aiChartOverlaySeriesRef.current,
+        priceLines: aiChartPriceLinesRef.current,
+        markers: aiChartMarkersRef.current,
+        chartTimeFromMs: (timestampMs: number) => toGaplessUtc(timestampMs),
+        setCombinedMarkers: () => applyCombinedChartMarkers(),
+        clearOverlays: clearAiChartAnnotations,
+        styleToLineStyle: assistantToolStyleToLineStyle
+      });
+
+      applyCombinedChartMarkers();
+    },
+    [
+      applyCombinedChartMarkers,
+      clearAiChartAnnotations,
+      selectedChartCandles,
+      toGaplessUtc
+    ]
+  );
+
+  useEffect(() => {
+    if (selectedSurfaceTab !== "chart") {
+      clearAiChartAnnotations();
+    }
+  }, [clearAiChartAnnotations, selectedSurfaceTab]);
 
   useEffect(() => {
     if (selectedSurfaceTab !== "chart") {
@@ -10375,7 +10476,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         chart.removeSeries(seriesGroup.pathLine);
       }
       multiTradeSeriesRef.current = [];
-      candleSeries.setMarkers([]);
+      applyCombinedChartMarkers([]);
       tradeProfitZone.setData([]);
       tradeLossZone.setData([]);
       tradeEntryLine.setData([]);
@@ -10404,7 +10505,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     const clearTradeOverlays = () => {
       clearMultiTradeOverlays();
-      candleSeries.setMarkers([]);
+      applyCombinedChartMarkers([]);
       tradeProfitZone.setData([]);
       tradeLossZone.setData([]);
       tradeEntryLine.setData([]);
@@ -10626,7 +10727,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const exitPosition = getExitMarkerPosition(trade.side, derivedResult);
       clearMultiTradeOverlays();
 
-      candleSeries.setMarkers([
+      applyCombinedChartMarkers([
         {
           time: startTime,
           position: trade.side === "Long" ? "belowBar" : "aboveBar",
@@ -10673,7 +10774,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       tradePathLine.setData([]);
 
       if (currentSymbolHistoryRows.length === 0) {
-        candleSeries.setMarkers([]);
+        applyCombinedChartMarkers([]);
         return;
       }
 
@@ -10745,7 +10846,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       allMarkers.sort((a, b) => Number(a.time) - Number(b.time));
-      candleSeries.setMarkers(allMarkers);
+      applyCombinedChartMarkers(allMarkers);
       return;
     }
 
@@ -10784,6 +10885,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     });
   }, [
     activeChartTrade,
+    applyCombinedChartMarkers,
     currentSymbolHistoryRows,
     selectedChartCandles,
     selectedHistoryInteractionTick,
@@ -14868,6 +14970,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         backtestHasRun={backtestHasRun}
                         backtestTimeframe={appliedBacktestSettings.timeframe}
                         backtestTrades={backtestTrades}
+                        onRunChartActions={runAssistantChartActions}
                       />
                     </div>
                   ) : null}

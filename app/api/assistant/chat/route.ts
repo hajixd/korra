@@ -7,6 +7,15 @@ import {
   type NebiusChatMessage,
   type NebiusModelSelection
 } from "../../../../lib/nebiusTokenFactory";
+import {
+  chartActionsPromptSpec,
+  detectDeterministicIntent,
+  GRAPH_TEMPLATE_ID_SET,
+  listGraphTemplatesForPrompt,
+  normalizeChartActions,
+  resolveGraphTemplate,
+  summarizeMonthlyAggregates
+} from "../../../../lib/assistant-tools";
 
 type ChatTurn = {
   role: "user" | "assistant";
@@ -128,13 +137,7 @@ type ReasoningOutput = {
 };
 
 type ChartPlan = {
-  template:
-    | "equity_curve"
-    | "pnl_distribution"
-    | "session_performance"
-    | "trade_outcomes"
-    | "price_action"
-    | "action_timeline";
+  template: string;
   title: string;
   source: "history" | "backtest" | "candles" | "clickhouse" | "actions";
   points?: number;
@@ -142,11 +145,21 @@ type ChartPlan = {
 
 type AssistantChart = {
   id: string;
-  template: ChartPlan["template"];
+  template: string;
   title: string;
   subtitle?: string;
   data: Array<Record<string, string | number>>;
   config?: Record<string, string | number | boolean>;
+};
+
+type ChartCodingOutput = {
+  chartPlans?: Array<{
+    template?: string;
+    title?: string;
+    source?: "history" | "backtest" | "candles" | "clickhouse" | "actions";
+    points?: number;
+  }>;
+  chartActions?: Array<Record<string, unknown>>;
 };
 
 type ChatRequestBody = {
@@ -201,14 +214,18 @@ const REASONING_PROMPT = [
   "Do not include markdown code fences."
 ].join("\n");
 
-const CODING_PROMPT = [
-  "You are a chart-planning model.",
-  "Return only JSON with this shape:",
-  '{"chartPlans":[{"template":"equity_curve|pnl_distribution|session_performance|trade_outcomes|price_action|action_timeline","title":string,"source":"history|backtest|candles|clickhouse|actions","points":number}]}',
-  "Pick up to 3 chart plans.",
-  "Only choose templates that can answer the user request.",
-  "Do not emit unsupported templates."
-].join("\n");
+const buildCodingPrompt = (): string =>
+  [
+    "You are a chart-planning model.",
+    "Return only JSON with this shape:",
+    '{"chartPlans":[{"template":string,"title":string,"source":"history|backtest|candles|clickhouse|actions","points":number}],"chartActions":[object]}',
+    "Pick up to 3 chart plans and up to 12 chart actions.",
+    "Use only supported templates listed below.",
+    listGraphTemplatesForPrompt(),
+    "Use only supported chart actions listed below.",
+    chartActionsPromptSpec(),
+    "Only choose templates/actions relevant to the request."
+  ].join("\n");
 
 const clamp = (value: number, min: number, max: number): number => {
   if (!Number.isFinite(value)) return min;
@@ -538,6 +555,16 @@ const mapToNebiusConversation = (turns: ChatTurn[]): NebiusChatMessage[] => {
   }));
 };
 
+const getLastUserPrompt = (turns: ChatTurn[]): string => {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (turn?.role === "user") {
+      return turn.content;
+    }
+  }
+  return "";
+};
+
 const normalizeClickhousePair = (pair: string): string => {
   const normalized = pair.trim().toUpperCase();
   if (CLICKHOUSE_PAIR_RE.test(normalized)) {
@@ -613,6 +640,67 @@ const fetchClickhouseCandles = async (
     pair,
     timeframe
   };
+};
+
+const fetchClickhouseMonthlyAnalytics = async (params: {
+  request: Request;
+  pair: string;
+  timeframe: string;
+  metric: "monthly_avg_price" | "monthly_volume";
+}): Promise<
+  Array<{
+    month: string;
+    metric_value: number;
+    avg_range: number;
+    total_volume: number;
+    count: number;
+  }>
+> => {
+  const { request, pair, timeframe, metric } = params;
+  const url = new URL("/api/clickhouse/analytics", request.url);
+  url.searchParams.set("pair", normalizeClickhousePair(pair));
+  url.searchParams.set("timeframe", mapTimeframeToClickhouse(timeframe));
+  url.searchParams.set("metric", metric);
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`ClickHouse analytics failed ${response.status}: ${body.slice(0, 320)}`);
+  }
+
+  const payload = (await response.json()) as Record<string, unknown>;
+  const rows = Array.isArray(payload.rows) ? payload.rows : [];
+
+  return rows
+    .map((row) => {
+      if (!row || typeof row !== "object") {
+        return null;
+      }
+
+      const raw = row as Record<string, unknown>;
+      return {
+        month: toText(raw.month, ""),
+        metric_value: toNumber(raw.metric_value),
+        avg_range: toNumber(raw.avg_range),
+        total_volume: toNumber(raw.total_volume),
+        count: toNumber(raw.count)
+      };
+    })
+    .filter(
+      (
+        row
+      ): row is {
+        month: string;
+        metric_value: number;
+        avg_range: number;
+        total_volume: number;
+        count: number;
+      } => row !== null && row.month.length > 0
+    );
 };
 
 const executePlanningStage = async (params: {
@@ -915,7 +1003,7 @@ const executeReasoningStage = async (params: {
 };
 
 const normalizeChartPlans = (input: unknown): ChartPlan[] => {
-  const raw = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const raw = input && typeof input === "object" ? (input as ChartCodingOutput) : {};
   const plansRaw = Array.isArray(raw.chartPlans) ? raw.chartPlans : [];
 
   const plans: ChartPlan[] = [];
@@ -926,19 +1014,10 @@ const normalizeChartPlans = (input: unknown): ChartPlan[] => {
     }
 
     const item = row as Record<string, unknown>;
-    const template = toText(item.template, "");
+    const template = toText(item.template, "").toLowerCase();
     const source = toText(item.source, "");
 
-    if (
-      ![
-        "equity_curve",
-        "pnl_distribution",
-        "session_performance",
-        "trade_outcomes",
-        "price_action",
-        "action_timeline"
-      ].includes(template)
-    ) {
+    if (!GRAPH_TEMPLATE_ID_SET.has(template)) {
       continue;
     }
 
@@ -947,8 +1026,8 @@ const normalizeChartPlans = (input: unknown): ChartPlan[] => {
     }
 
     plans.push({
-      template: template as ChartPlan["template"],
-      title: toText(item.title, "Chart"),
+      template,
+      title: toText(item.title, resolveGraphTemplate(template).title),
       source: source as ChartPlan["source"],
       points: clamp(toNumber(item.points, 180), 40, 1000)
     });
@@ -990,7 +1069,7 @@ const executeCodingStage = async (params: {
   reasoning: ReasoningOutput;
   context: AssistantContext;
   toolState: ToolState;
-}): Promise<ChartPlan[]> => {
+}): Promise<{ chartPlans: ChartPlan[]; chartActions: ReturnType<typeof normalizeChartActions> }> => {
   const { apiKey, baseUrl, models, reasoning, context, toolState } = params;
 
   const codingInput = {
@@ -1011,7 +1090,7 @@ const executeCodingStage = async (params: {
     messages: [
       {
         role: "system",
-        content: CODING_PROMPT
+        content: buildCodingPrompt()
       },
       {
         role: "user",
@@ -1031,11 +1110,12 @@ const executeCodingStage = async (params: {
   );
 
   const plans = normalizeChartPlans(parsed);
+  const chartActions = normalizeChartActions((parsed as ChartCodingOutput).chartActions);
   if (plans.length > 0) {
-    return plans;
+    return { chartPlans: plans, chartActions };
   }
 
-  return deriveFallbackChartPlans(context, reasoning);
+  return { chartPlans: deriveFallbackChartPlans(context, reasoning), chartActions };
 };
 
 const takeTail = <T>(rows: T[], count: number): T[] => {
@@ -1045,7 +1125,12 @@ const takeTail = <T>(rows: T[], count: number): T[] => {
   return rows.slice(rows.length - count);
 };
 
-const buildEquityCurveChart = (rows: TradeRow[], title: string, points: number): AssistantChart | null => {
+const buildEquityCurveChart = (
+  rows: TradeRow[],
+  title: string,
+  points: number,
+  templateId: string
+): AssistantChart | null => {
   if (rows.length === 0) {
     return null;
   }
@@ -1065,7 +1150,7 @@ const buildEquityCurveChart = (rows: TradeRow[], title: string, points: number):
 
   return {
     id: `equity-${rows[rows.length - 1]?.id ?? "chart"}`,
-    template: "equity_curve",
+    template: templateId,
     title,
     subtitle: `${rows.length} trades`,
     data,
@@ -1076,7 +1161,11 @@ const buildEquityCurveChart = (rows: TradeRow[], title: string, points: number):
   };
 };
 
-const buildPnlDistributionChart = (rows: TradeRow[], title: string): AssistantChart | null => {
+const buildPnlDistributionChart = (
+  rows: TradeRow[],
+  title: string,
+  templateId: string
+): AssistantChart | null => {
   if (rows.length < 2) {
     return null;
   }
@@ -1101,7 +1190,7 @@ const buildPnlDistributionChart = (rows: TradeRow[], title: string): AssistantCh
 
   return {
     id: `hist-${rows[rows.length - 1]?.id ?? "chart"}`,
-    template: "pnl_distribution",
+    template: templateId,
     title,
     subtitle: "PnL histogram",
     data: histogram.map((bucket) => ({
@@ -1115,7 +1204,11 @@ const buildPnlDistributionChart = (rows: TradeRow[], title: string): AssistantCh
   };
 };
 
-const buildSessionPerformanceChart = (rows: TradeRow[], title: string): AssistantChart | null => {
+const buildSessionPerformanceChart = (
+  rows: TradeRow[],
+  title: string,
+  templateId: string
+): AssistantChart | null => {
   if (rows.length === 0) {
     return null;
   }
@@ -1139,7 +1232,7 @@ const buildSessionPerformanceChart = (rows: TradeRow[], title: string): Assistan
 
   return {
     id: `session-${rows[rows.length - 1]?.id ?? "chart"}`,
-    template: "session_performance",
+    template: templateId,
     title,
     data: order.map((session) => {
       const item = buckets.get(session) ?? { pnl: 0, count: 0, wins: 0 };
@@ -1159,7 +1252,11 @@ const buildSessionPerformanceChart = (rows: TradeRow[], title: string): Assistan
   };
 };
 
-const buildTradeOutcomeChart = (rows: TradeRow[], title: string): AssistantChart | null => {
+const buildTradeOutcomeChart = (
+  rows: TradeRow[],
+  title: string,
+  templateId: string
+): AssistantChart | null => {
   if (rows.length === 0) {
     return null;
   }
@@ -1177,7 +1274,7 @@ const buildTradeOutcomeChart = (rows: TradeRow[], title: string): AssistantChart
 
   return {
     id: `outcomes-${rows[rows.length - 1]?.id ?? "chart"}`,
-    template: "trade_outcomes",
+    template: templateId,
     title,
     data: [
       { label: "Wins", value: wins },
@@ -1190,7 +1287,12 @@ const buildTradeOutcomeChart = (rows: TradeRow[], title: string): AssistantChart
   };
 };
 
-const buildPriceActionChart = (rows: CandleRow[], title: string, points: number): AssistantChart | null => {
+const buildPriceActionChart = (
+  rows: CandleRow[],
+  title: string,
+  points: number,
+  templateId: string
+): AssistantChart | null => {
   if (rows.length === 0) {
     return null;
   }
@@ -1205,7 +1307,7 @@ const buildPriceActionChart = (rows: CandleRow[], title: string, points: number)
 
   return {
     id: `price-${rows[rows.length - 1]?.time ?? "chart"}`,
-    template: "price_action",
+    template: templateId,
     title,
     subtitle: `${rows.length} candles`,
     data,
@@ -1218,7 +1320,11 @@ const buildPriceActionChart = (rows: CandleRow[], title: string, points: number)
   };
 };
 
-const buildActionTimelineChart = (rows: ActionRow[], title: string): AssistantChart | null => {
+const buildActionTimelineChart = (
+  rows: ActionRow[],
+  title: string,
+  templateId: string
+): AssistantChart | null => {
   if (rows.length === 0) {
     return null;
   }
@@ -1237,7 +1343,7 @@ const buildActionTimelineChart = (rows: ActionRow[], title: string): AssistantCh
 
   return {
     id: `actions-${rows[rows.length - 1]?.id ?? "chart"}`,
-    template: "action_timeline",
+    template: templateId,
     title,
     data,
     config: {
@@ -1256,6 +1362,10 @@ const buildChartsFromPlans = (
 
   for (const plan of plans) {
     const points = clamp(toNumber(plan.points, 220), 40, 1000);
+    const resolvedTemplate = resolveGraphTemplate(plan.template);
+    const templateId = resolvedTemplate.id;
+    const templateFamily = resolvedTemplate.family;
+    const chartTitle = toText(plan.title, resolvedTemplate.title);
     const historyRows = context.historyRows;
     const backtestRows = context.backtest.trades;
     const candleRows = context.liveCandles;
@@ -1264,48 +1374,48 @@ const buildChartsFromPlans = (
 
     let chart: AssistantChart | null = null;
 
-    if (plan.template === "equity_curve") {
+    if (templateFamily === "equity_curve") {
       const sourceRows =
         plan.source === "backtest" && backtestRows.length > 0
           ? backtestRows
           : historyRows.length > 0
             ? historyRows
             : backtestRows;
-      chart = buildEquityCurveChart(sourceRows, plan.title, points);
-    } else if (plan.template === "pnl_distribution") {
+      chart = buildEquityCurveChart(sourceRows, chartTitle, points, templateId);
+    } else if (templateFamily === "pnl_distribution") {
       const sourceRows =
         plan.source === "backtest" && backtestRows.length > 0
           ? backtestRows
           : historyRows.length > 0
             ? historyRows
             : backtestRows;
-      chart = buildPnlDistributionChart(sourceRows, plan.title);
-    } else if (plan.template === "session_performance") {
+      chart = buildPnlDistributionChart(sourceRows, chartTitle, templateId);
+    } else if (templateFamily === "session_performance") {
       const sourceRows =
         plan.source === "backtest" && backtestRows.length > 0
           ? backtestRows
           : historyRows.length > 0
             ? historyRows
             : backtestRows;
-      chart = buildSessionPerformanceChart(sourceRows, plan.title);
-    } else if (plan.template === "trade_outcomes") {
+      chart = buildSessionPerformanceChart(sourceRows, chartTitle, templateId);
+    } else if (templateFamily === "trade_outcomes") {
       const sourceRows =
         plan.source === "backtest" && backtestRows.length > 0
           ? backtestRows
           : historyRows.length > 0
             ? historyRows
             : backtestRows;
-      chart = buildTradeOutcomeChart(sourceRows, plan.title);
-    } else if (plan.template === "price_action") {
+      chart = buildTradeOutcomeChart(sourceRows, chartTitle, templateId);
+    } else if (templateFamily === "price_action") {
       const sourceRows =
         plan.source === "clickhouse" && clickhouseRows.length > 0
           ? clickhouseRows
           : candleRows.length > 0
             ? candleRows
             : clickhouseRows;
-      chart = buildPriceActionChart(sourceRows, plan.title, points);
-    } else if (plan.template === "action_timeline") {
-      chart = buildActionTimelineChart(actionRows, plan.title);
+      chart = buildPriceActionChart(sourceRows, chartTitle, points, templateId);
+    } else if (templateFamily === "action_timeline") {
+      chart = buildActionTimelineChart(actionRows, chartTitle, templateId);
     }
 
     if (chart && chart.data.length > 0) {
@@ -1342,6 +1452,131 @@ const buildFallbackFailureResponse = (message: string) => {
   };
 };
 
+const buildDeterministicMonthlyResponse = async (params: {
+  request: Request;
+  context: AssistantContext;
+  intent: ReturnType<typeof detectDeterministicIntent>;
+}) => {
+  const { request, context, intent } = params;
+  const metric = intent.type === "monthly_volume" ? "monthly_volume" : "monthly_avg_price";
+  const pair = context.symbol.includes("_")
+    ? context.symbol
+    : `${context.symbol.slice(0, 3)}_${context.symbol.slice(3, 6)}`;
+
+  const rows = await fetchClickhouseMonthlyAnalytics({
+    request,
+    pair,
+    timeframe: context.timeframe,
+    metric
+  });
+
+  if (rows.length === 0) {
+    return {
+      status: "ok" as const,
+      response: {
+        cannotAnswer: true,
+        cannotAnswerReason: "No ClickHouse rows were returned for the requested monthly calculation.",
+        shortAnswer: "",
+        bullets: [
+          {
+            tone: "gold" as const,
+            text: "No ClickHouse rows were returned for the requested monthly calculation."
+          }
+        ],
+        charts: [] as AssistantChart[],
+        chartActions: [] as Array<Record<string, unknown>>
+      },
+      modelTrace: null
+    };
+  }
+
+  const normalized = rows.map((row) => ({
+    month: row.month,
+    avg_close: row.metric_value,
+    avg_range: row.avg_range,
+    total_volume: row.total_volume,
+    count: row.count
+  }));
+  const summary = summarizeMonthlyAggregates(normalized);
+  const topMonth = summary.highestMonth?.month ?? "N/A";
+  const lowMonth = summary.lowestMonth?.month ?? "N/A";
+
+  const chart: AssistantChart = {
+    id: `monthly-${Date.now()}`,
+    template: metric === "monthly_volume" ? "monthly_volume" : "monthly_avg_close",
+    title: metric === "monthly_volume" ? "Monthly Volume" : "Monthly Average Price",
+    subtitle: `${rows.length} months`,
+    data: rows.map((row) => ({
+      month: row.month,
+      value: Number(row.metric_value.toFixed(4)),
+      avgRange: Number(row.avg_range.toFixed(4)),
+      volume: Number(row.total_volume.toFixed(2))
+    })),
+    config: {
+      xKey: "month",
+      yKey: "value"
+    }
+  };
+
+  const action: Record<string, unknown> = {
+    type: "move_to_date",
+    time:
+      rows.length > 0
+        ? new Date(`${rows[rows.length - 1]!.month}-01T00:00:00.000Z`).getTime()
+        : undefined,
+    label: "Monthly aggregate focus"
+  };
+
+  return {
+    status: "ok" as const,
+    response: {
+      cannotAnswer: false,
+      cannotAnswerReason: "",
+      shortAnswer:
+        metric === "monthly_volume"
+          ? `Monthly volume computed from ClickHouse for ${rows.length} months.`
+          : `Monthly average price computed from ClickHouse for ${rows.length} months.`,
+      bullets: [
+        {
+          tone: "black" as const,
+          text:
+            metric === "monthly_volume"
+              ? `**Months analyzed:** ${rows.length} • **Total volume:** ${summary.totalVolume.toLocaleString("en-US")}`
+              : `**Global monthly mean price:** ${summary.globalAvgClose.toFixed(4)}`
+        },
+        {
+          tone: "green" as const,
+          text:
+            metric === "monthly_volume"
+              ? `**Highest activity month:** ${topMonth}`
+              : `**Highest avg month:** ${topMonth} (${summary.highestMonth?.avgClose?.toFixed(4) ?? "N/A"})`
+        },
+        {
+          tone: "red" as const,
+          text:
+            metric === "monthly_volume"
+              ? `**Lowest activity month:** ${lowMonth}`
+              : `**Lowest avg month:** ${lowMonth} (${summary.lowestMonth?.avgClose?.toFixed(4) ?? "N/A"})`
+        }
+      ],
+      charts: [chart],
+      chartActions: [action]
+    },
+    modelTrace: {
+      instruction: "deterministic-analytics",
+      reasoning: "deterministic-analytics",
+      coding: "deterministic-analytics",
+      writer: "deterministic-analytics"
+    },
+    dataTrace: {
+      usedClickhouse: true,
+      mode: "monthly_aggregate",
+      metric,
+      rows: rows.length
+    }
+  };
+};
+
 export async function POST(request: Request) {
   let body: ChatRequestBody;
 
@@ -1374,6 +1609,29 @@ export async function POST(request: Request) {
   }
 
   const baseUrl = process.env.NEBIUS_BASE_URL || "https://api.tokenfactory.nebius.com/v1";
+  const lastUserPrompt = getLastUserPrompt(turns);
+  const deterministicIntent = detectDeterministicIntent(lastUserPrompt);
+
+  if (deterministicIntent.type !== "none") {
+    try {
+      return NextResponse.json(
+        await buildDeterministicMonthlyResponse({
+          request,
+          context,
+          intent: deterministicIntent
+        })
+      );
+    } catch (error) {
+      return NextResponse.json(
+        buildFallbackFailureResponse(
+          error instanceof Error
+            ? `I cannot answer due to deterministic analytics error: ${error.message}`
+            : "I cannot answer due to deterministic analytics error."
+        ),
+        { status: 200 }
+      );
+    }
+  }
 
   try {
     const modelsCatalog = await fetchNebiusModelCatalog({
@@ -1426,7 +1684,7 @@ export async function POST(request: Request) {
       planning: planningResult.planning
     });
 
-    const chartPlans = await executeCodingStage({
+    const codingResult = await executeCodingStage({
       apiKey,
       baseUrl,
       models: modelSelection,
@@ -1435,13 +1693,18 @@ export async function POST(request: Request) {
       toolState
     });
 
-    const charts = buildChartsFromPlans(chartPlans, context, toolState);
+    const charts = buildChartsFromPlans(codingResult.chartPlans, context, toolState);
+    const chartActions = codingResult.chartActions;
+    const usedClickhouseData = toolState.clickhouseCandles.length > 0;
 
     const finalBullets = reasoning.bullets.length > 0
       ? reasoning.bullets
       : reasoning.cannotAnswer
         ? [{ tone: "gold" as const, text: reasoning.cannotAnswerReason }]
         : [{ tone: "black" as const, text: "No concise bullet summary was generated." }];
+
+    // Ensure request-scope data is explicitly released after shaping response.
+    toolState.clickhouseCandles = [];
 
     return NextResponse.json({
       status: "ok",
@@ -1450,7 +1713,8 @@ export async function POST(request: Request) {
         cannotAnswerReason: reasoning.cannotAnswerReason,
         shortAnswer: reasoning.shortAnswer,
         bullets: finalBullets,
-        charts
+        charts,
+        chartActions
       },
       modelTrace: {
         instruction: modelSelection.instruction,
@@ -1459,7 +1723,7 @@ export async function POST(request: Request) {
         writer: modelSelection.writer
       },
       dataTrace: {
-        usedClickhouse: toolState.clickhouseCandles.length > 0,
+        usedClickhouse: usedClickhouseData,
         clickhouseMeta: toolState.clickhouseMeta,
         backtestDataIncluded: context.backtest.dataIncluded,
         historyRows: context.historyRows.length,
