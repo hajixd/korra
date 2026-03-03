@@ -6562,13 +6562,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   useEffect(() => {
     if (selectedSurfaceTab !== "chart") {
-      chartSourceLengthRef.current = 0;
-      chartRenderWindowRef.current = { from: 0, to: -1 };
-      chartVisibleGlobalRangeRef.current = null;
-      chartPendingVisibleGlobalRangeRef.current = null;
-      setChartRenderWindow((current) =>
-        current.from === 0 && current.to === -1 ? current : { from: 0, to: -1 }
-      );
       return;
     }
 
@@ -6689,16 +6682,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [selectedChartCandles.length, selectedSymbol, selectedSurfaceTab, selectedTimeframe]);
 
   const chartRenderCandles = useMemo(() => {
-    if (selectedSurfaceTab !== "chart") {
-      return EMPTY_CANDLES;
-    }
-
     if (chartRenderWindow.to < chartRenderWindow.from) {
       return EMPTY_CANDLES;
     }
 
     return selectedChartCandles.slice(chartRenderWindow.from, chartRenderWindow.to + 1);
-  }, [chartRenderWindow, selectedChartCandles, selectedSurfaceTab]);
+  }, [chartRenderWindow, selectedChartCandles]);
 
   requestChartVisibleRangeRef.current = (visibleRange: ChartDataWindow) => {
     const totalBars = chartSourceLengthRef.current;
@@ -9067,27 +9056,25 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const chart = chartRef.current;
     const container = chartContainerRef.current;
 
-    if (!chart) {
+    if (!chart || !container) {
       return;
     }
 
     if (selectedSurfaceTab !== "chart") {
-      if (chartSizeRef.current.width !== 1 || chartSizeRef.current.height !== 1) {
-        chartSizeRef.current = { width: 1, height: 1 };
-        chart.applyOptions({ width: 1, height: 1 });
-      }
       return;
     }
 
-    if (!container) {
-      return;
-    }
-
-    const frame = window.requestAnimationFrame(() => {
+    let frame = 0;
+    let attempts = 0;
+    const syncChartSize = () => {
       const width = Math.floor(container.clientWidth);
       const height = Math.floor(container.clientHeight);
 
       if (width <= 0 || height <= 0) {
+        if (attempts < 24) {
+          attempts += 1;
+          frame = window.requestAnimationFrame(syncChartSize);
+        }
         return;
       }
 
@@ -9097,7 +9084,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       chartSizeRef.current = { width, height };
       chart.applyOptions({ width, height });
-    });
+    };
+
+    frame = window.requestAnimationFrame(syncChartSize);
 
     return () => {
       window.cancelAnimationFrame(frame);
@@ -13407,7 +13396,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         {selectedSurfaceTab === "backtest" ? (
           <section className="backtest-surface" aria-label="backtest workspace">
             <div className="backtest-shell">
-              <div className="backtest-card compact">
+              <div
+                className={`backtest-card compact backtest-date-range-card ${
+                  !isBacktestSurfaceSettled || statsRefreshOverlayMode === "loading"
+                    ? "is-loading"
+                    : ""
+                }`}
+              >
                 <div className="backtest-card-head backtest-stats-head">
                   <div>
                     <h3>Backtest Date Range</h3>
