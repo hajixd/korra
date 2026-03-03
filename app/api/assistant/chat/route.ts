@@ -311,6 +311,7 @@ const PLANNING_PROMPT = [
   "Set needsBacktestData=true only when backtest has run but detailed rows are missing and required.",
   "Set needsClickhouseData=true only when current candle/history context is not enough.",
   "Use a recent-window query by default. Set start/end only when the user explicitly asks for past/historical/date ranges.",
+  "For recent-window queries, anchor end to the current runtime date/time.",
   "Do not tell the user to fetch data manually; produce a concrete clickhouseQuery instead.",
   "If no query needed, set clickhouseQuery to null."
 ].join("\n");
@@ -400,6 +401,8 @@ const REASONING_PROMPT = [
   "Use provided indicators when available (e.g., RSI 14 for overbought/oversold requests).",
   "Only compute indicators when the user explicitly asks for them.",
   "If codingComputedIndicators is provided, treat it as authoritative computed indicator data.",
+  "When giving numeric price levels, anchor them to recentWindow latest close/time and runtimeClock recency.",
+  "If runtimeClock indicates stale market data, avoid specific price levels and say the live window is stale.",
   "Use requestChecklist to enforce scope. If requestChecklist.requestKind='social', return a brief natural reply with no analytics, no bullets, and no chart hints.",
   "Before setting cannotAnswer=true, attempt to answer using available context and indicator snapshots.",
   "If data is insufficient, set cannotAnswer=true and explain why.",
@@ -417,6 +420,7 @@ const SPEAKER_PROMPT = [
   "Never ask about the user's day, mood, or personal life.",
   "Stay strictly in trading context.",
   "Answer exactly what the user asked and keep it concise.",
+  "If marketAnchor is provided, avoid stale price levels and keep any price references aligned to that current range.",
   "When the user asks broad guidance (for example, 'what should I do?'), give a clear immediate next step in plain language.",
   "Any follow-up question must be trading-specific only.",
   "Use analysis inputs as facts; do not invent data.",
@@ -447,6 +451,23 @@ const buildCodingPrompt = (): string =>
 const clamp = (value: number, min: number, max: number): number => {
   if (!Number.isFinite(value)) return min;
   return Math.max(min, Math.min(max, value));
+};
+
+const normalizeTimestampMs = (value: number): number => {
+  if (!Number.isFinite(value)) {
+    return value;
+  }
+
+  const abs = Math.abs(value);
+  if (abs < 1e11) {
+    // Seconds -> milliseconds.
+    return Math.trunc(value * 1000);
+  }
+  if (abs > 1e15) {
+    // Microseconds/nanoseconds -> milliseconds.
+    return Math.trunc(value / 1000);
+  }
+  return Math.trunc(value);
 };
 
 const toNumber = (value: unknown, fallback = 0): number => {
@@ -569,7 +590,7 @@ const normalizeCandleRows = (input: unknown, cap: number): CandleRow[] => {
     }
 
     const raw = row as Record<string, unknown>;
-    const time = toNumber(raw.time);
+    const time = normalizeTimestampMs(toNumber(raw.time));
     const open = toNumber(raw.open, Number.NaN);
     const high = toNumber(raw.high, Number.NaN);
     const low = toNumber(raw.low, Number.NaN);
@@ -768,7 +789,7 @@ const summarizeTrades = (rows: TradeRow[]): BacktestSummary => {
 };
 
 const formatTimeLabel = (timestampMs: number): string => {
-  const date = new Date(timestampMs);
+  const date = new Date(normalizeTimestampMs(timestampMs));
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
   const day = String(date.getUTCDate()).padStart(2, "0");
   const hours = String(date.getUTCHours()).padStart(2, "0");
@@ -1608,12 +1629,82 @@ const getRecentWindowCount = (timeframe: string): number => {
   return byTimeframe[normalized] ?? 480;
 };
 
+const timeframeToMs = (timeframe: string): number => {
+  const normalized = mapTimeframeToClickhouse(timeframe);
+  const byTimeframe: Record<string, number> = {
+    M1: 60_000,
+    M5: 5 * 60_000,
+    M15: 15 * 60_000,
+    M30: 30 * 60_000,
+    H1: 60 * 60_000,
+    H4: 4 * 60 * 60_000,
+    D: 24 * 60 * 60_000,
+    W: 7 * 24 * 60 * 60_000,
+    M: 30 * 24 * 60 * 60_000
+  };
+  return byTimeframe[normalized] ?? 15 * 60_000;
+};
+
+const getLatestCandleTimeMs = (candles: CandleRow[]): number | null => {
+  if (!Array.isArray(candles) || candles.length === 0) {
+    return null;
+  }
+  const latest = candles[candles.length - 1];
+  if (!latest || !Number.isFinite(latest.time)) {
+    return null;
+  }
+  return normalizeTimestampMs(latest.time);
+};
+
+const buildRuntimeClock = (params: {
+  nowMs: number;
+  context: AssistantContext;
+  clickhouseCandles: CandleRow[];
+}): Record<string, unknown> => {
+  const { nowMs, context, clickhouseCandles } = params;
+  const latestLiveTime = getLatestCandleTimeMs(context.liveCandles);
+  const latestClickhouseTime = getLatestCandleTimeMs(clickhouseCandles);
+  const mergedLatest = Math.max(latestLiveTime ?? 0, latestClickhouseTime ?? 0);
+  const frameMs = timeframeToMs(context.timeframe);
+  const freshnessBudgetMs = Math.max(frameMs * 3, 90_000);
+
+  const liveAgeMs = latestLiveTime ? Math.max(0, nowMs - latestLiveTime) : null;
+  const clickhouseAgeMs = latestClickhouseTime ? Math.max(0, nowMs - latestClickhouseTime) : null;
+  const mergedAgeMs = mergedLatest > 0 ? Math.max(0, nowMs - mergedLatest) : null;
+
+  return {
+    nowIso: new Date(nowMs).toISOString(),
+    nowEpochMs: nowMs,
+    todayUtcDate: new Date(nowMs).toISOString().slice(0, 10),
+    timeframeMs: frameMs,
+    freshnessBudgetMs,
+    live: {
+      count: context.liveCandles.length,
+      latestTime: latestLiveTime ? new Date(latestLiveTime).toISOString() : null,
+      ageMs: liveAgeMs,
+      isFresh: liveAgeMs !== null ? liveAgeMs <= freshnessBudgetMs : false
+    },
+    clickhouse: {
+      count: clickhouseCandles.length,
+      latestTime: latestClickhouseTime ? new Date(latestClickhouseTime).toISOString() : null,
+      ageMs: clickhouseAgeMs,
+      isFresh: clickhouseAgeMs !== null ? clickhouseAgeMs <= freshnessBudgetMs : false
+    },
+    merged: {
+      latestTime: mergedLatest > 0 ? new Date(mergedLatest).toISOString() : null,
+      ageMs: mergedAgeMs,
+      isFresh: mergedAgeMs !== null ? mergedAgeMs <= freshnessBudgetMs : false
+    }
+  };
+};
+
 const buildAutoClickhouseQuery = (params: {
   context: AssistantContext;
   prompt: string;
+  nowMs: number;
   planningQuery?: PlanningOutput["clickhouseQuery"];
 }): PlanningOutput["clickhouseQuery"] => {
-  const { context, prompt, planningQuery } = params;
+  const { context, prompt, planningQuery, nowMs } = params;
   const historicalRequested = isHistoricalWindowRequested(prompt);
 
   const pair = normalizeClickhousePair(
@@ -1630,7 +1721,7 @@ const buildAutoClickhouseQuery = (params: {
     timeframe,
     count,
     start: historicalRequested ? toText(planningQuery?.start, "") : "",
-    end: historicalRequested ? toText(planningQuery?.end, "") : "",
+    end: historicalRequested ? toText(planningQuery?.end, "") : new Date(nowMs).toISOString(),
     reason: toText(planningQuery?.reason, "Targeted recent-window fetch for chart analysis.")
   };
 };
@@ -1859,6 +1950,85 @@ const summarizeDrawnActions = (
   const preview = descriptions.slice(0, 3).join("; ");
   const suffix = descriptions.length > 3 ? "; ..." : "";
   return `Drew ${actions.length} item${actions.length === 1 ? "" : "s"}: ${preview}${suffix}.`;
+};
+
+type MarketPriceAnchor = {
+  latestClose: number;
+  bandLow: number;
+  bandHigh: number;
+  latestTimeIso: string;
+  nowIso: string;
+};
+
+const buildMarketPriceAnchor = (params: {
+  candles: CandleRow[];
+  nowMs: number;
+}): MarketPriceAnchor | null => {
+  const { candles, nowMs } = params;
+  if (!Array.isArray(candles) || candles.length === 0) {
+    return null;
+  }
+
+  const recent = candles.slice(-Math.min(candles.length, 320));
+  const latest = recent[recent.length - 1];
+  if (!latest || !Number.isFinite(latest.close) || !Number.isFinite(latest.time)) {
+    return null;
+  }
+
+  const closes = recent
+    .map((row) => row.close)
+    .filter((value) => Number.isFinite(value));
+  if (closes.length === 0) {
+    return null;
+  }
+
+  const bandLow = getPriceQuantile(closes, 0.2) ?? latest.close;
+  const bandHigh = getPriceQuantile(closes, 0.8) ?? latest.close;
+
+  return {
+    latestClose: Number(latest.close.toFixed(4)),
+    bandLow: Number(Math.min(bandLow, bandHigh).toFixed(4)),
+    bandHigh: Number(Math.max(bandLow, bandHigh).toFixed(4)),
+    latestTimeIso: new Date(normalizeTimestampMs(latest.time)).toISOString(),
+    nowIso: new Date(nowMs).toISOString()
+  };
+};
+
+const extractPriceCandidatesFromText = (text: string): number[] => {
+  const matches = text.match(/\$?(?:\d{1,3}(?:,\d{3})+|\d{3,6})(?:\.\d+)?/g);
+  if (!matches) {
+    return [];
+  }
+
+  return matches
+    .map((token) => Number(token.replace(/\$/g, "").replace(/,/g, "")))
+    .filter((value) => Number.isFinite(value) && value >= 500 && value <= 20_000);
+};
+
+const hasOutOfRangePriceReference = (params: {
+  text: string;
+  anchor: MarketPriceAnchor | null;
+}): boolean => {
+  const { text, anchor } = params;
+  if (!anchor) {
+    return false;
+  }
+
+  if (!/\b(price|level|support|resistance|entry|target|stop|at)\b/i.test(text)) {
+    return false;
+  }
+
+  const prices = extractPriceCandidatesFromText(text);
+  if (prices.length === 0) {
+    return false;
+  }
+
+  const toleranceFromBand = Math.max(
+    (anchor.bandHigh - anchor.bandLow) * 1.7,
+    anchor.latestClose * 0.35
+  );
+
+  return prices.some((value) => Math.abs(value - anchor.latestClose) > toleranceFromBand);
 };
 
 const inferCandleStepMs = (candles: CandleRow[]): number => {
@@ -2436,6 +2606,7 @@ const executeRequestModeStage = async (params: {
   fallback: RequestModePlan;
 }): Promise<RequestModePlan> => {
   const { apiKey, baseUrl, model, turns, context, fallback } = params;
+  const nowMs = Date.now();
 
   try {
     const completion = await nebiusChatCompletion({
@@ -2456,6 +2627,10 @@ const executeRequestModeStage = async (params: {
               symbol: context.symbol,
               timeframe: context.timeframe,
               liveCandleCount: context.liveCandles.length
+            },
+            runtime: {
+              nowIso: new Date(nowMs).toISOString(),
+              todayUtcDate: new Date(nowMs).toISOString().slice(0, 10)
             }
           })}`
         }
@@ -2518,6 +2693,7 @@ const executeIntentExecutionStage = async (params: {
   modePlan: RequestModePlan;
 }): Promise<IntentExecutionPlan> => {
   const { apiKey, baseUrl, model, turns, context, modePlan } = params;
+  const nowMs = Date.now();
   const fallback = buildFallbackExecutionPlan(modePlan);
 
   try {
@@ -2544,6 +2720,10 @@ const executeIntentExecutionStage = async (params: {
               actionRows: context.actionRows.length,
               backtestHasRun: context.backtest.hasRun,
               backtestRows: context.backtest.trades.length
+            },
+            runtime: {
+              nowIso: new Date(nowMs).toISOString(),
+              todayUtcDate: new Date(nowMs).toISOString().slice(0, 10)
             }
           })}`
         }
@@ -2588,6 +2768,7 @@ const executeInstructionChecklistAuthorStage = async (params: {
   fallback: RequestChecklistPlan;
 }): Promise<RequestChecklistPlan> => {
   const { apiKey, baseUrl, model, turns, context, modePlan, executionPlan, fallback } = params;
+  const nowMs = Date.now();
 
   try {
     const completion = await nebiusChatCompletion({
@@ -2614,6 +2795,10 @@ const executeInstructionChecklistAuthorStage = async (params: {
               actionRows: context.actionRows.length,
               backtestHasRun: context.backtest.hasRun,
               backtestRows: context.backtest.trades.length
+            },
+            runtime: {
+              nowIso: new Date(nowMs).toISOString(),
+              todayUtcDate: new Date(nowMs).toISOString().slice(0, 10)
             }
           })}`
         }
@@ -2894,8 +3079,20 @@ const executeSpeakerStage = async (params: {
   draftAnswer: string;
   cannotAnswer: boolean;
   cannotAnswerReason: string;
+  marketAnchor?: MarketPriceAnchor | null;
+  strictPriceAnchoring?: boolean;
 }): Promise<string> => {
-  const { apiKey, baseUrl, model, turns, draftAnswer, cannotAnswer, cannotAnswerReason } = params;
+  const {
+    apiKey,
+    baseUrl,
+    model,
+    turns,
+    draftAnswer,
+    cannotAnswer,
+    cannotAnswerReason,
+    marketAnchor = null,
+    strictPriceAnchoring = false
+  } = params;
   const lastPrompt = getLastUserPrompt(turns);
 
   try {
@@ -2914,7 +3111,9 @@ const executeSpeakerStage = async (params: {
             userPrompt: lastPrompt,
             draftAnswer,
             cannotAnswer,
-            cannotAnswerReason
+            cannotAnswerReason,
+            marketAnchor,
+            strictPriceAnchoring
           })}`
         }
       ],
@@ -2936,12 +3135,13 @@ const executePlanningStage = async (params: {
   context: AssistantContext;
   request: Request;
   toolState: ToolState;
+  nowMs: number;
 }): Promise<{
   planning: PlanningOutput;
   status?: "needs_backtest_data";
   reason?: string;
 }> => {
-  const { apiKey, baseUrl, model, turns, context, request, toolState } = params;
+  const { apiKey, baseUrl, model, turns, context, request, toolState, nowMs } = params;
 
   const planningMessages: NebiusChatMessage[] = [
     { role: "system", content: AI_SYSTEM_PROMPT },
@@ -2949,7 +3149,14 @@ const executePlanningStage = async (params: {
     ...mapToNebiusConversation(turns),
     {
       role: "user",
-      content: `RUNTIME_CONTEXT_JSON:\n${JSON.stringify(buildContextDigest(context))}`
+      content: `RUNTIME_CONTEXT_JSON:\n${JSON.stringify({
+        context: buildContextDigest(context),
+        runtimeClock: buildRuntimeClock({
+          nowMs,
+          context,
+          clickhouseCandles: toolState.clickhouseCandles
+        })
+      })}`
     }
   ];
 
@@ -3201,8 +3408,9 @@ const executeDataAnalysisStage = async (params: {
   toolState: ToolState;
   planning: PlanningOutput;
   indicatorSnapshot: Record<string, unknown>;
+  nowMs: number;
 }): Promise<DataAnalysisOutput> => {
-  const { apiKey, baseUrl, model, turns, context, toolState, planning, indicatorSnapshot } = params;
+  const { apiKey, baseUrl, model, turns, context, toolState, planning, indicatorSnapshot, nowMs } = params;
 
   const recentWindowCandles = getRecentWindowCandles({
     context,
@@ -3213,6 +3421,11 @@ const executeDataAnalysisStage = async (params: {
     latestPrompt: getLastUserPrompt(turns),
     conversation: turns.slice(-6),
     context: buildContextDigest(context),
+    runtimeClock: buildRuntimeClock({
+      nowMs,
+      context,
+      clickhouseCandles: toolState.clickhouseCandles
+    }),
     planning,
     recentWindow: {
       includesLiveStream: true,
@@ -3271,6 +3484,7 @@ const executeReasoningStage = async (params: {
   requestChecklist: RequestChecklistPlan;
   indicatorSnapshot: Record<string, unknown>;
   dataAnalysis: DataAnalysisOutput;
+  nowMs: number;
 }): Promise<ReasoningOutput> => {
   const {
     apiKey,
@@ -3295,6 +3509,11 @@ const executeReasoningStage = async (params: {
     planning,
     requestChecklist,
     dataAnalysis,
+    runtimeClock: buildRuntimeClock({
+      nowMs: params.nowMs,
+      context,
+      clickhouseCandles: toolState.clickhouseCandles
+    }),
     recentWindow: {
       includesLiveStream: true,
       count: recentWindowCandles.length,
@@ -3417,6 +3636,7 @@ const executeCodingStage = async (params: {
   requestedGraphType: string;
   forcedGraphTemplate: string | null;
   wantsAnimation: boolean;
+  nowMs: number;
 }): Promise<{
   chartPlans: ChartPlan[];
   chartActions: ReturnType<typeof normalizeChartActions>;
@@ -3437,6 +3657,11 @@ const executeCodingStage = async (params: {
     analysis: dataAnalysis,
     indicators: indicatorSnapshot,
     chartHints: reasoning.chartHints,
+    runtimeClock: buildRuntimeClock({
+      nowMs: params.nowMs,
+      context,
+      clickhouseCandles: toolState.clickhouseCandles
+    }),
     availableSources: {
       history: context.historyRows.length,
       backtest: context.backtest.trades.length,
@@ -4421,6 +4646,7 @@ const executeIndicatorCodingStage = async (params: {
   requestedIndicators: string[];
   candles: CandleRow[];
   indicatorSnapshot: Record<string, unknown>;
+  nowMs: number;
 }): Promise<IndicatorCodingResult> => {
   const {
     apiKey,
@@ -4429,7 +4655,8 @@ const executeIndicatorCodingStage = async (params: {
     prompt,
     requestedIndicators,
     candles,
-    indicatorSnapshot
+    indicatorSnapshot,
+    nowMs
   } = params;
 
   if (requestedIndicators.length === 0) {
@@ -4461,8 +4688,12 @@ const executeIndicatorCodingStage = async (params: {
           content: `INDICATOR_CODING_PLAN_JSON:\n${JSON.stringify({
             prompt,
             requestedIndicators,
+            nowIso: new Date(nowMs).toISOString(),
             candleCount: candles.length,
-            latestTime: candles[candles.length - 1]?.time ?? null,
+            latestTime:
+              candles.length > 0 && Number.isFinite(candles[candles.length - 1]!.time)
+                ? new Date(normalizeTimestampMs(candles[candles.length - 1]!.time)).toISOString()
+                : null,
             indicatorSnapshot
           })}`
         }
@@ -4518,6 +4749,7 @@ export async function POST(request: Request) {
 
   const baseUrl = process.env.NEBIUS_BASE_URL || "https://api.tokenfactory.nebius.com/v1";
   const lastUserPrompt = getLastUserPrompt(turns);
+  const runtimeNowMs = Date.now();
   const heuristicRequestMode = classifyRequestMode(lastUserPrompt);
   const indicatorComputationRequested = isIndicatorComputationRequest(lastUserPrompt);
   const requestedIndicators = extractRequestedIndicators(lastUserPrompt);
@@ -4720,6 +4952,11 @@ export async function POST(request: Request) {
           requestMode: requestMode.mode,
           requestChecklistPlan,
           executionPlan,
+          runtimeClock: buildRuntimeClock({
+            nowMs: runtimeNowMs,
+            context,
+            clickhouseCandles: []
+          }),
           usedClickhouse: false,
           clickhouseMeta: null,
           backtestDataIncluded: context.backtest.dataIncluded,
@@ -4766,7 +5003,8 @@ export async function POST(request: Request) {
       turns,
       context,
       request,
-      toolState
+      toolState,
+      nowMs: runtimeNowMs
     });
 
     if (planningResult.status === "needs_backtest_data") {
@@ -4799,6 +5037,7 @@ export async function POST(request: Request) {
         buildAutoClickhouseQuery({
         context,
         prompt: lastUserPrompt,
+        nowMs: runtimeNowMs,
         planningQuery: planningResult.planning.clickhouseQuery
         }) ?? {};
       if (mergedClickhouseCountHint > 0) {
@@ -4848,13 +5087,15 @@ export async function POST(request: Request) {
           context,
           clickhouseCandles: toolState.clickhouseCandles
         }),
-        indicatorSnapshot
+        indicatorSnapshot,
+        nowMs: runtimeNowMs
       });
 
       if (indicatorCodingResult.needsMoreData) {
         const codingQuery = buildAutoClickhouseQuery({
           context,
           prompt: lastUserPrompt,
+          nowMs: runtimeNowMs,
           planningQuery: planningResult.planning.clickhouseQuery
         }) ?? {};
         const desiredCount = clamp(
@@ -4911,7 +5152,8 @@ export async function POST(request: Request) {
               context,
               clickhouseCandles: toolState.clickhouseCandles
             })
-          )
+          ),
+          nowMs: runtimeNowMs
         });
       }
 
@@ -4938,7 +5180,8 @@ export async function POST(request: Request) {
       context,
       toolState,
       planning: planningResult.planning,
-      indicatorSnapshot
+      indicatorSnapshot,
+      nowMs: runtimeNowMs
     });
     if (dataAnalysis.summary || dataAnalysis.keyFindings.length > 0) {
       toolsUsed.add("analysis_model");
@@ -4954,7 +5197,8 @@ export async function POST(request: Request) {
       planning: planningResult.planning,
       requestChecklist: requestChecklistPlan,
       indicatorSnapshot,
-      dataAnalysis
+      dataAnalysis,
+      nowMs: runtimeNowMs
     });
 
     const shouldRetryReasoningWithMoreData =
@@ -4971,6 +5215,7 @@ export async function POST(request: Request) {
         buildAutoClickhouseQuery({
         context,
         prompt: lastUserPrompt,
+        nowMs: runtimeNowMs,
         planningQuery: planningResult.planning.clickhouseQuery
         }) ?? {};
       if (mergedClickhouseCountHint > 0) {
@@ -5014,7 +5259,8 @@ export async function POST(request: Request) {
                     context,
                     clickhouseCandles: toolState.clickhouseCandles
                   }),
-                  indicatorSnapshot: retryBaseSnapshot
+                  indicatorSnapshot: retryBaseSnapshot,
+                  nowMs: runtimeNowMs
                 })
               : {
                   computed: {},
@@ -5037,7 +5283,8 @@ export async function POST(request: Request) {
             context,
             toolState,
             planning: planningResult.planning,
-            indicatorSnapshot
+            indicatorSnapshot,
+            nowMs: runtimeNowMs
           });
           if (dataAnalysis.summary || dataAnalysis.keyFindings.length > 0) {
             toolsUsed.add("analysis_model");
@@ -5052,7 +5299,8 @@ export async function POST(request: Request) {
             planning: planningResult.planning,
             requestChecklist: requestChecklistPlan,
             indicatorSnapshot,
-            dataAnalysis
+            dataAnalysis,
+            nowMs: runtimeNowMs
           });
         }
       } catch {
@@ -5078,7 +5326,8 @@ export async function POST(request: Request) {
           requestMode,
           requestedGraphType,
           forcedGraphTemplate,
-          wantsAnimation
+          wantsAnimation,
+          nowMs: runtimeNowMs
         });
 
     if (toolState.clickhouseCandles.length > 0) {
@@ -5166,6 +5415,13 @@ export async function POST(request: Request) {
       toolsUsed.add("chart_animation");
     }
     const usedClickhouseData = toolState.clickhouseCandles.length > 0;
+    const marketPriceAnchor = buildMarketPriceAnchor({
+      candles: getRecentWindowCandles({
+        context,
+        clickhouseCandles: toolState.clickhouseCandles
+      }),
+      nowMs: runtimeNowMs
+    });
     const isDrawOnlyRequest = explicitDrawRequest && !wantsVisualization;
     const drawSummary = summarizeDrawnActions(chartActions);
     const responseCannotAnswer = explicitDrawRequest
@@ -5249,10 +5505,35 @@ export async function POST(request: Request) {
         turns,
         draftAnswer: finalShortAnswer || responseCannotAnswerReason,
         cannotAnswer: responseCannotAnswer,
-        cannotAnswerReason: responseCannotAnswerReason
+        cannotAnswerReason: responseCannotAnswerReason,
+        marketAnchor: marketPriceAnchor,
+        strictPriceAnchoring: true
       });
       if (rewritten) {
         finalShortAnswer = sanitizeDeliveryText(rewritten);
+      }
+    }
+    if (hasOutOfRangePriceReference({ text: finalShortAnswer, anchor: marketPriceAnchor })) {
+      const anchoredRewrite = await executeSpeakerStage({
+        apiKey,
+        baseUrl,
+        model: modelSelection.writer,
+        turns,
+        draftAnswer: finalShortAnswer,
+        cannotAnswer: responseCannotAnswer,
+        cannotAnswerReason: responseCannotAnswerReason,
+        marketAnchor: marketPriceAnchor,
+        strictPriceAnchoring: true
+      });
+      if (
+        anchoredRewrite &&
+        !hasOutOfRangePriceReference({ text: anchoredRewrite, anchor: marketPriceAnchor })
+      ) {
+        finalShortAnswer = sanitizeDeliveryText(anchoredRewrite);
+      } else if (marketPriceAnchor) {
+        finalShortAnswer = sanitizeDeliveryText(
+          `Current ${context.symbol} live price is around ${marketPriceAnchor.latestClose.toFixed(2)}. I would wait for confirmation around this current range before acting.`
+        );
       }
     }
     const requestChecklist = buildResponseChecklist({
@@ -5286,6 +5567,11 @@ export async function POST(request: Request) {
         requestMode: requestMode.mode,
         requestChecklistPlan,
         executionPlan,
+        runtimeClock: buildRuntimeClock({
+          nowMs: runtimeNowMs,
+          context,
+          clickhouseCandles: toolState.clickhouseCandles
+        }),
         requestModeHints: {
           needsClickhouse: mergedClickhouseHint,
           clickhouseCount: mergedClickhouseCountHint || null,
