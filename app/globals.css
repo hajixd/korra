@@ -2837,6 +2837,7 @@ button {
 .stats-refresh-loading-track {
   position: relative;
   margin-top: auto;
+  margin-bottom: 0.28rem;
   height: 30px;
   overflow: hidden;
   border: 1px solid rgba(25, 33, 33, 0.95);
