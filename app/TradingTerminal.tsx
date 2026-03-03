@@ -4022,6 +4022,41 @@ const generateTradeBlueprints = (
   return blueprints.sort((a, b) => b.exitMs - a.exitMs);
 };
 
+const enforceSingleActiveTradeBlueprints = (
+  blueprints: TradeBlueprint[]
+): TradeBlueprint[] => {
+  if (blueprints.length <= 1) {
+    return blueprints;
+  }
+
+  const chronological = [...blueprints]
+    .filter(
+      (blueprint) =>
+        Number.isFinite(blueprint.entryMs) &&
+        Number.isFinite(blueprint.exitMs) &&
+        blueprint.exitMs > blueprint.entryMs
+    )
+    .sort(
+      (left, right) =>
+        left.entryMs - right.entryMs ||
+        left.exitMs - right.exitMs ||
+        left.id.localeCompare(right.id)
+    );
+  const selected: TradeBlueprint[] = [];
+  let activeTradeExitMs = Number.NEGATIVE_INFINITY;
+
+  for (const blueprint of chronological) {
+    if (blueprint.entryMs < activeTradeExitMs) {
+      continue;
+    }
+
+    selected.push(blueprint);
+    activeTradeExitMs = blueprint.exitMs;
+  }
+
+  return selected.sort((left, right) => right.exitMs - left.exitMs);
+};
+
 const summarizeBacktestTrades = (
   trades: HistoryItem[],
   confidenceResolver: (trade: HistoryItem) => number = getTradeConfidenceScore
@@ -5881,7 +5916,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     if (appliedAiModelEveryCandleMode) {
-      return everyCandleTradeBlueprints.slice(0, backtestTargetTrades);
+      return enforceSingleActiveTradeBlueprints(everyCandleTradeBlueprints).slice(
+        0,
+        backtestTargetTrades
+      );
     }
 
     const perModelBase = Math.floor(backtestTargetTrades / appliedBacktestModelProfiles.length);
@@ -5906,9 +5944,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       );
     });
 
-    return blueprints
-      .sort((left, right) => right.exitMs - left.exitMs)
-      .slice(0, backtestTargetTrades);
+    return enforceSingleActiveTradeBlueprints(blueprints).slice(0, backtestTargetTrades);
   }, [
     appliedAiModelEveryCandleMode,
     appliedBacktestModelProfiles,
