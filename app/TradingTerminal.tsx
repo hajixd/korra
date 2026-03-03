@@ -13732,6 +13732,174 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         {selectedSurfaceTab === "backtest" ? (
           <section className="backtest-surface" aria-label="backtest workspace">
             <div className="backtest-shell">
+              <div
+                className={`backtest-card compact backtest-date-range-card ${
+                  !isBacktestSurfaceSettled || statsRefreshOverlayMode === "loading"
+                    ? "is-loading"
+                    : ""
+                }`}
+              >
+                <div className="backtest-card-head backtest-stats-head">
+                  <div>
+                    <h3>Backtest Date Range</h3>
+                  </div>
+
+                  <div
+                    className="backtest-stats-range backtest-stats-range-main"
+                    aria-label="global backtest date range"
+                  >
+                    <div className="backtest-date-input-row">
+                      <input
+                        type="date"
+                        value={statsDateStart}
+                        onChange={(event) => {
+                          setStatsDateStart(event.target.value);
+                          setStatsDatePreset("custom");
+                        }}
+                        className="backtest-date-input"
+                        aria-label="global backtest start date"
+                      />
+                      <span className="backtest-stats-range-arrow">-&gt;</span>
+                      <input
+                        type="date"
+                        value={statsDateEnd}
+                        onChange={(event) => {
+                          setStatsDateEnd(event.target.value);
+                          setStatsDatePreset("custom");
+                        }}
+                        className="backtest-date-input"
+                        aria-label="global backtest end date"
+                      />
+                    </div>
+                    <div className="backtest-date-preset-row">
+                      <div ref={statsDatePresetDdRef} className="backtest-date-preset-wrap">
+                        <button
+                          type="button"
+                          className="backtest-date-preset-trigger"
+                          onClick={() => setStatsDatePresetDdOpen((open) => !open)}
+                          aria-haspopup="listbox"
+                          aria-expanded={statsDatePresetDdOpen}
+                          aria-label="Select backtest date preset"
+                        >
+                          {
+                            BACKTEST_DATE_PRESET_OPTIONS.find((option) => option.id === statsDatePreset)
+                              ?.label ?? "Custom"
+                          }
+                          <span className="backtest-date-preset-chevron" aria-hidden="true">
+                            {statsDatePresetDdOpen ? "▴" : "▾"}
+                          </span>
+                        </button>
+                        {statsDatePresetDdOpen ? (
+                          <div
+                            className="backtest-date-preset-dd"
+                            role="listbox"
+                            aria-label="Backtest date preset options"
+                          >
+                            {BACKTEST_DATE_PRESET_OPTIONS.map((option) => (
+                              <button
+                                key={option.id}
+                                type="button"
+                                role="option"
+                                aria-selected={statsDatePreset === option.id}
+                                className={`backtest-date-preset-option${
+                                  statsDatePreset === option.id ? " active" : ""
+                                }`}
+                                onClick={() => {
+                                  setStatsDatePreset(option.id);
+                                  setStatsDatePresetDdOpen(false);
+                                  if (option.id === "custom") {
+                                    return;
+                                  }
+                                  const range = buildBacktestDateRangeFromPreset(option.id);
+                                  setStatsDateStart(range.startDate);
+                                  setStatsDateEnd(range.endDate);
+                                }}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div ref={statsTimeframeDdRef} className="stats-timeframe-wrap">
+                        <button
+                          type="button"
+                          className="stats-timeframe-trigger"
+                          onClick={() => setStatsTimeframeDdOpen((o) => !o)}
+                          aria-haspopup="listbox"
+                          aria-expanded={statsTimeframeDdOpen}
+                          aria-label="Select backtest timeframe"
+                        >
+                          {TIMEFRAME_DISPLAY_LABELS[selectedBacktestTimeframe]}
+                          <span className="stats-timeframe-chevron" aria-hidden="true">
+                            {statsTimeframeDdOpen ? "▴" : "▾"}
+                          </span>
+                        </button>
+                        {statsTimeframeDdOpen && (
+                          <div
+                            className="stats-timeframe-dd"
+                            role="listbox"
+                            aria-label="Backtest timeframe options"
+                          >
+                            {timeframes.map((tf) => (
+                              <button
+                                key={tf}
+                                type="button"
+                                role="option"
+                                aria-selected={selectedBacktestTimeframe === tf}
+                                className={`stats-timeframe-option${selectedBacktestTimeframe === tf ? " active" : ""}`}
+                                onClick={() => {
+                                  setSelectedBacktestTimeframe(tf);
+                                  setStatsTimeframeDdOpen(false);
+                                }}
+                              >
+                                {TIMEFRAME_DISPLAY_LABELS[tf]}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="backtest-minute-precise-row" aria-label="Minute precise execution setting">
+                        <span className="backtest-minute-precise-label">Minute Precise</span>
+                        <div className="backtest-minute-precise-toggle" role="group" aria-label="Minute Precise">
+                          <button
+                            type="button"
+                            className={`backtest-minute-precise-btn${
+                              minutePreciseEnabled ? " active" : ""
+                            }`}
+                            onClick={() => setMinutePreciseEnabled(true)}
+                            aria-pressed={minutePreciseEnabled}
+                          >
+                            ON
+                          </button>
+                          <button
+                            type="button"
+                            className={`backtest-minute-precise-btn${
+                              !minutePreciseEnabled ? " active" : ""
+                            }`}
+                            onClick={() => setMinutePreciseEnabled(false)}
+                            aria-pressed={!minutePreciseEnabled}
+                          >
+                            OFF
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="backtest-toolbar-note backtest-toolbar-note-stack">
+                  <span className="backtest-toolbar-note-range">
+                    Start Date: <strong>{backtestDateRangeStartLabel}</strong> · End Date:{" "}
+                    <strong>{backtestDateRangeEndLabel}</strong>
+                  </span>
+                  <span className="backtest-toolbar-note-meta">
+                    Total Live Trades: <strong>{backtestTrades.length.toLocaleString("en-US")}</strong> ·
+                    {" "}Total Library Trades:{" "}
+                    <strong>{backtestLibraryCandidateTrades.length.toLocaleString("en-US")}</strong>
+                  </span>
+                </div>
+              </div>
+
               <nav className="backtest-tabs" aria-label="backtest modules">
                 {backtestTabs.map((tab) => (
                   <button
@@ -13762,7 +13930,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 <div className="backtest-empty">
                   <h3>No trades in the selected date range</h3>
                   <p>
-                    Adjust Backtest Date Range in Main Settings, or clear it to load the full simulated
+                    Move the Backtest Date Range above, or clear it to load the full simulated
                     trade history again.
                   </p>
                 </div>
@@ -13860,160 +14028,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
               {selectedBacktestTab === "mainSettings" ? (
                 <div className="backtest-grid" style={{ gap: "0.75rem" }}>
-                  <div className="backtest-card compact main-settings-range-card">
-                    <div className="backtest-card-head backtest-stats-head">
-                      <div>
-                        <h3>Backtest Date Range</h3>
-                      </div>
-                    </div>
-
-                    <div
-                      className="main-settings-range-row"
-                      aria-label="main settings backtest range controls"
-                    >
-                      <div className="main-settings-range-dates">
-                        <input
-                          type="date"
-                          value={statsDateStart}
-                          onChange={(event) => {
-                            setStatsDateStart(event.target.value);
-                            setStatsDatePreset("custom");
-                          }}
-                          className="backtest-date-input"
-                          aria-label="global backtest start date"
-                        />
-                        <span className="backtest-stats-range-arrow">-&gt;</span>
-                        <input
-                          type="date"
-                          value={statsDateEnd}
-                          onChange={(event) => {
-                            setStatsDateEnd(event.target.value);
-                            setStatsDatePreset("custom");
-                          }}
-                          className="backtest-date-input"
-                          aria-label="global backtest end date"
-                        />
-                      </div>
-
-                      <div ref={statsDatePresetDdRef} className="backtest-date-preset-wrap main-settings-range-item">
-                        <button
-                          type="button"
-                          className="backtest-date-preset-trigger"
-                          onClick={() => {
-                            setStatsDatePresetDdOpen((open) => !open);
-                            setStatsTimeframeDdOpen(false);
-                          }}
-                          aria-haspopup="listbox"
-                          aria-expanded={statsDatePresetDdOpen}
-                          aria-label="Select backtest date preset"
-                        >
-                          {
-                            BACKTEST_DATE_PRESET_OPTIONS.find((option) => option.id === statsDatePreset)
-                              ?.label ?? "Custom"
-                          }
-                          <span className="backtest-date-preset-chevron" aria-hidden="true">
-                            {statsDatePresetDdOpen ? "▴" : "▾"}
-                          </span>
-                        </button>
-                        {statsDatePresetDdOpen ? (
-                          <div
-                            className="backtest-date-preset-dd"
-                            role="listbox"
-                            aria-label="Backtest date preset options"
-                          >
-                            {BACKTEST_DATE_PRESET_OPTIONS.map((option) => (
-                              <button
-                                key={option.id}
-                                type="button"
-                                role="option"
-                                aria-selected={statsDatePreset === option.id}
-                                className={`backtest-date-preset-option${
-                                  statsDatePreset === option.id ? " active" : ""
-                                }`}
-                                onClick={() => {
-                                  setStatsDatePreset(option.id);
-                                  setStatsDatePresetDdOpen(false);
-                                  if (option.id === "custom") {
-                                    return;
-                                  }
-                                  const range = buildBacktestDateRangeFromPreset(option.id);
-                                  setStatsDateStart(range.startDate);
-                                  setStatsDateEnd(range.endDate);
-                                }}
-                              >
-                                {option.label}
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-
-                      <div ref={statsTimeframeDdRef} className="stats-timeframe-wrap main-settings-range-item">
-                        <button
-                          type="button"
-                          className="stats-timeframe-trigger"
-                          onClick={() => {
-                            setStatsTimeframeDdOpen((open) => !open);
-                            setStatsDatePresetDdOpen(false);
-                          }}
-                          aria-haspopup="listbox"
-                          aria-expanded={statsTimeframeDdOpen}
-                          aria-label="Select backtest timeframe"
-                        >
-                          {TIMEFRAME_DISPLAY_LABELS[selectedBacktestTimeframe]}
-                          <span className="stats-timeframe-chevron" aria-hidden="true">
-                            {statsTimeframeDdOpen ? "▴" : "▾"}
-                          </span>
-                        </button>
-                        {statsTimeframeDdOpen ? (
-                          <div
-                            className="stats-timeframe-dd"
-                            role="listbox"
-                            aria-label="Backtest timeframe options"
-                          >
-                            {timeframes.map((tf) => (
-                              <button
-                                key={tf}
-                                type="button"
-                                role="option"
-                                aria-selected={selectedBacktestTimeframe === tf}
-                                className={`stats-timeframe-option${selectedBacktestTimeframe === tf ? " active" : ""}`}
-                                onClick={() => {
-                                  setSelectedBacktestTimeframe(tf);
-                                  setStatsTimeframeDdOpen(false);
-                                }}
-                              >
-                                {TIMEFRAME_DISPLAY_LABELS[tf]}
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-
-                      <button
-                        type="button"
-                        className={`main-settings-minute-precise-btn${minutePreciseEnabled ? " active" : ""}`}
-                        onClick={() => setMinutePreciseEnabled((enabled) => !enabled)}
-                        aria-pressed={minutePreciseEnabled}
-                        aria-label={`Minute Precise ${minutePreciseEnabled ? "enabled" : "disabled"}`}
-                      >
-                        Minute Precise · {minutePreciseEnabled ? "ON" : "OFF"}
-                      </button>
-                    </div>
-
-                    <div className="backtest-toolbar-note backtest-toolbar-note-stack">
-                      <span className="backtest-toolbar-note-range">
-                        Start Date: <strong>{backtestDateRangeStartLabel}</strong> · End Date:{" "}
-                        <strong>{backtestDateRangeEndLabel}</strong>
-                      </span>
-                      <span className="backtest-toolbar-note-meta">
-                        Total Live Trades: <strong>{backtestTrades.length.toLocaleString("en-US")}</strong> ·
-                        {" "}Total Library Trades:{" "}
-                        <strong>{backtestLibraryCandidateTrades.length.toLocaleString("en-US")}</strong>
-                      </span>
-                    </div>
-                  </div>
-
                   <div className="main-settings-kpi-strip" aria-label="AI rolling statistics">
                     <div className="main-settings-kpi-strip-track">
                       {[0, 1].map((sequenceIndex) => (
