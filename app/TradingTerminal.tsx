@@ -7616,7 +7616,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 }
 
                 const actualClosedVolume = recentVolumeByStart.get(pendingStartMs);
-                if (!Number.isFinite(actualClosedVolume) || actualClosedVolume <= 0) {
+                if (
+                  typeof actualClosedVolume !== "number" ||
+                  !Number.isFinite(actualClosedVolume) ||
+                  actualClosedVolume <= 0
+                ) {
                   continue;
                 }
 
