@@ -1125,14 +1125,17 @@ button {
 
 .backtest-stats-range-main {
   width: 100%;
+  margin-left: 0;
+  justify-content: flex-start;
 }
 
 .backtest-date-preset-row {
+  flex: 1 1 100%;
   width: 100%;
-  margin-left: auto;
+  margin-left: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 0.45rem;
 }
 
@@ -4832,6 +4835,29 @@ button {
   .backtest-card-head {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .backtest-date-preset-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.32rem;
+  }
+
+  .backtest-date-preset-wrap {
+    width: 100%;
+  }
+
+  .backtest-date-preset-trigger {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .backtest-date-preset-dd {
+    left: 0;
+    right: auto;
+    min-width: min(100%, 220px);
+    width: max-content;
+    max-width: 100%;
   }
 
   .backtest-search {

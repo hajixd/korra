@@ -2221,7 +2221,7 @@ const fetchHistoryApiCandles = async (timeframe: Timeframe, count: number): Prom
     count: String(count)
   });
 
-  const response = await fetch(`/api/clickhouse/candles?${params.toString()}`, {
+  const response = await fetch(`/api/history/candles?${params.toString()}`, {
     cache: "no-store"
   });
 
@@ -13346,57 +13346,57 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         All
                       </button>
                     )}
-                  </div>
-                  <div className="backtest-date-preset-row">
-                    <span className="backtest-date-preset-label">Preset</span>
-                    <div ref={statsDatePresetDdRef} className="backtest-date-preset-wrap">
-                      <button
-                        type="button"
-                        className="backtest-date-preset-trigger"
-                        onClick={() => setStatsDatePresetDdOpen((open) => !open)}
-                        aria-haspopup="listbox"
-                        aria-expanded={statsDatePresetDdOpen}
-                        aria-label="Select backtest date preset"
-                      >
-                        {
-                          BACKTEST_DATE_PRESET_OPTIONS.find((option) => option.id === statsDatePreset)
-                            ?.label ?? "Custom"
-                        }
-                        <span className="backtest-date-preset-chevron" aria-hidden="true">
-                          {statsDatePresetDdOpen ? "▴" : "▾"}
-                        </span>
-                      </button>
-                      {statsDatePresetDdOpen ? (
-                        <div
-                          className="backtest-date-preset-dd"
-                          role="listbox"
-                          aria-label="Backtest date preset options"
+                    <div className="backtest-date-preset-row">
+                      <span className="backtest-date-preset-label">Preset</span>
+                      <div ref={statsDatePresetDdRef} className="backtest-date-preset-wrap">
+                        <button
+                          type="button"
+                          className="backtest-date-preset-trigger"
+                          onClick={() => setStatsDatePresetDdOpen((open) => !open)}
+                          aria-haspopup="listbox"
+                          aria-expanded={statsDatePresetDdOpen}
+                          aria-label="Select backtest date preset"
                         >
-                          {BACKTEST_DATE_PRESET_OPTIONS.map((option) => (
-                            <button
-                              key={option.id}
-                              type="button"
-                              role="option"
-                              aria-selected={statsDatePreset === option.id}
-                              className={`backtest-date-preset-option${
-                                statsDatePreset === option.id ? " active" : ""
-                              }`}
-                              onClick={() => {
-                                setStatsDatePreset(option.id);
-                                setStatsDatePresetDdOpen(false);
-                                if (option.id === "custom") {
-                                  return;
-                                }
-                                const range = buildBacktestDateRangeFromPreset(option.id);
-                                setStatsDateStart(range.startDate);
-                                setStatsDateEnd(range.endDate);
-                              }}
-                            >
-                              {option.label}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
+                          {
+                            BACKTEST_DATE_PRESET_OPTIONS.find((option) => option.id === statsDatePreset)
+                              ?.label ?? "Custom"
+                          }
+                          <span className="backtest-date-preset-chevron" aria-hidden="true">
+                            {statsDatePresetDdOpen ? "▴" : "▾"}
+                          </span>
+                        </button>
+                        {statsDatePresetDdOpen ? (
+                          <div
+                            className="backtest-date-preset-dd"
+                            role="listbox"
+                            aria-label="Backtest date preset options"
+                          >
+                            {BACKTEST_DATE_PRESET_OPTIONS.map((option) => (
+                              <button
+                                key={option.id}
+                                type="button"
+                                role="option"
+                                aria-selected={statsDatePreset === option.id}
+                                className={`backtest-date-preset-option${
+                                  statsDatePreset === option.id ? " active" : ""
+                                }`}
+                                onClick={() => {
+                                  setStatsDatePreset(option.id);
+                                  setStatsDatePresetDdOpen(false);
+                                  if (option.id === "custom") {
+                                    return;
+                                  }
+                                  const range = buildBacktestDateRangeFromPreset(option.id);
+                                  setStatsDateStart(range.startDate);
+                                  setStatsDateEnd(range.endDate);
+                                }}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 </div>
