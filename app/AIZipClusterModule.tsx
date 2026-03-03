@@ -51,6 +51,23 @@ const ensureThreeRuntimeLoaded = async () => {
   await threeRuntimeLoadPromise;
 };
 
+const MONTH_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
 const tradeNum = (value) => {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (typeof value === "string") {
@@ -118,26 +135,154 @@ const isStopExitReason = (value) => {
   );
 };
 
+const TRADE_ENTRY_INDEX_KEYS = [
+  "entryIndex",
+  "entryIdx",
+  "entryBarIndex",
+  "entryBar",
+  "entryCandleIndex",
+  "entry_i",
+  "signalIndex",
+  "openIndex",
+];
+
+const TRADE_EXIT_INDEX_KEYS = [
+  "exitIndex",
+  "exitIdx",
+  "exitBarIndex",
+  "exitBar",
+  "exitCandleIndex",
+  "exit_i",
+  "closeIndex",
+  "endIndex",
+];
+
+const parseTradeTimeMs = (value) => {
+  if (value == null) return null;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    return value > 1e12 ? Math.round(value) : Math.round(value * 1000);
+  }
+
+  const text = String(value).trim();
+  if (!text) return null;
+
+  if (/^[+-]?\d+(\.\d+)?$/.test(text)) {
+    const asNum = Number(text);
+    if (Number.isFinite(asNum)) {
+      return asNum > 1e12 ? Math.round(asNum) : Math.round(asNum * 1000);
+    }
+  }
+
+  const d = new Date(text);
+  const ms = d.getTime();
+  return Number.isFinite(ms) ? ms : null;
+};
+
+const candleTimeMs = (candle) =>
+  parseTradeTimeMs(
+    candle?.t ??
+      candle?.time ??
+      candle?.timestamp ??
+      candle?.ts ??
+      candle?.date ??
+      candle?.datetime
+  );
+
+const clampTradeIndex = (rawIndex, candleCount) => {
+  const index = tradeNum(rawIndex);
+  if (index == null || candleCount <= 0) return null;
+  return Math.max(0, Math.min(candleCount - 1, Math.round(index)));
+};
+
+const findNearestTradeIndexByTime = (candles, targetMs) => {
+  if (!Array.isArray(candles) || candles.length === 0 || targetMs == null) {
+    return null;
+  }
+  let bestIdx = null;
+  let bestDist = Infinity;
+  for (let i = 0; i < candles.length; i++) {
+    const ms = candleTimeMs(candles[i]);
+    if (ms == null) continue;
+    const dist = Math.abs(ms - targetMs);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+};
+
+const resolveTradeCandleIndices = (
+  trade,
+  candles,
+  options?: { fallbackEntryToStart?: boolean; fallbackExitToEntry?: boolean }
+) => {
+  const list = Array.isArray(candles) ? candles : [];
+  const n = list.length;
+  if (n === 0) return { entryIndex: null, exitIndex: null };
+
+  const fallbackEntryToStart = options?.fallbackEntryToStart ?? true;
+  const fallbackExitToEntry = options?.fallbackExitToEntry ?? false;
+  const safeTrade = (trade as any) ?? {};
+
+  let entryIndex = null;
+  for (const key of TRADE_ENTRY_INDEX_KEYS) {
+    const idx = clampTradeIndex(safeTrade[key], n);
+    if (idx != null) {
+      entryIndex = idx;
+      break;
+    }
+  }
+
+  let exitIndex = null;
+  for (const key of TRADE_EXIT_INDEX_KEYS) {
+    const idx = clampTradeIndex(safeTrade[key], n);
+    if (idx != null) {
+      exitIndex = idx;
+      break;
+    }
+  }
+
+  const entryTimeMs = parseTradeTimeMs(
+    safeTrade.entryTime ??
+      safeTrade.entryTs ??
+      safeTrade.openTime ??
+      safeTrade.time ??
+      safeTrade.timestamp
+  );
+  const exitTimeMs = parseTradeTimeMs(
+    safeTrade.exitTime ??
+      safeTrade.exitTs ??
+      safeTrade.closeTime ??
+      safeTrade.endTime
+  );
+
+  if (entryIndex == null) {
+    entryIndex = findNearestTradeIndexByTime(list, entryTimeMs);
+  }
+  if (exitIndex == null && exitTimeMs != null) {
+    exitIndex = findNearestTradeIndexByTime(list, exitTimeMs);
+  }
+
+  if (entryIndex == null && fallbackEntryToStart) {
+    entryIndex = 0;
+  }
+  if (exitIndex == null && fallbackExitToEntry && entryIndex != null) {
+    exitIndex = entryIndex;
+  }
+
+  return { entryIndex, exitIndex };
+};
+
 const resolveTradePnlSnapshot = (trade, dollarsPerMove, candles, tpDist, slDist) => {
   const safeTrade = trade ?? {};
   const dir = inferTradeDirection(safeTrade);
   const candleList = Array.isArray(candles) ? candles : [];
-  const clampIndex = (rawIndex) => {
-    if (!candleList.length) return null;
-    const index = tradeNum(rawIndex);
-    if (index == null) return null;
-    return Math.max(0, Math.min(candleList.length - 1, Math.round(index)));
-  };
-
-  const entryIndex = clampIndex(
-    (safeTrade as any).entryIndex ??
-      (safeTrade as any).signalIndex ??
-      (safeTrade as any).openIndex
-  );
-  const exitIndex = clampIndex(
-    (safeTrade as any).exitIndex ??
-      (safeTrade as any).closeIndex ??
-      (safeTrade as any).endIndex
+  const { entryIndex, exitIndex } = resolveTradeCandleIndices(
+    safeTrade,
+    candleList,
+    { fallbackEntryToStart: false, fallbackExitToEntry: false }
   );
   const entryCandle = entryIndex != null ? candleList[entryIndex] : null;
   const exitCandle = exitIndex != null ? candleList[exitIndex] : null;
@@ -347,13 +492,27 @@ function TradeDetailsModalImpl({
     return minutesBetween((trade as any).entryTime, endT, parseMode) ?? null;
   }, [trade, parseMode]);
 
+  const resolvedTradeIndices = useMemo(
+    () =>
+      resolveTradeCandleIndices(trade, candles, {
+        fallbackEntryToStart: false,
+        fallbackExitToEntry: false,
+      }),
+    [trade, candles]
+  );
+
   const pathStats = useMemo(() => {
-    const a = Number((trade as any).entryIndex ?? -1);
-    const b = Number((trade as any).exitIndex ?? -1);
-    if (!candles?.length || a < 0) return null;
+    const a = resolvedTradeIndices.entryIndex;
+    const b = resolvedTradeIndices.exitIndex;
+    if (!candles?.length || a == null || a < 0) return null;
 
     const start = clampInt(a, 0, candles.length - 1);
-    const end = b >= 0 ? clampInt(b, 0, candles.length - 1) : start;
+    const end =
+      b != null
+        ? clampInt(b, 0, candles.length - 1)
+        : (trade as any).isOpen
+          ? candles.length - 1
+          : start;
 
     const ep = entryPrice;
     if (!Number.isFinite(ep)) return null;
@@ -368,9 +527,9 @@ function TradeDetailsModalImpl({
 
     for (let i = start; i <= end; i++) {
       const c: any = candles[i];
-      const hi = num(c?.high);
-      const lo = num(c?.low);
-      const close = num(c?.close);
+      const hi = num(c?.h ?? c?.high ?? c?.c ?? c?.close ?? c?.o ?? c?.open);
+      const lo = num(c?.l ?? c?.low ?? c?.c ?? c?.close ?? c?.o ?? c?.open);
+      const close = num(c?.c ?? c?.close ?? c?.o ?? c?.open);
 
       const hiPx = Number.isFinite(hi) ? hi : close;
       const loPx = Number.isFinite(lo) ? lo : close;
@@ -413,7 +572,16 @@ function TradeDetailsModalImpl({
       peak,
       trough,
     };
-  }, [trade, candles, dollarsPerMove, entryPrice, dir, tpPrice, slPrice]);
+  }, [
+    resolvedTradeIndices,
+    candles,
+    trade,
+    dollarsPerMove,
+    entryPrice,
+    dir,
+    tpPrice,
+    slPrice,
+  ]);
 
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -929,78 +1097,13 @@ function TradeCandlestickChartSVG({
   const entrySide = isLong ? "Buy" : "Sell";
   const exitSide = isLong ? "Sell" : "Buy";
 
-  // Index resolution
-  const resolveIdx = (obj: any, keys: string[]) => {
-    for (const k of keys) {
-      const v = num(obj?.[k]);
-      if (v != null) return Math.max(0, Math.min(N - 1, Math.round(v)));
-    }
-    return null;
-  };
-
-  const entryIdxDirect =
-    resolveIdx(trade, [
-      "entryIndex",
-      "entryIdx",
-      "entryBarIndex",
-      "entryBar",
-      "entryCandleIndex",
-      "entry_i",
-    ]) ?? null;
-  const exitIdxDirect =
-    resolveIdx(trade, [
-      "exitIndex",
-      "exitIdx",
-      "exitBarIndex",
-      "exitBar",
-      "exitCandleIndex",
-      "exit_i",
-    ]) ?? null;
-
-  // Time-based fallback
-  const parseTime = (t: any) => {
-    if (t == null) return null;
-    if (typeof t === "number") return t;
-    const s = String(t);
-    const d = new Date(s);
-    const ms = d.getTime();
-    return Number.isFinite(ms) ? ms : null;
-  };
-  const entryT = parseTime(
-    (trade as any)?.entryTime ??
-      (trade as any)?.entryTs ??
-      (trade as any)?.openTime
+  const resolvedIndices = React.useMemo(
+    () => resolveTradeCandleIndices(trade, baseData),
+    [trade, baseData]
   );
-  const exitT = parseTime(
-    (trade as any)?.exitTime ??
-      (trade as any)?.exitTs ??
-      (trade as any)?.closeTime
-  );
-
-  const candleTimeMs = (c: any) =>
-    parseTime(
-      c?.t ?? c?.time ?? c?.timestamp ?? c?.ts ?? c?.date ?? c?.datetime
-    );
-
-  const findNearestIdxByTime = (target: number | null) => {
-    if (target == null || N === 0) return null;
-    let bestI = 0;
-    let bestD = Infinity;
-    for (let i = 0; i < N; i++) {
-      const tm = candleTimeMs(baseData[i]);
-      if (tm == null) continue;
-      const d = Math.abs(tm - target);
-      if (d < bestD) {
-        bestD = d;
-        bestI = i;
-      }
-    }
-    return Number.isFinite(bestD) ? bestI : null;
-  };
-
-  const entryIdx = entryIdxDirect ?? findNearestIdxByTime(entryT) ?? 0;
-  const exitIdx =
-    exitIdxDirect ?? (exitT != null ? findNearestIdxByTime(exitT) : null);
+  const entryIdx = resolvedIndices.entryIndex ?? 0;
+  const exitIdx = resolvedIndices.exitIndex;
+  const candleMs = (c: any) => candleTimeMs(c);
 
   // Prices
   const entryPrice =
@@ -1237,7 +1340,7 @@ function TradeCandlestickChartSVG({
     if (!c) return;
     e.preventDefault();
     const { o, h, l, c: cl } = ohlc(c);
-    const tm = candleTimeMs(c);
+    const tm = candleMs(c);
     setCtxMenu({ clientX: e.clientX, clientY: e.clientY, candle: { o, h, l, c: cl, tm: tm ?? null, idx } });
   };
 
@@ -1363,7 +1466,7 @@ function TradeCandlestickChartSVG({
     const c = baseData[hoverI];
     if (!c) return null;
     const { o, h, l, c: cl } = ohlc(c);
-    const tm = candleTimeMs(c);
+    const tm = candleMs(c);
     return { idx: hoverI, o, h, l, c: cl, tm };
   }, [hoverI, baseData, N]);
 
@@ -1404,7 +1507,7 @@ function TradeCandlestickChartSVG({
           : Math.round((k * (viewData.length - 1)) / (maxTicks - 1));
       const point = viewData[idxInView];
       if (!point) continue;
-      const ms = candleTimeMs(point.c);
+      const ms = candleMs(point.c);
       const label = axisTimeLabel(ms);
       if (!label) continue;
       const x = xForIndex(point.i);
@@ -1968,32 +2071,12 @@ function TradeCandlestickChartLightweight({
   const intervalMin = parseIntervalToMinutes(interval ?? "") ?? 15;
   const intervalSec = Math.max(60, Math.round(intervalMin * 60));
 
-  const resolveIdx = (obj: any, keys: string[]) => {
-    for (const k of keys) {
-      const v = num(obj?.[k]);
-      if (v != null) return Math.max(0, Math.min(N - 1, Math.round(v)));
-    }
-    return null;
-  };
-
-  const entryIdx =
-    resolveIdx(trade, [
-      "entryIndex",
-      "entryIdx",
-      "entryBarIndex",
-      "entryBar",
-      "entryCandleIndex",
-      "entry_i",
-    ]) ?? 0;
-  const exitIdx =
-    resolveIdx(trade, [
-      "exitIndex",
-      "exitIdx",
-      "exitBarIndex",
-      "exitBar",
-      "exitCandleIndex",
-      "exit_i",
-    ]) ?? null;
+  const resolvedIndices = React.useMemo(
+    () => resolveTradeCandleIndices(trade, baseData),
+    [trade, baseData]
+  );
+  const entryIdx = resolvedIndices.entryIndex ?? 0;
+  const exitIdx = resolvedIndices.exitIndex;
 
   const entryTimeSec = toSec(
     (trade as any)?.entryTime ??
@@ -2022,10 +2105,18 @@ function TradeCandlestickChartLightweight({
 
     for (let i = 0; i < N; i++) {
       const c = baseData[i] || {};
-      const o = num(c?.o ?? c?.open);
-      const h = num(c?.h ?? c?.high);
-      const l = num(c?.l ?? c?.low);
-      const cl = num(c?.c ?? c?.close);
+      const openVal = num(c?.o ?? c?.open);
+      const closeVal = num(c?.c ?? c?.close ?? openVal);
+      const o = openVal ?? closeVal;
+      const cl = closeVal ?? openVal;
+      const highVal = num(c?.h ?? c?.high);
+      const lowVal = num(c?.l ?? c?.low);
+      const h =
+        highVal ??
+        (o != null && cl != null ? Math.max(o, cl) : null);
+      const l =
+        lowVal ??
+        (o != null && cl != null ? Math.min(o, cl) : null);
       if (o == null || h == null || l == null || cl == null) continue;
       const t = hasTimes ? candleTimeSec(c) : origin + i * intervalSec;
       if (t == null) continue;
@@ -2033,6 +2124,37 @@ function TradeCandlestickChartLightweight({
     }
     return out;
   }, [baseData, N, hasTimes, entryTimeSec, entryIdx, intervalSec]);
+
+  const barByOriginalIndex = React.useMemo(() => {
+    const m = new Map<number, any>();
+    for (const bar of data) {
+      if (bar && Number.isFinite(Number(bar.__i))) {
+        m.set(Number(bar.__i), bar);
+      }
+    }
+    return m;
+  }, [data]);
+
+  const barAtOrNearestIndex = React.useCallback(
+    (targetIdx: number | null) => {
+      if (targetIdx == null || !data.length) return null;
+      const direct = barByOriginalIndex.get(targetIdx);
+      if (direct) return direct;
+      let best = null;
+      let bestDist = Infinity;
+      for (const bar of data) {
+        const i = Number(bar?.__i);
+        if (!Number.isFinite(i)) continue;
+        const dist = Math.abs(i - targetIdx);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = bar;
+        }
+      }
+      return best;
+    },
+    [data, barByOriginalIndex]
+  );
 
   const priceSnapshot = React.useMemo(
     () => resolveTradePnlSnapshot(trade, 1, baseData, tpDist, slDist),
@@ -2050,8 +2172,13 @@ function TradeCandlestickChartLightweight({
         (trade as any)?.entry ??
         (trade as any)?.openPrice
     ) ??
-    (data[Math.min(entryIdx, Math.max(0, data.length - 1))]
-      ? num(data[Math.min(entryIdx, data.length - 1)].open)
+    (entryIdx != null
+      ? num(
+          baseData[entryIdx]?.o ??
+            baseData[entryIdx]?.open ??
+            baseData[entryIdx]?.c ??
+            baseData[entryIdx]?.close
+        )
       : null);
 
   const exitPrice =
@@ -2061,8 +2188,8 @@ function TradeCandlestickChartLightweight({
         (trade as any)?.exit ??
         (trade as any)?.closePrice
     ) ??
-    (exitIdx != null && data[Math.min(exitIdx, Math.max(0, data.length - 1))]
-      ? num(data[Math.min(exitIdx, data.length - 1)].close)
+    (exitIdx != null
+      ? num(baseData[exitIdx]?.c ?? baseData[exitIdx]?.close)
       : null);
 
   const tp = priceSnapshot.tpPrice;
@@ -2215,11 +2342,8 @@ function TradeCandlestickChartLightweight({
     if (!series) return;
     const LineStyle = lw?.LineStyle;
 
-    const entryT = data[Math.min(entryIdx, Math.max(0, data.length - 1))]?.time;
-    const exitT =
-      exitIdx != null
-        ? data[Math.min(exitIdx, Math.max(0, data.length - 1))]?.time
-        : null;
+    const entryT = barAtOrNearestIndex(entryIdx)?.time;
+    const exitT = barAtOrNearestIndex(exitIdx)?.time;
 
     const markers: any[] = [];
     if (entryT != null) {
@@ -2272,7 +2396,19 @@ function TradeCandlestickChartLightweight({
     addLine(entryPrice, "#ffffff", "Entry", LineStyle ? LineStyle.Solid : 0);
     addLine(tp, "#34d399", "TP", LineStyle ? LineStyle.Dashed : 2);
     addLine(sl, "#fb7185", "SL", LineStyle ? LineStyle.Dashed : 2);
-  }, [lw, data, entryIdx, exitIdx, isLong, entrySide, exitSide, entryPrice, tp, sl]);
+  }, [
+    lw,
+    data,
+    entryIdx,
+    exitIdx,
+    barAtOrNearestIndex,
+    isLong,
+    entrySide,
+    exitSide,
+    entryPrice,
+    tp,
+    sl,
+  ]);
 
   React.useEffect(() => {
     const chart = chartRef.current;
@@ -2280,20 +2416,20 @@ function TradeCandlestickChartLightweight({
     if (lastTradeViewKeyRef.current === tradeViewKey) return;
     lastTradeViewKeyRef.current = tradeViewKey;
 
-    const safeStart = Math.min(initialStart, Math.max(0, data.length - 1));
+    const safeStart = Math.min(initialStart, Math.max(0, N - 1));
     const safeEnd = Math.min(
       Math.max(safeStart, initialEnd),
-      Math.max(0, data.length - 1)
+      Math.max(0, N - 1)
     );
-    const startT = data[safeStart]?.time;
-    const endT = data[safeEnd]?.time;
+    const startT = barAtOrNearestIndex(safeStart)?.time;
+    const endT = barAtOrNearestIndex(safeEnd)?.time;
 
     if (startT != null && endT != null && chart.timeScale().setVisibleRange) {
       chart.timeScale().setVisibleRange({ from: startT, to: endT });
     } else {
       chart.timeScale().fitContent();
     }
-  }, [data, initialStart, initialEnd, tradeViewKey]);
+  }, [data, N, initialStart, initialEnd, tradeViewKey, barAtOrNearestIndex]);
 
   React.useEffect(() => {
     if (!ctxMenu) return;
@@ -12317,28 +12453,6 @@ export function ClusterMap({
     "Library" | "Live" | "All"
   >("Library");
   const [viewModel, setViewModel] = useState("All"); // All | model label
-
-  const MONTH_SHORT = useMemo(
-    () => [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
-    ],
-    []
-  );
-  const DOW_SHORT = useMemo(
-    () => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
-    []
-  );
 
   const viewOpts = useMemo(() => {
     const sessSet = new Set<string>();
