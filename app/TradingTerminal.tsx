@@ -2258,9 +2258,10 @@ const fetchHybridHistoryCandles = async (
   targetBars: number,
   recentOneMinutePromise?: Promise<Candle[]>
 ): Promise<Candle[]> => {
-  const recentTimeframeCandlesPromise = fetchMarketCandles(timeframe, LIVE_MARKET_SYNC_LIMIT).catch(
-    () => []
-  );
+  const recentTimeframeCandlesPromise = fetchMarketCandles(
+    timeframe,
+    Math.min(targetBars, MARKET_MAX_HISTORY_CANDLES)
+  ).catch(() => []);
 
   try {
     const historyCandles = await fetchHistoryApiCandles(
@@ -13396,13 +13397,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     </div>
                   </div>
                 </div>
-                <div className="backtest-toolbar-note backtest-toolbar-note-split">
+                <div className="backtest-toolbar-note backtest-toolbar-note-stack">
                   <span className="backtest-toolbar-note-range">
                     Start Date: <strong>{backtestDateRangeStartLabel}</strong> · End Date:{" "}
                     <strong>{backtestDateRangeEndLabel}</strong>
                   </span>
-                  <span className="backtest-toolbar-note-count">
-                    Visible trades: <strong>{backtestTrades.length}</strong>
+                  <span className="backtest-toolbar-note-meta">
+                    Total Trades: <strong>{backtestTrades.length}</strong> · Total Libraries:{" "}
+                    <strong>{appliedBacktestSettings.selectedAiLibraries.length}</strong>
                   </span>
                 </div>
               </div>

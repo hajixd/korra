@@ -15,7 +15,7 @@ const ALLOWED_PAIRS = new Set([
   "SPX500_USD",
   "BTC_USD"
 ]);
-const MAX_UPSTREAM_LIMIT = 2000;
+const MAX_UPSTREAM_LIMIT = 10000;
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
