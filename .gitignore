@@ -21,8 +21,7 @@ pnpm-debug.log*
 # local render temp
 .render/
 
-# env files
-.env*
+
 
 # typescript
 *.tsbuildinfo
