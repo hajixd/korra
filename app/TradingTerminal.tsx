@@ -13904,7 +13904,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="backtest-card" style={{ padding: "0.85rem" }}>
                       <div className="ai-zip-section-title">AI Data &amp; Embedding</div>
                       <div style={{ display: "grid", gap: "0.55rem" }}>
-                        <div className="ai-zip-toggle-grid">
+                        <div className="ai-zip-toggle-grid ai-zip-data-grid">
                           <button
                             type="button"
                             className={`ai-zip-button ${selectedAiModelCount > 0 ? "active" : ""}`}
@@ -13928,18 +13928,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           >
                             Libraries ({selectedAiLibraryCount})
                           </button>
+                          <button
+                            type="button"
+                            className={`ai-zip-button toggle ${
+                              staticLibrariesClusters ? "active success" : ""
+                            }`}
+                            disabled={aiDisabled}
+                            onClick={() => setStaticLibrariesClusters((value) => !value)}
+                          >
+                            Static Library &amp; Clusters {staticLibrariesClusters ? "· ON" : "· OFF"}
+                          </button>
                         </div>
-
-                        <button
-                          type="button"
-                          className={`ai-zip-button toggle ${
-                            staticLibrariesClusters ? "active success" : ""
-                          }`}
-                          disabled={aiDisabled}
-                          onClick={() => setStaticLibrariesClusters((value) => !value)}
-                        >
-                          Static Library &amp; Clusters {staticLibrariesClusters ? "· ON" : "· OFF"}
-                        </button>
 
                         <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
                           <div className="ai-zip-label">Chunk Size (bars)</div>
