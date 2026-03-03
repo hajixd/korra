@@ -1,7 +1,12 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import type {
+  CSSProperties,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactNode
+} from "react";
 import {
   startTransition,
   useCallback,
@@ -219,8 +224,8 @@ const WORKSPACE_PANEL_DEFAULT_WIDTH = 430;
 const WORKSPACE_PANEL_MAX_WIDTH = 980;
 const WORKSPACE_CHART_MIN_WIDTH = 360;
 
-const buildMt5AccountId = (login: string, server: string) => {
-  return `${login.trim().toLowerCase()}::${server.trim().toLowerCase()}`;
+const buildMt5AccountRuntimeId = () => {
+  return `mt5-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 };
 
 const TIMEFRAME_DISPLAY_LABELS: Record<Timeframe, string> = {
@@ -5942,8 +5947,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [mt5LoginInput, setMt5LoginInput] = useState("");
   const [mt5PasswordInput, setMt5PasswordInput] = useState("");
   const [mt5ServerInput, setMt5ServerInput] = useState("");
+  const [mt5FormOpen, setMt5FormOpen] = useState(false);
+  const [mt5EditingAccountId, setMt5EditingAccountId] = useState<string | null>(null);
   const [mt5Accounts, setMt5Accounts] = useState<Mt5Account[]>([]);
   const [selectedMt5AccountId, setSelectedMt5AccountId] = useState<string | null>(null);
+  const [mt5ContextMenu, setMt5ContextMenu] = useState<{
+    accountId: string;
+    clientX: number;
+    clientY: number;
+  } | null>(null);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [selectedHistoryInteractionTick, setSelectedHistoryInteractionTick] = useState(0);
   const [showAllTradesOnChart, setShowAllTradesOnChart] = useState(false);
@@ -6194,27 +6206,78 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setSelectedMt5AccountId(mt5Accounts[0].id);
   }, [mt5Accounts, selectedMt5AccountId]);
 
-  const selectedMt5Account = useMemo(() => {
-    if (!selectedMt5AccountId) {
+  const mt5ContextAccount = useMemo(() => {
+    if (!mt5ContextMenu) {
       return null;
     }
 
-    return mt5Accounts.find((account) => account.id === selectedMt5AccountId) ?? null;
-  }, [mt5Accounts, selectedMt5AccountId]);
+    return mt5Accounts.find((account) => account.id === mt5ContextMenu.accountId) ?? null;
+  }, [mt5Accounts, mt5ContextMenu]);
+
+  useEffect(() => {
+    if (!mt5ContextMenu) {
+      return;
+    }
+
+    if (mt5Accounts.some((account) => account.id === mt5ContextMenu.accountId)) {
+      return;
+    }
+
+    setMt5ContextMenu(null);
+  }, [mt5Accounts, mt5ContextMenu]);
+
+  const handleShowMt5AddForm = useCallback(() => {
+    setMt5EditingAccountId(null);
+    setMt5LoginInput("");
+    setMt5PasswordInput("");
+    setMt5ServerInput("");
+    setMt5FormOpen(true);
+    setMt5ContextMenu(null);
+  }, []);
+
+  const handleEditMt5Account = useCallback(
+    (accountId: string) => {
+      const targetAccount = mt5Accounts.find((account) => account.id === accountId);
+
+      if (!targetAccount) {
+        return;
+      }
+
+      setSelectedMt5AccountId(accountId);
+      setMt5EditingAccountId(accountId);
+      setMt5LoginInput(targetAccount.login);
+      setMt5PasswordInput("");
+      setMt5ServerInput(targetAccount.server);
+      setMt5FormOpen(true);
+      setMt5ContextMenu(null);
+    },
+    [mt5Accounts]
+  );
 
   const handleConnectMt5Account = useCallback(() => {
     const nextLogin = mt5LoginInput.trim() || `Demo-${Date.now().toString().slice(-6)}`;
     const nextServer = mt5ServerInput.trim() || "Server Unspecified";
-    const nextId = buildMt5AccountId(nextLogin, nextServer);
 
-    setMt5Accounts((current) => {
-      const alreadyAdded = current.some((account) => account.id === nextId);
+    if (mt5EditingAccountId) {
+      setMt5Accounts((current) =>
+        current.map((account) => {
+          if (account.id !== mt5EditingAccountId) {
+            return account;
+          }
 
-      if (alreadyAdded) {
-        return current;
-      }
+          return {
+            ...account,
+            login: nextLogin,
+            server: nextServer,
+            status: "Disconnected"
+          };
+        })
+      );
+      setSelectedMt5AccountId(mt5EditingAccountId);
+    } else {
+      const nextId = buildMt5AccountRuntimeId();
 
-      return [
+      setMt5Accounts((current) => [
         {
           id: nextId,
           login: nextLogin,
@@ -6223,30 +6286,46 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           paused: false
         },
         ...current
-      ];
-    });
+      ]);
+      setSelectedMt5AccountId(nextId);
+    }
 
-    setSelectedMt5AccountId(nextId);
     setMt5LoginInput("");
     setMt5PasswordInput("");
-  }, [mt5LoginInput, mt5ServerInput]);
+    setMt5ServerInput("");
+    setMt5EditingAccountId(null);
+    setMt5FormOpen(false);
+    setMt5ContextMenu(null);
+  }, [mt5EditingAccountId, mt5LoginInput, mt5ServerInput]);
 
-  const handleRemoveMt5Account = useCallback(() => {
-    if (!selectedMt5AccountId) {
-      return;
-    }
+  const handleCancelMt5Form = useCallback(() => {
+    setMt5FormOpen(false);
+    setMt5EditingAccountId(null);
+    setMt5LoginInput("");
+    setMt5PasswordInput("");
+    setMt5ServerInput("");
+  }, []);
 
-    setMt5Accounts((current) => current.filter((account) => account.id !== selectedMt5AccountId));
-  }, [selectedMt5AccountId]);
+  const handleRemoveMt5Account = useCallback(
+    (accountId: string) => {
+      setMt5Accounts((current) => current.filter((account) => account.id !== accountId));
+      setMt5ContextMenu(null);
 
-  const handleToggleMt5Pause = useCallback(() => {
-    if (!selectedMt5AccountId) {
-      return;
-    }
+      if (mt5EditingAccountId === accountId) {
+        setMt5FormOpen(false);
+        setMt5EditingAccountId(null);
+        setMt5LoginInput("");
+        setMt5PasswordInput("");
+        setMt5ServerInput("");
+      }
+    },
+    [mt5EditingAccountId]
+  );
 
+  const handleToggleMt5Pause = useCallback((accountId: string) => {
     setMt5Accounts((current) =>
       current.map((account) => {
-        if (account.id !== selectedMt5AccountId) {
+        if (account.id !== accountId) {
           return account;
         }
 
@@ -6256,7 +6335,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         };
       })
     );
-  }, [selectedMt5AccountId]);
+    setMt5ContextMenu(null);
+  }, []);
+
+  const handleMt5AccountContextMenu = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>, accountId: string) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setSelectedMt5AccountId(accountId);
+      setMt5ContextMenu({
+        accountId,
+        clientX: event.clientX,
+        clientY: event.clientY
+      });
+    },
+    []
+  );
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -15859,122 +15953,172 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           <h2>Copy Trade</h2>
                         </div>
                       </div>
-                      <div className="copytrade-body">
-                        <div className="copytrade-hero">
-                          <strong>MT5 Account Manager</strong>
-                          <p>
-                            Accounts are stored locally for now. Connection status is intentionally
-                            fixed to Disconnected.
-                          </p>
-                        </div>
-
-                        <div className="copytrade-form" aria-label="MT5 credentials form">
-                          <label className="copytrade-field">
-                            <span>MT5 Login</span>
-                            <input
-                              className="copytrade-input"
-                              type="text"
-                              name="mt5-login"
-                              placeholder="Account number"
-                              autoComplete="username"
-                              value={mt5LoginInput}
-                              onChange={(event) => setMt5LoginInput(event.target.value)}
-                            />
-                          </label>
-
-                          <label className="copytrade-field">
-                            <span>MT5 Password</span>
-                            <input
-                              className="copytrade-input"
-                              type="password"
-                              name="mt5-password"
-                              placeholder="Password"
-                              autoComplete="current-password"
-                              value={mt5PasswordInput}
-                              onChange={(event) => setMt5PasswordInput(event.target.value)}
-                            />
-                          </label>
-
-                          <label className="copytrade-field">
-                            <span>Server</span>
-                            <input
-                              className="copytrade-input"
-                              type="text"
-                              name="mt5-server"
-                              placeholder="Broker server"
-                              autoComplete="off"
-                              value={mt5ServerInput}
-                              onChange={(event) => setMt5ServerInput(event.target.value)}
-                            />
-                          </label>
-                        </div>
-
-                        <button
-                          type="button"
-                          className="panel-action-btn copytrade-submit"
-                          onClick={handleConnectMt5Account}
-                        >
-                          Connect to MT5
-                        </button>
-
+                      <div className="copytrade-body" onClick={() => setMt5ContextMenu(null)}>
                         <div className="copytrade-actions" role="group" aria-label="MT5 account actions">
                           <button
                             type="button"
                             className="panel-action-btn copytrade-action-btn"
-                            onClick={handleConnectMt5Account}
+                            onClick={handleShowMt5AddForm}
                           >
                             Add Account
                           </button>
-                          <button
-                            type="button"
-                            className="panel-action-btn copytrade-action-btn"
-                            onClick={handleRemoveMt5Account}
-                            disabled={!selectedMt5Account}
-                          >
-                            Remove Account
-                          </button>
-                          <button
-                            type="button"
-                            className="panel-action-btn copytrade-action-btn"
-                            onClick={handleToggleMt5Pause}
-                            disabled={!selectedMt5Account}
-                          >
-                            {selectedMt5Account?.paused ? "Resume" : "Pause"}
-                          </button>
                         </div>
+
+                        {mt5FormOpen ? (
+                          <div className="copytrade-form-shell">
+                            <div className="copytrade-form" aria-label="MT5 credentials form">
+                              <label className="copytrade-field">
+                                <span>MT5 Login</span>
+                                <input
+                                  className="copytrade-input"
+                                  type="text"
+                                  name="mt5-login"
+                                  placeholder="Account number"
+                                  autoComplete="username"
+                                  value={mt5LoginInput}
+                                  onChange={(event) => setMt5LoginInput(event.target.value)}
+                                />
+                              </label>
+
+                              <label className="copytrade-field">
+                                <span>MT5 Password</span>
+                                <input
+                                  className="copytrade-input"
+                                  type="password"
+                                  name="mt5-password"
+                                  placeholder="Password"
+                                  autoComplete="current-password"
+                                  value={mt5PasswordInput}
+                                  onChange={(event) => setMt5PasswordInput(event.target.value)}
+                                />
+                              </label>
+
+                              <label className="copytrade-field">
+                                <span>Server</span>
+                                <input
+                                  className="copytrade-input"
+                                  type="text"
+                                  name="mt5-server"
+                                  placeholder="Broker server"
+                                  autoComplete="off"
+                                  value={mt5ServerInput}
+                                  onChange={(event) => setMt5ServerInput(event.target.value)}
+                                />
+                              </label>
+                            </div>
+
+                            <div className="copytrade-form-actions">
+                              <button
+                                type="button"
+                                className="panel-action-btn copytrade-submit"
+                                onClick={handleConnectMt5Account}
+                              >
+                                {mt5EditingAccountId ? "Save Account" : "Connect to MT5"}
+                              </button>
+                              <button
+                                type="button"
+                                className="panel-action-btn copytrade-cancel-btn"
+                                onClick={handleCancelMt5Form}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
 
                         {mt5Accounts.length > 0 ? (
                           <ul className="copytrade-account-list" aria-label="MT5 accounts">
                             {mt5Accounts.map((account) => (
                               <li key={account.id}>
-                                <button
-                                  type="button"
+                                <div
                                   className={`copytrade-account-row ${
                                     selectedMt5AccountId === account.id ? "selected" : ""
                                   }`}
-                                  onClick={() => setSelectedMt5AccountId(account.id)}
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => {
+                                    setSelectedMt5AccountId(account.id);
+                                    setMt5ContextMenu(null);
+                                  }}
+                                  onContextMenu={(event) => handleMt5AccountContextMenu(event, account.id)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" || event.key === " ") {
+                                      event.preventDefault();
+                                      setSelectedMt5AccountId(account.id);
+                                      setMt5ContextMenu(null);
+                                    }
+                                  }}
                                 >
                                   <span className="copytrade-account-main">
                                     <strong>{account.login}</strong>
                                     <small>{account.server}</small>
                                   </span>
-                                  <span className="copytrade-account-badges">
-                                    <span className="copytrade-status-badge disconnected">
-                                      {account.status}
+
+                                  <span className="copytrade-account-right">
+                                    <span className="copytrade-account-badges">
+                                      <span className="copytrade-status-badge disconnected">
+                                        {account.status}
+                                      </span>
+                                      {account.paused ? (
+                                        <span className="copytrade-status-badge paused">Paused</span>
+                                      ) : null}
                                     </span>
-                                    {account.paused ? (
-                                      <span className="copytrade-status-badge paused">Paused</span>
-                                    ) : null}
+                                    <span className="copytrade-account-controls">
+                                      <button
+                                        type="button"
+                                        className="copytrade-mini-btn copytrade-mini-btn-play"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          handleToggleMt5Pause(account.id);
+                                        }}
+                                      >
+                                        {account.paused ? "Play" : "Pause"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="copytrade-mini-btn copytrade-mini-btn-edit"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          handleEditMt5Account(account.id);
+                                        }}
+                                      >
+                                        Edit
+                                      </button>
+                                    </span>
                                   </span>
-                                </button>
+                                </div>
                               </li>
                             ))}
                           </ul>
                         ) : (
-                          <p className="copytrade-note">
-                            No MT5 accounts yet. Press Connect to MT5 or Add Account to create one.
-                          </p>
+                          <p className="copytrade-note">No MT5 accounts yet. Press Add Account to begin.</p>
                         )}
+
+                        {mt5ContextMenu && mt5ContextAccount ? (
+                          <div
+                            className="copytrade-context-menu"
+                            style={{
+                              left: `${mt5ContextMenu.clientX}px`,
+                              top: `${mt5ContextMenu.clientY}px`
+                            }}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              className="copytrade-context-item"
+                              onClick={() => handleToggleMt5Pause(mt5ContextAccount.id)}
+                            >
+                              {mt5ContextAccount.paused ? "Resume" : "Pause"}
+                            </button>
+                            <button
+                              type="button"
+                              className="copytrade-context-item remove"
+                              onClick={() => handleRemoveMt5Account(mt5ContextAccount.id)}
+                            >
+                              Remove Account
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   ) : null}
