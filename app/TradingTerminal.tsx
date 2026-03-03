@@ -152,10 +152,14 @@ type AggressorPressureSnapshot = {
   updatedAtMs: number;
 };
 
+type TickDirectionTone = "up" | "down" | "neutral";
+
 type LiveQuoteSnapshot = {
   bid: number | null;
   ask: number | null;
   spread: number | null;
+  bidTone: TickDirectionTone;
+  askTone: TickDirectionTone;
   updatedAtMs: number;
 };
 
@@ -2351,7 +2355,6 @@ const CLICKHOUSE_MAX_HISTORY_CANDLES = 300_000;
 const MARKET_MAX_HISTORY_CANDLES = 25_000;
 const LIVE_MARKET_SYNC_LIMIT = 160;
 const CHART_STREAM_CONNECT_TIMEOUT_MS = 3500;
-const AGGRESSOR_PRESSURE_WINDOW_MS = 5 * 60_000;
 const AGGRESSOR_PRESSURE_UI_THROTTLE_MS = 220;
 const AGGRESSOR_PRESSURE_PEAK_DECAY = 0.996;
 const MARKET_API_KEY =
@@ -5417,6 +5420,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     bid: null,
     ask: null,
     spread: null,
+    bidTone: "neutral",
+    askTone: "neutral",
     updatedAtMs: 0
   }));
 
@@ -5489,6 +5494,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     lastUiUpdateMs: 0,
     peakPressure: 1,
     lastTickMs: 0
+  });
+  const liveQuoteStateRef = useRef({
+    bid: Number.NaN,
+    ask: Number.NaN
   });
   const selectedSurfaceTabRef = useRef<SurfaceTab>(selectedSurfaceTab);
   const statsRefreshOverlayModeRef = useRef<StatsRefreshOverlayMode>("idle");
@@ -6241,6 +6250,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     let streamReadyTimeoutId = 0;
     const key = selectedKey;
     const historyLimit = chartHistoryCountByTimeframe[selectedTimeframe];
+    const aggressorWindowMs = Math.max(60_000, timeframeMinutes[selectedTimeframe] * 60_000);
     const recentOneMinutePromise = fetchRecentOneMinuteCandles();
     const keyWasReady = Boolean(chartHistoryReadyByKeyRef.current[key]);
 
@@ -6372,10 +6382,38 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           const hasBid = Number.isFinite(bid);
           const hasAsk = Number.isFinite(ask);
           const spread = hasBid && hasAsk ? Math.max(0, ask - bid) : null;
+          const quoteState = liveQuoteStateRef.current;
+          const askTone: TickDirectionTone =
+            hasAsk && Number.isFinite(quoteState.ask)
+              ? ask > quoteState.ask
+                ? "up"
+                : ask < quoteState.ask
+                  ? "down"
+                  : "neutral"
+              : "neutral";
+          const bidTone: TickDirectionTone =
+            hasBid && Number.isFinite(quoteState.bid)
+              ? bid > quoteState.bid
+                ? "up"
+                : bid < quoteState.bid
+                  ? "down"
+                  : "neutral"
+              : "neutral";
+
+          if (hasAsk) {
+            quoteState.ask = ask;
+          }
+
+          if (hasBid) {
+            quoteState.bid = bid;
+          }
+
           setLiveQuote({
             bid: hasBid ? bid : null,
             ask: hasAsk ? ask : null,
             spread,
+            bidTone,
+            askTone,
             updatedAtMs: eventTime
           });
 
@@ -6407,7 +6445,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             pressureState.lastMid = price;
             pressureState.lastTickMs = eventTime;
 
-            const cutoffMs = eventTime - AGGRESSOR_PRESSURE_WINDOW_MS;
+            const cutoffMs = eventTime - aggressorWindowMs;
             while (pressurePoints.length > 0 && pressurePoints[0]!.timestampMs < cutoffMs) {
               pressurePoints.shift();
             }
@@ -7112,7 +7150,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     aggressorTotalPressure > 0
       ? ((aggressorPressure.buyPressure - aggressorPressure.sellPressure) / aggressorTotalPressure) * 100
       : 0;
-  const aggressorWindowLabel = `${Math.max(1, Math.round(AGGRESSOR_PRESSURE_WINDOW_MS / 60_000))}m`;
+  const aggressorWindowLabel = selectedTimeframe;
   const liveAskLabel = liveQuote.ask != null ? formatPrice(liveQuote.ask) : "--";
   const liveBidLabel = liveQuote.bid != null ? formatPrice(liveQuote.bid) : "--";
   const liveSpreadLabel = liveQuote.spread != null ? formatPrice(liveQuote.spread) : "--";
@@ -13456,15 +13494,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <div className="quote-overlay-grid">
                     <div className="quote-overlay-item">
                       <span>Ask</span>
-                      <strong>{liveAskLabel}</strong>
-                    </div>
-                    <div className="quote-overlay-item">
-                      <span>Bid</span>
-                      <strong>{liveBidLabel}</strong>
+                      <strong className={liveQuote.askTone}>{liveAskLabel}</strong>
                     </div>
                     <div className="quote-overlay-item">
                       <span>Spread</span>
-                      <strong>{liveSpreadLabel}</strong>
+                      <strong className="neutral">{liveSpreadLabel}</strong>
+                    </div>
+                    <div className="quote-overlay-item">
+                      <span>Bid</span>
+                      <strong className={liveQuote.bidTone}>{liveBidLabel}</strong>
                     </div>
                   </div>
                 </div>
