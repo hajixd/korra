@@ -223,10 +223,6 @@ const WORKSPACE_PANEL_MIN_WIDTH = 350;
 const WORKSPACE_PANEL_DEFAULT_WIDTH = 430;
 const WORKSPACE_PANEL_MAX_WIDTH = 980;
 const WORKSPACE_CHART_MIN_WIDTH = 360;
-const MOBILE_LAYOUT_BREAKPOINT_PX = 900;
-const TOUCH_LAYOUT_MAX_WIDTH_PX = 1180;
-const MOBILE_LAYOUT_USER_AGENT_RE =
-  /(android|iphone|ipod|ipad|mobile|iemobile|opera mini|blackberry|silk|kindle|tablet)/i;
 
 const buildMt5AccountRuntimeId = () => {
   return `mt5-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -5947,8 +5943,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [selectedSurfaceTab, setSelectedSurfaceTab] = useState<SurfaceTab>("chart");
   const [selectedBacktestTab, setSelectedBacktestTab] = useState<BacktestTab>("mainSettings");
   const [panelExpanded, setPanelExpanded] = useState(false);
-  const [isMobileLayout, setIsMobileLayout] = useState(false);
-  const [isStandaloneDisplay, setIsStandaloneDisplay] = useState(false);
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(WORKSPACE_PANEL_DEFAULT_WIDTH);
   const [isWorkspacePanelResizing, setIsWorkspacePanelResizing] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("active");
@@ -6541,87 +6535,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     lastAssistantDrawActionsRef.current = [];
   }, [clearAiChartAnnotations, clearDynamicAiChartAnnotations]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const root = document.documentElement;
-    const navWithStandalone = window.navigator as Navigator & { standalone?: boolean };
-    const mobileWidthQuery = window.matchMedia(
-      `(max-width: ${MOBILE_LAYOUT_BREAKPOINT_PX}px)`
-    );
-    const touchWidthQuery = window.matchMedia(
-      `(max-width: ${TOUCH_LAYOUT_MAX_WIDTH_PX}px) and (pointer: coarse)`
-    );
-    const coarsePointerQuery = window.matchMedia("(pointer: coarse)");
-    const hoverNoneQuery = window.matchMedia("(hover: none)");
-    const standaloneQuery = window.matchMedia("(display-mode: standalone)");
-
-    const addMediaListener = (query: MediaQueryList, callback: () => void) => {
-      if (typeof query.addEventListener === "function") {
-        query.addEventListener("change", callback);
-        return () => query.removeEventListener("change", callback);
-      }
-      const legacyCallback = callback as unknown as (this: MediaQueryList, ev: MediaQueryListEvent) => void;
-      query.addListener(legacyCallback);
-      return () => query.removeListener(legacyCallback);
-    };
-
-    const updateLayoutMode = () => {
-      const width = Math.max(
-        1,
-        Math.floor(window.visualViewport?.width ?? window.innerWidth)
-      );
-      const height = Math.max(
-        1,
-        Math.floor(window.visualViewport?.height ?? window.innerHeight)
-      );
-      root.style.setProperty("--app-vh", `${(height * 0.01).toFixed(4)}px`);
-      root.style.setProperty("--app-vw", `${(width * 0.01).toFixed(4)}px`);
-      root.style.setProperty("--app-height", `${height}px`);
-      root.style.setProperty("--app-width", `${width}px`);
-
-      const coarsePointer = coarsePointerQuery.matches;
-      const hoverNone = hoverNoneQuery.matches;
-      const touchCapable = (navWithStandalone.maxTouchPoints ?? 0) > 0;
-      const hasMobileUserAgent = MOBILE_LAYOUT_USER_AGENT_RE.test(
-        navWithStandalone.userAgent ?? ""
-      );
-
-      const mobileLayout =
-        mobileWidthQuery.matches ||
-        touchWidthQuery.matches ||
-        (hasMobileUserAgent && (touchCapable || coarsePointer || hoverNone));
-
-      setIsMobileLayout(mobileLayout);
-      setIsStandaloneDisplay(
-        standaloneQuery.matches || navWithStandalone.standalone === true
-      );
-    };
-
-    updateLayoutMode();
-    const removeMediaListeners = [
-      addMediaListener(mobileWidthQuery, updateLayoutMode),
-      addMediaListener(touchWidthQuery, updateLayoutMode),
-      addMediaListener(coarsePointerQuery, updateLayoutMode),
-      addMediaListener(hoverNoneQuery, updateLayoutMode),
-      addMediaListener(standaloneQuery, updateLayoutMode)
-    ];
-    window.addEventListener("resize", updateLayoutMode);
-    window.addEventListener("orientationchange", updateLayoutMode);
-    window.visualViewport?.addEventListener("resize", updateLayoutMode);
-
-    return () => {
-      for (const removeListener of removeMediaListeners) {
-        removeListener();
-      }
-      window.removeEventListener("resize", updateLayoutMode);
-      window.removeEventListener("orientationchange", updateLayoutMode);
-      window.visualViewport?.removeEventListener("resize", updateLayoutMode);
-    };
-  }, []);
-
   const clampWorkspacePanelWidth = useCallback((rawWidth: number): number => {
     const workspaceWidth =
       workspaceRef.current?.clientWidth ||
@@ -6635,7 +6548,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   const startWorkspacePanelResize = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => {
-      if (event.button !== 0 || !panelExpanded || isMobileLayout) {
+      if (event.button !== 0 || !panelExpanded) {
         return;
       }
 
@@ -6667,7 +6580,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       window.addEventListener("pointerup", stopResizing);
       window.addEventListener("pointercancel", stopResizing);
     },
-    [clampWorkspacePanelWidth, isMobileLayout, panelExpanded]
+    [clampWorkspacePanelWidth, panelExpanded]
   );
 
   useEffect(() => {
@@ -6695,14 +6608,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, []);
 
   const workspaceStyle = useMemo(() => {
-    if (!panelExpanded || isMobileLayout) {
+    if (!panelExpanded) {
       return undefined;
     }
 
     return {
       ["--workspace-panel-width" as string]: `${workspacePanelWidth}px`
     } as CSSProperties;
-  }, [isMobileLayout, panelExpanded, workspacePanelWidth]);
+  }, [panelExpanded, workspacePanelWidth]);
 
   const selectTradeOnChart = (tradeId: string, symbol: string) => {
     if (selectedHistoryId === tradeId) {
@@ -15459,15 +15372,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     `${appliedBacktestSettings.aiMode === "off" ? "AI Off" : "AI On"}`;
 
   return (
-    <main
-      className={[
-        "terminal",
-        isMobileLayout ? "mobile-layout" : "",
-        isStandaloneDisplay ? "standalone-layout" : ""
-      ]
-        .filter(Boolean)
-        .join(" ")}
-    >
+    <main className="terminal">
       <div className="surface-strip">
         <span className="site-tag surface-brand">Korra&apos;s Space</span>
         <nav className="surface-tabs" aria-label="primary views">
@@ -15708,9 +15613,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         <div className={`surface-view ${selectedSurfaceTab === "chart" ? "" : "hidden"}`}>
           <section
             ref={workspaceRef}
-            className={`workspace ${panelExpanded ? "" : "panel-collapsed"} ${
-              isMobileLayout ? "mobile-layout" : ""
-            }`}
+            className={`workspace ${panelExpanded ? "" : "panel-collapsed"}`}
             style={workspaceStyle}
           >
             <section className="chart-wrap">
@@ -15994,12 +15897,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               </div>
             </section>
 
-            <aside
-              className={`side-panel ${panelExpanded ? "expanded" : "collapsed"} ${
-                isMobileLayout ? "mobile-layout" : ""
-              }`}
-            >
-              {panelExpanded && !isMobileLayout ? (
+            <aside className={`side-panel ${panelExpanded ? "expanded" : "collapsed"}`}>
+              {panelExpanded ? (
                 <button
                   type="button"
                   className={`panel-resizer ${isWorkspacePanelResizing ? "active" : ""}`}
@@ -20173,7 +20072,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         )
       ) : null}
 
-      <footer className={`statusbar backtest-statusbar ${isMobileLayout ? "mobile-layout" : ""}`}>
+      <footer className="statusbar backtest-statusbar">
         {backtestHasRun ? (
           <div
             className="backtest-summary-strip backtest-summary-strip-compact"
