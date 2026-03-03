@@ -4881,9 +4881,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
-  background:
-    radial-gradient(circle at 100% 0%, rgba(122, 114, 92, 0.2), transparent 46%),
-    linear-gradient(180deg, rgba(18, 19, 24, 0.97) 0%, rgba(10, 11, 14, 0.97) 100%);
+  background: transparent;
 }
 
 .copytrade-field span {
@@ -4931,9 +4929,9 @@ button {
 
 .copytrade-input:focus {
   outline: none;
-  border-color: #9d8d5b;
+  border-color: #2f81ff;
   background: #1b1e26;
-  box-shadow: 0 0 0 1px rgba(157, 141, 91, 0.24);
+  box-shadow: 0 0 0 1px rgba(47, 129, 255, 0.24);
 }
 
 .copytrade-form-actions {
@@ -4946,27 +4944,28 @@ button {
   width: 100%;
   padding-top: 0.5rem;
   padding-bottom: 0.5rem;
-  border-color: #6f6546;
-  background: linear-gradient(120deg, #4c4128 0%, #605232 52%, #74643c 100%);
-  color: #f0ead7;
+  border-color: #2f81ff;
+  background: #1d3f77;
+  color: #dce9ff;
   font-weight: 600;
   letter-spacing: 0.08em;
 }
 
 .copytrade-submit:hover {
-  background: linear-gradient(120deg, #584b2d 0%, #6d5c37 52%, #806f43 100%);
+  border-color: #4f96ff;
+  background: #27549b;
 }
 
 .copytrade-cancel-btn {
   min-width: 84px;
-  border-color: #3f434d;
-  background: #1a1d24;
-  color: #d9dfea;
+  border-color: #cc5a5a;
+  background: #5d2020;
+  color: #ffd9d9;
 }
 
 .copytrade-cancel-btn:hover {
-  border-color: #5c5747;
-  background: #232216;
+  border-color: #e17a7a;
+  background: #742a2a;
 }
 
 .copytrade-actions {
@@ -4977,14 +4976,14 @@ button {
 
 .copytrade-action-btn {
   min-height: 36px;
-  border-color: #3f434d;
-  background: #1a1d24;
-  color: #e1e4ec;
+  border-color: #2f81ff;
+  background: #1d3f77;
+  color: #dce9ff;
 }
 
 .copytrade-action-btn:hover {
-  border-color: #60583e;
-  background: #252218;
+  border-color: #4f96ff;
+  background: #27549b;
 }
 
 .copytrade-account-list {
@@ -5010,19 +5009,19 @@ button {
 }
 
 .copytrade-account-row:focus-visible {
-  outline: 2px solid rgba(157, 141, 91, 0.65);
+  outline: 2px solid rgba(47, 129, 255, 0.65);
   outline-offset: 2px;
 }
 
 .copytrade-account-row:hover {
-  border-color: #625c46;
+  border-color: #355886;
   background: rgba(27, 30, 37, 0.95);
 }
 
 .copytrade-account-row.selected {
-  border-color: #97885c;
-  background: linear-gradient(90deg, rgba(56, 50, 36, 0.8) 0%, rgba(26, 27, 31, 0.95) 100%);
-  box-shadow: inset 0 0 0 1px rgba(151, 136, 92, 0.24);
+  border-color: #4f84ca;
+  background: rgba(45, 108, 255, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(79, 132, 202, 0.24);
 }
 
 .copytrade-account-main {
@@ -5080,9 +5079,9 @@ button {
 }
 
 .copytrade-status-badge.paused {
-  border-color: #73603a;
-  color: #f2d89c;
-  background: rgba(95, 72, 30, 0.36);
+  border-color: #cc5a5a;
+  color: #ffd2d2;
+  background: rgba(119, 40, 40, 0.36);
 }
 
 .copytrade-account-controls {
@@ -5091,9 +5090,9 @@ button {
 }
 
 .copytrade-mini-btn {
-  border: 1px solid #3f434d;
-  background: #171a21;
-  color: #d1d6e3;
+  border: 1px solid #2f81ff;
+  background: #193763;
+  color: #dce9ff;
   border-radius: 6px;
   padding: 0.22rem 0.44rem;
   font-size: 0.56rem;
@@ -5104,16 +5103,16 @@ button {
 }
 
 .copytrade-mini-btn:hover {
-  border-color: #696047;
-  background: #262318;
+  border-color: #4f96ff;
+  background: #24508f;
 }
 
 .copytrade-mini-btn-play {
-  color: #a9ddb8;
+  color: #dce9ff;
 }
 
 .copytrade-mini-btn-edit {
-  color: #f3dcab;
+  color: #dce9ff;
 }
 
 .copytrade-context-menu {
@@ -5131,9 +5130,9 @@ button {
 
 .copytrade-context-item {
   width: 100%;
-  border: 1px solid #3b3f47;
-  background: #191c22;
-  color: #d8ddeb;
+  border: 1px solid #2f81ff;
+  background: #1d3f77;
+  color: #dce9ff;
   border-radius: 7px;
   padding: 0.38rem 0.46rem;
   text-align: left;
@@ -5145,12 +5144,19 @@ button {
 }
 
 .copytrade-context-item:hover {
-  border-color: #665f45;
-  background: #272418;
+  border-color: #4f96ff;
+  background: #27549b;
 }
 
 .copytrade-context-item.remove {
-  color: #ffc2c2;
+  border-color: #cc5a5a;
+  background: #5d2020;
+  color: #ffd9d9;
+}
+
+.copytrade-context-item.remove:hover {
+  border-color: #e17a7a;
+  background: #742a2a;
 }
 
 .copytrade-note {
@@ -5487,6 +5493,43 @@ button {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.ai-checklist {
+  list-style: none;
+  margin: 0.1rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.24rem;
+}
+
+.ai-checklist li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.34rem;
+  border-radius: 8px;
+  padding: 0.34rem 0.44rem;
+  font-size: 0.63rem;
+  line-height: 1.3;
+  border: 1px solid transparent;
+}
+
+.ai-checklist li.done {
+  color: #b5f5d6;
+  border-color: rgba(19, 201, 143, 0.32);
+  background: rgba(16, 45, 34, 0.72);
+}
+
+.ai-checklist li.todo {
+  color: #ffe3b0;
+  border-color: rgba(240, 184, 79, 0.32);
+  background: rgba(50, 35, 10, 0.72);
+}
+
+.ai-check-status {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  transform: translateY(1px);
 }
 
 .ai-chart-grid {

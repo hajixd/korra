@@ -102,6 +102,13 @@ type AssistantBullet = {
   text: string;
 };
 
+type AssistantChecklistItem = {
+  id: string;
+  label: string;
+  required: boolean;
+  satisfied: boolean;
+};
+
 type AssistantMessage = {
   id: string;
   role: "user" | "assistant";
@@ -110,6 +117,7 @@ type AssistantMessage = {
   charts?: AssistantChart[];
   chartActions?: Array<Record<string, unknown>>;
   chartAnimations?: AssistantChartAnimation[];
+  requestChecklist?: AssistantChecklistItem[];
   toolsUsed?: string[];
   cannotAnswer?: boolean;
 };
@@ -125,6 +133,7 @@ type AssistantApiResponse = {
     charts: AssistantChart[];
     chartActions?: Array<Record<string, unknown>>;
     chartAnimations?: AssistantChartAnimation[];
+    requestChecklist?: AssistantChecklistItem[];
     toolsUsed?: string[];
   };
   modelTrace?: {
@@ -154,6 +163,16 @@ const MAX_CONTEXT_ACTIONS = 360;
 const MAX_CONTEXT_BACKTEST_WHEN_REQUESTED = 2200;
 
 const PIE_COLORS = ["#13c98f", "#f0455a", "#bfc6d8", "#f0b84f"];
+const DRAW_STAGE_RE =
+  /\b(draw|mark|annotate|support|resistance|trendline|trend line|line|box|fvg|fair value gap|arrow|ruler)\b/i;
+const GRAPH_STAGE_RE =
+  /\b(graph|chart|plot|visual|visualize|indicator|rsi|macd|ema|sma|atr|volatility|trend|average|mean)\b/i;
+const ANIMATION_STAGE_RE =
+  /\b(animate|animation|video|replay|playback|walkthrough|demo)\b/i;
+const DATA_STAGE_RE =
+  /\b(history|backtest|clickhouse|monthly|weekly|daily|recent|window|from|between|since)\b/i;
+const SOCIAL_STAGE_RE =
+  /^(hi|hello|hey|yo|sup|what'?s up|how are you|gm|gn|good morning|good afternoon|good evening)[!.?\s]*$/i;
 
 const normalizeToolPill = (value: string): string => {
   const text = String(value || "").trim();
@@ -229,6 +248,41 @@ const takeTail = <T,>(rows: T[], count: number): T[] => {
     return rows;
   }
   return rows.slice(rows.length - count);
+};
+
+const inferThinkingStages = (prompt: string): string[] => {
+  const text = prompt.trim().toLowerCase();
+  if (!text) {
+    return ["Planning", "Reasoning"];
+  }
+
+  const isSocialOnly =
+    SOCIAL_STAGE_RE.test(text) &&
+    !DRAW_STAGE_RE.test(text) &&
+    !GRAPH_STAGE_RE.test(text) &&
+    !ANIMATION_STAGE_RE.test(text);
+
+  if (isSocialOnly) {
+    return ["Understanding Request", "Composing Reply"];
+  }
+
+  if (ANIMATION_STAGE_RE.test(text)) {
+    return ["Planning Animation", "Preparing Chart Data", "Rendering Animation"];
+  }
+
+  if (DRAW_STAGE_RE.test(text)) {
+    return ["Planning Drawings", "Preparing Chart Data", "Drawing on Chart"];
+  }
+
+  if (GRAPH_STAGE_RE.test(text)) {
+    return ["Planning Graph", "Preparing Data", "Building Graph"];
+  }
+
+  if (DATA_STAGE_RE.test(text)) {
+    return ["Planning", "Fetching Data", "Reasoning"];
+  }
+
+  return ["Planning", "Reasoning"];
 };
 
 export default function AssistantPanel(props: AssistantPanelProps) {
@@ -395,12 +449,12 @@ export default function AssistantPanel(props: AssistantPanelProps) {
       setMessages((current) => [...current, userMessage]);
       setTurns(nextTurns);
       setIsPending(true);
-      setThinkingStage("Planning");
+      const stagePlan = inferThinkingStages(prompt);
+      setThinkingStage(stagePlan[0] ?? "Planning");
 
-      const stageTimers = [
-        window.setTimeout(() => setThinkingStage("Reasoning"), 350),
-        window.setTimeout(() => setThinkingStage("Building Charts"), 900)
-      ];
+      const stageTimers = stagePlan.slice(1).map((stage, index) =>
+        window.setTimeout(() => setThinkingStage(stage), 320 + index * 520)
+      );
 
       try {
         const payload = await runAssistantRequest(nextTurns, false);
@@ -446,6 +500,9 @@ export default function AssistantPanel(props: AssistantPanelProps) {
           chartActions: payload.response.chartActions,
           chartAnimations: Array.isArray(payload.response.chartAnimations)
             ? payload.response.chartAnimations
+            : [],
+          requestChecklist: Array.isArray(payload.response.requestChecklist)
+            ? payload.response.requestChecklist
             : [],
           toolsUsed: Array.isArray(payload.response.toolsUsed)
             ? payload.response.toolsUsed.map(normalizeToolPill).filter((tool) => tool.length > 0)
@@ -713,7 +770,8 @@ export default function AssistantPanel(props: AssistantPanelProps) {
         {messages.map((message) => {
           const hasTools = Boolean(message.toolsUsed && message.toolsUsed.length > 0);
           const hasBullets = Boolean(message.bullets && message.bullets.length > 0);
-          const hasDetails = message.role === "assistant" && (hasTools || hasBullets);
+          const hasChecklist = Boolean(message.requestChecklist && message.requestChecklist.length > 0);
+          const hasDetails = message.role === "assistant" && (hasTools || hasBullets || hasChecklist);
           const detailsExpanded = hasDetails && Boolean(detailsExpandedByMessageId[message.id]);
 
           return (
@@ -759,6 +817,22 @@ export default function AssistantPanel(props: AssistantPanelProps) {
                           •
                         </span>
                         <span>{boldText(bullet.text)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+
+                {hasChecklist ? (
+                  <ul className="ai-checklist">
+                    {message.requestChecklist!.map((item) => (
+                      <li
+                        key={`${message.id}-check-${item.id}`}
+                        className={item.satisfied ? "done" : "todo"}
+                      >
+                        <span className="ai-check-status" aria-hidden>
+                          {item.satisfied ? "✓" : "○"}
+                        </span>
+                        <span>{item.label}</span>
                       </li>
                     ))}
                   </ul>

@@ -5961,6 +5961,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [showAllTradesOnChart, setShowAllTradesOnChart] = useState(false);
   const [showActiveTradeOnChart, setShowActiveTradeOnChart] = useState(false);
   const [chartPanelLiveSimulationEnabled, setChartPanelLiveSimulationEnabled] = useState(true);
+  const [activePanelLiveSimulationEnabled, setActivePanelLiveSimulationEnabled] = useState(true);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [seenNotificationIds, setSeenNotificationIds] = useState<string[]>([]);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
@@ -8919,8 +8920,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const backtestSourceTrades = useMemo(() => {
     return chronologicalHistoryRows;
   }, [chronologicalHistoryRows]);
-  const usesChartPanelLiveSimulation =
+  const usesChartPanelLiveSimulationForHistory =
     selectedSurfaceTab === "chart" && chartPanelLiveSimulationEnabled;
+  const usesChartPanelLiveSimulationForActive =
+    selectedSurfaceTab === "chart" && activePanelLiveSimulationEnabled;
+  const shouldBuildChartPanelReplayRows =
+    selectedSurfaceTab === "chart" &&
+    (chartPanelLiveSimulationEnabled || activePanelLiveSimulationEnabled);
   const chartPanelFilterSettings = useMemo<BacktestFilterSettings>(
     () => ({
       statsDateStart,
@@ -8955,7 +8961,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     : confidenceThreshold;
   const chartPanelAiModelEveryCandleMode = aiMode !== "off" && !aiFilterEnabled;
   const chartPanelTradeBlueprints = useMemo(() => {
-    if (!usesChartPanelLiveSimulation) {
+    if (!shouldBuildChartPanelReplayRows) {
       return [] as TradeBlueprint[];
     }
 
@@ -8983,14 +8989,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     backtestModelProfiles,
     chartPanelAiModelEveryCandleMode,
     chunkBars,
-    usesChartPanelLiveSimulation,
+    shouldBuildChartPanelReplayRows,
     dollarsPerMove,
     maxConcurrentTrades,
     selectedCandles,
     selectedSymbol
   ]);
   const chartPanelOneMinuteCandlesBySymbol = useMemo<Record<string, Candle[]> | undefined>(() => {
-    if (!usesChartPanelLiveSimulation || selectedTimeframe === "1m" || !minutePreciseEnabled) {
+    if (!shouldBuildChartPanelReplayRows || selectedTimeframe === "1m" || !minutePreciseEnabled) {
       return undefined;
     }
 
@@ -9010,7 +9016,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     selectedSymbol,
     selectedTimeframe,
     seriesMap,
-    usesChartPanelLiveSimulation
+    shouldBuildChartPanelReplayRows
   ]);
   const chartPanelModelNamesById = useMemo(() => {
     const modelNamesById: Record<string, string> = {};
@@ -9025,7 +9031,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return modelNamesById;
   }, [chartPanelTradeBlueprints, modelProfileById]);
   const chartPanelReplayRows = useMemo(() => {
-    if (!usesChartPanelLiveSimulation) {
+    if (!shouldBuildChartPanelReplayRows) {
       return [] as HistoryItem[];
     }
 
@@ -9073,22 +9079,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     tpDollars,
     trailingDistPct,
     trailingStartPct,
-    usesChartPanelLiveSimulation
+    shouldBuildChartPanelReplayRows
   ]);
   const panelBacktestFilterSettings: BacktestFilterSettings =
-    usesChartPanelLiveSimulation
+    usesChartPanelLiveSimulationForHistory
       ? chartPanelFilterSettings
       : appliedBacktestSettings;
   const panelConfidenceGateDisabled =
-    usesChartPanelLiveSimulation
+    usesChartPanelLiveSimulationForHistory
       ? chartPanelConfidenceGateDisabled
       : appliedConfidenceGateDisabled;
   const panelEffectiveConfidenceThreshold =
-    usesChartPanelLiveSimulation
+    usesChartPanelLiveSimulationForHistory
       ? chartPanelEffectiveConfidenceThreshold
       : appliedEffectiveConfidenceThreshold;
   const panelSourceTrades =
-    usesChartPanelLiveSimulation
+    usesChartPanelLiveSimulationForHistory
       ? chartPanelReplayRows
       : backtestSourceTrades;
   const antiCheatBacktestContext = useMemo(() => {
@@ -9482,9 +9488,73 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     panelConfidenceGateDisabled,
     panelEffectiveConfidenceThreshold
   ]);
+  const activePanelBacktestFilterSettings: BacktestFilterSettings =
+    usesChartPanelLiveSimulationForActive
+      ? chartPanelFilterSettings
+      : appliedBacktestSettings;
+  const activePanelConfidenceGateDisabled =
+    usesChartPanelLiveSimulationForActive
+      ? chartPanelConfidenceGateDisabled
+      : appliedConfidenceGateDisabled;
+  const activePanelEffectiveConfidenceThreshold =
+    usesChartPanelLiveSimulationForActive
+      ? chartPanelEffectiveConfidenceThreshold
+      : appliedEffectiveConfidenceThreshold;
+  const activePanelSourceTrades =
+    usesChartPanelLiveSimulationForActive
+      ? chartPanelReplayRows
+      : backtestSourceTrades;
+  const activePanelHistoryRows = useMemo(() => {
+    const startMs = getUtcDayStartMs(activePanelBacktestFilterSettings.statsDateStart);
+    const endExclusiveMs = getUtcDayEndExclusiveMs(activePanelBacktestFilterSettings.statsDateEnd);
+
+    return activePanelSourceTrades
+      .filter((trade) => {
+        const tradeMs = Number(trade.entryTime) * 1000;
+
+        if (!Number.isFinite(tradeMs)) {
+          return false;
+        }
+
+        if (startMs !== null && tradeMs < startMs) {
+          return false;
+        }
+
+        if (endExclusiveMs !== null && tradeMs >= endExclusiveMs) {
+          return false;
+        }
+
+        const weekday = getWeekdayLabel(getTradeDayKey(trade.exitTime));
+        const session = getSessionLabel(trade.entryTime);
+        const monthIndex = getTradeMonthIndex(trade.exitTime);
+        const entryHour = getTradeHour(trade.entryTime);
+
+        if (
+          !activePanelBacktestFilterSettings.enabledBacktestWeekdays.includes(weekday) ||
+          !activePanelBacktestFilterSettings.enabledBacktestSessions.includes(session) ||
+          !activePanelBacktestFilterSettings.enabledBacktestMonths.includes(monthIndex) ||
+          !activePanelBacktestFilterSettings.enabledBacktestHours.includes(entryHour)
+        ) {
+          return false;
+        }
+
+        const confidence = getEffectiveTradeConfidenceScore(trade) * 100;
+        return (
+          activePanelConfidenceGateDisabled ||
+          confidence >= activePanelEffectiveConfidenceThreshold
+        );
+      })
+      .sort((a, b) => Number(b.exitTime) - Number(a.exitTime) || b.id.localeCompare(a.id));
+  }, [
+    activePanelBacktestFilterSettings,
+    activePanelConfidenceGateDisabled,
+    activePanelEffectiveConfidenceThreshold,
+    activePanelSourceTrades,
+    getEffectiveTradeConfidenceScore
+  ]);
 
   const activeTrade = useMemo<ActiveTrade | null>(() => {
-    if (chartPanelHistoryRows.length === 0) {
+    if (activePanelHistoryRows.length === 0) {
       return null;
     }
 
@@ -9494,10 +9564,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         : Math.floor(referenceNowMs / 1000);
     const runtimeNowSec = Math.floor(Date.now() / 1000);
     const activeThresholdSec =
-      usesChartPanelLiveSimulation
+      usesChartPanelLiveSimulationForActive
         ? chartNowSec
         : runtimeNowSec;
-    const trade = chartPanelHistoryRows.find(
+    const trade = activePanelHistoryRows.find(
       (candidate) => Number(candidate.exitTime) > activeThresholdSec
     );
 
@@ -9506,7 +9576,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     const markPrice =
-      usesChartPanelLiveSimulation && selectedCandles.length > 0
+      usesChartPanelLiveSimulationForActive && selectedCandles.length > 0
         ? selectedCandles[selectedCandles.length - 1]!.close
         : trade.outcomePrice;
     const pnlValue =
@@ -9520,7 +9590,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           : ((trade.entryPrice - markPrice) / trade.entryPrice) * 100
         : 0;
     const elapsedToSec =
-      usesChartPanelLiveSimulation
+      usesChartPanelLiveSimulationForActive
         ? Math.max(Number(trade.entryTime), chartNowSec)
         : Math.floor(referenceNowMs / 1000);
 
@@ -9549,15 +9619,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       rr
     };
   }, [
-    chartPanelHistoryRows,
+    activePanelHistoryRows,
     referenceNowMs,
     selectedCandles,
-    usesChartPanelLiveSimulation
+    usesChartPanelLiveSimulationForActive
   ]);
 
   const latestTradeBarsAgo = useMemo(() => {
     const sourceRows =
-      usesChartPanelLiveSimulation
+      usesChartPanelLiveSimulationForActive
         ? chartPanelReplayRows
         : deferredHistoryRows;
 
@@ -9574,11 +9644,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     const activeTimeframe =
-      usesChartPanelLiveSimulation
+      usesChartPanelLiveSimulationForActive
         ? selectedTimeframe
         : appliedBacktestSettings.timeframe;
     const anchorNowSec =
-      usesChartPanelLiveSimulation && selectedCandles.length > 0
+      usesChartPanelLiveSimulationForActive && selectedCandles.length > 0
         ? toUtcTimestamp(selectedCandles[selectedCandles.length - 1]!.time)
         : Math.floor(referenceNowMs / 1000);
     const barSeconds = timeframeMinutes[activeTimeframe] * 60;
@@ -9591,7 +9661,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedBacktestSettings.timeframe,
     selectedCandles,
     selectedTimeframe,
-    usesChartPanelLiveSimulation
+    usesChartPanelLiveSimulationForActive
   ]);
 
   const backtestHistorySeriesBySymbol = useMemo(() => {
@@ -10213,6 +10283,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     selectedTimeframe,
     selectedBacktestTimeframe,
     chartPanelLiveSimulationEnabled,
+    activePanelLiveSimulationEnabled,
     minutePreciseEnabled,
     enabledBacktestWeekdays,
     enabledBacktestSessions,
@@ -10273,7 +10344,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     statsDateStart,
     statsDateEnd,
   }), [
-    selectedSymbol, selectedTimeframe, selectedBacktestTimeframe, chartPanelLiveSimulationEnabled, minutePreciseEnabled,
+    selectedSymbol, selectedTimeframe, selectedBacktestTimeframe, chartPanelLiveSimulationEnabled, activePanelLiveSimulationEnabled, minutePreciseEnabled,
     enabledBacktestWeekdays, enabledBacktestSessions,
     enabledBacktestMonths, enabledBacktestHours, aiMode, aiModelEnabled, aiFilterEnabled,
     staticLibrariesClusters, confidenceThreshold, aiExitStrictness, aiExitLossTolerance,
@@ -10300,6 +10371,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (s.selectedBacktestTimeframe != null) setSelectedBacktestTimeframe(s.selectedBacktestTimeframe);
     if (s.chartPanelLiveSimulationEnabled != null) {
       setChartPanelLiveSimulationEnabled(Boolean(s.chartPanelLiveSimulationEnabled));
+    }
+    if (s.activePanelLiveSimulationEnabled != null) {
+      setActivePanelLiveSimulationEnabled(Boolean(s.activePanelLiveSimulationEnabled));
+    } else if (s.chartPanelLiveSimulationEnabled != null) {
+      setActivePanelLiveSimulationEnabled(Boolean(s.chartPanelLiveSimulationEnabled));
     }
     if (s.minutePreciseEnabled != null) setMinutePreciseEnabled(Boolean(s.minutePreciseEnabled));
     if (s.enabledBacktestWeekdays != null) setEnabledBacktestWeekdays(s.enabledBacktestWeekdays);
@@ -10406,6 +10482,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setSelectedTimeframe("15m");
     setSelectedBacktestTimeframe("15m");
     setChartPanelLiveSimulationEnabled(true);
+    setActivePanelLiveSimulationEnabled(true);
     setMinutePreciseEnabled(false);
     setEnabledBacktestWeekdays([...backtestWeekdayLabels]);
     setEnabledBacktestSessions([...backtestSessionLabels]);
@@ -15781,13 +15858,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         <button
                           type="button"
                           className={`panel-action-btn panel-mode-btn ${
-                            chartPanelLiveSimulationEnabled ? "on" : "off"
+                            activePanelLiveSimulationEnabled ? "on" : "off"
                           }`}
                           onClick={() =>
-                            setChartPanelLiveSimulationEnabled((current) => !current)
+                            setActivePanelLiveSimulationEnabled((current) => !current)
                           }
                         >
-                          {chartPanelLiveSimulationEnabled ? "Simulation ON" : "Simulation OFF"}
+                          {activePanelLiveSimulationEnabled ? "Simulation ON" : "Simulation OFF"}
                         </button>
                         <button
                           type="button"

@@ -206,6 +206,23 @@ type IntentExecutionPlan = {
   strictToRequest: boolean;
 };
 
+type RequestChecklistPlan = {
+  requestKind: "social" | "task";
+  requiresNaturalResponse: boolean;
+  requiresGraph: boolean;
+  requiresDraw: boolean;
+  requiresAnimation: boolean;
+  shouldAvoidDataFetch: boolean;
+  strictToRequest: boolean;
+};
+
+type RequestChecklistItem = {
+  id: string;
+  label: string;
+  required: boolean;
+  satisfied: boolean;
+};
+
 const MAX_CHAT_TURNS = 14;
 const MAX_HISTORY_ROWS = 700;
 const MAX_ACTION_ROWS = 700;
@@ -225,6 +242,10 @@ const TECHNICAL_DRAW_RE =
   /\b(support|resistance|s\/r|trendline|trend line|horizontal line|vertical line|box|fvg|fair value gap|arrow|ruler|mark candlestick|draw)\b/i;
 const INDICATOR_REQUEST_RE =
   /\b(rsi|overbought|oversold|over bought|over sold|macd|stoch|stochastic|ema|sma|moving average|atr|indicator)\b/i;
+const SOCIAL_GREETING_RE =
+  /^(hi|hello|hey|yo|sup|what'?s up|how are you|gm|gn|good morning|good afternoon|good evening)[!.?\s]*$/i;
+const TRADING_REQUEST_RE =
+  /\b(trade|trading|chart|graph|draw|support|resistance|trend|line|box|fvg|arrow|ruler|candle|candlestick|price|xau|xauusd|gold|rsi|macd|ema|sma|atr|indicator|backtest|history|pnl|risk|entry|stop|target|buy|sell|volume|volatility)\b/i;
 
 const AI_SYSTEM_PROMPT = [
   "You are KORRA AI Assistant, a trading copilot.",
@@ -238,7 +259,9 @@ const AI_SYSTEM_PROMPT = [
   "5) Default to the most recent data window unless the user explicitly asks for past/historical dates.",
   "6) Never ask the user to run data-fetch steps manually; fetch required data yourself.",
   "7) Use chart hints only when visual clarity helps the user request.",
-  "8) Treat user intent as trading analytics and risk-aware guidance, not guaranteed outcomes."
+  "8) Treat user intent as trading analytics and risk-aware guidance, not guaranteed outcomes.",
+  "9) If the user sends a pure greeting/small-talk message with no trading request, reply briefly and naturally.",
+  "10) Do not add market analysis, indicators, charts, drawings, or animations unless requested."
 ].join("\n");
 
 const PLANNING_PROMPT = [
@@ -293,6 +316,8 @@ const REASONING_PROMPT = [
   "Do not add extra information beyond the user request.",
   "Never tell the user to run/fetch tools manually.",
   "Use provided indicators when available (e.g., RSI 14 for overbought/oversold requests).",
+  "Only compute indicators when the user explicitly asks for them.",
+  "Use requestChecklist to enforce scope. If requestChecklist.requestKind='social', return a brief natural reply with no analytics, no bullets, and no chart hints.",
   "Before setting cannotAnswer=true, attempt to answer using available context and indicator snapshots.",
   "If data is insufficient, set cannotAnswer=true and explain why.",
   "Do not include markdown code fences."
@@ -1008,6 +1033,27 @@ const isIndicatorComputationRequest = (prompt: string): boolean => {
   return true;
 };
 
+const isSocialOnlyPrompt = (prompt: string): boolean => {
+  const text = toText(prompt, "").trim();
+  if (!text) {
+    return false;
+  }
+
+  if (TRADING_REQUEST_RE.test(text) || /\d/.test(text)) {
+    return false;
+  }
+
+  if (SOCIAL_GREETING_RE.test(text)) {
+    return true;
+  }
+
+  const normalized = text.toLowerCase();
+  const words = normalized.split(/\s+/).filter(Boolean);
+  const shortMessage = words.length > 0 && words.length <= 6;
+  const hasGreetingToken = /\b(hi|hello|hey|gm|gn|sup)\b/i.test(normalized);
+  return shortMessage && hasGreetingToken;
+};
+
 const isChartControlRequest = (prompt: string): boolean => {
   const text = toText(prompt, "").toLowerCase();
   if (!text) {
@@ -1055,6 +1101,104 @@ const buildFallbackExecutionPlan = (modePlan: RequestModePlan): IntentExecutionP
     needsBacktest: modePlan.needsBacktestHint,
     strictToRequest: modePlan.strictToRequest
   };
+};
+
+const buildRequestChecklistPlan = (params: {
+  socialOnlyRequest: boolean;
+  strictToRequest: boolean;
+  wantsNaturalOnly: boolean;
+  wantsVisualization: boolean;
+  explicitDrawRequest: boolean;
+  wantsAnimation: boolean;
+}): RequestChecklistPlan => {
+  const {
+    socialOnlyRequest,
+    strictToRequest,
+    wantsNaturalOnly,
+    wantsVisualization,
+    explicitDrawRequest,
+    wantsAnimation
+  } = params;
+
+  return {
+    requestKind: socialOnlyRequest ? "social" : "task",
+    requiresNaturalResponse: true,
+    requiresGraph: !socialOnlyRequest && wantsVisualization,
+    requiresDraw: !socialOnlyRequest && explicitDrawRequest,
+    requiresAnimation: !socialOnlyRequest && wantsAnimation,
+    shouldAvoidDataFetch:
+      socialOnlyRequest ||
+      (wantsNaturalOnly && !wantsVisualization && !explicitDrawRequest && !wantsAnimation),
+    strictToRequest
+  };
+};
+
+const buildResponseChecklist = (params: {
+  plan: RequestChecklistPlan;
+  shortAnswer: string;
+  responseCannotAnswer: boolean;
+  charts: AssistantChart[];
+  chartActions: ReturnType<typeof normalizeChartActions>;
+  chartAnimations: ReturnType<typeof normalizeChartAnimationsFromCoding>;
+  toolsUsed: Set<string>;
+}): RequestChecklistItem[] => {
+  const { plan, shortAnswer, responseCannotAnswer, charts, chartActions, chartAnimations, toolsUsed } = params;
+  const responseHasText = shortAnswer.trim().length > 0 || responseCannotAnswer;
+  const usedDataTools =
+    toolsUsed.has("clickhouse_candles") || toolsUsed.has("backtest_data_request");
+  const unrequestedVisuals =
+    (!plan.requiresGraph && charts.length > 0) ||
+    (!plan.requiresDraw && chartActions.length > 0) ||
+    (!plan.requiresAnimation && chartAnimations.length > 0);
+
+  return [
+    {
+      id: "intent",
+      label: "Understand and respond to user intent",
+      required: true,
+      satisfied: responseHasText
+    },
+    {
+      id: "natural",
+      label: "Return natural-language response",
+      required: plan.requiresNaturalResponse,
+      satisfied: !plan.requiresNaturalResponse || responseHasText
+    },
+    {
+      id: "graph",
+      label: "Provide panel graph only if requested",
+      required: plan.requiresGraph,
+      satisfied: plan.requiresGraph ? charts.length > 0 : charts.length === 0
+    },
+    {
+      id: "draw",
+      label: "Provide chart drawings only if requested",
+      required: plan.requiresDraw,
+      satisfied: plan.requiresDraw ? chartActions.length > 0 : chartActions.length === 0
+    },
+    {
+      id: "animation",
+      label: "Provide animation only if requested",
+      required: plan.requiresAnimation,
+      satisfied: plan.requiresAnimation
+        ? chartAnimations.length > 0
+        : chartAnimations.length === 0
+    },
+    {
+      id: "data",
+      label: "Avoid unnecessary data fetch",
+      required: plan.shouldAvoidDataFetch,
+      satisfied: !plan.shouldAvoidDataFetch || !usedDataTools
+    },
+    {
+      id: "scope",
+      label: "Stay within requested scope",
+      required: plan.strictToRequest,
+      satisfied:
+        !plan.strictToRequest ||
+        (!unrequestedVisuals && (!plan.shouldAvoidDataFetch || !usedDataTools))
+    }
+  ];
 };
 
 const normalizeGraphTypeCandidate = (value: string): string => {
@@ -2514,8 +2658,9 @@ const executeReasoningStage = async (params: {
   context: AssistantContext;
   toolState: ToolState;
   planning: PlanningOutput;
+  requestChecklist: RequestChecklistPlan;
 }): Promise<ReasoningOutput> => {
-  const { apiKey, baseUrl, models, turns, context, toolState, planning } = params;
+  const { apiKey, baseUrl, models, turns, context, toolState, planning, requestChecklist } = params;
   const recentWindowCandles = getRecentWindowCandles({
     context,
     clickhouseCandles: toolState.clickhouseCandles
@@ -2525,6 +2670,7 @@ const executeReasoningStage = async (params: {
     conversation: buildConversationTranscript(turns),
     context: buildContextDigest(context),
     planning,
+    requestChecklist,
     recentWindow: {
       includesLiveStream: true,
       count: recentWindowCandles.length,
@@ -3235,10 +3381,11 @@ export async function POST(request: Request) {
       context,
       modePlan: requestMode
     });
-    const requestedGraphType = toText(executionPlan.graphType, "");
+    const socialOnlyRequest = isSocialOnlyPrompt(lastUserPrompt);
+    const requestedGraphType = socialOnlyRequest ? "" : toText(executionPlan.graphType, "");
     let forcedGraphTemplate = resolveToolboxGraphTemplate(requestedGraphType);
     let graphToolingNeedsNewTool = false;
-    if (executionPlan.graphNeeded && requestedGraphType && !forcedGraphTemplate) {
+    if (!socialOnlyRequest && executionPlan.graphNeeded && requestedGraphType && !forcedGraphTemplate) {
       toolsUsed.add("coding_graph_tooling");
       const graphResolution = await executeGraphToolboxResolutionStage({
         apiKey,
@@ -3253,17 +3400,41 @@ export async function POST(request: Request) {
       toolsUsed.add("graph_template_resolution");
     }
 
-    const explicitDrawRequest = requestMode.wantsDraw || executionPlan.drawNeeded;
-    const wantsVisualization = requestMode.wantsVisualization || executionPlan.graphNeeded;
-    const wantsAnimation = requestMode.wantsAnimation || executionPlan.animationNeeded;
-    const wantsNaturalOnly = requestMode.wantsNaturalOnly || executionPlan.naturalOnly;
-    const strictToRequest = requestMode.strictToRequest && executionPlan.strictToRequest;
-    const mergedBacktestHint = requestMode.needsBacktestHint || executionPlan.needsBacktest;
-    const mergedClickhouseHint = requestMode.needsClickhouseHint || executionPlan.needsClickhouse;
-    const mergedClickhouseCountHint = Math.max(
-      toNumber(requestMode.clickhouseCountHint, 0),
-      toNumber(executionPlan.clickhouseCount, 0)
-    );
+    const explicitDrawRequest = socialOnlyRequest
+      ? false
+      : requestMode.wantsDraw || executionPlan.drawNeeded;
+    const wantsVisualization = socialOnlyRequest
+      ? false
+      : requestMode.wantsVisualization || executionPlan.graphNeeded;
+    const wantsAnimation = socialOnlyRequest
+      ? false
+      : requestMode.wantsAnimation || executionPlan.animationNeeded;
+    const wantsNaturalOnly = socialOnlyRequest
+      ? true
+      : requestMode.wantsNaturalOnly || executionPlan.naturalOnly;
+    const strictToRequest = socialOnlyRequest
+      ? true
+      : requestMode.strictToRequest && executionPlan.strictToRequest;
+    const mergedBacktestHint = socialOnlyRequest
+      ? false
+      : requestMode.needsBacktestHint || executionPlan.needsBacktest;
+    const mergedClickhouseHint = socialOnlyRequest
+      ? false
+      : requestMode.needsClickhouseHint || executionPlan.needsClickhouse;
+    const mergedClickhouseCountHint = socialOnlyRequest
+      ? 0
+      : Math.max(
+          toNumber(requestMode.clickhouseCountHint, 0),
+          toNumber(executionPlan.clickhouseCount, 0)
+        );
+    const requestChecklistPlan = buildRequestChecklistPlan({
+      socialOnlyRequest,
+      strictToRequest,
+      wantsNaturalOnly,
+      wantsVisualization,
+      explicitDrawRequest,
+      wantsAnimation
+    });
 
     const toolState: ToolState = {
       clickhouseCandles: [],
@@ -3290,17 +3461,23 @@ export async function POST(request: Request) {
       });
     }
 
-    const planningResult = await executePlanningStage({
-      apiKey,
-      baseUrl,
-      model: modelSelection.instruction,
-      turns,
-      context,
-      request,
-      toolState
-    });
+    const planningResult = socialOnlyRequest
+      ? ({ planning: {} } as {
+          planning: PlanningOutput;
+          status?: "needs_backtest_data";
+          reason?: string;
+        })
+      : await executePlanningStage({
+          apiKey,
+          baseUrl,
+          model: modelSelection.instruction,
+          turns,
+          context,
+          request,
+          toolState
+        });
 
-    if (planningResult.status === "needs_backtest_data") {
+    if (!socialOnlyRequest && planningResult.status === "needs_backtest_data") {
       toolsUsed.add("backtest_data_request");
       return NextResponse.json({
         status: "needs_backtest_data",
@@ -3363,7 +3540,8 @@ export async function POST(request: Request) {
       turns,
       context,
       toolState,
-      planning: planningResult.planning
+      planning: planningResult.planning,
+      requestChecklist: requestChecklistPlan
     });
 
     const shouldRetryReasoningWithMoreData =
@@ -3412,7 +3590,8 @@ export async function POST(request: Request) {
             turns,
             context,
             toolState,
-            planning: planningResult.planning
+            planning: planningResult.planning,
+            requestChecklist: requestChecklistPlan
           });
         }
       } catch {
@@ -3420,18 +3599,24 @@ export async function POST(request: Request) {
       }
     }
 
-    const codingResult = await executeCodingStage({
-      apiKey,
-      baseUrl,
-      models: modelSelection,
-      reasoning,
-      context,
-      toolState,
-      requestMode,
-      requestedGraphType,
-      forcedGraphTemplate,
-      wantsAnimation
-    });
+    const codingResult = socialOnlyRequest
+      ? {
+          chartPlans: [] as ChartPlan[],
+          chartActions: normalizeChartActions([]),
+          chartAnimations: normalizeChartAnimationsFromCoding({})
+        }
+      : await executeCodingStage({
+          apiKey,
+          baseUrl,
+          models: modelSelection,
+          reasoning,
+          context,
+          toolState,
+          requestMode,
+          requestedGraphType,
+          forcedGraphTemplate,
+          wantsAnimation
+        });
 
     if (toolState.clickhouseCandles.length > 0) {
       toolsUsed.add("clickhouse_candles");
@@ -3549,6 +3734,15 @@ export async function POST(request: Request) {
     const finalShortAnswer =
       shortAnswer ||
       (finalBullets.length > 0 ? sanitizeAssistantText(finalBullets[0]?.text ?? "") : "");
+    const requestChecklist = buildResponseChecklist({
+      plan: requestChecklistPlan,
+      shortAnswer: finalShortAnswer,
+      responseCannotAnswer,
+      charts,
+      chartActions,
+      chartAnimations,
+      toolsUsed
+    });
 
     // Ensure request-scope data is explicitly released after shaping response.
     toolState.clickhouseCandles = [];
@@ -3563,11 +3757,13 @@ export async function POST(request: Request) {
         charts,
         chartActions,
         chartAnimations,
+        requestChecklist,
         toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
       },
       modelTrace: null,
       dataTrace: {
         requestMode: requestMode.mode,
+        requestChecklistPlan,
         executionPlan,
         requestModeHints: {
           needsClickhouse: mergedClickhouseHint,
