@@ -110,7 +110,6 @@ type AssistantMessage = {
   charts?: AssistantChart[];
   chartActions?: Array<Record<string, unknown>>;
   cannotAnswer?: boolean;
-  trace?: string;
 };
 
 type AssistantApiResponse = {
@@ -381,10 +380,6 @@ export default function AssistantPanel(props: AssistantPanelProps) {
             ? payload.response.cannotAnswerReason
             : "I answered with concise bullet points.");
 
-        const trace = payload.modelTrace
-          ? `Instruction: ${payload.modelTrace.instruction} | Reasoning: ${payload.modelTrace.reasoning} | Coding: ${payload.modelTrace.coding}`
-          : "";
-
         const assistantMessage: AssistantMessage = {
           id: `assistant-${Date.now()}`,
           role: "assistant",
@@ -392,8 +387,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
           bullets: payload.response.bullets,
           charts: payload.response.charts,
           chartActions: payload.response.chartActions,
-          cannotAnswer: payload.response.cannotAnswer,
-          trace
+          cannotAnswer: payload.response.cannotAnswer
         };
 
         if (
@@ -622,7 +616,6 @@ export default function AssistantPanel(props: AssistantPanelProps) {
               </div>
             ) : null}
 
-            {message.trace ? <p className="ai-trace">{message.trace}</p> : null}
           </article>
         ))}
 

@@ -34,7 +34,7 @@ export async function GET(request: Request) {
   const metric = normalizeMetric(searchParams.get("metric"));
 
   const now = new Date();
-  const defaultStart = new Date(Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), 1));
+  const defaultStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 6, 1));
   const start = toClickhouseDateTime(searchParams.get("start") || defaultStart.toISOString());
   const end = toClickhouseDateTime(searchParams.get("end"));
 

@@ -186,6 +186,11 @@ const MAX_CLICKHOUSE_COUNT = 1500;
 
 const CLICKHOUSE_TIMEFRAME_RE = /^(M1|M5|M15|M30|H1|H4|D|W|M)$/;
 const CLICKHOUSE_PAIR_RE = /^[A-Z0-9]{2,20}_[A-Z0-9]{2,20}$/;
+const HISTORICAL_WINDOW_RE =
+  /\b(past|previous|historical|history|backtest|since|from|between|before|after|yesterday|last\s+\d+|last week|last month|last year)\b/i;
+const DATE_LITERAL_RE = /\b\d{4}-\d{2}-\d{2}\b/;
+const TECHNICAL_DRAW_RE =
+  /\b(support|resistance|s\/r|trendline|trend line|horizontal line|vertical line|box|fvg|fair value gap|arrow|ruler|mark candlestick|draw)\b/i;
 
 const AI_SYSTEM_PROMPT = [
   "You are KORRA AI Assistant, a trading copilot.",
@@ -194,8 +199,10 @@ const AI_SYSTEM_PROMPT = [
   "2) Prefer bullet points, with high-signal trading details only.",
   "3) Never invent facts. If data is insufficient, explicitly say so.",
   "4) If needed, use tools to fetch only necessary data.",
-  "5) Use chart hints only when visual clarity helps the user request.",
-  "6) Treat user intent as trading analytics and risk-aware guidance, not guaranteed outcomes."
+  "5) Default to the most recent data window unless the user explicitly asks for past/historical dates.",
+  "6) Never ask the user to run data-fetch steps manually; fetch required data yourself.",
+  "7) Use chart hints only when visual clarity helps the user request.",
+  "8) Treat user intent as trading analytics and risk-aware guidance, not guaranteed outcomes."
 ].join("\n");
 
 const PLANNING_PROMPT = [
@@ -203,6 +210,8 @@ const PLANNING_PROMPT = [
   '{"needsBacktestData":boolean,"backtestReason":string,"needsClickhouseData":boolean,"clickhouseQuery":{"pair":string,"timeframe":string,"count":number,"start":string,"end":string,"reason":string}}',
   "Set needsBacktestData=true only when backtest has run but detailed rows are missing and required.",
   "Set needsClickhouseData=true only when current candle/history context is not enough.",
+  "Use a recent-window query by default. Set start/end only when the user explicitly asks for past/historical/date ranges.",
+  "Do not tell the user to fetch data manually; produce a concrete clickhouseQuery instead.",
   "If no query needed, set clickhouseQuery to null."
 ].join("\n");
 
@@ -210,6 +219,7 @@ const REASONING_PROMPT = [
   "Return only JSON with this shape:",
   '{"cannotAnswer":boolean,"cannotAnswerReason":string,"shortAnswer":string,"bullets":[{"tone":"green|red|gold|black","text":string}],"chartHints":[{"template":"equity_curve|pnl_distribution|session_performance|trade_outcomes|price_action|action_timeline|auto","title":string,"reason":string,"source":"history|backtest|candles|clickhouse|actions","priority":number}]}',
   "Keep bullets concise and actionable.",
+  "Never tell the user to run/fetch tools manually.",
   "If data is insufficient, set cannotAnswer=true and explain why.",
   "Do not include markdown code fences."
 ].join("\n");
@@ -243,6 +253,22 @@ const toText = (value: unknown, fallback = ""): string => {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : fallback;
+};
+
+const sanitizeAssistantText = (value: string): string => {
+  const normalized = value
+    .replace(/run\s*contains\s*:\s*false/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  if (
+    /cannot draw support\/resistance/i.test(normalized) ||
+    /clickhouse data must be fetched first/i.test(normalized)
+  ) {
+    return "I cannot complete that chart because required data could not be loaded.";
+  }
+
+  return normalized;
 };
 
 const safeJsonParse = <T>(value: string, fallback: T): T => {
@@ -565,6 +591,82 @@ const getLastUserPrompt = (turns: ChatTurn[]): string => {
   return "";
 };
 
+const isHistoricalWindowRequested = (prompt: string): boolean => {
+  const text = toText(prompt, "");
+  if (!text) {
+    return false;
+  }
+  if (DATE_LITERAL_RE.test(text)) {
+    return true;
+  }
+  return HISTORICAL_WINDOW_RE.test(text);
+};
+
+const isTechnicalDrawRequest = (prompt: string): boolean => {
+  const text = toText(prompt, "");
+  if (!text) {
+    return false;
+  }
+  return TECHNICAL_DRAW_RE.test(text);
+};
+
+const symbolToClickhousePair = (symbol: string): string => {
+  const direct = symbol.trim().toUpperCase();
+  if (CLICKHOUSE_PAIR_RE.test(direct)) {
+    return direct;
+  }
+
+  const compact = direct.replace(/[^A-Z0-9]/g, "");
+  if (compact.length >= 6) {
+    return `${compact.slice(0, 3)}_${compact.slice(3, 6)}`;
+  }
+
+  return "XAU_USD";
+};
+
+const getRecentWindowCount = (timeframe: string): number => {
+  const normalized = mapTimeframeToClickhouse(timeframe);
+  const byTimeframe: Record<string, number> = {
+    M1: 720,
+    M5: 600,
+    M15: 480,
+    M30: 420,
+    H1: 360,
+    H4: 300,
+    D: 220,
+    W: 160,
+    M: 120
+  };
+  return byTimeframe[normalized] ?? 480;
+};
+
+const buildAutoClickhouseQuery = (params: {
+  context: AssistantContext;
+  prompt: string;
+  planningQuery?: PlanningOutput["clickhouseQuery"];
+}): PlanningOutput["clickhouseQuery"] => {
+  const { context, prompt, planningQuery } = params;
+  const historicalRequested = isHistoricalWindowRequested(prompt);
+
+  const pair = normalizeClickhousePair(
+    toText(planningQuery?.pair, symbolToClickhousePair(context.symbol))
+  );
+  const timeframe = mapTimeframeToClickhouse(
+    toText(planningQuery?.timeframe, context.timeframe)
+  );
+  const defaultCount = getRecentWindowCount(timeframe);
+  const count = clamp(toNumber(planningQuery?.count, defaultCount), 40, MAX_CLICKHOUSE_COUNT);
+
+  return {
+    pair,
+    timeframe,
+    count,
+    start: historicalRequested ? toText(planningQuery?.start, "") : "",
+    end: historicalRequested ? toText(planningQuery?.end, "") : "",
+    reason: toText(planningQuery?.reason, "Targeted recent-window fetch for chart analysis.")
+  };
+};
+
 const normalizeClickhousePair = (pair: string): string => {
   const normalized = pair.trim().toUpperCase();
   if (CLICKHOUSE_PAIR_RE.test(normalized)) {
@@ -882,7 +984,7 @@ const normalizeReasoningOutput = (input: unknown): ReasoningOutput => {
       }
 
       const item = row as Record<string, unknown>;
-      const text = toText(item.text, "");
+      const text = sanitizeAssistantText(toText(item.text, ""));
       if (!text) {
         return null;
       }
@@ -937,7 +1039,9 @@ const normalizeReasoningOutput = (input: unknown): ReasoningOutput => {
 
   return {
     cannotAnswer: Boolean(raw.cannotAnswer),
-    cannotAnswerReason: toText(raw.cannotAnswerReason, "Insufficient data to answer reliably."),
+    cannotAnswerReason: sanitizeAssistantText(
+      toText(raw.cannotAnswerReason, "Insufficient data to answer reliably.")
+    ),
     shortAnswer: toText(raw.shortAnswer, ""),
     bullets,
     chartHints: limitedChartHints
@@ -1459,9 +1563,7 @@ const buildDeterministicMonthlyResponse = async (params: {
 }) => {
   const { request, context, intent } = params;
   const metric = intent.type === "monthly_volume" ? "monthly_volume" : "monthly_avg_price";
-  const pair = context.symbol.includes("_")
-    ? context.symbol
-    : `${context.symbol.slice(0, 3)}_${context.symbol.slice(3, 6)}`;
+  const pair = symbolToClickhousePair(context.symbol);
 
   const rows = await fetchClickhouseMonthlyAnalytics({
     request,
@@ -1672,6 +1774,33 @@ export async function POST(request: Request) {
           writer: modelSelection.writer
         }
       });
+    }
+
+    const shouldAutofetchClickhouse =
+      toolState.clickhouseCandles.length === 0 &&
+      (Boolean(planningResult.planning.needsClickhouseData) || isTechnicalDrawRequest(lastUserPrompt));
+
+    if (shouldAutofetchClickhouse) {
+      const autoQuery = buildAutoClickhouseQuery({
+        context,
+        prompt: lastUserPrompt,
+        planningQuery: planningResult.planning.clickhouseQuery
+      });
+
+      try {
+        const result = await fetchClickhouseCandles(request, autoQuery);
+        toolState.clickhouseCandles = result.candles;
+        toolState.clickhouseMeta = {
+          pair: result.pair,
+          timeframe: result.timeframe,
+          count: result.candles.length
+        };
+
+        planningResult.planning.needsClickhouseData = true;
+        planningResult.planning.clickhouseQuery = autoQuery;
+      } catch {
+        // Continue to reasoning stage; it will handle insufficient data safely.
+      }
     }
 
     const reasoning = await executeReasoningStage({
