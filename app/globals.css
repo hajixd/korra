@@ -5174,6 +5174,28 @@ button {
   font-weight: 700;
 }
 
+.ai-tool-pills {
+  margin: 0.2rem 0 0.12rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.24rem;
+}
+
+.ai-tool-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.12rem 0.38rem;
+  border-radius: 999px;
+  border: 1px solid rgba(132, 170, 233, 0.38);
+  background: rgba(32, 52, 88, 0.62);
+  color: #c8dcff;
+  font-size: 0.56rem;
+  line-height: 1.2;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
 .ai-chart-grid {
   display: grid;
   gap: 0.48rem;

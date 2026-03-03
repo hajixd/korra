@@ -189,6 +189,8 @@ const CLICKHOUSE_PAIR_RE = /^[A-Z0-9]{2,20}_[A-Z0-9]{2,20}$/;
 const HISTORICAL_WINDOW_RE =
   /\b(past|previous|historical|history|backtest|since|from|between|before|after|yesterday|last\s+\d+|last week|last month|last year)\b/i;
 const DATE_LITERAL_RE = /\b\d{4}-\d{2}-\d{2}\b/;
+const DRAW_WORD_RE = /\bdraw\b/i;
+const VISUAL_REQUEST_RE = /\b(chart|graph|plot|visual|visualize|draw)\b/i;
 const TECHNICAL_DRAW_RE =
   /\b(support|resistance|s\/r|trendline|trend line|horizontal line|vertical line|box|fvg|fair value gap|arrow|ruler|mark candlestick|draw)\b/i;
 
@@ -197,6 +199,7 @@ const AI_SYSTEM_PROMPT = [
   "Rules:",
   "1) Be concise and direct.",
   "2) Prefer bullet points, with high-signal trading details only.",
+  "2b) Answer only what the user asked. Do not add extra sections or advice unless requested.",
   "3) Never invent facts. If data is insufficient, explicitly say so.",
   "4) If needed, use tools to fetch only necessary data.",
   "5) Default to the most recent data window unless the user explicitly asks for past/historical dates.",
@@ -218,7 +221,8 @@ const PLANNING_PROMPT = [
 const REASONING_PROMPT = [
   "Return only JSON with this shape:",
   '{"cannotAnswer":boolean,"cannotAnswerReason":string,"shortAnswer":string,"bullets":[{"tone":"green|red|gold|black","text":string}],"chartHints":[{"template":"equity_curve|pnl_distribution|session_performance|trade_outcomes|price_action|action_timeline|auto","title":string,"reason":string,"source":"history|backtest|candles|clickhouse|actions","priority":number}]}',
-  "Keep bullets concise and actionable.",
+  "Keep bullets concise and actionable. Use max 3 bullets unless the user explicitly asks for detail.",
+  "Do not add extra information beyond the user request.",
   "Never tell the user to run/fetch tools manually.",
   "If data is insufficient, set cannotAnswer=true and explain why.",
   "Do not include markdown code fences."
@@ -667,6 +671,191 @@ const buildAutoClickhouseQuery = (params: {
   };
 };
 
+const mergeCandleRowsPreferLive = (params: {
+  clickhouse: CandleRow[];
+  live: CandleRow[];
+}): CandleRow[] => {
+  const { clickhouse, live } = params;
+  const byTime = new Map<number, CandleRow>();
+
+  for (const row of clickhouse) {
+    if (!Number.isFinite(row.time)) {
+      continue;
+    }
+    byTime.set(Math.trunc(row.time), row);
+  }
+
+  // Live stream candles override overlapping ClickHouse rows in the recent window.
+  for (const row of live) {
+    if (!Number.isFinite(row.time)) {
+      continue;
+    }
+    byTime.set(Math.trunc(row.time), row);
+  }
+
+  return Array.from(byTime.values()).sort((left, right) => left.time - right.time);
+};
+
+const getRecentWindowCandles = (params: {
+  context: AssistantContext;
+  clickhouseCandles: CandleRow[];
+}): CandleRow[] => {
+  const { context, clickhouseCandles } = params;
+  const merged = mergeCandleRowsPreferLive({
+    clickhouse: clickhouseCandles,
+    live: context.liveCandles
+  });
+  const windowCount = getRecentWindowCount(context.timeframe);
+
+  if (merged.length > 0) {
+    return merged.slice(-windowCount);
+  }
+
+  return context.liveCandles.slice(-windowCount);
+};
+
+const getPriceQuantile = (values: number[], quantile: number): number | null => {
+  if (values.length === 0) {
+    return null;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.max(0, Math.min(1, quantile)) * (sorted.length - 1);
+  const low = Math.floor(index);
+  const high = Math.ceil(index);
+  const lowValue = sorted[low] ?? sorted[0] ?? 0;
+  const highValue = sorted[high] ?? lowValue;
+  const weight = index - low;
+
+  return Number((lowValue * (1 - weight) + highValue * weight).toFixed(4));
+};
+
+const extractPromptPrice = (prompt: string): number | null => {
+  const matches = prompt.match(/\b\d{3,6}(?:\.\d+)?\b/g);
+  if (!matches || matches.length === 0) {
+    return null;
+  }
+
+  const candidate = Number(matches[0]);
+  return Number.isFinite(candidate) ? candidate : null;
+};
+
+const normalizeToolLabel = (value: string): string => {
+  const text = value.replace(/_/g, " ").trim();
+  return text.length > 0 ? text : "tool";
+};
+
+const buildDrawActionsFromPrompt = (params: {
+  prompt: string;
+  candles: CandleRow[];
+}): Array<Record<string, unknown>> => {
+  const prompt = params.prompt.toLowerCase();
+  const candles = params.candles;
+  if (candles.length === 0) {
+    return [];
+  }
+
+  const recent = candles.slice(-Math.min(candles.length, 240));
+  const last = recent[recent.length - 1]!;
+  const first = recent[0]!;
+  const lows = recent.map((row) => row.low);
+  const highs = recent.map((row) => row.high);
+  const support = getPriceQuantile(lows, 0.2) ?? Number(last.low.toFixed(4));
+  const resistance = getPriceQuantile(highs, 0.8) ?? Number(last.high.toFixed(4));
+  const explicitPrice = extractPromptPrice(prompt);
+  const actions: Array<Record<string, unknown>> = [];
+
+  if (prompt.includes("support") || prompt.includes("resistance") || prompt.includes("s/r")) {
+    actions.push({
+      type: "draw_support_resistance",
+      priceStart: support,
+      priceEnd: resistance,
+      label: "Auto S/R"
+    });
+  }
+
+  if (prompt.includes("trendline") || prompt.includes("trend line")) {
+    actions.push({
+      type: "draw_trend_line",
+      timeStart: first.time,
+      priceStart: first.close,
+      timeEnd: last.time,
+      priceEnd: last.close,
+      label: "Trendline"
+    });
+  }
+
+  if (prompt.includes("horizontal")) {
+    actions.push({
+      type: "draw_horizontal_line",
+      price: explicitPrice ?? Number(last.close.toFixed(4)),
+      label: "Horizontal Level"
+    });
+  }
+
+  if (prompt.includes("vertical")) {
+    actions.push({
+      type: "draw_vertical_line",
+      time: last.time,
+      label: "Vertical Marker"
+    });
+  }
+
+  if (prompt.includes("box")) {
+    actions.push({
+      type: "draw_box",
+      timeStart: recent[Math.max(0, recent.length - 50)]?.time ?? first.time,
+      timeEnd: last.time,
+      priceStart: support,
+      priceEnd: resistance,
+      label: "Range Box"
+    });
+  }
+
+  if (prompt.includes("fvg") || prompt.includes("fair value gap")) {
+    actions.push({
+      type: "draw_fvg",
+      timeStart: recent[Math.max(0, recent.length - 25)]?.time ?? first.time,
+      timeEnd: last.time,
+      priceStart: Number(((support + last.close) / 2).toFixed(4)),
+      priceEnd: Number(((resistance + last.close) / 2).toFixed(4)),
+      label: "FVG"
+    });
+  }
+
+  if (prompt.includes("arrow")) {
+    actions.push({
+      type: "draw_arrow",
+      time: last.time,
+      price: explicitPrice ?? Number(last.close.toFixed(4)),
+      markerShape: "arrowUp",
+      label: "Arrow"
+    });
+  }
+
+  if (prompt.includes("ruler")) {
+    actions.push({
+      type: "draw_ruler",
+      timeStart: first.time,
+      priceStart: first.close,
+      timeEnd: last.time,
+      priceEnd: last.close,
+      label: "Ruler"
+    });
+  }
+
+  if (actions.length === 0) {
+    actions.push({
+      type: "mark_candlestick",
+      time: last.time,
+      markerShape: "circle",
+      note: "Draw marker"
+    });
+  }
+
+  return actions.slice(0, 12);
+};
+
 const normalizeClickhousePair = (pair: string): string => {
   const normalized = pair.trim().toUpperCase();
   if (CLICKHOUSE_PAIR_RE.test(normalized)) {
@@ -995,7 +1184,7 @@ const normalizeReasoningOutput = (input: unknown): ReasoningOutput => {
       };
     })
     .filter((row): row is { tone: "green" | "red" | "gold" | "black"; text: string } => row !== null)
-    .slice(0, 8);
+    .slice(0, 3);
 
   const chartHints: ReasoningOutput["chartHints"] = [];
 
@@ -1042,7 +1231,7 @@ const normalizeReasoningOutput = (input: unknown): ReasoningOutput => {
     cannotAnswerReason: sanitizeAssistantText(
       toText(raw.cannotAnswerReason, "Insufficient data to answer reliably.")
     ),
-    shortAnswer: toText(raw.shortAnswer, ""),
+    shortAnswer: sanitizeAssistantText(toText(raw.shortAnswer, "")),
     bullets,
     chartHints: limitedChartHints
   };
@@ -1058,16 +1247,25 @@ const executeReasoningStage = async (params: {
   planning: PlanningOutput;
 }): Promise<ReasoningOutput> => {
   const { apiKey, baseUrl, models, turns, context, toolState, planning } = params;
+  const recentWindowCandles = getRecentWindowCandles({
+    context,
+    clickhouseCandles: toolState.clickhouseCandles
+  });
 
   const reasoningInput = {
     conversation: buildConversationTranscript(turns),
     context: buildContextDigest(context),
     planning,
+    recentWindow: {
+      includesLiveStream: true,
+      count: recentWindowCandles.length,
+      candles: recentWindowCandles.slice(-300)
+    },
     clickhouse:
       toolState.clickhouseCandles.length > 0
         ? {
             meta: toolState.clickhouseMeta,
-            candles: toolState.clickhouseCandles.slice(-300)
+            candles: recentWindowCandles.slice(-300)
           }
         : null
   };
@@ -1474,6 +1672,10 @@ const buildChartsFromPlans = (
     const backtestRows = context.backtest.trades;
     const candleRows = context.liveCandles;
     const clickhouseRows = toolState.clickhouseCandles;
+    const recentWindowRows = getRecentWindowCandles({
+      context,
+      clickhouseCandles: clickhouseRows
+    });
     const actionRows = context.actionRows;
 
     let chart: AssistantChart | null = null;
@@ -1513,10 +1715,10 @@ const buildChartsFromPlans = (
     } else if (templateFamily === "price_action") {
       const sourceRows =
         plan.source === "clickhouse" && clickhouseRows.length > 0
-          ? clickhouseRows
+          ? recentWindowRows
           : candleRows.length > 0
             ? candleRows
-            : clickhouseRows;
+            : recentWindowRows;
       chart = buildPriceActionChart(sourceRows, chartTitle, points, templateId);
     } else if (templateFamily === "action_timeline") {
       chart = buildActionTimelineChart(actionRows, chartTitle, templateId);
@@ -1550,7 +1752,8 @@ const buildFallbackFailureResponse = (message: string) => {
           text: message
         }
       ],
-      charts: []
+      charts: [],
+      toolsUsed: [] as string[]
     },
     modelTrace: null
   };
@@ -1560,8 +1763,9 @@ const buildDeterministicMonthlyResponse = async (params: {
   request: Request;
   context: AssistantContext;
   intent: ReturnType<typeof detectDeterministicIntent>;
+  includeVisualization: boolean;
 }) => {
-  const { request, context, intent } = params;
+  const { request, context, intent, includeVisualization } = params;
   const metric = intent.type === "monthly_volume" ? "monthly_volume" : "monthly_avg_price";
   const pair = symbolToClickhousePair(context.symbol);
 
@@ -1586,7 +1790,8 @@ const buildDeterministicMonthlyResponse = async (params: {
           }
         ],
         charts: [] as AssistantChart[],
-        chartActions: [] as Array<Record<string, unknown>>
+        chartActions: [] as Array<Record<string, unknown>>,
+        toolsUsed: ["clickhouse analytics"]
       },
       modelTrace: null
     };
@@ -1603,31 +1808,35 @@ const buildDeterministicMonthlyResponse = async (params: {
   const topMonth = summary.highestMonth?.month ?? "N/A";
   const lowMonth = summary.lowestMonth?.month ?? "N/A";
 
-  const chart: AssistantChart = {
-    id: `monthly-${Date.now()}`,
-    template: metric === "monthly_volume" ? "monthly_volume" : "monthly_avg_close",
-    title: metric === "monthly_volume" ? "Monthly Volume" : "Monthly Average Price",
-    subtitle: `${rows.length} months`,
-    data: rows.map((row) => ({
-      month: row.month,
-      value: Number(row.metric_value.toFixed(4)),
-      avgRange: Number(row.avg_range.toFixed(4)),
-      volume: Number(row.total_volume.toFixed(2))
-    })),
-    config: {
-      xKey: "month",
-      yKey: "value"
-    }
-  };
+  const chart: AssistantChart | null = includeVisualization
+    ? {
+        id: `monthly-${Date.now()}`,
+        template: metric === "monthly_volume" ? "monthly_volume" : "monthly_avg_close",
+        title: metric === "monthly_volume" ? "Monthly Volume" : "Monthly Average Price",
+        subtitle: `${rows.length} months`,
+        data: rows.map((row) => ({
+          month: row.month,
+          value: Number(row.metric_value.toFixed(4)),
+          avgRange: Number(row.avg_range.toFixed(4)),
+          volume: Number(row.total_volume.toFixed(2))
+        })),
+        config: {
+          xKey: "month",
+          yKey: "value"
+        }
+      }
+    : null;
 
-  const action: Record<string, unknown> = {
-    type: "move_to_date",
-    time:
-      rows.length > 0
-        ? new Date(`${rows[rows.length - 1]!.month}-01T00:00:00.000Z`).getTime()
-        : undefined,
-    label: "Monthly aggregate focus"
-  };
+  const action: Record<string, unknown> | null = includeVisualization
+    ? {
+        type: "move_to_date",
+        time:
+          rows.length > 0
+            ? new Date(`${rows[rows.length - 1]!.month}-01T00:00:00.000Z`).getTime()
+            : undefined,
+        label: "Monthly aggregate focus"
+      }
+    : null;
 
   return {
     status: "ok" as const,
@@ -1661,8 +1870,11 @@ const buildDeterministicMonthlyResponse = async (params: {
               : `**Lowest avg month:** ${lowMonth} (${summary.lowestMonth?.avgClose?.toFixed(4) ?? "N/A"})`
         }
       ],
-      charts: [chart],
-      chartActions: [action]
+      charts: chart ? [chart] : [],
+      chartActions: action ? [action] : [],
+      toolsUsed: includeVisualization
+        ? ["clickhouse analytics", "chart actions"]
+        : ["clickhouse analytics"]
     },
     modelTrace: {
       instruction: "deterministic-analytics",
@@ -1712,6 +1924,8 @@ export async function POST(request: Request) {
 
   const baseUrl = process.env.NEBIUS_BASE_URL || "https://api.tokenfactory.nebius.com/v1";
   const lastUserPrompt = getLastUserPrompt(turns);
+  const explicitDrawRequest = DRAW_WORD_RE.test(lastUserPrompt);
+  const wantsVisualization = VISUAL_REQUEST_RE.test(lastUserPrompt);
   const deterministicIntent = detectDeterministicIntent(lastUserPrompt);
 
   if (deterministicIntent.type !== "none") {
@@ -1720,7 +1934,8 @@ export async function POST(request: Request) {
         await buildDeterministicMonthlyResponse({
           request,
           context,
-          intent: deterministicIntent
+          intent: deterministicIntent,
+          includeVisualization: wantsVisualization
         })
       );
     } catch (error) {
@@ -1736,6 +1951,11 @@ export async function POST(request: Request) {
   }
 
   try {
+    const toolsUsed = new Set<string>();
+    if (context.liveCandles.length > 0) {
+      toolsUsed.add("live_stream_data");
+    }
+
     const modelsCatalog = await fetchNebiusModelCatalog({
       apiKey,
       baseUrl
@@ -1759,6 +1979,7 @@ export async function POST(request: Request) {
     });
 
     if (planningResult.status === "needs_backtest_data") {
+      toolsUsed.add("backtest_data_request");
       return NextResponse.json({
         status: "needs_backtest_data",
         reason:
@@ -1766,6 +1987,9 @@ export async function POST(request: Request) {
           "Detailed backtest data is required to answer accurately.",
         request: {
           type: "backtest_trades"
+        },
+        response: {
+          toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
         },
         modelTrace: {
           instruction: modelSelection.instruction,
@@ -1798,6 +2022,7 @@ export async function POST(request: Request) {
 
         planningResult.planning.needsClickhouseData = true;
         planningResult.planning.clickhouseQuery = autoQuery;
+        toolsUsed.add("clickhouse_candles");
       } catch {
         // Continue to reasoning stage; it will handle insufficient data safely.
       }
@@ -1822,15 +2047,36 @@ export async function POST(request: Request) {
       toolState
     });
 
-    const charts = buildChartsFromPlans(codingResult.chartPlans, context, toolState);
-    const chartActions = codingResult.chartActions;
+    if (toolState.clickhouseCandles.length > 0) {
+      toolsUsed.add("clickhouse_candles");
+    }
+
+    const charts =
+      wantsVisualization || explicitDrawRequest
+        ? buildChartsFromPlans(codingResult.chartPlans, context, toolState)
+        : [];
+    let chartActions = codingResult.chartActions;
+    if (explicitDrawRequest && chartActions.length === 0) {
+      const fallbackDrawActions = buildDrawActionsFromPrompt({
+        prompt: lastUserPrompt,
+        candles: getRecentWindowCandles({
+          context,
+          clickhouseCandles: toolState.clickhouseCandles
+        })
+      });
+      chartActions = normalizeChartActions(fallbackDrawActions);
+    }
+
+    if (chartActions.length > 0) {
+      toolsUsed.add("chart_actions");
+    }
     const usedClickhouseData = toolState.clickhouseCandles.length > 0;
 
     const finalBullets = reasoning.bullets.length > 0
       ? reasoning.bullets
       : reasoning.cannotAnswer
         ? [{ tone: "gold" as const, text: reasoning.cannotAnswerReason }]
-        : [{ tone: "black" as const, text: "No concise bullet summary was generated." }];
+        : [];
 
     // Ensure request-scope data is explicitly released after shaping response.
     toolState.clickhouseCandles = [];
@@ -1843,7 +2089,8 @@ export async function POST(request: Request) {
         shortAnswer: reasoning.shortAnswer,
         bullets: finalBullets,
         charts,
-        chartActions
+        chartActions,
+        toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
       },
       modelTrace: {
         instruction: modelSelection.instruction,

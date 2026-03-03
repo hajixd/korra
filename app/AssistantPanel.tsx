@@ -109,6 +109,7 @@ type AssistantMessage = {
   bullets?: AssistantBullet[];
   charts?: AssistantChart[];
   chartActions?: Array<Record<string, unknown>>;
+  toolsUsed?: string[];
   cannotAnswer?: boolean;
 };
 
@@ -122,6 +123,7 @@ type AssistantApiResponse = {
     bullets: AssistantBullet[];
     charts: AssistantChart[];
     chartActions?: Array<Record<string, unknown>>;
+    toolsUsed?: string[];
   };
   modelTrace?: {
     instruction: string;
@@ -150,6 +152,14 @@ const MAX_CONTEXT_ACTIONS = 360;
 const MAX_CONTEXT_BACKTEST_WHEN_REQUESTED = 2200;
 
 const PIE_COLORS = ["#13c98f", "#f0455a", "#bfc6d8", "#f0b84f"];
+
+const normalizeToolPill = (value: string): string => {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+  return text;
+};
 
 const boldText = (text: string): ReactNode[] => {
   const output: ReactNode[] = [];
@@ -378,7 +388,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
           payload.response.shortAnswer ||
           (payload.response.cannotAnswer
             ? payload.response.cannotAnswerReason
-            : "I answered with concise bullet points.");
+            : payload.response.bullets[0]?.text || "Done.");
 
         const assistantMessage: AssistantMessage = {
           id: `assistant-${Date.now()}`,
@@ -387,6 +397,9 @@ export default function AssistantPanel(props: AssistantPanelProps) {
           bullets: payload.response.bullets,
           charts: payload.response.charts,
           chartActions: payload.response.chartActions,
+          toolsUsed: Array.isArray(payload.response.toolsUsed)
+            ? payload.response.toolsUsed.map(normalizeToolPill).filter((tool) => tool.length > 0)
+            : [],
           cannotAnswer: payload.response.cannotAnswer
         };
 
@@ -588,6 +601,16 @@ export default function AssistantPanel(props: AssistantPanelProps) {
             </header>
 
             <p className="ai-msg-content">{boldText(message.content)}</p>
+
+            {message.toolsUsed && message.toolsUsed.length > 0 ? (
+              <div className="ai-tool-pills" aria-label="tools used">
+                {message.toolsUsed.map((tool, index) => (
+                  <span className="ai-tool-pill" key={`${message.id}-tool-${index}`}>
+                    {tool}
+                  </span>
+                ))}
+              </div>
+            ) : null}
 
             {message.bullets && message.bullets.length > 0 ? (
               <ul className="ai-bullets">
