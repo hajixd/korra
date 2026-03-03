@@ -2258,17 +2258,16 @@ const fetchHybridHistoryCandles = async (
   targetBars: number,
   recentOneMinutePromise?: Promise<Candle[]>
 ): Promise<Candle[]> => {
-  const recentTimeframeCandlesPromise = fetchMarketCandles(
-    timeframe,
-    Math.min(targetBars, MARKET_MAX_HISTORY_CANDLES)
-  ).catch(() => []);
-
   try {
+    // Always seed from ClickHouse/history first before blending in recent market candles.
     const historyCandles = await fetchHistoryApiCandles(
       timeframe,
       Math.min(targetBars, MARKET_MAX_HISTORY_CANDLES)
     );
-    const recentTimeframeCandles = await recentTimeframeCandlesPromise;
+    const recentTimeframeCandles = await fetchMarketCandles(
+      timeframe,
+      Math.min(targetBars, MARKET_MAX_HISTORY_CANDLES)
+    ).catch(() => []);
 
     if (historyCandles.length >= MIN_SEED_CANDLES) {
       return mergeHistoricalAndRecentCandles(historyCandles, recentTimeframeCandles, targetBars);
@@ -5249,6 +5248,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const tradePathLineRef = useRef<ISeriesApi<"Line"> | null>(null);
   const multiTradeSeriesRef = useRef<MultiTradeOverlaySeries[]>([]);
   const chartHistoryReadyByKeyRef = useRef<Record<string, true>>({});
+  const chartResetAfterLoadKeyRef = useRef<string | null>(null);
   const selectionRef = useRef<string>("");
   const focusTradeIdRef = useRef<string | null>(null);
   const notificationRef = useRef<HTMLDivElement | null>(null);
@@ -6003,6 +6003,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const historyLimit = chartHistoryCountByTimeframe[selectedTimeframe];
     const recentOneMinutePromise = fetchRecentOneMinuteCandles();
     const keyWasReady = Boolean(chartHistoryReadyByKeyRef.current[key]);
+
+    if (!keyWasReady) {
+      chartResetAfterLoadKeyRef.current = key;
+    }
 
     setChartHistoryLoadingKey(keyWasReady ? null : key);
 
@@ -8787,6 +8791,40 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
     });
   }, [selectedTimeframe]);
+
+  useEffect(() => {
+    if (selectedSurfaceTab !== "chart") {
+      return;
+    }
+
+    if (chartHistoryLoadingKey !== null) {
+      return;
+    }
+
+    if (chartResetAfterLoadKeyRef.current !== selectedKey) {
+      return;
+    }
+
+    if (selectedCandles.length === 0) {
+      return;
+    }
+
+    chartResetAfterLoadKeyRef.current = null;
+
+    const resetFrame = window.requestAnimationFrame(() => {
+      resetChart();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(resetFrame);
+    };
+  }, [
+    chartHistoryLoadingKey,
+    resetChart,
+    selectedCandles.length,
+    selectedKey,
+    selectedSurfaceTab
+  ]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -12986,7 +13024,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <span>No market data loaded</span>
                 )}
               </div>
-              <div className="chart-stage">
+              <div className={`chart-stage ${isChartDataLoading ? "chart-stage-loading" : ""}`}>
                 <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
                 <div ref={countdownOverlayRef} className="candle-countdown-overlay" />
                 {isChartDataLoading ? (
