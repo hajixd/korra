@@ -248,10 +248,10 @@ const TRADING_REQUEST_RE =
   /\b(trade|trading|chart|graph|draw|support|resistance|trend|line|box|fvg|arrow|ruler|candle|candlestick|price|xau|xauusd|gold|rsi|macd|ema|sma|atr|indicator|backtest|history|pnl|risk|entry|stop|target|buy|sell|volume|volatility)\b/i;
 
 const AI_SYSTEM_PROMPT = [
-  "You are KORRA AI Assistant, a trading copilot.",
+  "You are Gideon, a trading copilot.",
   "Rules:",
-  "1) Be concise and direct.",
-  "2) Prefer bullet points, with high-signal trading details only.",
+  "1) Be concise, direct, and natural.",
+  "2) Sound human and conversational, not robotic.",
   "2b) Answer only what the user asked. Do not add extra sections or advice unless requested.",
   "2c) If the request is ambiguous and blocks execution, ask one concise clarifying question.",
   "3) Never invent facts. If data is insufficient, explicitly say so.",
@@ -312,6 +312,7 @@ const GRAPH_TOOLBOX_RESOLUTION_PROMPT = [
 const REASONING_PROMPT = [
   "Return only JSON with this shape:",
   '{"cannotAnswer":boolean,"cannotAnswerReason":string,"shortAnswer":string,"bullets":[{"tone":"green|red|gold|black","text":string}],"chartHints":[{"template":"equity_curve|pnl_distribution|session_performance|trade_outcomes|price_action|action_timeline|auto","title":string,"reason":string,"source":"history|backtest|candles|clickhouse|actions","priority":number}]}',
+  "Write shortAnswer in a natural human voice, concise and direct.",
   "Keep bullets concise and actionable. Use max 3 bullets unless the user explicitly asks for detail.",
   "Do not add extra information beyond the user request.",
   "Never tell the user to run/fetch tools manually.",
@@ -1150,55 +1151,77 @@ const buildResponseChecklist = (params: {
     (!plan.requiresGraph && charts.length > 0) ||
     (!plan.requiresDraw && chartActions.length > 0) ||
     (!plan.requiresAnimation && chartAnimations.length > 0);
-
-  return [
+  const output: RequestChecklistItem[] = [
     {
       id: "intent",
-      label: "Understand and respond to user intent",
+      label: plan.requestKind === "social" ? "Intent: social conversation" : "Intent: task request",
       required: true,
       satisfied: responseHasText
     },
     {
-      id: "natural",
-      label: "Return natural-language response",
-      required: plan.requiresNaturalResponse,
-      satisfied: !plan.requiresNaturalResponse || responseHasText
-    },
-    {
+      id: "reply",
+      label: "Reply generated",
+      required: true,
+      satisfied: responseHasText
+    }
+  ];
+
+  if (plan.requestKind === "social") {
+    output.push({
+      id: "social_scope",
+      label: "Skipped market analysis for social message",
+      required: true,
+      satisfied: charts.length === 0 && chartActions.length === 0 && chartAnimations.length === 0
+    });
+    return output;
+  }
+
+  if (charts.length > 0 || plan.requiresGraph) {
+    output.push({
       id: "graph",
-      label: "Provide panel graph only if requested",
+      label: charts.length > 0 ? "Panel graph generated" : "Panel graph requested but missing",
       required: plan.requiresGraph,
       satisfied: plan.requiresGraph ? charts.length > 0 : charts.length === 0
-    },
-    {
+    });
+  }
+
+  if (chartActions.length > 0 || plan.requiresDraw) {
+    output.push({
       id: "draw",
-      label: "Provide chart drawings only if requested",
+      label: chartActions.length > 0 ? "Chart drawings applied" : "Chart drawing requested but missing",
       required: plan.requiresDraw,
       satisfied: plan.requiresDraw ? chartActions.length > 0 : chartActions.length === 0
-    },
-    {
+    });
+  }
+
+  if (chartAnimations.length > 0 || plan.requiresAnimation) {
+    output.push({
       id: "animation",
-      label: "Provide animation only if requested",
+      label: chartAnimations.length > 0 ? "Animation prepared" : "Animation requested but missing",
       required: plan.requiresAnimation,
       satisfied: plan.requiresAnimation
         ? chartAnimations.length > 0
         : chartAnimations.length === 0
-    },
-    {
-      id: "data",
-      label: "Avoid unnecessary data fetch",
-      required: plan.shouldAvoidDataFetch,
-      satisfied: !plan.shouldAvoidDataFetch || !usedDataTools
-    },
-    {
-      id: "scope",
-      label: "Stay within requested scope",
-      required: plan.strictToRequest,
-      satisfied:
-        !plan.strictToRequest ||
-        (!unrequestedVisuals && (!plan.shouldAvoidDataFetch || !usedDataTools))
-    }
-  ];
+    });
+  }
+
+  output.push({
+    id: "data",
+    label: usedDataTools ? "Fetched required data" : "No extra data fetch needed",
+    required: true,
+    satisfied: !plan.shouldAvoidDataFetch || !usedDataTools
+  });
+
+  output.push({
+    id: "scope",
+    label: "Scope matched your request",
+    required: true,
+    satisfied:
+      !plan.strictToRequest ||
+      (!unrequestedVisuals && (!plan.shouldAvoidDataFetch || !usedDataTools))
+  });
+
+  return output.slice(0, 7);
 };
 
 const normalizeGraphTypeCandidate = (value: string): string => {
@@ -2407,6 +2430,44 @@ const executeGraphToolboxResolutionStage = async (params: {
   }
 };
 
+const executeSocialReplyStage = async (params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  turns: ChatTurn[];
+}): Promise<string> => {
+  const { apiKey, baseUrl, model, turns } = params;
+  const lastPrompt = getLastUserPrompt(turns);
+
+  try {
+    const completion = await nebiusChatCompletion({
+      apiKey,
+      baseUrl,
+      model,
+      messages: [
+        {
+          role: "system",
+          content: [
+            "You are Gideon.",
+            "Respond like a natural human in one short sentence.",
+            "The user sent a social/greeting message.",
+            "Do not include market analysis, indicators, charts, trading advice, or tool mentions."
+          ].join("\n")
+        },
+        {
+          role: "user",
+          content: lastPrompt
+        }
+      ],
+      maxTokens: 80
+    });
+
+    return sanitizeAssistantText(extractNebiusMessageText(completion.message.content));
+  } catch {
+    return sanitizeAssistantText(lastPrompt);
+  }
+};
+
 const executePlanningStage = async (params: {
   apiKey: string;
   baseUrl: string;
@@ -3356,9 +3417,6 @@ export async function POST(request: Request) {
 
   try {
     const toolsUsed = new Set<string>();
-    if (context.liveCandles.length > 0) {
-      toolsUsed.add("live_stream_data");
-    }
 
     const modelsCatalog = await fetchNebiusModelCatalog({
       apiKey,
@@ -3436,6 +3494,59 @@ export async function POST(request: Request) {
       wantsAnimation
     });
 
+    if (socialOnlyRequest) {
+      const shortAnswer = sanitizeAssistantText(
+        await executeSocialReplyStage({
+          apiKey,
+          baseUrl,
+          model: modelSelection.instruction,
+          turns
+        })
+      );
+      const emptyActions = normalizeChartActions([]);
+      const emptyAnimations = normalizeChartAnimationsFromCoding({});
+      const requestChecklist = buildResponseChecklist({
+        plan: requestChecklistPlan,
+        shortAnswer,
+        responseCannotAnswer: false,
+        charts: [],
+        chartActions: emptyActions,
+        chartAnimations: emptyAnimations,
+        toolsUsed
+      });
+
+      return NextResponse.json({
+        status: "ok",
+        response: {
+          cannotAnswer: false,
+          cannotAnswerReason: "",
+          shortAnswer,
+          bullets: [],
+          charts: [],
+          chartActions: [],
+          chartAnimations: [],
+          requestChecklist,
+          toolsUsed: []
+        },
+        modelTrace: null,
+        dataTrace: {
+          requestMode: requestMode.mode,
+          requestChecklistPlan,
+          executionPlan,
+          usedClickhouse: false,
+          clickhouseMeta: null,
+          backtestDataIncluded: context.backtest.dataIncluded,
+          historyRows: context.historyRows.length,
+          backtestRows: context.backtest.trades.length,
+          candleRows: context.liveCandles.length
+        }
+      });
+    }
+
+    if (context.liveCandles.length > 0) {
+      toolsUsed.add("live_stream_data");
+    }
+
     const toolState: ToolState = {
       clickhouseCandles: [],
       clickhouseMeta: null,
@@ -3461,23 +3572,17 @@ export async function POST(request: Request) {
       });
     }
 
-    const planningResult = socialOnlyRequest
-      ? ({ planning: {} } as {
-          planning: PlanningOutput;
-          status?: "needs_backtest_data";
-          reason?: string;
-        })
-      : await executePlanningStage({
-          apiKey,
-          baseUrl,
-          model: modelSelection.instruction,
-          turns,
-          context,
-          request,
-          toolState
-        });
+    const planningResult = await executePlanningStage({
+      apiKey,
+      baseUrl,
+      model: modelSelection.instruction,
+      turns,
+      context,
+      request,
+      toolState
+    });
 
-    if (!socialOnlyRequest && planningResult.status === "needs_backtest_data") {
+    if (planningResult.status === "needs_backtest_data") {
       toolsUsed.add("backtest_data_request");
       return NextResponse.json({
         status: "needs_backtest_data",

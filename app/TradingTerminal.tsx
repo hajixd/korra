@@ -2631,6 +2631,8 @@ const AGGRESSOR_PRESSURE_UI_THROTTLE_MS = 220;
 const AGGRESSOR_HALF_LIFE_BARS = 1.2;
 const AGGRESSOR_TRAINING_BARS = 96;
 const AGGRESSOR_MIN_TRAINING_PERIOD_MS = 3 * 60 * 60_000;
+const VOLUME_NOWCAST_CALIBRATION_FULL_SAMPLES = 10;
+const VOLUME_NOWCAST_CALIBRATION_PENDING_LIMIT = 32;
 const VP_THRESHOLD_RATIO = 0.8;
 const MARKET_API_KEY =
   process.env.NEXT_PUBLIC_PRICE_STREAM_API_KEY ||
@@ -6307,22 +6309,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setMt5ServerInput("");
   }, []);
 
-  const handleRemoveMt5Account = useCallback(
-    (accountId: string) => {
-      setMt5Accounts((current) => current.filter((account) => account.id !== accountId));
-      setMt5ContextMenu(null);
-
-      if (mt5EditingAccountId === accountId) {
-        setMt5FormOpen(false);
-        setMt5EditingAccountId(null);
-        setMt5LoginInput("");
-        setMt5PasswordInput("");
-        setMt5ServerInput("");
-      }
-    },
-    [mt5EditingAccountId]
-  );
-
   const handleToggleMt5Pause = useCallback((accountId: string) => {
     setMt5Accounts((current) =>
       current.map((account) => {
@@ -6392,7 +6378,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     absMidMove: 0,
     spreadSum: 0,
     spreadCount: 0,
-    lastUiUpdateMs: 0
+    lastUiUpdateMs: 0,
+    lastEstimatedFinalVolume: 0,
+    lastProgressRatio: 0
+  });
+  const volumeNowcastCalibrationRef = useRef({
+    multiplier: 1,
+    sampleCount: 0,
+    pendingByCandleStart: new Map<number, number>()
   });
   const volumeBaselineRef = useRef<VolumeBaselineProfile>(createEmptyVolumeBaselineProfile());
   const selectedSurfaceTabRef = useRef<SurfaceTab>(selectedSurfaceTab);
@@ -7355,7 +7348,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       absMidMove: 0,
       spreadSum: 0,
       spreadCount: 0,
-      lastUiUpdateMs: 0
+      lastUiUpdateMs: 0,
+      lastEstimatedFinalVolume: 0,
+      lastProgressRatio: 0
+    };
+    volumeNowcastCalibrationRef.current = {
+      multiplier: 1,
+      sampleCount: 0,
+      pendingByCandleStart: new Map<number, number>()
     };
     setLiveQuote({
       bid: null,
@@ -7542,7 +7542,27 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           const nowcastState = volumeNowcastStateRef.current;
           if (eventTime >= nowcastState.lastEventMs) {
             const candleStartMs = floorToTimeframe(eventTime, selectedTimeframe);
+            const calibrationState = volumeNowcastCalibrationRef.current;
             if (nowcastState.candleStartMs !== candleStartMs) {
+              if (
+                nowcastState.candleStartMs > 0 &&
+                nowcastState.lastEstimatedFinalVolume > 0 &&
+                nowcastState.lastProgressRatio >= 0.35
+              ) {
+                calibrationState.pendingByCandleStart.set(
+                  nowcastState.candleStartMs,
+                  nowcastState.lastEstimatedFinalVolume
+                );
+                if (calibrationState.pendingByCandleStart.size > VOLUME_NOWCAST_CALIBRATION_PENDING_LIMIT) {
+                  const oldestKey = calibrationState.pendingByCandleStart.keys().next().value as
+                    | number
+                    | undefined;
+                  if (oldestKey != null) {
+                    calibrationState.pendingByCandleStart.delete(oldestKey);
+                  }
+                }
+              }
+
               nowcastState.candleStartMs = candleStartMs;
               nowcastState.lastMid = price;
               nowcastState.tickCount = 0;
@@ -7577,13 +7597,55 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 ? baselineVolumeRaw
                 : baselineVolumeFallback;
             const latestChartCandles = selectedChartCandlesRef.current;
+            if (calibrationState.pendingByCandleStart.size > 0 && latestChartCandles.length > 0) {
+              const recentVolumeByStart = new Map<number, number>();
+              const scanStart = Math.max(0, latestChartCandles.length - 120);
+              for (let index = scanStart; index < latestChartCandles.length; index += 1) {
+                const candle = latestChartCandles[index];
+                const candleVolume = Number(candle?.volume);
+                if (Number.isFinite(candleVolume) && candleVolume > 0) {
+                  recentVolumeByStart.set(candle.time, candleVolume);
+                }
+              }
+
+              for (const [pendingStartMs, pendingForecast] of Array.from(
+                calibrationState.pendingByCandleStart.entries()
+              )) {
+                if (pendingStartMs >= candleStartMs) {
+                  continue;
+                }
+
+                const actualClosedVolume = recentVolumeByStart.get(pendingStartMs);
+                if (!Number.isFinite(actualClosedVolume) || actualClosedVolume <= 0) {
+                  continue;
+                }
+
+                const measuredRatio = clamp(actualClosedVolume / Math.max(1, pendingForecast), 0.75, 1.2);
+                const alpha = calibrationState.sampleCount < 6 ? 0.22 : 0.12;
+                calibrationState.multiplier = clamp(
+                  calibrationState.multiplier * (1 - alpha) + measuredRatio * alpha,
+                  0.82,
+                  1.06
+                );
+                calibrationState.sampleCount += 1;
+                calibrationState.pendingByCandleStart.delete(pendingStartMs);
+              }
+            }
+            const calibrationStrength = Math.min(
+              1,
+              calibrationState.sampleCount / VOLUME_NOWCAST_CALIBRATION_FULL_SAMPLES
+            );
+            const calibrationMultiplier =
+              1 + (calibrationState.multiplier - 1) * calibrationStrength;
             const latestCandle = latestChartCandles[latestChartCandles.length - 1];
             const previousCandle = latestChartCandles[latestChartCandles.length - 2];
             const currentCandleVolume = Number(
               latestCandle?.time === candleStartMs ? latestCandle?.volume : Number.NaN
             );
+            const hasObservedCurrentVolume =
+              Number.isFinite(currentCandleVolume) && currentCandleVolume > 0;
             const observedCurrentVolume =
-              Number.isFinite(currentCandleVolume) && currentCandleVolume > 0 ? currentCandleVolume : 0;
+              hasObservedCurrentVolume ? currentCandleVolume : 0;
             const projectedObservedFinalVolume =
               observedCurrentVolume > 0 ? observedCurrentVolume / progressSafe : Number.NaN;
             const previousCandleVolume = Number(previousCandle?.volume);
@@ -7602,17 +7664,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             const moveLift = clamp(projectedMove / 18, 0, 1.25);
             const flowMultiplier = 1 + tickLift * 0.18 + moveLift * 0.12;
             const baselineProjectedFinal = baselineVolume * recentVolumeBias * flowMultiplier;
-            const estimatedFinalVolume = Math.max(
+            const estimatedFinalVolumeRaw = Math.max(
               baselineProjectedFinal,
               Number.isFinite(projectedObservedFinalVolume)
                 ? projectedObservedFinalVolume * (0.985 + progressRatio * 0.015)
                 : 0
             );
-            const progressCurve = Math.pow(progressRatio, 0.98);
-            const estimatedCurrentVolume = Math.max(
-              estimatedFinalVolume * progressCurve,
+            const estimatedFinalVolume = Math.max(
+              estimatedFinalVolumeRaw * calibrationMultiplier,
               observedCurrentVolume
             );
+            const progressCurve = Math.pow(progressRatio, 0.98);
+            const estimatedCurrentVolume = hasObservedCurrentVolume
+              ? observedCurrentVolume
+              : estimatedFinalVolume * progressCurve;
+            nowcastState.lastEstimatedFinalVolume = estimatedFinalVolume;
+            nowcastState.lastProgressRatio = progressRatio;
             const confidence = clamp(progressRatio * 0.55 + Math.min(1, nowcastState.tickCount / 25) * 0.45, 0, 1);
 
             if (
@@ -8003,17 +8070,30 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       Number.isFinite(currentCandleVolume) && currentCandleVolume > 0
         ? currentCandleVolume / progressSafe
         : Number.NaN;
-    const estimatedFinalVolume = Math.max(
+    const calibrationState = volumeNowcastCalibrationRef.current;
+    const calibrationStrength = Math.min(
+      1,
+      calibrationState.sampleCount / VOLUME_NOWCAST_CALIBRATION_FULL_SAMPLES
+    );
+    const calibrationMultiplier =
+      1 + (calibrationState.multiplier - 1) * calibrationStrength;
+    const estimatedFinalVolumeRaw = Math.max(
       baselineVolume * recentVolumeBias,
       estimatedCurrentVolumeBase / progressSafe,
       Number.isFinite(projectedObservedFinalVolume)
         ? projectedObservedFinalVolume * (0.985 + progressRatio * 0.015)
         : 0
     );
-    const estimatedCurrentVolume = Math.max(
-      estimatedCurrentVolumeBase,
-      Number.isFinite(currentCandleVolume) && currentCandleVolume > 0 ? currentCandleVolume : 0
+    const hasObservedCurrentVolume =
+      Number.isFinite(currentCandleVolume) && currentCandleVolume > 0;
+    const observedCurrentVolume = hasObservedCurrentVolume ? currentCandleVolume : 0;
+    const estimatedFinalVolume = Math.max(
+      estimatedFinalVolumeRaw * calibrationMultiplier,
+      observedCurrentVolume
     );
+    const estimatedCurrentVolume = hasObservedCurrentVolume
+      ? observedCurrentVolume
+      : Math.min(estimatedCurrentVolumeBase, estimatedFinalVolume);
     const estimatedTickCount = Math.max(1, Math.round(estimatedCurrentVolume));
     const confidence = clamp(
       progressRatio * 0.55 + Math.min(1, estimatedTickCount / 25) * 0.45,
@@ -8029,7 +8109,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       absMidMove: 0,
       spreadSum: 0,
       spreadCount: 0,
-      lastUiUpdateMs: nowMs
+      lastUiUpdateMs: nowMs,
+      lastEstimatedFinalVolume: estimatedFinalVolume,
+      lastProgressRatio: progressRatio
     };
 
     setVolumeNowcast({
@@ -16134,33 +16216,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   <span className="copytrade-account-right">
                                     <span className="copytrade-account-badges">
                                       <span className="copytrade-status-badge disconnected">
-                                        {account.status}
+                                        Disconnected
                                       </span>
-                                      {account.paused ? (
-                                        <span className="copytrade-status-badge paused">Paused</span>
-                                      ) : null}
-                                    </span>
-                                    <span className="copytrade-account-controls">
-                                      <button
-                                        type="button"
-                                        className="copytrade-mini-btn copytrade-mini-btn-play"
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          handleToggleMt5Pause(account.id);
-                                        }}
-                                      >
-                                        {account.paused ? "Play" : "Pause"}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="copytrade-mini-btn copytrade-mini-btn-edit"
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          handleEditMt5Account(account.id);
-                                        }}
-                                      >
-                                        Edit
-                                      </button>
                                     </span>
                                   </span>
                                 </div>
@@ -16189,10 +16246,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             </button>
                             <button
                               type="button"
-                              className="copytrade-context-item remove"
-                              onClick={() => handleRemoveMt5Account(mt5ContextAccount.id)}
+                              className="copytrade-context-item"
+                              onClick={() => handleEditMt5Account(mt5ContextAccount.id)}
                             >
-                              Remove Account
+                              Edit
                             </button>
                           </div>
                         ) : null}

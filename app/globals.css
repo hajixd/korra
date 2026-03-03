@@ -5073,46 +5073,9 @@ button {
 }
 
 .copytrade-status-badge.disconnected {
-  border-color: #585f6d;
-  color: #d3d8e4;
-  background: rgba(62, 67, 77, 0.36);
-}
-
-.copytrade-status-badge.paused {
   border-color: #cc5a5a;
-  color: #ffd2d2;
+  color: #ffd9d9;
   background: rgba(119, 40, 40, 0.36);
-}
-
-.copytrade-account-controls {
-  display: inline-flex;
-  gap: 0.28rem;
-}
-
-.copytrade-mini-btn {
-  border: 1px solid #2f81ff;
-  background: #193763;
-  color: #dce9ff;
-  border-radius: 6px;
-  padding: 0.22rem 0.44rem;
-  font-size: 0.56rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-  cursor: pointer;
-}
-
-.copytrade-mini-btn:hover {
-  border-color: #4f96ff;
-  background: #24508f;
-}
-
-.copytrade-mini-btn-play {
-  color: #dce9ff;
-}
-
-.copytrade-mini-btn-edit {
-  color: #dce9ff;
 }
 
 .copytrade-context-menu {
@@ -5146,17 +5109,6 @@ button {
 .copytrade-context-item:hover {
   border-color: #4f96ff;
   background: #27549b;
-}
-
-.copytrade-context-item.remove {
-  border-color: #cc5a5a;
-  background: #5d2020;
-  color: #ffd9d9;
-}
-
-.copytrade-context-item.remove:hover {
-  border-color: #e17a7a;
-  background: #742a2a;
 }
 
 .copytrade-note {

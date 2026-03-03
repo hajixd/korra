@@ -754,7 +754,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
     <div className="ai-tab-shell">
       <div className="watchlist-head ai-head">
         <div>
-          <h2>AI Assistant</h2>
+          <h2>Gideon</h2>
         </div>
         <button
           type="button"
@@ -780,7 +780,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
             className={`ai-msg ${message.role === "assistant" ? "assistant" : "user"}`}
           >
             <header className="ai-msg-head">
-              <span>{message.role === "assistant" ? "Korra AI" : "You"}</span>
+              <span>{message.role === "assistant" ? "Gideon" : "You"}</span>
               {message.cannotAnswer ? <small className="ai-cannot">Insufficient Data</small> : null}
             </header>
 
@@ -901,7 +901,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
         {isPending ? (
           <article className="ai-msg assistant pending">
             <header className="ai-msg-head">
-              <span>Korra AI</span>
+              <span>Gideon</span>
               <small className="ai-stage">{thinkingStage}</small>
             </header>
             <div className="ai-thinking" aria-label="assistant thinking">
