@@ -5621,16 +5621,29 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     shouldBuildSharedLibraryCandidateTrades
   ]);
 
-  const deepChartCandles = backtestSeriesMap[selectedKey] ?? null;
+  const shouldHydrateBacktestChartData =
+    selectedSurfaceTab === "chart" ||
+    selectedBacktestTab === "cluster" ||
+    showAllTradesOnChart ||
+    showActiveTradeOnChart ||
+    selectedHistoryId !== null ||
+    activeBacktestTradeDetails !== null;
+  const deepChartCandles = shouldHydrateBacktestChartData
+    ? backtestSeriesMap[selectedKey] ?? null
+    : null;
   const usesDeepChartHistory = (deepChartCandles?.length ?? 0) > 0;
   const selectedChartCandles = useMemo(() => {
+    if (!shouldHydrateBacktestChartData) {
+      return selectedCandles;
+    }
+
     if (!usesDeepChartHistory) {
       return selectedCandles;
     }
 
     const deepHistory = deepChartCandles ?? EMPTY_CANDLES;
 
-    if (selectedCandles.length === 0) {
+    if (selectedSurfaceTab !== "chart" || selectedCandles.length === 0) {
       return deepHistory;
     }
 
@@ -5639,7 +5652,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       selectedCandles,
       Math.max(deepHistory.length + selectedCandles.length, selectedCandles.length)
     );
-  }, [deepChartCandles, selectedCandles, usesDeepChartHistory]);
+  }, [
+    deepChartCandles,
+    selectedCandles,
+    selectedSurfaceTab,
+    shouldHydrateBacktestChartData,
+    usesDeepChartHistory
+  ]);
 
   selectedChartCandlesRef.current = selectedChartCandles;
 
@@ -5647,7 +5666,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const realToGapless = new Map<number, number>();
     const gaplessToReal = new Map<number, number>();
 
-    if (selectedChartCandles.length === 0) {
+    if (!shouldHydrateBacktestChartData || selectedChartCandles.length === 0) {
       return { realToGapless, gaplessToReal };
     }
 
@@ -5662,7 +5681,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     return { realToGapless, gaplessToReal };
-  }, [selectedChartCandles, selectedTimeframe]);
+  }, [selectedChartCandles, selectedTimeframe, shouldHydrateBacktestChartData]);
 
   gaplessToRealRef.current = gaplessTimeMap.gaplessToReal;
 
@@ -5676,6 +5695,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   );
 
   useEffect(() => {
+    if (selectedSurfaceTab !== "chart") {
+      chartSourceLengthRef.current = 0;
+      chartRenderWindowRef.current = { from: 0, to: -1 };
+      chartVisibleGlobalRangeRef.current = null;
+      chartPendingVisibleGlobalRangeRef.current = null;
+      setChartRenderWindow((current) =>
+        current.from === 0 && current.to === -1 ? current : { from: 0, to: -1 }
+      );
+      return;
+    }
+
     const candles = selectedChartCandlesRef.current;
     const totalBars = candles.length;
     const selection = `${selectedSymbol}-${selectedTimeframe}`;
@@ -5790,15 +5820,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         current.from === nextWindow.from && current.to === nextWindow.to ? current : nextWindow
       );
     }
-  }, [selectedChartCandles.length, selectedSymbol, selectedTimeframe]);
+  }, [selectedChartCandles.length, selectedSymbol, selectedSurfaceTab, selectedTimeframe]);
 
   const chartRenderCandles = useMemo(() => {
+    if (selectedSurfaceTab !== "chart") {
+      return EMPTY_CANDLES;
+    }
+
     if (chartRenderWindow.to < chartRenderWindow.from) {
       return EMPTY_CANDLES;
     }
 
     return selectedChartCandles.slice(chartRenderWindow.from, chartRenderWindow.to + 1);
-  }, [chartRenderWindow, selectedChartCandles]);
+  }, [chartRenderWindow, selectedChartCandles, selectedSurfaceTab]);
 
   requestChartVisibleRangeRef.current = (visibleRange: ChartDataWindow) => {
     const totalBars = chartSourceLengthRef.current;
@@ -6746,15 +6780,25 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return chartPanelHistoryRows.filter((row) => row.symbol === selectedSymbol);
   }, [chartPanelHistoryRows, selectedSymbol]);
 
+  const shouldBuildCandleIndexByUnix =
+    selectedSurfaceTab === "chart" ||
+    selectedBacktestTab === "cluster" ||
+    selectedBacktestTab === "history" ||
+    selectedHistoryId !== null ||
+    activeBacktestTradeDetails !== null;
   const candleIndexByUnix = useMemo(() => {
     const map = new Map<number, number>();
+
+    if (!shouldBuildCandleIndexByUnix || selectedChartCandles.length === 0) {
+      return map;
+    }
 
     for (let i = 0; i < selectedChartCandles.length; i += 1) {
       map.set(toUtcTimestamp(selectedChartCandles[i].time), i);
     }
 
     return map;
-  }, [selectedChartCandles]);
+  }, [selectedChartCandles, shouldBuildCandleIndexByUnix]);
 
   const openBacktestTradeDetails = (trade: HistoryItem) => {
     const entryIndex = candleIndexByUnix.get(Number(trade.entryTime));
@@ -7960,6 +8004,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   ]);
 
   useEffect(() => {
+    if (selectedSurfaceTab !== "chart") {
+      return;
+    }
+
     const chart = chartRef.current;
     const pendingTradeId = focusTradeIdRef.current;
 
@@ -8056,6 +8104,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     focusTradeIdRef.current = null;
   }, [
     candleIndexByUnix,
+    selectedSurfaceTab,
     selectedChartCandles,
     selectedHistoryInteractionTick,
     selectedHistoryTrade,
@@ -8124,6 +8173,26 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       !tradeStopLine ||
       !tradePathLine
     ) {
+      return;
+    }
+
+    if (selectedSurfaceTab !== "chart") {
+      for (const seriesGroup of multiTradeSeriesRef.current) {
+        chart.removeSeries(seriesGroup.profitZone);
+        chart.removeSeries(seriesGroup.lossZone);
+        chart.removeSeries(seriesGroup.entryLine);
+        chart.removeSeries(seriesGroup.targetLine);
+        chart.removeSeries(seriesGroup.stopLine);
+        chart.removeSeries(seriesGroup.pathLine);
+      }
+      multiTradeSeriesRef.current = [];
+      candleSeries.setMarkers([]);
+      tradeProfitZone.setData([]);
+      tradeLossZone.setData([]);
+      tradeEntryLine.setData([]);
+      tradeTargetLine.setData([]);
+      tradeStopLine.setData([]);
+      tradePathLine.setData([]);
       return;
     }
 
@@ -8523,6 +8592,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     selectedTimeframe,
     showActiveTradeOnChart,
     showAllTradesOnChart,
+    selectedSurfaceTab,
     toGaplessUtc
   ]);
 
@@ -8584,6 +8654,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     isBacktestAnalyticsVisible && selectedBacktestTab === "entryExit";
   const isPropFirmBacktestTabActive =
     isBacktestAnalyticsVisible && selectedBacktestTab === "propFirm";
+  const shouldComputeAiLibraryInsights =
+    isBacktestAnalyticsVisible &&
+    (selectedBacktestTab === "mainSettings" || selectedBacktestTab === "cluster");
 
   const mainStatsTrades = useMemo(() => backtestTrades, [backtestTrades]);
 
@@ -8626,6 +8699,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [backtestTrades, getEffectiveTradeConfidenceScore]);
 
   const aiLibraryInsights = useMemo(() => {
+    if (!shouldComputeAiLibraryInsights) {
+      return {
+        counts: {} as Record<string, number>,
+        baselineWinRates: {} as Record<string, number>,
+        points: [] as any[]
+      };
+    }
+
     if (!backtestHasRun || !backtestHistorySeedReady) {
       return {
         counts: {} as Record<string, number>,
@@ -8916,7 +8997,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     sharedLibraryCandidateTrades,
     backtestTimeFilteredTrades,
     backtestTrades,
-    isClusterBacktestTabActive
+    isClusterBacktestTabActive,
+    shouldComputeAiLibraryInsights
   ]);
   const aiLibraryCounts = aiLibraryInsights.counts;
   const aiLibraryBaselineWinRates = aiLibraryInsights.baselineWinRates;
