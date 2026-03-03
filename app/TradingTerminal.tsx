@@ -4988,6 +4988,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const streamRef = useRef<EventSource | null>(null);
   const selectedSurfaceTabRef = useRef<SurfaceTab>(selectedSurfaceTab);
   const statsRefreshOverlayModeRef = useRef<StatsRefreshOverlayMode>("idle");
+  const statsRefreshStatusRef = useRef(statsRefreshStatus);
   const statsRefreshResetTimeoutRef = useRef(0);
   const statsRefreshVisualCompletionRafRef = useRef(0);
   const statsRefreshProgressRef = useRef(0);
@@ -5214,8 +5215,67 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [statsRefreshProgress]);
 
   useEffect(() => {
+    statsRefreshStatusRef.current = statsRefreshStatus;
+  }, [statsRefreshStatus]);
+
+  useEffect(() => {
     setStatsRefreshLoadingDisplayProgress(statsRefreshProgress);
   }, [statsRefreshProgress]);
+
+  useEffect(() => {
+    if (statsRefreshOverlayMode !== "loading") {
+      return;
+    }
+
+    if (
+      statsRefreshStatus === "Replaying Backtest Trades" ||
+      statsRefreshStatus === "No Trades In Selected Range"
+    ) {
+      return;
+    }
+
+    const durationMs =
+      statsRefreshStatus === "Preparing Backtest Replay"
+        ? 900
+        : statsRefreshStatus === "Finalizing Statistics"
+          ? 800
+          : statsRefreshStatus === "Loading AI Libraries"
+            ? 1200
+            : 2200;
+    const statusSnapshot = statsRefreshStatus;
+    const startedAt = performance.now();
+    let rafId = 0;
+
+    setStatsRefreshProgress(0);
+    setStatsRefreshLoadingDisplayProgress(0);
+
+    const tick = () => {
+      if (statsRefreshOverlayModeRef.current !== "loading") {
+        return;
+      }
+
+      if (statsRefreshStatusRef.current !== statusSnapshot) {
+        return;
+      }
+
+      const ratio = clamp((performance.now() - startedAt) / durationMs, 0, 1);
+      setStatsRefreshProgress((current) =>
+        current >= 100 ? current : Math.max(current, ratio * 100)
+      );
+
+      if (ratio < 1) {
+        rafId = window.requestAnimationFrame(tick);
+      }
+    };
+
+    rafId = window.requestAnimationFrame(tick);
+
+    return () => {
+      if (rafId) {
+        window.cancelAnimationFrame(rafId);
+      }
+    };
+  }, [statsRefreshOverlayMode, statsRefreshStatus]);
 
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
@@ -6910,11 +6970,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const fallbackEndMs = floorToTimeframe(backtestRefreshNowMs, "1m");
     const fallbackStartMs =
       fallbackEndMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000;
-    const timelineStartMs = Number.isFinite(backtestBlueprintRangeSnapshot.startMs)
-      ? backtestBlueprintRangeSnapshot.startMs
+    const normalizeTimestampMs = (value: number): number => {
+      if (!Number.isFinite(value)) {
+        return NaN;
+      }
+
+      return value > 1_000_000_000_000 ? value : value * 1000;
+    };
+    const normalizedTimelineStartMs = normalizeTimestampMs(backtestBlueprintRangeSnapshot.startMs);
+    const normalizedTimelineEndMs = normalizeTimestampMs(backtestBlueprintRangeSnapshot.endMs);
+    const timelineStartMs = Number.isFinite(normalizedTimelineStartMs)
+      ? normalizedTimelineStartMs
       : fallbackStartMs;
-    const timelineEndMsRaw = Number.isFinite(backtestBlueprintRangeSnapshot.endMs)
-      ? backtestBlueprintRangeSnapshot.endMs
+    const timelineEndMsRaw = Number.isFinite(normalizedTimelineEndMs)
+      ? normalizedTimelineEndMs
       : fallbackEndMs;
     const timelineEndMs = Math.max(timelineStartMs + 60_000, timelineEndMsRaw);
     const chronologicalTradeBlueprints = [...tradeBlueprintsSnapshot].sort(
@@ -6938,24 +7007,32 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const analysisStartMs = Number.isFinite(filterStartMs)
       ? Math.max(timelineStartMs, filterStartMs)
       : timelineStartMs;
-    const rawEndMs = Number.isFinite(analysisEndMsRaw) ? analysisEndMsRaw : timelineEndMs;
+    const normalizedAnalysisEndMsRaw = normalizeTimestampMs(analysisEndMsRaw);
+    const rawEndMs = Number.isFinite(normalizedAnalysisEndMsRaw)
+      ? normalizedAnalysisEndMsRaw
+      : timelineEndMs;
     const analysisEndMs = Math.max(
       analysisStartMs + 60_000,
       Number.isFinite(filterEndMs) ? Math.min(rawEndMs, filterEndMs) : rawEndMs
     );
     const analysisSpanMs = Math.max(60_000, analysisEndMs - analysisStartMs);
     let lastLoadingProgressRatio = 0;
-    const setLoadingProgressFromRatio = (ratio: number) => {
-      const normalizedRatio = clamp(ratio, 0, 1);
+    const setLoadingProgressFromCursorMs = (cursorMs: number) => {
+      const normalizedCursorMs = normalizeTimestampMs(cursorMs);
+      if (!Number.isFinite(normalizedCursorMs)) {
+        return;
+      }
+
+      const clampedCursorMs = clamp(normalizedCursorMs, analysisStartMs, analysisEndMs);
+      const normalizedRatio = clamp((clampedCursorMs - analysisStartMs) / analysisSpanMs, 0, 1);
 
       if (normalizedRatio < lastLoadingProgressRatio) {
         return;
       }
 
       lastLoadingProgressRatio = normalizedRatio;
-      const cursorMs = analysisStartMs + analysisSpanMs * normalizedRatio;
       setStatsRefreshProgress(normalizedRatio * 100);
-      setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(cursorMs));
+      setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(clampedCursorMs));
     };
 
     const computeSynchronously = (): HistoryItem[] => {
@@ -7031,7 +7108,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setStatsRefreshProgress(0);
     setStatsRefreshLoadingDisplayProgress(0);
     setStatsRefreshStatus("Replaying Backtest Trades");
-    setLoadingProgressFromRatio(0);
+    setLoadingProgressFromCursorMs(analysisStartMs);
 
     if (typeof Worker === "undefined") {
       handleFallback();
@@ -7061,9 +7138,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       if (message.type === "progress") {
-        const total = Math.max(1, message.total);
         setStatsRefreshStatus("Replaying Backtest Trades");
-        setLoadingProgressFromRatio(message.processed / total);
+        setLoadingProgressFromCursorMs(message.cursorMs);
         return;
       }
 
@@ -7071,7 +7147,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       setStatsRefreshStatus(
         hasAiLibraryPass ? "Loading AI Libraries" : "Finalizing Statistics"
       );
-      setLoadingProgressFromRatio(1);
+      setLoadingProgressFromCursorMs(analysisEndMs);
       window.requestAnimationFrame(() => {
         commitRows(
           normalizeBacktestHistoryRows(
