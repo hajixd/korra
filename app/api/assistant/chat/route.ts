@@ -190,7 +190,7 @@ const HISTORICAL_WINDOW_RE =
   /\b(past|previous|historical|history|backtest|since|from|between|before|after|yesterday|last\s+\d+|last week|last month|last year)\b/i;
 const DATE_LITERAL_RE = /\b\d{4}-\d{2}-\d{2}\b/;
 const DRAW_WORD_RE = /\bdraw\b/i;
-const VISUAL_REQUEST_RE = /\b(chart|graph|plot|visual|visualize|draw)\b/i;
+const VISUAL_REQUEST_RE = /\b(chart|graph|plot|visual|visualize|overview)\b/i;
 const TECHNICAL_DRAW_RE =
   /\b(support|resistance|s\/r|trendline|trend line|horizontal line|vertical line|box|fvg|fair value gap|arrow|ruler|mark candlestick|draw)\b/i;
 
@@ -200,6 +200,7 @@ const AI_SYSTEM_PROMPT = [
   "1) Be concise and direct.",
   "2) Prefer bullet points, with high-signal trading details only.",
   "2b) Answer only what the user asked. Do not add extra sections or advice unless requested.",
+  "2c) If the request is ambiguous and blocks execution, ask one concise clarifying question.",
   "3) Never invent facts. If data is insufficient, explicitly say so.",
   "4) If needed, use tools to fetch only necessary data.",
   "5) Default to the most recent data window unless the user explicitly asks for past/historical dates.",
@@ -2051,10 +2052,9 @@ export async function POST(request: Request) {
       toolsUsed.add("clickhouse_candles");
     }
 
-    const charts =
-      wantsVisualization || explicitDrawRequest
-        ? buildChartsFromPlans(codingResult.chartPlans, context, toolState)
-        : [];
+    const charts = wantsVisualization
+      ? buildChartsFromPlans(codingResult.chartPlans, context, toolState)
+      : [];
     let chartActions = codingResult.chartActions;
     if (explicitDrawRequest && chartActions.length === 0) {
       const fallbackDrawActions = buildDrawActionsFromPrompt({
@@ -2071,12 +2071,22 @@ export async function POST(request: Request) {
       toolsUsed.add("chart_actions");
     }
     const usedClickhouseData = toolState.clickhouseCandles.length > 0;
+    const isDrawOnlyRequest = explicitDrawRequest && !wantsVisualization;
+    const shortAnswer = isDrawOnlyRequest
+      ? chartActions.length > 0
+        ? "Drawn on chart."
+        : reasoning.cannotAnswer
+          ? reasoning.cannotAnswerReason
+          : sanitizeAssistantText(reasoning.shortAnswer)
+      : sanitizeAssistantText(reasoning.shortAnswer);
 
-    const finalBullets = reasoning.bullets.length > 0
-      ? reasoning.bullets
-      : reasoning.cannotAnswer
-        ? [{ tone: "gold" as const, text: reasoning.cannotAnswerReason }]
-        : [];
+    const finalBullets = isDrawOnlyRequest
+      ? []
+      : reasoning.bullets.length > 0
+        ? reasoning.bullets
+        : reasoning.cannotAnswer
+          ? [{ tone: "gold" as const, text: reasoning.cannotAnswerReason }]
+          : [];
 
     // Ensure request-scope data is explicitly released after shaping response.
     toolState.clickhouseCandles = [];
@@ -2086,7 +2096,7 @@ export async function POST(request: Request) {
       response: {
         cannotAnswer: reasoning.cannotAnswer,
         cannotAnswerReason: reasoning.cannotAnswerReason,
-        shortAnswer: reasoning.shortAnswer,
+        shortAnswer,
         bullets: finalBullets,
         charts,
         chartActions,

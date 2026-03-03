@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
   startTransition,
   useCallback,
@@ -176,6 +176,19 @@ type VolumeNowcastSnapshot = {
   updatedAtMs: number;
 };
 
+type VolumeBaselineProfile = {
+  bySlot: Map<number, number>;
+  bySlotCount: Map<number, number>;
+  byHour: Map<number, number>;
+  byHourCount: Map<number, number>;
+  byWeekday: Map<number, number>;
+  byWeekdayCount: Map<number, number>;
+  byWeekdayHour: Map<string, number>;
+  byWeekdayHourCount: Map<string, number>;
+  globalAverage: number;
+  sampleCount: number;
+};
+
 type TickDirectionTone = "up" | "down" | "neutral";
 
 type LiveQuoteSnapshot = {
@@ -191,6 +204,10 @@ const EMPTY_CANDLES: Candle[] = [];
 const STATS_REFRESH_HOLD_MS = 3000;
 const STATS_REFRESH_COMPLETE_DELAY_MS = 1000;
 const STATS_REFRESH_VISUAL_FULL_THRESHOLD = 99.95;
+const WORKSPACE_PANEL_MIN_WIDTH = 350;
+const WORKSPACE_PANEL_DEFAULT_WIDTH = 430;
+const WORKSPACE_PANEL_MAX_WIDTH = 980;
+const WORKSPACE_CHART_MIN_WIDTH = 360;
 
 const TIMEFRAME_DISPLAY_LABELS: Record<Timeframe, string> = {
   "1m": "1 Minute",
@@ -2035,6 +2052,174 @@ const getTimeframeSlotIndex = (timestampMs: number, timeframe: Timeframe): numbe
   const date = new Date(timestampMs);
   const minuteOfDay = date.getUTCHours() * 60 + date.getUTCMinutes();
   return Math.floor(minuteOfDay / slotMinutes);
+};
+
+const createEmptyVolumeBaselineProfile = (): VolumeBaselineProfile => ({
+  bySlot: new Map(),
+  bySlotCount: new Map(),
+  byHour: new Map(),
+  byHourCount: new Map(),
+  byWeekday: new Map(),
+  byWeekdayCount: new Map(),
+  byWeekdayHour: new Map(),
+  byWeekdayHourCount: new Map(),
+  globalAverage: 0,
+  sampleCount: 0
+});
+
+const finalizeBucketAverages = <T extends string | number>(accumulator: Map<T, { sum: number; count: number }>) => {
+  const averages = new Map<T, number>();
+  const counts = new Map<T, number>();
+
+  for (const [key, row] of accumulator.entries()) {
+    averages.set(key, row.sum / Math.max(1, row.count));
+    counts.set(key, row.count);
+  }
+
+  return { averages, counts };
+};
+
+const buildVolumeBaselineProfile = (
+  candles: Candle[],
+  timeframe: Timeframe
+): VolumeBaselineProfile => {
+  const bySlotAccumulator = new Map<number, { sum: number; count: number }>();
+  const byHourAccumulator = new Map<number, { sum: number; count: number }>();
+  const byWeekdayAccumulator = new Map<number, { sum: number; count: number }>();
+  const byWeekdayHourAccumulator = new Map<string, { sum: number; count: number }>();
+  let totalVolume = 0;
+  let totalCount = 0;
+
+  for (const candle of candles) {
+    const volume = Number(candle.volume);
+    if (!Number.isFinite(volume) || volume <= 0) {
+      continue;
+    }
+
+    const date = new Date(candle.time);
+    const hour = date.getUTCHours();
+    const weekday = date.getUTCDay();
+    const weekdayHourKey = `${weekday}-${hour}`;
+    const slot = getTimeframeSlotIndex(candle.time, timeframe);
+
+    const slotCurrent = bySlotAccumulator.get(slot) ?? { sum: 0, count: 0 };
+    slotCurrent.sum += volume;
+    slotCurrent.count += 1;
+    bySlotAccumulator.set(slot, slotCurrent);
+
+    const hourCurrent = byHourAccumulator.get(hour) ?? { sum: 0, count: 0 };
+    hourCurrent.sum += volume;
+    hourCurrent.count += 1;
+    byHourAccumulator.set(hour, hourCurrent);
+
+    const weekdayCurrent = byWeekdayAccumulator.get(weekday) ?? { sum: 0, count: 0 };
+    weekdayCurrent.sum += volume;
+    weekdayCurrent.count += 1;
+    byWeekdayAccumulator.set(weekday, weekdayCurrent);
+
+    const weekdayHourCurrent = byWeekdayHourAccumulator.get(weekdayHourKey) ?? { sum: 0, count: 0 };
+    weekdayHourCurrent.sum += volume;
+    weekdayHourCurrent.count += 1;
+    byWeekdayHourAccumulator.set(weekdayHourKey, weekdayHourCurrent);
+
+    totalVolume += volume;
+    totalCount += 1;
+  }
+
+  const slotResult = finalizeBucketAverages(bySlotAccumulator);
+  const hourResult = finalizeBucketAverages(byHourAccumulator);
+  const weekdayResult = finalizeBucketAverages(byWeekdayAccumulator);
+  const weekdayHourResult = finalizeBucketAverages(byWeekdayHourAccumulator);
+
+  return {
+    bySlot: slotResult.averages,
+    bySlotCount: slotResult.counts,
+    byHour: hourResult.averages,
+    byHourCount: hourResult.counts,
+    byWeekday: weekdayResult.averages,
+    byWeekdayCount: weekdayResult.counts,
+    byWeekdayHour: weekdayHourResult.averages,
+    byWeekdayHourCount: weekdayHourResult.counts,
+    globalAverage: totalCount > 0 ? totalVolume / totalCount : 0,
+    sampleCount: totalCount
+  };
+};
+
+const resolveVolumeBaselineForTimestamp = (
+  timestampMs: number,
+  timeframe: Timeframe,
+  profile: VolumeBaselineProfile
+): number => {
+  const date = new Date(timestampMs);
+  const slot = getTimeframeSlotIndex(timestampMs, timeframe);
+  const hour = date.getUTCHours();
+  const weekday = date.getUTCDay();
+  const weekdayHourKey = `${weekday}-${hour}`;
+  const baselineCandidates: Array<{ value: number; count: number; priority: number }> = [];
+
+  const slotValue = profile.bySlot.get(slot);
+  if (slotValue != null) {
+    baselineCandidates.push({
+      value: slotValue,
+      count: profile.bySlotCount.get(slot) ?? 0,
+      priority: 1
+    });
+  }
+
+  const weekdayHourValue = profile.byWeekdayHour.get(weekdayHourKey);
+  if (weekdayHourValue != null) {
+    baselineCandidates.push({
+      value: weekdayHourValue,
+      count: profile.byWeekdayHourCount.get(weekdayHourKey) ?? 0,
+      priority: 0.9
+    });
+  }
+
+  const hourValue = profile.byHour.get(hour);
+  if (hourValue != null) {
+    baselineCandidates.push({
+      value: hourValue,
+      count: profile.byHourCount.get(hour) ?? 0,
+      priority: 0.75
+    });
+  }
+
+  const weekdayValue = profile.byWeekday.get(weekday);
+  if (weekdayValue != null) {
+    baselineCandidates.push({
+      value: weekdayValue,
+      count: profile.byWeekdayCount.get(weekday) ?? 0,
+      priority: 0.5
+    });
+  }
+
+  if (profile.globalAverage > 0) {
+    baselineCandidates.push({
+      value: profile.globalAverage,
+      count: profile.sampleCount,
+      priority: 0.25
+    });
+  }
+
+  let weightedSum = 0;
+  let totalWeight = 0;
+
+  for (const candidate of baselineCandidates) {
+    if (!Number.isFinite(candidate.value) || candidate.value <= 0) {
+      continue;
+    }
+
+    if (candidate.count <= 0) {
+      continue;
+    }
+
+    const reliability = Math.min(1, candidate.count / 24);
+    const weight = candidate.priority * (0.35 + reliability * 0.65);
+    weightedSum += candidate.value * weight;
+    totalWeight += weight;
+  }
+
+  return totalWeight > 0 ? weightedSum / totalWeight : Number.NaN;
 };
 
 const isXauTradingTime = (timestampMs: number): boolean => {
@@ -5315,6 +5500,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [selectedSurfaceTab, setSelectedSurfaceTab] = useState<SurfaceTab>("chart");
   const [selectedBacktestTab, setSelectedBacktestTab] = useState<BacktestTab>("mainSettings");
   const [panelExpanded, setPanelExpanded] = useState(false);
+  const [workspacePanelWidth, setWorkspacePanelWidth] = useState(WORKSPACE_PANEL_DEFAULT_WIDTH);
+  const [isWorkspacePanelResizing, setIsWorkspacePanelResizing] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("active");
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [selectedHistoryInteractionTick, setSelectedHistoryInteractionTick] = useState(0);
@@ -5592,15 +5779,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     spreadCount: 0,
     lastUiUpdateMs: 0
   });
-  const volumeBaselineRef = useRef<{
-    bySlot: Map<number, number>;
-    globalAverage: number;
-    sampleCount: number;
-  }>({
-    bySlot: new Map(),
-    globalAverage: 0,
-    sampleCount: 0
-  });
+  const volumeBaselineRef = useRef<VolumeBaselineProfile>(createEmptyVolumeBaselineProfile());
   const selectedSurfaceTabRef = useRef<SurfaceTab>(selectedSurfaceTab);
   const statsRefreshOverlayModeRef = useRef<StatsRefreshOverlayMode>("idle");
   const statsRefreshStatusRef = useRef(statsRefreshStatus);
@@ -5644,6 +5823,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const chartIsApplyingVisibleRangeRef = useRef(false);
   const chartHoverCandleRef = useRef<MainChartContextMenuCandle | null>(null);
   const chartBarIndexByGaplessTimeRef = useRef<Map<number, number>>(new Map());
+  const workspaceRef = useRef<HTMLElement | null>(null);
   const settingsFileInputRef = useRef<HTMLInputElement | null>(null);
   const presetMenuRef = useRef<HTMLDivElement | null>(null);
   const chartSourceLengthRef = useRef(0);
@@ -5700,6 +5880,88 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     aiChartMarkersRef.current = [];
     applyCombinedChartMarkers();
   }, [applyCombinedChartMarkers]);
+
+  const clampWorkspacePanelWidth = useCallback((rawWidth: number): number => {
+    const workspaceWidth =
+      workspaceRef.current?.clientWidth ||
+      (typeof window !== "undefined" ? window.innerWidth : WORKSPACE_PANEL_DEFAULT_WIDTH + WORKSPACE_CHART_MIN_WIDTH);
+    const maxFromWorkspace = Math.max(
+      WORKSPACE_PANEL_MIN_WIDTH,
+      Math.min(WORKSPACE_PANEL_MAX_WIDTH, workspaceWidth - WORKSPACE_CHART_MIN_WIDTH)
+    );
+    return clamp(Math.round(rawWidth), WORKSPACE_PANEL_MIN_WIDTH, maxFromWorkspace);
+  }, []);
+
+  const startWorkspacePanelResize = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (event.button !== 0 || !panelExpanded) {
+        return;
+      }
+
+      event.preventDefault();
+      setIsWorkspacePanelResizing(true);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        const workspaceElement = workspaceRef.current;
+        if (!workspaceElement) {
+          return;
+        }
+        const bounds = workspaceElement.getBoundingClientRect();
+        const nextWidth = bounds.right - moveEvent.clientX;
+        setWorkspacePanelWidth(clampWorkspacePanelWidth(nextWidth));
+      };
+
+      const stopResizing = () => {
+        setIsWorkspacePanelResizing(false);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", stopResizing);
+        window.removeEventListener("pointercancel", stopResizing);
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", stopResizing);
+      window.addEventListener("pointercancel", stopResizing);
+    },
+    [clampWorkspacePanelWidth, panelExpanded]
+  );
+
+  useEffect(() => {
+    if (!panelExpanded) {
+      setIsWorkspacePanelResizing(false);
+      return;
+    }
+
+    const clampCurrentWidth = () => {
+      setWorkspacePanelWidth((current) => clampWorkspacePanelWidth(current));
+    };
+
+    clampCurrentWidth();
+    window.addEventListener("resize", clampCurrentWidth);
+    return () => {
+      window.removeEventListener("resize", clampCurrentWidth);
+    };
+  }, [clampWorkspacePanelWidth, panelExpanded]);
+
+  useEffect(() => {
+    return () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, []);
+
+  const workspaceStyle = useMemo(() => {
+    if (!panelExpanded) {
+      return undefined;
+    }
+
+    return {
+      ["--workspace-panel-width" as string]: `${workspacePanelWidth}px`
+    } as CSSProperties;
+  }, [panelExpanded, workspacePanelWidth]);
 
   const selectTradeOnChart = (tradeId: string, symbol: string) => {
     if (selectedHistoryId === tradeId) {
@@ -6642,11 +6904,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             const elapsedMs = Math.max(0, eventTime - candleStartMs);
             const progressRatio = clamp(elapsedMs / candleDurationMs, 0.0001, 1);
             const progressSafe = Math.max(progressRatio, 0.12);
-            const slot = getTimeframeSlotIndex(candleStartMs, selectedTimeframe);
             const baselineProfile = volumeBaselineRef.current;
-            const baselineVolumeRaw =
-              baselineProfile.bySlot.get(slot) ??
-              (baselineProfile.globalAverage > 0 ? baselineProfile.globalAverage : NaN);
+            const baselineVolumeRaw = resolveVolumeBaselineForTimestamp(
+              candleStartMs,
+              selectedTimeframe,
+              baselineProfile
+            );
             const baselineVolumeFallback = Math.max(20, nowcastState.tickCount / progressSafe);
             const baselineVolume =
               Number.isFinite(baselineVolumeRaw) && baselineVolumeRaw > 0
@@ -6930,35 +7193,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return seriesMap[selectedKey] ?? EMPTY_CANDLES;
   }, [selectedKey, seriesMap]);
   const volumeBaselineProfile = useMemo(() => {
-    const bySlotAccumulator = new Map<number, { sum: number; count: number }>();
-    let totalVolume = 0;
-    let totalCount = 0;
-
-    for (const candle of selectedCandles) {
-      const volume = Number(candle.volume);
-      if (!Number.isFinite(volume) || volume <= 0) {
-        continue;
-      }
-
-      const slot = getTimeframeSlotIndex(candle.time, selectedTimeframe);
-      const current = bySlotAccumulator.get(slot) ?? { sum: 0, count: 0 };
-      current.sum += volume;
-      current.count += 1;
-      bySlotAccumulator.set(slot, current);
-      totalVolume += volume;
-      totalCount += 1;
-    }
-
-    const bySlot = new Map<number, number>();
-    for (const [slot, row] of bySlotAccumulator.entries()) {
-      bySlot.set(slot, row.sum / Math.max(1, row.count));
-    }
-
-    return {
-      bySlot,
-      globalAverage: totalCount > 0 ? totalVolume / totalCount : 0,
-      sampleCount: totalCount
-    };
+    return buildVolumeBaselineProfile(selectedCandles, selectedTimeframe);
   }, [selectedCandles, selectedTimeframe]);
 
   useEffect(() => {
@@ -7058,10 +7293,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }));
 
     const candleStartMs = floorToTimeframe(nowMs, selectedTimeframe);
-    const slot = getTimeframeSlotIndex(candleStartMs, selectedTimeframe);
-    const baselineVolumeRaw =
-      volumeBaselineProfile.bySlot.get(slot) ??
-      (volumeBaselineProfile.globalAverage > 0 ? volumeBaselineProfile.globalAverage : NaN);
+    const baselineVolumeRaw = resolveVolumeBaselineForTimestamp(
+      candleStartMs,
+      selectedTimeframe,
+      volumeBaselineProfile
+    );
     const baselineVolume = Number.isFinite(baselineVolumeRaw) && baselineVolumeRaw > 0 ? baselineVolumeRaw : 20;
     const progressRatio = clamp((nowMs - candleStartMs) / candleDurationMs, 0.0001, 1);
     const currentCandleVolume = Number(
@@ -14290,7 +14526,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       <section className="surface-stage">
         <div className={`surface-view ${selectedSurfaceTab === "chart" ? "" : "hidden"}`}>
-          <section className={`workspace ${panelExpanded ? "" : "panel-collapsed"}`}>
+          <section
+            ref={workspaceRef}
+            className={`workspace ${panelExpanded ? "" : "panel-collapsed"}`}
+            style={workspaceStyle}
+          >
             <section className="chart-wrap">
               <div className="chart-toolbar">
                 {hoveredCandle ? (
@@ -14573,6 +14813,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             </section>
 
             <aside className={`side-panel ${panelExpanded ? "expanded" : "collapsed"}`}>
+              {panelExpanded ? (
+                <button
+                  type="button"
+                  className={`panel-resizer ${isWorkspacePanelResizing ? "active" : ""}`}
+                  onPointerDown={startWorkspacePanelResize}
+                  aria-label="Resize side panel"
+                  title="Drag to resize panel"
+                />
+              ) : null}
               <nav className="panel-rail" aria-label="sidebar tabs">
                 {sidebarTabs.map((tab) => (
                   <button

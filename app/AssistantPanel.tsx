@@ -26,6 +26,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
+import { resolveGraphTemplate } from "../lib/assistant-tools";
 
 export type AssistantPanelCandle = {
   time: number;
@@ -84,13 +85,7 @@ export type AssistantPanelActiveTrade = {
 
 type AssistantChart = {
   id: string;
-  template:
-    | "equity_curve"
-    | "pnl_distribution"
-    | "session_performance"
-    | "trade_outcomes"
-    | "price_action"
-    | "action_timeline";
+  template: string;
   title: string;
   subtitle?: string;
   data: Array<Record<string, string | number>>;
@@ -445,12 +440,27 @@ export default function AssistantPanel(props: AssistantPanelProps) {
   );
 
   const renderChart = (chart: AssistantChart) => {
-    if (chart.template === "equity_curve") {
+    const family = resolveGraphTemplate(chart.template).family;
+    const sampleRow = chart.data[0] ?? {};
+    const hasKey = (key: string) => Object.prototype.hasOwnProperty.call(sampleRow, key);
+    const xKey = hasKey("x")
+      ? "x"
+      : hasKey("month")
+        ? "month"
+        : hasKey("bucket")
+          ? "bucket"
+          : hasKey("session")
+            ? "session"
+            : hasKey("label")
+              ? "label"
+              : "x";
+
+    if (family === "equity_curve" && hasKey("equity")) {
       return (
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={chart.data}>
             <CartesianGrid strokeDasharray="2 4" stroke="rgba(255,255,255,0.08)" />
-            <XAxis dataKey="x" tick={{ fill: "#8b94a8", fontSize: 10 }} hide={chart.data.length > 18} />
+            <XAxis dataKey={xKey} tick={{ fill: "#8b94a8", fontSize: 10 }} hide={chart.data.length > 18} />
             <YAxis tick={{ fill: "#8b94a8", fontSize: 10 }} width={48} />
             <Tooltip
               contentStyle={{
@@ -465,12 +475,12 @@ export default function AssistantPanel(props: AssistantPanelProps) {
       );
     }
 
-    if (chart.template === "pnl_distribution") {
+    if (family === "pnl_distribution" && hasKey("count")) {
       return (
         <ResponsiveContainer width="100%" height={220}>
           <BarChart data={chart.data}>
             <CartesianGrid strokeDasharray="2 4" stroke="rgba(255,255,255,0.08)" />
-            <XAxis dataKey="bucket" tick={{ fill: "#8b94a8", fontSize: 10 }} hide={chart.data.length > 10} />
+            <XAxis dataKey={xKey} tick={{ fill: "#8b94a8", fontSize: 10 }} hide={chart.data.length > 10} />
             <YAxis tick={{ fill: "#8b94a8", fontSize: 10 }} width={42} />
             <Tooltip
               contentStyle={{
@@ -485,7 +495,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
       );
     }
 
-    if (chart.template === "session_performance") {
+    if (family === "session_performance" && hasKey("session") && hasKey("pnl")) {
       return (
         <ResponsiveContainer width="100%" height={220}>
           <ComposedChart data={chart.data}>
@@ -508,7 +518,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
       );
     }
 
-    if (chart.template === "trade_outcomes") {
+    if (family === "trade_outcomes" && hasKey("value") && hasKey("label")) {
       return (
         <ResponsiveContainer width="100%" height={220}>
           <PieChart>
@@ -537,12 +547,12 @@ export default function AssistantPanel(props: AssistantPanelProps) {
       );
     }
 
-    if (chart.template === "price_action") {
+    if (family === "price_action" && hasKey("high") && hasKey("low") && hasKey("close")) {
       return (
         <ResponsiveContainer width="100%" height={220}>
           <ComposedChart data={chart.data}>
             <CartesianGrid strokeDasharray="2 4" stroke="rgba(255,255,255,0.08)" />
-            <XAxis dataKey="x" tick={{ fill: "#8b94a8", fontSize: 10 }} hide={chart.data.length > 20} />
+            <XAxis dataKey={xKey} tick={{ fill: "#8b94a8", fontSize: 10 }} hide={chart.data.length > 20} />
             <YAxis tick={{ fill: "#8b94a8", fontSize: 10 }} width={52} />
             <Tooltip
               contentStyle={{
@@ -559,11 +569,33 @@ export default function AssistantPanel(props: AssistantPanelProps) {
       );
     }
 
+    if (family === "price_action" && hasKey("value")) {
+      return (
+        <ResponsiveContainer width="100%" height={220}>
+          <LineChart data={chart.data}>
+            <CartesianGrid strokeDasharray="2 4" stroke="rgba(255,255,255,0.08)" />
+            <XAxis dataKey={xKey} tick={{ fill: "#8b94a8", fontSize: 10 }} hide={chart.data.length > 16} />
+            <YAxis tick={{ fill: "#8b94a8", fontSize: 10 }} width={52} />
+            <Tooltip
+              contentStyle={{
+                background: "#0e1521",
+                border: "1px solid #1f2a40",
+                color: "#d4dae5"
+              }}
+            />
+            <Line type="monotone" dataKey="value" stroke="#13c98f" strokeWidth={2} dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      );
+    }
+
+    const fallbackYKey = hasKey("count") ? "count" : hasKey("value") ? "value" : "count";
+
     return (
       <ResponsiveContainer width="100%" height={220}>
         <BarChart data={chart.data}>
           <CartesianGrid strokeDasharray="2 4" stroke="rgba(255,255,255,0.08)" />
-          <XAxis dataKey="label" tick={{ fill: "#8b94a8", fontSize: 10 }} />
+          <XAxis dataKey={xKey} tick={{ fill: "#8b94a8", fontSize: 10 }} />
           <YAxis tick={{ fill: "#8b94a8", fontSize: 10 }} width={42} />
           <Tooltip
             contentStyle={{
@@ -572,7 +604,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
               color: "#d4dae5"
             }}
           />
-          <Bar dataKey="count" fill="#8797ba" radius={[4, 4, 0, 0]} />
+          <Bar dataKey={fallbackYKey} fill="#8797ba" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
     );
