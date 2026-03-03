@@ -2305,6 +2305,7 @@ const XAUUSD_PAIR = "XAU_USD";
 const MIN_SEED_CANDLES = 40;
 const MARKET_MAX_HISTORY_CANDLES = 25_000;
 const LIVE_MARKET_SYNC_LIMIT = 160;
+const CHART_STREAM_CONNECT_TIMEOUT_MS = 3500;
 const MARKET_API_KEY =
   process.env.NEXT_PUBLIC_PRICE_STREAM_API_KEY ||
   process.env.NEXT_PUBLIC_MARKET_API_KEY ||
@@ -4824,6 +4825,17 @@ const InlineLoadingBar = ({
   );
 };
 
+const ChartLoadingSpinner = ({ label }: { label: string }) => {
+  return (
+    <div className="chart-loading-overlay" role="status" aria-live="polite">
+      <div className="chart-loading-core">
+        <span className="chart-loading-spinner" aria-hidden />
+        <span className="chart-loading-text">{label}</span>
+      </div>
+    </div>
+  );
+};
+
 const getAiZipTradeDisplayId = (trade: Pick<HistoryItem, "id" | "entryTime">) => {
   const rawId = String(trade.id ?? "").trim();
 
@@ -5986,6 +5998,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     let cancelled = false;
     let stream: EventSource | null = null;
     let liveSyncInterval = 0;
+    let streamReadyTimeoutId = 0;
     const key = selectedKey;
     const historyLimit = chartHistoryCountByTimeframe[selectedTimeframe];
     const recentOneMinutePromise = fetchRecentOneMinuteCandles();
@@ -5995,6 +6008,25 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     const connect = async () => {
       let hasInitialSeed = false;
+      let historyResolved = false;
+      let liveSyncResolved = false;
+      let streamResolved = false;
+
+      const resolveChartInitialLoad = () => {
+        if (cancelled) {
+          return;
+        }
+
+        if (!historyResolved || !liveSyncResolved || !streamResolved) {
+          return;
+        }
+
+        if (hasInitialSeed) {
+          chartHistoryReadyByKeyRef.current[key] = true;
+        }
+
+        setChartHistoryLoadingKey((current) => (current === key ? null : current));
+      };
 
       try {
         const historicalCandles = await fetchHistoryCandles(selectedTimeframe, recentOneMinutePromise);
@@ -6008,6 +6040,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         }
       } catch {
         // Keep the last real candle state if historical loading is unavailable.
+      } finally {
+        historyResolved = true;
+        resolveChartInitialLoad();
       }
 
       const syncLiveCandlesFromMarket = async () => {
@@ -6029,28 +6064,49 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       };
 
       await syncLiveCandlesFromMarket();
+      liveSyncResolved = true;
+      resolveChartInitialLoad();
 
       if (cancelled) {
         return;
       }
 
-      if (hasInitialSeed) {
-        chartHistoryReadyByKeyRef.current[key] = true;
-      }
-
-      setChartHistoryLoadingKey((current) => (current === key ? null : current));
-
       liveSyncInterval = window.setInterval(() => {
         void syncLiveCandlesFromMarket();
       }, 8000);
 
-      stream = new EventSource(
-        `${PRICE_STREAM_URL}?${new URLSearchParams({
-          api_key: MARKET_API_KEY,
-          pairs: XAUUSD_PAIR
-        }).toString()}`
-      );
+      const resolveStream = () => {
+        if (streamResolved) {
+          return;
+        }
+
+        streamResolved = true;
+        resolveChartInitialLoad();
+      };
+
+      streamReadyTimeoutId = window.setTimeout(resolveStream, CHART_STREAM_CONNECT_TIMEOUT_MS);
+
+      try {
+        stream = new EventSource(
+          `${PRICE_STREAM_URL}?${new URLSearchParams({
+            api_key: MARKET_API_KEY,
+            pairs: XAUUSD_PAIR
+          }).toString()}`
+        );
+      } catch {
+        resolveStream();
+        return;
+      }
+
       streamRef.current = stream;
+
+      stream.onopen = () => {
+        resolveStream();
+      };
+
+      stream.onerror = () => {
+        resolveStream();
+      };
 
       stream.onmessage = (event) => {
         try {
@@ -6089,6 +6145,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       if (liveSyncInterval) {
         window.clearInterval(liveSyncInterval);
+      }
+
+      if (streamReadyTimeoutId) {
+        window.clearTimeout(streamReadyTimeoutId);
       }
 
       stream?.close();
@@ -6230,8 +6290,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [selectedKey, seriesMap]);
   const isChartDataLoading =
     selectedSurfaceTab === "chart" &&
-    chartHistoryLoadingKey === selectedKey &&
-    (seriesMap[selectedKey]?.length ?? 0) === 0;
+    chartHistoryLoadingKey === selectedKey;
 
   const selectedBacktestCandles = useMemo(() => {
     return (
@@ -12931,10 +12990,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
                 <div ref={countdownOverlayRef} className="candle-countdown-overlay" />
                 {isChartDataLoading ? (
-                  <InlineLoadingBar
-                    className="chart-inline-loading"
-                    label="Loading chart candles..."
-                  />
+                  <ChartLoadingSpinner label="Loading chart candles..." />
                 ) : null}
                 <button
                   type="button"
@@ -13403,8 +13459,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <strong>{backtestDateRangeEndLabel}</strong>
                   </span>
                   <span className="backtest-toolbar-note-meta">
-                    Total Trades: <strong>{backtestTrades.length}</strong> · Total Libraries:{" "}
-                    <strong>{appliedBacktestSettings.selectedAiLibraries.length}</strong>
+                    Total Live Trades: <strong>{backtestTrades.length.toLocaleString("en-US")}</strong> ·
+                    {" "}Total Library Trades:{" "}
+                    <strong>{backtestLibraryCandidateTrades.length.toLocaleString("en-US")}</strong>
                   </span>
                 </div>
               </div>
@@ -13664,7 +13721,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
                         <button
                           type="button"
-                          className={`ai-zip-button toggle ${useMitExit ? "active" : ""}`}
+                          className={`ai-zip-button toggle ${
+                            aiMode !== "off" && useMitExit ? "active" : ""
+                          }`}
+                          disabled={aiMode === "off"}
                           onClick={() => setUseMitExit((value) => !value)}
                         >
                           MIT Exit {useMitExit ? "· ON" : "· OFF"}
@@ -13677,17 +13737,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           onClick={() => setMethodSettingsOpen(true)}
                         >
                           Method Specific Settings
-                        </button>
-
-                        <button
-                          type="button"
-                          className={`ai-zip-button toggle ${
-                            staticLibrariesClusters ? "active success" : ""
-                          }`}
-                          disabled={aiMode === "off"}
-                          onClick={() => setStaticLibrariesClusters((value) => !value)}
-                        >
-                          Static Libraries &amp; Clusters {staticLibrariesClusters ? "· ON" : "· OFF"}
                         </button>
                       </div>
                     </div>
@@ -13843,6 +13892,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           </button>
                         </div>
 
+                        <button
+                          type="button"
+                          className={`ai-zip-button toggle ${
+                            staticLibrariesClusters ? "active success" : ""
+                          }`}
+                          disabled={aiDisabled}
+                          onClick={() => setStaticLibrariesClusters((value) => !value)}
+                        >
+                          Static Library &amp; Clusters {staticLibrariesClusters ? "· ON" : "· OFF"}
+                        </button>
+
                         <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
                           <div className="ai-zip-label">Chunk Size (bars)</div>
                           <input
@@ -13997,6 +14057,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               className="ai-zip-input"
                             />
                           </label>
+                        </div>
+
+                        <div className="ai-zip-input-grid compact-trade-row">
                           <label className="ai-zip-field">
                             <span className="ai-zip-label">Units ($ / 1.0 move)</span>
                             <input
