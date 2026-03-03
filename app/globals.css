@@ -918,6 +918,7 @@ button {
   min-height: 0;
   display: grid;
   gap: 0.9rem;
+  position: relative;
 }
 
 .backtest-empty {
@@ -1146,11 +1147,22 @@ button {
 .backtest-stats-range-main {
   width: 100%;
   margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   justify-content: flex-end;
+  gap: 0.32rem;
+}
+
+.backtest-date-input-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.32rem;
 }
 
 .backtest-date-preset-row {
-  flex: 1 1 100%;
   width: 100%;
   max-width: 272px;
   margin-left: auto;
@@ -5450,6 +5462,7 @@ input[style*="background: rgba(255,255,255,0.06)"] {
   flex: 1;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 .backtest-grid {
   flex: 1;

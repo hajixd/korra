@@ -4805,25 +4805,6 @@ const TabIcon = ({ tab }: { tab: PanelTab }) => {
   );
 };
 
-const InlineLoadingBar = ({
-  label,
-  className = ""
-}: {
-  label: string;
-  className?: string;
-}) => {
-  const classes = ["inline-loading-bar", className].filter(Boolean).join(" ");
-
-  return (
-    <div className={classes} role="status" aria-live="polite">
-      <span className="inline-loading-label">{label}</span>
-      <div className="inline-loading-track" aria-hidden>
-        <div className="inline-loading-fill" />
-      </div>
-    </div>
-  );
-};
-
 const ChartLoadingSpinner = ({ label }: { label: string }) => {
   return (
     <div className="chart-loading-overlay" role="status" aria-live="polite">
@@ -9610,9 +9591,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       : isBacktestTabHistoryPending
         ? "Loading backtest data..."
         : "Loading tab data...";
-  const isDimensionTabLoading =
-    selectedBacktestTab === "dimensions" &&
-    (isBacktestTabDataPending || isBacktestTabHistoryPending);
 
   const mainStatsTrades = useMemo(() => backtestTrades, [backtestTrades]);
 
@@ -13400,27 +13378,29 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     className="backtest-stats-range backtest-stats-range-main"
                     aria-label="global backtest date range"
                   >
-                    <input
-                      type="date"
-                      value={statsDateStart}
-                      onChange={(event) => {
-                        setStatsDateStart(event.target.value);
-                        setStatsDatePreset("custom");
-                      }}
-                      className="backtest-date-input"
-                      aria-label="global backtest start date"
-                    />
-                    <span className="backtest-stats-range-arrow">-&gt;</span>
-                    <input
-                      type="date"
-                      value={statsDateEnd}
-                      onChange={(event) => {
-                        setStatsDateEnd(event.target.value);
-                        setStatsDatePreset("custom");
-                      }}
-                      className="backtest-date-input"
-                      aria-label="global backtest end date"
-                    />
+                    <div className="backtest-date-input-row">
+                      <input
+                        type="date"
+                        value={statsDateStart}
+                        onChange={(event) => {
+                          setStatsDateStart(event.target.value);
+                          setStatsDatePreset("custom");
+                        }}
+                        className="backtest-date-input"
+                        aria-label="global backtest start date"
+                      />
+                      <span className="backtest-stats-range-arrow">-&gt;</span>
+                      <input
+                        type="date"
+                        value={statsDateEnd}
+                        onChange={(event) => {
+                          setStatsDateEnd(event.target.value);
+                          setStatsDatePreset("custom");
+                        }}
+                        className="backtest-date-input"
+                        aria-label="global backtest end date"
+                      />
+                    </div>
                     <div className="backtest-date-preset-row">
                       <div ref={statsDatePresetDdRef} className="backtest-date-preset-wrap">
                         <button
@@ -13576,10 +13556,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ) : null}
 
               {shouldShowBacktestInlineLoader ? (
-                <InlineLoadingBar
-                  className="backtest-inline-loading"
-                  label={backtestInlineLoaderLabel}
-                />
+                <ChartLoadingSpinner label={backtestInlineLoaderLabel} />
               ) : null}
 
               {selectedBacktestTab === "mainStats" ? (
@@ -16292,12 +16269,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     </div>
                   </div>
 
-                  {isDimensionTabLoading ? (
-                    <InlineLoadingBar
-                      className="backtest-inline-loading backtest-inline-loading-inset"
-                      label="Building dimension statistics..."
-                    />
-                  ) : !dimensionStats || dimensionStats.dims.length === 0 ? (
+                  {!dimensionStats || dimensionStats.dims.length === 0 ? (
                     <div className="backtest-empty-inline">
                       {!aiModelEnabled && !aiFilterEnabled
                         ? "Turn on AI Model or AI Filter to view dimension statistics."
