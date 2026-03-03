@@ -153,6 +153,11 @@ type AggressorPressureSnapshot = {
   updatedAtMs: number;
 };
 
+type AggressorTrainingPeak = {
+  timestampMs: number;
+  peak: number;
+};
+
 type VolumeNowcastSnapshot = {
   estimatedCurrentVolume: number;
   estimatedFinalVolume: number;
@@ -2390,7 +2395,10 @@ const MARKET_MAX_HISTORY_CANDLES = 25_000;
 const LIVE_MARKET_SYNC_LIMIT = 160;
 const CHART_STREAM_CONNECT_TIMEOUT_MS = 3500;
 const AGGRESSOR_PRESSURE_UI_THROTTLE_MS = 220;
-const AGGRESSOR_PRESSURE_PEAK_DECAY = 0.996;
+const AGGRESSOR_HALF_LIFE_BARS = 1.2;
+const AGGRESSOR_TRAINING_BARS = 96;
+const AGGRESSOR_MIN_TRAINING_PERIOD_MS = 3 * 60 * 60_000;
+const VP_THRESHOLD_RATIO = 0.8;
 const MARKET_API_KEY =
   process.env.NEXT_PUBLIC_PRICE_STREAM_API_KEY ||
   process.env.NEXT_PUBLIC_MARKET_API_KEY ||
@@ -5532,12 +5540,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const notificationRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<EventSource | null>(null);
   const aggressorPressurePointsRef = useRef<AggressorPressurePoint[]>([]);
+  const aggressorTrainingPeaksRef = useRef<AggressorTrainingPeak[]>([]);
   const aggressorPressureStateRef = useRef({
     lastMid: Number.NaN,
     lastUiUpdateMs: 0,
     peakPressure: 1,
     lastTickMs: 0
   });
+  const overlayCatchupSeedKeyRef = useRef("");
   const liveQuoteStateRef = useRef({
     bid: Number.NaN,
     ask: Number.NaN
@@ -6314,6 +6324,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const historyLimit = chartHistoryCountByTimeframe[selectedTimeframe];
     const candleDurationMs = Math.max(60_000, timeframeMinutes[selectedTimeframe] * 60_000);
     const aggressorWindowMs = Math.max(60_000, timeframeMinutes[selectedTimeframe] * 60_000);
+    const aggressorHalfLifeMs = Math.max(45_000, candleDurationMs * AGGRESSOR_HALF_LIFE_BARS);
+    const aggressorDecayLambda = Math.log(2) / aggressorHalfLifeMs;
+    const aggressorTrainingPeriodMs = Math.max(
+      AGGRESSOR_MIN_TRAINING_PERIOD_MS,
+      candleDurationMs * AGGRESSOR_TRAINING_BARS
+    );
     const recentOneMinutePromise = fetchRecentOneMinuteCandles();
     const keyWasReady = Boolean(chartHistoryReadyByKeyRef.current[key]);
 
@@ -6323,6 +6339,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     setChartHistoryLoadingKey(keyWasReady ? null : key);
     aggressorPressurePointsRef.current = [];
+    aggressorTrainingPeaksRef.current = [];
     aggressorPressureStateRef.current = {
       lastMid: Number.NaN,
       lastUiUpdateMs: 0,
@@ -6360,6 +6377,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       tickCount: 0,
       updatedAtMs: 0
     });
+    overlayCatchupSeedKeyRef.current = "";
 
     const connect = async () => {
       let hasInitialSeed = false;
@@ -6589,6 +6607,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
           const pressureState = aggressorPressureStateRef.current;
           const pressurePoints = aggressorPressurePointsRef.current;
+          const trainingPeaks = aggressorTrainingPeaksRef.current;
 
           if (eventTime >= pressureState.lastTickMs) {
             const spreadValue = spread ?? Number.NaN;
@@ -6626,8 +6645,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             let spreadCount = 0;
 
             for (const point of pressurePoints) {
-              buyPressure += point.buyPressure;
-              sellPressure += point.sellPressure;
+              const ageMs = Math.max(0, eventTime - point.timestampMs);
+              const weight = Math.exp(-aggressorDecayLambda * ageMs);
+              buyPressure += point.buyPressure * weight;
+              sellPressure += point.sellPressure * weight;
 
               if (point.spread > 0) {
                 spreadSum += point.spread;
@@ -6636,10 +6657,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             }
 
             const currentSidePeak = Math.max(buyPressure, sellPressure, 1);
-            pressureState.peakPressure = Math.max(
-              currentSidePeak,
-              pressureState.peakPressure * AGGRESSOR_PRESSURE_PEAK_DECAY
-            );
+            trainingPeaks.push({
+              timestampMs: eventTime,
+              peak: currentSidePeak
+            });
+
+            const trainingCutoffMs = eventTime - aggressorTrainingPeriodMs;
+            while (trainingPeaks.length > 0 && trainingPeaks[0]!.timestampMs < trainingCutoffMs) {
+              trainingPeaks.shift();
+            }
+
+            let trainingPeak = 1;
+            for (const entry of trainingPeaks) {
+              if (entry.peak > trainingPeak) {
+                trainingPeak = entry.peak;
+              }
+            }
+            pressureState.peakPressure = trainingPeak;
 
             if (
               pressureState.lastUiUpdateMs === 0 ||
@@ -6850,6 +6884,149 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   useEffect(() => {
     volumeBaselineRef.current = volumeBaselineProfile;
   }, [volumeBaselineProfile]);
+
+  useEffect(() => {
+    const seedKey = `${selectedKey}__${selectedTimeframe}`;
+    if (overlayCatchupSeedKeyRef.current === seedKey) {
+      return;
+    }
+
+    if (selectedCandles.length === 0) {
+      return;
+    }
+
+    const nowMs = Date.now();
+    const candleDurationMs = Math.max(60_000, timeframeMinutes[selectedTimeframe] * 60_000);
+    const aggressorWindowMs = candleDurationMs;
+    const aggressorHalfLifeMs = Math.max(45_000, candleDurationMs * AGGRESSOR_HALF_LIFE_BARS);
+    const aggressorDecayLambda = Math.log(2) / aggressorHalfLifeMs;
+    const aggressorTrainingPeriodMs = Math.max(
+      AGGRESSOR_MIN_TRAINING_PERIOD_MS,
+      candleDurationMs * AGGRESSOR_TRAINING_BARS
+    );
+    const trainingCutoffMs = nowMs - aggressorTrainingPeriodMs;
+    const windowCutoffMs = nowMs - aggressorWindowMs;
+
+    const seededPoints: AggressorPressurePoint[] = [];
+    const seededTrainingPeaks: AggressorTrainingPeak[] = [];
+
+    for (const candle of selectedCandles) {
+      const candleEndMs = candle.time + candleDurationMs;
+      if (candleEndMs < trainingCutoffMs) {
+        continue;
+      }
+
+      const volume = Number(candle.volume);
+      const range = Math.max(
+        0.000001,
+        candle.high - candle.low,
+        Math.abs(candle.close - candle.open),
+        Math.abs(candle.close) * 0.00001
+      );
+      const closePos = clamp((candle.close - candle.low) / range, 0, 1);
+      const fallbackActivity = Math.max(1, Math.abs(candle.close - candle.open) / range * 32);
+      const activity = Number.isFinite(volume) && volume > 0 ? volume : fallbackActivity;
+      const buyPressure = activity * closePos;
+      const sellPressure = activity * (1 - closePos);
+
+      seededTrainingPeaks.push({
+        timestampMs: candleEndMs,
+        peak: Math.max(buyPressure, sellPressure, 1)
+      });
+
+      if (candleEndMs >= windowCutoffMs) {
+        seededPoints.push({
+          timestampMs: candleEndMs,
+          buyPressure,
+          sellPressure,
+          spread: 0
+        });
+      }
+    }
+
+    let seededBuyPressure = 0;
+    let seededSellPressure = 0;
+    for (const point of seededPoints) {
+      const ageMs = Math.max(0, nowMs - point.timestampMs);
+      const weight = Math.exp(-aggressorDecayLambda * ageMs);
+      seededBuyPressure += point.buyPressure * weight;
+      seededSellPressure += point.sellPressure * weight;
+    }
+
+    let trainingPeak = 1;
+    for (const row of seededTrainingPeaks) {
+      if (row.peak > trainingPeak) {
+        trainingPeak = row.peak;
+      }
+    }
+
+    aggressorPressurePointsRef.current = seededPoints;
+    aggressorTrainingPeaksRef.current = seededTrainingPeaks;
+    aggressorPressureStateRef.current = {
+      ...aggressorPressureStateRef.current,
+      peakPressure: trainingPeak
+    };
+
+    setAggressorPressure((current) => ({
+      ...current,
+      buyPressure: seededBuyPressure,
+      sellPressure: seededSellPressure,
+      scaleCeiling: trainingPeak,
+      averageSpread: 0,
+      tickCount: seededPoints.length,
+      updatedAtMs: nowMs
+    }));
+
+    const candleStartMs = floorToTimeframe(nowMs, selectedTimeframe);
+    const slot = getTimeframeSlotIndex(candleStartMs, selectedTimeframe);
+    const baselineVolumeRaw =
+      volumeBaselineProfile.bySlot.get(slot) ??
+      (volumeBaselineProfile.globalAverage > 0 ? volumeBaselineProfile.globalAverage : NaN);
+    const baselineVolume = Number.isFinite(baselineVolumeRaw) && baselineVolumeRaw > 0 ? baselineVolumeRaw : 20;
+    const progressRatio = clamp((nowMs - candleStartMs) / candleDurationMs, 0.0001, 1);
+    const currentCandleVolume = Number(
+      selectedCandles[selectedCandles.length - 1]?.time === candleStartMs
+        ? selectedCandles[selectedCandles.length - 1]?.volume
+        : Number.NaN
+    );
+    const estimatedCurrentVolume =
+      Number.isFinite(currentCandleVolume) && currentCandleVolume > 0
+        ? currentCandleVolume
+        : baselineVolume * Math.pow(progressRatio, 0.92);
+    const estimatedFinalVolume = Math.max(
+      baselineVolume,
+      estimatedCurrentVolume / Math.max(progressRatio, 0.12)
+    );
+    const estimatedTickCount = Math.max(1, Math.round(estimatedCurrentVolume));
+    const confidence = clamp(
+      progressRatio * 0.55 + Math.min(1, estimatedTickCount / 25) * 0.45,
+      0,
+      1
+    );
+
+    volumeNowcastStateRef.current = {
+      candleStartMs,
+      lastEventMs: nowMs,
+      lastMid: selectedCandles[selectedCandles.length - 1]?.close ?? Number.NaN,
+      tickCount: estimatedTickCount,
+      absMidMove: 0,
+      spreadSum: 0,
+      spreadCount: 0,
+      lastUiUpdateMs: nowMs
+    };
+
+    setVolumeNowcast({
+      estimatedCurrentVolume,
+      estimatedFinalVolume,
+      baselineVolume,
+      progressRatio,
+      confidence,
+      tickCount: estimatedTickCount,
+      updatedAtMs: nowMs
+    });
+
+    overlayCatchupSeedKeyRef.current = seedKey;
+  }, [selectedCandles, selectedKey, selectedTimeframe, volumeBaselineProfile]);
 
   const isChartDataLoading =
     selectedSurfaceTab === "chart" &&
@@ -7349,9 +7526,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     aggressorPressure.buyPressure,
     aggressorPressure.sellPressure
   );
-  const aggressorSellShare = clamp(aggressorPressure.sellPressure / aggressorScaleCeiling, 0, 1);
-  const aggressorBuyShare = clamp(aggressorPressure.buyPressure / aggressorScaleCeiling, 0, 1);
   const aggressorTotalPressure = aggressorPressure.buyPressure + aggressorPressure.sellPressure;
+  const aggressorBuyFlowShare =
+    aggressorTotalPressure > 0 ? clamp(aggressorPressure.buyPressure / aggressorTotalPressure, 0, 1) : 0.5;
+  const aggressorSellFlowShare =
+    aggressorTotalPressure > 0 ? clamp(aggressorPressure.sellPressure / aggressorTotalPressure, 0, 1) : 0.5;
+  const aggressorSellFillShare = clamp(aggressorPressure.sellPressure / aggressorScaleCeiling, 0, 1);
+  const aggressorBuyFillShare = clamp(aggressorPressure.buyPressure / aggressorScaleCeiling, 0, 1);
   const aggressorImbalancePct =
     aggressorTotalPressure > 0
       ? ((aggressorPressure.buyPressure - aggressorPressure.sellPressure) / aggressorTotalPressure) * 100
@@ -7362,8 +7543,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const liveSpreadLabel = liveQuote.spread != null ? formatPrice(liveQuote.spread) : "--";
   const estimatedVolumeCurrent = Math.max(0, volumeNowcast.estimatedCurrentVolume);
   const estimatedVolumeFinal = Math.max(0, volumeNowcast.estimatedFinalVolume);
-  const estimatedBuyVolume = estimatedVolumeCurrent * aggressorBuyShare;
-  const estimatedSellVolume = estimatedVolumeCurrent * aggressorSellShare;
+  const estimatedBuyVolume = estimatedVolumeCurrent * aggressorBuyFlowShare;
+  const estimatedSellVolume = estimatedVolumeCurrent * aggressorSellFlowShare;
   const estimatedVolumeScale = Math.max(1, estimatedVolumeFinal);
   const estimatedVolumeCurrentLabel = formatAggressorPressure(estimatedVolumeCurrent);
   const estimatedVolumeFinalLabel = formatAggressorPressure(estimatedVolumeFinal);
@@ -13722,6 +13903,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 <div
                   className="vp-proxy-card"
                   title="Bookmap VP-style view. Uses quote-direction pressure from bid/ask/mid ticks, not true traded volume."
+                  style={{ ["--vp-threshold-ratio" as any]: `${(VP_THRESHOLD_RATIO * 100).toFixed(0)}%` }}
                 >
                   <div className="vp-proxy-head">
                     <strong>VP*</strong>
@@ -13736,7 +13918,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="vp-proxy-track">
                       <span
                         className="vp-proxy-fill sell"
-                        style={{ width: `${(aggressorSellShare * 100).toFixed(1)}%` }}
+                        style={{ width: `${(aggressorSellFillShare * 100).toFixed(1)}%` }}
                       />
                       <span className="vp-proxy-midline" />
                       <span className="vp-proxy-value">
@@ -13753,7 +13935,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="vp-proxy-track">
                       <span
                         className="vp-proxy-fill buy"
-                        style={{ width: `${(aggressorBuyShare * 100).toFixed(1)}%` }}
+                        style={{ width: `${(aggressorBuyFillShare * 100).toFixed(1)}%` }}
                       />
                       <span className="vp-proxy-midline" />
                       <span className="vp-proxy-value">

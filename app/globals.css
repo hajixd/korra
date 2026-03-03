@@ -4217,6 +4217,7 @@ button {
 }
 
 .vp-proxy-card {
+  --vp-threshold-ratio: 80%;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 9px;
   background: rgba(22, 33, 44, 0.88);
@@ -4289,7 +4290,7 @@ button {
   position: absolute;
   top: 5px;
   bottom: 5px;
-  left: 50%;
+  left: var(--vp-threshold-ratio);
   width: 2px;
   margin-left: -1px;
   border-radius: 2px;
