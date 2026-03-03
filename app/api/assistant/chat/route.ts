@@ -137,6 +137,27 @@ type ReasoningOutput = {
   }>;
 };
 
+type DataAnalysisOutput = {
+  summary: string;
+  keyFindings: string[];
+  suggestedIndicatorFocus: string[];
+  confidence: number;
+};
+
+type IndicatorCodingPlan = {
+  indicator: string;
+  output: "snapshot" | "series";
+  params: Record<string, number>;
+  minCandles: number;
+};
+
+type IndicatorCodingResult = {
+  computed: Record<string, unknown>;
+  computedAny: boolean;
+  requiredMinCandles: number;
+  needsMoreData: boolean;
+};
+
 type ChartPlan = {
   template: string;
   title: string;
@@ -346,6 +367,29 @@ const CHECKLIST_AUDIT_PROMPT = [
   "Bullets are optional; include only when they materially help the exact request."
 ].join("\n");
 
+const DATA_ANALYSIS_PROMPT = [
+  "Return only JSON with this shape:",
+  '{"summary":string,"keyFindings":[string],"suggestedIndicatorFocus":[string],"confidence":number}',
+  "Analyze only the provided market/trade data and recent candle window.",
+  "Do not invent missing values.",
+  "Keep summary concise and trading-focused.",
+  "Provide up to 4 keyFindings."
+].join("\n");
+
+const INDICATOR_CODING_PROMPT = [
+  "Return only JSON with this shape:",
+  '{"plans":[{"indicator":string,"output":"snapshot|series","params":{"fast":number,"slow":number,"signal":number,"period":number,"k":number,"d":number},"minCandles":number}]}',
+  "You are the coding model deciding how to compute requested indicators from candle OHLCV data.",
+  "Only include plans for indicators explicitly requested by the user.",
+  "Use standard defaults unless user asks otherwise:",
+  "- macd: fast=12, slow=26, signal=9, minCandles>=40",
+  "- rsi: period=14, minCandles>=period+2",
+  "- ema/sma: period=20 unless specified",
+  "- atr: period=14",
+  "- stochastic: k=14, d=3",
+  "If multiple indicators are requested, return multiple plans."
+].join("\n");
+
 const REASONING_PROMPT = [
   "Return only JSON with this shape:",
   '{"cannotAnswer":boolean,"cannotAnswerReason":string,"shortAnswer":string,"bullets":[{"tone":"green|red|gold|black","text":string}],"chartHints":[{"template":"equity_curve|pnl_distribution|session_performance|trade_outcomes|price_action|action_timeline|auto","title":string,"reason":string,"source":"history|backtest|candles|clickhouse|actions","priority":number}]}',
@@ -355,9 +399,11 @@ const REASONING_PROMPT = [
   "Never tell the user to run/fetch tools manually.",
   "Use provided indicators when available (e.g., RSI 14 for overbought/oversold requests).",
   "Only compute indicators when the user explicitly asks for them.",
+  "If codingComputedIndicators is provided, treat it as authoritative computed indicator data.",
   "Use requestChecklist to enforce scope. If requestChecklist.requestKind='social', return a brief natural reply with no analytics, no bullets, and no chart hints.",
   "Before setting cannotAnswer=true, attempt to answer using available context and indicator snapshots.",
   "If data is insufficient, set cannotAnswer=true and explain why.",
+  "Never say phrases like 'in the information provided'.",
   "Do not include markdown code fences."
 ].join("\n");
 
@@ -367,9 +413,14 @@ const SPEAKER_PROMPT = [
   "Style: natural, conversational, and direct.",
   "Do not sound robotic.",
   "Never output <think> tags or private reasoning.",
+  "Never use stage directions or roleplay text (for example: *smiles*, *laughs*, [nods]).",
+  "Never ask about the user's day, mood, or personal life.",
+  "Stay strictly in trading context.",
   "Answer exactly what the user asked and keep it concise.",
   "When the user asks broad guidance (for example, 'what should I do?'), give a clear immediate next step in plain language.",
+  "Any follow-up question must be trading-specific only.",
   "Use analysis inputs as facts; do not invent data.",
+  "Never say phrases like 'in the information provided'.",
   "Do not mention tools, models, prompts, or internal pipeline."
 ].join("\n");
 
@@ -418,6 +469,18 @@ const toBool = (value: unknown, fallback = false): boolean => {
   return fallback;
 };
 
+const stripRoleplayAndPersonalTalk = (value: string): string => {
+  return value
+    .replace(/\*(?:\s*[a-z][^*\n]{0,80})\*/gi, " ")
+    .replace(/\[(?:\s*[a-z][^\]\n]{0,80})\]/gi, " ")
+    .replace(
+      /\bhow are you(?:\s+(?:doing|feeling))?(?:\s+today)?\??/gi,
+      " "
+    )
+    .replace(/\bhow'?s your day(?:\s+going)?\??/gi, " ")
+    .replace(/\bhope you(?:'re| are)\s+doing\s+well\b/gi, " ");
+};
+
 const stripPrivateReasoning = (value: string): string => {
   return value
     .replace(/<\s*think\b[^>]*>[\s\S]*?<\s*\/\s*think\s*>/gi, " ")
@@ -429,6 +492,23 @@ const stripPrivateReasoning = (value: string): string => {
 
 const sanitizeAssistantText = (value: string): string => {
   return stripPrivateReasoning(value)
+    .replace(/^\s*(?:okay|alright|sure)[,:\-\s]+/i, "")
+    .replace(/^\s*(?:greetings|hey there)[,:\-\s]+/i, "")
+    .replace(/^\s*hi[,:\-\s]+/i, "Hi. ")
+    .replace(/^\s*hello[,:\-\s]+/i, "Hello. ")
+    .replace(/^\s*hey[,:\-\s]+/i, "Hey. ")
+    .replace(/^\s*good\s+(?:morning|afternoon|evening)[,:\-\s]+/i, "")
+    .replace(/\bin\s+the\s+information\s+provided\b/gi, "")
+    .replace(/\bwith\s+the\s+information\s+provided\b/gi, "")
+    .replace(/\bfrom\s+the\s+information\s+provided\b/gi, "")
+    .replace(/<\s*\/?\s*think\s*>/gi, " ")
+    .replace(/run\s*contains\s*:\s*false/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+};
+
+const sanitizeDeliveryText = (value: string): string => {
+  return stripRoleplayAndPersonalTalk(sanitizeAssistantText(value))
     .replace(/<\s*\/?\s*think\s*>/gi, " ")
     .replace(/run\s*contains\s*:\s*false/gi, "")
     .replace(/\s{2,}/g, " ")
@@ -2761,8 +2841,11 @@ const executeSocialReplyStage = async (params: {
             "You are Gideon.",
             "Respond like a natural human in one short sentence.",
             "The user sent a social/greeting message.",
+            "Keep it trading-focused, concise, and professional.",
             "Do not include market analysis, indicators, charts, trading advice, or tool mentions.",
-            "Never output <think> tags or private reasoning."
+            "Never output <think> tags or private reasoning.",
+            "Never use stage directions or roleplay text.",
+            "Never ask about the user's day, mood, or personal life."
           ].join("\n")
         },
         {
@@ -2773,7 +2856,7 @@ const executeSocialReplyStage = async (params: {
       maxTokens: 80
     });
 
-    const sanitized = sanitizeAssistantText(extractNebiusMessageText(completion.message.content));
+    const sanitized = sanitizeDeliveryText(extractNebiusMessageText(completion.message.content));
     if (sanitized) {
       return sanitized;
     }
@@ -2797,9 +2880,9 @@ const executeSocialReplyStage = async (params: {
       maxTokens: 48
     });
 
-    return sanitizeAssistantText(extractNebiusMessageText(retry.message.content));
+    return sanitizeDeliveryText(extractNebiusMessageText(retry.message.content));
   } catch {
-    return sanitizeAssistantText(lastPrompt);
+    return sanitizeDeliveryText(lastPrompt);
   }
 };
 
@@ -2839,9 +2922,9 @@ const executeSpeakerStage = async (params: {
       maxTokens: 180
     });
 
-    return sanitizeAssistantText(extractNebiusMessageText(completion.message.content));
+    return sanitizeDeliveryText(extractNebiusMessageText(completion.message.content));
   } catch {
-    return sanitizeAssistantText(draftAnswer || cannotAnswerReason);
+    return sanitizeDeliveryText(draftAnswer || cannotAnswerReason);
   }
 };
 
@@ -3088,6 +3171,95 @@ const normalizeReasoningOutput = (input: unknown): ReasoningOutput => {
   };
 };
 
+const normalizeDataAnalysisOutput = (input: unknown): DataAnalysisOutput => {
+  const raw = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const keyFindingsRaw = Array.isArray(raw.keyFindings) ? raw.keyFindings : [];
+  const suggestedIndicatorFocusRaw = Array.isArray(raw.suggestedIndicatorFocus)
+    ? raw.suggestedIndicatorFocus
+    : [];
+
+  return {
+    summary: sanitizeAssistantText(toText(raw.summary, "")),
+    keyFindings: keyFindingsRaw
+      .map((row) => sanitizeAssistantText(toText(row, "")))
+      .filter((row) => row.length > 0)
+      .slice(0, 4),
+    suggestedIndicatorFocus: suggestedIndicatorFocusRaw
+      .map((row) => sanitizeAssistantText(toText(row, "")))
+      .filter((row) => row.length > 0)
+      .slice(0, 4),
+    confidence: clamp(toNumber(raw.confidence, 0), 0, 1)
+  };
+};
+
+const executeDataAnalysisStage = async (params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  turns: ChatTurn[];
+  context: AssistantContext;
+  toolState: ToolState;
+  planning: PlanningOutput;
+  indicatorSnapshot: Record<string, unknown>;
+}): Promise<DataAnalysisOutput> => {
+  const { apiKey, baseUrl, model, turns, context, toolState, planning, indicatorSnapshot } = params;
+
+  const recentWindowCandles = getRecentWindowCandles({
+    context,
+    clickhouseCandles: toolState.clickhouseCandles
+  });
+
+  const input = {
+    latestPrompt: getLastUserPrompt(turns),
+    conversation: turns.slice(-6),
+    context: buildContextDigest(context),
+    planning,
+    recentWindow: {
+      includesLiveStream: true,
+      count: recentWindowCandles.length,
+      candles: recentWindowCandles.slice(-260)
+    },
+    indicators: indicatorSnapshot
+  };
+
+  try {
+    const completion = await nebiusChatCompletion({
+      apiKey,
+      baseUrl,
+      model,
+      messages: [
+        {
+          role: "system",
+          content: `${AI_SYSTEM_PROMPT}\n${DATA_ANALYSIS_PROMPT}`
+        },
+        {
+          role: "user",
+          content: `ANALYZE_MARKET_DATA_JSON:\n${JSON.stringify(input)}`
+        }
+      ],
+      temperature: 0.1,
+      maxTokens: 620,
+      responseFormat: {
+        type: "json_object"
+      }
+    });
+
+    return normalizeDataAnalysisOutput(
+      safeJsonParse<Record<string, unknown>>(
+        extractNebiusMessageText(completion.message.content),
+        {}
+      )
+    );
+  } catch {
+    return {
+      summary: "",
+      keyFindings: [],
+      suggestedIndicatorFocus: [],
+      confidence: 0
+    };
+  }
+};
+
 const executeReasoningStage = async (params: {
   apiKey: string;
   baseUrl: string;
@@ -3097,8 +3269,21 @@ const executeReasoningStage = async (params: {
   toolState: ToolState;
   planning: PlanningOutput;
   requestChecklist: RequestChecklistPlan;
+  indicatorSnapshot: Record<string, unknown>;
+  dataAnalysis: DataAnalysisOutput;
 }): Promise<ReasoningOutput> => {
-  const { apiKey, baseUrl, models, turns, context, toolState, planning, requestChecklist } = params;
+  const {
+    apiKey,
+    baseUrl,
+    models,
+    turns,
+    context,
+    toolState,
+    planning,
+    requestChecklist,
+    indicatorSnapshot,
+    dataAnalysis
+  } = params;
   const recentWindowCandles = getRecentWindowCandles({
     context,
     clickhouseCandles: toolState.clickhouseCandles
@@ -3109,12 +3294,13 @@ const executeReasoningStage = async (params: {
     context: buildContextDigest(context),
     planning,
     requestChecklist,
+    dataAnalysis,
     recentWindow: {
       includesLiveStream: true,
       count: recentWindowCandles.length,
       candles: recentWindowCandles.slice(-300)
     },
-    indicators: buildIndicatorSnapshot(recentWindowCandles),
+    indicators: indicatorSnapshot,
     clickhouse:
       toolState.clickhouseCandles.length > 0
         ? {
@@ -3223,6 +3409,8 @@ const executeCodingStage = async (params: {
   baseUrl: string;
   models: NebiusModelSelection;
   reasoning: ReasoningOutput;
+  dataAnalysis: DataAnalysisOutput;
+  indicatorSnapshot: Record<string, unknown>;
   context: AssistantContext;
   toolState: ToolState;
   requestMode: RequestModePlan;
@@ -3234,9 +3422,20 @@ const executeCodingStage = async (params: {
   chartActions: ReturnType<typeof normalizeChartActions>;
   chartAnimations: ReturnType<typeof normalizeChartAnimationsFromCoding>;
 }> => {
-  const { apiKey, baseUrl, models, reasoning, context, toolState } = params;
+  const {
+    apiKey,
+    baseUrl,
+    models,
+    reasoning,
+    dataAnalysis,
+    indicatorSnapshot,
+    context,
+    toolState
+  } = params;
 
   const codingInput = {
+    analysis: dataAnalysis,
+    indicators: indicatorSnapshot,
     chartHints: reasoning.chartHints,
     availableSources: {
       history: context.historyRows.length,
@@ -3695,6 +3894,174 @@ const buildFallbackFailureResponse = (message: string) => {
   };
 };
 
+const INDICATOR_ALIAS_MAP: Array<{ name: string; regex: RegExp }> = [
+  { name: "macd", regex: /\bmacd\b/i },
+  { name: "rsi", regex: /\brsi\b|\boverbought\b|\boversold\b/i },
+  { name: "ema", regex: /\bema\b|\bexponential moving average\b/i },
+  { name: "sma", regex: /\bsma\b|\bsimple moving average\b|\bmoving average\b/i },
+  { name: "atr", regex: /\batr\b|\baverage true range\b/i },
+  { name: "stochastic", regex: /\bstoch\b|\bstochastic\b/i }
+];
+
+const extractRequestedIndicators = (prompt: string): string[] => {
+  const normalized = toText(prompt, "");
+  if (!normalized) {
+    return [];
+  }
+
+  const requested: string[] = [];
+  for (const entry of INDICATOR_ALIAS_MAP) {
+    if (entry.regex.test(normalized)) {
+      requested.push(entry.name);
+    }
+  }
+
+  return Array.from(new Set(requested));
+};
+
+const normalizeIndicatorName = (value: string): string => {
+  const token = value.trim().toLowerCase();
+  if (token === "stoch") return "stochastic";
+  return token;
+};
+
+const parseIndicatorPeriodFromPrompt = (prompt: string, fallback: number): number => {
+  const text = toText(prompt, "");
+  if (!text) {
+    return fallback;
+  }
+
+  const periodMatch = text.match(/\b(?:period|len|length)\s*(?:=|:)?\s*(\d{1,3})\b/i);
+  if (periodMatch?.[1]) {
+    return clamp(toNumber(periodMatch[1], fallback), 2, 300);
+  }
+
+  const trailingMatch = text.match(/\b(?:rsi|ema|sma|atr)\s*(\d{1,3})\b/i);
+  if (trailingMatch?.[1]) {
+    return clamp(toNumber(trailingMatch[1], fallback), 2, 300);
+  }
+
+  return fallback;
+};
+
+const buildFallbackIndicatorPlans = (params: {
+  requestedIndicators: string[];
+  prompt: string;
+}): IndicatorCodingPlan[] => {
+  const period = parseIndicatorPeriodFromPrompt(params.prompt, 14);
+  const plans: IndicatorCodingPlan[] = [];
+
+  for (const rawName of params.requestedIndicators) {
+    const name = normalizeIndicatorName(rawName);
+    if (name === "macd") {
+      plans.push({
+        indicator: "macd",
+        output: "snapshot",
+        params: { fast: 12, slow: 26, signal: 9 },
+        minCandles: 40
+      });
+      continue;
+    }
+    if (name === "rsi") {
+      plans.push({
+        indicator: "rsi",
+        output: "snapshot",
+        params: { period },
+        minCandles: Math.max(20, period + 2)
+      });
+      continue;
+    }
+    if (name === "ema") {
+      plans.push({
+        indicator: "ema",
+        output: "snapshot",
+        params: { period: Math.max(5, period) },
+        minCandles: Math.max(30, period + 2)
+      });
+      continue;
+    }
+    if (name === "sma") {
+      plans.push({
+        indicator: "sma",
+        output: "snapshot",
+        params: { period: Math.max(5, period) },
+        minCandles: Math.max(30, period + 2)
+      });
+      continue;
+    }
+    if (name === "atr") {
+      plans.push({
+        indicator: "atr",
+        output: "snapshot",
+        params: { period: Math.max(5, period) },
+        minCandles: Math.max(30, period + 2)
+      });
+      continue;
+    }
+    if (name === "stochastic") {
+      plans.push({
+        indicator: "stochastic",
+        output: "snapshot",
+        params: { k: 14, d: 3 },
+        minCandles: 32
+      });
+    }
+  }
+
+  return plans;
+};
+
+const normalizeIndicatorCodingPlans = (
+  payload: unknown,
+  requestedIndicators: string[],
+  fallbackPlans: IndicatorCodingPlan[]
+): IndicatorCodingPlan[] => {
+  const raw = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+  const plansRaw = Array.isArray(raw.plans) ? raw.plans : [];
+  if (plansRaw.length === 0) {
+    return fallbackPlans;
+  }
+
+  const requestedSet = new Set(requestedIndicators.map((entry) => normalizeIndicatorName(entry)));
+  const plans = plansRaw
+    .map((row) => {
+      if (!row || typeof row !== "object") {
+        return null;
+      }
+      const item = row as Record<string, unknown>;
+      const indicator = normalizeIndicatorName(toText(item.indicator, ""));
+      if (!indicator || !requestedSet.has(indicator)) {
+        return null;
+      }
+
+      const paramsRaw = item.params && typeof item.params === "object"
+        ? (item.params as Record<string, unknown>)
+        : {};
+
+      const params: Record<string, number> = {};
+      for (const [key, value] of Object.entries(paramsRaw)) {
+        const numeric = toNumber(value, Number.NaN);
+        if (Number.isFinite(numeric)) {
+          params[key] = numeric;
+        }
+      }
+
+      return {
+        indicator,
+        output: toText(item.output, "snapshot").toLowerCase() === "series" ? "series" : "snapshot",
+        params,
+        minCandles: clamp(toNumber(item.minCandles, 24), 8, MAX_CLICKHOUSE_COUNT)
+      } satisfies IndicatorCodingPlan;
+    })
+    .filter((row): row is IndicatorCodingPlan => row !== null);
+
+  if (plans.length === 0) {
+    return fallbackPlans;
+  }
+
+  return plans;
+};
+
 const computeLatestRsiSnapshot = (candles: CandleRow[], period = 14) => {
   if (!Array.isArray(candles) || candles.length < period + 1) {
     return null;
@@ -3720,6 +4087,166 @@ const computeLatestRsiSnapshot = (candles: CandleRow[], period = 14) => {
     value: Number(latest.toFixed(2)),
     previous: Number(previous.toFixed(2)),
     momentum: Number(momentum.toFixed(2)),
+    state
+  };
+};
+
+const computeMacdSeries = (params: {
+  candles: CandleRow[];
+  fast: number;
+  slow: number;
+  signal: number;
+}): Array<{ time: number; macd: number; signal: number; histogram: number }> => {
+  const { candles, fast, slow, signal } = params;
+  if (candles.length === 0) {
+    return [];
+  }
+  const closes = candles.map((row) => row.close);
+  const fastEma = computeEmaSeries(closes, fast);
+  const slowEma = computeEmaSeries(closes, slow);
+  const macdLine = fastEma.map((value, index) => value - (slowEma[index] ?? value));
+  const signalLine = computeEmaSeries(macdLine, signal);
+
+  return candles.map((candle, index) => {
+    const macd = macdLine[index] ?? 0;
+    const signalValue = signalLine[index] ?? 0;
+    return {
+      time: candle.time,
+      macd,
+      signal: signalValue,
+      histogram: macd - signalValue
+    };
+  });
+};
+
+const computeLatestMacdSnapshot = (params: {
+  candles: CandleRow[];
+  fast: number;
+  slow: number;
+  signal: number;
+}) => {
+  const { candles, fast, slow, signal } = params;
+  const minCandles = Math.max(24, slow + signal + 4);
+  if (candles.length < minCandles) {
+    return null;
+  }
+
+  const series = computeMacdSeries({ candles, fast, slow, signal });
+  if (series.length < 2) {
+    return null;
+  }
+
+  const latest = series[series.length - 1]!;
+  const previous = series[series.length - 2]!;
+  const crossedUp = previous.macd <= previous.signal && latest.macd > latest.signal;
+  const crossedDown = previous.macd >= previous.signal && latest.macd < latest.signal;
+  const regime = latest.histogram > 0 ? "bullish_momentum" : latest.histogram < 0 ? "bearish_momentum" : "flat";
+
+  return {
+    macd: Number(latest.macd.toFixed(4)),
+    signal: Number(latest.signal.toFixed(4)),
+    histogram: Number(latest.histogram.toFixed(4)),
+    crossedUp,
+    crossedDown,
+    regime
+  };
+};
+
+const computeLatestMovingAverageSnapshot = (params: {
+  candles: CandleRow[];
+  period: number;
+  kind: "ema" | "sma";
+}) => {
+  const { candles, period, kind } = params;
+  if (candles.length < period + 1) {
+    return null;
+  }
+
+  const closes = candles.map((row) => row.close);
+  let series: number[] = [];
+  if (kind === "ema") {
+    series = computeEmaSeries(closes, period);
+  } else {
+    series = closes.map((_, index) => rollingMeanAt(closes, index, period));
+  }
+
+  const latest = series[series.length - 1];
+  const previous = series[Math.max(0, series.length - 2)] ?? latest;
+  if (!Number.isFinite(latest) || !Number.isFinite(previous)) {
+    return null;
+  }
+
+  return {
+    value: Number(latest.toFixed(4)),
+    previous: Number(previous.toFixed(4)),
+    slope: Number((latest - previous).toFixed(4)),
+    period
+  };
+};
+
+const computeLatestAtrSnapshot = (params: {
+  candles: CandleRow[];
+  period: number;
+}) => {
+  const { candles, period } = params;
+  if (candles.length < period + 2) {
+    return null;
+  }
+
+  const trueRanges: number[] = [];
+  for (let index = 1; index < candles.length; index += 1) {
+    const current = candles[index]!;
+    const previous = candles[index - 1]!;
+    const range1 = current.high - current.low;
+    const range2 = Math.abs(current.high - previous.close);
+    const range3 = Math.abs(current.low - previous.close);
+    trueRanges.push(Math.max(range1, range2, range3));
+  }
+
+  if (trueRanges.length === 0) {
+    return null;
+  }
+
+  const atrSeries = trueRanges.map((_, index) => rollingMeanAt(trueRanges, index, period));
+  const latest = atrSeries[atrSeries.length - 1] ?? 0;
+  const previous = atrSeries[Math.max(0, atrSeries.length - 2)] ?? latest;
+  return {
+    value: Number(latest.toFixed(4)),
+    previous: Number(previous.toFixed(4)),
+    change: Number((latest - previous).toFixed(4)),
+    period
+  };
+};
+
+const computeLatestStochasticSnapshot = (params: {
+  candles: CandleRow[];
+  kPeriod: number;
+  dPeriod: number;
+}) => {
+  const { candles, kPeriod, dPeriod } = params;
+  if (candles.length < kPeriod + dPeriod + 2) {
+    return null;
+  }
+
+  const percentK: number[] = candles.map((row, index) => {
+    const start = Math.max(0, index - kPeriod + 1);
+    const window = candles.slice(start, index + 1);
+    if (window.length === 0) {
+      return 50;
+    }
+    const low = Math.min(...window.map((entry) => entry.low));
+    const high = Math.max(...window.map((entry) => entry.high));
+    const span = Math.max(1e-9, high - low);
+    return ((row.close - low) / span) * 100;
+  });
+  const percentD = percentK.map((_, index) => rollingMeanAt(percentK, index, dPeriod));
+
+  const latestK = percentK[percentK.length - 1] ?? 50;
+  const latestD = percentD[percentD.length - 1] ?? latestK;
+  const state = latestK >= 80 ? "overbought" : latestK <= 20 ? "oversold" : "neutral";
+  return {
+    k: Number(latestK.toFixed(2)),
+    d: Number(latestD.toFixed(2)),
     state
   };
 };
@@ -3754,6 +4281,208 @@ const buildIndicatorSnapshot = (candles: CandleRow[]): Record<string, unknown> =
         }
       : null
   };
+};
+
+const mergeIndicatorSnapshot = (params: {
+  baseSnapshot: Record<string, unknown>;
+  computed: Record<string, unknown>;
+}): Record<string, unknown> => {
+  const { baseSnapshot, computed } = params;
+  return {
+    ...baseSnapshot,
+    codedComputedIndicators: computed,
+    ...computed
+  };
+};
+
+const applyIndicatorCodingPlans = (params: {
+  candles: CandleRow[];
+  plans: IndicatorCodingPlan[];
+}): IndicatorCodingResult => {
+  const { candles, plans } = params;
+  const computed: Record<string, unknown> = {};
+  let computedAny = false;
+  let requiredMinCandles = 0;
+  let needsMoreData = false;
+
+  for (const plan of plans) {
+    requiredMinCandles = Math.max(requiredMinCandles, Math.max(2, plan.minCandles));
+    if (candles.length < Math.max(2, plan.minCandles)) {
+      needsMoreData = true;
+      continue;
+    }
+
+    const indicator = normalizeIndicatorName(plan.indicator);
+    if (indicator === "macd") {
+      const fast = clamp(toNumber(plan.params.fast, 12), 2, 120);
+      const slow = clamp(toNumber(plan.params.slow, 26), fast + 1, 240);
+      const signal = clamp(toNumber(plan.params.signal, 9), 2, 120);
+      const snapshot = computeLatestMacdSnapshot({ candles, fast, slow, signal });
+      if (!snapshot) {
+        needsMoreData = true;
+        continue;
+      }
+      const series =
+        plan.output === "series"
+          ? computeMacdSeries({ candles, fast, slow, signal }).slice(-240).map((row) => ({
+              ...row,
+              macd: Number(row.macd.toFixed(6)),
+              signal: Number(row.signal.toFixed(6)),
+              histogram: Number(row.histogram.toFixed(6))
+            }))
+          : undefined;
+      computed.macd = {
+        ...snapshot,
+        params: { fast, slow, signal },
+        series
+      };
+      computedAny = true;
+      continue;
+    }
+
+    if (indicator === "rsi") {
+      const period = clamp(toNumber(plan.params.period, 14), 2, 200);
+      const snapshot = computeLatestRsiSnapshot(candles, period);
+      if (!snapshot) {
+        needsMoreData = true;
+        continue;
+      }
+      computed[`rsi${period}`] = {
+        ...snapshot,
+        period,
+        overboughtThreshold: 70,
+        oversoldThreshold: 30
+      };
+      computedAny = true;
+      continue;
+    }
+
+    if (indicator === "ema" || indicator === "sma") {
+      const period = clamp(toNumber(plan.params.period, 20), 2, 240);
+      const snapshot = computeLatestMovingAverageSnapshot({
+        candles,
+        period,
+        kind: indicator
+      });
+      if (!snapshot) {
+        needsMoreData = true;
+        continue;
+      }
+      computed[`${indicator}${period}`] = {
+        ...snapshot,
+        kind: indicator
+      };
+      computedAny = true;
+      continue;
+    }
+
+    if (indicator === "atr") {
+      const period = clamp(toNumber(plan.params.period, 14), 2, 200);
+      const snapshot = computeLatestAtrSnapshot({ candles, period });
+      if (!snapshot) {
+        needsMoreData = true;
+        continue;
+      }
+      computed[`atr${period}`] = snapshot;
+      computedAny = true;
+      continue;
+    }
+
+    if (indicator === "stochastic") {
+      const kPeriod = clamp(toNumber(plan.params.k, 14), 2, 100);
+      const dPeriod = clamp(toNumber(plan.params.d, 3), 2, 50);
+      const snapshot = computeLatestStochasticSnapshot({
+        candles,
+        kPeriod,
+        dPeriod
+      });
+      if (!snapshot) {
+        needsMoreData = true;
+        continue;
+      }
+      computed[`stochastic_${kPeriod}_${dPeriod}`] = snapshot;
+      computedAny = true;
+    }
+  }
+
+  return {
+    computed,
+    computedAny,
+    requiredMinCandles,
+    needsMoreData
+  };
+};
+
+const executeIndicatorCodingStage = async (params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  prompt: string;
+  requestedIndicators: string[];
+  candles: CandleRow[];
+  indicatorSnapshot: Record<string, unknown>;
+}): Promise<IndicatorCodingResult> => {
+  const {
+    apiKey,
+    baseUrl,
+    model,
+    prompt,
+    requestedIndicators,
+    candles,
+    indicatorSnapshot
+  } = params;
+
+  if (requestedIndicators.length === 0) {
+    return {
+      computed: {},
+      computedAny: false,
+      requiredMinCandles: 0,
+      needsMoreData: false
+    };
+  }
+
+  const fallbackPlans = buildFallbackIndicatorPlans({
+    requestedIndicators,
+    prompt
+  });
+
+  try {
+    const completion = await nebiusChatCompletion({
+      apiKey,
+      baseUrl,
+      model,
+      messages: [
+        {
+          role: "system",
+          content: INDICATOR_CODING_PROMPT
+        },
+        {
+          role: "user",
+          content: `INDICATOR_CODING_PLAN_JSON:\n${JSON.stringify({
+            prompt,
+            requestedIndicators,
+            candleCount: candles.length,
+            latestTime: candles[candles.length - 1]?.time ?? null,
+            indicatorSnapshot
+          })}`
+        }
+      ],
+      temperature: 0,
+      maxTokens: 500,
+      responseFormat: {
+        type: "json_object"
+      }
+    });
+
+    const parsed = safeJsonParse<Record<string, unknown>>(
+      extractNebiusMessageText(completion.message.content),
+      {}
+    );
+    const plans = normalizeIndicatorCodingPlans(parsed, requestedIndicators, fallbackPlans);
+    return applyIndicatorCodingPlans({ candles, plans });
+  } catch {
+    return applyIndicatorCodingPlans({ candles, plans: fallbackPlans });
+  }
 };
 
 export async function POST(request: Request) {
@@ -3791,6 +4520,7 @@ export async function POST(request: Request) {
   const lastUserPrompt = getLastUserPrompt(turns);
   const heuristicRequestMode = classifyRequestMode(lastUserPrompt);
   const indicatorComputationRequested = isIndicatorComputationRequest(lastUserPrompt);
+  const requestedIndicators = extractRequestedIndicators(lastUserPrompt);
 
   try {
     const toolsUsed = new Set<string>();
@@ -3803,7 +4533,7 @@ export async function POST(request: Request) {
     const requestMode = await executeRequestModeStage({
       apiKey,
       baseUrl,
-      model: modelSelection.instruction,
+      model: modelSelection.coordinator,
       turns,
       context,
       fallback: heuristicRequestMode
@@ -3811,7 +4541,7 @@ export async function POST(request: Request) {
     const executionPlan = await executeIntentExecutionStage({
       apiKey,
       baseUrl,
-      model: modelSelection.instruction,
+      model: modelSelection.coordinator,
       turns,
       context,
       modePlan: requestMode
@@ -3856,7 +4586,7 @@ export async function POST(request: Request) {
     let requestChecklistPlan = await executeInstructionChecklistAuthorStage({
       apiKey,
       baseUrl,
-      model: modelSelection.instruction,
+      model: modelSelection.coordinator,
       turns,
       context,
       modePlan: requestMode,
@@ -3864,7 +4594,14 @@ export async function POST(request: Request) {
       fallback: fallbackChecklistPlan
     });
 
-    let socialOnlyRequest = socialOnlyPrompt || requestChecklistPlan.requestKind === "social";
+    let socialOnlyRequest = socialOnlyPrompt;
+    if (!socialOnlyRequest && requestChecklistPlan.requestKind !== "task") {
+      requestChecklistPlan = {
+        ...requestChecklistPlan,
+        requestKind: "task",
+        source: requestChecklistPlan.source
+      };
+    }
     if (socialOnlyRequest) {
       explicitDrawRequest = false;
       wantsVisualization = false;
@@ -4025,7 +4762,7 @@ export async function POST(request: Request) {
     const planningResult = await executePlanningStage({
       apiKey,
       baseUrl,
-      model: modelSelection.instruction,
+      model: modelSelection.coordinator,
       turns,
       context,
       request,
@@ -4088,6 +4825,125 @@ export async function POST(request: Request) {
       }
     }
 
+    let indicatorSnapshot = buildIndicatorSnapshot(
+      getRecentWindowCandles({
+        context,
+        clickhouseCandles: toolState.clickhouseCandles
+      })
+    );
+    let indicatorCodingResult: IndicatorCodingResult = {
+      computed: {},
+      computedAny: false,
+      requiredMinCandles: 0,
+      needsMoreData: false
+    };
+    if (indicatorComputationRequested && requestedIndicators.length > 0) {
+      indicatorCodingResult = await executeIndicatorCodingStage({
+        apiKey,
+        baseUrl,
+        model: modelSelection.coding,
+        prompt: lastUserPrompt,
+        requestedIndicators,
+        candles: getRecentWindowCandles({
+          context,
+          clickhouseCandles: toolState.clickhouseCandles
+        }),
+        indicatorSnapshot
+      });
+
+      if (indicatorCodingResult.needsMoreData) {
+        const codingQuery = buildAutoClickhouseQuery({
+          context,
+          prompt: lastUserPrompt,
+          planningQuery: planningResult.planning.clickhouseQuery
+        }) ?? {};
+        const desiredCount = clamp(
+          Math.max(
+            toNumber(codingQuery.count, getRecentWindowCount(context.timeframe)),
+            indicatorCodingResult.requiredMinCandles + 120,
+            320
+          ),
+          80,
+          MAX_CLICKHOUSE_COUNT
+        );
+
+        const availableCount = getRecentWindowCandles({
+          context,
+          clickhouseCandles: toolState.clickhouseCandles
+        }).length;
+        if (desiredCount > availableCount) {
+          try {
+            const result = await fetchClickhouseCandles(request, {
+              ...codingQuery,
+              count: desiredCount
+            });
+            if (result.candles.length > 0) {
+              toolState.clickhouseCandles = result.candles;
+              toolState.clickhouseMeta = {
+                pair: result.pair,
+                timeframe: result.timeframe,
+                count: result.candles.length
+              };
+              planningResult.planning.needsClickhouseData = true;
+              planningResult.planning.clickhouseQuery = {
+                ...codingQuery,
+                count: desiredCount
+              };
+              toolsUsed.add("clickhouse_candles");
+            }
+          } catch {
+            // Continue with current data.
+          }
+        }
+
+        indicatorCodingResult = await executeIndicatorCodingStage({
+          apiKey,
+          baseUrl,
+          model: modelSelection.coding,
+          prompt: lastUserPrompt,
+          requestedIndicators,
+          candles: getRecentWindowCandles({
+            context,
+            clickhouseCandles: toolState.clickhouseCandles
+          }),
+          indicatorSnapshot: buildIndicatorSnapshot(
+            getRecentWindowCandles({
+              context,
+              clickhouseCandles: toolState.clickhouseCandles
+            })
+          )
+        });
+      }
+
+      if (indicatorCodingResult.computedAny) {
+        toolsUsed.add("coding_indicator_tooling");
+      }
+    }
+
+    indicatorSnapshot = mergeIndicatorSnapshot({
+      baseSnapshot: buildIndicatorSnapshot(
+        getRecentWindowCandles({
+          context,
+          clickhouseCandles: toolState.clickhouseCandles
+        })
+      ),
+      computed: indicatorCodingResult.computed
+    });
+
+    let dataAnalysis = await executeDataAnalysisStage({
+      apiKey,
+      baseUrl,
+      model: modelSelection.analysis,
+      turns,
+      context,
+      toolState,
+      planning: planningResult.planning,
+      indicatorSnapshot
+    });
+    if (dataAnalysis.summary || dataAnalysis.keyFindings.length > 0) {
+      toolsUsed.add("analysis_model");
+    }
+
     let reasoning = await executeReasoningStage({
       apiKey,
       baseUrl,
@@ -4096,7 +4952,9 @@ export async function POST(request: Request) {
       context,
       toolState,
       planning: planningResult.planning,
-      requestChecklist: requestChecklistPlan
+      requestChecklist: requestChecklistPlan,
+      indicatorSnapshot,
+      dataAnalysis
     });
 
     const shouldRetryReasoningWithMoreData =
@@ -4138,6 +4996,52 @@ export async function POST(request: Request) {
           planningResult.planning.clickhouseQuery = recoveryQuery;
           toolsUsed.add("clickhouse_candles");
 
+          const retryBaseSnapshot = buildIndicatorSnapshot(
+            getRecentWindowCandles({
+              context,
+              clickhouseCandles: toolState.clickhouseCandles
+            })
+          );
+          const retryIndicatorCoding =
+            indicatorComputationRequested && requestedIndicators.length > 0
+              ? await executeIndicatorCodingStage({
+                  apiKey,
+                  baseUrl,
+                  model: modelSelection.coding,
+                  prompt: lastUserPrompt,
+                  requestedIndicators,
+                  candles: getRecentWindowCandles({
+                    context,
+                    clickhouseCandles: toolState.clickhouseCandles
+                  }),
+                  indicatorSnapshot: retryBaseSnapshot
+                })
+              : {
+                  computed: {},
+                  computedAny: false,
+                  requiredMinCandles: 0,
+                  needsMoreData: false
+                };
+          if (retryIndicatorCoding.computedAny) {
+            toolsUsed.add("coding_indicator_tooling");
+          }
+          indicatorSnapshot = mergeIndicatorSnapshot({
+            baseSnapshot: retryBaseSnapshot,
+            computed: retryIndicatorCoding.computed
+          });
+          dataAnalysis = await executeDataAnalysisStage({
+            apiKey,
+            baseUrl,
+            model: modelSelection.analysis,
+            turns,
+            context,
+            toolState,
+            planning: planningResult.planning,
+            indicatorSnapshot
+          });
+          if (dataAnalysis.summary || dataAnalysis.keyFindings.length > 0) {
+            toolsUsed.add("analysis_model");
+          }
           reasoning = await executeReasoningStage({
             apiKey,
             baseUrl,
@@ -4146,7 +5050,9 @@ export async function POST(request: Request) {
             context,
             toolState,
             planning: planningResult.planning,
-            requestChecklist: requestChecklistPlan
+            requestChecklist: requestChecklistPlan,
+            indicatorSnapshot,
+            dataAnalysis
           });
         }
       } catch {
@@ -4165,6 +5071,8 @@ export async function POST(request: Request) {
           baseUrl,
           models: modelSelection,
           reasoning,
+          dataAnalysis,
+          indicatorSnapshot,
           context,
           toolState,
           requestMode,
@@ -4286,14 +5194,15 @@ export async function POST(request: Request) {
       strictToRequest && wantsNaturalOnly
         ? []
         : baseBullets;
-    const rawFinalShortAnswer =
+    const rawFinalShortAnswer = sanitizeDeliveryText(
       shortAnswer ||
-      (finalBullets.length > 0 ? sanitizeAssistantText(finalBullets[0]?.text ?? "") : "");
+        (finalBullets.length > 0 ? sanitizeAssistantText(finalBullets[0]?.text ?? "") : "")
+    );
     let finalShortAnswer = rawFinalShortAnswer;
     const checklistAudit = await executeInstructionChecklistAuditStage({
       apiKey,
       baseUrl,
-      model: modelSelection.instruction,
+      model: modelSelection.coordinator,
       turns,
       checklistPlan: requestChecklistPlan,
       candidate: {
@@ -4327,7 +5236,7 @@ export async function POST(request: Request) {
         finalBullets = checklistAudit.bullets;
       }
       if (checklistAudit.shortAnswer) {
-        finalShortAnswer = checklistAudit.shortAnswer;
+        finalShortAnswer = sanitizeDeliveryText(checklistAudit.shortAnswer);
       }
     }
 
@@ -4343,7 +5252,7 @@ export async function POST(request: Request) {
         cannotAnswerReason: responseCannotAnswerReason
       });
       if (rewritten) {
-        finalShortAnswer = rewritten;
+        finalShortAnswer = sanitizeDeliveryText(rewritten);
       }
     }
     const requestChecklist = buildResponseChecklist({

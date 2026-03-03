@@ -122,6 +122,14 @@ type AssistantMessage = {
   cannotAnswer?: boolean;
 };
 
+type PersistedAssistantThread = {
+  version: number;
+  savedAt: number;
+  messages: AssistantMessage[];
+  turns: Array<{ role: "user" | "assistant"; content: string }>;
+  detailsExpandedByMessageId: Record<string, boolean>;
+};
+
 type AssistantApiResponse = {
   status: "ok" | "needs_backtest_data";
   reason?: string;
@@ -169,10 +177,21 @@ const GRAPH_STAGE_RE =
   /\b(graph|chart|plot|visual|visualize|indicator|rsi|macd|ema|sma|atr|volatility|trend|average|mean)\b/i;
 const ANIMATION_STAGE_RE =
   /\b(animate|animation|video|replay|playback|walkthrough|demo)\b/i;
+const INDICATOR_STAGE_RE =
+  /\b(indicator|rsi|macd|ema|sma|atr|stoch|stochastic|moving average)\b/i;
 const DATA_STAGE_RE =
   /\b(history|backtest|clickhouse|monthly|weekly|daily|recent|window|from|between|since)\b/i;
 const SOCIAL_STAGE_RE =
   /^(hi|hello|hey|yo|sup|what'?s up|how are you|gm|gn|good morning|good afternoon|good evening)[!.?\s]*$/i;
+const ASSISTANT_THREAD_STORAGE_KEY = "korra:gideon:thread:v1";
+const MAX_PERSISTED_MESSAGES = 80;
+const MAX_PERSISTED_TURNS = 160;
+
+const buildWelcomeMessage = (): AssistantMessage => ({
+  id: "welcome",
+  role: "assistant",
+  content: "How can I help you?"
+});
 
 const normalizeToolPill = (value: string): string => {
   const text = String(value || "").trim();
@@ -274,6 +293,10 @@ const inferThinkingStages = (prompt: string): string[] => {
     return ["Planning Drawings", "Preparing Chart Data", "Drawing on Chart"];
   }
 
+  if (INDICATOR_STAGE_RE.test(text)) {
+    return ["Planning", "Fetching Data", "Coding", "Reasoning"];
+  }
+
   if (GRAPH_STAGE_RE.test(text)) {
     return ["Planning Graph", "Preparing Data", "Building Graph"];
   }
@@ -283,6 +306,72 @@ const inferThinkingStages = (prompt: string): string[] => {
   }
 
   return ["Planning", "Reasoning"];
+};
+
+const isValidChatTurn = (
+  value: unknown
+): value is { role: "user" | "assistant"; content: string } => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const row = value as Record<string, unknown>;
+  return (
+    (row.role === "user" || row.role === "assistant") &&
+    typeof row.content === "string" &&
+    row.content.trim().length > 0
+  );
+};
+
+const isValidMessage = (value: unknown): value is AssistantMessage => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const row = value as Record<string, unknown>;
+  return (
+    (row.role === "user" || row.role === "assistant") &&
+    typeof row.content === "string" &&
+    row.content.trim().length > 0
+  );
+};
+
+const loadPersistedThread = (): PersistedAssistantThread | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(ASSISTANT_THREAD_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<PersistedAssistantThread>;
+    const messages = Array.isArray(parsed.messages)
+      ? parsed.messages.filter(isValidMessage).slice(-MAX_PERSISTED_MESSAGES)
+      : [];
+    const turns = Array.isArray(parsed.turns)
+      ? parsed.turns.filter(isValidChatTurn).slice(-MAX_PERSISTED_TURNS)
+      : [];
+    const detailsExpandedByMessageId =
+      parsed.detailsExpandedByMessageId &&
+      typeof parsed.detailsExpandedByMessageId === "object"
+        ? (parsed.detailsExpandedByMessageId as Record<string, boolean>)
+        : {};
+
+    if (messages.length === 0 && turns.length === 0) {
+      return null;
+    }
+
+    return {
+      version: Number(parsed.version) || 1,
+      savedAt: Number(parsed.savedAt) || Date.now(),
+      messages: messages.length > 0 ? messages : [buildWelcomeMessage()],
+      turns,
+      detailsExpandedByMessageId
+    };
+  } catch {
+    return null;
+  }
 };
 
 export default function AssistantPanel(props: AssistantPanelProps) {
@@ -299,13 +388,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
     onRunChartActions
   } = props;
 
-  const [messages, setMessages] = useState<AssistantMessage[]>(() => [
-    {
-      id: "welcome",
-      role: "assistant",
-      content: "How can I help you?"
-    }
-  ]);
+  const [messages, setMessages] = useState<AssistantMessage[]>(() => [buildWelcomeMessage()]);
   const [turns, setTurns] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
   const [input, setInput] = useState("");
   const [isPending, setIsPending] = useState(false);
@@ -317,6 +400,35 @@ export default function AssistantPanel(props: AssistantPanelProps) {
 
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const persisted = loadPersistedThread();
+    if (!persisted) {
+      return;
+    }
+    setMessages(persisted.messages);
+    setTurns(persisted.turns);
+    setDetailsExpandedByMessageId(persisted.detailsExpandedByMessageId);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const payload: PersistedAssistantThread = {
+        version: 1,
+        savedAt: Date.now(),
+        messages: messages.slice(-MAX_PERSISTED_MESSAGES),
+        turns: turns.slice(-MAX_PERSISTED_TURNS),
+        detailsExpandedByMessageId
+      };
+      window.localStorage.setItem(ASSISTANT_THREAD_STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // Ignore persistence failures (for example quota exceeded).
+    }
+  }, [messages, turns, detailsExpandedByMessageId]);
 
   useEffect(() => {
     if (!messageListRef.current) {
@@ -342,6 +454,9 @@ export default function AssistantPanel(props: AssistantPanelProps) {
     setIsPending(false);
     setActiveAnimation(null);
     setDetailsExpandedByMessageId({});
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(ASSISTANT_THREAD_STORAGE_KEY);
+    }
 
     if (typeof onRunChartActions === "function") {
       onRunChartActions([{ type: "clear_annotations" }]);

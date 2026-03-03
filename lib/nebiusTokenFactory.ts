@@ -23,20 +23,31 @@ const LLM_HINT_RE =
   /(instruct|chat|assistant|reason|r1|coder|code|llama|qwen|mistral|mixtral|deepseek|nemotron|phi|gemma|command|hermes|glm|devstral|codestral)/;
 
 const MODEL_FALLBACKS = {
+  coordinator: [
+    "Qwen/Qwen3-235B-A22B-Instruct-2507",
+    "zai-org/GLM-4.5",
+    "moonshotai/Kimi-K2-Instruct"
+  ],
   instruction: [
     "Qwen/Qwen3-235B-A22B-Instruct-2507",
-    "THUDM/GLM-4.5",
-    "THUDM/GLM-4.5-Air"
+    "zai-org/GLM-4.5",
+    "zai-org/GLM-4.5-Air"
+  ],
+  analysis: [
+    "deepseek-ai/DeepSeek-V3.2",
+    "moonshotai/Kimi-K2.5",
+    "zai-org/GLM-4.7-FP8",
+    "Qwen/Qwen3-235B-A22B-Instruct-2507"
   ],
   reasoning: [
     "deepseek-ai/DeepSeek-R1-0528",
     "Qwen/Qwen3-235B-A22B-Thinking-2507",
-    "THUDM/GLM-4.5"
+    "zai-org/GLM-4.5"
   ],
   coding: [
     "Qwen/Qwen3-Coder-480B-A35B-Instruct",
-    "mistralai/Devstral-Small-2505",
-    "THUDM/GLM-4.5-Air"
+    "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+    "zai-org/GLM-4.5-Air"
   ],
   writer: [
     "NousResearch/Hermes-4-70B",
@@ -57,6 +68,8 @@ export type NebiusModelEntry = {
 };
 
 export type NebiusModelSelection = {
+  coordinator: string;
+  analysis: string;
   instruction: string;
   reasoning: string;
   coding: string;
@@ -205,6 +218,38 @@ const scoreModelForRole = (model: NebiusModelEntry, role: NebiusRole): number =>
     if (sizeB !== null) {
       if (sizeB >= 70) score += 10;
       if (sizeB <= 8) score -= 9;
+    }
+  }
+
+  if (role === "coordinator") {
+    if (/(qwen3-235b|qwen3\b|kimi-k2|glm-4\.5|glm-4\.7|instruct|assistant|chat)/.test(text)) {
+      score += 64;
+    }
+    if (/(reason|r1|thinking)/.test(text)) {
+      score -= 6;
+    }
+    if (/(coder|code|codestral|devstral)/.test(text)) {
+      score -= 8;
+    }
+    if (sizeB !== null) {
+      if (sizeB >= 30) score += 9;
+      if (sizeB <= 8) score -= 8;
+    }
+  }
+
+  if (role === "analysis") {
+    if (/(deepseek-v3\.2|deepseek-v3|kimi-k2\.5|kimi-k2|glm-4\.7|glm-4\.5|qwen3|instruct)/.test(text)) {
+      score += 60;
+    }
+    if (/(reason|r1|thinking)/.test(text)) {
+      score -= 4;
+    }
+    if (/(coder|code|codestral|devstral)/.test(text)) {
+      score -= 10;
+    }
+    if (sizeB !== null) {
+      if (sizeB >= 14) score += 8;
+      if (sizeB < 8) score -= 8;
     }
   }
 
@@ -402,6 +447,12 @@ export const fetchNebiusModelCatalog = async (params: {
 };
 
 export const pickNebiusModels = (models: NebiusModelEntry[]): NebiusModelSelection => {
+  const coordinator =
+    tryResolveFallbackFromCatalog(models, MODEL_FALLBACKS.coordinator) ??
+    selectBestModelForRole(models, "coordinator");
+  const analysis =
+    tryResolveFallbackFromCatalog(models, MODEL_FALLBACKS.analysis) ??
+    selectBestModelForRole(models, "analysis");
   const instruction =
     tryResolveFallbackFromCatalog(models, MODEL_FALLBACKS.instruction) ??
     selectBestModelForRole(models, "instruction");
@@ -416,7 +467,9 @@ export const pickNebiusModels = (models: NebiusModelEntry[]): NebiusModelSelecti
     selectBestModelForRole(models, "writer");
 
   return {
-    instruction,
+    coordinator,
+    analysis,
+    instruction: instruction || coordinator,
     reasoning,
     coding,
     writer
