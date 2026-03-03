@@ -121,6 +121,21 @@ type Candle = {
   time: number;
 };
 
+type MainChartContextMenuCandle = {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  index: number | null;
+};
+
+type MainChartContextMenuState = {
+  clientX: number;
+  clientY: number;
+  candle: MainChartContextMenuCandle;
+};
+
 const EMPTY_CANDLES: Candle[] = [];
 const STATS_REFRESH_HOLD_MS = 3000;
 const STATS_REFRESH_COMPLETE_DELAY_MS = 1000;
@@ -3220,9 +3235,6 @@ const BacktestPerTradeMiniChart = ({
     price: number;
     high: number;
     low: number;
-    up: number | null;
-    down: number | null;
-    flat: number | null;
     ts?: number;
     candIdx?: number;
     relCand?: number;
@@ -3271,6 +3283,104 @@ const BacktestPerTradeMiniChart = ({
       : "–";
   const formatChartPnl = (value: number) => `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(3)}`;
   const toPnl = (price: number) => (price - entryPrice) * direction * usdPerUnit;
+  const miniSegments = useMemo(() => {
+    const segments: Array<{
+      key: string;
+      stroke: string;
+      segment: [{ x: number; y: number }, { x: number; y: number }];
+    }> = [];
+
+    if (data.length < 2) {
+      return segments;
+    }
+
+    const pnlEpsilon = 0.000001;
+    const getTone = (pnl: number): "up" | "down" | "flat" => {
+      if (pnl > pnlEpsilon) {
+        return "up";
+      }
+
+      if (pnl < -pnlEpsilon) {
+        return "down";
+      }
+
+      return "flat";
+    };
+    const getStroke = (tone: "up" | "down" | "flat") =>
+      tone === "up" ? "#34d399" : tone === "down" ? "#f87171" : "#ffffff";
+    const pushSegment = (
+      leftBar: number,
+      leftPrice: number,
+      rightBar: number,
+      rightPrice: number,
+      tone: "up" | "down" | "flat",
+      index: number
+    ) => {
+      if (
+        !Number.isFinite(leftBar) ||
+        !Number.isFinite(leftPrice) ||
+        !Number.isFinite(rightBar) ||
+        !Number.isFinite(rightPrice)
+      ) {
+        return;
+      }
+
+      if (Math.abs(rightBar - leftBar) <= 0.000000001 && Math.abs(rightPrice - leftPrice) <= 0.000000001) {
+        return;
+      }
+
+      segments.push({
+        key: `mini-segment-${index}-${segments.length}`,
+        stroke: getStroke(tone),
+        segment: [
+          { x: leftBar, y: leftPrice },
+          { x: rightBar, y: rightPrice }
+        ]
+      });
+    };
+
+    for (let index = 1; index < data.length; index += 1) {
+      const previous = data[index - 1]!;
+      const current = data[index]!;
+      const previousPnl = (previous.price - entryPrice) * direction * usdPerUnit;
+      const currentPnl = (current.price - entryPrice) * direction * usdPerUnit;
+      const previousTone = getTone(previousPnl);
+      const currentTone = getTone(currentPnl);
+
+      if (previousTone === currentTone) {
+        pushSegment(previous.bar, previous.price, current.bar, current.price, previousTone, index);
+        continue;
+      }
+
+      const isSignFlip =
+        (previousTone === "up" && currentTone === "down") ||
+        (previousTone === "down" && currentTone === "up");
+
+      if (isSignFlip) {
+        const priceDelta = current.price - previous.price;
+        if (Math.abs(priceDelta) > 0.000000001) {
+          const crossingRatio = (entryPrice - previous.price) / priceDelta;
+
+          if (crossingRatio > 0 && crossingRatio < 1) {
+            const crossingBar = previous.bar + (current.bar - previous.bar) * crossingRatio;
+            pushSegment(previous.bar, previous.price, crossingBar, entryPrice, previousTone, index);
+            pushSegment(crossingBar, entryPrice, current.bar, current.price, currentTone, index);
+            continue;
+          }
+        }
+      }
+
+      if (previousTone === "flat") {
+        pushSegment(previous.bar, previous.price, current.bar, current.price, currentTone, index);
+      } else if (currentTone === "flat") {
+        pushSegment(previous.bar, previous.price, current.bar, current.price, previousTone, index);
+      } else {
+        pushSegment(previous.bar, previous.price, current.bar, current.price, currentTone, index);
+      }
+    }
+
+    return segments;
+  }, [data, direction, entryPrice, usdPerUnit]);
 
   return (
     <div className="backtest-trade-mini-chart">
@@ -3292,8 +3402,8 @@ const BacktestPerTradeMiniChart = ({
           <XAxis
             dataKey="bar"
             type="number"
-            domain={[-1, "dataMax"]}
-            tickFormatter={(value: number) => (value === -1 ? "-1" : String(value))}
+            domain={[0, "dataMax"]}
+            tickFormatter={(value: number) => String(Math.max(0, Math.round(value)))}
             label={{
               value: "Minutes since entry",
               position: "insideBottomRight",
@@ -3407,37 +3517,24 @@ const BacktestPerTradeMiniChart = ({
           <g clipPath={`url(#${clipId})`}>
             <Line
               type="monotone"
-              dataKey="up"
-              stroke="#34d399"
-              strokeWidth={3}
+              dataKey="price"
+              stroke="rgba(255, 255, 255, 0.2)"
+              strokeWidth={1.25}
               dot={false}
-              activeDot={{ r: 6 }}
-              style={{ filter: `url(#${glowId})` }}
+              activeDot={{ r: 5, fill: "#111827", stroke: "#e5e7eb", strokeWidth: 1 }}
               isAnimationActive={false}
-              connectNulls={false}
+              connectNulls
             />
-            <Line
-              type="monotone"
-              dataKey="down"
-              stroke="#f87171"
-              strokeWidth={3}
-              dot={false}
-              activeDot={{ r: 6 }}
-              style={{ filter: `url(#${glowId})` }}
-              isAnimationActive={false}
-              connectNulls={false}
-            />
-            <Line
-              type="monotone"
-              dataKey="flat"
-              stroke="#ffffff"
-              strokeWidth={3}
-              dot={false}
-              activeDot={{ r: 6 }}
-              style={{ filter: `url(#${glowId})` }}
-              isAnimationActive={false}
-              connectNulls={false}
-            />
+            {miniSegments.map((item) => (
+              <ReferenceLine
+                key={item.key}
+                segment={item.segment}
+                stroke={item.stroke}
+                strokeWidth={3}
+                ifOverflow="extendDomain"
+                style={{ filter: `url(#${glowId})` }}
+              />
+            ))}
           </g>
         </ComposedChart>
       </ResponsiveContainer>
@@ -3899,92 +3996,62 @@ const buildDimensionFeatureLagBuckets = (
 const BacktestTradeMiniChart = ({
   trade,
   candles,
-  minutesPerBar,
   isOpen
 }: {
   trade: HistoryItem;
   candles: Candle[];
-  minutesPerBar: number;
   isOpen: boolean;
 }) => {
   const entryIndex = findCandleIndexAtOrBefore(candles, Number(trade.entryTime) * 1000);
   const exitIndex = findCandleIndexAtOrBefore(candles, Number(trade.exitTime) * 1000);
-  const safeMinutesPerBar = Math.max(1, Number.isFinite(minutesPerBar) ? minutesPerBar : 1);
 
   const data = useMemo(() => {
     if (entryIndex < 0 || exitIndex < entryIndex || candles.length === 0) {
       return [];
     }
 
-    const startIndex = Math.max(0, entryIndex - 1);
     const endIndex = Math.min(candles.length - 1, Math.max(entryIndex, exitIndex));
+    const entryTimeMs = Number(trade.entryTime) * 1000;
     const rows: Array<{
       bar: number;
       price: number;
       high: number;
       low: number;
-      up: number | null;
-      down: number | null;
-      flat: number | null;
       relCand: number;
       candIdx?: number;
       ts?: number;
     }> = [];
-    const preCandle = candles[startIndex];
-    const prePrice = startIndex < entryIndex ? preCandle?.close ?? trade.entryPrice : trade.entryPrice;
-    const preTime = preCandle?.time ?? candles[entryIndex]?.time ?? Number(trade.entryTime) * 1000;
 
     rows.push({
-      bar: -1,
-      price: prePrice,
-      high: prePrice,
-      low: prePrice,
-      up: prePrice,
-      down: null,
-      flat: null,
+      bar: 0,
+      price: trade.entryPrice,
+      high: trade.entryPrice,
+      low: trade.entryPrice,
       relCand: -1,
-      ts: preTime
+      ts: entryTimeMs
     });
 
-    let previousPrice = prePrice;
+    let previousPrice = trade.entryPrice;
 
     for (let index = entryIndex; index <= endIndex; index += 1) {
       const candle = candles[index];
       const close = candle?.close ?? previousPrice;
       const high = candle?.high ?? close;
       const low = candle?.low ?? close;
+      const candleTime = candle?.time ?? entryTimeMs;
+      const minuteIndex = Math.max(1, Math.ceil((candleTime + 60_000 - entryTimeMs) / 60_000));
 
       rows.push({
-        bar: (index - entryIndex) * safeMinutesPerBar,
+        bar: minuteIndex,
         price: close,
         high,
         low,
-        up: close > previousPrice ? close : null,
-        down: close < previousPrice ? close : null,
-        flat: close === previousPrice ? close : null,
         relCand: index - entryIndex,
         candIdx: index,
-        ts: candle?.time ?? preTime
+        ts: candleTime
       });
 
       previousPrice = close;
-    }
-
-    for (let index = 1; index < rows.length; index += 1) {
-      const current = rows[index]!;
-      const previous = rows[index - 1]!;
-
-      if (current.up != null) {
-        previous.up = previous.price;
-      }
-
-      if (current.down != null) {
-        previous.down = previous.price;
-      }
-
-      if (current.flat != null) {
-        previous.flat = previous.price;
-      }
     }
 
     if (rows.length > 0) {
@@ -3993,13 +4060,6 @@ const BacktestTradeMiniChart = ({
       last.price = exitPrice;
       last.high = Math.max(last.high, exitPrice);
       last.low = Math.min(last.low, exitPrice);
-
-      if (rows.length >= 2) {
-        const previous = rows[rows.length - 2]!;
-        last.up = exitPrice > previous.price ? exitPrice : null;
-        last.down = exitPrice < previous.price ? exitPrice : null;
-        last.flat = exitPrice === previous.price ? exitPrice : null;
-      }
     }
 
     return rows;
@@ -4007,7 +4067,6 @@ const BacktestTradeMiniChart = ({
     candles,
     entryIndex,
     exitIndex,
-    safeMinutesPerBar,
     trade.entryPrice,
     trade.entryTime,
     trade.outcomePrice
@@ -5001,6 +5060,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [aiLibraryDefs]);
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
+  const [selectedBacktestTimeframe, setSelectedBacktestTimeframe] = useState<Timeframe>("15m");
   const [selectedSurfaceTab, setSelectedSurfaceTab] = useState<SurfaceTab>("chart");
   const [selectedBacktestTab, setSelectedBacktestTab] = useState<BacktestTab>("mainSettings");
   const [panelExpanded, setPanelExpanded] = useState(false);
@@ -5012,6 +5072,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [seenNotificationIds, setSeenNotificationIds] = useState<string[]>([]);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
+  const [chartContextMenu, setChartContextMenu] = useState<MainChartContextMenuState | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>({});
   const [chartHistoryLoadingKey, setChartHistoryLoadingKey] = useState<string | null>(null);
   const [backtestSeriesMap, setBacktestSeriesMap] = useState<Record<string, Candle[]>>({});
@@ -5170,7 +5231,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   const buildCurrentBacktestSettingsSnapshot = (): BacktestSettingsSnapshot => ({
     symbol: selectedSymbol,
-    timeframe: selectedTimeframe,
+    timeframe: selectedBacktestTimeframe,
     statsDateStart,
     statsDateEnd,
     enabledBacktestWeekdays: [...enabledBacktestWeekdays],
@@ -5270,6 +5331,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const chartFocusedPriceRangeRef = useRef<PriceRange | null>(null);
   const chartFocusedPriceRangeResetRafRef = useRef(0);
   const chartIsApplyingVisibleRangeRef = useRef(false);
+  const chartHoverCandleRef = useRef<MainChartContextMenuCandle | null>(null);
+  const chartBarIndexByGaplessTimeRef = useRef<Map<number, number>>(new Map());
   const settingsFileInputRef = useRef<HTMLInputElement | null>(null);
   const presetMenuRef = useRef<HTMLDivElement | null>(null);
   const chartSourceLengthRef = useRef(0);
@@ -7876,6 +7939,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const collectSettings = useCallback(() => ({
     selectedSymbol,
     selectedTimeframe,
+    selectedBacktestTimeframe,
     enabledBacktestWeekdays,
     enabledBacktestSessions,
     enabledBacktestMonths,
@@ -7935,7 +7999,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     statsDateStart,
     statsDateEnd,
   }), [
-    selectedSymbol, selectedTimeframe, enabledBacktestWeekdays, enabledBacktestSessions,
+    selectedSymbol, selectedTimeframe, selectedBacktestTimeframe,
+    enabledBacktestWeekdays, enabledBacktestSessions,
     enabledBacktestMonths, enabledBacktestHours, aiMode, aiModelEnabled, aiFilterEnabled,
     staticLibrariesClusters, confidenceThreshold, aiExitStrictness, aiExitLossTolerance,
     aiExitWinTolerance, useMitExit, complexity, volatilityPercentile, tpDollars, slDollars,
@@ -7952,7 +8017,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   const applySettings = useCallback((s: Record<string, any>) => {
     if (s.selectedSymbol != null) setSelectedSymbol(s.selectedSymbol);
-    if (s.selectedTimeframe != null) setSelectedTimeframe(s.selectedTimeframe);
+    if (s.selectedTimeframe != null) {
+      setSelectedTimeframe(s.selectedTimeframe);
+      if (s.selectedBacktestTimeframe == null) {
+        setSelectedBacktestTimeframe(s.selectedTimeframe);
+      }
+    }
+    if (s.selectedBacktestTimeframe != null) setSelectedBacktestTimeframe(s.selectedBacktestTimeframe);
     if (s.enabledBacktestWeekdays != null) setEnabledBacktestWeekdays(s.enabledBacktestWeekdays);
     if (s.enabledBacktestSessions != null) setEnabledBacktestSessions(s.enabledBacktestSessions);
     if (s.enabledBacktestMonths != null) setEnabledBacktestMonths(s.enabledBacktestMonths);
@@ -8055,6 +8126,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     localStorage.removeItem(SETTINGS_STORAGE_KEY);
     setSelectedSymbol(futuresAssets[0].symbol);
     setSelectedTimeframe("15m");
+    setSelectedBacktestTimeframe("15m");
     setEnabledBacktestWeekdays([...backtestWeekdayLabels]);
     setEnabledBacktestSessions([...backtestSessionLabels]);
     setEnabledBacktestMonths(Array.from({ length: 12 }, (_, i) => i));
@@ -8240,6 +8312,44 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       window.removeEventListener("keydown", onEscape);
     };
   }, [notificationsOpen]);
+
+  useEffect(() => {
+    if (!chartContextMenu) {
+      return;
+    }
+
+    const close = () => setChartContextMenu(null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        close();
+      }
+    };
+    const onDown = (event: MouseEvent) => {
+      if (event.button !== 2) {
+        close();
+      }
+    };
+
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("wheel", close, true);
+    window.addEventListener("keydown", onKey);
+
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("wheel", close, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [chartContextMenu]);
+
+  useEffect(() => {
+    if (selectedSurfaceTab === "chart") {
+      return;
+    }
+
+    setChartContextMenu(null);
+  }, [selectedSurfaceTab]);
 
   useEffect(() => {
     if (!notificationsOpen || notificationItems.length === 0) {
@@ -8446,10 +8556,37 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const onCrosshairMove = (param: MouseEventParams<Time>) => {
         if (!param.point || !param.time) {
           setHoveredTime(null);
+          chartHoverCandleRef.current = null;
           return;
         }
 
-        setHoveredTime(parseTimeFromCrosshair(param.time));
+        const crosshairTime = parseTimeFromCrosshair(param.time);
+        setHoveredTime(crosshairTime);
+
+        const hoveredBar = param.seriesData?.get(candleSeries) as
+          | { open?: number; high?: number; low?: number; close?: number }
+          | undefined;
+
+        if (
+          crosshairTime === null ||
+          !hoveredBar ||
+          !Number.isFinite(hoveredBar.open) ||
+          !Number.isFinite(hoveredBar.high) ||
+          !Number.isFinite(hoveredBar.low) ||
+          !Number.isFinite(hoveredBar.close)
+        ) {
+          chartHoverCandleRef.current = null;
+          return;
+        }
+
+        chartHoverCandleRef.current = {
+          time: crosshairTime,
+          open: hoveredBar.open,
+          high: hoveredBar.high,
+          low: hoveredBar.low,
+          close: hoveredBar.close,
+          index: chartBarIndexByGaplessTimeRef.current.get(crosshairTime) ?? null
+        };
       };
       const onVisibleLogicalRangeChange = (range: { from: number; to: number } | null) => {
         if (
@@ -8488,6 +8625,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       chart.subscribeCrosshairMove(onCrosshairMove);
       chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange);
+      const onContextMenu = (event: MouseEvent) => {
+        const candle = chartHoverCandleRef.current;
+
+        if (!candle) {
+          return;
+        }
+
+        event.preventDefault();
+        setChartContextMenu({
+          clientX: event.clientX,
+          clientY: event.clientY,
+          candle
+        });
+      };
+      container.addEventListener("contextmenu", onContextMenu);
       let resizeRaf = 0;
 
       const applyChartSize = (rawWidth: number, rawHeight: number, force = false) => {
@@ -8590,6 +8742,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         window.removeEventListener("resize", queueResizeFromContainer);
         document.removeEventListener("fullscreenchange", queueResizeFromContainer);
         resizeObserver.disconnect();
+        container.removeEventListener("contextmenu", onContextMenu);
         chart.unsubscribeCrosshairMove(onCrosshairMove);
         chart.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange);
         chart.remove();
@@ -8618,6 +8771,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         chartPendingVisibleGlobalRangeRef.current = null;
         chartFocusedPriceRangeRef.current = null;
         chartIsApplyingVisibleRangeRef.current = false;
+        chartHoverCandleRef.current = null;
+        chartBarIndexByGaplessTimeRef.current = new Map();
       };
 
       if (disposed) {
@@ -8646,16 +8801,31 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       candleSeries.setData([]);
       chartDataLengthRef.current = 0;
       chartLastBarTimeRef.current = 0;
+      chartBarIndexByGaplessTimeRef.current = new Map();
+      chartHoverCandleRef.current = null;
       return;
     }
 
-    const candleData: CandlestickData<UTCTimestamp>[] = chartRenderCandles.map((candle) => ({
-      time: toGaplessUtc(candle.time),
-      open: candle.open,
-      high: candle.high,
-      low: candle.low,
-      close: candle.close
-    }));
+    const barIndexByTime = new Map<number, number>();
+    const candleData: CandlestickData<UTCTimestamp>[] = chartRenderCandles.map((candle, index) => {
+      const gaplessTime = toGaplessUtc(candle.time) as number;
+      barIndexByTime.set(gaplessTime, chartRenderWindow.from + index);
+
+      return {
+        time: gaplessTime as UTCTimestamp,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close
+      };
+    });
+    chartBarIndexByGaplessTimeRef.current = barIndexByTime;
+    if (chartHoverCandleRef.current) {
+      const hoverTime = chartHoverCandleRef.current.time;
+      const hoverIndex = barIndexByTime.get(hoverTime);
+      chartHoverCandleRef.current =
+        hoverIndex === undefined ? null : { ...chartHoverCandleRef.current, index: hoverIndex };
+    }
 
     const prevLength = chartDataLengthRef.current;
     const prevLastTime = chartLastBarTimeRef.current;
@@ -12977,6 +13147,162 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 >
                   Reset Chart
                 </button>
+                {chartContextMenu
+                  ? (() => {
+                      const { candle } = chartContextMenu;
+                      const bullish = candle.close >= candle.open;
+                      const chg = candle.close - candle.open;
+                      const chgPct = candle.open !== 0 ? (chg / candle.open) * 100 : 0;
+                      const range = candle.high - candle.low;
+                      const body = Math.abs(chg);
+                      const fp = (value: number) => value.toFixed(2);
+                      const fs = (value: number) => `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
+                      const realSec = gaplessToRealRef.current.get(candle.time) ?? candle.time;
+                      const dt = new Date(realSec * 1000);
+                      const dateStr = dt.toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric"
+                      });
+                      const timeStr = dt.toLocaleTimeString(undefined, {
+                        hour: "2-digit",
+                        minute: "2-digit"
+                      });
+                      const viewportWidth =
+                        typeof window !== "undefined" ? window.innerWidth : Number.POSITIVE_INFINITY;
+                      const viewportHeight =
+                        typeof window !== "undefined" ? window.innerHeight : Number.POSITIVE_INFINITY;
+                      let left = chartContextMenu.clientX + 4;
+                      let top = chartContextMenu.clientY + 4;
+                      if (left + 250 > viewportWidth - 8) {
+                        left = chartContextMenu.clientX - 254;
+                      }
+                      if (top + 270 > viewportHeight - 8) {
+                        top = chartContextMenu.clientY - 274;
+                      }
+                      const row = (label: string, value: string, color: string) => (
+                        <div
+                          key={label}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            padding: "3px 0"
+                          }}
+                        >
+                          <span
+                            style={{
+                              color: "rgba(255,255,255,0.45)",
+                              fontSize: 11,
+                              fontFamily: "ui-sans-serif,system-ui,sans-serif",
+                              fontWeight: 500
+                            }}
+                          >
+                            {label}
+                          </span>
+                          <span
+                            style={{
+                              color,
+                              fontWeight: 700,
+                              fontSize: 13,
+                              fontVariantNumeric: "tabular-nums",
+                              letterSpacing: "0.02em"
+                            }}
+                          >
+                            {value}
+                          </span>
+                        </div>
+                      );
+
+                      return (
+                        <div
+                          style={{
+                            position: "fixed",
+                            left,
+                            top,
+                            zIndex: 99999,
+                            background: "rgba(10,10,14,0.97)",
+                            border: "1px solid rgba(255,255,255,0.10)",
+                            borderRadius: 14,
+                            padding: "14px 18px",
+                            minWidth: 230,
+                            boxShadow: "0 16px 48px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.05)",
+                            backdropFilter: "blur(20px)",
+                            fontFamily: "ui-monospace,'SF Mono',Menlo,monospace",
+                            fontSize: 12
+                          }}
+                          onContextMenu={(event) => event.preventDefault()}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              marginBottom: 10,
+                              paddingBottom: 8,
+                              borderBottom: "1px solid rgba(255,255,255,0.08)"
+                            }}
+                          >
+                            <span
+                              style={{
+                                color: "rgba(255,255,255,0.55)",
+                                fontSize: 11,
+                                fontFamily: "ui-sans-serif,system-ui,sans-serif"
+                              }}
+                            >
+                              {dateStr}
+                            </span>
+                            <span
+                              style={{
+                                color: "rgba(255,255,255,0.55)",
+                                fontSize: 11,
+                                fontFamily: "ui-sans-serif,system-ui,sans-serif"
+                              }}
+                            >
+                              {timeStr}
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                            <div
+                              style={{
+                                width: 8,
+                                height: 8,
+                                borderRadius: "50%",
+                                background: bullish ? "#34d399" : "#fb7185"
+                              }}
+                            />
+                            <span
+                              style={{
+                                color: bullish ? "#34d399" : "#fb7185",
+                                fontWeight: 700,
+                                fontSize: 12,
+                                fontFamily: "ui-sans-serif,system-ui,sans-serif"
+                              }}
+                            >
+                              {bullish ? "Bullish" : "Bearish"}
+                            </span>
+                          </div>
+                          {row("Open", fp(candle.open), "rgba(255,255,255,0.85)")}
+                          {row("High", fp(candle.high), "#34d399")}
+                          {row("Low", fp(candle.low), "#fb7185")}
+                          {row("Close", fp(candle.close), bullish ? "#34d399" : "#fb7185")}
+                          <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", margin: "8px 0" }} />
+                          {row(
+                            "Change",
+                            `${fs(chg)} (${fs(chgPct)}%)`,
+                            bullish ? "#34d399" : "#fb7185"
+                          )}
+                          {row("Range", fp(range), "#fbbf24")}
+                          {row("Body", fp(body), "rgba(255,255,255,0.50)")}
+                          {row(
+                            "Bar #",
+                            candle.index === null ? "\u2014" : String(candle.index),
+                            "rgba(255,255,255,0.35)"
+                          )}
+                        </div>
+                      );
+                    })()
+                  : null}
               </div>
             </section>
 
@@ -13444,7 +13770,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           aria-expanded={statsTimeframeDdOpen}
                           aria-label="Select backtest timeframe"
                         >
-                          {TIMEFRAME_DISPLAY_LABELS[selectedTimeframe]}
+                          {TIMEFRAME_DISPLAY_LABELS[selectedBacktestTimeframe]}
                           <span className="stats-timeframe-chevron" aria-hidden="true">
                             {statsTimeframeDdOpen ? "▴" : "▾"}
                           </span>
@@ -13460,10 +13786,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 key={tf}
                                 type="button"
                                 role="option"
-                                aria-selected={selectedTimeframe === tf}
-                                className={`stats-timeframe-option${selectedTimeframe === tf ? " active" : ""}`}
+                                aria-selected={selectedBacktestTimeframe === tf}
+                                className={`stats-timeframe-option${selectedBacktestTimeframe === tf ? " active" : ""}`}
                                 onClick={() => {
-                                  setSelectedTimeframe(tf);
+                                  setSelectedBacktestTimeframe(tf);
                                   setStatsTimeframeDdOpen(false);
                                 }}
                               >
@@ -13511,8 +13837,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 <div className="backtest-empty">
                   <h3>No models selected</h3>
                   <p>
-                    Open Settings and enable at least one model in the MODELS panel. The
-                    Chart tab now follows that Backtest selection automatically.
+                    Open Settings and enable at least one model in the MODELS panel to load backtest
+                    results.
                   </p>
                 </div>
               ) : backtestDateFilteredTrades.length === 0 && backtestSourceTrades.length > 0 ? (
@@ -15408,13 +15734,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 timeframeMinutes[appliedBacktestSettings.timeframe]
                             )
                           );
+                          const oneMinuteKey = symbolTimeframeKey(trade.symbol, "1m");
+                          const timeframeKey = symbolTimeframeKey(
+                            trade.symbol,
+                            appliedBacktestSettings.timeframe
+                          );
                           const tradeCandles =
-                            backtestSeriesMap[
-                              symbolTimeframeKey(trade.symbol, appliedBacktestSettings.timeframe)
-                            ] ??
-                            seriesMap[
-                              symbolTimeframeKey(trade.symbol, appliedBacktestSettings.timeframe)
-                            ] ??
+                            backtestOneMinuteSeriesMap[oneMinuteKey] ??
+                            backtestSeriesMap[oneMinuteKey] ??
+                            seriesMap[oneMinuteKey] ??
+                            backtestSeriesMap[timeframeKey] ??
+                            seriesMap[timeframeKey] ??
                             EMPTY_CANDLES;
 
                           return (
@@ -15510,7 +15840,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     <BacktestTradeMiniChart
                                       trade={trade}
                                       candles={tradeCandles}
-                                      minutesPerBar={timeframeMinutes[appliedBacktestSettings.timeframe]}
                                       isOpen={isExpanded}
                                     />
                                   </div>

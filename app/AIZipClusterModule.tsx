@@ -11132,6 +11132,7 @@ function dbscan2D(points: [number, number][], eps: number, minSamples: number) {
 }
 
 const clusterMapDrawOrderCache = new WeakMap<any[], any[]>();
+const CLUSTER_MAP_LOW_POWER_KEY = "clusterMapLowPower";
 
 function drawClusterMapCanvas(
   canvas,
@@ -11152,11 +11153,15 @@ function drawClusterMapCanvas(
   heatmapInterp = 1,
   mapSpreadMul = 1,
   heatmapSmoothness = 0.6,
-  heatmapNodesOverride = null
+  heatmapNodesOverride = null,
+  renderOpts = {}
 ) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-  const dpr = window.devicePixelRatio || 1;
+  const lowPowerMode = !!(renderOpts as any)?.lowPowerMode;
+  const dpr = lowPowerMode
+    ? Math.min(1, window.devicePixelRatio || 1)
+    : window.devicePixelRatio || 1;
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
   const nextWidth = Math.max(1, Math.floor(w * dpr));
@@ -11601,8 +11606,10 @@ function drawClusterMapCanvas(
         ctx.strokeStyle = col;
 
         // darker + more noticeable
-        ctx.shadowColor = col;
-        ctx.shadowBlur = 18;
+        if (!lowPowerMode) {
+          ctx.shadowColor = col;
+          ctx.shadowBlur = 18;
+        }
 
         // fill
         ctx.globalAlpha = 0.22 * (Number(groupOverlayOpacity) || 0);
@@ -11726,10 +11733,11 @@ function drawClusterMapCanvas(
 
       // Glow for potential + open trades (but not libraries)
       if (
-        isSearch ||
-        n.kind === "close" ||
-        n.kind === "potential" ||
-        (n.isOpen && !isLib)
+        !lowPowerMode &&
+        (isSearch ||
+          n.kind === "close" ||
+          n.kind === "potential" ||
+          (n.isOpen && !isLib))
       ) {
         ctx.beginPath();
         const glowR = r * 2.3;
@@ -11752,7 +11760,8 @@ function drawClusterMapCanvas(
       ctx.arc(sx, sy, r * (isHovered ? 1.25 : 1.0), 0, Math.PI * 2);
       ctx.fillStyle = fill;
       ctx.fill();
-      ctx.lineWidth = (isHovered ? 4 : 2) * (Number(nodeOutlineMul) || 1);
+      const outlineBase = lowPowerMode ? (isHovered ? 2.2 : 1.1) : isHovered ? 4 : 2;
+      ctx.lineWidth = outlineBase * (Number(nodeOutlineMul) || 1);
       ctx.strokeStyle = outline;
       ctx.stroke();
     };
@@ -11765,10 +11774,12 @@ function drawClusterMapCanvas(
 
     // Open ↔ Live links (thinner, and above background nodes)
     ctx.save();
-    ctx.lineWidth = 4;
+    ctx.lineWidth = lowPowerMode ? 2.2 : 4;
     ctx.strokeStyle = "rgba(255,80,220,0.86)";
-    ctx.shadowColor = "rgba(255,80,220,0.45)";
-    ctx.shadowBlur = 9;
+    if (!lowPowerMode) {
+      ctx.shadowColor = "rgba(255,80,220,0.45)";
+      ctx.shadowBlur = 9;
+    }
     ctx.beginPath();
     for (const n of nodes) {
       if (n.kind === "close" && (n as any).parentId) {
@@ -11819,8 +11830,10 @@ function drawClusterMapCanvas(
         ctx.globalAlpha = 0.9;
         ctx.lineWidth = 2.25;
         ctx.strokeStyle = "rgba(255,255,255,0.95)";
-        ctx.shadowColor = "rgba(255,255,255,0.55)";
-        ctx.shadowBlur = 12;
+        if (!lowPowerMode) {
+          ctx.shadowColor = "rgba(255,255,255,0.55)";
+          ctx.shadowBlur = 12;
+        }
         ctx.beginPath();
         ctx.arc(psx, psy, rHalo, 0, Math.PI * 2);
         ctx.stroke();
@@ -11901,16 +11914,32 @@ function ClusterMapViewport3D({
   selectedId,
   searchHighlightId,
   resetKey,
+  lowPowerMode,
   onSelectId,
 }: {
   nodes: any[];
   selectedId: string | null;
   searchHighlightId: string | null;
   resetKey: number;
+  lowPowerMode: boolean;
   onSelectId: (id: string | null) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<number | null>(null);
+  const renderRafRef = useRef<number | null>(null);
+  const rendererRef = useRef<any>(null);
+  const sceneRef = useRef<any>(null);
+  const cameraRef = useRef<any>(null);
+  const controlsRef = useRef<any>(null);
+  const nodeGeoRef = useRef<any>(null);
+  const nodeMatRef = useRef<any>(null);
+  const instRef = useRef<any>(null);
+  const tmpObjRef = useRef<any>(null);
+  const tmpColorRef = useRef<any>(null);
+  const nodeIdsRef = useRef<string[]>([]);
+  const capacityRef = useRef<number>(0);
+  const shouldFrameRef = useRef<boolean>(true);
+  const renderNowRef = useRef<() => void>(() => {});
   const [runtimeReady, setRuntimeReady] = useState(() =>
     Boolean(THREE && OrbitControls)
   );
@@ -11931,17 +11960,69 @@ function ClusterMapViewport3D({
   }, [runtimeReady]);
 
   useEffect(() => {
+    shouldFrameRef.current = true;
+  }, [resetKey]);
+
+  const toNodeColor = React.useCallback((n: any, isHighlighted: boolean) => {
+    if (isHighlighted) return 0xffffff;
+    const kind = String((n as any)?.kind || "").toLowerCase();
+    const isLib =
+      kind === "library" ||
+      (n as any).libId != null ||
+      String((n as any).id || "").startsWith("lib|");
+    if (kind === "potential") return 0xc88cff;
+    if (kind === "close") return 0xff8c00;
+    if ((n as any)?.isOpen && kind === "trade" && !isLib) return 0x00d2ff;
+    const pnl = Number((n as any)?.pnl ?? (n as any)?.unrealizedPnl ?? 0);
+    return pnl >= 0 ? 0x3cdc78 : 0xe65050;
+  }, []);
+
+  const requestRender = React.useCallback(() => {
+    if (renderRafRef.current != null) return;
+    renderRafRef.current = requestAnimationFrame(() => {
+      renderRafRef.current = null;
+      renderNowRef.current();
+    });
+  }, []);
+
+  const ensureInstCapacity = React.useCallback(
+    (neededCount: number) => {
+      if (!THREE) return;
+      const scene = sceneRef.current;
+      const nodeGeo = nodeGeoRef.current;
+      const nodeMat = nodeMatRef.current;
+      const curInst = instRef.current;
+      const needed = Math.max(1, Number(neededCount) || 1);
+      if (!scene || !nodeGeo || !nodeMat || !curInst) return;
+      if (needed <= capacityRef.current) return;
+
+      const nextCapacity = Math.max(needed, Math.ceil(capacityRef.current * 1.5), 64);
+      const nextInst = new (THREE as any).InstancedMesh(nodeGeo, nodeMat, nextCapacity);
+      nextInst.count = curInst.count || 0;
+      scene.remove(curInst);
+      scene.add(nextInst);
+      instRef.current = nextInst;
+      capacityRef.current = nextCapacity;
+    },
+    []
+  );
+
+  useEffect(() => {
     if (!runtimeReady || !THREE || !OrbitControls) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const renderer = new (THREE as any).WebGLRenderer({
       canvas,
-      antialias: true,
+      antialias: !lowPowerMode,
       alpha: false,
       powerPreference: "high-performance",
     });
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.setPixelRatio(
+      lowPowerMode
+        ? Math.min(1, window.devicePixelRatio || 1)
+        : Math.min(2, window.devicePixelRatio || 1)
+    );
     renderer.outputColorSpace = (THREE as any).SRGBColorSpace;
     renderer.setClearColor(0x070707, 1);
 
@@ -11950,8 +12031,8 @@ function ClusterMapViewport3D({
     camera.position.set(0, 0, 9);
 
     const controls = new (OrbitControls as any)(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.09;
+    controls.enableDamping = !lowPowerMode;
+    controls.dampingFactor = lowPowerMode ? 0 : 0.09;
     controls.rotateSpeed = 0.62;
     controls.panSpeed = 0.8;
     controls.zoomSpeed = 0.9;
@@ -11972,28 +12053,150 @@ function ClusterMapViewport3D({
       roughness: 0.36,
       metalness: 0.08,
     });
-
-    const count = Math.max(1, nodes.length);
-    const inst = new (THREE as any).InstancedMesh(nodeGeo, nodeMat, count);
     const tmpObj = new (THREE as any).Object3D();
     const tmpColor = new (THREE as any).Color(0xffffff);
-    const nodeIds: string[] = new Array(count).fill("");
+    const initialCapacity = Math.max(1, nodes.length || 1);
+    const inst = new (THREE as any).InstancedMesh(nodeGeo, nodeMat, initialCapacity);
+    scene.add(inst);
 
-    const toNodeColor = (n: any, isHighlighted: boolean) => {
-      if (isHighlighted) return 0xffffff;
-      const kind = String((n as any)?.kind || "").toLowerCase();
-      const isLib =
-        kind === "library" ||
-        (n as any).libId != null ||
-        String((n as any).id || "").startsWith("lib|");
-      if (kind === "potential") return 0xc88cff;
-      if (kind === "close") return 0xff8c00;
-      if ((n as any)?.isOpen && kind === "trade" && !isLib) return 0x00d2ff;
-      const pnl = Number((n as any)?.pnl ?? (n as any)?.unrealizedPnl ?? 0);
-      return pnl >= 0 ? 0x3cdc78 : 0xe65050;
+    rendererRef.current = renderer;
+    sceneRef.current = scene;
+    cameraRef.current = camera;
+    controlsRef.current = controls;
+    nodeGeoRef.current = nodeGeo;
+    nodeMatRef.current = nodeMat;
+    instRef.current = inst;
+    tmpObjRef.current = tmpObj;
+    tmpColorRef.current = tmpColor;
+    capacityRef.current = initialCapacity;
+    shouldFrameRef.current = true;
+
+    const renderNow = () => {
+      const rr = rendererRef.current;
+      const sc = sceneRef.current;
+      const cam = cameraRef.current;
+      const ctl = controlsRef.current;
+      if (!rr || !sc || !cam || !ctl) return;
+      if (!lowPowerMode) ctl.update();
+      rr.render(sc, cam);
     };
+    renderNowRef.current = renderNow;
 
+    const raycaster = new (THREE as any).Raycaster();
+    const pointer = new (THREE as any).Vector2();
+    const onClick = (ev: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+      const cam = cameraRef.current;
+      const instNow = instRef.current;
+      if (!cam || !instNow) return;
+      raycaster.setFromCamera(pointer, cam);
+      const hits = raycaster.intersectObject(instNow, false);
+      if (!hits || hits.length === 0) {
+        onSelectId(null);
+        return;
+      }
+      const idx = Number((hits[0] as any)?.instanceId);
+      const nodeIds = nodeIdsRef.current || [];
+      if (!Number.isFinite(idx) || idx < 0 || idx >= nodeIds.length) return;
+      const id = nodeIds[idx] || null;
+      onSelectId(id);
+    };
+    canvas.addEventListener("click", onClick);
+
+    const resize = () => {
+      const rr = rendererRef.current;
+      const cam = cameraRef.current;
+      if (!rr || !cam) return;
+      const w = Math.max(1, canvas.clientWidth || 1);
+      const h = Math.max(1, canvas.clientHeight || 1);
+      rr.setSize(w, h, false);
+      cam.aspect = w / h;
+      cam.updateProjectionMatrix();
+      requestRender();
+    };
+    resize();
+    window.addEventListener("resize", resize);
+
+    const onControlsChange = () => {
+      requestRender();
+    };
+    controls.addEventListener("change", onControlsChange);
+
+    if (!lowPowerMode) {
+      const animate = () => {
+        frameRef.current = requestAnimationFrame(animate);
+        renderNow();
+      };
+      animate();
+    } else {
+      requestRender();
+    }
+
+    return () => {
+      try {
+        canvas.removeEventListener("click", onClick);
+      } catch {}
+      try {
+        window.removeEventListener("resize", resize);
+      } catch {}
+      try {
+        if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
+      } catch {}
+      try {
+        if (renderRafRef.current != null) cancelAnimationFrame(renderRafRef.current);
+      } catch {}
+      try {
+        controls.removeEventListener("change", onControlsChange);
+      } catch {}
+      try {
+        controls.dispose();
+      } catch {}
+      try {
+        instRef.current?.dispose?.();
+      } catch {}
+      try {
+        nodeGeo.dispose();
+      } catch {}
+      try {
+        nodeMat.dispose();
+      } catch {}
+      try {
+        renderer.dispose();
+      } catch {}
+      rendererRef.current = null;
+      sceneRef.current = null;
+      cameraRef.current = null;
+      controlsRef.current = null;
+      nodeGeoRef.current = null;
+      nodeMatRef.current = null;
+      instRef.current = null;
+      tmpObjRef.current = null;
+      tmpColorRef.current = null;
+      nodeIdsRef.current = [];
+      capacityRef.current = 0;
+      renderNowRef.current = () => {};
+    };
+  }, [runtimeReady, resetKey, onSelectId, requestRender, lowPowerMode]);
+
+  useEffect(() => {
+    if (!runtimeReady || !THREE) return;
+    const inst = instRef.current;
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    const tmpObj = tmpObjRef.current;
+    const tmpColor = tmpColorRef.current;
+    if (!inst || !camera || !controls || !tmpObj || !tmpColor) return;
+
+    ensureInstCapacity(nodes.length);
+    const instNow = instRef.current;
+    if (!instNow) return;
+
+    const nodeIds: string[] = new Array(Math.max(1, nodes.length)).fill("");
     const worldPts: Array<[number, number, number]> = [];
+
     for (let i = 0; i < nodes.length; i++) {
       const n: any = nodes[i];
       const id = String((n as any)?.id ?? "");
@@ -12008,7 +12211,10 @@ function ClusterMapViewport3D({
       const z = zChrono * 0.58 + zJitter;
       worldPts.push([x, y, z]);
 
-      const baseR = Math.max(0.03, Math.min(0.28, (Number((n as any)?.r) || 6) / 88));
+      const baseR = Math.max(
+        0.03,
+        Math.min(0.28, (Number((n as any)?.r) || 6) / 88)
+      );
       const isHighlighted =
         (selectedId != null && String(selectedId) === id) ||
         (searchHighlightId != null && String(searchHighlightId) === id);
@@ -12017,16 +12223,17 @@ function ClusterMapViewport3D({
       tmpObj.position.set(x, y, z);
       tmpObj.scale.setScalar(r);
       tmpObj.updateMatrix();
-      inst.setMatrixAt(i, tmpObj.matrix);
+      instNow.setMatrixAt(i, tmpObj.matrix);
       tmpColor.setHex(toNodeColor(n, isHighlighted));
-      inst.setColorAt(i, tmpColor);
+      instNow.setColorAt(i, tmpColor);
     }
-    inst.count = nodes.length;
-    inst.instanceMatrix.needsUpdate = true;
-    if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
-    scene.add(inst);
 
-    if (worldPts.length > 0) {
+    instNow.count = nodes.length;
+    instNow.instanceMatrix.needsUpdate = true;
+    if (instNow.instanceColor) instNow.instanceColor.needsUpdate = true;
+    nodeIdsRef.current = nodeIds;
+
+    if (shouldFrameRef.current && worldPts.length > 0) {
       let minX = Infinity,
         minY = Infinity,
         minZ = Infinity;
@@ -12049,69 +12256,19 @@ function ClusterMapViewport3D({
       camera.position.set(cx + dist * 0.78, cy + dist * 0.56, cz + dist * 0.95);
       controls.target.set(cx, cy, cz);
       controls.update();
+      shouldFrameRef.current = false;
     }
 
-    const raycaster = new (THREE as any).Raycaster();
-    const pointer = new (THREE as any).Vector2();
-    const onClick = (ev: MouseEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      if (!rect.width || !rect.height) return;
-      pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
-      pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
-      raycaster.setFromCamera(pointer, camera);
-      const hits = raycaster.intersectObject(inst, false);
-      if (!hits || hits.length === 0) {
-        onSelectId(null);
-        return;
-      }
-      const idx = Number((hits[0] as any)?.instanceId);
-      if (!Number.isFinite(idx) || idx < 0 || idx >= nodeIds.length) return;
-      const id = nodeIds[idx] || null;
-      onSelectId(id);
-    };
-    canvas.addEventListener("click", onClick);
-
-    const resize = () => {
-      const w = Math.max(1, canvas.clientWidth || 1);
-      const h = Math.max(1, canvas.clientHeight || 1);
-      renderer.setSize(w, h, false);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-    };
-    resize();
-    window.addEventListener("resize", resize);
-
-    const animate = () => {
-      frameRef.current = requestAnimationFrame(animate);
-      controls.update();
-      renderer.render(scene, camera);
-    };
-    animate();
-
-    return () => {
-      try {
-        canvas.removeEventListener("click", onClick);
-      } catch {}
-      try {
-        window.removeEventListener("resize", resize);
-      } catch {}
-      try {
-        if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
-      } catch {}
-      try {
-        controls.dispose();
-      } catch {}
-      try {
-        inst.material?.dispose?.();
-      } catch {}
-      try {
-        nodeGeo.dispose();
-      } catch {}
-      try {
-        renderer.dispose();
-      } catch {}
-    };
-  }, [runtimeReady, nodes, selectedId, searchHighlightId, resetKey, onSelectId]);
+    requestRender();
+  }, [
+    runtimeReady,
+    nodes,
+    selectedId,
+    searchHighlightId,
+    ensureInstCapacity,
+    toNodeColor,
+    requestRender,
+  ]);
 
   return (
     <div style={{ position: "absolute", inset: 0 }}>
@@ -12254,6 +12411,22 @@ export function ClusterMap({
   const [heatmapOn, setHeatmapOn] = useState(false);
   const [heatHoverLive, setHeatHover] = useState<null | any>(null);
   const heatmapRef = useRef<any>(null);
+  const [lowPowerMode, setLowPowerMode] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const raw = localStorage.getItem(CLUSTER_MAP_LOW_POWER_KEY);
+      if (raw == null) return false;
+      const v = String(raw).trim().toLowerCase();
+      return v === "1" || v === "true" || v === "on";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(CLUSTER_MAP_LOW_POWER_KEY, lowPowerMode ? "1" : "0");
+    } catch {}
+  }, [lowPowerMode]);
 
   // Pinning: click the map to freeze hover coords (top-center) and heatmap stats (top-left).
   // Press Escape to clear the pin and resume live hover.
@@ -12266,6 +12439,12 @@ export function ClusterMap({
   useEffect(() => {
     pinnedRef.current = !!pinnedWorld;
   }, [pinnedWorld]);
+  useEffect(() => {
+    if (!lowPowerMode) return;
+    setHeatmapOn(false);
+    setHeatHover(null);
+    setPinnedHeatHover(null);
+  }, [lowPowerMode]);
 
   // Track whether the mouse is currently over the map so WASD/arrow panning doesn't steal keys elsewhere.
   const mapFocusRef = useRef(false);
@@ -12535,6 +12714,7 @@ export function ClusterMap({
       if (isHeatToggle && !isTyping) {
         e.preventDefault();
         e.stopPropagation();
+        if (lowPowerMode) return;
         setHeatmapOn((v) => {
           const nv = !v;
           return nv;
@@ -12587,7 +12767,7 @@ export function ClusterMap({
         onKeyDown as any,
         { capture: true } as any
       );
-  }, [clusterMapView]);
+  }, [clusterMapView, lowPowerMode]);
   const hoveredIdRef = useRef(null);
   const projectionRef = useRef(null);
   const [tooltip, setTooltip] = useState(null);
@@ -13779,6 +13959,11 @@ export function ClusterMap({
 
   const [groupOverlayOpacity, setGroupOverlayOpacity] = React.useState(1);
   const showGroupOverlays = (Number(groupOverlayOpacity) || 0) > 0.001;
+  const effectiveGroupOverlayOpacity = lowPowerMode ? 0 : groupOverlayOpacity;
+  const drawRenderOpts = React.useMemo(
+    () => ({ lowPowerMode }),
+    [lowPowerMode]
+  );
   const [nodeSizeMul, setNodeSizeMul] = React.useState(1);
   const [nodeOutlineMul, setNodeOutlineMul] = React.useState(1);
   const [heatmapInterp, setHeatmapInterp] = React.useState(0.1);
@@ -17402,13 +17587,14 @@ export function ClusterMap({
         hdbOverlay,
         hoveredGroupRef.current,
         selectedGroupRef.current,
-        groupOverlayOpacity,
+        effectiveGroupOverlayOpacity,
         nodeSizeMul,
         nodeOutlineMul,
         heatmapInterp,
         mapSpreadMulRef.current,
         heatmapSmoothness,
-        heatmapBasisNodes
+        heatmapBasisNodes,
+        drawRenderOpts
       );
     };
   });
@@ -17454,13 +17640,14 @@ export function ClusterMap({
       hdbOverlay,
       hoveredGroupRef.current,
       selectedGroupRef.current,
-      groupOverlayOpacity,
+      effectiveGroupOverlayOpacity,
       nodeSizeMul,
       nodeOutlineMul,
       heatmapInterp,
       mapSpreadMulRef.current,
       heatmapSmoothness,
-      heatmapBasisNodes
+      heatmapBasisNodes,
+      drawRenderOpts
     );
   }, [
     is3dMapActive,
@@ -17472,11 +17659,12 @@ export function ClusterMap({
     boxViz,
     heatmapOn,
     hdbOverlay,
-    groupOverlayOpacity,
+    effectiveGroupOverlayOpacity,
     nodeSizeMul,
     nodeOutlineMul,
     heatmapInterp,
     mapSpreadMul,
+    drawRenderOpts,
   ]);
   useEffect(() => {
     if (is3dMapActive) return;
@@ -17598,8 +17786,37 @@ export function ClusterMap({
     let dragging = false;
     let drag = { x: 0, y: 0, ox: 0, oy: 0, moved: false };
     let rafId = null;
+    let hoverRafId = null;
     let pendingOx = viewRef.current.ox;
     let pendingOy = viewRef.current.oy;
+    const scheduleHoverRedraw = () => {
+      if (hoverRafId != null) return;
+      hoverRafId = requestAnimationFrame(() => {
+        hoverRafId = null;
+        drawClusterMapCanvas(
+          canvas,
+          displayNodes,
+          viewRef.current,
+          hoveredIdRef.current,
+          searchHighlightIdRef.current,
+          ghostLegendColored,
+          boxViz,
+          heatmapOn,
+          heatmapRef,
+          hdbOverlay,
+          hoveredGroupRef.current,
+          selectedGroupRef.current,
+          effectiveGroupOverlayOpacity,
+          nodeSizeMul,
+          nodeOutlineMul,
+          heatmapInterp,
+          mapSpreadMulRef.current,
+          heatmapSmoothness,
+          heatmapBasisNodes,
+          drawRenderOpts
+        );
+      });
+    };
     const onPointerDown = (e) => {
       const p = getLocal(e);
 
@@ -17655,12 +17872,14 @@ export function ClusterMap({
             hdbOverlay,
             hoveredGroupRef.current,
             selectedGroupRef.current,
-            groupOverlayOpacity,
+            effectiveGroupOverlayOpacity,
             nodeSizeMul,
             nodeOutlineMul,
             heatmapInterp,
             mapSpreadMulRef.current,
-            heatmapSmoothness
+            heatmapSmoothness,
+            heatmapBasisNodes,
+            drawRenderOpts
           );
           return;
         }
@@ -17700,12 +17919,14 @@ export function ClusterMap({
             hdbOverlay,
             hoveredGroupRef.current,
             selectedGroupRef.current,
-            groupOverlayOpacity,
+            effectiveGroupOverlayOpacity,
             nodeSizeMul,
             nodeOutlineMul,
             heatmapInterp,
             mapSpreadMulRef.current,
-            heatmapSmoothness
+            heatmapSmoothness,
+            heatmapBasisNodes,
+            drawRenderOpts
           );
           return;
         }
@@ -17771,12 +17992,14 @@ export function ClusterMap({
             hdbOverlay,
             hoveredGroupRef.current,
             selectedGroupRef.current,
-            groupOverlayOpacity,
+            effectiveGroupOverlayOpacity,
             nodeSizeMul,
             nodeOutlineMul,
             heatmapInterp,
             mapSpreadMulRef.current,
-            heatmapSmoothness
+            heatmapSmoothness,
+            heatmapBasisNodes,
+            drawRenderOpts
           );
           return;
         }
@@ -17821,12 +18044,14 @@ export function ClusterMap({
             hdbOverlay,
             hoveredGroupRef.current,
             selectedGroupRef.current,
-            groupOverlayOpacity,
+            effectiveGroupOverlayOpacity,
             nodeSizeMul,
             nodeOutlineMul,
             heatmapInterp,
             mapSpreadMulRef.current,
-            heatmapSmoothness
+            heatmapSmoothness,
+            heatmapBasisNodes,
+            drawRenderOpts
           );
           return;
         }
@@ -17860,12 +18085,14 @@ export function ClusterMap({
               hdbOverlay,
               hoveredGroupRef.current,
               selectedGroupRef.current,
-              groupOverlayOpacity,
+              effectiveGroupOverlayOpacity,
               nodeSizeMul,
               nodeOutlineMul,
               heatmapInterp,
               mapSpreadMulRef.current,
-              heatmapSmoothness
+              heatmapSmoothness,
+              heatmapBasisNodes,
+              drawRenderOpts
             );
             rafId = null;
           });
@@ -17912,29 +18139,34 @@ export function ClusterMap({
           hdbOverlay,
           hoveredGroupRef.current,
           selectedGroupRef.current,
-          groupOverlayOpacity,
+          effectiveGroupOverlayOpacity,
           nodeSizeMul,
           nodeOutlineMul,
           heatmapInterp,
           mapSpreadMulRef.current,
-          heatmapSmoothness
+          heatmapSmoothness,
+          heatmapBasisNodes,
+          drawRenderOpts
         );
         return;
       } else if (heatHover) {
         // Clear hover box when leaving heatmap mode.
         setHeatHover(null);
       }
+      let hoverVisualChanged = false;
       const id = pickNode(p.x, p.y);
       if (id) {
         // Node hover has priority over overlay-group hover
         if (hoveredGroupRef.current) {
           hoveredGroupRef.current = null;
           setHoveredGroup(null);
+          hoverVisualChanged = true;
         }
       }
       if (hoveredIdRef.current !== id) {
         setHoveredId(id);
         hoveredIdRef.current = id;
+        hoverVisualChanged = true;
       }
       if (id) {
         const n = displayNodes.find((x) => x.id === id);
@@ -18061,6 +18293,7 @@ export function ClusterMap({
         if (prevId !== nextId) {
           hoveredGroupRef.current = grp;
           setHoveredGroup(grp);
+          hoverVisualChanged = true;
         }
         if (grp && grp.stats) {
           const st: any = grp.stats || {};
@@ -18088,26 +18321,9 @@ export function ClusterMap({
           setTooltip(null);
         }
       }
-      drawClusterMapCanvas(
-        canvas,
-        displayNodes,
-        viewRef.current,
-        hoveredIdRef.current,
-        searchHighlightIdRef.current,
-        ghostLegendColored,
-        boxViz,
-        heatmapOn,
-        heatmapRef,
-        hdbOverlay,
-        hoveredGroupRef.current,
-        selectedGroupRef.current,
-        groupOverlayOpacity,
-        nodeSizeMul,
-        nodeOutlineMul,
-        heatmapInterp,
-        mapSpreadMulRef.current,
-        heatmapSmoothness
-      );
+      if (hoverVisualChanged) {
+        scheduleHoverRedraw();
+      }
     };
     const endDrag = (e) => {
       dragging = false;
@@ -18251,12 +18467,14 @@ export function ClusterMap({
         hdbOverlay,
         hoveredGroupRef.current,
         selectedGroupRef.current,
-        groupOverlayOpacity,
+        effectiveGroupOverlayOpacity,
         nodeSizeMul,
         nodeOutlineMul,
         heatmapInterp,
         mapSpreadMulRef.current,
-        heatmapSmoothness
+        heatmapSmoothness,
+        heatmapBasisNodes,
+        drawRenderOpts
       );
     };
 
@@ -18302,6 +18520,7 @@ export function ClusterMap({
       canvas.removeEventListener("wheel", onWheel);
       canvas.removeEventListener("contextmenu", onContextMenu);
       if (rafId !== null) cancelAnimationFrame(rafId);
+      if (hoverRafId !== null) cancelAnimationFrame(hoverRafId);
     };
   }, [
     is3dMapActive,
@@ -18317,10 +18536,14 @@ export function ClusterMap({
     heatmapOn,
     heatHover,
     computeHeatHover,
+    heatmapBasisNodes,
     hdbOverlay,
-    groupOverlayOpacity,
+    effectiveGroupOverlayOpacity,
     nodeSizeMul,
     nodeOutlineMul,
+    heatmapInterp,
+    heatmapSmoothness,
+    drawRenderOpts,
   ]);
 
   const searchPool = useMemo(() => {
@@ -19104,6 +19327,26 @@ export function ClusterMap({
             >
               {clusterMapView === "3d" ? "2D" : "3D"}
             </button>
+            <button
+              onClick={() => setLowPowerMode((v) => !v)}
+              style={{
+                border: lowPowerMode
+                  ? "1px solid rgba(120,255,150,0.55)"
+                  : "1px solid rgba(255,255,255,0.18)",
+                background: lowPowerMode
+                  ? "rgba(40,130,70,0.28)"
+                  : "rgba(0,0,0,0.35)",
+                color: "rgba(255,255,255,0.92)",
+                borderRadius: 10,
+                padding: "6px 10px",
+                fontSize: 11,
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+              title="Aggressive performance mode for weak GPUs/CPUs"
+            >
+              Low-Power {lowPowerMode ? "ON" : "OFF"}
+            </button>
 
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{ position: "relative" }}>
@@ -19317,6 +19560,7 @@ export function ClusterMap({
             selectedId={selectedId}
             searchHighlightId={searchHighlightId}
             resetKey={resetKey}
+            lowPowerMode={lowPowerMode}
             onSelectId={handle3dSelectId}
           />
         )}
