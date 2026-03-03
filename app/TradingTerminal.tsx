@@ -119,6 +119,7 @@ type Candle = {
   high: number;
   low: number;
   time: number;
+  volume?: number;
 };
 
 type MainChartContextMenuCandle = {
@@ -148,6 +149,16 @@ type AggressorPressureSnapshot = {
   sellPressure: number;
   scaleCeiling: number;
   averageSpread: number;
+  tickCount: number;
+  updatedAtMs: number;
+};
+
+type VolumeNowcastSnapshot = {
+  estimatedCurrentVolume: number;
+  estimatedFinalVolume: number;
+  baselineVolume: number;
+  progressRatio: number;
+  confidence: number;
   tickCount: number;
   updatedAtMs: number;
 };
@@ -389,6 +400,7 @@ type MarketApiCandle = {
   high: number | string;
   low: number | string;
   close: number | string;
+  volume?: number | string;
 };
 
 type PropFirmResult = {
@@ -1991,6 +2003,13 @@ const floorToTimeframe = (timestampMs: number, timeframe: Timeframe): number => 
   return Math.floor(timestampMs / step) * step;
 };
 
+const getTimeframeSlotIndex = (timestampMs: number, timeframe: Timeframe): number => {
+  const slotMinutes = Math.max(1, timeframeMinutes[timeframe]);
+  const date = new Date(timestampMs);
+  const minuteOfDay = date.getUTCHours() * 60 + date.getUTCMinutes();
+  return Math.floor(minuteOfDay / slotMinutes);
+};
+
 const isXauTradingTime = (timestampMs: number): boolean => {
   const date = new Date(timestampMs);
   const day = date.getUTCDay();
@@ -2032,6 +2051,7 @@ const normalizeMarketCandles = (candles: MarketApiCandle[]): Candle[] => {
       const highRaw = Number(candle.high);
       const lowRaw = Number(candle.low);
       const close = Number(candle.close);
+      const volumeRaw = Number(candle.volume);
       const high = Math.max(open, highRaw, lowRaw, close);
       const low = Math.min(open, highRaw, lowRaw, close);
 
@@ -2046,13 +2066,19 @@ const normalizeMarketCandles = (candles: MarketApiCandle[]): Candle[] => {
         return null;
       }
 
-      return {
+      const normalizedCandle: Candle = {
         time,
         open,
         high,
         low,
         close
       };
+
+      if (Number.isFinite(volumeRaw) && volumeRaw >= 0) {
+        normalizedCandle.volume = volumeRaw;
+      }
+
+      return normalizedCandle;
     })
     .filter((candle): candle is Candle => candle !== null)
     .sort((a, b) => a.time - b.time);
@@ -2178,12 +2204,17 @@ const aggregateCandlesToTimeframe = (candles: Candle[], timeframe: Timeframe): C
         aggregated.push(activeBucket);
       }
 
+      const initialVolume = Number(candle.volume);
       activeBucket = {
         time: bucketTime,
         open: candle.open,
         high: candle.high,
         low: candle.low,
-        close: candle.close
+        close: candle.close,
+        volume:
+          Number.isFinite(initialVolume) && initialVolume >= 0
+            ? initialVolume
+            : undefined
       };
       continue;
     }
@@ -2191,6 +2222,9 @@ const aggregateCandlesToTimeframe = (candles: Candle[], timeframe: Timeframe): C
     activeBucket.high = Math.max(activeBucket.high, candle.high);
     activeBucket.low = Math.min(activeBucket.low, candle.low);
     activeBucket.close = candle.close;
+    const candleVolume = Number(candle.volume);
+    const nextVolume = (activeBucket.volume ?? 0) + (Number.isFinite(candleVolume) ? candleVolume : 0);
+    activeBucket.volume = nextVolume > 0 ? nextVolume : undefined;
   }
 
   if (activeBucket) {
@@ -5424,6 +5458,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     askTone: "neutral",
     updatedAtMs: 0
   }));
+  const [volumeNowcast, setVolumeNowcast] = useState<VolumeNowcastSnapshot>(() => ({
+    estimatedCurrentVolume: 0,
+    estimatedFinalVolume: 0,
+    baselineVolume: 0,
+    progressRatio: 0,
+    confidence: 0,
+    tickCount: 0,
+    updatedAtMs: 0
+  }));
 
   const buildCurrentBacktestSettingsSnapshot = (): BacktestSettingsSnapshot => ({
     symbol: selectedSymbol,
@@ -5498,6 +5541,25 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const liveQuoteStateRef = useRef({
     bid: Number.NaN,
     ask: Number.NaN
+  });
+  const volumeNowcastStateRef = useRef({
+    candleStartMs: 0,
+    lastEventMs: 0,
+    lastMid: Number.NaN,
+    tickCount: 0,
+    absMidMove: 0,
+    spreadSum: 0,
+    spreadCount: 0,
+    lastUiUpdateMs: 0
+  });
+  const volumeBaselineRef = useRef<{
+    bySlot: Map<number, number>;
+    globalAverage: number;
+    sampleCount: number;
+  }>({
+    bySlot: new Map(),
+    globalAverage: 0,
+    sampleCount: 0
   });
   const selectedSurfaceTabRef = useRef<SurfaceTab>(selectedSurfaceTab);
   const statsRefreshOverlayModeRef = useRef<StatsRefreshOverlayMode>("idle");
@@ -6250,6 +6312,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     let streamReadyTimeoutId = 0;
     const key = selectedKey;
     const historyLimit = chartHistoryCountByTimeframe[selectedTimeframe];
+    const candleDurationMs = Math.max(60_000, timeframeMinutes[selectedTimeframe] * 60_000);
     const aggressorWindowMs = Math.max(60_000, timeframeMinutes[selectedTimeframe] * 60_000);
     const recentOneMinutePromise = fetchRecentOneMinuteCandles();
     const keyWasReady = Boolean(chartHistoryReadyByKeyRef.current[key]);
@@ -6259,6 +6322,44 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     setChartHistoryLoadingKey(keyWasReady ? null : key);
+    aggressorPressurePointsRef.current = [];
+    aggressorPressureStateRef.current = {
+      lastMid: Number.NaN,
+      lastUiUpdateMs: 0,
+      peakPressure: 1,
+      lastTickMs: 0
+    };
+    liveQuoteStateRef.current = {
+      bid: Number.NaN,
+      ask: Number.NaN
+    };
+    volumeNowcastStateRef.current = {
+      candleStartMs: 0,
+      lastEventMs: 0,
+      lastMid: Number.NaN,
+      tickCount: 0,
+      absMidMove: 0,
+      spreadSum: 0,
+      spreadCount: 0,
+      lastUiUpdateMs: 0
+    };
+    setLiveQuote({
+      bid: null,
+      ask: null,
+      spread: null,
+      bidTone: "neutral",
+      askTone: "neutral",
+      updatedAtMs: 0
+    });
+    setVolumeNowcast({
+      estimatedCurrentVolume: 0,
+      estimatedFinalVolume: 0,
+      baselineVolume: 0,
+      progressRatio: 0,
+      confidence: 0,
+      tickCount: 0,
+      updatedAtMs: 0
+    });
 
     const connect = async () => {
       let hasInitialSeed = false;
@@ -6416,6 +6517,75 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             askTone,
             updatedAtMs: eventTime
           });
+
+          const nowcastState = volumeNowcastStateRef.current;
+          if (eventTime >= nowcastState.lastEventMs) {
+            const candleStartMs = floorToTimeframe(eventTime, selectedTimeframe);
+            if (nowcastState.candleStartMs !== candleStartMs) {
+              nowcastState.candleStartMs = candleStartMs;
+              nowcastState.lastMid = price;
+              nowcastState.tickCount = 0;
+              nowcastState.absMidMove = 0;
+              nowcastState.spreadSum = 0;
+              nowcastState.spreadCount = 0;
+            }
+
+            const deltaMid = Number.isFinite(nowcastState.lastMid) ? price - nowcastState.lastMid : 0;
+            nowcastState.lastMid = price;
+            nowcastState.lastEventMs = eventTime;
+            nowcastState.tickCount += 1;
+            nowcastState.absMidMove += Math.abs(deltaMid);
+
+            if (spread != null && Number.isFinite(spread) && spread > 0) {
+              nowcastState.spreadSum += spread;
+              nowcastState.spreadCount += 1;
+            }
+
+            const elapsedMs = Math.max(0, eventTime - candleStartMs);
+            const progressRatio = clamp(elapsedMs / candleDurationMs, 0.0001, 1);
+            const progressSafe = Math.max(progressRatio, 0.12);
+            const slot = getTimeframeSlotIndex(candleStartMs, selectedTimeframe);
+            const baselineProfile = volumeBaselineRef.current;
+            const baselineVolumeRaw =
+              baselineProfile.bySlot.get(slot) ??
+              (baselineProfile.globalAverage > 0 ? baselineProfile.globalAverage : NaN);
+            const baselineVolumeFallback = Math.max(20, nowcastState.tickCount / progressSafe);
+            const baselineVolume =
+              Number.isFinite(baselineVolumeRaw) && baselineVolumeRaw > 0
+                ? baselineVolumeRaw
+                : baselineVolumeFallback;
+
+            const projectedTicks = nowcastState.tickCount / progressSafe;
+            const tickPaceRatio = projectedTicks / Math.max(1, baselineVolume);
+            const avgSpreadNow =
+              nowcastState.spreadCount > 0
+                ? nowcastState.spreadSum / nowcastState.spreadCount
+                : Math.max(price * 0.00002, 0.01);
+            const normalizedMove = nowcastState.absMidMove / Math.max(avgSpreadNow, 0.000001);
+            const projectedMove = normalizedMove / progressSafe;
+            const moveRatio = projectedMove / Math.max(1, baselineVolume * 0.35);
+            const activityMultiplier = clamp(0.55 + tickPaceRatio * 0.3 + moveRatio * 0.15, 0.45, 2.6);
+            const estimatedFinalVolume = baselineVolume * activityMultiplier;
+            const progressCurve = Math.pow(progressRatio, 0.92);
+            const estimatedCurrentVolume = estimatedFinalVolume * progressCurve;
+            const confidence = clamp(progressRatio * 0.55 + Math.min(1, nowcastState.tickCount / 25) * 0.45, 0, 1);
+
+            if (
+              nowcastState.lastUiUpdateMs === 0 ||
+              eventTime - nowcastState.lastUiUpdateMs >= AGGRESSOR_PRESSURE_UI_THROTTLE_MS
+            ) {
+              setVolumeNowcast({
+                estimatedCurrentVolume,
+                estimatedFinalVolume,
+                baselineVolume,
+                progressRatio,
+                confidence,
+                tickCount: nowcastState.tickCount,
+                updatedAtMs: eventTime
+              });
+              nowcastState.lastUiUpdateMs = eventTime;
+            }
+          }
 
           const pressureState = aggressorPressureStateRef.current;
           const pressurePoints = aggressorPressurePointsRef.current;
@@ -6645,6 +6815,42 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const selectedCandles = useMemo(() => {
     return seriesMap[selectedKey] ?? EMPTY_CANDLES;
   }, [selectedKey, seriesMap]);
+  const volumeBaselineProfile = useMemo(() => {
+    const bySlotAccumulator = new Map<number, { sum: number; count: number }>();
+    let totalVolume = 0;
+    let totalCount = 0;
+
+    for (const candle of selectedCandles) {
+      const volume = Number(candle.volume);
+      if (!Number.isFinite(volume) || volume <= 0) {
+        continue;
+      }
+
+      const slot = getTimeframeSlotIndex(candle.time, selectedTimeframe);
+      const current = bySlotAccumulator.get(slot) ?? { sum: 0, count: 0 };
+      current.sum += volume;
+      current.count += 1;
+      bySlotAccumulator.set(slot, current);
+      totalVolume += volume;
+      totalCount += 1;
+    }
+
+    const bySlot = new Map<number, number>();
+    for (const [slot, row] of bySlotAccumulator.entries()) {
+      bySlot.set(slot, row.sum / Math.max(1, row.count));
+    }
+
+    return {
+      bySlot,
+      globalAverage: totalCount > 0 ? totalVolume / totalCount : 0,
+      sampleCount: totalCount
+    };
+  }, [selectedCandles, selectedTimeframe]);
+
+  useEffect(() => {
+    volumeBaselineRef.current = volumeBaselineProfile;
+  }, [volumeBaselineProfile]);
+
   const isChartDataLoading =
     selectedSurfaceTab === "chart" &&
     chartHistoryLoadingKey === selectedKey;
@@ -7154,6 +7360,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const liveAskLabel = liveQuote.ask != null ? formatPrice(liveQuote.ask) : "--";
   const liveBidLabel = liveQuote.bid != null ? formatPrice(liveQuote.bid) : "--";
   const liveSpreadLabel = liveQuote.spread != null ? formatPrice(liveQuote.spread) : "--";
+  const estimatedVolumeCurrent = Math.max(0, volumeNowcast.estimatedCurrentVolume);
+  const estimatedVolumeFinal = Math.max(0, volumeNowcast.estimatedFinalVolume);
+  const estimatedBuyVolume = estimatedVolumeCurrent * aggressorBuyShare;
+  const estimatedSellVolume = estimatedVolumeCurrent * aggressorSellShare;
+  const estimatedVolumeScale = Math.max(1, estimatedVolumeFinal);
+  const estimatedVolumeCurrentLabel = formatAggressorPressure(estimatedVolumeCurrent);
+  const estimatedVolumeFinalLabel = formatAggressorPressure(estimatedVolumeFinal);
 
   const watchlistRows = useMemo(() => {
     return futuresAssets.map((asset) => {
@@ -13518,7 +13731,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <div className="vp-proxy-row">
                     <div className="vp-proxy-row-head">
                       <span>Aggr sells</span>
-                      <span>{formatAggressorPressure(aggressorScaleCeiling)}</span>
+                      <span>{formatAggressorPressure(estimatedVolumeScale)}</span>
                     </div>
                     <div className="vp-proxy-track">
                       <span
@@ -13527,7 +13740,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       />
                       <span className="vp-proxy-midline" />
                       <span className="vp-proxy-value">
-                        {formatAggressorPressure(aggressorPressure.sellPressure)}
+                        {formatAggressorPressure(estimatedSellVolume)}
                       </span>
                     </div>
                   </div>
@@ -13535,7 +13748,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <div className="vp-proxy-row">
                     <div className="vp-proxy-row-head">
                       <span>Aggr buys</span>
-                      <span>{formatAggressorPressure(aggressorScaleCeiling)}</span>
+                      <span>{formatAggressorPressure(estimatedVolumeScale)}</span>
                     </div>
                     <div className="vp-proxy-track">
                       <span
@@ -13544,7 +13757,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       />
                       <span className="vp-proxy-midline" />
                       <span className="vp-proxy-value">
-                        {formatAggressorPressure(aggressorPressure.buyPressure)}
+                        {formatAggressorPressure(estimatedBuyVolume)}
                       </span>
                     </div>
                   </div>
@@ -13554,13 +13767,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       Delta {aggressorImbalancePct >= 0 ? "+" : ""}
                       {aggressorImbalancePct.toFixed(1)}%
                     </span>
-                    <span>
-                      Spr{" "}
-                      {aggressorPressure.averageSpread > 0
-                        ? formatPrice(aggressorPressure.averageSpread)
-                        : "--"}
-                    </span>
-                    <span>{aggressorPressure.tickCount} ticks</span>
+                    <span>Vol {estimatedVolumeCurrentLabel}/{estimatedVolumeFinalLabel}</span>
+                    <span>{Math.round(volumeNowcast.confidence * 100)}%</span>
                   </div>
                 </div>
               </div>
