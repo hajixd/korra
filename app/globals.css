@@ -5164,6 +5164,32 @@ button {
   font-weight: 700;
 }
 
+.ai-details-toggle {
+  justify-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(132, 170, 233, 0.34);
+  border-radius: 999px;
+  background: rgba(23, 38, 63, 0.66);
+  color: #d2def8;
+  padding: 0.12rem 0.42rem;
+  font-size: 0.56rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  cursor: pointer;
+}
+
+.ai-details-toggle:hover {
+  border-color: rgba(132, 170, 233, 0.5);
+  background: rgba(28, 47, 78, 0.76);
+}
+
+.ai-details-panel {
+  display: grid;
+  gap: 0.34rem;
+}
+
 .ai-bullets {
   list-style: none;
   margin: 0;

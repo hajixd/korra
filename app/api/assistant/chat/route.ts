@@ -182,6 +182,16 @@ type ToolState = {
   requestedBacktestData: boolean;
 };
 
+type RequestMode = "natural" | "graph" | "draw" | "animation";
+
+type RequestModePlan = {
+  mode: RequestMode;
+  wantsNaturalOnly: boolean;
+  wantsVisualization: boolean;
+  wantsDraw: boolean;
+  wantsAnimation: boolean;
+};
+
 const MAX_CHAT_TURNS = 14;
 const MAX_HISTORY_ROWS = 700;
 const MAX_ACTION_ROWS = 700;
@@ -199,6 +209,8 @@ const VISUAL_REQUEST_RE = /\b(chart|graph|plot|visual|visualize|overview)\b/i;
 const ANIMATION_REQUEST_RE = /\b(animate|animation|video|replay|playback|walkthrough|demo)\b/i;
 const TECHNICAL_DRAW_RE =
   /\b(support|resistance|s\/r|trendline|trend line|horizontal line|vertical line|box|fvg|fair value gap|arrow|ruler|mark candlestick|draw)\b/i;
+const INDICATOR_REQUEST_RE =
+  /\b(rsi|overbought|oversold|over bought|over sold|macd|stoch|stochastic|ema|sma|moving average|atr|indicator)\b/i;
 
 const AI_SYSTEM_PROMPT = [
   "You are KORRA AI Assistant, a trading copilot.",
@@ -231,6 +243,8 @@ const REASONING_PROMPT = [
   "Keep bullets concise and actionable. Use max 3 bullets unless the user explicitly asks for detail.",
   "Do not add extra information beyond the user request.",
   "Never tell the user to run/fetch tools manually.",
+  "Use provided indicators when available (e.g., RSI 14 for overbought/oversold requests).",
+  "Before setting cannotAnswer=true, attempt to answer using available context and indicator snapshots.",
   "If data is insufficient, set cannotAnswer=true and explain why.",
   "Do not include markdown code fences."
 ].join("\n");
@@ -935,6 +949,20 @@ const isTechnicalDrawRequest = (prompt: string): boolean => {
   return TECHNICAL_DRAW_RE.test(text);
 };
 
+const isIndicatorComputationRequest = (prompt: string): boolean => {
+  const text = toText(prompt, "");
+  if (!text) {
+    return false;
+  }
+  if (!INDICATOR_REQUEST_RE.test(text)) {
+    return false;
+  }
+  if (DRAW_WORD_RE.test(text)) {
+    return false;
+  }
+  return true;
+};
+
 const isChartControlRequest = (prompt: string): boolean => {
   const text = toText(prompt, "").toLowerCase();
   if (!text) {
@@ -954,6 +982,30 @@ const isChartControlRequest = (prompt: string): boolean => {
     );
 
   return adjustIntent || dynamicIntent;
+};
+
+const classifyRequestMode = (prompt: string): RequestModePlan => {
+  const text = toText(prompt, "");
+  const drawIntent = DRAW_WORD_RE.test(text) || isChartControlRequest(text);
+  const animationIntent = ANIMATION_REQUEST_RE.test(text);
+  const graphIntent = VISUAL_REQUEST_RE.test(text);
+
+  let mode: RequestMode = "natural";
+  if (animationIntent) {
+    mode = "animation";
+  } else if (drawIntent) {
+    mode = "draw";
+  } else if (graphIntent) {
+    mode = "graph";
+  }
+
+  return {
+    mode,
+    wantsNaturalOnly: mode === "natural",
+    wantsVisualization: mode === "graph" || mode === "animation",
+    wantsDraw: mode === "draw",
+    wantsAnimation: mode === "animation"
+  };
 };
 
 const inferClickhousePair = (rawValue: string): string | null => {
@@ -1654,15 +1706,6 @@ const buildDrawActionsFromPrompt = (params: {
     });
   }
 
-  if (actions.length === 0) {
-    actions.push({
-      type: "mark_candlestick",
-      time: last.time,
-      markerShape: "circle",
-      note: "Draw marker"
-    });
-  }
-
   return actions.slice(0, 12);
 };
 
@@ -2190,6 +2233,7 @@ const executeReasoningStage = async (params: {
       count: recentWindowCandles.length,
       candles: recentWindowCandles.slice(-300)
     },
+    indicators: buildIndicatorSnapshot(recentWindowCandles),
     clickhouse:
       toolState.clickhouseCandles.length > 0
         ? {
@@ -2746,6 +2790,67 @@ const buildFallbackFailureResponse = (message: string) => {
   };
 };
 
+const computeLatestRsiSnapshot = (candles: CandleRow[], period = 14) => {
+  if (!Array.isArray(candles) || candles.length < period + 1) {
+    return null;
+  }
+
+  const closes = candles.map((row) => row.close);
+  const rsi = computeRsiSeries(closes, period);
+  if (rsi.length < period + 1) {
+    return null;
+  }
+
+  const latest = rsi[rsi.length - 1];
+  if (!Number.isFinite(latest)) {
+    return null;
+  }
+
+  const previous = rsi[Math.max(0, rsi.length - 2)] ?? latest;
+  const momentum = latest - previous;
+  const state =
+    latest >= 70 ? "overbought" : latest <= 30 ? "oversold" : "neutral";
+
+  return {
+    value: Number(latest.toFixed(2)),
+    previous: Number(previous.toFixed(2)),
+    momentum: Number(momentum.toFixed(2)),
+    state
+  };
+};
+
+const buildIndicatorSnapshot = (candles: CandleRow[]): Record<string, unknown> => {
+  const latest = candles[candles.length - 1] ?? null;
+  const earliest = candles[0] ?? null;
+  const movePct =
+    latest && earliest && Math.abs(earliest.close) > 1e-9
+      ? ((latest.close - earliest.close) / earliest.close) * 100
+      : 0;
+
+  const rsi14 = computeLatestRsiSnapshot(candles, 14);
+  const rsi21 = computeLatestRsiSnapshot(candles, 21);
+
+  return {
+    candleCount: candles.length,
+    latestTime: latest ? formatTimeLabel(latest.time) : null,
+    movePct: Number(movePct.toFixed(4)),
+    rsi14: rsi14
+      ? {
+          ...rsi14,
+          overboughtThreshold: 70,
+          oversoldThreshold: 30
+        }
+      : null,
+    rsi21: rsi21
+      ? {
+          ...rsi21,
+          overboughtThreshold: 70,
+          oversoldThreshold: 30
+        }
+      : null
+  };
+};
+
 const buildDeterministicMonthlyResponse = async (params: {
   request: Request;
   context: AssistantContext;
@@ -2909,10 +3014,11 @@ export async function POST(request: Request) {
 
   const baseUrl = process.env.NEBIUS_BASE_URL || "https://api.tokenfactory.nebius.com/v1";
   const lastUserPrompt = getLastUserPrompt(turns);
-  const explicitDrawRequest =
-    DRAW_WORD_RE.test(lastUserPrompt) || isChartControlRequest(lastUserPrompt);
-  const wantsVisualization = VISUAL_REQUEST_RE.test(lastUserPrompt);
-  const wantsAnimation = ANIMATION_REQUEST_RE.test(lastUserPrompt);
+  const requestMode = classifyRequestMode(lastUserPrompt);
+  const explicitDrawRequest = requestMode.wantsDraw;
+  const wantsVisualization = requestMode.wantsVisualization;
+  const wantsAnimation = requestMode.wantsAnimation;
+  const indicatorComputationRequested = isIndicatorComputationRequest(lastUserPrompt);
   const deterministicIntent = detectDeterministicIntent(lastUserPrompt);
 
   if (deterministicIntent.type !== "none") {
@@ -2984,7 +3090,10 @@ export async function POST(request: Request) {
 
     const shouldAutofetchClickhouse =
       toolState.clickhouseCandles.length === 0 &&
-      (Boolean(planningResult.planning.needsClickhouseData) || isTechnicalDrawRequest(lastUserPrompt));
+      (Boolean(planningResult.planning.needsClickhouseData) ||
+        explicitDrawRequest ||
+        wantsVisualization ||
+        (indicatorComputationRequested && context.liveCandles.length < 80));
 
     if (shouldAutofetchClickhouse) {
       const autoQuery = buildAutoClickhouseQuery({
@@ -3010,7 +3119,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const reasoning = await executeReasoningStage({
+    let reasoning = await executeReasoningStage({
       apiKey,
       baseUrl,
       models: modelSelection,
@@ -3019,6 +3128,52 @@ export async function POST(request: Request) {
       toolState,
       planning: planningResult.planning
     });
+
+    const shouldRetryReasoningWithMoreData =
+      reasoning.cannotAnswer &&
+      toolState.clickhouseCandles.length === 0 &&
+      (wantsVisualization ||
+        explicitDrawRequest ||
+        indicatorComputationRequested ||
+        context.liveCandles.length < 80);
+
+    if (shouldRetryReasoningWithMoreData) {
+      const recoveryQuery = buildAutoClickhouseQuery({
+        context,
+        prompt: lastUserPrompt,
+        planningQuery: planningResult.planning.clickhouseQuery
+      });
+
+      try {
+        const result = await fetchClickhouseCandles(request, {
+          ...recoveryQuery,
+          count: Math.max(toNumber(recoveryQuery?.count, 240), 240)
+        });
+        if (result.candles.length > 0) {
+          toolState.clickhouseCandles = result.candles;
+          toolState.clickhouseMeta = {
+            pair: result.pair,
+            timeframe: result.timeframe,
+            count: result.candles.length
+          };
+          planningResult.planning.needsClickhouseData = true;
+          planningResult.planning.clickhouseQuery = recoveryQuery;
+          toolsUsed.add("clickhouse_candles");
+
+          reasoning = await executeReasoningStage({
+            apiKey,
+            baseUrl,
+            models: modelSelection,
+            turns,
+            context,
+            toolState,
+            planning: planningResult.planning
+          });
+        }
+      } catch {
+        // Keep current reasoning result.
+      }
+    }
 
     const codingResult = await executeCodingStage({
       apiKey,
@@ -3037,7 +3192,7 @@ export async function POST(request: Request) {
     const charts = wantsVisualization
       ? buildChartsFromPlans(codingResult.chartPlans, context, toolState)
       : [];
-    let chartActions = codingResult.chartActions;
+    let chartActions = explicitDrawRequest || wantsAnimation ? codingResult.chartActions : [];
     if (explicitDrawRequest) {
       const drawCandles = getDrawWindowCandles({
         context,
@@ -3093,10 +3248,18 @@ export async function POST(request: Request) {
     const usedClickhouseData = toolState.clickhouseCandles.length > 0;
     const isDrawOnlyRequest = explicitDrawRequest && !wantsVisualization;
     const drawSummary = summarizeDrawnActions(chartActions);
+    const responseCannotAnswer = explicitDrawRequest
+      ? chartActions.length === 0 && reasoning.cannotAnswer
+      : wantsVisualization
+        ? charts.length === 0 && reasoning.cannotAnswer
+        : reasoning.cannotAnswer;
+    const responseCannotAnswerReason = responseCannotAnswer ? reasoning.cannotAnswerReason : "";
     const shortAnswer = explicitDrawRequest
       ? drawSummary ||
-        (isDrawOnlyRequest
-          ? reasoning.cannotAnswer
+        (chartActions.length === 0
+          ? "No drawable items matched your request."
+          : isDrawOnlyRequest
+          ? responseCannotAnswer
             ? reasoning.cannotAnswerReason
             : sanitizeAssistantText(reasoning.shortAnswer || "Draw request completed.")
           : sanitizeAssistantText(reasoning.shortAnswer))
@@ -3106,7 +3269,7 @@ export async function POST(request: Request) {
       ? []
       : reasoning.bullets.length > 0
         ? reasoning.bullets
-        : reasoning.cannotAnswer
+        : responseCannotAnswer
           ? [{ tone: "gold" as const, text: reasoning.cannotAnswerReason }]
           : [];
 
@@ -3116,8 +3279,8 @@ export async function POST(request: Request) {
     return NextResponse.json({
       status: "ok",
       response: {
-        cannotAnswer: reasoning.cannotAnswer,
-        cannotAnswerReason: reasoning.cannotAnswerReason,
+        cannotAnswer: responseCannotAnswer,
+        cannotAnswerReason: responseCannotAnswerReason,
         shortAnswer,
         bullets: finalBullets,
         charts,
@@ -3127,6 +3290,7 @@ export async function POST(request: Request) {
       },
       modelTrace: null,
       dataTrace: {
+        requestMode: requestMode.mode,
         usedClickhouse: usedClickhouseData,
         clickhouseMeta: toolState.clickhouseMeta,
         backtestDataIncluded: context.backtest.dataIncluded,

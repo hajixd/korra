@@ -7411,7 +7411,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             const baselineProjectedFinal = baselineVolume * recentVolumeBias * flowMultiplier;
             const estimatedFinalVolume = Math.max(
               baselineProjectedFinal,
-              Number.isFinite(projectedObservedFinalVolume) ? projectedObservedFinalVolume * 1.04 : 0
+              Number.isFinite(projectedObservedFinalVolume) ? projectedObservedFinalVolume * 1.01 : 0
             );
             const progressCurve = Math.pow(progressRatio, 0.98);
             const estimatedCurrentVolume = Math.max(
@@ -7811,7 +7811,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const estimatedFinalVolume = Math.max(
       baselineVolume * recentVolumeBias,
       estimatedCurrentVolumeBase / progressSafe,
-      Number.isFinite(projectedObservedFinalVolume) ? projectedObservedFinalVolume * 1.04 : 0
+      Number.isFinite(projectedObservedFinalVolume) ? projectedObservedFinalVolume * 1.01 : 0
     );
     const estimatedCurrentVolume = Math.max(
       estimatedCurrentVolumeBase,

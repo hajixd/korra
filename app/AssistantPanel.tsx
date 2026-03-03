@@ -257,6 +257,9 @@ export default function AssistantPanel(props: AssistantPanelProps) {
   const [isPending, setIsPending] = useState(false);
   const [thinkingStage, setThinkingStage] = useState("Analyzing");
   const [activeAnimation, setActiveAnimation] = useState<AssistantChartAnimation | null>(null);
+  const [detailsExpandedByMessageId, setDetailsExpandedByMessageId] = useState<
+    Record<string, boolean>
+  >({});
 
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -284,6 +287,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
     setThinkingStage("Analyzing");
     setIsPending(false);
     setActiveAnimation(null);
+    setDetailsExpandedByMessageId({});
 
     if (typeof onRunChartActions === "function") {
       onRunChartActions([{ type: "clear_annotations" }]);
@@ -291,6 +295,13 @@ export default function AssistantPanel(props: AssistantPanelProps) {
 
     window.requestAnimationFrame(() => inputRef.current?.focus());
   }, [onRunChartActions]);
+
+  const toggleMessageDetails = useCallback((messageId: string) => {
+    setDetailsExpandedByMessageId((current) => ({
+      ...current,
+      [messageId]: !current[messageId]
+    }));
+  }, []);
 
   const buildPayloadContext = useCallback(
     (includeBacktestData: boolean) => {
@@ -695,7 +706,13 @@ export default function AssistantPanel(props: AssistantPanelProps) {
       </div>
 
       <div className="ai-thread" ref={messageListRef} aria-live="polite">
-        {messages.map((message) => (
+        {messages.map((message) => {
+          const hasTools = Boolean(message.toolsUsed && message.toolsUsed.length > 0);
+          const hasBullets = Boolean(message.bullets && message.bullets.length > 0);
+          const hasDetails = message.role === "assistant" && (hasTools || hasBullets);
+          const detailsExpanded = hasDetails && Boolean(detailsExpandedByMessageId[message.id]);
+
+          return (
           <article
             key={message.id}
             className={`ai-msg ${message.role === "assistant" ? "assistant" : "user"}`}
@@ -707,27 +724,42 @@ export default function AssistantPanel(props: AssistantPanelProps) {
 
             <p className="ai-msg-content">{boldText(message.content)}</p>
 
-            {message.toolsUsed && message.toolsUsed.length > 0 ? (
-              <div className="ai-tool-pills" aria-label="tools used">
-                {message.toolsUsed.map((tool, index) => (
-                  <span className="ai-tool-pill" key={`${message.id}-tool-${index}`}>
-                    {tool}
-                  </span>
-                ))}
-              </div>
+            {hasDetails ? (
+              <button
+                type="button"
+                className="ai-details-toggle"
+                onClick={() => toggleMessageDetails(message.id)}
+                aria-expanded={detailsExpanded}
+              >
+                {detailsExpanded ? "Hide Details" : "Details"}
+              </button>
             ) : null}
 
-            {message.bullets && message.bullets.length > 0 ? (
-              <ul className="ai-bullets">
-                {message.bullets.map((bullet, index) => (
-                  <li key={`${message.id}-bullet-${index}`} className={`tone-${bullet.tone}`}>
-                    <span className="ai-bullet-dot" aria-hidden>
-                      •
-                    </span>
-                    <span>{boldText(bullet.text)}</span>
-                  </li>
-                ))}
-              </ul>
+            {detailsExpanded ? (
+              <section className="ai-details-panel">
+                {hasTools ? (
+                  <div className="ai-tool-pills" aria-label="tools used">
+                    {message.toolsUsed!.map((tool, index) => (
+                      <span className="ai-tool-pill" key={`${message.id}-tool-${index}`}>
+                        {tool}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+
+                {hasBullets ? (
+                  <ul className="ai-bullets">
+                    {message.bullets!.map((bullet, index) => (
+                      <li key={`${message.id}-bullet-${index}`} className={`tone-${bullet.tone}`}>
+                        <span className="ai-bullet-dot" aria-hidden>
+                          •
+                        </span>
+                        <span>{boldText(bullet.text)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </section>
             ) : null}
 
             {message.charts && message.charts.length > 0 ? (
@@ -786,7 +818,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
             ) : null}
 
           </article>
-        ))}
+        )})}
 
         {isPending ? (
           <article className="ai-msg assistant pending">
