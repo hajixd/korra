@@ -39,10 +39,17 @@ type AssistantChartAnimationModalProps = {
   onClose: () => void;
 };
 
-type AnimationBurst = {
+type AnimationClickPulse = {
   id: number;
   x: number;
   y: number;
+};
+
+type AnimationCursor = {
+  visible: boolean;
+  x: number;
+  y: number;
+  clicking: boolean;
 };
 
 const clamp = (value: number, min: number, max: number): number => {
@@ -67,12 +74,18 @@ export default function AssistantChartAnimationModal(props: AssistantChartAnimat
   const markersRef = useRef<SeriesMarker<Time>[]>([]);
   const playbackTimeoutsRef = useRef<number[]>([]);
   const progressTimerRef = useRef<number>(0);
-  const burstSeedRef = useRef(0);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [activeStepIndex, setActiveStepIndex] = useState(-1);
-  const [bursts, setBursts] = useState<AnimationBurst[]>([]);
+  const [clickPulses, setClickPulses] = useState<AnimationClickPulse[]>([]);
+  const [cursor, setCursor] = useState<AnimationCursor>({
+    visible: false,
+    x: 78,
+    y: 58,
+    clicking: false
+  });
+  const [chartReadyVersion, setChartReadyVersion] = useState(0);
 
   const sortedCandles = useMemo(() => {
     if (!Array.isArray(candles) || candles.length === 0) {
@@ -87,6 +100,7 @@ export default function AssistantChartAnimationModal(props: AssistantChartAnimat
         Number.isFinite(row.close)
       )
       .map((row) => ({
+        timeMs: row.time,
         time: toChartTime(row.time),
         open: row.open,
         high: row.high,
@@ -138,18 +152,176 @@ export default function AssistantChartAnimationModal(props: AssistantChartAnimat
     candleSeries.setMarkers([...markersRef.current]);
   }, []);
 
-  const emitBurst = useCallback((stepIndex: number) => {
-    burstSeedRef.current += 1;
-    const seed = burstSeedRef.current + stepIndex * 13;
-    const x = 18 + ((seed * 37) % 64);
-    const y = 24 + ((seed * 23) % 52);
-    const id = Date.now() + stepIndex;
-    setBursts((current) => [...current, { id, x, y }].slice(-22));
+  const getNearestCandle = useCallback(
+    (targetTimeMs: number | null) => {
+      if (sortedCandles.length === 0) {
+        return null;
+      }
+      if (!Number.isFinite(targetTimeMs)) {
+        return sortedCandles[sortedCandles.length - 1] ?? null;
+      }
+      let nearest = sortedCandles[0]!;
+      let nearestDistance = Math.abs(nearest.timeMs - Number(targetTimeMs));
+      for (let index = 1; index < sortedCandles.length; index += 1) {
+        const row = sortedCandles[index]!;
+        const distance = Math.abs(row.timeMs - Number(targetTimeMs));
+        if (distance < nearestDistance) {
+          nearest = row;
+          nearestDistance = distance;
+        }
+      }
+      return nearest;
+    },
+    [sortedCandles]
+  );
 
-    const timeoutId = window.setTimeout(() => {
-      setBursts((current) => current.filter((entry) => entry.id !== id));
-    }, 920);
-    playbackTimeoutsRef.current.push(timeoutId);
+  const inferActionTimeMs = useCallback((actions: AssistantChartAction[]): number | null => {
+    for (const action of actions) {
+      const candidates = [action.time, action.timeEnd, action.timeStart];
+      for (const candidate of candidates) {
+        if (Number.isFinite(candidate)) {
+          return Number(candidate);
+        }
+      }
+    }
+    return null;
+  }, []);
+
+  const inferActionPrice = useCallback((actions: AssistantChartAction[]): number | null => {
+    for (const action of actions) {
+      if (
+        action.type === "draw_support_resistance" &&
+        Number.isFinite(action.priceStart) &&
+        Number.isFinite(action.priceEnd)
+      ) {
+        return (Number(action.priceStart) + Number(action.priceEnd)) / 2;
+      }
+
+      const candidates = [
+        action.entryPrice,
+        action.price,
+        action.targetPrice,
+        action.stopPrice,
+        action.priceEnd,
+        action.priceStart
+      ];
+      for (const candidate of candidates) {
+        if (Number.isFinite(candidate)) {
+          return Number(candidate);
+        }
+      }
+    }
+    return null;
+  }, []);
+
+  const resolveStepPoint = useCallback(
+    (
+      actions: AssistantChartAction[],
+      overrides?: { timeMs?: number | null; price?: number | null }
+    ): { x: number; y: number } => {
+      const host = containerRef.current;
+      const chart = chartRef.current;
+      const candleSeries = candleSeriesRef.current;
+      const fallback = { x: 78, y: 58 };
+
+      if (!host || !chart || !candleSeries || sortedCandles.length === 0) {
+        return fallback;
+      }
+
+      const width = Math.max(1, Math.floor(host.clientWidth));
+      const height = Math.max(1, Math.floor(host.clientHeight));
+      if (width <= 2 || height <= 2) {
+        return fallback;
+      }
+
+      const targetTimeMs =
+        Number.isFinite(overrides?.timeMs) ? Number(overrides?.timeMs) : inferActionTimeMs(actions);
+      const nearest = getNearestCandle(targetTimeMs);
+      const effectiveTimeMs = Number.isFinite(targetTimeMs) ? Number(targetTimeMs) : nearest?.timeMs;
+      const effectivePrice =
+        (Number.isFinite(overrides?.price) ? Number(overrides?.price) : null) ??
+        inferActionPrice(actions) ??
+        nearest?.close ??
+        sortedCandles[sortedCandles.length - 1]?.close ??
+        0;
+
+      const xCoord = Number.isFinite(effectiveTimeMs)
+        ? chart.timeScale().timeToCoordinate(toChartTime(Number(effectiveTimeMs)))
+        : null;
+      const yCoord = Number.isFinite(effectivePrice)
+        ? candleSeries.priceToCoordinate(Number(effectivePrice))
+        : null;
+
+      const xPx = Number.isFinite(xCoord) ? Number(xCoord) : width * 0.82;
+      const yPx = Number.isFinite(yCoord) ? Number(yCoord) : height * 0.55;
+
+      return {
+        x: Number(((clamp(xPx, 8, width - 8) / width) * 100).toFixed(2)),
+        y: Number(((clamp(yPx, 8, height - 8) / height) * 100).toFixed(2))
+      };
+    },
+    [getNearestCandle, inferActionPrice, inferActionTimeMs, sortedCandles]
+  );
+
+  const resolveSupportResistancePoints = useCallback(
+    (actions: AssistantChartAction[]): Array<{ x: number; y: number }> => {
+      const srAction = actions.find(
+        (action) =>
+          action.type === "draw_support_resistance" &&
+          Number.isFinite(action.priceStart) &&
+          Number.isFinite(action.priceEnd)
+      );
+
+      if (!srAction) {
+        return [];
+      }
+
+      const targetTimeMs =
+        Number.isFinite(srAction.time) ? Number(srAction.time) : inferActionTimeMs(actions);
+      const supportPoint = resolveStepPoint(actions, {
+        timeMs: targetTimeMs,
+        price: Number(srAction.priceStart)
+      });
+      const resistancePoint = resolveStepPoint(actions, {
+        timeMs: targetTimeMs,
+        price: Number(srAction.priceEnd)
+      });
+
+      return [supportPoint, resistancePoint];
+    },
+    [inferActionTimeMs, resolveStepPoint]
+  );
+
+  const moveCursorToPoint = useCallback((point: { x: number; y: number }) => {
+    setCursor((current) => ({
+      ...current,
+      visible: true,
+      x: point.x,
+      y: point.y,
+      clicking: false
+    }));
+  }, []);
+
+  const emitClickPulse = useCallback((point: { x: number; y: number }) => {
+    const id = Date.now() + Math.floor(Math.random() * 1_000_000);
+    setClickPulses((current) => [...current, { id, x: point.x, y: point.y }].slice(-24));
+    setCursor((current) => ({
+      ...current,
+      visible: true,
+      x: point.x,
+      y: point.y,
+      clicking: true
+    }));
+
+    const releaseId = window.setTimeout(() => {
+      setCursor((current) => ({ ...current, clicking: false }));
+    }, 120);
+    playbackTimeoutsRef.current.push(releaseId);
+
+    const clearId = window.setTimeout(() => {
+      setClickPulses((current) => current.filter((entry) => entry.id !== id));
+    }, 640);
+    playbackTimeoutsRef.current.push(clearId);
   }, []);
 
   const runStepActions = useCallback(
@@ -164,7 +336,7 @@ export default function AssistantChartAnimationModal(props: AssistantChartAnimat
         chart,
         candleSeries,
         candles: sortedCandles.map((row) => ({
-          time: Number(row.time) * 1000,
+          time: row.timeMs,
           open: row.open,
           high: row.high,
           low: row.low,
@@ -191,10 +363,11 @@ export default function AssistantChartAnimationModal(props: AssistantChartAnimat
 
     clearTimers();
     clearOverlays();
-    setBursts([]);
+    setClickPulses([]);
     setProgress(0);
     setActiveStepIndex(-1);
     setIsPlaying(true);
+    setCursor((current) => ({ ...current, visible: true, clicking: false }));
 
     const rightIndex = sortedCandles.length - 1;
     const leftIndex = Math.max(0, rightIndex - 220);
@@ -215,11 +388,40 @@ export default function AssistantChartAnimationModal(props: AssistantChartAnimat
       setProgress(ratio);
     }, 40);
 
+    const cursorLeadMs = 230;
     animation.steps.forEach((step, index) => {
+      const stepPoint = resolveStepPoint(step.actions);
+      const srPoints = resolveSupportResistancePoints(step.actions);
+      const moveTimerId = window.setTimeout(() => {
+        setActiveStepIndex(index);
+        moveCursorToPoint(srPoints[0] ?? stepPoint);
+      }, Math.max(0, step.atMs - cursorLeadMs));
+      playbackTimeoutsRef.current.push(moveTimerId);
+
       const timerId = window.setTimeout(() => {
         setActiveStepIndex(index);
+        if (srPoints.length === 2) {
+          const supportPoint = srPoints[0]!;
+          const resistancePoint = srPoints[1]!;
+          moveCursorToPoint(supportPoint);
+          emitClickPulse(supportPoint);
+
+          const secondTapTimerId = window.setTimeout(() => {
+            moveCursorToPoint(resistancePoint);
+            emitClickPulse(resistancePoint);
+          }, 150);
+          playbackTimeoutsRef.current.push(secondTapTimerId);
+
+          const drawTimerId = window.setTimeout(() => {
+            runStepActions(step.actions);
+          }, 230);
+          playbackTimeoutsRef.current.push(drawTimerId);
+          return;
+        }
+
+        moveCursorToPoint(stepPoint);
+        emitClickPulse(stepPoint);
         runStepActions(step.actions);
-        emitBurst(index);
       }, step.atMs);
       playbackTimeoutsRef.current.push(timerId);
     });
@@ -229,9 +431,20 @@ export default function AssistantChartAnimationModal(props: AssistantChartAnimat
       setProgress(1);
       setIsPlaying(false);
       setActiveStepIndex(animation.steps.length - 1);
+      setCursor((current) => ({ ...current, clicking: false }));
     }, totalDuration + 40);
     playbackTimeoutsRef.current.push(endTimer);
-  }, [animation, clearOverlays, clearTimers, emitBurst, runStepActions, sortedCandles]);
+  }, [
+    animation,
+    clearOverlays,
+    clearTimers,
+    emitClickPulse,
+    moveCursorToPoint,
+    resolveSupportResistancePoints,
+    resolveStepPoint,
+    runStepActions,
+    sortedCandles
+  ]);
 
   useEffect(() => {
     if (!open || !containerRef.current || chartRef.current) {
@@ -252,39 +465,91 @@ export default function AssistantChartAnimationModal(props: AssistantChartAnimat
         width: Math.max(1, Math.floor(host.clientWidth)),
         height: Math.max(1, Math.floor(host.clientHeight)),
         layout: {
-          background: { type: LIGHTWEIGHT_CHART_SOLID_BACKGROUND, color: "#070d16" },
-          textColor: "#8ea0bf"
+          background: { type: LIGHTWEIGHT_CHART_SOLID_BACKGROUND, color: "#090d13" },
+          textColor: "#7f889d"
+        },
+        localization: {
+          priceFormatter: (price: number) =>
+            Number(price).toLocaleString("en-US", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 4
+            }),
+          timeFormatter: (time: number) => {
+            const date = new Date(time * 1000);
+            const hh = String(date.getUTCHours()).padStart(2, "0");
+            const mm = String(date.getUTCMinutes()).padStart(2, "0");
+            const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+            const day = String(date.getUTCDate()).padStart(2, "0");
+            return `${date.getUTCFullYear()}-${month}-${day} ${hh}:${mm}`;
+          }
         },
         grid: {
-          vertLines: { color: "rgba(78, 99, 138, 0.16)" },
-          horzLines: { color: "rgba(78, 99, 138, 0.16)" }
+          vertLines: { visible: false },
+          horzLines: { visible: false }
         },
         rightPriceScale: {
           borderVisible: true,
-          borderColor: "#1a2539"
+          borderColor: "#182131"
         },
         leftPriceScale: { visible: false },
         timeScale: {
           borderVisible: true,
-          borderColor: "#1a2539",
+          borderColor: "#182131",
           timeVisible: true,
           secondsVisible: false,
-          rightOffset: 4
+          rightOffset: 3,
+          shiftVisibleRangeOnNewBar: false,
+          tickMarkFormatter: (time: number) => {
+            const date = new Date(time * 1000);
+            const hh = String(date.getUTCHours()).padStart(2, "0");
+            const mm = String(date.getUTCMinutes()).padStart(2, "0");
+            const day = String(date.getUTCDate()).padStart(2, "0");
+            const months = [
+              "Jan",
+              "Feb",
+              "Mar",
+              "Apr",
+              "May",
+              "Jun",
+              "Jul",
+              "Aug",
+              "Sep",
+              "Oct",
+              "Nov",
+              "Dec"
+            ];
+            const month = months[date.getUTCMonth()];
+            if (hh === "00" && mm === "00") {
+              return `${day} ${month}`;
+            }
+            return `${hh}:${mm}`;
+          }
         },
         crosshair: {
           mode: 0,
           vertLine: {
-            color: "rgba(213, 223, 243, 0.28)",
+            color: "rgba(198, 208, 228, 0.28)",
             width: 1,
             style: 3,
-            labelBackgroundColor: "#111a29"
+            labelBackgroundColor: "#141c2a"
           },
           horzLine: {
-            color: "rgba(213, 223, 243, 0.28)",
+            color: "rgba(198, 208, 228, 0.28)",
             width: 1,
             style: 3,
-            labelBackgroundColor: "#111a29"
+            labelBackgroundColor: "#141c2a"
           }
+        },
+        handleScroll: {
+          mouseWheel: true,
+          pressedMouseMove: true,
+          horzTouchDrag: true,
+          vertTouchDrag: false
+        },
+        handleScale: {
+          axisPressedMouseMove: true,
+          mouseWheel: true,
+          pinch: true
         }
       });
 
@@ -295,12 +560,16 @@ export default function AssistantChartAnimationModal(props: AssistantChartAnimat
         wickDownColor: "#f0455a",
         borderUpColor: "#1bae8a",
         borderDownColor: "#f0455a",
-        priceLineVisible: false,
+        priceLineVisible: true,
+        priceLineStyle: 3,
+        priceLineColor: "rgba(27, 174, 138, 0.72)",
+        priceLineWidth: 1,
         lastValueVisible: false
       });
 
       chartRef.current = chart;
       candleSeriesRef.current = candleSeries;
+      setChartReadyVersion((value) => value + 1);
 
       const resizeObserver = new ResizeObserver((entries) => {
         const entry = entries[0];
@@ -370,7 +639,8 @@ export default function AssistantChartAnimationModal(props: AssistantChartAnimat
       setIsPlaying(false);
       setProgress(0);
       setActiveStepIndex(-1);
-      setBursts([]);
+      setClickPulses([]);
+      setCursor((current) => ({ ...current, visible: false, clicking: false }));
       return;
     }
 
@@ -382,7 +652,7 @@ export default function AssistantChartAnimationModal(props: AssistantChartAnimat
     return () => {
       clearTimers();
     };
-  }, [animation, clearTimers, open, replay]);
+  }, [animation, chartReadyVersion, clearTimers, open, replay]);
 
   useEffect(() => {
     if (!open) {
@@ -452,17 +722,28 @@ export default function AssistantChartAnimationModal(props: AssistantChartAnimat
             </div>
           </div>
 
-          {bursts.map((burst) => (
+          {clickPulses.map((pulse) => (
             <span
-              key={burst.id}
-              className="ai-animation-burst"
+              key={pulse.id}
+              className="ai-animation-click"
               style={{
-                left: `${burst.x}%`,
-                top: `${burst.y}%`
+                left: `${pulse.x}%`,
+                top: `${pulse.y}%`
               }}
               aria-hidden
             />
           ))}
+
+          {cursor.visible ? (
+            <span
+              className={`ai-animation-cursor${cursor.clicking ? " clicking" : ""}`}
+              style={{
+                left: `${cursor.x}%`,
+                top: `${cursor.y}%`
+              }}
+              aria-hidden
+            />
+          ) : null}
         </div>
 
         <div className="ai-animation-timeline">
@@ -479,8 +760,27 @@ export default function AssistantChartAnimationModal(props: AssistantChartAnimat
                 clearTimers();
                 clearOverlays();
                 setActiveStepIndex(index);
-                runStepActions(step.actions);
-                emitBurst(index);
+                const srPoints = resolveSupportResistancePoints(step.actions);
+                if (srPoints.length === 2) {
+                  const supportPoint = srPoints[0]!;
+                  const resistancePoint = srPoints[1]!;
+                  moveCursorToPoint(supportPoint);
+                  emitClickPulse(supportPoint);
+                  const secondTapTimerId = window.setTimeout(() => {
+                    moveCursorToPoint(resistancePoint);
+                    emitClickPulse(resistancePoint);
+                  }, 150);
+                  playbackTimeoutsRef.current.push(secondTapTimerId);
+                  const drawTimerId = window.setTimeout(() => {
+                    runStepActions(step.actions);
+                  }, 230);
+                  playbackTimeoutsRef.current.push(drawTimerId);
+                } else {
+                  const stepPoint = resolveStepPoint(step.actions);
+                  moveCursorToPoint(stepPoint);
+                  emitClickPulse(stepPoint);
+                  runStepActions(step.actions);
+                }
                 setIsPlaying(false);
               }}
             >

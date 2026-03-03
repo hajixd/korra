@@ -11,13 +11,11 @@ import {
   buildFallbackChartAnimation,
   chartAnimationsPromptSpec,
   chartActionsPromptSpec,
-  detectDeterministicIntent,
   GRAPH_TEMPLATE_ID_SET,
   listGraphTemplatesForPrompt,
   normalizeChartAnimationsFromCoding,
   normalizeChartActions,
-  resolveGraphTemplate,
-  summarizeMonthlyAggregates
+  resolveGraphTemplate
 } from "../../../../lib/assistant-tools";
 
 type ChatTurn = {
@@ -190,6 +188,22 @@ type RequestModePlan = {
   wantsVisualization: boolean;
   wantsDraw: boolean;
   wantsAnimation: boolean;
+  needsClickhouseHint: boolean;
+  clickhouseCountHint: number | null;
+  needsBacktestHint: boolean;
+  strictToRequest: boolean;
+};
+
+type IntentExecutionPlan = {
+  graphNeeded: boolean;
+  graphType: string;
+  drawNeeded: boolean;
+  animationNeeded: boolean;
+  naturalOnly: boolean;
+  needsClickhouse: boolean;
+  clickhouseCount: number | null;
+  needsBacktest: boolean;
+  strictToRequest: boolean;
 };
 
 const MAX_CHAT_TURNS = 14;
@@ -237,6 +251,41 @@ const PLANNING_PROMPT = [
   "If no query needed, set clickhouseQuery to null."
 ].join("\n");
 
+const MODE_CLASSIFIER_PROMPT = [
+  "Return only JSON with this shape:",
+  '{"mode":"natural|graph|draw|animation","confidence":number,"requires":{"text":boolean,"panelGraph":boolean,"chartDraw":boolean,"animation":boolean},"toolHints":{"needsClickhouse":boolean,"clickhouseCount":number,"needsBacktest":boolean},"quality":{"strictToRequest":boolean},"reason":string}',
+  "Classify by user intent semantics, not keyword matching.",
+  "Mode definitions:",
+  "- natural: text answer only (no chart drawing/animation required).",
+  "- graph: chart(s) inside assistant panel.",
+  "- draw: annotate the main trading chart with tools/levels.",
+  "- animation: replay/video-like chart action sequence.",
+  "If the user asks where support/resistance areas are on chart, pick draw.",
+  "If the user asks for replay/step-by-step visual sequence, pick animation.",
+  "If the user asks to visualize metric trend in panel chart, pick graph."
+].join("\n");
+
+const INTENT_EXECUTION_PROMPT = [
+  "Return only JSON with this shape:",
+  '{"graphNeeded":boolean,"graphType":string,"drawNeeded":boolean,"animationNeeded":boolean,"naturalOnly":boolean,"needsClickhouse":boolean,"clickhouseCount":number,"needsBacktest":boolean,"strictToRequest":boolean,"reason":string}',
+  "Pipeline objective: optimize fulfillment quality and efficiency.",
+  "Step 1: decide if a graph is needed.",
+  "Step 2: if graphNeeded=true, infer the graph type the user most likely wants.",
+  "Step 3: decide if chart drawings are needed.",
+  "Step 4: decide if animation is needed.",
+  "Step 5: decide minimal required data/tools.",
+  "Choose only what is necessary for the user's exact request."
+].join("\n");
+
+const GRAPH_TOOLBOX_RESOLUTION_PROMPT = [
+  "Return only JSON with this shape:",
+  '{"resolvedTemplate":string,"needsNewTooling":boolean,"reason":string}',
+  "Use the requested graph intent and the available toolbox templates.",
+  "If requested graph exists, return that template id.",
+  "If it does not exist, choose the closest template id that can fulfill the request.",
+  "Set needsNewTooling=true only when no available template can reasonably fulfill intent."
+].join("\n");
+
 const REASONING_PROMPT = [
   "Return only JSON with this shape:",
   '{"cannotAnswer":boolean,"cannotAnswerReason":string,"shortAnswer":string,"bullets":[{"tone":"green|red|gold|black","text":string}],"chartHints":[{"template":"equity_curve|pnl_distribution|session_performance|trade_outcomes|price_action|action_timeline|auto","title":string,"reason":string,"source":"history|backtest|candles|clickhouse|actions","priority":number}]}',
@@ -261,7 +310,12 @@ const buildCodingPrompt = (): string =>
     chartActionsPromptSpec(),
     "Use chart animations only when user asks for animation/video/replay/demo.",
     chartAnimationsPromptSpec(),
-    "Only choose templates/actions relevant to the request."
+    "Only choose templates/actions relevant to the request.",
+    "Respect requiredArtifacts from input JSON.",
+    "If requiredArtifacts.drawings=true, return at least one drawable chart action.",
+    "If requiredArtifacts.graphs=true, return at least one chart plan.",
+    "If requiredArtifacts.animation=true, return at least one chart animation.",
+    "If requestedGraphType is missing from toolbox, synthesize closest equivalent using available templates."
   ].join("\n");
 
 const clamp = (value: number, min: number, max: number): number => {
@@ -283,19 +337,10 @@ const toText = (value: unknown, fallback = ""): string => {
 };
 
 const sanitizeAssistantText = (value: string): string => {
-  const normalized = value
+  return value
     .replace(/run\s*contains\s*:\s*false/gi, "")
     .replace(/\s{2,}/g, " ")
     .trim();
-
-  if (
-    /cannot draw support\/resistance/i.test(normalized) ||
-    /clickhouse data must be fetched first/i.test(normalized)
-  ) {
-    return "I cannot complete that chart because required data could not be loaded.";
-  }
-
-  return normalized;
 };
 
 const safeJsonParse = <T>(value: string, fallback: T): T => {
@@ -984,9 +1029,117 @@ const isChartControlRequest = (prompt: string): boolean => {
   return adjustIntent || dynamicIntent;
 };
 
+const buildRequestModePlan = (mode: RequestMode): RequestModePlan => {
+  return {
+    mode,
+    wantsNaturalOnly: mode === "natural",
+    wantsVisualization: mode === "graph" || mode === "animation",
+    wantsDraw: mode === "draw",
+    wantsAnimation: mode === "animation",
+    needsClickhouseHint: false,
+    clickhouseCountHint: null,
+    needsBacktestHint: false,
+    strictToRequest: true
+  };
+};
+
+const buildFallbackExecutionPlan = (modePlan: RequestModePlan): IntentExecutionPlan => {
+  return {
+    graphNeeded: modePlan.wantsVisualization,
+    graphType: "",
+    drawNeeded: modePlan.wantsDraw,
+    animationNeeded: modePlan.wantsAnimation,
+    naturalOnly: modePlan.wantsNaturalOnly,
+    needsClickhouse: modePlan.needsClickhouseHint,
+    clickhouseCount: modePlan.clickhouseCountHint,
+    needsBacktest: modePlan.needsBacktestHint,
+    strictToRequest: modePlan.strictToRequest
+  };
+};
+
+const normalizeGraphTypeCandidate = (value: string): string => {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+};
+
+const resolveToolboxGraphTemplate = (value: string): string | null => {
+  const normalized = normalizeGraphTypeCandidate(value);
+  if (!normalized) {
+    return null;
+  }
+
+  if (GRAPH_TEMPLATE_ID_SET.has(normalized)) {
+    return normalized;
+  }
+
+  const compact = normalized.replace(/_/g, "");
+  for (const templateId of GRAPH_TEMPLATE_ID_SET) {
+    if (templateId.replace(/_/g, "") === compact) {
+      return templateId;
+    }
+  }
+
+  return null;
+};
+
+const normalizeRequestMode = (value: unknown): RequestMode | null => {
+  const text = toText(value, "").trim().toLowerCase();
+  if (!text) {
+    return null;
+  }
+
+  if (text === "natural" || text === "text" || text === "answer") {
+    return "natural";
+  }
+  if (text === "graph" || text === "chart" || text === "visual") {
+    return "graph";
+  }
+  if (text === "draw" || text === "drawing" || text === "annotate" || text === "annotation") {
+    return "draw";
+  }
+  if (text === "animation" || text === "animate" || text === "replay" || text === "video") {
+    return "animation";
+  }
+
+  return null;
+};
+
+const modeFromRequires = (value: unknown): RequestMode | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const raw = value as Record<string, unknown>;
+  const wantsAnimation = Boolean(raw.animation);
+  const wantsDraw = Boolean(raw.chartDraw);
+  const wantsGraph = Boolean(raw.panelGraph);
+  const wantsText = Boolean(raw.text);
+
+  if (wantsAnimation) {
+    return "animation";
+  }
+  if (wantsDraw) {
+    return "draw";
+  }
+  if (wantsGraph) {
+    return "graph";
+  }
+  if (wantsText) {
+    return "natural";
+  }
+  return null;
+};
+
 const classifyRequestMode = (prompt: string): RequestModePlan => {
   const text = toText(prompt, "");
-  const drawIntent = DRAW_WORD_RE.test(text) || isChartControlRequest(text);
+  const drawIntent =
+    isTechnicalDrawRequest(text) ||
+    DRAW_WORD_RE.test(text) ||
+    /\b(mark|annotate|plot)\b/i.test(text) ||
+    isChartControlRequest(text);
   const animationIntent = ANIMATION_REQUEST_RE.test(text);
   const graphIntent = VISUAL_REQUEST_RE.test(text);
 
@@ -999,13 +1152,7 @@ const classifyRequestMode = (prompt: string): RequestModePlan => {
     mode = "graph";
   }
 
-  return {
-    mode,
-    wantsNaturalOnly: mode === "natural",
-    wantsVisualization: mode === "graph" || mode === "animation",
-    wantsDraw: mode === "draw",
-    wantsAnimation: mode === "animation"
-  };
+  return buildRequestModePlan(mode);
 };
 
 const inferClickhousePair = (rawValue: string): string | null => {
@@ -1706,6 +1853,15 @@ const buildDrawActionsFromPrompt = (params: {
     });
   }
 
+  if (actions.length === 0) {
+    actions.push({
+      type: "draw_support_resistance",
+      priceStart: support,
+      priceEnd: resistance,
+      label: "Auto S/R"
+    });
+  }
+
   return actions.slice(0, 12);
 };
 
@@ -1905,65 +2061,206 @@ const fetchClickhouseCandles = async (
   };
 };
 
-const fetchClickhouseMonthlyAnalytics = async (params: {
-  request: Request;
-  pair: string;
-  timeframe: string;
-  metric: "monthly_avg_price" | "monthly_volume";
-}): Promise<
-  Array<{
-    month: string;
-    metric_value: number;
-    avg_range: number;
-    total_volume: number;
-    count: number;
-  }>
-> => {
-  const { request, pair, timeframe, metric } = params;
-  const url = new URL("/api/clickhouse/analytics", request.url);
-  url.searchParams.set("pair", normalizeClickhousePair(pair));
-  url.searchParams.set("timeframe", mapTimeframeToClickhouse(timeframe));
-  url.searchParams.set("metric", metric);
+const executeRequestModeStage = async (params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  turns: ChatTurn[];
+  context: AssistantContext;
+  fallback: RequestModePlan;
+}): Promise<RequestModePlan> => {
+  const { apiKey, baseUrl, model, turns, context, fallback } = params;
 
-  const response = await fetch(url.toString(), {
-    method: "GET",
-    cache: "no-store"
-  });
+  try {
+    const completion = await nebiusChatCompletion({
+      apiKey,
+      baseUrl,
+      model,
+      messages: [
+        {
+          role: "system",
+          content: `${AI_SYSTEM_PROMPT}\n${MODE_CLASSIFIER_PROMPT}`
+        },
+        {
+          role: "user",
+          content: `CLASSIFY_REQUEST_MODE_JSON:\n${JSON.stringify({
+            latestPrompt: getLastUserPrompt(turns),
+            recentConversation: turns.slice(-6),
+            context: {
+              symbol: context.symbol,
+              timeframe: context.timeframe,
+              liveCandleCount: context.liveCandles.length
+            }
+          })}`
+        }
+      ],
+      temperature: 0,
+      maxTokens: 220,
+      responseFormat: {
+        type: "json_object"
+      }
+    });
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`ClickHouse analytics failed ${response.status}: ${body.slice(0, 320)}`);
+    const parsed = safeJsonParse<Record<string, unknown>>(
+      extractNebiusMessageText(completion.message.content),
+      {}
+    );
+    const mode =
+      normalizeRequestMode(parsed.mode) ??
+      modeFromRequires(parsed.requires);
+    if (!mode) {
+      return fallback;
+    }
+
+    const confidence = clamp(toNumber(parsed.confidence, 0.8), 0, 1);
+    if (confidence < 0.3) {
+      return fallback;
+    }
+
+    const toolHintsRaw =
+      parsed.toolHints && typeof parsed.toolHints === "object"
+        ? (parsed.toolHints as Record<string, unknown>)
+        : {};
+    const qualityRaw =
+      parsed.quality && typeof parsed.quality === "object"
+        ? (parsed.quality as Record<string, unknown>)
+        : {};
+
+    const plan = buildRequestModePlan(mode);
+    const hintedCount = Math.round(toNumber(toolHintsRaw.clickhouseCount, 0));
+    return {
+      ...plan,
+      needsClickhouseHint: Boolean(toolHintsRaw.needsClickhouse),
+      clickhouseCountHint:
+        hintedCount > 0 ? clamp(hintedCount, 40, MAX_CLICKHOUSE_COUNT) : null,
+      needsBacktestHint: Boolean(toolHintsRaw.needsBacktest),
+      strictToRequest: Boolean(
+        qualityRaw.strictToRequest === undefined ? true : qualityRaw.strictToRequest
+      )
+    };
+  } catch {
+    return fallback;
+  }
+};
+
+const executeIntentExecutionStage = async (params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  turns: ChatTurn[];
+  context: AssistantContext;
+  modePlan: RequestModePlan;
+}): Promise<IntentExecutionPlan> => {
+  const { apiKey, baseUrl, model, turns, context, modePlan } = params;
+  const fallback = buildFallbackExecutionPlan(modePlan);
+
+  try {
+    const completion = await nebiusChatCompletion({
+      apiKey,
+      baseUrl,
+      model,
+      messages: [
+        {
+          role: "system",
+          content: `${AI_SYSTEM_PROMPT}\n${INTENT_EXECUTION_PROMPT}`
+        },
+        {
+          role: "user",
+          content: `BUILD_EXECUTION_PLAN_JSON:\n${JSON.stringify({
+            latestPrompt: getLastUserPrompt(turns),
+            recentConversation: turns.slice(-6),
+            modePlan,
+            context: {
+              symbol: context.symbol,
+              timeframe: context.timeframe,
+              liveCandleCount: context.liveCandles.length,
+              historyRows: context.historyRows.length,
+              actionRows: context.actionRows.length,
+              backtestHasRun: context.backtest.hasRun,
+              backtestRows: context.backtest.trades.length
+            }
+          })}`
+        }
+      ],
+      temperature: 0,
+      maxTokens: 360,
+      responseFormat: {
+        type: "json_object"
+      }
+    });
+
+    const parsed = safeJsonParse<Record<string, unknown>>(
+      extractNebiusMessageText(completion.message.content),
+      {}
+    );
+
+    const clickhouseCountRaw = Math.round(toNumber(parsed.clickhouseCount, 0));
+    return {
+      graphNeeded: Boolean(parsed.graphNeeded),
+      graphType: toText(parsed.graphType, ""),
+      drawNeeded: Boolean(parsed.drawNeeded),
+      animationNeeded: Boolean(parsed.animationNeeded),
+      naturalOnly: Boolean(parsed.naturalOnly),
+      needsClickhouse: Boolean(parsed.needsClickhouse),
+      clickhouseCount: clickhouseCountRaw > 0 ? clamp(clickhouseCountRaw, 40, MAX_CLICKHOUSE_COUNT) : null,
+      needsBacktest: Boolean(parsed.needsBacktest),
+      strictToRequest: Boolean(parsed.strictToRequest === undefined ? true : parsed.strictToRequest)
+    };
+  } catch {
+    return fallback;
+  }
+};
+
+const executeGraphToolboxResolutionStage = async (params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  requestedGraphType: string;
+}): Promise<{ resolvedTemplate: string | null; needsNewTooling: boolean }> => {
+  const { apiKey, baseUrl, model, requestedGraphType } = params;
+
+  const direct = resolveToolboxGraphTemplate(requestedGraphType);
+  if (direct) {
+    return { resolvedTemplate: direct, needsNewTooling: false };
   }
 
-  const payload = (await response.json()) as Record<string, unknown>;
-  const rows = Array.isArray(payload.rows) ? payload.rows : [];
-
-  return rows
-    .map((row) => {
-      if (!row || typeof row !== "object") {
-        return null;
+  try {
+    const completion = await nebiusChatCompletion({
+      apiKey,
+      baseUrl,
+      model,
+      messages: [
+        {
+          role: "system",
+          content: GRAPH_TOOLBOX_RESOLUTION_PROMPT
+        },
+        {
+          role: "user",
+          content: `RESOLVE_GRAPH_TOOLBOX_JSON:\n${JSON.stringify({
+            requestedGraphType,
+            availableTemplates: listGraphTemplatesForPrompt()
+          })}`
+        }
+      ],
+      temperature: 0,
+      maxTokens: 260,
+      responseFormat: {
+        type: "json_object"
       }
+    });
 
-      const raw = row as Record<string, unknown>;
-      return {
-        month: toText(raw.month, ""),
-        metric_value: toNumber(raw.metric_value),
-        avg_range: toNumber(raw.avg_range),
-        total_volume: toNumber(raw.total_volume),
-        count: toNumber(raw.count)
-      };
-    })
-    .filter(
-      (
-        row
-      ): row is {
-        month: string;
-        metric_value: number;
-        avg_range: number;
-        total_volume: number;
-        count: number;
-      } => row !== null && row.month.length > 0
+    const parsed = safeJsonParse<Record<string, unknown>>(
+      extractNebiusMessageText(completion.message.content),
+      {}
     );
+    const resolvedTemplate = resolveToolboxGraphTemplate(toText(parsed.resolvedTemplate, ""));
+    return {
+      resolvedTemplate,
+      needsNewTooling: Boolean(parsed.needsNewTooling)
+    };
+  } catch {
+    return { resolvedTemplate: null, needsNewTooling: false };
+  }
 };
 
 const executePlanningStage = async (params: {
@@ -2344,6 +2641,9 @@ const executeCodingStage = async (params: {
   reasoning: ReasoningOutput;
   context: AssistantContext;
   toolState: ToolState;
+  requestMode: RequestModePlan;
+  requestedGraphType: string;
+  forcedGraphTemplate: string | null;
   wantsAnimation: boolean;
 }): Promise<{
   chartPlans: ChartPlan[];
@@ -2361,6 +2661,14 @@ const executeCodingStage = async (params: {
       clickhouse: toolState.clickhouseCandles.length,
       actions: context.actionRows.length
     },
+    requiredArtifacts: {
+      text: true,
+      graphs: params.requestMode.wantsVisualization,
+      drawings: params.requestMode.wantsDraw,
+      animation: params.requestMode.wantsAnimation
+    },
+    requestedGraphType: params.requestedGraphType,
+    forcedGraphTemplate: params.forcedGraphTemplate,
     wantsAnimation: params.wantsAnimation
   };
 
@@ -2391,6 +2699,19 @@ const executeCodingStage = async (params: {
   );
 
   const plans = normalizeChartPlans(parsed);
+  if (
+    params.requestMode.wantsVisualization &&
+    params.forcedGraphTemplate &&
+    GRAPH_TEMPLATE_ID_SET.has(params.forcedGraphTemplate) &&
+    !plans.some((plan) => plan.template === params.forcedGraphTemplate)
+  ) {
+    plans.unshift({
+      template: params.forcedGraphTemplate,
+      title: resolveGraphTemplate(params.forcedGraphTemplate).title,
+      source: "candles",
+      points: 240
+    });
+  }
   const chartActions = normalizeChartActions((parsed as ChartCodingOutput).chartActions);
   const chartAnimations = normalizeChartAnimationsFromCoding(parsed);
   if (plans.length > 0) {
@@ -2851,136 +3172,6 @@ const buildIndicatorSnapshot = (candles: CandleRow[]): Record<string, unknown> =
   };
 };
 
-const buildDeterministicMonthlyResponse = async (params: {
-  request: Request;
-  context: AssistantContext;
-  intent: ReturnType<typeof detectDeterministicIntent>;
-  includeVisualization: boolean;
-}) => {
-  const { request, context, intent, includeVisualization } = params;
-  const metric = intent.type === "monthly_volume" ? "monthly_volume" : "monthly_avg_price";
-  const pair = symbolToClickhousePair(context.symbol);
-
-  const rows = await fetchClickhouseMonthlyAnalytics({
-    request,
-    pair,
-    timeframe: context.timeframe,
-    metric
-  });
-
-  if (rows.length === 0) {
-    return {
-      status: "ok" as const,
-      response: {
-        cannotAnswer: true,
-        cannotAnswerReason: "No ClickHouse rows were returned for the requested monthly calculation.",
-        shortAnswer: "",
-        bullets: [
-          {
-            tone: "gold" as const,
-            text: "No ClickHouse rows were returned for the requested monthly calculation."
-          }
-        ],
-        charts: [] as AssistantChart[],
-        chartActions: [] as Array<Record<string, unknown>>,
-        chartAnimations: [] as Array<Record<string, unknown>>,
-        toolsUsed: ["clickhouse analytics"]
-      },
-      modelTrace: null
-    };
-  }
-
-  const normalized = rows.map((row) => ({
-    month: row.month,
-    avg_close: row.metric_value,
-    avg_range: row.avg_range,
-    total_volume: row.total_volume,
-    count: row.count
-  }));
-  const summary = summarizeMonthlyAggregates(normalized);
-  const topMonth = summary.highestMonth?.month ?? "N/A";
-  const lowMonth = summary.lowestMonth?.month ?? "N/A";
-
-  const chart: AssistantChart | null = includeVisualization
-      ? {
-        id: `monthly-${Date.now()}`,
-        template: metric === "monthly_volume" ? "monthly_volume" : "monthly_avg_close",
-        title: metric === "monthly_volume" ? "Monthly Volume" : "Monthly Average Price",
-        subtitle: `${rows.length} months`,
-        mode: "static",
-        data: rows.map((row) => ({
-          month: row.month,
-          value: Number(row.metric_value.toFixed(4)),
-          avgRange: Number(row.avg_range.toFixed(4)),
-          volume: Number(row.total_volume.toFixed(2))
-        })),
-        config: {
-          xKey: "month",
-          yKey: "value"
-        }
-      }
-    : null;
-
-  const action: Record<string, unknown> | null = includeVisualization
-    ? {
-        type: "move_to_date",
-        time:
-          rows.length > 0
-            ? new Date(`${rows[rows.length - 1]!.month}-01T00:00:00.000Z`).getTime()
-            : undefined,
-        label: "Monthly aggregate focus"
-      }
-    : null;
-
-  return {
-    status: "ok" as const,
-    response: {
-      cannotAnswer: false,
-      cannotAnswerReason: "",
-      shortAnswer:
-        metric === "monthly_volume"
-          ? `Monthly volume computed from ClickHouse for ${rows.length} months.`
-          : `Monthly average price computed from ClickHouse for ${rows.length} months.`,
-      bullets: [
-        {
-          tone: "black" as const,
-          text:
-            metric === "monthly_volume"
-              ? `**Months analyzed:** ${rows.length} • **Total volume:** ${summary.totalVolume.toLocaleString("en-US")}`
-              : `**Global monthly mean price:** ${summary.globalAvgClose.toFixed(4)}`
-        },
-        {
-          tone: "green" as const,
-          text:
-            metric === "monthly_volume"
-              ? `**Highest activity month:** ${topMonth}`
-              : `**Highest avg month:** ${topMonth} (${summary.highestMonth?.avgClose?.toFixed(4) ?? "N/A"})`
-        },
-        {
-          tone: "red" as const,
-          text:
-            metric === "monthly_volume"
-              ? `**Lowest activity month:** ${lowMonth}`
-              : `**Lowest avg month:** ${lowMonth} (${summary.lowestMonth?.avgClose?.toFixed(4) ?? "N/A"})`
-        }
-      ],
-      charts: chart ? [chart] : [],
-      chartActions: action ? [action] : [],
-      chartAnimations: [],
-      toolsUsed: includeVisualization
-        ? ["clickhouse analytics", "chart actions"]
-        : ["clickhouse analytics"]
-    },
-    modelTrace: null,
-    dataTrace: {
-      usedClickhouse: true,
-      mode: "monthly_aggregate",
-      metric,
-      rows: rows.length
-    }
-  };
-};
-
 export async function POST(request: Request) {
   let body: ChatRequestBody;
 
@@ -3014,34 +3205,8 @@ export async function POST(request: Request) {
 
   const baseUrl = process.env.NEBIUS_BASE_URL || "https://api.tokenfactory.nebius.com/v1";
   const lastUserPrompt = getLastUserPrompt(turns);
-  const requestMode = classifyRequestMode(lastUserPrompt);
-  const explicitDrawRequest = requestMode.wantsDraw;
-  const wantsVisualization = requestMode.wantsVisualization;
-  const wantsAnimation = requestMode.wantsAnimation;
+  const heuristicRequestMode = classifyRequestMode(lastUserPrompt);
   const indicatorComputationRequested = isIndicatorComputationRequest(lastUserPrompt);
-  const deterministicIntent = detectDeterministicIntent(lastUserPrompt);
-
-  if (deterministicIntent.type !== "none") {
-    try {
-      return NextResponse.json(
-        await buildDeterministicMonthlyResponse({
-          request,
-          context,
-          intent: deterministicIntent,
-          includeVisualization: wantsVisualization
-        })
-      );
-    } catch (error) {
-      return NextResponse.json(
-        buildFallbackFailureResponse(
-          error instanceof Error
-            ? `I cannot answer due to deterministic analytics error: ${error.message}`
-            : "I cannot answer due to deterministic analytics error."
-        ),
-        { status: 200 }
-      );
-    }
-  }
 
   try {
     const toolsUsed = new Set<string>();
@@ -3054,12 +3219,76 @@ export async function POST(request: Request) {
       baseUrl
     });
     const modelSelection = pickNebiusModels(modelsCatalog);
+    const requestMode = await executeRequestModeStage({
+      apiKey,
+      baseUrl,
+      model: modelSelection.instruction,
+      turns,
+      context,
+      fallback: heuristicRequestMode
+    });
+    const executionPlan = await executeIntentExecutionStage({
+      apiKey,
+      baseUrl,
+      model: modelSelection.instruction,
+      turns,
+      context,
+      modePlan: requestMode
+    });
+    const requestedGraphType = toText(executionPlan.graphType, "");
+    let forcedGraphTemplate = resolveToolboxGraphTemplate(requestedGraphType);
+    let graphToolingNeedsNewTool = false;
+    if (executionPlan.graphNeeded && requestedGraphType && !forcedGraphTemplate) {
+      toolsUsed.add("coding_graph_tooling");
+      const graphResolution = await executeGraphToolboxResolutionStage({
+        apiKey,
+        baseUrl,
+        model: modelSelection.coding,
+        requestedGraphType
+      });
+      forcedGraphTemplate = graphResolution.resolvedTemplate;
+      graphToolingNeedsNewTool = graphResolution.needsNewTooling;
+    }
+    if (forcedGraphTemplate) {
+      toolsUsed.add("graph_template_resolution");
+    }
+
+    const explicitDrawRequest = requestMode.wantsDraw || executionPlan.drawNeeded;
+    const wantsVisualization = requestMode.wantsVisualization || executionPlan.graphNeeded;
+    const wantsAnimation = requestMode.wantsAnimation || executionPlan.animationNeeded;
+    const wantsNaturalOnly = requestMode.wantsNaturalOnly || executionPlan.naturalOnly;
+    const strictToRequest = requestMode.strictToRequest && executionPlan.strictToRequest;
+    const mergedBacktestHint = requestMode.needsBacktestHint || executionPlan.needsBacktest;
+    const mergedClickhouseHint = requestMode.needsClickhouseHint || executionPlan.needsClickhouse;
+    const mergedClickhouseCountHint = Math.max(
+      toNumber(requestMode.clickhouseCountHint, 0),
+      toNumber(executionPlan.clickhouseCount, 0)
+    );
 
     const toolState: ToolState = {
       clickhouseCandles: [],
       clickhouseMeta: null,
       requestedBacktestData: false
     };
+
+    if (
+      mergedBacktestHint &&
+      context.backtest.hasRun &&
+      !context.backtest.dataIncluded
+    ) {
+      toolsUsed.add("backtest_data_request");
+      return NextResponse.json({
+        status: "needs_backtest_data",
+        reason: "Detailed backtest rows are needed to fulfill this request accurately.",
+        request: {
+          type: "backtest_trades"
+        },
+        response: {
+          toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
+        },
+        modelTrace: null
+      });
+    }
 
     const planningResult = await executePlanningStage({
       apiKey,
@@ -3091,16 +3320,24 @@ export async function POST(request: Request) {
     const shouldAutofetchClickhouse =
       toolState.clickhouseCandles.length === 0 &&
       (Boolean(planningResult.planning.needsClickhouseData) ||
+        mergedClickhouseHint ||
         explicitDrawRequest ||
         wantsVisualization ||
         (indicatorComputationRequested && context.liveCandles.length < 80));
 
     if (shouldAutofetchClickhouse) {
-      const autoQuery = buildAutoClickhouseQuery({
+      const autoQuery: NonNullable<PlanningOutput["clickhouseQuery"]> =
+        buildAutoClickhouseQuery({
         context,
         prompt: lastUserPrompt,
         planningQuery: planningResult.planning.clickhouseQuery
-      });
+        }) ?? {};
+      if (mergedClickhouseCountHint > 0) {
+        autoQuery.count = Math.max(
+          toNumber(autoQuery.count, 0),
+          mergedClickhouseCountHint
+        );
+      }
 
       try {
         const result = await fetchClickhouseCandles(request, autoQuery);
@@ -3135,14 +3372,22 @@ export async function POST(request: Request) {
       (wantsVisualization ||
         explicitDrawRequest ||
         indicatorComputationRequested ||
+        mergedClickhouseHint ||
         context.liveCandles.length < 80);
 
     if (shouldRetryReasoningWithMoreData) {
-      const recoveryQuery = buildAutoClickhouseQuery({
+      const recoveryQuery: NonNullable<PlanningOutput["clickhouseQuery"]> =
+        buildAutoClickhouseQuery({
         context,
         prompt: lastUserPrompt,
         planningQuery: planningResult.planning.clickhouseQuery
-      });
+        }) ?? {};
+      if (mergedClickhouseCountHint > 0) {
+        recoveryQuery.count = Math.max(
+          toNumber(recoveryQuery.count, 0),
+          mergedClickhouseCountHint
+        );
+      }
 
       try {
         const result = await fetchClickhouseCandles(request, {
@@ -3182,6 +3427,9 @@ export async function POST(request: Request) {
       reasoning,
       context,
       toolState,
+      requestMode,
+      requestedGraphType,
+      forcedGraphTemplate,
       wantsAnimation
     });
 
@@ -3189,9 +3437,33 @@ export async function POST(request: Request) {
       toolsUsed.add("clickhouse_candles");
     }
 
-    const charts = wantsVisualization
+    let charts = wantsVisualization
       ? buildChartsFromPlans(codingResult.chartPlans, context, toolState)
       : [];
+    if (wantsVisualization && charts.length === 0) {
+      const sourceRows = getRecentWindowCandles({
+        context,
+        clickhouseCandles: toolState.clickhouseCandles
+      });
+      const fallbackTemplateId =
+        forcedGraphTemplate ||
+        resolveToolboxGraphTemplate(requestedGraphType) ||
+        "price_action";
+      const fallbackTitle =
+        requestedGraphType ||
+        resolveGraphTemplate(fallbackTemplateId).title;
+      const synthesized = buildPriceValueSeriesChart(
+        sourceRows,
+        fallbackTitle,
+        260,
+        fallbackTemplateId
+      );
+      if (synthesized && synthesized.data.length > 0) {
+        synthesized.mode = resolveGraphTemplate(fallbackTemplateId).mode;
+        charts = [synthesized];
+        toolsUsed.add("coding_graph_tooling");
+      }
+    }
     let chartActions = explicitDrawRequest || wantsAnimation ? codingResult.chartActions : [];
     if (explicitDrawRequest) {
       const drawCandles = getDrawWindowCandles({
@@ -3256,22 +3528,27 @@ export async function POST(request: Request) {
     const responseCannotAnswerReason = responseCannotAnswer ? reasoning.cannotAnswerReason : "";
     const shortAnswer = explicitDrawRequest
       ? drawSummary ||
-        (chartActions.length === 0
-          ? "No drawable items matched your request."
-          : isDrawOnlyRequest
+        (isDrawOnlyRequest
           ? responseCannotAnswer
             ? reasoning.cannotAnswerReason
-            : sanitizeAssistantText(reasoning.shortAnswer || "Draw request completed.")
+            : sanitizeAssistantText(reasoning.shortAnswer || reasoning.cannotAnswerReason)
           : sanitizeAssistantText(reasoning.shortAnswer))
-      : sanitizeAssistantText(reasoning.shortAnswer);
+      : sanitizeAssistantText(reasoning.shortAnswer || reasoning.cannotAnswerReason);
 
-    const finalBullets = isDrawOnlyRequest
+    const baseBullets = isDrawOnlyRequest
       ? []
       : reasoning.bullets.length > 0
         ? reasoning.bullets
         : responseCannotAnswer
           ? [{ tone: "gold" as const, text: reasoning.cannotAnswerReason }]
           : [];
+    const finalBullets =
+      strictToRequest && wantsNaturalOnly
+        ? []
+        : baseBullets;
+    const finalShortAnswer =
+      shortAnswer ||
+      (finalBullets.length > 0 ? sanitizeAssistantText(finalBullets[0]?.text ?? "") : "");
 
     // Ensure request-scope data is explicitly released after shaping response.
     toolState.clickhouseCandles = [];
@@ -3281,7 +3558,7 @@ export async function POST(request: Request) {
       response: {
         cannotAnswer: responseCannotAnswer,
         cannotAnswerReason: responseCannotAnswerReason,
-        shortAnswer,
+        shortAnswer: finalShortAnswer,
         bullets: finalBullets,
         charts,
         chartActions,
@@ -3291,6 +3568,19 @@ export async function POST(request: Request) {
       modelTrace: null,
       dataTrace: {
         requestMode: requestMode.mode,
+        executionPlan,
+        requestModeHints: {
+          needsClickhouse: mergedClickhouseHint,
+          clickhouseCount: mergedClickhouseCountHint || null,
+          needsBacktest: mergedBacktestHint,
+          strictToRequest,
+          naturalOnly: wantsNaturalOnly
+        },
+        graphPlan: {
+          requestedGraphType,
+          forcedGraphTemplate,
+          graphToolingNeedsNewTool
+        },
         usedClickhouse: usedClickhouseData,
         clickhouseMeta: toolState.clickhouseMeta,
         backtestDataIncluded: context.backtest.dataIncluded,

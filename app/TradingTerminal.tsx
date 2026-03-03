@@ -200,6 +200,16 @@ type LiveQuoteSnapshot = {
   updatedAtMs: number;
 };
 
+type Mt5AccountStatus = "Connected" | "Disconnected";
+
+type Mt5Account = {
+  id: string;
+  login: string;
+  server: string;
+  status: Mt5AccountStatus;
+  paused: boolean;
+};
+
 const EMPTY_CANDLES: Candle[] = [];
 const STATS_REFRESH_HOLD_MS = 3000;
 const STATS_REFRESH_COMPLETE_DELAY_MS = 1000;
@@ -208,6 +218,10 @@ const WORKSPACE_PANEL_MIN_WIDTH = 350;
 const WORKSPACE_PANEL_DEFAULT_WIDTH = 430;
 const WORKSPACE_PANEL_MAX_WIDTH = 980;
 const WORKSPACE_CHART_MIN_WIDTH = 360;
+
+const buildMt5AccountId = (login: string, server: string) => {
+  return `${login.trim().toLowerCase()}::${server.trim().toLowerCase()}`;
+};
 
 const TIMEFRAME_DISPLAY_LABELS: Record<Timeframe, string> = {
   "1m": "1 Minute",
@@ -5925,6 +5939,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(WORKSPACE_PANEL_DEFAULT_WIDTH);
   const [isWorkspacePanelResizing, setIsWorkspacePanelResizing] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("active");
+  const [mt5LoginInput, setMt5LoginInput] = useState("");
+  const [mt5PasswordInput, setMt5PasswordInput] = useState("");
+  const [mt5ServerInput, setMt5ServerInput] = useState("");
+  const [mt5Accounts, setMt5Accounts] = useState<Mt5Account[]>([]);
+  const [selectedMt5AccountId, setSelectedMt5AccountId] = useState<string | null>(null);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [selectedHistoryInteractionTick, setSelectedHistoryInteractionTick] = useState(0);
   const [showAllTradesOnChart, setShowAllTradesOnChart] = useState(false);
@@ -6159,6 +6178,85 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   useEffect(() => {
     setAiModelStates((current) => syncAiModelStates(current, availableAiModelNames));
   }, [availableAiModelNames]);
+
+  useEffect(() => {
+    if (mt5Accounts.length === 0) {
+      if (selectedMt5AccountId !== null) {
+        setSelectedMt5AccountId(null);
+      }
+      return;
+    }
+
+    if (selectedMt5AccountId && mt5Accounts.some((account) => account.id === selectedMt5AccountId)) {
+      return;
+    }
+
+    setSelectedMt5AccountId(mt5Accounts[0].id);
+  }, [mt5Accounts, selectedMt5AccountId]);
+
+  const selectedMt5Account = useMemo(() => {
+    if (!selectedMt5AccountId) {
+      return null;
+    }
+
+    return mt5Accounts.find((account) => account.id === selectedMt5AccountId) ?? null;
+  }, [mt5Accounts, selectedMt5AccountId]);
+
+  const handleConnectMt5Account = useCallback(() => {
+    const nextLogin = mt5LoginInput.trim() || `Demo-${Date.now().toString().slice(-6)}`;
+    const nextServer = mt5ServerInput.trim() || "Server Unspecified";
+    const nextId = buildMt5AccountId(nextLogin, nextServer);
+
+    setMt5Accounts((current) => {
+      const alreadyAdded = current.some((account) => account.id === nextId);
+
+      if (alreadyAdded) {
+        return current;
+      }
+
+      return [
+        {
+          id: nextId,
+          login: nextLogin,
+          server: nextServer,
+          status: "Disconnected",
+          paused: false
+        },
+        ...current
+      ];
+    });
+
+    setSelectedMt5AccountId(nextId);
+    setMt5LoginInput("");
+    setMt5PasswordInput("");
+  }, [mt5LoginInput, mt5ServerInput]);
+
+  const handleRemoveMt5Account = useCallback(() => {
+    if (!selectedMt5AccountId) {
+      return;
+    }
+
+    setMt5Accounts((current) => current.filter((account) => account.id !== selectedMt5AccountId));
+  }, [selectedMt5AccountId]);
+
+  const handleToggleMt5Pause = useCallback(() => {
+    if (!selectedMt5AccountId) {
+      return;
+    }
+
+    setMt5Accounts((current) =>
+      current.map((account) => {
+        if (account.id !== selectedMt5AccountId) {
+          return account;
+        }
+
+        return {
+          ...account,
+          paused: !account.paused
+        };
+      })
+    );
+  }, [selectedMt5AccountId]);
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -7411,7 +7509,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             const baselineProjectedFinal = baselineVolume * recentVolumeBias * flowMultiplier;
             const estimatedFinalVolume = Math.max(
               baselineProjectedFinal,
-              Number.isFinite(projectedObservedFinalVolume) ? projectedObservedFinalVolume * 1.01 : 0
+              Number.isFinite(projectedObservedFinalVolume)
+                ? projectedObservedFinalVolume * (0.985 + progressRatio * 0.015)
+                : 0
             );
             const progressCurve = Math.pow(progressRatio, 0.98);
             const estimatedCurrentVolume = Math.max(
@@ -7811,7 +7911,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const estimatedFinalVolume = Math.max(
       baselineVolume * recentVolumeBias,
       estimatedCurrentVolumeBase / progressSafe,
-      Number.isFinite(projectedObservedFinalVolume) ? projectedObservedFinalVolume * 1.01 : 0
+      Number.isFinite(projectedObservedFinalVolume)
+        ? projectedObservedFinalVolume * (0.985 + progressRatio * 0.015)
+        : 0
     );
     const estimatedCurrentVolume = Math.max(
       estimatedCurrentVolumeBase,
@@ -15758,6 +15860,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         </div>
                       </div>
                       <div className="copytrade-body">
+                        <div className="copytrade-hero">
+                          <strong>MT5 Account Manager</strong>
+                          <p>
+                            Accounts are stored locally for now. Connection status is intentionally
+                            fixed to Disconnected.
+                          </p>
+                        </div>
+
                         <div className="copytrade-form" aria-label="MT5 credentials form">
                           <label className="copytrade-field">
                             <span>MT5 Login</span>
@@ -15767,6 +15877,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               name="mt5-login"
                               placeholder="Account number"
                               autoComplete="username"
+                              value={mt5LoginInput}
+                              onChange={(event) => setMt5LoginInput(event.target.value)}
                             />
                           </label>
 
@@ -15778,6 +15890,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               name="mt5-password"
                               placeholder="Password"
                               autoComplete="current-password"
+                              value={mt5PasswordInput}
+                              onChange={(event) => setMt5PasswordInput(event.target.value)}
                             />
                           </label>
 
@@ -15789,14 +15903,78 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               name="mt5-server"
                               placeholder="Broker server"
                               autoComplete="off"
+                              value={mt5ServerInput}
+                              onChange={(event) => setMt5ServerInput(event.target.value)}
                             />
                           </label>
                         </div>
 
-                        <button type="button" className="panel-action-btn copytrade-submit" disabled>
-                          Connect MT5
+                        <button
+                          type="button"
+                          className="panel-action-btn copytrade-submit"
+                          onClick={handleConnectMt5Account}
+                        >
+                          Connect to MT5
                         </button>
 
+                        <div className="copytrade-actions" role="group" aria-label="MT5 account actions">
+                          <button
+                            type="button"
+                            className="panel-action-btn copytrade-action-btn"
+                            onClick={handleConnectMt5Account}
+                          >
+                            Add Account
+                          </button>
+                          <button
+                            type="button"
+                            className="panel-action-btn copytrade-action-btn"
+                            onClick={handleRemoveMt5Account}
+                            disabled={!selectedMt5Account}
+                          >
+                            Remove Account
+                          </button>
+                          <button
+                            type="button"
+                            className="panel-action-btn copytrade-action-btn"
+                            onClick={handleToggleMt5Pause}
+                            disabled={!selectedMt5Account}
+                          >
+                            {selectedMt5Account?.paused ? "Resume" : "Pause"}
+                          </button>
+                        </div>
+
+                        {mt5Accounts.length > 0 ? (
+                          <ul className="copytrade-account-list" aria-label="MT5 accounts">
+                            {mt5Accounts.map((account) => (
+                              <li key={account.id}>
+                                <button
+                                  type="button"
+                                  className={`copytrade-account-row ${
+                                    selectedMt5AccountId === account.id ? "selected" : ""
+                                  }`}
+                                  onClick={() => setSelectedMt5AccountId(account.id)}
+                                >
+                                  <span className="copytrade-account-main">
+                                    <strong>{account.login}</strong>
+                                    <small>{account.server}</small>
+                                  </span>
+                                  <span className="copytrade-account-badges">
+                                    <span className="copytrade-status-badge disconnected">
+                                      {account.status}
+                                    </span>
+                                    {account.paused ? (
+                                      <span className="copytrade-status-badge paused">Paused</span>
+                                    ) : null}
+                                  </span>
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="copytrade-note">
+                            No MT5 accounts yet. Press Connect to MT5 or Add Account to create one.
+                          </p>
+                        )}
                       </div>
                     </div>
                   ) : null}

@@ -427,11 +427,15 @@ export default function AssistantPanel(props: AssistantPanelProps) {
           return;
         }
 
+        const assistantContentCandidates = [
+          payload.response.shortAnswer,
+          payload.response.bullets[0]?.text,
+          payload.response.cannotAnswerReason
+        ];
         const assistantContent =
-          payload.response.shortAnswer ||
-          (payload.response.cannotAnswer
-            ? payload.response.cannotAnswerReason
-            : payload.response.bullets[0]?.text || "Done.");
+          assistantContentCandidates.find(
+            (value): value is string => typeof value === "string" && value.trim().length > 0
+          ) ?? "";
 
         const assistantMessage: AssistantMessage = {
           id: `assistant-${Date.now()}`,

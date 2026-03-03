@@ -4877,10 +4877,37 @@ button {
   min-height: 0;
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 0.86rem 0.78rem 1rem;
+  padding: 0.9rem 0.78rem 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.7rem;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(47, 129, 255, 0.16), transparent 44%),
+    linear-gradient(180deg, rgba(14, 22, 35, 0.95) 0%, rgba(9, 13, 22, 0.95) 100%);
+}
+
+.copytrade-hero {
+  padding: 0.74rem 0.78rem;
+  border: 1px solid #243450;
+  border-radius: 11px;
+  background: linear-gradient(135deg, rgba(22, 36, 62, 0.96) 0%, rgba(13, 20, 35, 0.96) 100%);
+  display: grid;
+  gap: 0.3rem;
+}
+
+.copytrade-hero strong {
+  color: #f3f7ff;
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.copytrade-hero p {
+  margin: 0;
+  color: #a8b7d6;
+  font-size: 0.66rem;
+  line-height: 1.48;
 }
 
 .copytrade-source {
@@ -4916,43 +4943,168 @@ button {
 
 .copytrade-form {
   display: grid;
-  gap: 0.64rem;
+  gap: 0.62rem;
+  padding: 0.76rem;
+  border: 1px solid #1f2b44;
+  border-radius: 11px;
+  background: rgba(10, 16, 28, 0.84);
 }
 
 .copytrade-field {
   display: grid;
-  gap: 0.28rem;
+  gap: 0.3rem;
 }
 
 .copytrade-input {
   width: 100%;
-  border: 1px solid #1f2a40;
-  border-radius: 8px;
-  background: #0f1724;
+  border: 1px solid #2b3a58;
+  border-radius: 10px;
+  background: #111a2a;
   color: var(--text);
-  padding: 0.56rem 0.62rem;
+  padding: 0.58rem 0.65rem;
   font-size: 0.72rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
 }
 
 .copytrade-input::placeholder {
-  color: var(--text-faint);
+  color: #65789d;
 }
 
 .copytrade-input:focus {
   outline: none;
-  border-color: #2f81ff;
-  box-shadow: 0 0 0 1px rgba(47, 129, 255, 0.18);
+  border-color: #4e9bff;
+  background: #12213a;
+  box-shadow: 0 0 0 1px rgba(78, 155, 255, 0.26);
 }
 
 .copytrade-submit {
   width: 100%;
-  padding-top: 0.46rem;
-  padding-bottom: 0.46rem;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-color: #366ecc;
+  background: linear-gradient(120deg, #14325f 0%, #204d89 48%, #2f81ff 100%);
+  color: #edf4ff;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.copytrade-submit:hover {
+  background: linear-gradient(120deg, #1a3a6a 0%, #2d5f9f 46%, #3d8dff 100%);
+}
+
+.copytrade-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.copytrade-action-btn {
+  min-height: 34px;
+}
+
+.copytrade-account-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.46rem;
+}
+
+.copytrade-account-row {
+  width: 100%;
+  border: 1px solid #25354f;
+  border-radius: 10px;
+  background: rgba(16, 24, 39, 0.92);
+  padding: 0.6rem 0.66rem;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  cursor: pointer;
+  transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+
+.copytrade-account-row:hover {
+  border-color: #3863a6;
+  background: rgba(22, 34, 55, 0.95);
+}
+
+.copytrade-account-row.selected {
+  border-color: #4b8fff;
+  background: linear-gradient(90deg, rgba(36, 58, 95, 0.78) 0%, rgba(18, 28, 46, 0.9) 100%);
+  box-shadow: inset 0 0 0 1px rgba(75, 143, 255, 0.2);
+}
+
+.copytrade-account-main {
+  min-width: 0;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.copytrade-account-main strong {
+  color: #ecf3ff;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.copytrade-account-main small {
+  color: #8ea1c7;
+  font-size: 0.61rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.copytrade-account-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.copytrade-status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.18rem 0.46rem;
+  border: 1px solid transparent;
+  font-size: 0.56rem;
+  line-height: 1.1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.copytrade-status-badge.disconnected {
+  border-color: #5a6478;
+  color: #d8e2f7;
+  background: rgba(64, 71, 89, 0.32);
+}
+
+.copytrade-status-badge.paused {
+  border-color: #6a5a34;
+  color: #ffe3a8;
+  background: rgba(100, 74, 25, 0.35);
 }
 
 .copytrade-note {
   margin: 0;
+  padding: 0.7rem 0.75rem;
+  border-radius: 10px;
+  border: 1px dashed #314363;
+  background: rgba(16, 24, 39, 0.72);
+}
+
+@media (max-width: 720px) {
+  .copytrade-actions {
+    grid-template-columns: 1fr;
+  }
 }
 
 .history-list {
@@ -5576,27 +5728,63 @@ button {
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
 }
 
-.ai-animation-burst {
+.ai-animation-click {
   position: absolute;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border-radius: 999px;
-  border: 1px solid rgba(157, 198, 255, 0.72);
-  background: rgba(110, 169, 255, 0.22);
+  border: 1px solid rgba(180, 220, 255, 0.88);
+  background: rgba(108, 173, 255, 0.3);
   transform: translate(-50%, -50%);
-  animation: ai-animation-burst 920ms ease-out forwards;
+  animation: ai-animation-click 640ms ease-out forwards;
   pointer-events: none;
+  z-index: 7;
 }
 
-@keyframes ai-animation-burst {
+@keyframes ai-animation-click {
   0% {
-    opacity: 0.86;
-    transform: translate(-50%, -50%) scale(0.45);
+    opacity: 0.92;
+    transform: translate(-50%, -50%) scale(0.5);
   }
   100% {
     opacity: 0;
-    transform: translate(-50%, -50%) scale(5.2);
+    transform: translate(-50%, -50%) scale(4.1);
   }
+}
+
+.ai-animation-cursor {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 2px solid rgba(229, 241, 255, 0.96);
+  background: rgba(25, 48, 84, 0.58);
+  box-shadow:
+    0 0 0 1px rgba(5, 13, 23, 0.65),
+    0 8px 16px rgba(0, 0, 0, 0.38);
+  transform: translate(-50%, -50%);
+  transition:
+    left 260ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    top 260ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 120ms ease;
+  pointer-events: none;
+  z-index: 8;
+}
+
+.ai-animation-cursor::after {
+  content: "";
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(240, 247, 255, 0.98);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.ai-animation-cursor.clicking {
+  transform: translate(-50%, -50%) scale(0.84);
 }
 
 .ai-animation-timeline {
