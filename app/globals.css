@@ -2780,50 +2780,85 @@ button {
 }
 
 .stats-refresh-loading-shell {
-  width: min(680px, calc(100vw - 2.5rem));
-  padding: 1.25rem 1.35rem;
+  width: min(920px, calc(100vw - 2.5rem));
+  padding: 1.45rem 1.55rem;
   border-radius: 20px;
   border: 1px solid rgba(0, 255, 157, 0.16);
   background: rgba(3, 8, 8, 0.78);
   box-shadow: 0 0 72px rgba(0, 255, 157, 0.08);
 }
 
+.stats-refresh-loading-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
 .stats-refresh-loading-status,
-.stats-refresh-loading-date {
+.stats-refresh-loading-pct,
+.stats-refresh-loading-detail,
+.stats-refresh-loading-range {
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .stats-refresh-loading-status {
-  margin-bottom: 0.75rem;
+  margin: 0;
   color: rgba(233, 255, 245, 0.9);
+}
+
+.stats-refresh-loading-pct {
+  color: rgba(117, 255, 205, 0.95);
+}
+
+.stats-refresh-loading-detail {
+  margin-bottom: 0.75rem;
+  color: rgba(201, 255, 230, 0.72);
 }
 
 .stats-refresh-loading-track {
   position: relative;
-  height: 20px;
+  height: 30px;
   overflow: hidden;
   border: 1px solid rgba(25, 33, 33, 0.95);
-  border-radius: 2px;
+  border-radius: 6px;
   background: linear-gradient(180deg, rgba(5, 8, 8, 0.98), rgba(2, 4, 4, 0.98));
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
 
 .stats-refresh-loading-fill {
   height: 100%;
-  border-radius: 0;
+  border-radius: 4px;
   background: linear-gradient(90deg, #00cf7a 0%, #00ff9d 52%, #75ffcd 100%);
   box-shadow: 0 0 22px rgba(0, 255, 157, 0.55);
-  transition: width 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: none;
   will-change: width;
 }
 
-.stats-refresh-loading-date {
-  margin-top: 0.8rem;
+.stats-refresh-loading-range {
+  margin-top: 0.9rem;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 0.8rem;
   color: rgba(201, 255, 230, 0.84);
+}
+
+.stats-refresh-loading-range > span:first-child {
+  justify-self: start;
+}
+
+.stats-refresh-loading-range > span:nth-child(2) {
+  justify-self: center;
+  color: rgba(227, 255, 242, 0.95);
+}
+
+.stats-refresh-loading-range > span:last-child {
+  justify-self: end;
 }
 
 .ai-zip-section {

@@ -4777,6 +4777,34 @@ const isStatsRefreshAutoFinishPhase = (status: string): boolean => {
   return status === "Finalizing Statistics" || status === "No Trades In Selected Range";
 };
 
+const getStatsRefreshStatusDetail = (status: string): string => {
+  if (status === "Loading Candle History") {
+    return "Fetching historical candles and 1-minute support data.";
+  }
+
+  if (status === "Preparing Backtest Replay") {
+    return "Applying date filters and building replay timeline.";
+  }
+
+  if (status === "Replaying Backtest Trades") {
+    return "Replaying backtest trades across the full selected date range.";
+  }
+
+  if (status === "Loading AI Libraries") {
+    return "Applying selected AI libraries to replayed backtest results.";
+  }
+
+  if (status === "Finalizing Statistics") {
+    return "Aggregating performance metrics and updating panels.";
+  }
+
+  if (status === "No Trades In Selected Range") {
+    return "No trades were found inside the selected backtest range.";
+  }
+
+  return "Updating backtest statistics.";
+};
+
 export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProps) {
   const modelProfiles = useMemo(() => {
     return buildModelProfiles(aiZipModelNames);
@@ -4952,6 +4980,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [statsRefreshLoadingDisplayProgress, setStatsRefreshLoadingDisplayProgress] = useState(0);
   const [statsRefreshStatus, setStatsRefreshStatus] = useState("Updating Backtest Statistics");
   const [statsRefreshProgressLabel, setStatsRefreshProgressLabel] = useState("");
+  const [statsRefreshTimelineRange, setStatsRefreshTimelineRange] = useState<{
+    startMs: number;
+    endMs: number;
+  }>(() => ({
+    startMs: backtestRefreshNowMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000,
+    endMs: backtestRefreshNowMs
+  }));
   const [backtestHistorySeedReady, setBacktestHistorySeedReady] = useState(false);
   const [isBacktestSurfaceSettled, setIsBacktestSurfaceSettled] = useState(true);
   const [savedPresets, setSavedPresets] = useState<SavedPreset[]>([]);
@@ -5022,8 +5057,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const statsRefreshOverlayModeRef = useRef<StatsRefreshOverlayMode>("idle");
   const statsRefreshStatusRef = useRef(statsRefreshStatus);
   const statsRefreshTimelineRangeRef = useRef<{ startMs: number; endMs: number }>({
-    startMs: backtestRefreshNowMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000,
-    endMs: backtestRefreshNowMs
+    startMs: statsRefreshTimelineRange.startMs,
+    endMs: statsRefreshTimelineRange.endMs
   });
   const statsRefreshResetTimeoutRef = useRef(0);
   const statsRefreshVisualCompletionRafRef = useRef(0);
@@ -5089,6 +5124,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     statsRefreshOverlayModeRef.current = mode;
     setStatsRefreshOverlayMode(mode);
   }, []);
+  const setStatsRefreshTimelineRangeValue = useCallback((startMs: number, endMs: number) => {
+    const safeStartMs = Number.isFinite(startMs)
+      ? startMs
+      : backtestRefreshNowMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000;
+    const safeEndMs = Number.isFinite(endMs) ? Math.max(safeStartMs + 60_000, endMs) : backtestRefreshNowMs;
+    const nextRange = { startMs: safeStartMs, endMs: safeEndMs };
+    statsRefreshTimelineRangeRef.current = nextRange;
+    setStatsRefreshTimelineRange(nextRange);
+  }, [backtestRefreshNowMs]);
   const clearStatsRefreshResetTimeout = useCallback(() => {
     if (statsRefreshVisualCompletionRafRef.current) {
       window.cancelAnimationFrame(statsRefreshVisualCompletionRafRef.current);
@@ -5214,10 +5258,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         phaseStartMs + 60_000,
         Number.isFinite(filterEndMs) ? Math.min(baseEndMs, filterEndMs) : baseEndMs
       );
-      statsRefreshTimelineRangeRef.current = {
-        startMs: phaseStartMs,
-        endMs: phaseEndMs
-      };
+      setStatsRefreshTimelineRangeValue(phaseStartMs, phaseEndMs);
       setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(phaseStartMs));
     } else {
       updateStatsRefreshOverlayMode("idle");
@@ -5232,6 +5273,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedBacktestSettings,
     backtestRunCount,
     clearStatsRefreshResetTimeout,
+    setStatsRefreshTimelineRangeValue,
     updateStatsRefreshOverlayMode
   ]);
 
@@ -7060,10 +7102,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       analysisStartMs + 60_000,
       Number.isFinite(filterEndMs) ? Math.min(rawEndMs, filterEndMs) : rawEndMs
     );
-    statsRefreshTimelineRangeRef.current = {
-      startMs: analysisStartMs,
-      endMs: analysisEndMs
-    };
+    setStatsRefreshTimelineRangeValue(analysisStartMs, analysisEndMs);
 
     if (tradeBlueprintsSnapshot.length === 0 || backtestTargetTradesSnapshot <= 0) {
       setStatsRefreshStatus("No Trades In Selected Range");
@@ -7075,22 +7114,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     const analysisSpanMs = Math.max(60_000, analysisEndMs - analysisStartMs);
     let lastLoadingProgressRatio = 0;
-    const setLoadingProgressFromCursorMs = (cursorMs: number) => {
-      const normalizedCursorMs = normalizeTimestampMs(cursorMs);
-      if (!Number.isFinite(normalizedCursorMs)) {
-        return;
-      }
+    const setLoadingProgressFromRatio = (ratio: number) => {
+      const normalizedRatio = clamp(ratio, 0, 1);
 
-      const clampedCursorMs = clamp(normalizedCursorMs, analysisStartMs, analysisEndMs);
-      const normalizedRatio = clamp((clampedCursorMs - analysisStartMs) / analysisSpanMs, 0, 1);
-
-      if (normalizedRatio < lastLoadingProgressRatio) {
+      if (normalizedRatio <= lastLoadingProgressRatio) {
         return;
       }
 
       lastLoadingProgressRatio = normalizedRatio;
+      const cursorMs = analysisStartMs + analysisSpanMs * normalizedRatio;
       setStatsRefreshProgress(normalizedRatio * 100);
-      setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(clampedCursorMs));
+      setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(cursorMs));
     };
 
     const computeSynchronously = (): HistoryItem[] => {
@@ -7176,7 +7210,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setStatsRefreshProgress(0);
     setStatsRefreshLoadingDisplayProgress(0);
     setStatsRefreshStatus("Replaying Backtest Trades");
-    setLoadingProgressFromCursorMs(analysisStartMs);
+    setLoadingProgressFromRatio(0);
 
     if (typeof Worker === "undefined") {
       handleFallback();
@@ -7208,12 +7242,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       if (message.type === "progress") {
+        const total = Math.max(1, message.total);
         setStatsRefreshStatus("Replaying Backtest Trades");
-        setLoadingProgressFromCursorMs(message.cursorMs);
+        setLoadingProgressFromRatio(message.processed / total);
         return;
       }
 
       worker.terminate();
+      setLoadingProgressFromRatio(1);
       const finalizedRows = normalizeBacktestHistoryRows(
         finalizeBacktestHistoryRows(
           message.rows,
@@ -7275,7 +7311,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     backtestHasRun,
     backtestHistorySeedReady,
     backtestRunCount,
-    backtestRefreshNowMs
+    backtestRefreshNowMs,
+    setStatsRefreshTimelineRangeValue
   ]);
 
   const selectedHistoryTrade = useMemo(() => {
@@ -12287,6 +12324,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     ((100 - clamp(statsRefreshProgress, 0, 100)) / 100) * (STATS_REFRESH_HOLD_MS / 1000)
   );
   const statsRefreshDisplayProgress = clamp(statsRefreshProgress, 0, 100);
+  const statsRefreshStatusDetail = getStatsRefreshStatusDetail(statsRefreshStatus);
+  const statsRefreshRangeStartLabel = formatStatsRefreshDateLabel(statsRefreshTimelineRange.startMs);
+  const statsRefreshRangeEndLabel = formatStatsRefreshDateLabel(statsRefreshTimelineRange.endMs);
+  const statsRefreshCurrentDateLabel =
+    statsRefreshProgressLabel || statsRefreshRangeStartLabel;
 
   return (
     <main className="terminal">
@@ -16497,8 +16539,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         statsRefreshOverlayMode === "loading" ? (
           <div className="stats-refresh-loading-overlay" aria-live="polite" aria-atomic="true">
             <div className="stats-refresh-loading-shell">
-              <div className="stats-refresh-loading-status">{statsRefreshStatus}</div>
+              <div className="stats-refresh-loading-head">
+                <div className="stats-refresh-loading-status">{statsRefreshStatus}</div>
+                <div className="stats-refresh-loading-pct">
+                  {`${Math.round(statsRefreshDisplayProgress)}%`}
+                </div>
+              </div>
+              <div className="stats-refresh-loading-detail">{statsRefreshStatusDetail}</div>
               <div
+                key={statsRefreshStatus}
                 className="stats-refresh-loading-track"
                 role="progressbar"
                 aria-label="Updating backtest statistics"
@@ -16511,8 +16560,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   style={{ width: `${statsRefreshDisplayProgress}%` }}
                 />
               </div>
-              <div className="stats-refresh-loading-date">
-                {statsRefreshProgressLabel || formatStatsRefreshDateLabel(backtestRefreshNowMs)}
+              <div className="stats-refresh-loading-range">
+                <span>{statsRefreshRangeStartLabel}</span>
+                <span>{statsRefreshCurrentDateLabel}</span>
+                <span>{statsRefreshRangeEndLabel}</span>
               </div>
             </div>
           </div>
