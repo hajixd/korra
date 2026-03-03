@@ -4457,6 +4457,16 @@ button {
   gap: 0.6rem;
 }
 
+.watchlist-head.panel-head-centered {
+  text-align: center;
+  border-bottom: none;
+  padding-bottom: 0.32rem;
+}
+
+.watchlist-head.panel-head-centered > div {
+  width: 100%;
+}
+
 .watchlist-head h2 {
   margin: 0;
   font-size: 0.82rem;
@@ -4490,6 +4500,43 @@ button {
   opacity: 0.45;
   cursor: not-allowed;
   background: #101726;
+}
+
+.panel-head-actions {
+  padding: 0.4rem 0.7rem 0.56rem;
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.42rem;
+}
+
+.panel-head-actions .panel-action-btn {
+  width: 100%;
+  max-width: 240px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.panel-mode-btn.on {
+  border-color: #1d5b42;
+  background: #10281d;
+  color: #95efbe;
+}
+
+.panel-mode-btn.on:hover {
+  background: #163626;
+}
+
+.panel-mode-btn.off {
+  border-color: #57483a;
+  background: #241a13;
+  color: #f2c6a4;
+}
+
+.panel-mode-btn.off:hover {
+  background: #312116;
 }
 
 .active-tab {
@@ -4975,6 +5022,11 @@ button {
 
 .ai-placeholder p {
   margin: 0;
+}
+
+.active-tab .ai-placeholder {
+  text-align: center;
+  align-items: center;
 }
 
 .statusbar {
