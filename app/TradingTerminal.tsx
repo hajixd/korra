@@ -136,6 +136,29 @@ type MainChartContextMenuState = {
   candle: MainChartContextMenuCandle;
 };
 
+type AggressorPressurePoint = {
+  timestampMs: number;
+  buyPressure: number;
+  sellPressure: number;
+  spread: number;
+};
+
+type AggressorPressureSnapshot = {
+  buyPressure: number;
+  sellPressure: number;
+  scaleCeiling: number;
+  averageSpread: number;
+  tickCount: number;
+  updatedAtMs: number;
+};
+
+type LiveQuoteSnapshot = {
+  bid: number | null;
+  ask: number | null;
+  spread: number | null;
+  updatedAtMs: number;
+};
+
 const EMPTY_CANDLES: Candle[] = [];
 const STATS_REFRESH_HOLD_MS = 3000;
 const STATS_REFRESH_COMPLETE_DELAY_MS = 1000;
@@ -2328,6 +2351,9 @@ const CLICKHOUSE_MAX_HISTORY_CANDLES = 300_000;
 const MARKET_MAX_HISTORY_CANDLES = 25_000;
 const LIVE_MARKET_SYNC_LIMIT = 160;
 const CHART_STREAM_CONNECT_TIMEOUT_MS = 3500;
+const AGGRESSOR_PRESSURE_WINDOW_MS = 5 * 60_000;
+const AGGRESSOR_PRESSURE_UI_THROTTLE_MS = 220;
+const AGGRESSOR_PRESSURE_PEAK_DECAY = 0.996;
 const MARKET_API_KEY =
   process.env.NEXT_PUBLIC_PRICE_STREAM_API_KEY ||
   process.env.NEXT_PUBLIC_MARKET_API_KEY ||
@@ -2426,6 +2452,29 @@ const formatChartUsd = (value: number): string => {
 
 const formatSignedPercent = (value: number): string => {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+};
+
+const formatAggressorPressure = (value: number): string => {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0";
+  }
+
+  if (value < 10) {
+    return value.toFixed(2);
+  }
+
+  if (value < 100) {
+    return value.toFixed(1);
+  }
+
+  return value
+    .toLocaleString("en-US", {
+      notation: "compact",
+      maximumFractionDigits: 2
+    })
+    .replace("K", "k")
+    .replace("M", "m")
+    .replace("B", "b");
 };
 
 const getTradeDayKey = (timestampSeconds: UTCTimestamp): string => {
@@ -5356,6 +5405,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [savedPresets, setSavedPresets] = useState<SavedPreset[]>([]);
   const [presetMenuOpen, setPresetMenuOpen] = useState<"save" | "load" | null>(null);
   const [presetNameInput, setPresetNameInput] = useState("");
+  const [aggressorPressure, setAggressorPressure] = useState<AggressorPressureSnapshot>(() => ({
+    buyPressure: 0,
+    sellPressure: 0,
+    scaleCeiling: 1,
+    averageSpread: 0,
+    tickCount: 0,
+    updatedAtMs: 0
+  }));
+  const [liveQuote, setLiveQuote] = useState<LiveQuoteSnapshot>(() => ({
+    bid: null,
+    ask: null,
+    spread: null,
+    updatedAtMs: 0
+  }));
 
   const buildCurrentBacktestSettingsSnapshot = (): BacktestSettingsSnapshot => ({
     symbol: selectedSymbol,
@@ -5420,6 +5483,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const focusTradeIdRef = useRef<string | null>(null);
   const notificationRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<EventSource | null>(null);
+  const aggressorPressurePointsRef = useRef<AggressorPressurePoint[]>([]);
+  const aggressorPressureStateRef = useRef({
+    lastMid: Number.NaN,
+    lastUiUpdateMs: 0,
+    peakPressure: 1,
+    lastTickMs: 0
+  });
   const selectedSurfaceTabRef = useRef<SurfaceTab>(selectedSurfaceTab);
   const statsRefreshOverlayModeRef = useRef<StatsRefreshOverlayMode>("idle");
   const statsRefreshStatusRef = useRef(statsRefreshStatus);
@@ -6290,11 +6360,93 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             return;
           }
 
+          const bid = Number(message.bid);
+          const ask = Number(message.ask);
           const price = Number(message.mid);
           const eventTime = Date.parse(String(message.time));
 
           if (!Number.isFinite(price) || !Number.isFinite(eventTime)) {
             return;
+          }
+
+          const hasBid = Number.isFinite(bid);
+          const hasAsk = Number.isFinite(ask);
+          const spread = hasBid && hasAsk ? Math.max(0, ask - bid) : null;
+          setLiveQuote({
+            bid: hasBid ? bid : null,
+            ask: hasAsk ? ask : null,
+            spread,
+            updatedAtMs: eventTime
+          });
+
+          const pressureState = aggressorPressureStateRef.current;
+          const pressurePoints = aggressorPressurePointsRef.current;
+
+          if (eventTime >= pressureState.lastTickMs) {
+            const spreadValue = spread ?? Number.NaN;
+            const safeSpread =
+              Number.isFinite(spreadValue) && spreadValue > 0
+                ? spreadValue
+                : Math.max(price * 0.00002, 0.01);
+
+            if (Number.isFinite(pressureState.lastMid)) {
+              const delta = price - pressureState.lastMid;
+              const absDelta = Math.abs(delta);
+
+              if (absDelta > 0) {
+                const directionalPressure = absDelta / Math.max(safeSpread, 0.000001);
+                pressurePoints.push({
+                  timestampMs: eventTime,
+                  buyPressure: delta > 0 ? directionalPressure : 0,
+                  sellPressure: delta < 0 ? directionalPressure : 0,
+                  spread: Number.isFinite(spreadValue) ? spreadValue : 0
+                });
+              }
+            }
+
+            pressureState.lastMid = price;
+            pressureState.lastTickMs = eventTime;
+
+            const cutoffMs = eventTime - AGGRESSOR_PRESSURE_WINDOW_MS;
+            while (pressurePoints.length > 0 && pressurePoints[0]!.timestampMs < cutoffMs) {
+              pressurePoints.shift();
+            }
+
+            let buyPressure = 0;
+            let sellPressure = 0;
+            let spreadSum = 0;
+            let spreadCount = 0;
+
+            for (const point of pressurePoints) {
+              buyPressure += point.buyPressure;
+              sellPressure += point.sellPressure;
+
+              if (point.spread > 0) {
+                spreadSum += point.spread;
+                spreadCount += 1;
+              }
+            }
+
+            const currentSidePeak = Math.max(buyPressure, sellPressure, 1);
+            pressureState.peakPressure = Math.max(
+              currentSidePeak,
+              pressureState.peakPressure * AGGRESSOR_PRESSURE_PEAK_DECAY
+            );
+
+            if (
+              pressureState.lastUiUpdateMs === 0 ||
+              eventTime - pressureState.lastUiUpdateMs >= AGGRESSOR_PRESSURE_UI_THROTTLE_MS
+            ) {
+              setAggressorPressure({
+                buyPressure,
+                sellPressure,
+                scaleCeiling: pressureState.peakPressure,
+                averageSpread: spreadCount > 0 ? spreadSum / spreadCount : 0,
+                tickCount: pressurePoints.length,
+                updatedAtMs: eventTime
+              });
+              pressureState.lastUiUpdateMs = eventTime;
+            }
           }
 
           setSeriesMap((prev) => ({
@@ -6946,6 +7098,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     hoveredCandle && hoveredCandle.open > 0
       ? ((hoveredCandle.close - hoveredCandle.open) / hoveredCandle.open) * 100
       : 0;
+
+  const aggressorScaleCeiling = Math.max(
+    1,
+    aggressorPressure.scaleCeiling,
+    aggressorPressure.buyPressure,
+    aggressorPressure.sellPressure
+  );
+  const aggressorSellShare = clamp(aggressorPressure.sellPressure / aggressorScaleCeiling, 0, 1);
+  const aggressorBuyShare = clamp(aggressorPressure.buyPressure / aggressorScaleCeiling, 0, 1);
+  const aggressorTotalPressure = aggressorPressure.buyPressure + aggressorPressure.sellPressure;
+  const aggressorImbalancePct =
+    aggressorTotalPressure > 0
+      ? ((aggressorPressure.buyPressure - aggressorPressure.sellPressure) / aggressorTotalPressure) * 100
+      : 0;
+  const aggressorWindowLabel = `${Math.max(1, Math.round(AGGRESSOR_PRESSURE_WINDOW_MS / 60_000))}m`;
+  const liveAskLabel = liveQuote.ask != null ? formatPrice(liveQuote.ask) : "--";
+  const liveBidLabel = liveQuote.bid != null ? formatPrice(liveQuote.bid) : "--";
+  const liveSpreadLabel = liveQuote.spread != null ? formatPrice(liveQuote.spread) : "--";
 
   const watchlistRows = useMemo(() => {
     return futuresAssets.map((asset) => {
@@ -13278,6 +13448,84 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <span>No market data loaded</span>
                 )}
               </div>
+              <div className="chart-overlay-stack">
+                <div className="quote-overlay-card" title="Live quote from bid/ask ticks">
+                  <div className="quote-overlay-head">
+                    <strong>Live Quote</strong>
+                  </div>
+                  <div className="quote-overlay-grid">
+                    <div className="quote-overlay-item">
+                      <span>Ask</span>
+                      <strong>{liveAskLabel}</strong>
+                    </div>
+                    <div className="quote-overlay-item">
+                      <span>Bid</span>
+                      <strong>{liveBidLabel}</strong>
+                    </div>
+                    <div className="quote-overlay-item">
+                      <span>Spread</span>
+                      <strong>{liveSpreadLabel}</strong>
+                    </div>
+                  </div>
+                </div>
+                <div
+                  className="vp-proxy-card"
+                  title="Bookmap VP-style view. Uses quote-direction pressure from bid/ask/mid ticks, not true traded volume."
+                >
+                  <div className="vp-proxy-head">
+                    <strong>VP*</strong>
+                    <span>{aggressorWindowLabel} quote window</span>
+                  </div>
+
+                  <div className="vp-proxy-row">
+                    <div className="vp-proxy-row-head">
+                      <span>Aggr sells</span>
+                      <span>{formatAggressorPressure(aggressorScaleCeiling)}</span>
+                    </div>
+                    <div className="vp-proxy-track">
+                      <span
+                        className="vp-proxy-fill sell"
+                        style={{ width: `${(aggressorSellShare * 100).toFixed(1)}%` }}
+                      />
+                      <span className="vp-proxy-midline" />
+                      <span className="vp-proxy-value">
+                        {formatAggressorPressure(aggressorPressure.sellPressure)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="vp-proxy-row">
+                    <div className="vp-proxy-row-head">
+                      <span>Aggr buys</span>
+                      <span>{formatAggressorPressure(aggressorScaleCeiling)}</span>
+                    </div>
+                    <div className="vp-proxy-track">
+                      <span
+                        className="vp-proxy-fill buy"
+                        style={{ width: `${(aggressorBuyShare * 100).toFixed(1)}%` }}
+                      />
+                      <span className="vp-proxy-midline" />
+                      <span className="vp-proxy-value">
+                        {formatAggressorPressure(aggressorPressure.buyPressure)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="vp-proxy-meta">
+                    <span>
+                      Delta {aggressorImbalancePct >= 0 ? "+" : ""}
+                      {aggressorImbalancePct.toFixed(1)}%
+                    </span>
+                    <span>
+                      Spr{" "}
+                      {aggressorPressure.averageSpread > 0
+                        ? formatPrice(aggressorPressure.averageSpread)
+                        : "--"}
+                    </span>
+                    <span>{aggressorPressure.tickCount} ticks</span>
+                  </div>
+                </div>
+              </div>
               <div className={`chart-stage ${isChartDataLoading ? "chart-stage-loading" : ""}`}>
                 <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
                 <div ref={countdownOverlayRef} className="candle-countdown-overlay" />
@@ -13945,7 +14193,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         )}
                       </div>
                       <div className="backtest-minute-precise-row" aria-label="Minute precise execution setting">
-                        <span className="backtest-minute-precise-label">Minute Precise</span>
                         <button
                           type="button"
                           className={`backtest-minute-precise-btn backtest-minute-precise-single${
@@ -13953,9 +14200,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           }`}
                           onClick={() => setMinutePreciseEnabled((current) => !current)}
                           aria-pressed={minutePreciseEnabled}
-                          aria-label={`Minute precise ${minutePreciseEnabled ? "on" : "off"}`}
+                          aria-label="Toggle minute precise execution"
                         >
-                          {minutePreciseEnabled ? "ON" : "OFF"}
+                          <span className="backtest-minute-precise-btn-title">Minute Precise</span>
+                          <span className="backtest-minute-precise-btn-state">
+                            {minutePreciseEnabled ? "ON" : "OFF"}
+                          </span>
                         </button>
                       </div>
                     </div>
