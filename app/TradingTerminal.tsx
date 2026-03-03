@@ -3261,6 +3261,428 @@ const clamp = (value: number, min: number, max: number): number => {
   return Math.min(max, Math.max(min, value));
 };
 
+const DYNAMIC_SR_DEFAULT_LEVELS = 3;
+const DYNAMIC_SR_MAX_LEVELS = 8;
+const DYNAMIC_SR_MAX_LOOKBACK = 6000;
+
+const ASSISTANT_DRAWABLE_ACTION_TYPES = new Set<AssistantChartAction["type"]>([
+  "draw_horizontal_line",
+  "draw_vertical_line",
+  "draw_trend_line",
+  "draw_box",
+  "draw_fvg",
+  "draw_support_resistance",
+  "draw_arrow",
+  "draw_long_position",
+  "draw_short_position",
+  "draw_ruler",
+  "mark_candlestick"
+]);
+
+const ASSISTANT_SHIFTABLE_PRICE_FIELDS: Array<
+  "price" | "priceStart" | "priceEnd" | "entryPrice" | "stopPrice" | "targetPrice"
+> = ["price", "priceStart", "priceEnd", "entryPrice", "stopPrice", "targetPrice"];
+
+const ASSISTANT_SHIFTABLE_TIME_FIELDS: Array<"time" | "timeStart" | "timeEnd"> = [
+  "time",
+  "timeStart",
+  "timeEnd"
+];
+
+const isAssistantDrawableAction = (action: AssistantChartAction): boolean => {
+  return ASSISTANT_DRAWABLE_ACTION_TYPES.has(action.type);
+};
+
+const candleQuantile = (values: number[], quantile: number): number | null => {
+  if (values.length === 0) {
+    return null;
+  }
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.max(0, Math.min(1, quantile)) * (sorted.length - 1);
+  const lowIndex = Math.floor(index);
+  const highIndex = Math.ceil(index);
+  const low = sorted[lowIndex] ?? sorted[0] ?? 0;
+  const high = sorted[highIndex] ?? low;
+  const weight = index - lowIndex;
+  return low * (1 - weight) + high * weight;
+};
+
+const computeDynamicSupportResistanceLevels = (params: {
+  candles: Candle[];
+  levels?: number;
+  lookback?: number;
+}): { supports: number[]; resistances: number[] } | null => {
+  const { candles } = params;
+  if (!Array.isArray(candles) || candles.length < 12) {
+    return null;
+  }
+
+  const levels = clamp(
+    Math.round(params.levels ?? DYNAMIC_SR_DEFAULT_LEVELS),
+    1,
+    DYNAMIC_SR_MAX_LEVELS
+  );
+  const lookback = Math.max(0, Math.min(DYNAMIC_SR_MAX_LOOKBACK, Math.round(params.lookback ?? 0)));
+  const source =
+    lookback > 0 && candles.length > lookback ? candles.slice(-lookback) : candles;
+
+  if (source.length < 12) {
+    return null;
+  }
+
+  const lows = source
+    .map((row) => row.low)
+    .filter((value): value is number => Number.isFinite(value));
+  const highs = source
+    .map((row) => row.high)
+    .filter((value): value is number => Number.isFinite(value));
+
+  if (lows.length < 12 || highs.length < 12) {
+    return null;
+  }
+
+  const lastClose = source[source.length - 1]?.close;
+  const minLow = Math.min(...lows);
+  const maxHigh = Math.max(...highs);
+  const span = Math.max(0.0001, maxHigh - minLow);
+  const dedupeThreshold = Math.max(0.01, span * 0.01);
+
+  const dedupe = (values: number[]): number[] => {
+    const deduped: number[] = [];
+    for (const value of values) {
+      if (
+        !deduped.some((existing) => Math.abs(existing - value) <= dedupeThreshold)
+      ) {
+        deduped.push(value);
+      }
+    }
+    return deduped;
+  };
+
+  const supportsRaw: number[] = [];
+  const resistancesRaw: number[] = [];
+
+  for (let index = 0; index < levels; index += 1) {
+    const ratio = levels === 1 ? 0.5 : index / (levels - 1);
+    const supportQuantile = 0.08 + ratio * 0.30;
+    const resistanceQuantile = 0.62 + ratio * 0.30;
+    const support = candleQuantile(lows, supportQuantile);
+    const resistance = candleQuantile(highs, resistanceQuantile);
+    if (support !== null) {
+      supportsRaw.push(Number(support.toFixed(4)));
+    }
+    if (resistance !== null) {
+      resistancesRaw.push(Number(resistance.toFixed(4)));
+    }
+  }
+
+  let supports = dedupe(supportsRaw).sort((left, right) => right - left);
+  let resistances = dedupe(resistancesRaw).sort((left, right) => left - right);
+
+  if (Number.isFinite(lastClose)) {
+    const anchor = Number(lastClose);
+    supports = supports
+      .sort((left, right) => Math.abs(anchor - left) - Math.abs(anchor - right))
+      .slice(0, levels)
+      .sort((left, right) => right - left);
+    resistances = resistances
+      .sort((left, right) => Math.abs(anchor - left) - Math.abs(anchor - right))
+      .slice(0, levels)
+      .sort((left, right) => left - right);
+  }
+
+  return {
+    supports: supports.slice(0, levels),
+    resistances: resistances.slice(0, levels)
+  };
+};
+
+const adjustAssistantDrawAction = (params: {
+  action: AssistantChartAction;
+  priceDelta: number;
+  timeDeltaMs: number;
+}): AssistantChartAction => {
+  const { action, priceDelta, timeDeltaMs } = params;
+  const next: AssistantChartAction = { ...action };
+
+  if (Number.isFinite(priceDelta) && Math.abs(priceDelta) > 0) {
+    for (const field of ASSISTANT_SHIFTABLE_PRICE_FIELDS) {
+      const value = next[field];
+      if (!Number.isFinite(value)) {
+        continue;
+      }
+      next[field] = Number((Number(value) + priceDelta).toFixed(4));
+    }
+  }
+
+  if (Number.isFinite(timeDeltaMs) && Math.abs(timeDeltaMs) > 0) {
+    for (const field of ASSISTANT_SHIFTABLE_TIME_FIELDS) {
+      const value = next[field];
+      if (!Number.isFinite(value)) {
+        continue;
+      }
+      next[field] = Number(value) + timeDeltaMs;
+    }
+  }
+
+  if (
+    next.type === "draw_support_resistance" &&
+    Number.isFinite(next.priceStart) &&
+    Number.isFinite(next.priceEnd) &&
+    Number(next.priceStart) > Number(next.priceEnd)
+  ) {
+    const currentSupport = Number(next.priceStart);
+    next.priceStart = Number(next.priceEnd);
+    next.priceEnd = currentSupport;
+  }
+
+  return next;
+};
+
+const stripDynamicMeta = (action: AssistantChartAction): AssistantChartAction => {
+  const next: AssistantChartAction = { ...action };
+  delete next.dynamic;
+  delete next.dynamicLookback;
+  return next;
+};
+
+const getDynamicActionWindow = (candles: Candle[], lookback?: number): Candle[] => {
+  if (!Array.isArray(candles) || candles.length === 0) {
+    return EMPTY_CANDLES;
+  }
+
+  const requested = Number(lookback);
+  if (!Number.isFinite(requested) || requested <= 0) {
+    return candles;
+  }
+
+  const safeLookback = clamp(Math.round(requested), 12, candles.length);
+  return candles.slice(-safeLookback);
+};
+
+const findLatestDynamicFvg = (
+  candles: Candle[]
+): { timeStart: number; timeEnd: number; priceStart: number; priceEnd: number } | null => {
+  if (candles.length < 3) {
+    return null;
+  }
+
+  for (let index = candles.length - 1; index >= 2; index -= 1) {
+    const left = candles[index - 2];
+    const right = candles[index];
+    if (!left || !right) {
+      continue;
+    }
+
+    // Bullish imbalance: gap between two non-overlapping candles.
+    if (left.high < right.low) {
+      return {
+        timeStart: left.time,
+        timeEnd: right.time,
+        priceStart: Number(left.high.toFixed(4)),
+        priceEnd: Number(right.low.toFixed(4))
+      };
+    }
+
+    // Bearish imbalance.
+    if (left.low > right.high) {
+      return {
+        timeStart: left.time,
+        timeEnd: right.time,
+        priceStart: Number(right.high.toFixed(4)),
+        priceEnd: Number(left.low.toFixed(4))
+      };
+    }
+  }
+
+  return null;
+};
+
+const resolveDynamicAssistantAction = (params: {
+  action: AssistantChartAction;
+  candles: Candle[];
+}): AssistantChartAction[] => {
+  const action = params.action;
+  const sourceWindow = getDynamicActionWindow(
+    params.candles,
+    action.dynamicLookback ?? action.lookback
+  );
+
+  if (sourceWindow.length === 0) {
+    return [];
+  }
+
+  const first = sourceWindow[0]!;
+  const last = sourceWindow[sourceWindow.length - 1]!;
+  const lows = sourceWindow.map((row) => row.low);
+  const highs = sourceWindow.map((row) => row.high);
+  const closes = sourceWindow.map((row) => row.close);
+  const support = candleQuantile(lows, 0.2) ?? last.low;
+  const resistance = candleQuantile(highs, 0.8) ?? last.high;
+  const median = candleQuantile(closes, 0.5) ?? last.close;
+
+  if (action.type === "draw_support_resistance") {
+    const levelsRequested = Number.isFinite(action.levels) ? Number(action.levels) : 1;
+    const levels = clamp(Math.round(levelsRequested), 1, DYNAMIC_SR_MAX_LEVELS);
+    if (levels <= 1) {
+      return [
+        {
+          ...stripDynamicMeta(action),
+          type: "draw_support_resistance",
+          priceStart: Number(support.toFixed(4)),
+          priceEnd: Number(resistance.toFixed(4))
+        }
+      ];
+    }
+
+    const computed = computeDynamicSupportResistanceLevels({
+      candles: sourceWindow,
+      levels,
+      lookback: sourceWindow.length
+    });
+
+    if (!computed) {
+      return [];
+    }
+
+    const lines: AssistantChartAction[] = [];
+    computed.supports.forEach((price, index) => {
+      lines.push({
+        type: "draw_horizontal_line",
+        label: action.label ? `${action.label} Support ${index + 1}` : `Support ${index + 1}`,
+        color: "#13c98f",
+        style: action.style ?? "dashed",
+        price: Number(price.toFixed(4))
+      });
+    });
+    computed.resistances.forEach((price, index) => {
+      lines.push({
+        type: "draw_horizontal_line",
+        label: action.label ? `${action.label} Resistance ${index + 1}` : `Resistance ${index + 1}`,
+        color: "#f0455a",
+        style: action.style ?? "dashed",
+        price: Number(price.toFixed(4))
+      });
+    });
+    return lines;
+  }
+
+  if (action.type === "draw_horizontal_line") {
+    const price = Number.isFinite(action.price)
+      ? Number(action.price)
+      : Number(median.toFixed(4));
+    return [{ ...stripDynamicMeta(action), price: Number(price.toFixed(4)) }];
+  }
+
+  if (action.type === "draw_vertical_line") {
+    return [{ ...stripDynamicMeta(action), time: last.time }];
+  }
+
+  if (action.type === "draw_trend_line") {
+    return [
+      {
+        ...stripDynamicMeta(action),
+        timeStart: first.time,
+        priceStart: Number(first.close.toFixed(4)),
+        timeEnd: last.time,
+        priceEnd: Number(last.close.toFixed(4))
+      }
+    ];
+  }
+
+  if (action.type === "draw_box") {
+    return [
+      {
+        ...stripDynamicMeta(action),
+        timeStart: first.time,
+        timeEnd: last.time,
+        priceStart: Number(support.toFixed(4)),
+        priceEnd: Number(resistance.toFixed(4))
+      }
+    ];
+  }
+
+  if (action.type === "draw_fvg") {
+    const fvg = findLatestDynamicFvg(sourceWindow);
+    if (fvg) {
+      return [{ ...stripDynamicMeta(action), ...fvg }];
+    }
+    return [
+      {
+        ...stripDynamicMeta(action),
+        timeStart: sourceWindow[Math.max(0, sourceWindow.length - 3)]?.time ?? first.time,
+        timeEnd: last.time,
+        priceStart: Number(((support + median) / 2).toFixed(4)),
+        priceEnd: Number(((resistance + median) / 2).toFixed(4))
+      }
+    ];
+  }
+
+  if (action.type === "draw_arrow") {
+    return [
+      {
+        ...stripDynamicMeta(action),
+        time: last.time,
+        price: Number(last.close.toFixed(4)),
+        markerShape: last.close >= last.open ? "arrowUp" : "arrowDown"
+      }
+    ];
+  }
+
+  if (action.type === "draw_long_position") {
+    return [
+      {
+        ...stripDynamicMeta(action),
+        entryPrice: Number(last.close.toFixed(4)),
+        stopPrice: Number(support.toFixed(4)),
+        targetPrice: Number(resistance.toFixed(4)),
+        side: "long"
+      }
+    ];
+  }
+
+  if (action.type === "draw_short_position") {
+    return [
+      {
+        ...stripDynamicMeta(action),
+        entryPrice: Number(last.close.toFixed(4)),
+        stopPrice: Number(resistance.toFixed(4)),
+        targetPrice: Number(support.toFixed(4)),
+        side: "short"
+      }
+    ];
+  }
+
+  if (action.type === "draw_ruler") {
+    return [
+      {
+        ...stripDynamicMeta(action),
+        timeStart: first.time,
+        priceStart: Number(first.close.toFixed(4)),
+        timeEnd: last.time,
+        priceEnd: Number(last.close.toFixed(4))
+      }
+    ];
+  }
+
+  if (action.type === "mark_candlestick") {
+    return [
+      {
+        ...stripDynamicMeta(action),
+        time: last.time,
+        price: Number(last.close.toFixed(4)),
+        markerShape: action.markerShape ?? "circle"
+      }
+    ];
+  }
+
+  if (action.type === "move_to_date") {
+    return [{ ...stripDynamicMeta(action), time: last.time }];
+  }
+
+  return [stripDynamicMeta(action)];
+};
+
 const clampTradePnlToRiskBounds = (
   pnlUsd: number,
   tpDollars: number,
@@ -5837,7 +6259,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const statsTimeframeDdRef = useRef<HTMLDivElement>(null);
   const aiChartOverlaySeriesRef = useRef<Array<ISeriesApi<"Line">>>([]);
   const aiChartPriceLinesRef = useRef<IPriceLine[]>([]);
+  const aiDynamicChartOverlaySeriesRef = useRef<Array<ISeriesApi<"Line">>>([]);
+  const aiDynamicChartPriceLinesRef = useRef<IPriceLine[]>([]);
   const aiChartMarkersRef = useRef<SeriesMarker<Time>[]>([]);
+  const aiDynamicChartMarkersRef = useRef<SeriesMarker<Time>[]>([]);
+  const dynamicAssistantActionsRef = useRef<AssistantChartAction[]>([]);
+  const lastAssistantDrawActionsRef = useRef<AssistantChartAction[]>([]);
   const baseChartMarkersRef = useRef<SeriesMarker<Time>[]>([]);
   const [chartRenderWindow, setChartRenderWindow] = useState<ChartDataWindow>({ from: 0, to: -1 });
 
@@ -5851,7 +6278,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       baseChartMarkersRef.current = baseMarkers;
     }
 
-    const merged = [...baseChartMarkersRef.current, ...aiChartMarkersRef.current];
+    const merged = [
+      ...baseChartMarkersRef.current,
+      ...aiChartMarkersRef.current,
+      ...aiDynamicChartMarkersRef.current
+    ];
     merged.sort((left, right) => Number(left.time) - Number(right.time));
     candleSeries.setMarkers(merged);
   }, []);
@@ -5880,6 +6311,43 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     aiChartMarkersRef.current = [];
     applyCombinedChartMarkers();
   }, [applyCombinedChartMarkers]);
+
+  const clearDynamicAiChartAnnotations = useCallback((preserveRegisteredActions = false) => {
+    const candleSeries = candleSeriesRef.current;
+    if (!candleSeries) {
+      aiDynamicChartOverlaySeriesRef.current = [];
+      aiDynamicChartPriceLinesRef.current = [];
+      aiDynamicChartMarkersRef.current = [];
+      if (!preserveRegisteredActions) {
+        dynamicAssistantActionsRef.current = [];
+      }
+      return;
+    }
+
+    const chart = chartRef.current;
+    if (chart) {
+      for (const series of aiDynamicChartOverlaySeriesRef.current) {
+        chart.removeSeries(series);
+      }
+    }
+    aiDynamicChartOverlaySeriesRef.current = [];
+
+    for (const priceLine of aiDynamicChartPriceLinesRef.current) {
+      candleSeries.removePriceLine(priceLine);
+    }
+    aiDynamicChartPriceLinesRef.current = [];
+    aiDynamicChartMarkersRef.current = [];
+    if (!preserveRegisteredActions) {
+      dynamicAssistantActionsRef.current = [];
+    }
+    applyCombinedChartMarkers();
+  }, [applyCombinedChartMarkers]);
+
+  const clearAllAiChartAnnotations = useCallback(() => {
+    clearAiChartAnnotations();
+    clearDynamicAiChartAnnotations();
+    lastAssistantDrawActionsRef.current = [];
+  }, [clearAiChartAnnotations, clearDynamicAiChartAnnotations]);
 
   const clampWorkspacePanelWidth = useCallback((rawWidth: number): number => {
     const workspaceWidth =
@@ -7650,12 +8118,63 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     [gaplessTimeMap]
   );
 
+  const renderDynamicAssistantActions = useCallback(
+    (candlesInput?: Candle[]) => {
+      const chart = chartRef.current;
+      const candleSeries = candleSeriesRef.current;
+      const candles = candlesInput ?? selectedChartCandlesRef.current;
+
+      if (!chart || !candleSeries || candles.length === 0) {
+        return;
+      }
+
+      clearDynamicAiChartAnnotations(true);
+
+      const registered = dynamicAssistantActionsRef.current.filter(
+        (action) => action.dynamic === true
+      );
+      if (registered.length === 0) {
+        return;
+      }
+
+      const resolved = registered
+        .flatMap((action) =>
+          resolveDynamicAssistantAction({
+            action,
+            candles
+          })
+        )
+        .slice(0, 64);
+
+      if (resolved.length === 0) {
+        return;
+      }
+
+      executeAssistantChartActions(resolved, {
+        chart,
+        candleSeries,
+        candles,
+        overlaySeries: aiDynamicChartOverlaySeriesRef.current,
+        priceLines: aiDynamicChartPriceLinesRef.current,
+        markers: aiDynamicChartMarkersRef.current,
+        chartTimeFromMs: (timestampMs: number) => toGaplessUtc(timestampMs),
+        setCombinedMarkers: () => applyCombinedChartMarkers(),
+        clearOverlays: () => clearDynamicAiChartAnnotations(true),
+        styleToLineStyle: assistantToolStyleToLineStyle
+      });
+
+      applyCombinedChartMarkers();
+    },
+    [applyCombinedChartMarkers, clearDynamicAiChartAnnotations, toGaplessUtc]
+  );
+
   const runAssistantChartActions = useCallback(
     (actionsRaw: Array<Record<string, unknown>>) => {
       const chart = chartRef.current;
       const candleSeries = candleSeriesRef.current;
+      const candles = selectedChartCandlesRef.current;
 
-      if (!chart || !candleSeries || selectedChartCandles.length === 0) {
+      if (!chart || !candleSeries || candles.length === 0) {
         return;
       }
 
@@ -7664,41 +8183,203 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         return;
       }
 
-      const hasClearAction = normalizedActions.some(
-        (action) => action.type === "clear_annotations"
+      const toggleDynamicActions = normalizedActions.filter(
+        (action) => action.type === "toggle_dynamic_support_resistance"
       );
-      if (hasClearAction) {
-        clearAiChartAnnotations();
+      if (toggleDynamicActions.length > 0) {
+        const hasManagedDynamicSr = (action: AssistantChartAction): boolean => {
+          return (
+            action.dynamic === true &&
+            action.type === "draw_support_resistance" &&
+            String(action.label || "")
+              .toLowerCase()
+              .includes("dynamic s/r")
+          );
+        };
+
+        for (const toggleAction of toggleDynamicActions) {
+          if (toggleAction.enabled === false) {
+            dynamicAssistantActionsRef.current = dynamicAssistantActionsRef.current.filter(
+              (row) => !hasManagedDynamicSr(row)
+            );
+            continue;
+          }
+
+          const levels = Number.isFinite(toggleAction.levels)
+            ? clamp(Math.round(Number(toggleAction.levels)), 1, DYNAMIC_SR_MAX_LEVELS)
+            : DYNAMIC_SR_DEFAULT_LEVELS;
+          const dynamicLookback = Number.isFinite(toggleAction.lookback)
+            ? clamp(Math.round(Number(toggleAction.lookback)), 12, DYNAMIC_SR_MAX_LOOKBACK)
+            : undefined;
+
+          const nextDynamicSr: AssistantChartAction = {
+            type: "draw_support_resistance",
+            dynamic: true,
+            dynamicLookback,
+            levels,
+            style: "dashed",
+            label: "Dynamic S/R"
+          };
+
+          dynamicAssistantActionsRef.current = [
+            ...dynamicAssistantActionsRef.current.filter((row) => !hasManagedDynamicSr(row)),
+            nextDynamicSr
+          ];
+        }
       }
 
-      executeAssistantChartActions(normalizedActions, {
-        chart,
-        candleSeries,
-        candles: selectedChartCandles,
-        overlaySeries: aiChartOverlaySeriesRef.current,
-        priceLines: aiChartPriceLinesRef.current,
-        markers: aiChartMarkersRef.current,
-        chartTimeFromMs: (timestampMs: number) => toGaplessUtc(timestampMs),
-        setCombinedMarkers: () => applyCombinedChartMarkers(),
-        clearOverlays: clearAiChartAnnotations,
-        styleToLineStyle: assistantToolStyleToLineStyle
-      });
+      const adjustActions = normalizedActions.filter(
+        (action) => action.type === "adjust_previous_drawings"
+      );
 
-      applyCombinedChartMarkers();
+      if (adjustActions.length > 0) {
+        const applyAdjustments = (input: AssistantChartAction[]) => {
+          let changed = false;
+          let output = [...input];
+
+          for (const adjustAction of adjustActions) {
+            const priceDelta = Number.isFinite(adjustAction.priceDelta)
+              ? Number(adjustAction.priceDelta)
+              : 0;
+            const timeDeltaMs = Number.isFinite(adjustAction.timeDeltaMs)
+              ? Number(adjustAction.timeDeltaMs)
+              : 0;
+            if (Math.abs(priceDelta) <= 0 && Math.abs(timeDeltaMs) <= 0) {
+              continue;
+            }
+
+            const labelFilter = String(adjustAction.targetLabel || "")
+              .trim()
+              .toLowerCase();
+
+            output = output.map((drawAction) => {
+              if (!isAssistantDrawableAction(drawAction)) {
+                return drawAction;
+              }
+
+              if (labelFilter) {
+                const drawLabel = String(drawAction.label || "").toLowerCase();
+                if (!drawLabel.includes(labelFilter)) {
+                  return drawAction;
+                }
+              }
+
+              changed = true;
+              return adjustAssistantDrawAction({
+                action: drawAction,
+                priceDelta,
+                timeDeltaMs
+              });
+            });
+          }
+
+          return { output, changed };
+        };
+
+        const adjustedStatic = applyAdjustments(lastAssistantDrawActionsRef.current);
+        const adjustedDynamic = applyAdjustments(dynamicAssistantActionsRef.current);
+
+        if (adjustedStatic.changed) {
+          const adjustedDrawableReplay = adjustedStatic.output.filter(isAssistantDrawableAction);
+          clearAiChartAnnotations();
+          if (adjustedDrawableReplay.length > 0) {
+            executeAssistantChartActions(adjustedDrawableReplay, {
+              chart,
+              candleSeries,
+              candles,
+              overlaySeries: aiChartOverlaySeriesRef.current,
+              priceLines: aiChartPriceLinesRef.current,
+              markers: aiChartMarkersRef.current,
+              chartTimeFromMs: (timestampMs: number) => toGaplessUtc(timestampMs),
+              setCombinedMarkers: () => applyCombinedChartMarkers(),
+              clearOverlays: clearAiChartAnnotations,
+              styleToLineStyle: assistantToolStyleToLineStyle
+            });
+            applyCombinedChartMarkers();
+          }
+          lastAssistantDrawActionsRef.current = adjustedStatic.output;
+        }
+
+        if (adjustedDynamic.changed) {
+          dynamicAssistantActionsRef.current = adjustedDynamic.output;
+        }
+      }
+
+      const drawActions = normalizedActions.filter(
+        (action) =>
+          action.type !== "adjust_previous_drawings" &&
+          action.type !== "toggle_dynamic_support_resistance"
+      );
+      const hasClearAction = drawActions.some((action) => action.type === "clear_annotations");
+
+      if (hasClearAction) {
+        clearAllAiChartAnnotations();
+      }
+
+      const actionable = drawActions.filter((action) => action.type !== "clear_annotations");
+      const staticActions = actionable.filter((action) => !action.dynamic);
+      const incomingDynamicActions = actionable
+        .filter((action) => action.dynamic === true)
+        .filter((action) => isAssistantDrawableAction(action) || action.type === "move_to_date")
+        .map((action) => ({ ...action }));
+
+      if (staticActions.length > 0) {
+        executeAssistantChartActions(staticActions, {
+          chart,
+          candleSeries,
+          candles,
+          overlaySeries: aiChartOverlaySeriesRef.current,
+          priceLines: aiChartPriceLinesRef.current,
+          markers: aiChartMarkersRef.current,
+          chartTimeFromMs: (timestampMs: number) => toGaplessUtc(timestampMs),
+          setCombinedMarkers: () => applyCombinedChartMarkers(),
+          clearOverlays: clearAllAiChartAnnotations,
+          styleToLineStyle: assistantToolStyleToLineStyle
+        });
+
+        applyCombinedChartMarkers();
+
+        const latestDrawableActions = staticActions.filter(isAssistantDrawableAction);
+        if (latestDrawableActions.length > 0) {
+          lastAssistantDrawActionsRef.current = latestDrawableActions.map((action) => ({
+            ...action
+          }));
+        }
+      }
+
+      if (incomingDynamicActions.length > 0) {
+        dynamicAssistantActionsRef.current = hasClearAction
+          ? incomingDynamicActions
+          : [...dynamicAssistantActionsRef.current, ...incomingDynamicActions].slice(-24);
+      }
+
+      renderDynamicAssistantActions(candles);
     },
     [
       applyCombinedChartMarkers,
       clearAiChartAnnotations,
-      selectedChartCandles,
+      clearAllAiChartAnnotations,
+      renderDynamicAssistantActions,
       toGaplessUtc
     ]
   );
 
   useEffect(() => {
     if (selectedSurfaceTab !== "chart") {
-      clearAiChartAnnotations();
+      clearAllAiChartAnnotations();
     }
-  }, [clearAiChartAnnotations, selectedSurfaceTab]);
+  }, [clearAllAiChartAnnotations, selectedSurfaceTab]);
+
+  useEffect(() => {
+    if (selectedSurfaceTab !== "chart") {
+      return;
+    }
+    renderDynamicAssistantActions(selectedChartCandles);
+  }, [
+    renderDynamicAssistantActions,
+    selectedChartCandles,
+    selectedSurfaceTab
+  ]);
 
   useEffect(() => {
     if (selectedSurfaceTab !== "chart") {
@@ -10184,6 +10865,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         chartIsApplyingVisibleRangeRef.current = false;
         chartHoverCandleRef.current = null;
         chartBarIndexByGaplessTimeRef.current = new Map();
+        aiChartOverlaySeriesRef.current = [];
+        aiChartPriceLinesRef.current = [];
+        aiDynamicChartOverlaySeriesRef.current = [];
+        aiDynamicChartPriceLinesRef.current = [];
+        aiChartMarkersRef.current = [];
+        aiDynamicChartMarkersRef.current = [];
+        baseChartMarkersRef.current = [];
+        lastAssistantDrawActionsRef.current = [];
+        dynamicAssistantActionsRef.current = [];
       };
 
       if (disposed) {

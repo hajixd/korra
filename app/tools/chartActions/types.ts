@@ -14,6 +14,8 @@ export type AssistantChartAction = {
   type:
     | "clear_annotations"
     | "move_to_date"
+    | "adjust_previous_drawings"
+    | "toggle_dynamic_support_resistance"
     | "draw_horizontal_line"
     | "draw_vertical_line"
     | "draw_trend_line"
@@ -40,6 +42,14 @@ export type AssistantChartAction = {
   side?: "long" | "short";
   markerShape?: "arrowUp" | "arrowDown" | "circle" | "square";
   note?: string;
+  priceDelta?: number;
+  timeDeltaMs?: number;
+  targetLabel?: string;
+  enabled?: boolean;
+  levels?: number;
+  lookback?: number;
+  dynamic?: boolean;
+  dynamicLookback?: number;
 };
 
 export type ChartCandleLike = {

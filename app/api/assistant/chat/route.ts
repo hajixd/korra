@@ -935,6 +935,27 @@ const isTechnicalDrawRequest = (prompt: string): boolean => {
   return TECHNICAL_DRAW_RE.test(text);
 };
 
+const isChartControlRequest = (prompt: string): boolean => {
+  const text = toText(prompt, "").toLowerCase();
+  if (!text) {
+    return false;
+  }
+
+  const adjustIntent =
+    /\b(adjust|move|shift|nudge|edit|update|reposition|offset)\b/.test(text) &&
+    /\b(draw|drawing|drawings|line|lines|level|levels|annotation|annotations|support|resistance)\b/.test(
+      text
+    );
+
+  const dynamicIntent =
+    /\b(dynamic|indicator|auto)\b/.test(text) &&
+    /\b(draw|line|trendline|trend line|box|fvg|fair value gap|arrow|ruler|support|resistance|s\/r|mark|position)\b/.test(
+      text
+    );
+
+  return adjustIntent || dynamicIntent;
+};
+
 const inferClickhousePair = (rawValue: string): string | null => {
   const direct = rawValue.trim().toUpperCase();
   if (!direct) {
@@ -1161,74 +1182,83 @@ const summarizeDrawnActions = (
   };
 
   const descriptions: string[] = [];
+  const withDynamicPrefix = (
+    action: (typeof actions)[number],
+    text: string
+  ): string => {
+    return action.dynamic ? `dynamic ${text}` : text;
+  };
 
   for (const action of actions.slice(0, 6)) {
     if (action.type === "draw_support_resistance") {
       const support = describePrice(action.priceStart);
       const resistance = describePrice(action.priceEnd);
       descriptions.push(
-        support && resistance
-          ? `support ${support} / resistance ${resistance}`
-          : "support/resistance levels"
+        withDynamicPrefix(
+          action,
+          support && resistance
+            ? `support ${support} / resistance ${resistance}`
+            : "support/resistance levels"
+        )
       );
       continue;
     }
 
     if (action.type === "draw_horizontal_line") {
       const price = describePrice(action.price);
-      descriptions.push(price ? `horizontal level ${price}` : "horizontal level");
+      descriptions.push(withDynamicPrefix(action, price ? `horizontal level ${price}` : "horizontal level"));
       continue;
     }
 
     if (action.type === "draw_vertical_line") {
       const time = describeTime(action.time);
-      descriptions.push(time ? `vertical marker at ${time}` : "vertical marker");
+      descriptions.push(withDynamicPrefix(action, time ? `vertical marker at ${time}` : "vertical marker"));
       continue;
     }
 
     if (action.type === "draw_trend_line") {
       const start = describePrice(action.priceStart);
       const end = describePrice(action.priceEnd);
-      descriptions.push(
-        start && end ? `trend line ${start} -> ${end}` : "trend line"
-      );
+      descriptions.push(withDynamicPrefix(action, start && end ? `trend line ${start} -> ${end}` : "trend line"));
       continue;
     }
 
     if (action.type === "draw_box") {
-      descriptions.push(action.label ? `box (${action.label})` : "box zone");
+      descriptions.push(withDynamicPrefix(action, action.label ? `box (${action.label})` : "box zone"));
       continue;
     }
 
     if (action.type === "draw_fvg") {
-      descriptions.push("fair value gap zone");
+      descriptions.push(withDynamicPrefix(action, "fair value gap zone"));
       continue;
     }
 
     if (action.type === "draw_arrow") {
-      descriptions.push(action.label ? `arrow (${action.label})` : "arrow marker");
+      descriptions.push(withDynamicPrefix(action, action.label ? `arrow (${action.label})` : "arrow marker"));
       continue;
     }
 
     if (action.type === "draw_long_position") {
       const entry = describePrice(action.entryPrice);
-      descriptions.push(entry ? `long position (entry ${entry})` : "long position");
+      descriptions.push(withDynamicPrefix(action, entry ? `long position (entry ${entry})` : "long position"));
       continue;
     }
 
     if (action.type === "draw_short_position") {
       const entry = describePrice(action.entryPrice);
-      descriptions.push(entry ? `short position (entry ${entry})` : "short position");
+      descriptions.push(withDynamicPrefix(action, entry ? `short position (entry ${entry})` : "short position"));
       continue;
     }
 
     if (action.type === "draw_ruler") {
-      descriptions.push("ruler measurement");
+      descriptions.push(withDynamicPrefix(action, "ruler measurement"));
       continue;
     }
 
     if (action.type === "mark_candlestick") {
-      descriptions.push(action.note ? `marked candle (${action.note})` : "marked candle");
+      descriptions.push(
+        withDynamicPrefix(action, action.note ? `marked candle (${action.note})` : "marked candle")
+      );
       continue;
     }
 
@@ -1242,6 +1272,19 @@ const summarizeDrawnActions = (
       descriptions.push("cleared existing annotations");
       continue;
     }
+
+    if (action.type === "adjust_previous_drawings") {
+      const delta = Number.isFinite(action.priceDelta)
+        ? `${action.priceDelta && action.priceDelta > 0 ? "+" : ""}${Number(action.priceDelta).toFixed(4)}`
+        : "";
+      descriptions.push(delta ? `adjusted previous drawings (${delta})` : "adjusted previous drawings");
+      continue;
+    }
+
+    if (action.type === "toggle_dynamic_support_resistance") {
+      descriptions.push(action.enabled === false ? "disabled dynamic support/resistance" : "enabled dynamic support/resistance");
+      continue;
+    }
   }
 
   if (descriptions.length === 0) {
@@ -1253,6 +1296,250 @@ const summarizeDrawnActions = (
   return `Drew ${actions.length} item${actions.length === 1 ? "" : "s"}: ${preview}${suffix}.`;
 };
 
+const inferCandleStepMs = (candles: CandleRow[]): number => {
+  if (candles.length < 2) {
+    return 60_000;
+  }
+
+  const diffs: number[] = [];
+  for (let index = Math.max(1, candles.length - 40); index < candles.length; index += 1) {
+    const previous = candles[index - 1];
+    const current = candles[index];
+    if (!previous || !current) {
+      continue;
+    }
+    const delta = Math.trunc(current.time) - Math.trunc(previous.time);
+    if (Number.isFinite(delta) && delta > 0) {
+      diffs.push(delta);
+    }
+  }
+
+  if (diffs.length === 0) {
+    return 60_000;
+  }
+
+  diffs.sort((left, right) => left - right);
+  const mid = Math.floor(diffs.length / 2);
+  return Math.max(1_000, diffs[mid] ?? 60_000);
+};
+
+const parseAdjustIntentAction = (params: {
+  prompt: string;
+  candles: CandleRow[];
+}): Record<string, unknown> | null => {
+  const prompt = params.prompt.toLowerCase();
+  const hasAdjustIntent = /\b(adjust|move|shift|nudge|edit|update|reposition|offset)\b/.test(prompt);
+  const hasDrawTarget =
+    /\b(drawing|drawings|line|lines|level|levels|annotation|annotations|support|resistance)\b/.test(
+      prompt
+    );
+
+  if (!hasAdjustIntent || !hasDrawTarget) {
+    return null;
+  }
+
+  let priceDelta = 0;
+  const upMatch = prompt.match(/\b(?:up|higher|raise|increase)\s+(\d+(?:\.\d+)?)\b/);
+  const downMatch = prompt.match(/\b(?:down|lower|decrease|reduce)\s+(\d+(?:\.\d+)?)\b/);
+  const signedMatch = prompt.match(/\b(?:by|delta|offset)\s*(-?\d+(?:\.\d+)?)\b/);
+
+  if (upMatch) {
+    priceDelta = Number(upMatch[1]);
+  } else if (downMatch) {
+    priceDelta = -Number(downMatch[1]);
+  } else if (signedMatch) {
+    priceDelta = Number(signedMatch[1]);
+  }
+
+  const stepMs = inferCandleStepMs(params.candles);
+  let timeDeltaMs = 0;
+  const rightMatch = prompt.match(/\b(?:right|forward|ahead)\s+(\d+)\s*(?:bars?|candles?)\b/);
+  const leftMatch = prompt.match(/\b(?:left|back|backward)\s+(\d+)\s*(?:bars?|candles?)\b/);
+  const minuteForwardMatch = prompt.match(/\b(?:forward|ahead)\s+(\d+)\s*(?:m|min|minutes?)\b/);
+  const minuteBackwardMatch = prompt.match(/\b(?:back|backward)\s+(\d+)\s*(?:m|min|minutes?)\b/);
+
+  if (rightMatch) {
+    timeDeltaMs = Number(rightMatch[1]) * stepMs;
+  } else if (leftMatch) {
+    timeDeltaMs = -Number(leftMatch[1]) * stepMs;
+  } else if (minuteForwardMatch) {
+    timeDeltaMs = Number(minuteForwardMatch[1]) * 60_000;
+  } else if (minuteBackwardMatch) {
+    timeDeltaMs = -Number(minuteBackwardMatch[1]) * 60_000;
+  }
+
+  let targetLabel = "";
+  if (prompt.includes("support") && !prompt.includes("resistance")) {
+    targetLabel = "support";
+  } else if (prompt.includes("resistance") && !prompt.includes("support")) {
+    targetLabel = "resistance";
+  } else if (prompt.includes("trend")) {
+    targetLabel = "trend";
+  }
+
+  return {
+    type: "adjust_previous_drawings",
+    priceDelta: Number.isFinite(priceDelta) ? Number(priceDelta.toFixed(4)) : undefined,
+    timeDeltaMs: Number.isFinite(timeDeltaMs) ? Math.trunc(timeDeltaMs) : undefined,
+    targetLabel: targetLabel || undefined
+  };
+};
+
+const parseDynamicSupportResistanceControlAction = (prompt: string): Record<string, unknown> | null => {
+  const normalized = prompt.toLowerCase();
+  const mentionsDynamic =
+    /\b(dynamic|indicator|auto)\b/.test(normalized) &&
+    (normalized.includes("support") || normalized.includes("resistance") || normalized.includes("s/r"));
+  if (!mentionsDynamic) {
+    return null;
+  }
+
+  const isControlToggle = /\b(enable|disable|start|stop|off|on|remove)\b/.test(normalized);
+  if (!isControlToggle) {
+    return null;
+  }
+
+  const disableRequested =
+    /\b(disable|off|stop|remove)\b/.test(normalized) &&
+    /\b(dynamic|indicator|auto)\b/.test(normalized);
+  const levelsMatch = normalized.match(/\b(\d+)\s*(?:levels?|lines?)\b/);
+  const lookbackMatch = normalized.match(/\b(\d+)\s*(?:bars?|candles?)\b/);
+
+  return {
+    type: "toggle_dynamic_support_resistance",
+    enabled: !disableRequested,
+    levels: levelsMatch ? clamp(toNumber(levelsMatch[1], 3), 1, 8) : undefined,
+    lookback: lookbackMatch ? clamp(toNumber(lookbackMatch[1], 0), 0, MAX_CLICKHOUSE_COUNT) : undefined
+  };
+};
+
+const parseDynamicDrawAction = (params: {
+  prompt: string;
+  candles: CandleRow[];
+}): Record<string, unknown> | null => {
+  const normalized = params.prompt.toLowerCase();
+  const hasDynamicIntent = /\b(dynamic|indicator|auto)\b/.test(normalized);
+  if (!hasDynamicIntent) {
+    return null;
+  }
+
+  const lookbackMatch = normalized.match(/\b(\d+)\s*(?:bars?|candles?)\b/);
+  const levelsMatch = normalized.match(/\b(\d+)\s*(?:levels?|lines?)\b/);
+  const dynamicLookback = lookbackMatch
+    ? clamp(toNumber(lookbackMatch[1], 0), 0, MAX_CLICKHOUSE_COUNT)
+    : undefined;
+  const levels = levelsMatch ? clamp(toNumber(levelsMatch[1], 2), 1, 8) : undefined;
+  const explicitPrice = extractPromptPrice(normalized);
+
+  const baseAction: Record<string, unknown> = {
+    dynamic: true,
+    dynamicLookback
+  };
+
+  if (normalized.includes("support") || normalized.includes("resistance") || normalized.includes("s/r")) {
+    return {
+      ...baseAction,
+      type: "draw_support_resistance",
+      levels,
+      label: "Dynamic S/R"
+    };
+  }
+
+  if (normalized.includes("trendline") || normalized.includes("trend line")) {
+    return {
+      ...baseAction,
+      type: "draw_trend_line",
+      label: "Dynamic Trendline"
+    };
+  }
+
+  if (normalized.includes("horizontal")) {
+    return {
+      ...baseAction,
+      type: "draw_horizontal_line",
+      price: explicitPrice ?? undefined,
+      label: "Dynamic Horizontal Level"
+    };
+  }
+
+  if (normalized.includes("vertical")) {
+    return {
+      ...baseAction,
+      type: "draw_vertical_line",
+      label: "Dynamic Vertical Marker"
+    };
+  }
+
+  if (normalized.includes("box")) {
+    return {
+      ...baseAction,
+      type: "draw_box",
+      label: "Dynamic Box"
+    };
+  }
+
+  if (normalized.includes("fvg") || normalized.includes("fair value gap")) {
+    return {
+      ...baseAction,
+      type: "draw_fvg",
+      label: "Dynamic FVG"
+    };
+  }
+
+  if (normalized.includes("arrow")) {
+    return {
+      ...baseAction,
+      type: "draw_arrow",
+      markerShape: "arrowUp",
+      label: "Dynamic Arrow"
+    };
+  }
+
+  if (normalized.includes("long")) {
+    return {
+      ...baseAction,
+      type: "draw_long_position",
+      label: "Dynamic Long"
+    };
+  }
+
+  if (normalized.includes("short")) {
+    return {
+      ...baseAction,
+      type: "draw_short_position",
+      label: "Dynamic Short"
+    };
+  }
+
+  if (normalized.includes("ruler")) {
+    return {
+      ...baseAction,
+      type: "draw_ruler",
+      label: "Dynamic Ruler"
+    };
+  }
+
+  if (normalized.includes("mark") || normalized.includes("candle")) {
+    return {
+      ...baseAction,
+      type: "mark_candlestick",
+      markerShape: "circle",
+      note: "Dynamic candle marker"
+    };
+  }
+
+  if (params.candles.length > 0) {
+    return {
+      ...baseAction,
+      type: "draw_support_resistance",
+      levels,
+      label: "Dynamic S/R"
+    };
+  }
+
+  return null;
+};
+
 const buildDrawActionsFromPrompt = (params: {
   prompt: string;
   candles: CandleRow[];
@@ -1261,6 +1548,21 @@ const buildDrawActionsFromPrompt = (params: {
   const candles = params.candles;
   if (candles.length === 0) {
     return [];
+  }
+
+  const dynamicControlAction = parseDynamicSupportResistanceControlAction(prompt);
+  if (dynamicControlAction) {
+    return [dynamicControlAction];
+  }
+
+  const adjustAction = parseAdjustIntentAction({ prompt, candles });
+  if (adjustAction) {
+    return [adjustAction];
+  }
+
+  const dynamicAction = parseDynamicDrawAction({ prompt, candles });
+  if (dynamicAction) {
+    return [dynamicAction];
   }
 
   const recent = candles.slice(-Math.min(candles.length, 240));
@@ -2607,7 +2909,8 @@ export async function POST(request: Request) {
 
   const baseUrl = process.env.NEBIUS_BASE_URL || "https://api.tokenfactory.nebius.com/v1";
   const lastUserPrompt = getLastUserPrompt(turns);
-  const explicitDrawRequest = DRAW_WORD_RE.test(lastUserPrompt);
+  const explicitDrawRequest =
+    DRAW_WORD_RE.test(lastUserPrompt) || isChartControlRequest(lastUserPrompt);
   const wantsVisualization = VISUAL_REQUEST_RE.test(lastUserPrompt);
   const wantsAnimation = ANIMATION_REQUEST_RE.test(lastUserPrompt);
   const deterministicIntent = detectDeterministicIntent(lastUserPrompt);
@@ -2744,10 +3047,15 @@ export async function POST(request: Request) {
         prompt: lastUserPrompt,
         candles: drawCandles
       });
-      chartActions = normalizeChartActions([
-        { type: "clear_annotations" },
-        ...dataAnchoredDrawActions
-      ]);
+      const hasControlAction = dataAnchoredDrawActions.some((action) => {
+        const type = String((action as Record<string, unknown>).type || "");
+        return type === "adjust_previous_drawings" || type === "toggle_dynamic_support_resistance";
+      });
+      chartActions = normalizeChartActions(
+        hasControlAction
+          ? dataAnchoredDrawActions
+          : [{ type: "clear_annotations" }, ...dataAnchoredDrawActions]
+      );
       chartActions = sanitizeDrawActionsAgainstCandles({
         actions: chartActions,
         candles: drawCandles

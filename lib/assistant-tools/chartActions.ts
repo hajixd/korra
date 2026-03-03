@@ -1,6 +1,8 @@
 export type AssistantChartActionType =
   | "clear_annotations"
   | "move_to_date"
+  | "adjust_previous_drawings"
+  | "toggle_dynamic_support_resistance"
   | "draw_horizontal_line"
   | "draw_vertical_line"
   | "draw_trend_line"
@@ -30,11 +32,21 @@ export type AssistantChartAction = {
   side?: "long" | "short";
   markerShape?: "arrowUp" | "arrowDown" | "circle" | "square";
   note?: string;
+  priceDelta?: number;
+  timeDeltaMs?: number;
+  targetLabel?: string;
+  enabled?: boolean;
+  levels?: number;
+  lookback?: number;
+  dynamic?: boolean;
+  dynamicLookback?: number;
 };
 
 const ACTION_TYPES: AssistantChartActionType[] = [
   "clear_annotations",
   "move_to_date",
+  "adjust_previous_drawings",
+  "toggle_dynamic_support_resistance",
   "draw_horizontal_line",
   "draw_vertical_line",
   "draw_trend_line",
@@ -57,6 +69,19 @@ const normalizeActionTypeToken = (value: string): string =>
     .replace(/^_+|_+$/g, "");
 
 const ACTION_TYPE_SET = new Set(ACTION_TYPES);
+const DYNAMIC_CAPABLE_ACTION_SET = new Set<AssistantChartActionType>([
+  "draw_horizontal_line",
+  "draw_vertical_line",
+  "draw_trend_line",
+  "draw_box",
+  "draw_fvg",
+  "draw_support_resistance",
+  "draw_arrow",
+  "draw_long_position",
+  "draw_short_position",
+  "draw_ruler",
+  "mark_candlestick"
+]);
 
 const ACTION_ALIAS_GROUPS: Record<AssistantChartActionType, string[]> = {
   clear_annotations: [
@@ -115,6 +140,34 @@ const ACTION_ALIAS_GROUPS: Record<AssistantChartActionType, string[]> = {
     "show_time",
     "navigate_to_date",
     "navigate_to_time"
+  ],
+  adjust_previous_drawings: [
+    "adjust_previous",
+    "adjust_previous_drawing",
+    "adjust_last_draw",
+    "adjust_last_drawing",
+    "shift_previous_drawings",
+    "move_previous_drawings",
+    "offset_previous_drawings",
+    "nudge_previous_drawings",
+    "edit_previous_drawings",
+    "update_previous_drawings",
+    "reposition_previous_drawings",
+    "align_previous_drawings"
+  ],
+  toggle_dynamic_support_resistance: [
+    "dynamic_support_resistance",
+    "toggle_dynamic_sr",
+    "enable_dynamic_sr",
+    "disable_dynamic_sr",
+    "start_dynamic_support_resistance",
+    "stop_dynamic_support_resistance",
+    "auto_support_resistance_indicator",
+    "dynamic_sr_indicator",
+    "live_support_resistance_indicator",
+    "toggle_auto_sr",
+    "enable_auto_sr",
+    "disable_auto_sr"
   ],
   draw_horizontal_line: [
     "draw_support_line",
@@ -477,17 +530,61 @@ const toText = (value: unknown, fallback = ""): string => {
   return trimmed.length > 0 ? trimmed : fallback;
 };
 
-const toCanonicalActionType = (value: unknown): AssistantChartActionType | null => {
+const toBoolean = (value: unknown): boolean | undefined => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+  if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+  return undefined;
+};
+
+const resolveCanonicalActionType = (
+  token: string
+): AssistantChartActionType | null => {
+  if (ACTION_TYPE_SET.has(token as AssistantChartActionType)) {
+    return token as AssistantChartActionType;
+  }
+
+  return ACTION_ALIAS_LOOKUP.get(token) ?? null;
+};
+
+const toCanonicalActionType = (
+  value: unknown
+): { type: AssistantChartActionType; dynamicFromType: boolean } | null => {
   const normalized = normalizeActionTypeToken(String(value ?? ""));
   if (!normalized) {
     return null;
   }
 
-  if (ACTION_TYPE_SET.has(normalized as AssistantChartActionType)) {
-    return normalized as AssistantChartActionType;
+  const direct = resolveCanonicalActionType(normalized);
+  if (direct) {
+    return { type: direct, dynamicFromType: false };
   }
 
-  return ACTION_ALIAS_LOOKUP.get(normalized) ?? null;
+  for (const prefix of ["dynamic_", "auto_"]) {
+    if (!normalized.startsWith(prefix)) {
+      continue;
+    }
+
+    const stripped = normalized.slice(prefix.length);
+    const resolved = resolveCanonicalActionType(stripped);
+    if (resolved) {
+      return { type: resolved, dynamicFromType: true };
+    }
+  }
+
+  return null;
 };
 
 const sanitizeStyle = (value: unknown): "solid" | "dashed" | "dotted" => {
@@ -529,10 +626,19 @@ export const normalizeChartActions = (input: unknown): AssistantChartAction[] =>
     }
 
     const raw = row as Record<string, unknown>;
-    const actionType = toCanonicalActionType(raw.type);
-    if (!actionType) {
+    const actionTypeMeta = toCanonicalActionType(raw.type);
+    if (!actionTypeMeta) {
       continue;
     }
+    const actionType = actionTypeMeta.type;
+    const dynamicHintFromToken = normalizeActionTypeToken(String(raw.type ?? "")).includes(
+      "dynamic"
+    );
+    const dynamicRaw =
+      toBoolean(raw.dynamic) ??
+      (DYNAMIC_CAPABLE_ACTION_SET.has(actionType)
+        ? actionTypeMeta.dynamicFromType || dynamicHintFromToken
+        : undefined);
 
     const action: AssistantChartAction = {
       type: actionType,
@@ -550,7 +656,19 @@ export const normalizeChartActions = (input: unknown): AssistantChartAction[] =>
       targetPrice: toNumber(raw.targetPrice) ?? undefined,
       side: sanitizeSide(raw.side),
       markerShape: sanitizeMarkerShape(raw.markerShape),
-      note: toText(raw.note, "")
+      note: toText(raw.note, ""),
+      priceDelta: toNumber(raw.priceDelta) ?? undefined,
+      timeDeltaMs: toNumber(raw.timeDeltaMs) ?? undefined,
+      targetLabel: toText(raw.targetLabel, ""),
+      enabled: toBoolean(raw.enabled),
+      levels: toNumber(raw.levels) ?? undefined,
+      lookback: toNumber(raw.lookback) ?? undefined,
+      dynamic: dynamicRaw,
+      dynamicLookback:
+        toNumber(raw.dynamicLookback) ??
+        toNumber(raw.lookbackBars) ??
+        toNumber(raw.windowBars) ??
+        undefined
     };
 
     if (action.type === "draw_long_position" && !action.side) {
@@ -586,6 +704,10 @@ export const chartActionsPromptSpec = (): string => {
     `Total alias actions available: ${totalAliases}.`,
     '{"type":"clear_annotations"}',
     '{"type":"move_to_date","time":1709251200000}',
+    '{"type":"adjust_previous_drawings","priceDelta":2.5,"targetLabel":"support"}',
+    '{"type":"toggle_dynamic_support_resistance","enabled":true,"levels":3,"lookback":1200}',
+    '{"type":"draw_support_resistance","dynamic":true,"dynamicLookback":1200,"levels":4,"label":"Dynamic S/R"}',
+    '{"type":"dynamic_draw_trend_line","dynamicLookback":300,"label":"Dynamic Trend"}',
     '{"type":"draw_horizontal_line","price":3365.2,"label":"Resistance","color":"#f0455a"}',
     '{"type":"draw_vertical_line","time":1709251200000,"label":"Event"}',
     '{"type":"draw_trend_line","timeStart":1709200000000,"priceStart":3340,"timeEnd":1709300000000,"priceEnd":3360}',

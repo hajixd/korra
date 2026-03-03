@@ -23,6 +23,11 @@ export const executeAssistantChartActions = (
       continue;
     }
 
+    if (action.type === "adjust_previous_drawings" || action.type === "toggle_dynamic_support_resistance") {
+      // Managed by higher-level orchestration in TradingTerminal.
+      continue;
+    }
+
     if (action.type === "move_to_date") {
       moveToDate(action, ctx);
       continue;
