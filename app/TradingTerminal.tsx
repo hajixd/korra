@@ -3431,10 +3431,20 @@ const BacktestPerTradeMiniChart = ({
 
           <ReferenceLine y={entryPrice} stroke="#a3a3a3" strokeDasharray="4 6" />
           {Number.isFinite(tpPrice as number) ? (
-            <ReferenceLine y={tpPrice as number} stroke="#34d399" strokeDasharray="4 6" />
+            <ReferenceLine
+              y={tpPrice as number}
+              stroke="#34d399"
+              strokeDasharray="4 6"
+              ifOverflow="extendDomain"
+            />
           ) : null}
           {Number.isFinite(slPrice as number) ? (
-            <ReferenceLine y={slPrice as number} stroke="#f87171" strokeDasharray="4 6" />
+            <ReferenceLine
+              y={slPrice as number}
+              stroke="#f87171"
+              strokeDasharray="4 6"
+              ifOverflow="extendDomain"
+            />
           ) : null}
 
           <Tooltip
@@ -3516,7 +3526,7 @@ const BacktestPerTradeMiniChart = ({
 
           <g clipPath={`url(#${clipId})`}>
             <Line
-              type="monotone"
+              type="linear"
               dataKey="price"
               stroke="rgba(255, 255, 255, 0.2)"
               strokeWidth={1.25}
@@ -4057,9 +4067,28 @@ const BacktestTradeMiniChart = ({
     if (rows.length > 0) {
       const last = rows[rows.length - 1]!;
       const exitPrice = trade.outcomePrice;
-      last.price = exitPrice;
-      last.high = Math.max(last.high, exitPrice);
-      last.low = Math.min(last.low, exitPrice);
+      const exitTimeMs = Number(trade.exitTime) * 1000;
+      const exitMinuteIndex = Math.max(
+        1,
+        Math.ceil((exitTimeMs + 60_000 - entryTimeMs) / 60_000)
+      );
+
+      if (exitMinuteIndex > last.bar) {
+        rows.push({
+          bar: exitMinuteIndex,
+          price: exitPrice,
+          high: Math.max(last.price, exitPrice),
+          low: Math.min(last.price, exitPrice),
+          relCand: last.relCand,
+          candIdx: last.candIdx,
+          ts: exitTimeMs
+        });
+      } else {
+        last.price = exitPrice;
+        last.high = Math.max(last.high, exitPrice);
+        last.low = Math.min(last.low, exitPrice);
+        last.ts = exitTimeMs;
+      }
     }
 
     return rows;
@@ -4069,6 +4098,7 @@ const BacktestTradeMiniChart = ({
     exitIndex,
     trade.entryPrice,
     trade.entryTime,
+    trade.exitTime,
     trade.outcomePrice
   ]);
 
@@ -4088,11 +4118,13 @@ const BacktestTradeMiniChart = ({
     let high = Math.max(...highs);
 
     if (Number.isFinite(trade.targetPrice)) {
+      low = Math.min(low, trade.targetPrice);
       high = Math.max(high, trade.targetPrice);
     }
 
     if (Number.isFinite(trade.stopPrice)) {
       low = Math.min(low, trade.stopPrice);
+      high = Math.max(high, trade.stopPrice);
     }
 
     const span = Math.max(0.000000001, high - low);
@@ -9735,8 +9767,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [antiCheatBacktestContext]);
 
   const backtestLibraryCandidateTrades = useMemo(() => {
-    return antiCheatBacktestContext.libraryCandidateTrades;
-  }, [antiCheatBacktestContext]);
+    return sharedLibraryCandidateTrades.length > 0
+      ? sharedLibraryCandidateTrades
+      : backtestTimeFilteredTrades;
+  }, [backtestTimeFilteredTrades, sharedLibraryCandidateTrades]);
 
   const backtestTrades = useMemo(() => {
     return backtestTimeFilteredTrades.filter((trade) => {
@@ -15735,13 +15769,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         {selectedBacktestDayTrades.map((trade) => {
                           const isExpanded = expandedBacktestTradeId === trade.id;
                           const durationMinutes = getHistoryTradeDurationMinutes(trade);
-                          const estimatedBars = Math.max(
-                            1,
-                            Math.round(
-                              durationMinutes /
-                                timeframeMinutes[appliedBacktestSettings.timeframe]
-                            )
-                          );
                           const oneMinuteKey = symbolTimeframeKey(trade.symbol, "1m");
                           const timeframeKey = symbolTimeframeKey(
                             trade.symbol,
@@ -15801,7 +15828,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                       </span>
                                     </div>
                                     <div className="backtest-calendar-trade-duration">
-                                      Duration: {estimatedBars} bars · {formatMinutesCompact(durationMinutes)}
+                                      Duration: {formatMinutesCompact(durationMinutes)}
                                     </div>
                                   </div>
                                 </div>
@@ -15819,16 +15846,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     <div className="backtest-calendar-trade-stat">
                                       <span>Duration</span>
                                       <strong>
-                                        {estimatedBars} bars · {formatMinutesCompact(durationMinutes)}
+                                        {formatMinutesCompact(durationMinutes)}
                                       </strong>
                                     </div>
                                     <div className="backtest-calendar-trade-stat">
                                       <span>TP Price</span>
-                                      <strong>{formatPrice(trade.targetPrice)}</strong>
+                                      <strong className="backtest-calendar-trade-stat-value tp">
+                                        {formatPrice(trade.targetPrice)}
+                                      </strong>
                                     </div>
                                     <div className="backtest-calendar-trade-stat">
                                       <span>SL Price</span>
-                                      <strong>{formatPrice(trade.stopPrice)}</strong>
+                                      <strong className="backtest-calendar-trade-stat-value sl">
+                                        {formatPrice(trade.stopPrice)}
+                                      </strong>
                                     </div>
                                   </div>
 
