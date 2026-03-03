@@ -8567,13 +8567,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           | { open?: number; high?: number; low?: number; close?: number }
           | undefined;
 
+        const open = hoveredBar?.open;
+        const high = hoveredBar?.high;
+        const low = hoveredBar?.low;
+        const close = hoveredBar?.close;
+
         if (
           crosshairTime === null ||
-          !hoveredBar ||
-          !Number.isFinite(hoveredBar.open) ||
-          !Number.isFinite(hoveredBar.high) ||
-          !Number.isFinite(hoveredBar.low) ||
-          !Number.isFinite(hoveredBar.close)
+          typeof open !== "number" ||
+          !Number.isFinite(open) ||
+          typeof high !== "number" ||
+          !Number.isFinite(high) ||
+          typeof low !== "number" ||
+          !Number.isFinite(low) ||
+          typeof close !== "number" ||
+          !Number.isFinite(close)
         ) {
           chartHoverCandleRef.current = null;
           return;
@@ -8581,10 +8589,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
         chartHoverCandleRef.current = {
           time: crosshairTime,
-          open: hoveredBar.open,
-          high: hoveredBar.high,
-          low: hoveredBar.low,
-          close: hoveredBar.close,
+          open,
+          high,
+          low,
+          close,
           index: chartBarIndexByGaplessTimeRef.current.get(crosshairTime) ?? null
         };
       };
