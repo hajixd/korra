@@ -174,15 +174,20 @@ const resolveWithOneMinuteCandles = (
 
 const resolveEntryWithOneMinuteCandles = (
   oneMinuteCandles: BacktestHistoryCandle[],
-  entryMs: number
+  rangeStartMs: number,
+  rangeEndMs: number
 ): { entryPrice: number; entryTimeMs: number } | null => {
-  const minuteIndex = findCandleIndexAtOrAfter(oneMinuteCandles, entryMs);
+  if (!(rangeEndMs > rangeStartMs)) {
+    return null;
+  }
+
+  const minuteIndex = findCandleIndexAtOrAfter(oneMinuteCandles, rangeStartMs);
   if (minuteIndex < 0) {
     return null;
   }
 
   const candle = oneMinuteCandles[minuteIndex];
-  if (!candle) {
+  if (!candle || candle.time >= rangeEndMs) {
     return null;
   }
 
@@ -194,33 +199,36 @@ const resolveEntryWithOneMinuteCandles = (
 
 const resolveModelExitWithOneMinuteCandles = (
   oneMinuteCandles: BacktestHistoryCandle[],
-  minExitMs: number,
-  targetExitMs: number
+  rangeStartMs: number,
+  rangeEndMs: number
 ): { outcomePrice: number; outcomeTimeMs: number } | null => {
-  const normalizedTargetExitMs = Math.max(minExitMs, targetExitMs);
-  let minuteIndex = findCandleIndexAtOrBefore(oneMinuteCandles, normalizedTargetExitMs);
-
-  if (minuteIndex >= 0 && oneMinuteCandles[minuteIndex].time >= minExitMs) {
-    const candle = oneMinuteCandles[minuteIndex];
-    return {
-      outcomePrice: Math.max(0.000001, candle.close),
-      outcomeTimeMs: candle.time
-    };
+  if (!(rangeEndMs > rangeStartMs)) {
+    return null;
   }
 
-  minuteIndex = findCandleIndexAtOrAfter(oneMinuteCandles, minExitMs);
+  const minuteIndex = findCandleIndexAtOrAfter(oneMinuteCandles, rangeStartMs);
   if (minuteIndex < 0) {
     return null;
   }
 
-  const candle = oneMinuteCandles[minuteIndex];
-  if (!candle) {
+  const firstCandle = oneMinuteCandles[minuteIndex];
+  if (!firstCandle || firstCandle.time >= rangeEndMs) {
     return null;
   }
 
+  let lastInRange = firstCandle;
+
+  for (let i = minuteIndex + 1; i < oneMinuteCandles.length; i += 1) {
+    const candle = oneMinuteCandles[i];
+    if (!candle || candle.time >= rangeEndMs) {
+      break;
+    }
+    lastInRange = candle;
+  }
+
   return {
-    outcomePrice: Math.max(0.000001, candle.open),
-    outcomeTimeMs: candle.time
+    outcomePrice: Math.max(0.000001, lastInRange.close),
+    outcomeTimeMs: lastInRange.time
   };
 };
 
@@ -337,7 +345,16 @@ export const computeBacktestHistoryRowsChunk = ({
       let entryPrice = list[entryIndex].close;
 
       if (oneMinuteCandles && oneMinuteCandles.length > 0) {
-        const oneMinuteEntry = resolveEntryWithOneMinuteCandles(oneMinuteCandles, blueprint.entryMs);
+        const entryBarStartMs = list[entryIndex].time;
+        const entryBarEndMs =
+          entryIndex + 1 < list.length
+            ? list[entryIndex + 1].time
+            : entryBarStartMs + 60_000;
+        const oneMinuteEntry = resolveEntryWithOneMinuteCandles(
+          oneMinuteCandles,
+          entryBarStartMs,
+          entryBarEndMs
+        );
         if (oneMinuteEntry && oneMinuteEntry.entryTimeMs < list[exitIndex].time) {
           resolvedEntryTimeMs = oneMinuteEntry.entryTimeMs;
           entryPrice = oneMinuteEntry.entryPrice;
@@ -504,10 +521,19 @@ export const computeBacktestHistoryRowsChunk = ({
         outcomePrice = Math.max(0.000001, list[resolvedExitIndex].close);
         resolvedExitTimeMs = list[resolvedExitIndex].time;
         if (oneMinuteCandles && oneMinuteCandles.length > 0) {
+          const exitBarStartMs = list[resolvedExitIndex].time;
+          const exitBarStepMs =
+            resolvedExitIndex + 1 < list.length
+              ? Math.max(60_000, list[resolvedExitIndex + 1].time - exitBarStartMs)
+              : Math.max(
+                  60_000,
+                  resolvedExitIndex > 0 ? exitBarStartMs - list[resolvedExitIndex - 1].time : 60_000
+                );
+          const exitBarEndMs = exitBarStartMs + exitBarStepMs;
           const oneMinuteModelExit = resolveModelExitWithOneMinuteCandles(
             oneMinuteCandles,
-            resolvedEntryTimeMs + 60_000,
-            blueprint.exitMs
+            Math.max(resolvedEntryTimeMs, exitBarStartMs),
+            exitBarEndMs
           );
           if (oneMinuteModelExit) {
             outcomePrice = oneMinuteModelExit.outcomePrice;

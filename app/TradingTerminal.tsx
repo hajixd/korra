@@ -2273,8 +2273,18 @@ const fetchHybridHistoryCandles = async (
     // Always seed from ClickHouse/history first before blending in recent market candles.
     const historyCandles = await fetchHistoryApiCandles(
       timeframe,
-      Math.min(targetBars, MARKET_MAX_HISTORY_CANDLES)
+      Math.min(targetBars, CLICKHOUSE_MAX_HISTORY_CANDLES)
     );
+
+    if (timeframe === "1m") {
+      if (historyCandles.length >= MIN_SEED_CANDLES) {
+        return historyCandles.slice(-targetBars);
+      }
+
+      const recentOneMinuteCandles = await fetchRecentOneMinuteCandles(recentOneMinutePromise);
+      return recentOneMinuteCandles.slice(-targetBars);
+    }
+
     const recentTimeframeCandles = await fetchMarketCandles(
       timeframe,
       Math.min(targetBars, MARKET_MAX_HISTORY_CANDLES)
@@ -2313,6 +2323,7 @@ const fetchBacktestHistoryCandles = async (
 
 const XAUUSD_PAIR = "XAU_USD";
 const MIN_SEED_CANDLES = 40;
+const CLICKHOUSE_MAX_HISTORY_CANDLES = 300_000;
 const MARKET_MAX_HISTORY_CANDLES = 25_000;
 const LIVE_MARKET_SYNC_LIMIT = 160;
 const CHART_STREAM_CONNECT_TIMEOUT_MS = 3500;
@@ -6304,14 +6315,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           ),
           isAlreadyOneMinute
             ? Promise.resolve([])
-            : fetchHistoryApiCandles("1m", BACKTEST_ONE_MINUTE_FETCH_COUNT)
-                .then((candles) => {
-                  if (candles.length >= MIN_SEED_CANDLES) {
-                    return candles;
-                  }
-                  return fetchMarketCandles("1m", MARKET_MAX_HISTORY_CANDLES);
-                })
-                .catch(() => fetchMarketCandles("1m", MARKET_MAX_HISTORY_CANDLES).catch(() => []))
+            : fetchHistoryApiCandles("1m", BACKTEST_ONE_MINUTE_FETCH_COUNT).catch(() => [])
         ];
 
         const [deepHistoryCandles, oneMinuteCandles] = await Promise.all(promises);
