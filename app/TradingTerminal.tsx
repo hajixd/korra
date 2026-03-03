@@ -6845,6 +6845,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       );
     });
     const confidenceById = new Map<string, number>();
+    const usesSplitValidation =
+      appliedBacktestSettings.antiCheatEnabled &&
+      appliedBacktestSettings.validationMode === "split";
+    const splitIndex = usesSplitValidation
+      ? Math.floor(timeFilteredBase.length * 0.5)
+      : 0;
+    const splitTrainingTrades = usesSplitValidation
+      ? timeFilteredBase.slice(0, splitIndex)
+      : timeFilteredBase;
+    const splitEvaluationTrades = usesSplitValidation
+      ? timeFilteredBase.slice(splitIndex)
+      : timeFilteredBase;
 
     if (
       appliedBacktestSettings.aiMode === "off" ||
@@ -6853,11 +6865,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     ) {
       return {
         dateFilteredTrades,
-        timeFilteredTrades:
-          appliedBacktestSettings.antiCheatEnabled &&
-          appliedBacktestSettings.validationMode === "split"
-            ? timeFilteredBase.slice(Math.floor(timeFilteredBase.length * 0.5))
-            : timeFilteredBase,
+        libraryCandidateTrades: splitTrainingTrades,
+        timeFilteredTrades: splitEvaluationTrades,
         confidenceById
       };
     }
@@ -6866,18 +6875,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       appliedBacktestSettings.selectedAiLibraries.length > 0
         ? appliedBacktestSettings.selectedAiLibraries
         : ["core"];
-    const splitIndex =
-      appliedBacktestSettings.validationMode === "split"
-        ? Math.floor(timeFilteredBase.length * 0.5)
-        : 0;
-    const splitTrainingTrades =
-      appliedBacktestSettings.validationMode === "split"
-        ? timeFilteredBase.slice(0, splitIndex)
-        : timeFilteredBase;
-    const timeFilteredTrades =
-      appliedBacktestSettings.validationMode === "split"
-        ? timeFilteredBase.slice(splitIndex)
-        : timeFilteredBase;
+    const timeFilteredTrades = splitEvaluationTrades;
 
     const getLibrarySettings = (libraryId: string) => {
       const definition = aiLibraryDefById[libraryId];
@@ -7173,6 +7171,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return {
       dateFilteredTrades,
+      libraryCandidateTrades: splitTrainingTrades,
       timeFilteredTrades,
       confidenceById
     };
@@ -7653,9 +7652,37 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return map;
   }, [selectedChartCandles, shouldBuildCandleIndexByUnix]);
 
+  const getHistoryCandlesForSymbol = useCallback((symbol: string): Candle[] => {
+    const key = symbolTimeframeKey(symbol, selectedTimeframe);
+    const byTimeframe = backtestSeriesMap[key] ?? seriesMap[key];
+    if (byTimeframe && byTimeframe.length > 0) {
+      return byTimeframe;
+    }
+
+    const byHistory = backtestHistorySeriesBySymbol[symbol];
+    if (byHistory && byHistory.length > 0) {
+      return byHistory;
+    }
+
+    return selectedChartCandles;
+  }, [
+    backtestHistorySeriesBySymbol,
+    backtestSeriesMap,
+    selectedChartCandles,
+    selectedTimeframe,
+    seriesMap
+  ]);
+
   const openBacktestTradeDetails = (trade: HistoryItem) => {
-    const entryIndex = candleIndexByUnix.get(Number(trade.entryTime));
-    const exitIndex = candleIndexByUnix.get(Number(trade.exitTime));
+    const detailCandles = getHistoryCandlesForSymbol(trade.symbol);
+    const entryIndex = findCandleIndexAtOrBefore(
+      detailCandles,
+      Number(trade.entryTime) * 1000
+    );
+    const exitIndex = findCandleIndexAtOrBefore(
+      detailCandles,
+      Number(trade.exitTime) * 1000
+    );
 
     setActiveBacktestTradeDetails({
       id: trade.id,
@@ -7678,10 +7705,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       entryReason: trade.entrySource,
       exitReason: getBacktestExitLabel(trade),
       confidence: getEffectiveTradeConfidenceScore(trade),
-      entryIndex: typeof entryIndex === "number" ? entryIndex : undefined,
-      exitIndex: typeof exitIndex === "number" ? exitIndex : undefined
+      entryIndex: entryIndex >= 0 ? entryIndex : undefined,
+      exitIndex: exitIndex >= 0 ? exitIndex : undefined
     });
   };
+
+  const activeBacktestTradeCandles = useMemo(() => {
+    if (!activeBacktestTradeDetails) {
+      return selectedChartCandles;
+    }
+
+    return getHistoryCandlesForSymbol(String(activeBacktestTradeDetails.symbol ?? ""));
+  }, [activeBacktestTradeDetails, getHistoryCandlesForSymbol, selectedChartCandles]);
 
   const activeChartTrade = useMemo<OverlayTrade | null>(() => {
     if (!activeTrade || selectedCandles.length === 0) {
@@ -9522,26 +9557,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [antiCheatBacktestContext]);
 
   const backtestLibraryCandidateTrades = useMemo(() => {
-    return backtestDateFilteredTrades.filter((trade) => {
-      const weekday = getWeekdayLabel(getTradeDayKey(trade.exitTime));
-      const session = getSessionLabel(trade.entryTime);
-      const monthIndex = getTradeMonthIndex(trade.exitTime);
-      const entryHour = getTradeHour(trade.entryTime);
-
-      return (
-        appliedBacktestSettings.enabledBacktestWeekdays.includes(weekday) &&
-        appliedBacktestSettings.enabledBacktestSessions.includes(session) &&
-        appliedBacktestSettings.enabledBacktestMonths.includes(monthIndex) &&
-        appliedBacktestSettings.enabledBacktestHours.includes(entryHour)
-      );
-    });
-  }, [
-    appliedBacktestSettings.enabledBacktestHours,
-    appliedBacktestSettings.enabledBacktestMonths,
-    appliedBacktestSettings.enabledBacktestSessions,
-    appliedBacktestSettings.enabledBacktestWeekdays,
-    backtestDateFilteredTrades,
-  ]);
+    return antiCheatBacktestContext.libraryCandidateTrades;
+  }, [antiCheatBacktestContext]);
 
   const backtestTrades = useMemo(() => {
     return backtestTimeFilteredTrades.filter((trade) => {
@@ -9594,35 +9611,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     () => backtestTimeFilteredTrades,
     [backtestTimeFilteredTrades]
   );
-
-  const backtestRange = useMemo(() => {
-    if (selectedBacktestCandles.length > 0) {
-      return {
-        startMs: selectedBacktestCandles[0].time,
-        endMs: selectedBacktestCandles[selectedBacktestCandles.length - 1].time
-      };
-    }
-
-    if (backtestSourceTrades.length === 0) {
-      return {
-        startMs: null as number | null,
-        endMs: null as number | null
-      };
-    }
-
-    let startMs = Number.POSITIVE_INFINITY;
-    let endMs = Number.NEGATIVE_INFINITY;
-
-    for (const trade of backtestSourceTrades) {
-      startMs = Math.min(startMs, Number(trade.entryTime) * 1000);
-      endMs = Math.max(endMs, Number(trade.exitTime) * 1000);
-    }
-
-    return {
-      startMs: Number.isFinite(startMs) ? startMs : null,
-      endMs: Number.isFinite(endMs) ? endMs : null
-    };
-  }, [backtestSourceTrades, selectedBacktestCandles]);
 
   const backtestSummary = useMemo(() => {
     return summarizeBacktestTrades(backtestTrades, getEffectiveTradeConfidenceScore);
@@ -10640,13 +10628,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       buildStatRow("date-range-row", [
         {
           label: "Start Date",
-          value: backtestRange.startMs === null ? "—" : formatDateTime(backtestRange.startMs),
+          value: backtestDateRangeStartLabel,
           tone: "neutral",
           span: 1
         },
         {
           label: "End Date",
-          value: backtestRange.endMs === null ? "—" : formatDateTime(backtestRange.endMs),
+          value: backtestDateRangeEndLabel,
           tone: "neutral",
           span: 1
         }
@@ -11012,8 +11000,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
     ];
   }, [
-    backtestRange.endMs,
-    backtestRange.startMs,
+    backtestDateRangeEndLabel,
+    backtestDateRangeStartLabel,
     mainStatsAiEfficacyPct,
     mainStatsAiEffectivenessPct,
     mainStatsAiEfficiency,
@@ -13896,6 +13884,34 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           />
                         </div>
 
+                        <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
+                          <div className="ai-zip-label">Domain</div>
+                          <div className="ai-zip-toggle-grid tiles compact">
+                            {AI_DOMAIN_OPTIONS.map((domain) => (
+                              <button
+                                key={domain}
+                                type="button"
+                                className={`ai-zip-button pill ${
+                                  selectedAiDomains.includes(domain) ? "active" : ""
+                                }`}
+                                disabled={aiDisabled}
+                                onClick={() => {
+                                  setSelectedAiDomains((current) =>
+                                    toggleListValue(current, domain)
+                                  );
+                                }}
+                              >
+                                {domain}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="backtest-card" style={{ padding: "0.85rem" }}>
+                      <div className="ai-zip-section-title">Dimensionality</div>
+                      <div style={{ display: "grid", gap: "0.55rem" }}>
                         <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
                           <span className="ai-zip-label">Distance Metric</span>
                           <select
@@ -13932,34 +13948,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           />
                           <span className="ai-zip-note">{embeddingCompression}%</span>
                         </label>
-                      </div>
-                    </div>
-
-                    <div className="backtest-card" style={{ padding: "0.85rem" }}>
-                      <div className="ai-zip-section-title">Dimensionality</div>
-                      <div style={{ display: "grid", gap: "0.55rem" }}>
-                        <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
-                          <div className="ai-zip-label">Domain</div>
-                          <div className="ai-zip-toggle-grid tiles compact">
-                            {AI_DOMAIN_OPTIONS.map((domain) => (
-                              <button
-                                key={domain}
-                                type="button"
-                                className={`ai-zip-button pill ${
-                                  selectedAiDomains.includes(domain) ? "active" : ""
-                                }`}
-                                disabled={aiDisabled}
-                                onClick={() => {
-                                  setSelectedAiDomains((current) =>
-                                    toggleListValue(current, domain)
-                                  );
-                                }}
-                              >
-                                {domain}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
 
                         <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
                           <span className="ai-zip-label">Dimension Amount</span>
@@ -17016,7 +17004,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       {activeBacktestTradeDetails ? (
         <AIZipTradeDetailsModal
           trade={activeBacktestTradeDetails}
-          candles={selectedChartCandles}
+          candles={activeBacktestTradeCandles}
           dollarsPerMove={dollarsPerMove}
           interval={selectedTimeframe}
           parseMode="utc"

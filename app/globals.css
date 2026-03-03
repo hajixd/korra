@@ -237,6 +237,7 @@ button {
 
 .notif-wrap {
   position: relative;
+  z-index: 1700;
 }
 
 .notif-btn {
@@ -525,7 +526,7 @@ button {
   box-shadow:
     0 14px 44px rgba(0, 0, 0, 0.52),
     0 0 0 1px rgba(255, 255, 255, 0.03) inset;
-  z-index: 20;
+  z-index: 1701;
   overflow: hidden;
 }
 
@@ -1034,9 +1035,14 @@ button {
 }
 
 .backtest-date-range-card {
-  padding-top: 0.3rem;
-  padding-bottom: 0.3rem;
+  padding-top: 0.12rem;
+  padding-bottom: 0.12rem;
   transition: filter 0.18s ease, opacity 0.18s ease;
+}
+
+.backtest-date-range-card .backtest-card-head h3 {
+  margin-top: 0.08rem;
+  font-size: 1rem;
 }
 
 .backtest-date-range-card.is-loading {
