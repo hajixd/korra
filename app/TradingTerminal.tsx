@@ -3328,23 +3328,9 @@ const BacktestPerTradeMiniChart = ({
         return;
       }
 
-      const stroke = getStroke(tone);
-      const last = segments[segments.length - 1];
-      const mergeEpsilon = 0.000001;
-
-      if (
-        last &&
-        last.stroke === stroke &&
-        Math.abs(last.segment[1].x - leftBar) <= mergeEpsilon &&
-        Math.abs(last.segment[1].y - leftPrice) <= mergeEpsilon
-      ) {
-        last.segment[1] = { x: rightBar, y: rightPrice };
-        return;
-      }
-
       segments.push({
         key: `mini-segment-${index}-${segments.length}`,
-        stroke,
+        stroke: getStroke(tone),
         segment: [
           { x: leftBar, y: leftPrice },
           { x: rightBar, y: rightPrice }
@@ -3547,7 +3533,7 @@ const BacktestPerTradeMiniChart = ({
                 segment={item.segment}
                 stroke={item.stroke}
                 strokeWidth={2.75}
-                strokeLinecap="round"
+                strokeLinecap="butt"
                 ifOverflow="extendDomain"
               />
             ))}
@@ -4641,7 +4627,7 @@ const enforceMaxConcurrentHistoryRows = (
     .filter((row) => {
       const entrySec = Number(row.entryTime);
       const exitSec = Number(row.exitTime);
-      return Number.isFinite(entrySec) && Number.isFinite(exitSec) && exitSec > entrySec;
+      return Number.isFinite(entrySec) && Number.isFinite(exitSec) && exitSec >= entrySec;
     })
     .sort(
       (left, right) =>
