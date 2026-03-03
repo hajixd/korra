@@ -10028,19 +10028,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return summarizeBacktestTrades(mainStatsTrades, getEffectiveTradeConfidenceScore);
   }, [getEffectiveTradeConfidenceScore, mainStatsTrades]);
 
-  const mainStatsTitle = useMemo(() => {
-    if (!appliedBacktestSettings.statsDateStart && !appliedBacktestSettings.statsDateEnd) {
-      return "Stats (All Trades)";
-    }
-
-    const startLabel = appliedBacktestSettings.statsDateStart
-      ? formatStatsDateLabel(appliedBacktestSettings.statsDateStart)
-      : "Start";
-    const endLabel = appliedBacktestSettings.statsDateEnd
-      ? formatStatsDateLabel(appliedBacktestSettings.statsDateEnd)
-      : "End";
-    return `Stats (${startLabel} -> ${endLabel})`;
-  }, [appliedBacktestSettings.statsDateEnd, appliedBacktestSettings.statsDateStart]);
+  const mainStatsTitle = "Main Statistics";
 
   const backtestDateRangeStartLabel = useMemo(() => {
     return appliedBacktestSettings.statsDateStart
@@ -10675,6 +10663,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     );
 
     return [
+      buildStatRow("date-range-row", [
+        {
+          label: "Start Date",
+          value: backtestRange.startMs === null ? "—" : formatDateTime(backtestRange.startMs),
+          tone: "neutral",
+          span: 1
+        },
+        {
+          label: "End Date",
+          value: backtestRange.endMs === null ? "—" : formatDateTime(backtestRange.endMs),
+          tone: "neutral",
+          span: 1
+        }
+      ]),
       {
         label: "Total PnL",
         value: formatSignedUsd(mainStatsSummary.totalPnl),
@@ -11033,21 +11035,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         labelEmphasis: true,
         valueClassName: "with-nav",
         span: 6
-      },
-      buildStatRow("date-range-row", [
-        {
-          label: "Start Date",
-          value: backtestRange.startMs === null ? "—" : formatDateTime(backtestRange.startMs),
-          tone: "neutral",
-          span: 1
-        },
-        {
-          label: "End Date",
-          value: backtestRange.endMs === null ? "—" : formatDateTime(backtestRange.endMs),
-          tone: "neutral",
-          span: 1
-        }
-      ])
+      }
     ];
   }, [
     backtestRange.endMs,
@@ -13483,6 +13471,44 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           </div>
                         ) : null}
                       </div>
+                      <div ref={statsTimeframeDdRef} className="stats-timeframe-wrap">
+                        <button
+                          type="button"
+                          className="stats-timeframe-trigger"
+                          onClick={() => setStatsTimeframeDdOpen((o) => !o)}
+                          aria-haspopup="listbox"
+                          aria-expanded={statsTimeframeDdOpen}
+                          aria-label="Select backtest timeframe"
+                        >
+                          {TIMEFRAME_DISPLAY_LABELS[selectedTimeframe]}
+                          <span className="stats-timeframe-chevron" aria-hidden="true">
+                            {statsTimeframeDdOpen ? "▴" : "▾"}
+                          </span>
+                        </button>
+                        {statsTimeframeDdOpen && (
+                          <div
+                            className="stats-timeframe-dd"
+                            role="listbox"
+                            aria-label="Backtest timeframe options"
+                          >
+                            {timeframes.map((tf) => (
+                              <button
+                                key={tf}
+                                type="button"
+                                role="option"
+                                aria-selected={selectedTimeframe === tf}
+                                className={`stats-timeframe-option${selectedTimeframe === tf ? " active" : ""}`}
+                                onClick={() => {
+                                  setSelectedTimeframe(tf);
+                                  setStatsTimeframeDdOpen(false);
+                                }}
+                              >
+                                {TIMEFRAME_DISPLAY_LABELS[tf]}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -13562,45 +13588,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="backtest-card-head backtest-stats-head">
                       <div>
                         <h3>{mainStatsTitle}</h3>
-                      </div>
-
-                      <div ref={statsTimeframeDdRef} className="stats-timeframe-wrap">
-                        <button
-                          type="button"
-                          className="stats-timeframe-trigger"
-                          onClick={() => setStatsTimeframeDdOpen((o) => !o)}
-                          aria-haspopup="listbox"
-                          aria-expanded={statsTimeframeDdOpen}
-                          aria-label="Select backtest timeframe"
-                        >
-                          {TIMEFRAME_DISPLAY_LABELS[selectedTimeframe]}
-                          <span className="stats-timeframe-chevron" aria-hidden="true">
-                            {statsTimeframeDdOpen ? "▴" : "▾"}
-                          </span>
-                        </button>
-                        {statsTimeframeDdOpen && (
-                          <div
-                            className="stats-timeframe-dd"
-                            role="listbox"
-                            aria-label="Backtest timeframe options"
-                          >
-                            {timeframes.map((tf) => (
-                              <button
-                                key={tf}
-                                type="button"
-                                role="option"
-                                aria-selected={selectedTimeframe === tf}
-                                className={`stats-timeframe-option${selectedTimeframe === tf ? " active" : ""}`}
-                                onClick={() => {
-                                  setSelectedTimeframe(tf);
-                                  setStatsTimeframeDdOpen(false);
-                                }}
-                              >
-                                {TIMEFRAME_DISPLAY_LABELS[tf]}
-                              </button>
-                            ))}
-                          </div>
-                        )}
                       </div>
                     </div>
 

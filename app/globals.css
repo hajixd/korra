@@ -1051,7 +1051,7 @@ button {
 }
 
 .backtest-card.compact {
-  gap: 0.35rem;
+  gap: 0.28rem;
   contain-intrinsic-size: 120px;
   position: relative;
   z-index: 280;
@@ -1060,8 +1060,8 @@ button {
 }
 
 .backtest-date-range-card {
-  padding-top: 0.46rem;
-  padding-bottom: 0.46rem;
+  padding-top: 0.3rem;
+  padding-bottom: 0.3rem;
   transition: filter 0.18s ease, opacity 0.18s ease;
 }
 
@@ -1152,16 +1152,18 @@ button {
 .backtest-date-preset-row {
   flex: 1 1 100%;
   width: 100%;
+  max-width: 272px;
   margin-left: auto;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-end;
   justify-content: flex-end;
   gap: 0.32rem;
 }
 
 .backtest-date-preset-wrap {
   position: relative;
-  width: min(100%, 272px);
+  width: 100%;
   z-index: 320;
 }
 
@@ -1241,14 +1243,19 @@ button {
 
 .stats-timeframe-wrap {
   position: relative;
+  width: 100%;
+  z-index: 320;
 }
 
 .stats-timeframe-trigger {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  min-height: 32px;
-  padding: 0 0.72rem;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 28px;
+  min-width: 0;
+  width: 100%;
+  padding: 0 0.64rem;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 10px;
   background: rgba(0, 0, 0, 0.25);
@@ -1256,7 +1263,6 @@ button {
   font-size: 0.72rem;
   font-weight: 800;
   cursor: pointer;
-  white-space: nowrap;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
   transition: border-color 0.15s;
 }
@@ -1275,8 +1281,11 @@ button {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 200;
-  min-width: 164px;
+  z-index: 1400;
+  width: 100%;
+  min-width: 100%;
+  max-height: 280px;
+  overflow-y: auto;
   padding: 4px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
@@ -1357,7 +1366,7 @@ button {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.28rem;
+  gap: 0.2rem;
 }
 
 .backtest-toolbar-note-range,
@@ -4946,6 +4955,7 @@ button {
   .backtest-date-preset-row {
     flex-direction: column;
     align-items: stretch;
+    max-width: none;
     gap: 0.32rem;
   }
 
@@ -4959,6 +4969,14 @@ button {
   }
 
   .backtest-date-preset-dd {
+    left: 0;
+    right: auto;
+    width: 100%;
+    min-width: 100%;
+    max-width: none;
+  }
+
+  .stats-timeframe-dd {
     left: 0;
     right: auto;
     width: 100%;

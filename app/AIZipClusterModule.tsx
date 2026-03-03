@@ -11131,6 +11131,8 @@ function dbscan2D(points: [number, number][], eps: number, minSamples: number) {
   return { labels, nClusters: clusterId };
 }
 
+const clusterMapDrawOrderCache = new WeakMap<any[], any[]>();
+
 function drawClusterMapCanvas(
   canvas,
   nodes,
@@ -11157,8 +11159,12 @@ function drawClusterMapCanvas(
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
-  canvas.width = Math.max(1, Math.floor(w * dpr));
-  canvas.height = Math.max(1, Math.floor(h * dpr));
+  const nextWidth = Math.max(1, Math.floor(w * dpr));
+  const nextHeight = Math.max(1, Math.floor(h * dpr));
+  if (canvas.width !== nextWidth || canvas.height !== nextHeight) {
+    canvas.width = nextWidth;
+    canvas.height = nextHeight;
+  }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = "#070707";
@@ -11503,53 +11509,57 @@ function drawClusterMapCanvas(
 
   if (!heatmapOn) {
     // Draw in passes so Open Trade + Live Trade always render on top.
-    const ordered = [...nodes].sort((a, b) => {
-      const rank = (node: any) => {
-        const isLib =
-          node.kind === "library" ||
-          (node as any).libId != null ||
-          String((node as any).id || "").startsWith("lib|");
-        const isOpenTrade = !!node.isOpen && node.kind === "trade" && !isLib;
-        if (isOpenTrade) return 80; // Open Trade (cyan) on top
-        if (node.kind === "close") return 70; // Live Trade point on top
-        if (node.kind === "potential") return 60;
-        if (isLib) return 30;
-        if (node.kind === "trade") return 20;
-        if (node.kind === "ghost") return 10;
-        return 0;
-      };
-      const timeMs = (node: any) => {
-        const raw =
-          (node as any).time ??
-          (node as any).entryTime ??
-          (node as any).exitTime ??
-          "";
-        const s = (typeof raw === "string" ? raw : String(raw)).trim();
-        if (!s) return 0;
-        if (/^\d+$/.test(s)) {
-          const num = Number(s);
-          if (!Number.isFinite(num)) return 0;
-          const ms = s.length >= 13 ? num : num * 1000;
-          return Number.isFinite(ms) ? ms : 0;
-        }
-        const d = new Date(s);
-        const t = d.getTime();
-        return Number.isFinite(t) ? t : 0;
-      };
+    let ordered = clusterMapDrawOrderCache.get(nodes as any[]);
+    if (!ordered) {
+      ordered = [...nodes].sort((a, b) => {
+        const rank = (node: any) => {
+          const isLib =
+            node.kind === "library" ||
+            (node as any).libId != null ||
+            String((node as any).id || "").startsWith("lib|");
+          const isOpenTrade = !!node.isOpen && node.kind === "trade" && !isLib;
+          if (isOpenTrade) return 80; // Open Trade (cyan) on top
+          if (node.kind === "close") return 70; // Live Trade point on top
+          if (node.kind === "potential") return 60;
+          if (isLib) return 30;
+          if (node.kind === "trade") return 20;
+          if (node.kind === "ghost") return 10;
+          return 0;
+        };
+        const timeMs = (node: any) => {
+          const raw =
+            (node as any).time ??
+            (node as any).entryTime ??
+            (node as any).exitTime ??
+            "";
+          const s = (typeof raw === "string" ? raw : String(raw)).trim();
+          if (!s) return 0;
+          if (/^\d+$/.test(s)) {
+            const num = Number(s);
+            if (!Number.isFinite(num)) return 0;
+            const ms = s.length >= 13 ? num : num * 1000;
+            return Number.isFinite(ms) ? ms : 0;
+          }
+          const d = new Date(s);
+          const t = d.getTime();
+          return Number.isFinite(t) ? t : 0;
+        };
 
-      const ra = rank(a);
-      const rb = rank(b);
-      if (ra !== rb) return ra - rb;
+        const ra = rank(a);
+        const rb = rank(b);
+        if (ra !== rb) return ra - rb;
 
-      // Chronological stacking within the same layer:
-      // older first, newer last (newer draws on top).
-      const ta = timeMs(a);
-      const tb = timeMs(b);
-      if (ta !== tb) return ta - tb;
+        // Chronological stacking within the same layer:
+        // older first, newer last (newer draws on top).
+        const ta = timeMs(a);
+        const tb = timeMs(b);
+        if (ta !== tb) return ta - tb;
 
-      // final tie-breaker: small → big (big draws on top)
-      return (a.r ?? 0) - (b.r ?? 0);
-    });
+        // final tie-breaker: small → big (big draws on top)
+        return (a.r ?? 0) - (b.r ?? 0);
+      });
+      clusterMapDrawOrderCache.set(nodes as any[], ordered);
+    }
 
     const screenPositions: any = {};
 
@@ -17297,8 +17307,8 @@ export function ClusterMap({
     let dragging = false;
     let drag = { x: 0, y: 0, ox: 0, oy: 0, moved: false };
     let rafId = null;
-    let pendingOx = view.ox;
-    let pendingOy = view.oy;
+    let pendingOx = viewRef.current.ox;
+    let pendingOy = viewRef.current.oy;
     const onPointerDown = (e) => {
       const p = getLocal(e);
 
@@ -17426,8 +17436,6 @@ export function ClusterMap({
     };
     const onPointerMove = (e) => {
       const p = getLocal(e);
-      const wpos0 = toWorld(p.x, p.y);
-      setHoverWorld(wpos0);
 
       // Live preview / drawing while in selection mode.
       if (boxSelectMode) {
@@ -17547,11 +17555,7 @@ export function ClusterMap({
         pendingOy = newOy;
         if (rafId === null) {
           rafId = requestAnimationFrame(() => {
-            setView((v) => {
-              const newV = { ...v, ox: pendingOx, oy: pendingOy };
-              viewRef.current = newV;
-              return newV;
-            });
+            viewRef.current = { ...viewRef.current, ox: pendingOx, oy: pendingOy };
             drawClusterMapCanvas(
               canvas,
               displayNodes,
@@ -17577,6 +17581,21 @@ export function ClusterMap({
         }
         return;
       }
+
+      const wpos0 = toWorld(p.x, p.y);
+      if (!pinnedRef.current) {
+        setHoverWorld((prev) => {
+          if (
+            prev &&
+            Math.abs(prev.x - wpos0.x) < 0.35 &&
+            Math.abs(prev.y - wpos0.y) < 0.35
+          ) {
+            return prev;
+          }
+          return wpos0;
+        });
+      }
+
       // Heatmap hover (when ON, nodes are hidden; show local expectancy stats instead).
       if (heatmapOn) {
         if (!pinnedRef.current) {
@@ -17622,8 +17641,10 @@ export function ClusterMap({
           setHoveredGroup(null);
         }
       }
-      setHoveredId(id);
-      hoveredIdRef.current = id;
+      if (hoveredIdRef.current !== id) {
+        setHoveredId(id);
+        hoveredIdRef.current = id;
+      }
       if (id) {
         const n = displayNodes.find((x) => x.id === id);
         if (n) {
@@ -17743,8 +17764,13 @@ export function ClusterMap({
       } else {
         // Overlay group hover (HDBSCAN hulls) when not on a node
         const grp = pickGroup(p.x, p.y);
-        hoveredGroupRef.current = grp;
-        setHoveredGroup(grp);
+        const prevGrp = hoveredGroupRef.current as any;
+        const prevId = prevGrp && typeof prevGrp === "object" ? prevGrp.id : prevGrp;
+        const nextId = grp && typeof grp === "object" ? grp.id : grp;
+        if (prevId !== nextId) {
+          hoveredGroupRef.current = grp;
+          setHoveredGroup(grp);
+        }
         if (grp && grp.stats) {
           const st: any = grp.stats || {};
           const count = Number(st.count ?? 0);
@@ -17795,6 +17821,17 @@ export function ClusterMap({
     const endDrag = (e) => {
       dragging = false;
       setIsDragging(false);
+      setView((prev) => {
+        const cur = viewRef.current;
+        if (
+          Math.abs((prev?.scale ?? 1) - (cur?.scale ?? 1)) < 1e-9 &&
+          Math.abs((prev?.ox ?? 0) - (cur?.ox ?? 0)) < 1e-6 &&
+          Math.abs((prev?.oy ?? 0) - (cur?.oy ?? 0)) < 1e-6
+        ) {
+          return prev;
+        }
+        return cur;
+      });
       // In selection mode we don't do click-to-select node here.
       // Finish lasso selection on release.
       if (boxSelectMode) {
@@ -17875,31 +17912,39 @@ export function ClusterMap({
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
-      setView((v) => {
-        const oldScale = Number(v.scale) || 1;
-        const zoom = Math.exp(-e.deltaY * 0.0012);
-        const newScale = clamp(oldScale * zoom, 0.25, 6);
+      const v = viewRef.current;
+      const oldScale = Number(v.scale) || 1;
+      const zoom = Math.exp(-e.deltaY * 0.0012);
+      const newScale = clamp(oldScale * zoom, 0.25, 6);
 
-        const s = Number(mapSpreadMulRef.current) || 1;
-        const cw = canvas.clientWidth || 1;
-        const ch = canvas.clientHeight || 1;
+      const s = Number(mapSpreadMulRef.current) || 1;
+      const cw = canvas.clientWidth || 1;
+      const ch = canvas.clientHeight || 1;
 
-        // Effective transform (center-anchored "spread" zoom).
-        const oldEffScale = oldScale * s;
-        const oldEffOx = cw * 0.5 - (cw * 0.5 - (Number(v.ox) || 0)) * s;
-        const oldEffOy = ch * 0.5 - (ch * 0.5 - (Number(v.oy) || 0)) * s;
+      // Effective transform (center-anchored "spread" zoom).
+      const oldEffScale = oldScale * s;
+      const oldEffOx = cw * 0.5 - (cw * 0.5 - (Number(v.ox) || 0)) * s;
+      const oldEffOy = ch * 0.5 - (ch * 0.5 - (Number(v.oy) || 0)) * s;
 
-        const wx = (mx - oldEffOx) / (oldEffScale || 1);
-        const wy = (my - oldEffOy) / (oldEffScale || 1);
+      const wx = (mx - oldEffOx) / (oldEffScale || 1);
+      const wy = (my - oldEffOy) / (oldEffScale || 1);
 
-        const newEffScale = newScale * s;
+      const newEffScale = newScale * s;
 
-        // Solve base offsets so the same world point stays under the mouse.
-        const nox = (mx - wx * newEffScale - cw * 0.5 * (1 - s)) / (s || 1);
-        const noy = (my - wy * newEffScale - ch * 0.5 * (1 - s)) / (s || 1);
+      // Solve base offsets so the same world point stays under the mouse.
+      const nox = (mx - wx * newEffScale - cw * 0.5 * (1 - s)) / (s || 1);
+      const noy = (my - wy * newEffScale - ch * 0.5 * (1 - s)) / (s || 1);
 
-        const newV = { scale: newScale, ox: nox, oy: noy };
-        viewRef.current = newV;
+      const newV = { scale: newScale, ox: nox, oy: noy };
+      viewRef.current = newV;
+      setView((prev) => {
+        if (
+          Math.abs((prev?.scale ?? 1) - newV.scale) < 1e-9 &&
+          Math.abs((prev?.ox ?? 0) - newV.ox) < 1e-6 &&
+          Math.abs((prev?.oy ?? 0) - newV.oy) < 1e-6
+        ) {
+          return prev;
+        }
         return newV;
       });
       drawClusterMapCanvas(
@@ -22039,11 +22084,8 @@ export function ClusterMap3D({
     potential: true,
     active: true,
     close: true,
-    win: true,
-    loss: true,
-    ghost: true,
-    buy: true,
-    sell: true,
+    closedWin: true,
+    closedLoss: true,
   });
 
   const allLibIds = useMemo(() => {
@@ -22251,7 +22293,7 @@ export function ClusterMap3D({
       }
     }
 
-    // Suppressed library ghosts (visual-only)
+    // Suppressed library points
     const actLibs = Array.isArray(activeLibraries)
       ? activeLibraries.map((v: any) => String(v))
       : [];
@@ -22261,8 +22303,6 @@ export function ClusterMap3D({
     if (suppressedLibActive) {
       for (let gi = 0; gi < (ghostEntries || []).length; gi++) {
         const g: any = ghostEntries[gi];
-        if (!passesViewFilter(g.dir, g.entryTime, g.model ?? g.chunkType ?? ""))
-          continue;
 
         const pseudo: any = {
           direction: g.dir,
@@ -22289,13 +22329,13 @@ export function ClusterMap3D({
           .toString(36)
           .toUpperCase()}`;
         entries.push({
-          id: `ghost-${g.signalIndex}-${g.entryIndex}-${gi}`,
+          id: `lib-suppressed-${g.signalIndex}-${g.entryIndex}-${gi}`,
           uid,
           chunk,
           meta,
           timeFeature,
           baseR: 6.6,
-          kind: "ghost",
+          kind: "library",
           signalIndex: g.signalIndex,
           entryIndex: g.entryIndex,
           exitIndex: g.entryIndex,
@@ -22308,6 +22348,7 @@ export function ClusterMap3D({
           metaLib: "suppressed",
           libId: "suppressed",
           metaSuppressed: true,
+          suppressed: true,
           label: (g.pnl ?? 0) >= 0 ? 1 : -1,
         });
       }
@@ -22510,7 +22551,6 @@ export function ClusterMap3D({
 
       // Base kind toggles
       if (kind === "potential" && !allowKind("potential")) continue;
-      if (kind === "ghost" && !allowKind("ghost")) continue;
 
       const pnl =
         typeof p.pnl === "number"
@@ -22522,15 +22562,10 @@ export function ClusterMap3D({
       const isClose = kind === "close";
       if (isOpen && !allowKind("active")) continue;
       if (isClose && !allowKind("close")) continue;
-      if (!isOpen && !isClose && kind !== "potential" && kind !== "ghost") {
-        if (pnl >= 0 && !allowKind("win")) continue;
-        if (pnl < 0 && !allowKind("loss")) continue;
+      if (!isOpen && !isClose && kind !== "potential") {
+        if (pnl >= 0 && !allowKind("closedWin")) continue;
+        if (pnl < 0 && !allowKind("closedLoss")) continue;
       }
-
-      // Direction toggles (applies to trades + library + ghost)
-      const dir = Number(p.dir ?? p.direction ?? 0);
-      if (dir === 1 && !allowKind("buy")) continue;
-      if (dir === -1 && !allowKind("sell")) continue;
 
       // Library toggle ONLY controls library points
       if (kind === "library") {
@@ -23526,8 +23561,9 @@ export function ClusterMap3D({
     const base = (visiblePts || []).filter((p: any) => {
       const kind = String(p.kind || "trade");
       if (kind === "potential" || kind === "close") return false;
-      // Keep library points for clustering; keep ghosts out by default
+      // Keep library points for clustering, except suppressed memory points.
       if (kind === "ghost") return false;
+      if ((p as any).metaSuppressed) return false;
       return true;
     });
 
@@ -23863,29 +23899,110 @@ export function ClusterMap3D({
   }, [visiblePts, nodeSizeMul, heatmapOn, highlightSet]);
 
   // ---- UI ----
+  const suppressedLibraryTotalAll = useMemo(() => {
+    let c = 0;
+    for (const lp of (libraryPoints as any[]) || []) {
+      if (!lp) continue;
+      const lid = String(
+        (lp as any).metaLib ?? (lp as any).libId ?? (lp as any).metaLibrary ?? ""
+      ).toLowerCase();
+      if (lid === "suppressed") c++;
+    }
+    for (const g of (ghostEntries as any[]) || []) {
+      if (g) c++;
+    }
+    return c;
+  }, [libraryPoints, ghostEntries]);
+
+  const legendLibraryById = useMemo(() => {
+    const byId: Record<string, number> = {};
+    for (const n of visiblePts as any[]) {
+      if (!n) continue;
+      const kind = String((n as any).kind || "").toLowerCase();
+      if (kind !== "library") continue;
+      const lid = String((n as any).libId || (n as any).metaLib || "unknown");
+      byId[lid] = (byId[lid] || 0) + 1;
+    }
+    return byId;
+  }, [visiblePts]);
+
   const legendItems = useMemo(() => {
     const items: any[] = [
-      { key: "potential", label: "Potential", dot: "rgba(255,197,104,0.95)" },
-      { key: "active", label: "Active", dot: "rgba(87,206,255,0.95)" },
-      { key: "close", label: "Close", dot: "rgba(255,157,102,0.95)" },
-      { key: "win", label: "Win", dot: "rgba(51,229,146,0.95)" },
-      { key: "loss", label: "Loss", dot: "rgba(255,111,116,0.95)" },
-      { key: "ghost", label: "Suppressed", dot: "rgba(186,194,207,0.85)" },
-      { key: "buy", label: "Buy outline", isDirection: true },
-      { key: "sell", label: "Sell outline", isDirection: true },
+      {
+        key: "potential",
+        label: "Potential Setup",
+        description: "Purple node · current candle’s projected position",
+        dot: "rgba(160,90,255,1.0)",
+        bg: "linear-gradient(135deg, rgba(120,60,200,0.28), rgba(160,90,255,0.25), rgba(200,120,255,0.22))",
+        border: "1px solid rgba(200,160,255,0.55)",
+        titleColor: "rgba(160,90,255,1.0)",
+        span: 1,
+      },
+      {
+        key: "active",
+        label: "Open Trade",
+        description: "Cyan fill · open trade (unrealized PnL)",
+        dot: "rgba(0,210,255,1.0)",
+        bg: "linear-gradient(135deg, rgba(0,130,200,0.28), rgba(0,210,255,0.22), rgba(0,255,210,0.18))",
+        border: "1px solid rgba(0,210,255,0.55)",
+        titleColor: "rgba(0,210,255,1.0)",
+        span: 1,
+      },
+      {
+        key: "close",
+        label: "Live Trade",
+        description: "Orange fill · live trade point (during trade)",
+        dot: "rgba(255,140,0,1.0)",
+        bg: "linear-gradient(135deg, rgba(180,90,0,0.26), rgba(255,140,0,0.22), rgba(255,200,80,0.18))",
+        border: "1px solid rgba(255,140,0,0.55)",
+        titleColor: "rgba(255,140,0,1.0)",
+        span: 1,
+      },
+      {
+        key: "closedWin",
+        label: "Closed Win",
+        description: "Green fill · trade closed with non‑negative PnL",
+        dot: "rgba(60,220,120,1.0)",
+        bg: "linear-gradient(135deg, rgba(40,160,80,0.28), rgba(60,220,120,0.25), rgba(80,255,160,0.22))",
+        border: "1px solid rgba(60,220,120,0.55)",
+        titleColor: "rgba(60,220,120,1.0)",
+        span: 1,
+      },
+      {
+        key: "closedLoss",
+        label: "Closed Loss",
+        description: "Red fill · trade closed with negative PnL",
+        dot: "rgba(230,80,80,1.0)",
+        bg: "linear-gradient(135deg, rgba(200,50,50,0.28), rgba(230,80,80,0.25), rgba(255,110,110,0.22))",
+        border: "1px solid rgba(230,80,80,0.55)",
+        titleColor: "rgba(230,80,80,1.0)",
+        span: 1,
+      },
+      ...(Array.isArray(activeLibraries) ? activeLibraries : []).map((lid) => {
+        const def = (AI_LIBRARY_DEF_BY_ID as any)[String(lid)];
+        const name = def ? def.name || def.label || def.id : String(lid);
+        const isSupp = String(lid).toLowerCase() === "suppressed";
+        const hue = Math.floor(stableHashToUnit("libLegend:" + String(lid)) * 360);
+        const c0 = isSupp ? "rgba(140,140,140,1)" : `hsla(${hue}, 92%, 64%, 1)`;
+        const bg0 = isSupp ? "rgba(140,140,140,0.18)" : `hsla(${hue}, 92%, 64%, 0.18)`;
+        const br0 = isSupp ? "rgba(140,140,140,0.55)" : `hsla(${hue}, 92%, 64%, 0.55)`;
+        const cntRaw = Number(legendLibraryById[String(lid)] ?? 0);
+        const cnt = isSupp ? suppressedLibraryTotalAll : cntRaw;
+        return {
+          key: `lib:${String(lid)}`,
+          label: `Library · ${name}`,
+          description: `${cnt.toLocaleString()} points`,
+          dot: c0,
+          bg: `linear-gradient(135deg, ${bg0}, rgba(0,0,0,0.18), rgba(255,255,255,0.03))`,
+          border: `1px solid ${br0}`,
+          titleColor: "rgba(255,255,255,0.94)",
+          span: 1,
+          isLibrary: true,
+        };
+      }),
     ];
-    // Per-library toggles
-    for (const lid of allLibIds) {
-      const key = "lib:" + String(lid);
-      items.push({
-        key,
-        label: `Lib: ${String(lid)}`,
-        dot: "rgba(121,214,255,0.70)",
-        span: 2,
-      });
-    }
     return items;
-  }, [allLibIds]);
+  }, [activeLibraries, legendLibraryById, suppressedLibraryTotalAll]);
 
   const clusterRows = useMemo(() => {
     const clusters: any[] = (hdb3d?.clusters as any[]) || [];
@@ -24280,10 +24397,10 @@ export function ClusterMap3D({
           style={{
             padding: 12,
             borderRadius: 16,
-            border: "1px solid rgba(144,216,255,0.18)",
+            border: "1px solid rgba(255,255,255,0.10)",
             background:
-              "linear-gradient(150deg, rgba(10,21,39,0.80), rgba(6,13,25,0.74))",
-            boxShadow: "inset 0 1px 0 rgba(205,236,255,0.12)",
+              "linear-gradient(180deg, rgba(16,16,16,0.84), rgba(8,8,8,0.90))",
+            boxShadow: "0 10px 26px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.05)",
           }}
         >
           <div
@@ -24459,17 +24576,17 @@ export function ClusterMap3D({
           style={{
             padding: 12,
             borderRadius: 16,
-            border: "1px solid rgba(144,216,255,0.18)",
+            border: "1px solid rgba(255,255,255,0.10)",
             background:
-              "linear-gradient(150deg, rgba(10,21,39,0.80), rgba(6,13,25,0.74))",
-            boxShadow: "inset 0 1px 0 rgba(205,236,255,0.12)",
+              "linear-gradient(180deg, rgba(16,16,16,0.84), rgba(8,8,8,0.90))",
+            boxShadow: "0 10px 26px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.05)",
           }}
         >
           <div
             style={{
               fontSize: 11,
               fontWeight: 900,
-              color: "rgba(226,244,255,0.96)",
+              color: "rgba(255,255,255,0.96)",
               letterSpacing: 0.3,
             }}
           >
@@ -24479,12 +24596,18 @@ export function ClusterMap3D({
             style={{
               marginTop: 10,
               display: "grid",
-              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
               gap: 8,
             }}
           >
             {legendItems.map((it: any) => {
               const enabled = !!legendToggles[it.key];
+              const disabledBg =
+                "linear-gradient(135deg, rgba(60,60,60,0.20), rgba(80,80,80,0.18), rgba(100,100,100,0.16))";
+              const disabledBorder = "1px solid rgba(120,120,120,0.50)";
+              const disabledDot = "rgba(120,120,120,1.0)";
+              const disabledTitle = "rgba(180,180,180,0.9)";
+              const disabledDesc = "rgba(200,200,200,0.6)";
               return (
                 <div
                   key={it.key}
@@ -24493,17 +24616,18 @@ export function ClusterMap3D({
                   }
                   style={{
                     display: "flex",
-                    alignItems: "center",
-                    gap: 8,
+                    flexDirection: "row",
+                    alignItems: "flex-start",
+                    gap: 6,
                     padding: 10,
-                    borderRadius: 12,
-                    border: "1px solid rgba(145,214,255,0.20)",
-                    background: enabled
-                      ? "linear-gradient(140deg, rgba(68,127,181,0.28), rgba(32,68,108,0.20))"
-                      : "rgba(255,255,255,0.02)",
+                    borderRadius: 11,
+                    background: enabled ? it.bg : disabledBg,
+                    border: enabled ? it.border : disabledBorder,
+                    boxShadow: "0 8px 20px rgba(0,0,0,0.45)",
                     cursor: "pointer",
                     userSelect: "none",
-                    gridColumn: it.span ? `span ${it.span}` : undefined,
+                    gridColumn:
+                      it.span && it.span > 1 ? `span ${it.span}` : undefined,
                   }}
                 >
                   <div
@@ -24512,31 +24636,45 @@ export function ClusterMap3D({
                       height: 10,
                       borderRadius: 999,
                       background: it.isDirection
-                        ? "transparent"
+                        ? undefined
                         : enabled
                         ? it.dot
-                        : "rgba(255,255,255,0.20)",
+                        : disabledDot,
                       border: it.isDirection
                         ? `2px solid ${
                             enabled
                               ? it.key === "buy"
                                 ? "rgba(60,220,120,1.0)"
                                 : "rgba(230,80,80,1.0)"
-                              : "rgba(255,255,255,0.22)"
+                              : disabledDot
                           }`
-                        : "1px solid rgba(255,255,255,0.10)",
+                        : undefined,
+                      marginTop: 2,
                     }}
                   />
                   <div
                     style={{
-                      fontSize: 11,
-                      fontWeight: 800,
-                      color: enabled
-                        ? "rgba(225,244,255,0.95)"
-                        : "rgba(154,190,220,0.60)",
+                      flex: 1,
                     }}
                   >
-                    {it.label}
+                    <div
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: enabled ? it.titleColor : disabledTitle,
+                      }}
+                    >
+                      {it.label}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 9,
+                        color: enabled ? "rgba(255,255,255,0.85)" : disabledDesc,
+                        marginTop: 2,
+                      }}
+                    >
+                      {it.description}
+                    </div>
                   </div>
                 </div>
               );
