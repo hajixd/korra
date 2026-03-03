@@ -2258,8 +2258,8 @@ const fetchHybridHistoryCandles = async (
   targetBars: number,
   recentOneMinutePromise?: Promise<Candle[]>
 ): Promise<Candle[]> => {
-  const recentTimeframeCandlesPromise = fetchRecentOneMinuteCandles(recentOneMinutePromise).then(
-    (candles) => aggregateCandlesToTimeframe(candles, timeframe)
+  const recentTimeframeCandlesPromise = fetchMarketCandles(timeframe, LIVE_MARKET_SYNC_LIMIT).catch(
+    () => []
   );
 
   try {
@@ -2267,16 +2267,21 @@ const fetchHybridHistoryCandles = async (
       timeframe,
       Math.min(targetBars, MARKET_MAX_HISTORY_CANDLES)
     );
+    const recentTimeframeCandles = await recentTimeframeCandlesPromise;
 
     if (historyCandles.length >= MIN_SEED_CANDLES) {
-      const recentTimeframeCandles = await recentTimeframeCandlesPromise;
       return mergeHistoricalAndRecentCandles(historyCandles, recentTimeframeCandles, targetBars);
+    }
+
+    if (recentTimeframeCandles.length >= MIN_SEED_CANDLES) {
+      return recentTimeframeCandles.slice(-targetBars);
     }
   } catch {
     // Leave chart and backtest to use the recent 1m window when deeper history is unavailable.
   }
 
-  const recentTimeframeCandles = await recentTimeframeCandlesPromise;
+  const recentOneMinuteCandles = await fetchRecentOneMinuteCandles(recentOneMinutePromise);
+  const recentTimeframeCandles = aggregateCandlesToTimeframe(recentOneMinuteCandles, timeframe);
   return recentTimeframeCandles.slice(-targetBars);
 };
 
@@ -6170,7 +6175,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           ),
           isAlreadyOneMinute
             ? Promise.resolve([])
-            : fetchHistoryApiCandles("1m", BACKTEST_ONE_MINUTE_FETCH_COUNT).catch(() => [])
+            : fetchHistoryApiCandles("1m", BACKTEST_ONE_MINUTE_FETCH_COUNT)
+                .then((candles) => {
+                  if (candles.length >= MIN_SEED_CANDLES) {
+                    return candles;
+                  }
+                  return fetchMarketCandles("1m", MARKET_MAX_HISTORY_CANDLES);
+                })
+                .catch(() => fetchMarketCandles("1m", MARKET_MAX_HISTORY_CANDLES).catch(() => []))
         ];
 
         const [deepHistoryCandles, oneMinuteCandles] = await Promise.all(promises);
@@ -13333,21 +13345,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       className="backtest-date-input"
                       aria-label="global backtest end date"
                     />
-                    {(statsDateStart || statsDateEnd) && (
-                      <button
-                        type="button"
-                        className="backtest-range-clear"
-                        onClick={() => {
-                          setStatsDateStart("");
-                          setStatsDateEnd("");
-                          setStatsDatePreset("custom");
-                        }}
-                      >
-                        All
-                      </button>
-                    )}
                     <div className="backtest-date-preset-row">
-                      <span className="backtest-date-preset-label">Preset</span>
                       <div ref={statsDatePresetDdRef} className="backtest-date-preset-wrap">
                         <button
                           type="button"

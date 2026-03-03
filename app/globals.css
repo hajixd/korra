@@ -1125,31 +1125,23 @@ button {
 
 .backtest-stats-range-main {
   width: 100%;
-  margin-left: 0;
-  justify-content: flex-start;
+  margin-left: auto;
+  justify-content: flex-end;
 }
 
 .backtest-date-preset-row {
   flex: 1 1 100%;
   width: 100%;
-  margin-left: 0;
+  margin-left: auto;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: flex-end;
   gap: 0.45rem;
-}
-
-.backtest-date-preset-label {
-  color: rgba(255, 255, 255, 0.58);
-  font-size: 0.66rem;
-  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-  font-weight: 900;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 .backtest-date-preset-wrap {
   position: relative;
+  width: min(100%, 340px);
 }
 
 .backtest-date-preset-trigger {
@@ -1158,7 +1150,8 @@ button {
   justify-content: space-between;
   gap: 0.5rem;
   min-height: 32px;
-  min-width: 170px;
+  min-width: 0;
+  width: 100%;
   padding: 0 0.72rem;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 10px;

@@ -97,7 +97,7 @@ export async function GET(request: Request) {
 
   const query = `
     SELECT
-      toUnixTimestamp(toTimeZone(time, '${timezone}')) AS time,
+      toUnixTimestamp64Milli(toTimeZone(time, '${timezone}')) AS time,
       pair,
       timeframe,
       toFloat64(open) AS open,
