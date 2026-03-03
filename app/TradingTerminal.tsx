@@ -4274,6 +4274,40 @@ const cloneAiLibrarySettings = (settings: AiLibrarySettings): AiLibrarySettings 
   return next;
 };
 
+const serializeBacktestSettingsSnapshot = (settings: BacktestSettingsSnapshot) =>
+  JSON.stringify(settings);
+
+const areAiModelStatesEqual = (
+  left: BacktestSettingsSnapshot["aiModelStates"],
+  right: BacktestSettingsSnapshot["aiModelStates"]
+) => {
+  const keys = new Set([...Object.keys(left ?? {}), ...Object.keys(right ?? {})]);
+  for (const key of keys) {
+    if ((left?.[key] ?? 0) !== (right?.[key] ?? 0)) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const doesBacktestHistoryGenerationInputChange = (
+  previous: BacktestSettingsSnapshot,
+  next: BacktestSettingsSnapshot
+) => {
+  if (previous.symbol !== next.symbol) return true;
+  if (previous.timeframe !== next.timeframe) return true;
+  if (previous.aiFilterEnabled !== next.aiFilterEnabled) return true;
+  if (!areAiModelStatesEqual(previous.aiModelStates, next.aiModelStates)) return true;
+  if (previous.dollarsPerMove !== next.dollarsPerMove) return true;
+  if (previous.tpDollars !== next.tpDollars) return true;
+  if (previous.slDollars !== next.slDollars) return true;
+  if (previous.stopMode !== next.stopMode) return true;
+  if (previous.breakEvenTriggerPct !== next.breakEvenTriggerPct) return true;
+  if (previous.trailingStartPct !== next.trailingStartPct) return true;
+  if (previous.trailingDistPct !== next.trailingDistPct) return true;
+  return false;
+};
+
 const formatStatsRefreshDateLabel = (timeMs: number) => {
   const date = new Date(timeMs);
 
@@ -4651,32 +4685,65 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   );
   const applyBacktestSettingsSnapshot = useCallback(() => {
     const nextSettings = liveBacktestSettingsRef.current;
+    const previousSettings = appliedBacktestSettings;
+    const hasBacktestRun = backtestRunCount > 0;
+    const settingsChanged =
+      serializeBacktestSettingsSnapshot(previousSettings) !==
+      serializeBacktestSettingsSnapshot(nextSettings);
+
+    if (!settingsChanged) {
+      updateStatsRefreshOverlayMode("idle");
+      setStatsRefreshProgress(0);
+      setStatsRefreshLoadingDisplayProgress(0);
+      setStatsRefreshProgressLabel("");
+      return;
+    }
+
+    const needsHistoryRecompute =
+      !hasBacktestRun ||
+      doesBacktestHistoryGenerationInputChange(previousSettings, nextSettings);
+    const needsHistorySeedReload =
+      !hasBacktestRun ||
+      previousSettings.symbol !== nextSettings.symbol ||
+      previousSettings.timeframe !== nextSettings.timeframe;
     const nextRefreshMs = floorToTimeframe(Date.now(), "1m");
 
     clearStatsRefreshResetTimeout();
     setAppliedBacktestSettings(nextSettings);
-    setBacktestRunCount((current) => current + 1);
-    setBacktestRefreshNowMs(nextRefreshMs);
-    setBacktestHistorySeedReady(false);
-    updateStatsRefreshOverlayMode("loading");
-    setStatsRefreshProgress(0);
-    setStatsRefreshLoadingDisplayProgress(0);
-    const rangeStartMs = backtestBlueprintRangeRef.current.startMs;
-    const baseStartMs =
-      Number.isFinite(rangeStartMs) && rangeStartMs > 0
-        ? rangeStartMs
-        : nextRefreshMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000;
-    const filterStartMs = nextSettings.statsDateStart
-      ? new Date(nextSettings.statsDateStart).getTime()
-      : NaN;
-    setStatsRefreshProgressLabel(
-      formatStatsRefreshDateLabel(
-        Number.isFinite(filterStartMs) ? Math.max(baseStartMs, filterStartMs) : baseStartMs
-      )
-    );
+    if (needsHistoryRecompute) {
+      setBacktestRunCount((current) => current + 1);
+      setBacktestRefreshNowMs(nextRefreshMs);
+      setBacktestHistorySeedReady(!needsHistorySeedReload);
+      updateStatsRefreshOverlayMode("loading");
+      setStatsRefreshProgress(0);
+      setStatsRefreshLoadingDisplayProgress(0);
+      const rangeStartMs = backtestBlueprintRangeRef.current.startMs;
+      const baseStartMs =
+        Number.isFinite(rangeStartMs) && rangeStartMs > 0
+          ? rangeStartMs
+          : nextRefreshMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000;
+      const filterStartMs = nextSettings.statsDateStart
+        ? new Date(nextSettings.statsDateStart).getTime()
+        : NaN;
+      setStatsRefreshProgressLabel(
+        formatStatsRefreshDateLabel(
+          Number.isFinite(filterStartMs) ? Math.max(baseStartMs, filterStartMs) : baseStartMs
+        )
+      );
+    } else {
+      updateStatsRefreshOverlayMode("idle");
+      setStatsRefreshProgress(0);
+      setStatsRefreshLoadingDisplayProgress(0);
+      setStatsRefreshProgressLabel("");
+    }
     setPropResult(null);
     setPropStats(null);
-  }, [clearStatsRefreshResetTimeout, updateStatsRefreshOverlayMode]);
+  }, [
+    appliedBacktestSettings,
+    backtestRunCount,
+    clearStatsRefreshResetTimeout,
+    updateStatsRefreshOverlayMode
+  ]);
 
   const statsRefreshOverlayVisible = statsRefreshOverlayMode !== "idle";
 
@@ -4843,9 +4910,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     ? 0
     : appliedBacktestSettings.confidenceThreshold;
   const appliedAiModelEveryCandleMode =
-    !appliedBacktestSettings.aiFilterEnabled;
+    appliedBacktestSettings.aiMode !== "off" && !appliedBacktestSettings.aiFilterEnabled;
   const shouldSkipBacktestHistoryFetch =
-    appliedBacktestSettings.aiMode === "off" &&
     !appliedBacktestSettings.antiCheatEnabled &&
     appliedBacktestModelProfiles.length === 0;
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
@@ -5202,15 +5268,36 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return;
     }
 
+    const key = appliedBacktestKey;
+    const oneMinuteKey = symbolTimeframeKey(appliedBacktestSettings.symbol, "1m");
+
+    if (backtestHistorySeedReady) {
+      return;
+    }
+
     if (shouldSkipBacktestHistoryFetch) {
+      setBacktestSeriesMap((prev) => {
+        if (!prev[key]) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      setBacktestOneMinuteSeriesMap((prev) => {
+        if (!prev[oneMinuteKey]) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[oneMinuteKey];
+        return next;
+      });
       setStatsRefreshProgress((current) => Math.max(current, 32));
       setBacktestHistorySeedReady(true);
       return;
     }
 
     let cancelled = false;
-    const key = appliedBacktestKey;
-    const oneMinuteKey = symbolTimeframeKey(appliedBacktestSettings.symbol, "1m");
     const isAlreadyOneMinute = appliedBacktestSettings.timeframe === "1m";
     const recentOneMinutePromise = fetchRecentOneMinuteCandles();
 
@@ -5261,6 +5348,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedBacktestSettings.symbol,
     appliedBacktestSettings.timeframe,
     backtestHasRun,
+    backtestHistorySeedReady,
     backtestRefreshNowMs,
     backtestRunCount,
     shouldSkipBacktestHistoryFetch
@@ -5342,6 +5430,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   ]);
 
   const everyCandleTradeBlueprints = useMemo(() => {
+    if (!appliedAiModelEveryCandleMode) {
+      return [] as TradeBlueprint[];
+    }
+
     if (appliedBacktestModelProfiles.length === 0) {
       return [] as TradeBlueprint[];
     }
@@ -5366,7 +5458,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         : 1
     );
 
-    for (let candleIndex = 0; candleIndex <= maxEntryIndex; candleIndex += 1) {
+    for (let candleIndex = maxEntryIndex; candleIndex >= 0; candleIndex -= 1) {
       const modelIndex = (candleIndex + Math.floor(rand() * modelCount)) % Math.max(1, modelCount);
       const model = appliedBacktestModelProfiles[modelIndex]!;
       const symbol = futuresAssets[Math.floor(rand() * futuresAssets.length)]?.symbol ?? selectedSymbol;
@@ -5399,8 +5491,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       });
     }
 
-    return blueprints.sort((left, right) => right.exitMs - left.exitMs);
+    return blueprints;
   }, [
+    appliedAiModelEveryCandleMode,
     appliedBacktestModelProfiles,
     appliedBacktestSettings.dollarsPerMove,
     appliedBacktestSettings.timeframe,
@@ -5409,8 +5502,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     selectedSymbol
   ]);
 
+  const shouldBuildSharedLibraryCandidateTrades =
+    appliedAiModelEveryCandleMode &&
+    (appliedBacktestSettings.antiCheatEnabled || selectedBacktestTab === "cluster");
+
   const sharedLibraryCandidateTrades = useMemo(() => {
     if (!backtestHasRun || !backtestHistorySeedReady) {
+      return [] as HistoryItem[];
+    }
+
+    if (!shouldBuildSharedLibraryCandidateTrades) {
       return [] as HistoryItem[];
     }
 
@@ -5481,7 +5582,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedBacktestSettings.trailingDistPct,
     backtestSeriesMap,
     backtestOneMinuteSeriesMap,
-    seriesMap
+    seriesMap,
+    shouldBuildSharedLibraryCandidateTrades
   ]);
 
   const deepChartCandles = backtestSeriesMap[selectedKey] ?? null;
@@ -5870,7 +5972,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     });
     const confidenceById = new Map<string, number>();
 
-    if (!appliedBacktestSettings.antiCheatEnabled || timeFilteredBase.length === 0) {
+    if (
+      appliedBacktestSettings.aiMode === "off" ||
+      !appliedBacktestSettings.antiCheatEnabled ||
+      timeFilteredBase.length === 0
+    ) {
       return {
         dateFilteredTrades,
         timeFilteredTrades:
@@ -6198,6 +6304,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [
     aiLibraryDefById,
+    appliedBacktestSettings.aiMode,
     appliedBacktestSettings.antiCheatEnabled,
     appliedBacktestSettings.enabledBacktestHours,
     appliedBacktestSettings.enabledBacktestMonths,
@@ -8491,6 +8598,29 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       };
     }
 
+    if (appliedBacktestSettings.aiMode === "off") {
+      return {
+        counts: {} as Record<string, number>,
+        baselineWinRates: {} as Record<string, number>,
+        points: [] as any[]
+      };
+    }
+
+    const activeLibraryDefs =
+      (appliedBacktestSettings.selectedAiLibraries.length > 0
+        ? appliedBacktestSettings.selectedAiLibraries
+        : ["core"])
+        .map((libraryId) => aiLibraryDefById[libraryId])
+        .filter((definition): definition is AiLibraryDef => Boolean(definition));
+
+    if (activeLibraryDefs.length === 0) {
+      return {
+        counts: {} as Record<string, number>,
+        baselineWinRates: {} as Record<string, number>,
+        points: [] as any[]
+      };
+    }
+
     const executedTradeIds = new Set(backtestTrades.map((trade) => trade.id));
     const libraryPoolSource =
       sharedLibraryCandidateTrades.length > 0
@@ -8630,7 +8760,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const baselineWinRates: Record<string, number> = {};
     const counts: Record<string, number> = {};
     const balancedByLibrary: Record<string, HistoryItem[]> = {};
-    for (const definition of aiLibraryDefs) {
+    for (const definition of activeLibraryDefs) {
       const source = buildRawSource(definition);
       const settings = getSettings(definition);
       const baselineWinRate = getOutcomeWinRatePercent(
@@ -8685,7 +8815,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     const points: any[] = [];
 
-    for (const definition of aiLibraryDefs) {
+    for (const definition of activeLibraryDefs) {
       const source = balancedByLibrary[definition.id] ?? [];
       if (source.length === 0) {
         continue;
@@ -8741,8 +8871,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [
     backtestHasRun,
     backtestHistorySeedReady,
+    appliedBacktestSettings.aiMode,
+    appliedBacktestSettings.selectedAiLibraries,
     appliedBacktestSettings.selectedAiLibrarySettings,
-    aiLibraryDefs,
+    aiLibraryDefById,
     candleIndexByUnix,
     selectedChartCandles.length,
     sharedLibraryCandidateTrades,
