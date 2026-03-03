@@ -11895,6 +11895,240 @@ function drawClusterMapCanvas(
     }
   }
 }
+
+function ClusterMapViewport3D({
+  nodes,
+  selectedId,
+  searchHighlightId,
+  resetKey,
+  onSelectId,
+}: {
+  nodes: any[];
+  selectedId: string | null;
+  searchHighlightId: string | null;
+  resetKey: number;
+  onSelectId: (id: string | null) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const [runtimeReady, setRuntimeReady] = useState(() =>
+    Boolean(THREE && OrbitControls)
+  );
+
+  useEffect(() => {
+    if (runtimeReady) return;
+    let cancelled = false;
+    ensureThreeRuntimeLoaded()
+      .then(() => {
+        if (!cancelled) setRuntimeReady(true);
+      })
+      .catch(() => {
+        // Keep the old map shell stable even if runtime import fails.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runtimeReady]);
+
+  useEffect(() => {
+    if (!runtimeReady || !THREE || !OrbitControls) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const renderer = new (THREE as any).WebGLRenderer({
+      canvas,
+      antialias: true,
+      alpha: false,
+      powerPreference: "high-performance",
+    });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.outputColorSpace = (THREE as any).SRGBColorSpace;
+    renderer.setClearColor(0x070707, 1);
+
+    const scene = new (THREE as any).Scene();
+    const camera = new (THREE as any).PerspectiveCamera(52, 1, 0.01, 500);
+    camera.position.set(0, 0, 9);
+
+    const controls = new (OrbitControls as any)(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.09;
+    controls.rotateSpeed = 0.62;
+    controls.panSpeed = 0.8;
+    controls.zoomSpeed = 0.9;
+    controls.minDistance = 1.4;
+    controls.maxDistance = 60;
+
+    scene.add(new (THREE as any).AmbientLight(0xffffff, 0.88));
+    const key = new (THREE as any).DirectionalLight(0xbfd9ff, 0.82);
+    key.position.set(5, 6, 8);
+    scene.add(key);
+    const rim = new (THREE as any).DirectionalLight(0x9ec8ff, 0.42);
+    rim.position.set(-7, -4, -6);
+    scene.add(rim);
+
+    const nodeGeo = new (THREE as any).IcosahedronGeometry(1, 1);
+    const nodeMat = new (THREE as any).MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.36,
+      metalness: 0.08,
+    });
+
+    const count = Math.max(1, nodes.length);
+    const inst = new (THREE as any).InstancedMesh(nodeGeo, nodeMat, count);
+    const tmpObj = new (THREE as any).Object3D();
+    const tmpColor = new (THREE as any).Color(0xffffff);
+    const nodeIds: string[] = new Array(count).fill("");
+
+    const toNodeColor = (n: any, isHighlighted: boolean) => {
+      if (isHighlighted) return 0xffffff;
+      const kind = String((n as any)?.kind || "").toLowerCase();
+      const isLib =
+        kind === "library" ||
+        (n as any).libId != null ||
+        String((n as any).id || "").startsWith("lib|");
+      if (kind === "potential") return 0xc88cff;
+      if (kind === "close") return 0xff8c00;
+      if ((n as any)?.isOpen && kind === "trade" && !isLib) return 0x00d2ff;
+      const pnl = Number((n as any)?.pnl ?? (n as any)?.unrealizedPnl ?? 0);
+      return pnl >= 0 ? 0x3cdc78 : 0xe65050;
+    };
+
+    const worldPts: Array<[number, number, number]> = [];
+    for (let i = 0; i < nodes.length; i++) {
+      const n: any = nodes[i];
+      const id = String((n as any)?.id ?? "");
+      nodeIds[i] = id;
+
+      const x = (Number((n as any)?.x) || 0) / 90;
+      const y = -(Number((n as any)?.y) || 0) / 90;
+      const order =
+        Number((n as any)?.signalIndex ?? (n as any)?.entryIndex ?? i) || 0;
+      const zChrono = ((order % 180) - 90) / 40;
+      const zJitter = (stableHashToUnit(`${id}|z3d`) - 0.5) * 1.2;
+      const z = zChrono * 0.58 + zJitter;
+      worldPts.push([x, y, z]);
+
+      const baseR = Math.max(0.03, Math.min(0.28, (Number((n as any)?.r) || 6) / 88));
+      const isHighlighted =
+        (selectedId != null && String(selectedId) === id) ||
+        (searchHighlightId != null && String(searchHighlightId) === id);
+      const r = isHighlighted ? baseR * 1.42 : baseR;
+
+      tmpObj.position.set(x, y, z);
+      tmpObj.scale.setScalar(r);
+      tmpObj.updateMatrix();
+      inst.setMatrixAt(i, tmpObj.matrix);
+      tmpColor.setHex(toNodeColor(n, isHighlighted));
+      inst.setColorAt(i, tmpColor);
+    }
+    inst.count = nodes.length;
+    inst.instanceMatrix.needsUpdate = true;
+    if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
+    scene.add(inst);
+
+    if (worldPts.length > 0) {
+      let minX = Infinity,
+        minY = Infinity,
+        minZ = Infinity;
+      let maxX = -Infinity,
+        maxY = -Infinity,
+        maxZ = -Infinity;
+      for (const p of worldPts) {
+        if (p[0] < minX) minX = p[0];
+        if (p[1] < minY) minY = p[1];
+        if (p[2] < minZ) minZ = p[2];
+        if (p[0] > maxX) maxX = p[0];
+        if (p[1] > maxY) maxY = p[1];
+        if (p[2] > maxZ) maxZ = p[2];
+      }
+      const cx = (minX + maxX) * 0.5;
+      const cy = (minY + maxY) * 0.5;
+      const cz = (minZ + maxZ) * 0.5;
+      const span = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 0.35);
+      const dist = Math.max(3.2, span * 2.35);
+      camera.position.set(cx + dist * 0.78, cy + dist * 0.56, cz + dist * 0.95);
+      controls.target.set(cx, cy, cz);
+      controls.update();
+    }
+
+    const raycaster = new (THREE as any).Raycaster();
+    const pointer = new (THREE as any).Vector2();
+    const onClick = (ev: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const hits = raycaster.intersectObject(inst, false);
+      if (!hits || hits.length === 0) {
+        onSelectId(null);
+        return;
+      }
+      const idx = Number((hits[0] as any)?.instanceId);
+      if (!Number.isFinite(idx) || idx < 0 || idx >= nodeIds.length) return;
+      const id = nodeIds[idx] || null;
+      onSelectId(id);
+    };
+    canvas.addEventListener("click", onClick);
+
+    const resize = () => {
+      const w = Math.max(1, canvas.clientWidth || 1);
+      const h = Math.max(1, canvas.clientHeight || 1);
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    };
+    resize();
+    window.addEventListener("resize", resize);
+
+    const animate = () => {
+      frameRef.current = requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    return () => {
+      try {
+        canvas.removeEventListener("click", onClick);
+      } catch {}
+      try {
+        window.removeEventListener("resize", resize);
+      } catch {}
+      try {
+        if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
+      } catch {}
+      try {
+        controls.dispose();
+      } catch {}
+      try {
+        inst.material?.dispose?.();
+      } catch {}
+      try {
+        nodeGeo.dispose();
+      } catch {}
+      try {
+        renderer.dispose();
+      } catch {}
+    };
+  }, [runtimeReady, nodes, selectedId, searchHighlightId, resetKey, onSelectId]);
+
+  return (
+    <div style={{ position: "absolute", inset: 0 }}>
+      <canvas
+        ref={canvasRef}
+        style={{
+          width: "100%",
+          height: "100%",
+          display: "block",
+          cursor: "grab",
+          touchAction: "none",
+        }}
+      />
+    </div>
+  );
+}
+
 function LegendChip({ dot, label, sub, bg, border }) {
   return (
     <div
@@ -12233,12 +12467,36 @@ export function ClusterMap({
 
   // Hotkeys for box selection mode.
   useEffect(() => {
+    const is3dMode = clusterMapView === "3d";
     const onKeyDown = (e: KeyboardEvent) => {
       // NOTE: On macOS, Option+T often produces a special character (e.key === "†" on US layout).
       // e.code stays stable ("KeyT"), so prefer it.
       const key = String((e as any).key || "");
       const k = key.toLowerCase();
       const code = String((e as any).code || "");
+
+      if (is3dMode) {
+        const is2dToggle = !!(
+          e.altKey &&
+          (code === "KeyT" ||
+            code === "KeyH" ||
+            k === "t" ||
+            k === "h" ||
+            (e as any).keyCode === 84 ||
+            (e as any).keyCode === 72)
+        );
+        if (is2dToggle) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        if (k === "escape") {
+          setHeatHover(null);
+          setPinnedWorld(null);
+          setPinnedHeatHover(null);
+        }
+        return;
+      }
+
       const isToggle = !!(
         e.altKey &&
         (code === "KeyT" || k === "t" || (e as any).keyCode === 84)
@@ -12329,7 +12587,7 @@ export function ClusterMap({
         onKeyDown as any,
         { capture: true } as any
       );
-  }, []);
+  }, [clusterMapView]);
   const hoveredIdRef = useRef(null);
   const projectionRef = useRef(null);
   const [tooltip, setTooltip] = useState(null);
@@ -15312,6 +15570,36 @@ export function ClusterMap({
   const [view, setView] = useState({ scale: 1, ox: 600, oy: 280 });
   const viewRef = useRef(view);
   const [isDragging, setIsDragging] = useState(false);
+  const is3dMapActive = clusterMapView === "3d";
+
+  useEffect(() => {
+    if (!is3dMapActive) return;
+    setHeatmapOn(false);
+    setHeatHover(null);
+    setPinnedHeatHover(null);
+    setBoxSelectMode(false);
+    setBoxStart(null);
+    setBoxEnd(null);
+    setBoxPreview(null);
+    setSelShape(null);
+    setLassoFinal(null);
+    setLassoIsDrawing(false);
+    lassoRef.current.drawing = false;
+    lassoRef.current.pts = [];
+    setTooltip(null);
+    setHoveredId(null);
+    hoveredIdRef.current = null;
+    if (hoveredGroupRef.current) {
+      hoveredGroupRef.current = null;
+      setHoveredGroup(null);
+    }
+  }, [is3dMapActive]);
+
+  const handle3dSelectId = React.useCallback((id: string | null) => {
+    setSelectedId(id);
+    setSelectedGroup(null);
+    selectedGroupRef.current = null;
+  }, []);
 
   const computeHeatHover = React.useCallback((wx: number, wy: number) => {
     const hm = heatmapRef.current;
@@ -17149,6 +17437,7 @@ export function ClusterMap({
   }, []);
 
   useEffect(() => {
+    if (is3dMapActive) return;
     const c = canvasRef.current;
     if (!c) return;
     hoveredIdRef.current = hoveredId;
@@ -17174,6 +17463,7 @@ export function ClusterMap({
       heatmapBasisNodes
     );
   }, [
+    is3dMapActive,
     displayNodes,
     heatmapBasisNodes,
     hoveredId,
@@ -17189,6 +17479,7 @@ export function ClusterMap({
     mapSpreadMul,
   ]);
   useEffect(() => {
+    if (is3dMapActive) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const getLocal = (e) => {
@@ -18013,6 +18304,7 @@ export function ClusterMap({
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
   }, [
+    is3dMapActive,
     displayNodes,
     parseMode,
     boxSelectMode,
@@ -19004,20 +19296,30 @@ export function ClusterMap({
           overflow: "hidden",
         }}
       >
-        <canvas
-          style={{
-            width: "100%",
-            height: "100%",
-            display: "block",
-            cursor: boxSelectMode
-              ? "crosshair"
-              : isDragging
-              ? "grabbing"
-              : "grab",
-            touchAction: "none",
-          }}
-          ref={canvasRef}
-        />
+        {!is3dMapActive ? (
+          <canvas
+            style={{
+              width: "100%",
+              height: "100%",
+              display: "block",
+              cursor: boxSelectMode
+                ? "crosshair"
+                : isDragging
+                ? "grabbing"
+                : "grab",
+              touchAction: "none",
+            }}
+            ref={canvasRef}
+          />
+        ) : (
+          <ClusterMapViewport3D
+            nodes={displayNodes}
+            selectedId={selectedId}
+            searchHighlightId={searchHighlightId}
+            resetKey={resetKey}
+            onSelectId={handle3dSelectId}
+          />
+        )}
 
         {hoverWorldShown && (
           <div
@@ -39015,12 +39317,13 @@ export default function App() {
             </MButton>
 
             {/*
-              Ensure post-hoc trades are computed even when the map is collapsed or when the 3D view is selected,
-              so the main stats/calendar/history stay in sync with the Cluster Map's post-hoc logic.
+              Keep one map shell across 2D/3D so only the map interior changes
+              when toggling views. HDBSCAN still mounts while collapsed so
+              post-hoc trades remain in sync with stats/calendar/history.
             */}
             {aiMethod === "hdbscan" ? (
               <ClusterMap
-                headless={isClusterCollapsed || clusterMapView !== "2d"}
+                headless={isClusterCollapsed}
                 candles={candles}
                 trades={trades}
                 ghostEntries={ghostEntries}
@@ -39048,9 +39351,11 @@ export default function App() {
                 libraryCounts={aiLibraryCounts}
                 aiDomains={aiDomains}
                 hdbDomainDistinction={hdbDomainDistinction}
-                onResetClusterMap={() => {}}
-                clusterMapView={"2d"}
-                onToggleClusterMapView={() => {}}
+                onResetClusterMap={() => setClusterResetKey((k) => k + 1)}
+                clusterMapView={clusterMapView}
+                onToggleClusterMapView={() =>
+                  setClusterMapView((v) => (v === "3d" ? "2d" : "3d"))
+                }
                 aiMethod={aiMethod}
                 confidenceThreshold={effectiveConfidenceThreshold}
                 statsDateStart={statsDateStart}
@@ -39061,82 +39366,48 @@ export default function App() {
                 staticLibrariesClusters={staticLibrariesClusters}
               />
             ) : null}
-            {!isClusterCollapsed && (
-              <>
-                {clusterMapView === "2d" ? (
-                  aiMethod === "hdbscan" ? null : (
-                    <ClusterMap
-                      candles={candles}
-                      trades={trades}
-                      ghostEntries={ghostEntries}
-                      onPostHocTrades={setPostHocTrades}
-                      onMitMap={setMitByTradeKey}
-                      onPostHocProgress={(
-                        phase: string,
-                        pct: number,
-                        done?: boolean
-                      ) => {
-                        setPostHocProgress({ phase, pct });
-                        if (done) {
-                          setTimeout(() => setPostHocProgress(null), 250);
-                        }
-                      }}
-                      chunkBars={chunkBars}
-                      potential={potential}
-                      parseMode={parseMode}
-                      showPotential={isAIActive}
-                      resetKey={clusterResetKey}
-                      sliderValue={clusterTimelineIdx}
-                      setSliderValue={setClusterTimelineIdx}
-                      libraryPoints={aiLibraryPoints}
-                      activeLibraries={aiActiveLibraries}
-                      libraryCounts={aiLibraryCounts}
-                      aiDomains={aiDomains}
-                      hdbDomainDistinction={hdbDomainDistinction}
-                      onResetClusterMap={() => setClusterResetKey((k) => k + 1)}
-                      clusterMapView={clusterMapView}
-                      onToggleClusterMapView={() =>
-                        setClusterMapView((v) => (v === "3d" ? "2d" : "3d"))
-                      }
-                      aiMethod={aiMethod}
-                      confidenceThreshold={effectiveConfidenceThreshold}
-                      hdbMinClusterSize={hdbMinClusterSize}
-                      hdbMinSamples={hdbMinSamples}
-                      hdbEpsQuantile={hdbEpsQuantile}
-                      staticLibrariesClusters={staticLibrariesClusters}
-                    />
-                  )
-                ) : (
-                  <ClusterMap3D
-                    candles={candles}
-                    trades={trades}
-                    ghostEntries={ghostEntries}
-                    libraryPoints={aiLibraryPoints}
-                    chunkBarsDeb={chunkBars}
-                    potential={potential}
-                    parseMode={parseMode}
-                    showPotential={isAIActive}
-                    resetKey={clusterResetKey}
-                    sliderValue={clusterTimelineIdx}
-                    setSliderValue={setClusterTimelineIdx}
-                    onResetClusterMap={() => setClusterResetKey((k) => k + 1)}
-                    clusterMapView={clusterMapView}
-                    onToggleClusterMapView={() =>
-                      setClusterMapView((v) => (v === "3d" ? "2d" : "3d"))
-                    }
-                    activeLibraries={aiActiveLibraries}
-                    staticLibrariesClusters={staticLibrariesClusters}
-                    aiMethod={aiMethod}
-                    aiDomains={aiDomains}
-                    hdbMinClusterSize={hdbMinClusterSize}
-                    hdbMinSamples={hdbMinSamples}
-                    hdbEpsQuantile={hdbEpsQuantile}
-                    hdbDomainDistinction={hdbDomainDistinction}
-                    clusterGroupStatsMode={clusterGroupStatsMode}
-                  />
-                )}
-              </>
-            )}
+            {!isClusterCollapsed && aiMethod !== "hdbscan" ? (
+              <ClusterMap
+                candles={candles}
+                trades={trades}
+                ghostEntries={ghostEntries}
+                onPostHocTrades={setPostHocTrades}
+                onMitMap={setMitByTradeKey}
+                onPostHocProgress={(
+                  phase: string,
+                  pct: number,
+                  done?: boolean
+                ) => {
+                  setPostHocProgress({ phase, pct });
+                  if (done) {
+                    setTimeout(() => setPostHocProgress(null), 250);
+                  }
+                }}
+                chunkBars={chunkBars}
+                potential={potential}
+                parseMode={parseMode}
+                showPotential={isAIActive}
+                resetKey={clusterResetKey}
+                sliderValue={clusterTimelineIdx}
+                setSliderValue={setClusterTimelineIdx}
+                libraryPoints={aiLibraryPoints}
+                activeLibraries={aiActiveLibraries}
+                libraryCounts={aiLibraryCounts}
+                aiDomains={aiDomains}
+                hdbDomainDistinction={hdbDomainDistinction}
+                onResetClusterMap={() => setClusterResetKey((k) => k + 1)}
+                clusterMapView={clusterMapView}
+                onToggleClusterMapView={() =>
+                  setClusterMapView((v) => (v === "3d" ? "2d" : "3d"))
+                }
+                aiMethod={aiMethod}
+                confidenceThreshold={effectiveConfidenceThreshold}
+                hdbMinClusterSize={hdbMinClusterSize}
+                hdbMinSamples={hdbMinSamples}
+                hdbEpsQuantile={hdbEpsQuantile}
+                staticLibrariesClusters={staticLibrariesClusters}
+              />
+            ) : null}
           </div>
         </div>
 

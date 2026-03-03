@@ -61,10 +61,6 @@ const AIZipClusterMap = dynamic<any>(
   () => loadAiZipClusterModule().then((mod) => mod.ClusterMap),
   { ssr: false }
 );
-const AIZipClusterMap3D = dynamic<any>(
-  () => loadAiZipClusterModule().then((mod) => mod.ClusterMap3D),
-  { ssr: false }
-);
 
 const LIGHTWEIGHT_CHART_SOLID_BACKGROUND: ColorType = "solid" as ColorType;
 const LIGHTWEIGHT_CHART_CROSSHAIR_NORMAL: CrosshairMode = 0;
@@ -13518,23 +13514,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 ))}
               </nav>
 
-              <section className="backtest-panel">
+              <section className={`backtest-panel ${!isBacktestSurfaceSettled ? "backtest-panel-loading" : ""}`}>
                 {!isBacktestSurfaceSettled ? (
-                  <div className="backtest-empty">
-                    <h3>Preparing Backtest</h3>
-                    <p>
-                      Applying the selected date range and staging the heavier panels so Chrome
-                      stays responsive.
-                    </p>
-                    <div
-                      className="backtest-loading-progress-shell"
-                      role="progressbar"
-                      aria-label="Preparing backtest view"
-                      aria-valuetext="Preparing backtest modules"
-                    >
-                      <div className="backtest-loading-progress-bar" />
-                    </div>
-                  </div>
+                  <ChartLoadingSpinner label="Preparing Backtest..." />
                 ) : (
                   <>
               {backtestDateFilteredTrades.length === 0 && backtestModelProfiles.length === 0 ? (
@@ -15561,71 +15543,40 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               {selectedBacktestTab === "cluster" ? (
                 <div className="backtest-grid">
                   <div className="backtest-card">
-                    {aiZipClusterMapView === "2d" ? (
-                      <AIZipClusterMap
-                        candles={aiZipClusterCandles}
-                        trades={aiZipClusterTrades}
-                        ghostEntries={[]}
-                        libraryPoints={aiClusterLibraryPoints}
-                        activeLibraries={appliedBacktestSettings.selectedAiLibraries}
-                        libraryCounts={aiClusterLibraryCounts}
-                        chunkBars={appliedBacktestSettings.chunkBars}
-                        potential={null}
-                        parseMode="utc"
-                        showPotential={false}
-                        resetKey={aiZipClusterResetKey}
-                        sliderValue={aiZipClusterTimelineIdx}
-                        setSliderValue={setAiZipClusterTimelineIdx}
-                        onResetClusterMap={() => setAiZipClusterResetKey((current) => current + 1)}
-                        clusterMapView={aiZipClusterMapView}
-                        onToggleClusterMapView={() =>
-                          setAiZipClusterMapView((current) => (current === "3d" ? "2d" : "3d"))
-                        }
-                        onPostHocTrades={() => {}}
-                        onPostHocProgress={() => {}}
-                        onMitMap={() => {}}
-                        aiMethod={appliedBacktestSettings.aiMode}
-                        aiModalities={appliedBacktestSettings.selectedAiDomains}
-                        hdbDomainDistinction="conceptual"
-                        hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}
-                        hdbMinSamples={appliedBacktestSettings.hdbMinSamples}
-                        hdbEpsQuantile={appliedBacktestSettings.hdbEpsQuantile}
-                        staticLibrariesClusters={appliedBacktestSettings.staticLibrariesClusters}
-                        confidenceThreshold={appliedEffectiveConfidenceThreshold}
-                        statsDateStart={appliedBacktestSettings.statsDateStart}
-                        statsDateEnd={appliedBacktestSettings.statsDateEnd}
-                        antiCheatEnabled={appliedBacktestSettings.antiCheatEnabled}
-                      />
-                    ) : (
-                      <AIZipClusterMap3D
-                        candles={aiZipClusterCandles}
-                        trades={aiZipClusterTrades}
-                        ghostEntries={[]}
-                        libraryPoints={aiClusterLibraryPoints}
-                        chunkBarsDeb={appliedBacktestSettings.chunkBars}
-                        potential={null}
-                        parseMode="utc"
-                        showPotential={false}
-                        resetKey={aiZipClusterResetKey}
-                        sliderValue={aiZipClusterTimelineIdx}
-                        setSliderValue={setAiZipClusterTimelineIdx}
-                        onResetClusterMap={() => setAiZipClusterResetKey((current) => current + 1)}
-                        clusterMapView={aiZipClusterMapView}
-                        onToggleClusterMapView={() =>
-                          setAiZipClusterMapView((current) => (current === "3d" ? "2d" : "3d"))
-                        }
-                        activeLibraries={appliedBacktestSettings.selectedAiLibraries}
-                        staticLibrariesClusters={appliedBacktestSettings.staticLibrariesClusters}
-                        aiMethod={appliedBacktestSettings.aiMode}
-                        aiModalities={appliedBacktestSettings.selectedAiDomains}
-                        hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}
-                        hdbMinSamples={appliedBacktestSettings.hdbMinSamples}
-                        hdbEpsQuantile={appliedBacktestSettings.hdbEpsQuantile}
-                        hdbDomainDistinction="conceptual"
-                        clusterGroupStatsMode="All"
-                        antiCheatEnabled={appliedBacktestSettings.antiCheatEnabled}
-                      />
-                    )}
+                    <AIZipClusterMap
+                      candles={aiZipClusterCandles}
+                      trades={aiZipClusterTrades}
+                      ghostEntries={[]}
+                      libraryPoints={aiClusterLibraryPoints}
+                      activeLibraries={appliedBacktestSettings.selectedAiLibraries}
+                      libraryCounts={aiClusterLibraryCounts}
+                      chunkBars={appliedBacktestSettings.chunkBars}
+                      potential={null}
+                      parseMode="utc"
+                      showPotential={false}
+                      resetKey={aiZipClusterResetKey}
+                      sliderValue={aiZipClusterTimelineIdx}
+                      setSliderValue={setAiZipClusterTimelineIdx}
+                      onResetClusterMap={() => setAiZipClusterResetKey((current) => current + 1)}
+                      clusterMapView={aiZipClusterMapView}
+                      onToggleClusterMapView={() =>
+                        setAiZipClusterMapView((current) => (current === "3d" ? "2d" : "3d"))
+                      }
+                      onPostHocTrades={() => {}}
+                      onPostHocProgress={() => {}}
+                      onMitMap={() => {}}
+                      aiMethod={appliedBacktestSettings.aiMode}
+                      aiDomains={appliedBacktestSettings.selectedAiDomains}
+                      hdbDomainDistinction="conceptual"
+                      hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}
+                      hdbMinSamples={appliedBacktestSettings.hdbMinSamples}
+                      hdbEpsQuantile={appliedBacktestSettings.hdbEpsQuantile}
+                      staticLibrariesClusters={appliedBacktestSettings.staticLibrariesClusters}
+                      confidenceThreshold={appliedEffectiveConfidenceThreshold}
+                      statsDateStart={appliedBacktestSettings.statsDateStart}
+                      statsDateEnd={appliedBacktestSettings.statsDateEnd}
+                      antiCheatEnabled={appliedBacktestSettings.antiCheatEnabled}
+                    />
                   </div>
                 </div>
               ) : null}
