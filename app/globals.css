@@ -1035,46 +1035,14 @@ button {
 }
 
 .backtest-date-range-card {
-  padding-top: 0.04rem;
-  padding-bottom: 0.04rem;
-  gap: 0.22rem;
+  padding-top: 0.12rem;
+  padding-bottom: 0.12rem;
   transition: filter 0.18s ease, opacity 0.18s ease;
 }
 
-.backtest-date-range-card .backtest-card-head {
-  gap: 0.5rem;
-}
-
 .backtest-date-range-card .backtest-card-head h3 {
-  margin-top: 0;
-  font-size: 0.9rem;
-  line-height: 1.1;
-}
-
-.backtest-date-range-card .backtest-stats-range-main {
-  gap: 0.22rem;
-}
-
-.backtest-date-range-card .backtest-date-input-row,
-.backtest-date-range-card .backtest-date-preset-row {
-  gap: 0.22rem;
-}
-
-.backtest-date-range-card .backtest-date-input,
-.backtest-date-range-card .backtest-date-preset-trigger,
-.backtest-date-range-card .stats-timeframe-trigger {
-  min-height: 24px;
-}
-
-.backtest-date-range-card .backtest-minute-precise-btn {
-  min-height: 26px;
-  padding-top: 0.2rem;
-  padding-bottom: 0.2rem;
-}
-
-.backtest-date-range-card .backtest-toolbar-note {
-  margin-top: -0.14rem;
-  font-size: 0.62rem;
+  margin-top: 0.08rem;
+  font-size: 1rem;
 }
 
 .backtest-date-range-card.is-loading {
