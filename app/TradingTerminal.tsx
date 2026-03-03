@@ -3275,7 +3275,6 @@ const BacktestPerTradeMiniChart = ({
   }, [isOpen]);
 
   const clipId = useId();
-  const glowId = useId();
   const direction = side === "BUY" ? 1 : -1;
   const formatChartPrice = (value: number) =>
     Number.isFinite(value)
@@ -3329,9 +3328,23 @@ const BacktestPerTradeMiniChart = ({
         return;
       }
 
+      const stroke = getStroke(tone);
+      const last = segments[segments.length - 1];
+      const mergeEpsilon = 0.000001;
+
+      if (
+        last &&
+        last.stroke === stroke &&
+        Math.abs(last.segment[1].x - leftBar) <= mergeEpsilon &&
+        Math.abs(last.segment[1].y - leftPrice) <= mergeEpsilon
+      ) {
+        last.segment[1] = { x: rightBar, y: rightPrice };
+        return;
+      }
+
       segments.push({
         key: `mini-segment-${index}-${segments.length}`,
-        stroke: getStroke(tone),
+        stroke,
         segment: [
           { x: leftBar, y: leftPrice },
           { x: rightBar, y: rightPrice }
@@ -3387,13 +3400,6 @@ const BacktestPerTradeMiniChart = ({
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={data} margin={{ top: 10, right: 24, left: 12, bottom: 10 }}>
           <defs>
-            <filter id={glowId} x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="2" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
             <clipPath id={clipId} clipPathUnits="objectBoundingBox">
               <rect x="0" y="0" width={reveal} height="1" />
             </clipPath>
@@ -3528,8 +3534,8 @@ const BacktestPerTradeMiniChart = ({
             <Line
               type="linear"
               dataKey="price"
-              stroke="rgba(255, 255, 255, 0.2)"
-              strokeWidth={1.25}
+              stroke="rgba(255, 255, 255, 0)"
+              strokeWidth={1}
               dot={false}
               activeDot={{ r: 5, fill: "#111827", stroke: "#e5e7eb", strokeWidth: 1 }}
               isAnimationActive={false}
@@ -3540,9 +3546,9 @@ const BacktestPerTradeMiniChart = ({
                 key={item.key}
                 segment={item.segment}
                 stroke={item.stroke}
-                strokeWidth={3}
+                strokeWidth={2.75}
+                strokeLinecap="round"
                 ifOverflow="extendDomain"
-                style={{ filter: `url(#${glowId})` }}
               />
             ))}
           </g>
@@ -15779,6 +15785,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             backtestSeriesMap[timeframeKey] ??
                             seriesMap[timeframeKey] ??
                             EMPTY_CANDLES;
+                          const executionFrameLabel =
+                            appliedBacktestSettings.timeframe === "1m" ? "1m" : "1m exec";
 
                           return (
                             <div
@@ -15805,7 +15813,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   <div className="backtest-calendar-trade-copy">
                                     <div className="backtest-calendar-trade-inline">
                                       <span className="backtest-calendar-trade-inline-label">
-                                        Entry ({appliedBacktestSettings.timeframe}):
+                                        Entry ({executionFrameLabel}):
                                       </span>
                                       <span className="backtest-calendar-trade-inline-value">
                                         {trade.entryAt}
@@ -15816,7 +15824,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     </div>
                                     <div className="backtest-calendar-trade-inline optional">
                                       <span className="backtest-calendar-trade-inline-label">
-                                        Exit ({appliedBacktestSettings.timeframe}):
+                                        Exit ({executionFrameLabel}):
                                       </span>
                                       <span className="backtest-calendar-trade-inline-value">
                                         {trade.exitAt}
