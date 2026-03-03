@@ -1347,6 +1347,10 @@ button {
   cursor: pointer;
 }
 
+.backtest-minute-precise-single {
+  width: 132px;
+}
+
 .backtest-minute-precise-btn:hover {
   border-color: rgba(255, 255, 255, 0.24);
   color: rgba(255, 255, 255, 0.9);

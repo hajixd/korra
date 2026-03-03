@@ -3199,6 +3199,63 @@ const findCandleIndexAtOrBefore = (candles: Candle[], targetMs: number): number 
   return Math.max(0, right);
 };
 
+const doesTradeFitCandles = (
+  trade: Pick<HistoryItem, "entryTime" | "exitTime">,
+  candles: Candle[]
+): boolean => {
+  if (candles.length < 2) {
+    return false;
+  }
+
+  const entryMs = Number(trade.entryTime) * 1000;
+  const exitMs = Number(trade.exitTime) * 1000;
+
+  if (!Number.isFinite(entryMs) || !Number.isFinite(exitMs)) {
+    return false;
+  }
+
+  const startMs = Math.min(entryMs, exitMs);
+  const endMs = Math.max(entryMs, exitMs);
+  const firstTime = candles[0]?.time ?? Number.POSITIVE_INFINITY;
+  const lastIndex = candles.length - 1;
+  const lastTime = candles[lastIndex]?.time ?? Number.NEGATIVE_INFINITY;
+  const tailStepMs =
+    lastIndex > 0 ? Math.max(60_000, lastTime - candles[lastIndex - 1].time) : 60_000;
+
+  if (startMs < firstTime || endMs > lastTime + tailStepMs) {
+    return false;
+  }
+
+  const entryIndex = findCandleIndexAtOrBefore(candles, entryMs);
+  const exitIndex = findCandleIndexAtOrBefore(candles, exitMs);
+
+  return entryIndex >= 0 && exitIndex >= entryIndex;
+};
+
+const resolveTradeMiniChartCandles = (
+  trade: Pick<HistoryItem, "entryTime" | "exitTime">,
+  preferredCandles: Candle[],
+  fallbackCandles: Candle[]
+): Candle[] => {
+  if (doesTradeFitCandles(trade, preferredCandles)) {
+    return preferredCandles;
+  }
+
+  if (doesTradeFitCandles(trade, fallbackCandles)) {
+    return fallbackCandles;
+  }
+
+  if (preferredCandles.length > 0) {
+    return preferredCandles;
+  }
+
+  if (fallbackCandles.length > 0) {
+    return fallbackCandles;
+  }
+
+  return EMPTY_CANDLES;
+};
+
 const humanizeDurationMinutes = (totalMin: number): string => {
   const minutes = Math.max(0, Math.round(totalMin));
   const parts: string[] = [];
@@ -4020,12 +4077,41 @@ const BacktestTradeMiniChart = ({
   const exitIndex = findCandleIndexAtOrBefore(candles, Number(trade.exitTime) * 1000);
 
   const data = useMemo(() => {
+    const entryTimeMs = Number(trade.entryTime) * 1000;
+    const exitTimeMs = Number(trade.exitTime) * 1000;
+
     if (entryIndex < 0 || exitIndex < entryIndex || candles.length === 0) {
-      return [];
+      if (!Number.isFinite(entryTimeMs) || !Number.isFinite(exitTimeMs)) {
+        return [];
+      }
+
+      const safeExitTimeMs = Math.max(entryTimeMs + 60_000, exitTimeMs);
+      const syntheticExitBar = Math.max(
+        1,
+        Math.ceil((safeExitTimeMs + 60_000 - entryTimeMs) / 60_000)
+      );
+
+      return [
+        {
+          bar: 0,
+          price: trade.entryPrice,
+          high: trade.entryPrice,
+          low: trade.entryPrice,
+          relCand: -1,
+          ts: entryTimeMs
+        },
+        {
+          bar: syntheticExitBar,
+          price: trade.outcomePrice,
+          high: Math.max(trade.entryPrice, trade.outcomePrice),
+          low: Math.min(trade.entryPrice, trade.outcomePrice),
+          relCand: 0,
+          ts: safeExitTimeMs
+        }
+      ];
     }
 
     const endIndex = Math.min(candles.length - 1, Math.max(entryIndex, exitIndex));
-    const entryTimeMs = Number(trade.entryTime) * 1000;
     const rows: Array<{
       bar: number;
       price: number;
@@ -4071,7 +4157,6 @@ const BacktestTradeMiniChart = ({
     if (rows.length > 0) {
       const last = rows[rows.length - 1]!;
       const exitPrice = trade.outcomePrice;
-      const exitTimeMs = Number(trade.exitTime) * 1000;
       const exitMinuteIndex = Math.max(
         1,
         Math.ceil((exitTimeMs + 60_000 - entryTimeMs) / 60_000)
@@ -13861,28 +13946,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       </div>
                       <div className="backtest-minute-precise-row" aria-label="Minute precise execution setting">
                         <span className="backtest-minute-precise-label">Minute Precise</span>
-                        <div className="backtest-minute-precise-toggle" role="group" aria-label="Minute Precise">
-                          <button
-                            type="button"
-                            className={`backtest-minute-precise-btn${
-                              minutePreciseEnabled ? " active" : ""
-                            }`}
-                            onClick={() => setMinutePreciseEnabled(true)}
-                            aria-pressed={minutePreciseEnabled}
-                          >
-                            ON
-                          </button>
-                          <button
-                            type="button"
-                            className={`backtest-minute-precise-btn${
-                              !minutePreciseEnabled ? " active" : ""
-                            }`}
-                            onClick={() => setMinutePreciseEnabled(false)}
-                            aria-pressed={!minutePreciseEnabled}
-                          >
-                            OFF
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          className={`backtest-minute-precise-btn backtest-minute-precise-single${
+                            minutePreciseEnabled ? " active" : ""
+                          }`}
+                          onClick={() => setMinutePreciseEnabled((current) => !current)}
+                          aria-pressed={minutePreciseEnabled}
+                          aria-label={`Minute precise ${minutePreciseEnabled ? "on" : "off"}`}
+                        >
+                          {minutePreciseEnabled ? "ON" : "OFF"}
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -15817,13 +15891,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             trade.symbol,
                             appliedBacktestSettings.timeframe
                           );
-                          const tradeCandles =
+                          const oneMinuteCandles =
                             backtestOneMinuteSeriesMap[oneMinuteKey] ??
                             backtestSeriesMap[oneMinuteKey] ??
                             seriesMap[oneMinuteKey] ??
+                            EMPTY_CANDLES;
+                          const timeframeCandles =
                             backtestSeriesMap[timeframeKey] ??
                             seriesMap[timeframeKey] ??
                             EMPTY_CANDLES;
+                          const tradeCandles = resolveTradeMiniChartCandles(
+                            trade,
+                            appliedBacktestSettings.minutePreciseEnabled
+                              ? oneMinuteCandles
+                              : timeframeCandles,
+                            appliedBacktestSettings.minutePreciseEnabled
+                              ? timeframeCandles
+                              : oneMinuteCandles
+                          );
                           const executionFrameLabel =
                             appliedBacktestSettings.minutePreciseEnabled
                               ? appliedBacktestSettings.timeframe === "1m"
