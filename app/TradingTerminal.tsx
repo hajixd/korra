@@ -5153,8 +5153,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         needsHistorySeedReload
           ? "Loading Candle History"
           : loadingLibraries
-            ? "Replaying Strategy + AI Libraries"
-            : "Replaying Strategy Trades"
+            ? "Replaying Backtest + AI Libraries"
+            : "Replaying Backtest Trades"
       );
       const rangeStartMs = backtestBlueprintRangeRef.current.startMs;
       const baseStartMs =
@@ -5732,7 +5732,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         delete next[oneMinuteKey];
         return next;
       });
-      setStatsRefreshStatus("Preparing Strategy Replay");
+      setStatsRefreshStatus("Preparing Backtest Replay");
       setBacktestHistorySeedReady(true);
       return;
     }
@@ -5773,7 +5773,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         // Backtest falls back to chart history if deep history cannot load.
       } finally {
         if (!cancelled) {
-          setStatsRefreshStatus("Preparing Strategy Replay");
+          setStatsRefreshStatus("Preparing Backtest Replay");
           setBacktestHistorySeedReady(true);
         }
       }
@@ -6943,23 +6943,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       analysisStartMs + 60_000,
       Number.isFinite(filterEndMs) ? Math.min(rawEndMs, filterEndMs) : rawEndMs
     );
+    const analysisSpanMs = Math.max(60_000, analysisEndMs - analysisStartMs);
     let lastLoadingProgressRatio = 0;
-    const setLoadingProgressFromTime = (cursorMs: number) => {
-      if (!Number.isFinite(cursorMs)) {
-        return;
-      }
-
-      const clampedCursorMs = clamp(cursorMs, analysisStartMs, analysisEndMs);
-      const analysisSpanMs = Math.max(60_000, analysisEndMs - analysisStartMs);
-      const normalizedRatio = clamp((clampedCursorMs - analysisStartMs) / analysisSpanMs, 0, 1);
+    const setLoadingProgressFromRatio = (ratio: number) => {
+      const normalizedRatio = clamp(ratio, 0, 1);
 
       if (normalizedRatio < lastLoadingProgressRatio) {
         return;
       }
 
       lastLoadingProgressRatio = normalizedRatio;
+      const cursorMs = analysisStartMs + analysisSpanMs * normalizedRatio;
       setStatsRefreshProgress(normalizedRatio * 100);
-      setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(clampedCursorMs));
+      setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(cursorMs));
     };
 
     const computeSynchronously = (): HistoryItem[] => {
@@ -7034,8 +7030,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     setStatsRefreshProgress(0);
     setStatsRefreshLoadingDisplayProgress(0);
-    setStatsRefreshStatus("Replaying Strategy Trades");
-    setLoadingProgressFromTime(analysisStartMs);
+    setStatsRefreshStatus("Replaying Backtest Trades");
+    setLoadingProgressFromRatio(0);
 
     if (typeof Worker === "undefined") {
       handleFallback();
@@ -7065,8 +7061,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       if (message.type === "progress") {
-        setStatsRefreshStatus("Replaying Strategy Trades");
-        setLoadingProgressFromTime(message.cursorMs);
+        const total = Math.max(1, message.total);
+        setStatsRefreshStatus("Replaying Backtest Trades");
+        setLoadingProgressFromRatio(message.processed / total);
         return;
       }
 
@@ -7074,7 +7071,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       setStatsRefreshStatus(
         hasAiLibraryPass ? "Loading AI Libraries" : "Finalizing Statistics"
       );
-      setLoadingProgressFromTime(analysisEndMs);
+      setLoadingProgressFromRatio(1);
       window.requestAnimationFrame(() => {
         commitRows(
           normalizeBacktestHistoryRows(
