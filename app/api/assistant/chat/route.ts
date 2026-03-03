@@ -366,6 +366,7 @@ const SPEAKER_PROMPT = [
   "Return plain text only (no JSON).",
   "Style: natural, conversational, and direct.",
   "Do not sound robotic.",
+  "Never output <think> tags or private reasoning.",
   "Answer exactly what the user asked and keep it concise.",
   "When the user asks broad guidance (for example, 'what should I do?'), give a clear immediate next step in plain language.",
   "Use analysis inputs as facts; do not invent data.",
@@ -417,8 +418,18 @@ const toBool = (value: unknown, fallback = false): boolean => {
   return fallback;
 };
 
-const sanitizeAssistantText = (value: string): string => {
+const stripPrivateReasoning = (value: string): string => {
   return value
+    .replace(/<\s*think\b[^>]*>[\s\S]*?<\s*\/\s*think\s*>/gi, " ")
+    .replace(/<\s*analysis\b[^>]*>[\s\S]*?<\s*\/\s*analysis\s*>/gi, " ")
+    .replace(/<\s*reasoning\b[^>]*>[\s\S]*?<\s*\/\s*reasoning\s*>/gi, " ")
+    .replace(/```(?:think|analysis|reasoning)[\s\S]*?```/gi, " ")
+    .replace(/^\s*(?:think|analysis|reasoning)\s*:\s*[\s\S]*?(?:\n{2,}|$)/gi, " ");
+};
+
+const sanitizeAssistantText = (value: string): string => {
+  return stripPrivateReasoning(value)
+    .replace(/<\s*\/?\s*think\s*>/gi, " ")
     .replace(/run\s*contains\s*:\s*false/gi, "")
     .replace(/\s{2,}/g, " ")
     .trim();
@@ -2750,7 +2761,8 @@ const executeSocialReplyStage = async (params: {
             "You are Gideon.",
             "Respond like a natural human in one short sentence.",
             "The user sent a social/greeting message.",
-            "Do not include market analysis, indicators, charts, trading advice, or tool mentions."
+            "Do not include market analysis, indicators, charts, trading advice, or tool mentions.",
+            "Never output <think> tags or private reasoning."
           ].join("\n")
         },
         {
@@ -2761,7 +2773,31 @@ const executeSocialReplyStage = async (params: {
       maxTokens: 80
     });
 
-    return sanitizeAssistantText(extractNebiusMessageText(completion.message.content));
+    const sanitized = sanitizeAssistantText(extractNebiusMessageText(completion.message.content));
+    if (sanitized) {
+      return sanitized;
+    }
+
+    const retry = await nebiusChatCompletion({
+      apiKey,
+      baseUrl,
+      model,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Reply with one short human greeting sentence only. No tags. No private reasoning. No analysis."
+        },
+        {
+          role: "user",
+          content: lastPrompt
+        }
+      ],
+      temperature: 0.2,
+      maxTokens: 48
+    });
+
+    return sanitizeAssistantText(extractNebiusMessageText(retry.message.content));
   } catch {
     return sanitizeAssistantText(lastPrompt);
   }
