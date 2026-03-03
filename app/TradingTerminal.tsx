@@ -1804,7 +1804,6 @@ const RECENT_ONE_MINUTE_FETCH_COUNT = 40_000;
 const BACKTEST_LOOKBACK_YEARS = 10;
 const BACKTEST_MAX_HISTORY_CANDLES = 400_000;
 const BACKTEST_ONE_MINUTE_FETCH_COUNT = 500_000;
-const BACKTEST_TARGET_TRADES_PER_DAY = 4;
 const BACKTEST_HISTORY_PAGE_SIZE = 250;
 
 const symbolTimeframeKey = (symbol: string, timeframe: Timeframe) => {
@@ -2174,30 +2173,6 @@ const MARKET_API_KEY =
 const PRICE_STREAM_URL =
   process.env.NEXT_PUBLIC_PRICE_STREAM_URL ||
   "https://oanda-worker-production.up.railway.app/stream/prices";
-
-const hashString = (value: string) => {
-  let hash = 0;
-
-  for (let i = 0; i < value.length; i += 1) {
-    hash = (hash * 31 + value.charCodeAt(i)) | 0;
-  }
-
-  return Math.abs(hash) + 1;
-};
-
-const createSeededRng = (seed: number) => {
-  let state = seed % 2147483647;
-
-  if (state <= 0) {
-    state += 2147483646;
-  }
-
-  return () => {
-    state = (state * 16807) % 2147483647;
-
-    return (state - 1) / 2147483646;
-  };
-};
 
 const formatPrice = (value: number): string => {
   if (value < 1) {
@@ -3951,76 +3926,425 @@ const BacktestTradeMiniChart = ({
   );
 };
 
-const generateTradeBlueprints = (
-  model: ModelProfile,
-  total: number,
-  seedMs = floorToTimeframe(Date.now(), "1m"),
-  range?: { startMs: number; endMs: number },
-  unitsPerMove = 1
-): TradeBlueprint[] => {
-  const rand = createSeededRng(hashString(`blueprints-${model.id}-${seedMs}`));
-  const blueprints: TradeBlueprint[] = [];
-  const usedTimes = new Set<number>();
-  const fallbackEndMs = floorToTimeframe(seedMs, "1m");
-  const fallbackStartMs =
-    fallbackEndMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000;
-  const rawStartMs = range?.startMs ?? fallbackStartMs;
-  const rawEndMs = range?.endMs ?? fallbackEndMs;
-  const endMs = floorToTimeframe(
-    Number.isFinite(rawEndMs) ? rawEndMs : fallbackEndMs,
-    "1m"
-  );
-  const startMs = floorToTimeframe(
-    Number.isFinite(rawStartMs) ? Math.min(rawStartMs, endMs - 60_000) : fallbackStartMs,
-    "1m"
-  );
-  const lookbackMinutes = Math.max(1, Math.floor((endMs - startMs) / 60_000));
-  const spacingMinutes = Math.max(1, Math.floor(lookbackMinutes / Math.max(1, total)));
+type ReplayModelKind =
+  | "momentum"
+  | "meanReversion"
+  | "seasons"
+  | "timeOfDay"
+  | "fibonacci"
+  | "supportResistance";
 
-  for (let i = 0; i < total; i += 1) {
-    const symbol = futuresAssets[Math.floor(rand() * futuresAssets.length)].symbol;
-    const side: TradeSide = rand() <= model.longBias ? "Long" : "Short";
-    const result: TradeResult = rand() <= model.winRate ? "Win" : "Loss";
-    const rr = model.rrMin + rand() * (model.rrMax - model.rrMin);
-    const riskPct = model.riskMin + rand() * (model.riskMax - model.riskMin);
-    const holdMinutes = 35 + Math.floor(rand() * Math.max(720, spacingMinutes * 0.75));
-    const baseOffsetMinutes = Math.round((i + 1) * spacingMinutes);
-    const jitterWindow = Math.max(1, Math.floor(spacingMinutes * 0.45));
-    const jitter = Math.floor((rand() - 0.5) * jitterWindow);
-    const exitOffsetMinutes = Math.max(1, baseOffsetMinutes + jitter);
-    const exitMs = floorToTimeframe(
-      clamp(endMs - exitOffsetMinutes * 60_000, startMs + 60_000, endMs),
-      "1m"
-    );
-    let uniqueExitMs = exitMs;
+type ReplayEntrySignal = {
+  side: TradeSide;
+  strength: number;
+  holdBars: number;
+  rrWeight: number;
+  riskWeight: number;
+};
 
-    while (usedTimes.has(uniqueExitMs) && uniqueExitMs > startMs + 60_000) {
-      uniqueExitMs -= 60_000;
-    }
+const getUtcDayOfYear = (date: Date): number => {
+  const year = date.getUTCFullYear();
+  const startMs = Date.UTC(year, 0, 0);
+  const dayMs = Date.UTC(year, date.getUTCMonth(), date.getUTCDate());
+  return Math.max(1, Math.floor((dayMs - startMs) / 86_400_000));
+};
 
-    while (usedTimes.has(uniqueExitMs) && uniqueExitMs < endMs) {
-      uniqueExitMs += 60_000;
-    }
+const resolveReplayModelKind = (name: string): ReplayModelKind => {
+  const normalized = name.trim().toLowerCase();
 
-    usedTimes.add(uniqueExitMs);
-    const entryMs = Math.max(startMs, uniqueExitMs - holdMinutes * 60_000);
-    const units = Math.max(1, Number.isFinite(unitsPerMove) ? unitsPerMove : 1);
-
-    blueprints.push({
-      id: `${model.id}-t${String(i + 1).padStart(4, "0")}`,
-      modelId: model.id,
-      symbol,
-      side,
-      result,
-      entryMs,
-      exitMs: uniqueExitMs,
-      riskPct,
-      rr,
-      units
-    });
+  if (normalized.includes("mean") || normalized.includes("reversion")) {
+    return "meanReversion";
   }
 
-  return blueprints.sort((a, b) => b.exitMs - a.exitMs);
+  if (normalized.includes("season")) {
+    return "seasons";
+  }
+
+  if (normalized.includes("time of day") || normalized.includes("time")) {
+    return "timeOfDay";
+  }
+
+  if (normalized.includes("fibonacci") || normalized.includes("fib")) {
+    return "fibonacci";
+  }
+
+  if (
+    normalized.includes("support") ||
+    normalized.includes("resistance") ||
+    normalized.includes("s/r")
+  ) {
+    return "supportResistance";
+  }
+
+  return "momentum";
+};
+
+const getReplayModelCooldownBars = (kind: ReplayModelKind): number => {
+  switch (kind) {
+    case "momentum":
+      return 2;
+    case "meanReversion":
+      return 3;
+    case "seasons":
+      return 8;
+    case "timeOfDay":
+      return 5;
+    case "fibonacci":
+      return 4;
+    case "supportResistance":
+      return 4;
+    default:
+      return 3;
+  }
+};
+
+const evaluateReplaySignal = ({
+  modelKind,
+  candles,
+  entryIndex,
+  windowBars,
+  aggressive
+}: {
+  modelKind: ReplayModelKind;
+  candles: Candle[];
+  entryIndex: number;
+  windowBars: number;
+  aggressive: boolean;
+}): ReplayEntrySignal | null => {
+  const lookbackBars = Math.max(8, Math.min(180, Math.round(windowBars) || 24));
+
+  if (entryIndex < lookbackBars + 1 || entryIndex >= candles.length) {
+    return null;
+  }
+
+  const startIndex = entryIndex - lookbackBars;
+  const previous = candles[entryIndex - 1];
+
+  if (!previous) {
+    return null;
+  }
+
+  let minLow = Number.POSITIVE_INFINITY;
+  let maxHigh = Number.NEGATIVE_INFINITY;
+  let sumClose = 0;
+  let sumCloseSq = 0;
+  let sumRange = 0;
+
+  for (let index = startIndex; index < entryIndex; index += 1) {
+    const candle = candles[index];
+    if (!candle) {
+      return null;
+    }
+
+    minLow = Math.min(minLow, candle.low);
+    maxHigh = Math.max(maxHigh, candle.high);
+    sumClose += candle.close;
+    sumCloseSq += candle.close * candle.close;
+    sumRange += Math.max(0.000001, candle.high - candle.low);
+  }
+
+  const firstClose = candles[startIndex]?.close ?? previous.close;
+  if (!Number.isFinite(firstClose) || Math.abs(firstClose) <= 0.000001) {
+    return null;
+  }
+
+  const rangeAbs = Math.max(0.000001, maxHigh - minLow);
+  const rangePct = rangeAbs / Math.max(0.000001, Math.abs(previous.close));
+  const trendRet = (previous.close - firstClose) / Math.max(0.000001, Math.abs(firstClose));
+  const recentStart = Math.max(startIndex, entryIndex - Math.min(5, lookbackBars));
+  const recentClose = candles[recentStart]?.close ?? firstClose;
+  const shortRet = (previous.close - recentClose) / Math.max(0.000001, Math.abs(recentClose));
+  const meanClose = sumClose / lookbackBars;
+  const variance = Math.max(0, sumCloseSq / lookbackBars - meanClose * meanClose);
+  const stdClose = Math.sqrt(variance);
+  const zScore = (previous.close - meanClose) / Math.max(0.000001, stdClose);
+  const closePos = clamp((previous.close - minLow) / rangeAbs, 0, 1);
+
+  const body = Math.abs(previous.close - previous.open);
+  const upperWick = Math.max(0, previous.high - Math.max(previous.open, previous.close));
+  const lowerWick = Math.max(0, Math.min(previous.open, previous.close) - previous.low);
+  const wickBalance = (lowerWick - upperWick) / Math.max(0.000001, body + upperWick + lowerWick);
+  const avgRange = sumRange / lookbackBars;
+
+  const fibLevels = [0.236, 0.382, 0.5, 0.618, 0.786];
+  let nearestFibLevel = 0.5;
+  let nearestFibDistance = Number.POSITIVE_INFINITY;
+  for (const level of fibLevels) {
+    const fibPrice = minLow + rangeAbs * level;
+    const distance = Math.abs(previous.close - fibPrice) / rangeAbs;
+    if (distance < nearestFibDistance) {
+      nearestFibDistance = distance;
+      nearestFibLevel = level;
+    }
+  }
+
+  const touchBand = Math.max(rangeAbs * 0.08, avgRange * 0.7);
+  let supportTouches = 0;
+  let resistanceTouches = 0;
+  for (let index = startIndex; index < entryIndex; index += 1) {
+    const candle = candles[index];
+    if (!candle) continue;
+    if (candle.low <= minLow + touchBand) supportTouches += 1;
+    if (candle.high >= maxHigh - touchBand) resistanceTouches += 1;
+  }
+
+  const date = new Date(previous.time);
+  const hour = date.getUTCHours();
+  const dayOfYear = getUtcDayOfYear(date);
+  const seasonalWave = Math.sin((dayOfYear / 365) * Math.PI * 2);
+  const intradayWave = Math.sin((hour / 24) * Math.PI * 2);
+
+  if (modelKind === "momentum") {
+    const score = Math.abs(trendRet) * 175 + Math.abs(shortRet) * 245;
+    const threshold = aggressive ? 0.08 : 0.16;
+    if (score < threshold) return null;
+    const side: TradeSide = (trendRet || shortRet) >= 0 ? "Long" : "Short";
+    const strength = clamp(
+      (score - threshold) / Math.max(0.1, 1 - threshold),
+      0,
+      1
+    );
+    return {
+      side,
+      strength,
+      holdBars: Math.round(6 + strength * (aggressive ? 30 : 22)),
+      rrWeight: 0.45 + strength * 0.45,
+      riskWeight: 0.4 + strength * 0.35
+    };
+  }
+
+  if (modelKind === "meanReversion") {
+    const zThreshold = aggressive ? 0.9 : 1.15;
+    if (Math.abs(zScore) < zThreshold) return null;
+    const side: TradeSide | null =
+      zScore >= zThreshold && closePos > 0.52
+        ? "Short"
+        : zScore <= -zThreshold && closePos < 0.48
+          ? "Long"
+          : null;
+    if (!side) return null;
+    const strength = clamp(
+      (Math.abs(zScore) - zThreshold) / (aggressive ? 2.2 : 1.8) +
+        Math.abs(closePos - 0.5) * 0.6,
+      0,
+      1
+    );
+    return {
+      side,
+      strength,
+      holdBars: Math.round(4 + strength * (aggressive ? 18 : 14)),
+      rrWeight: 0.35 + strength * 0.35,
+      riskWeight: 0.55 + strength * 0.3
+    };
+  }
+
+  if (modelKind === "seasons") {
+    const score = seasonalWave * 0.65 + intradayWave * 0.35;
+    const threshold = aggressive ? 0.16 : 0.26;
+    if (Math.abs(score) < threshold) return null;
+    const strength = clamp((Math.abs(score) - threshold) / (1 - threshold), 0, 1);
+    return {
+      side: score >= 0 ? "Long" : "Short",
+      strength,
+      holdBars: Math.round(10 + strength * (aggressive ? 24 : 18)),
+      rrWeight: 0.4 + strength * 0.4,
+      riskWeight: 0.5
+    };
+  }
+
+  if (modelKind === "timeOfDay") {
+    const londonNyHours = hour >= 7 && hour <= 16;
+    const asiaHours = hour <= 4 || hour >= 20;
+    if (londonNyHours) {
+      const score = trendRet * 210 + shortRet * 150;
+      const threshold = aggressive ? 0.09 : 0.16;
+      if (Math.abs(score) < threshold) return null;
+      const strength = clamp((Math.abs(score) - threshold) / Math.max(0.1, 1 - threshold), 0, 1);
+      return {
+        side: score >= 0 ? "Long" : "Short",
+        strength,
+        holdBars: Math.round(6 + strength * (aggressive ? 22 : 16)),
+        rrWeight: 0.45 + strength * 0.35,
+        riskWeight: 0.45 + strength * 0.25
+      };
+    }
+
+    if (asiaHours) {
+      const zThreshold = aggressive ? 0.75 : 1.05;
+      if (Math.abs(zScore) < zThreshold) return null;
+      const strength = clamp((Math.abs(zScore) - zThreshold) / 2, 0, 1);
+      return {
+        side: zScore >= 0 ? "Short" : "Long",
+        strength,
+        holdBars: Math.round(4 + strength * (aggressive ? 16 : 12)),
+        rrWeight: 0.35 + strength * 0.25,
+        riskWeight: 0.55 + strength * 0.25
+      };
+    }
+
+    return null;
+  }
+
+  if (modelKind === "fibonacci") {
+    const nearBand = aggressive ? 0.11 : 0.08;
+    if (nearestFibDistance > nearBand) return null;
+    const side: TradeSide = nearestFibLevel <= 0.5 ? "Long" : "Short";
+    const strength = clamp(
+      (nearBand - nearestFibDistance) / nearBand + Math.abs(shortRet) * 180,
+      0,
+      1
+    );
+    return {
+      side,
+      strength,
+      holdBars: Math.round(6 + strength * (aggressive ? 24 : 18)),
+      rrWeight: 0.5 + strength * 0.4,
+      riskWeight: 0.4 + strength * 0.3
+    };
+  }
+
+  const supportPressure =
+    Math.max(0, (0.24 - closePos) * 4) +
+    Math.max(0, wickBalance) +
+    (supportTouches / lookbackBars) * 0.7;
+  const resistancePressure =
+    Math.max(0, (closePos - 0.76) * 4) +
+    Math.max(0, -wickBalance) +
+    (resistanceTouches / lookbackBars) * 0.7;
+  const threshold = aggressive ? 0.45 : 0.6;
+
+  if (supportPressure < threshold && resistancePressure < threshold) {
+    return null;
+  }
+
+  const longSide = supportPressure >= resistancePressure;
+  const strength = clamp(Math.max(supportPressure, resistancePressure) - threshold, 0, 1);
+  return {
+    side: longSide ? "Long" : "Short",
+    strength,
+    holdBars: Math.round(5 + strength * (aggressive ? 20 : 14)),
+    rrWeight: 0.4 + strength * 0.3,
+    riskWeight: 0.5 + strength * 0.25
+  };
+};
+
+const buildReplayTradeBlueprints = ({
+  candles,
+  models,
+  symbol,
+  unitsPerMove,
+  windowBars,
+  aggressive
+}: {
+  candles: Candle[];
+  models: ModelProfile[];
+  symbol: string;
+  unitsPerMove: number;
+  windowBars: number;
+  aggressive: boolean;
+}): TradeBlueprint[] => {
+  if (models.length === 0 || candles.length < 3) {
+    return [];
+  }
+
+  const lookbackBars = Math.max(8, Math.min(180, Math.round(windowBars) || 24));
+  const maxEntryIndex = candles.length - 2;
+  const safeUnits = Math.max(1, Number.isFinite(unitsPerMove) ? unitsPerMove : 1);
+  const lastEntryByModel = new Map<string, number>();
+  const blueprints: TradeBlueprint[] = [];
+
+  for (let candleIndex = lookbackBars; candleIndex <= maxEntryIndex; candleIndex += 1) {
+    const entryMs = Number(candles[candleIndex]?.time);
+    if (!Number.isFinite(entryMs)) {
+      continue;
+    }
+
+    const candidates: Array<{ model: ModelProfile; signal: ReplayEntrySignal }> = [];
+
+    for (const model of models) {
+      const modelKind = resolveReplayModelKind(model.name);
+      const cooldownBars = Math.max(
+        1,
+        Math.round(getReplayModelCooldownBars(modelKind) * (aggressive ? 0.75 : 1))
+      );
+      const previousEntryIndex = lastEntryByModel.get(model.id) ?? Number.NEGATIVE_INFINITY;
+      if (candleIndex - previousEntryIndex < cooldownBars) {
+        continue;
+      }
+
+      const signal = evaluateReplaySignal({
+        modelKind,
+        candles,
+        entryIndex: candleIndex,
+        windowBars,
+        aggressive
+      });
+      if (!signal) {
+        continue;
+      }
+
+      const longBiasWeight = signal.side === "Long" ? model.longBias : 1 - model.longBias;
+      const weightedStrength = clamp(signal.strength * (0.75 + longBiasWeight * 0.6), 0, 1);
+      const minStrength = aggressive ? 0.14 : 0.26;
+      if (weightedStrength < minStrength) {
+        continue;
+      }
+
+      candidates.push({
+        model,
+        signal: {
+          ...signal,
+          strength: weightedStrength
+        }
+      });
+    }
+
+    if (candidates.length === 0) {
+      continue;
+    }
+
+    candidates.sort(
+      (left, right) =>
+        right.signal.strength - left.signal.strength || left.model.id.localeCompare(right.model.id)
+    );
+
+    const chosen = candidates[0]!;
+    const remainingBars = Math.max(1, candles.length - 1 - candleIndex);
+    const holdBars = clamp(Math.round(chosen.signal.holdBars), 1, Math.min(160, remainingBars));
+    const exitIndex = Math.min(candles.length - 1, candleIndex + holdBars);
+    const exitMs = Number(candles[exitIndex]?.time);
+
+    if (!Number.isFinite(exitMs) || exitMs <= entryMs) {
+      continue;
+    }
+
+    const rrWeight = clamp(chosen.signal.rrWeight, 0, 1);
+    const riskWeight = clamp(chosen.signal.riskWeight, 0, 1);
+    const rr = chosen.model.rrMin + (chosen.model.rrMax - chosen.model.rrMin) * rrWeight;
+    const riskPct =
+      chosen.model.riskMin + (chosen.model.riskMax - chosen.model.riskMin) * riskWeight;
+
+    blueprints.push({
+      id: `${chosen.model.id}-replay-${String(candleIndex).padStart(6, "0")}`,
+      modelId: chosen.model.id,
+      symbol,
+      side: chosen.signal.side,
+      // Final outcome is determined by replaying candle path against TP/SL.
+      result: "Win",
+      entryMs,
+      exitMs,
+      riskPct,
+      rr,
+      units: safeUnits
+    });
+
+    lastEntryByModel.set(chosen.model.id, candleIndex);
+  }
+
+  return blueprints.sort(
+    (left, right) =>
+      right.exitMs - left.exitMs || right.entryMs - left.entryMs || left.id.localeCompare(right.id)
+  );
 };
 
 const insertSortedExit = (activeExitMs: number[], exitMs: number) => {
@@ -5505,21 +5829,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     );
     const availableSlots =
       selectedBacktestCandles.length > 0
-        ? selectedBacktestCandles.length
+        ? Math.max(1, selectedBacktestCandles.length - 1)
         : Math.min(BACKTEST_MAX_HISTORY_CANDLES, estimatedSlots);
-    const rangeDays = Math.max(1, Math.ceil(rangeMs / (24 * 60 * 60_000)));
-    const densityTarget = rangeDays * BACKTEST_TARGET_TRADES_PER_DAY;
 
-    if (appliedAiModelEveryCandleMode) {
-      // AI Model mode checks every bar, so candidate entries should be available
-      // at candle cadence rather than sparse per-day trade density.
-      const everyCandleTarget = Math.max(1, availableSlots - 1);
-      return Math.max(appliedBacktestModelProfiles.length, everyCandleTarget);
-    }
-
-    return Math.max(appliedBacktestModelProfiles.length, Math.min(availableSlots, densityTarget));
+    // In replay mode we cap by available bars, not synthetic density targets.
+    return Math.max(appliedBacktestModelProfiles.length, availableSlots);
   }, [
-    appliedAiModelEveryCandleMode,
     appliedBacktestModelProfiles.length,
     appliedBacktestSettings.timeframe,
     backtestHasRun,
@@ -5528,28 +5843,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     selectedBacktestCandles.length
   ]);
 
-  const everyCandleTradeBlueprints = useMemo(() => {
-    if (!appliedAiModelEveryCandleMode) {
-      return [] as TradeBlueprint[];
-    }
-
-    if (appliedBacktestModelProfiles.length === 0) {
+  const deterministicTradeBlueprints = useMemo(() => {
+    if (!backtestHasRun || !backtestHistorySeedReady || appliedBacktestModelProfiles.length === 0) {
       return [] as TradeBlueprint[];
     }
 
     const candles = selectedBacktestCandles;
-    if (candles.length < 2) {
+    if (candles.length < 3) {
       return [] as TradeBlueprint[];
     }
 
-    const seedKey = `ai-model-every-candle-${backtestRefreshNowMs}-${appliedBacktestModelProfiles
-      .map((model) => model.id)
-      .join("|")}`;
-    const rand = createSeededRng(hashString(seedKey));
-    const blueprints: TradeBlueprint[] = [];
-    const modelCount = appliedBacktestModelProfiles.length;
-    const maxEntryIndex = Math.max(0, candles.length - 2);
-    const fallbackExitOffsetMs = Math.max(60_000, getTimeframeMs(appliedBacktestSettings.timeframe));
     const unitsPerMove = Math.max(
       1,
       Number.isFinite(appliedBacktestSettings.dollarsPerMove)
@@ -5557,49 +5860,33 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         : 1
     );
 
-    for (let candleIndex = maxEntryIndex; candleIndex >= 0; candleIndex -= 1) {
-      const modelIndex = (candleIndex + Math.floor(rand() * modelCount)) % Math.max(1, modelCount);
-      const model = appliedBacktestModelProfiles[modelIndex]!;
-      const symbol = futuresAssets[Math.floor(rand() * futuresAssets.length)]?.symbol ?? selectedSymbol;
-      const side: TradeSide = rand() <= model.longBias ? "Long" : "Short";
-      const result: TradeResult = rand() <= model.winRate ? "Win" : "Loss";
-      const rr = model.rrMin + rand() * (model.rrMax - model.rrMin);
-      const riskPct = model.riskMin + rand() * (model.riskMax - model.riskMin);
-      const entryMs = Number(candles[candleIndex]?.time);
-      const remainingBars = Math.max(1, candles.length - 1 - candleIndex);
-      const holdBars = 1 + Math.floor(rand() * Math.min(96, remainingBars));
-      const exitIndex = Math.min(candles.length - 1, candleIndex + holdBars);
-      const exitMsRaw = Number(candles[exitIndex]?.time);
-      const exitMs = Number.isFinite(exitMsRaw) ? exitMsRaw : entryMs + fallbackExitOffsetMs;
-
-      if (!Number.isFinite(entryMs) || !Number.isFinite(exitMs) || exitMs <= entryMs) {
-        continue;
-      }
-
-      blueprints.push({
-        id: `${model.id}-ec-${String(candleIndex).padStart(6, "0")}`,
-        modelId: model.id,
-        symbol,
-        side,
-        result,
-        entryMs,
-        exitMs,
-        riskPct,
-        rr,
-        units: unitsPerMove
-      });
-    }
-
-    return blueprints;
+    return buildReplayTradeBlueprints({
+      candles,
+      models: appliedBacktestModelProfiles,
+      symbol: appliedBacktestSettings.symbol,
+      unitsPerMove,
+      windowBars: appliedBacktestSettings.chunkBars,
+      // AI Model mode is less strict and checks more bars. AI Filter mode is stricter.
+      aggressive: appliedAiModelEveryCandleMode
+    });
   }, [
     appliedAiModelEveryCandleMode,
     appliedBacktestModelProfiles,
+    appliedBacktestSettings.chunkBars,
     appliedBacktestSettings.dollarsPerMove,
-    appliedBacktestSettings.timeframe,
-    backtestRefreshNowMs,
-    selectedBacktestCandles,
-    selectedSymbol
+    appliedBacktestSettings.symbol,
+    backtestHasRun,
+    backtestHistorySeedReady,
+    selectedBacktestCandles
   ]);
+
+  const everyCandleTradeBlueprints = useMemo(() => {
+    if (!appliedAiModelEveryCandleMode) {
+      return [] as TradeBlueprint[];
+    }
+
+    return deterministicTradeBlueprints;
+  }, [appliedAiModelEveryCandleMode, deterministicTradeBlueprints]);
 
   const shouldBuildSharedLibraryCandidateTrades =
     appliedAiModelEveryCandleMode &&
@@ -6013,51 +6300,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return [];
     }
 
-    if (appliedAiModelEveryCandleMode) {
-      return enforceMaxConcurrentTradeBlueprints(
-        everyCandleTradeBlueprints,
-        appliedBacktestSettings.maxConcurrentTrades
-      ).slice(
-        0,
-        backtestTargetTrades
-      );
-    }
-
-    const perModelBase = Math.floor(backtestTargetTrades / appliedBacktestModelProfiles.length);
-    const remainder = backtestTargetTrades % appliedBacktestModelProfiles.length;
-    const blueprints: TradeBlueprint[] = [];
-
-    appliedBacktestModelProfiles.forEach((model, index) => {
-      const count = perModelBase + (index < remainder ? 1 : 0);
-
-      if (count <= 0) {
-        return;
-      }
-
-      blueprints.push(
-        ...generateTradeBlueprints(
-          model,
-          count,
-          backtestRefreshNowMs,
-          backtestBlueprintRange,
-          appliedBacktestSettings.dollarsPerMove
-        )
-      );
-    });
-
     return enforceMaxConcurrentTradeBlueprints(
-      blueprints,
+      deterministicTradeBlueprints,
       appliedBacktestSettings.maxConcurrentTrades
     ).slice(0, backtestTargetTrades);
   }, [
-    appliedAiModelEveryCandleMode,
     appliedBacktestModelProfiles,
     appliedBacktestSettings.maxConcurrentTrades,
-    appliedBacktestSettings.dollarsPerMove,
-    backtestBlueprintRange,
-    everyCandleTradeBlueprints,
-    backtestTargetTrades,
-    backtestRefreshNowMs
+    deterministicTradeBlueprints,
+    backtestTargetTrades
   ]);
 
   const [historyRows, setHistoryRows] = useState<HistoryItem[]>([]);
