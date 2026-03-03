@@ -114,6 +114,28 @@ type PlanningOutput = {
     end?: string;
     reason?: string;
   };
+  needsInternetData?: boolean;
+  internetQuery?: {
+    query?: string;
+    recencyDays?: number;
+    maxResults?: number;
+    reason?: string;
+  };
+};
+
+type InternetResultItem = {
+  title: string;
+  url: string;
+  snippet: string;
+  source: string;
+  publishedAt?: string;
+};
+
+type InternetContext = {
+  query: string;
+  provider: "serper" | "duckduckgo";
+  fetchedAt: string;
+  results: InternetResultItem[];
 };
 
 type ReasoningOutput = {
@@ -199,6 +221,7 @@ type ToolState = {
     count: number;
   } | null;
   requestedBacktestData: boolean;
+  internetContext: InternetContext | null;
 };
 
 type RequestMode = "natural" | "graph" | "draw" | "animation";
@@ -287,6 +310,8 @@ const SOCIAL_GREETING_RE =
   /^(hi|hello|hey|yo|sup|what'?s up|how are you|gm|gn|good morning|good afternoon|good evening)[!.?\s]*$/i;
 const TRADING_REQUEST_RE =
   /\b(trade|trading|chart|graph|draw|support|resistance|trend|line|box|fvg|arrow|ruler|candle|candlestick|price|xau|xauusd|gold|rsi|macd|ema|sma|atr|indicator|backtest|history|pnl|risk|entry|stop|target|buy|sell|volume|volatility)\b/i;
+const INTERNET_CONTEXT_RE =
+  /\b(news|headline|headlines|macro|calendar|event|cpi|nfp|fomc|fed|interest rate|yield|dxy|geopolitical|war|sanction|breaking|latest|today|internet|web)\b/i;
 
 const AI_SYSTEM_PROMPT = [
   "You are Gideon, a trading copilot.",
@@ -297,6 +322,7 @@ const AI_SYSTEM_PROMPT = [
   "2c) If the request is ambiguous and blocks execution, ask one concise clarifying question.",
   "3) Never invent facts. If data is insufficient, explicitly say so.",
   "4) If needed, use tools to fetch only necessary data.",
+  "4b) If the request needs external web/news context, use internet search tools and cite only fetched facts.",
   "5) Default to the most recent data window unless the user explicitly asks for past/historical dates.",
   "6) Never ask the user to run data-fetch steps manually; fetch required data yourself.",
   "7) Use chart hints only when visual clarity helps the user request.",
@@ -307,13 +333,15 @@ const AI_SYSTEM_PROMPT = [
 
 const PLANNING_PROMPT = [
   "Return only JSON with this shape:",
-  '{"needsBacktestData":boolean,"backtestReason":string,"needsClickhouseData":boolean,"clickhouseQuery":{"pair":string,"timeframe":string,"count":number,"start":string,"end":string,"reason":string}}',
+  '{"needsBacktestData":boolean,"backtestReason":string,"needsClickhouseData":boolean,"clickhouseQuery":{"pair":string,"timeframe":string,"count":number,"start":string,"end":string,"reason":string},"needsInternetData":boolean,"internetQuery":{"query":string,"recencyDays":number,"maxResults":number,"reason":string}}',
   "Set needsBacktestData=true only when backtest has run but detailed rows are missing and required.",
   "Set needsClickhouseData=true only when current candle/history context is not enough.",
+  "Set needsInternetData=true only when external/public web data is required to answer.",
   "Use a recent-window query by default. Set start/end only when the user explicitly asks for past/historical/date ranges.",
   "For recent-window queries, anchor end to the current runtime date/time.",
   "Do not tell the user to fetch data manually; produce a concrete clickhouseQuery instead.",
-  "If no query needed, set clickhouseQuery to null."
+  "If no query needed, set clickhouseQuery to null.",
+  "If no web query is needed, set internetQuery to null."
 ].join("\n");
 
 const MODE_CLASSIFIER_PROMPT = [
@@ -372,6 +400,7 @@ const DATA_ANALYSIS_PROMPT = [
   "Return only JSON with this shape:",
   '{"summary":string,"keyFindings":[string],"suggestedIndicatorFocus":[string],"confidence":number}',
   "Analyze only the provided market/trade data and recent candle window.",
+  "If internetContext is present, include only concrete facts from those results.",
   "Do not invent missing values.",
   "Keep summary concise and trading-focused.",
   "Provide up to 4 keyFindings."
@@ -403,6 +432,7 @@ const REASONING_PROMPT = [
   "If codingComputedIndicators is provided, treat it as authoritative computed indicator data.",
   "When giving numeric price levels, anchor them to recentWindow latest close/time and runtimeClock recency.",
   "If runtimeClock indicates stale market data, avoid specific price levels and say the live window is stale.",
+  "If internetContext is provided, use only that fetched context and do not invent external facts.",
   "Use requestChecklist to enforce scope. If requestChecklist.requestKind='social', return a brief natural reply with no analytics, no bullets, and no chart hints.",
   "Before setting cannotAnswer=true, attempt to answer using available context and indicator snapshots.",
   "If data is insufficient, set cannotAnswer=true and explain why.",
@@ -1376,7 +1406,9 @@ const buildResponseChecklist = (params: {
   const { plan, shortAnswer, responseCannotAnswer, charts, chartActions, chartAnimations, toolsUsed } = params;
   const responseHasText = shortAnswer.trim().length > 0 || responseCannotAnswer;
   const usedDataTools =
-    toolsUsed.has("clickhouse_candles") || toolsUsed.has("backtest_data_request");
+    toolsUsed.has("clickhouse_candles") ||
+    toolsUsed.has("backtest_data_request") ||
+    toolsUsed.has("internet_search");
   const unrequestedVisuals =
     (!plan.requiresGraph && charts.length > 0) ||
     (!plan.requiresDraw && chartActions.length > 0) ||
@@ -1723,6 +1755,21 @@ const buildAutoClickhouseQuery = (params: {
     start: historicalRequested ? toText(planningQuery?.start, "") : "",
     end: historicalRequested ? toText(planningQuery?.end, "") : new Date(nowMs).toISOString(),
     reason: toText(planningQuery?.reason, "Targeted recent-window fetch for chart analysis.")
+  };
+};
+
+const buildAutoInternetQuery = (params: {
+  prompt: string;
+  planningQuery?: PlanningOutput["internetQuery"];
+}): NonNullable<PlanningOutput["internetQuery"]> => {
+  const { prompt, planningQuery } = params;
+  const defaultQuery = toText(prompt, "");
+  const planningValue = planningQuery && typeof planningQuery === "object" ? planningQuery : {};
+  return {
+    query: toText(planningValue?.query, defaultQuery).slice(0, 220),
+    recencyDays: clamp(Math.round(toNumber(planningValue?.recencyDays, 3)), 1, 30),
+    maxResults: clamp(Math.round(toNumber(planningValue?.maxResults, 5)), 1, 8),
+    reason: toText(planningValue?.reason, "External web context requested for this answer.").slice(0, 260)
   };
 };
 
@@ -2597,6 +2644,211 @@ const fetchClickhouseCandles = async (
   };
 };
 
+const stripHtmlTags = (value: string): string => {
+  return value.replace(/<[^>]+>/g, " ").replace(/\s{2,}/g, " ").trim();
+};
+
+const sanitizeUrl = (value: string): string => {
+  const text = toText(value, "");
+  if (!text) {
+    return "";
+  }
+  if (!/^https?:\/\//i.test(text)) {
+    return "";
+  }
+  return text.slice(0, 500);
+};
+
+const normalizeInternetResults = (
+  rows: InternetResultItem[],
+  maxResults: number
+): InternetResultItem[] => {
+  const seen = new Set<string>();
+  const normalized: InternetResultItem[] = [];
+
+  for (const row of rows) {
+    const url = sanitizeUrl(row.url);
+    const title = sanitizeAssistantText(toText(row.title, ""));
+    const snippet = sanitizeAssistantText(toText(row.snippet, ""));
+    if (!url || !title || !snippet) {
+      continue;
+    }
+    if (seen.has(url.toLowerCase())) {
+      continue;
+    }
+    seen.add(url.toLowerCase());
+    normalized.push({
+      title: title.slice(0, 220),
+      url,
+      snippet: snippet.slice(0, 360),
+      source: sanitizeAssistantText(toText(row.source, "web")).slice(0, 120),
+      publishedAt: toText(row.publishedAt, "")
+    });
+    if (normalized.length >= maxResults) {
+      break;
+    }
+  }
+
+  return normalized;
+};
+
+const fetchInternetContext = async (params: {
+  query: string;
+  recencyDays: number;
+  maxResults: number;
+}): Promise<InternetContext> => {
+  const query = toText(params.query, "").slice(0, 220);
+  const recencyDays = clamp(Math.round(toNumber(params.recencyDays, 3)), 1, 30);
+  const maxResults = clamp(Math.round(toNumber(params.maxResults, 5)), 1, 8);
+  const nowIso = new Date().toISOString();
+
+  if (!query) {
+    return {
+      query: "",
+      provider: "duckduckgo",
+      fetchedAt: nowIso,
+      results: []
+    };
+  }
+
+  const serperApiKey = process.env.SERPER_API_KEY || process.env.SERPAPI_KEY || "";
+  if (serperApiKey) {
+    try {
+      const response = await fetch("https://google.serper.dev/search", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-KEY": serperApiKey
+        },
+        body: JSON.stringify({
+          q: query,
+          num: maxResults,
+          tbs: `qdr:d${recencyDays}`
+        }),
+        cache: "no-store"
+      });
+
+      if (response.ok) {
+        const payload = (await response.json()) as Record<string, unknown>;
+        const organic = Array.isArray(payload.organic) ? payload.organic : [];
+        const results = normalizeInternetResults(
+          organic.map((item) => {
+            const row = item as Record<string, unknown>;
+            return {
+              title: toText(row.title, ""),
+              url: toText(row.link, ""),
+              snippet: toText(row.snippet, ""),
+              source: "google",
+              publishedAt: toText(row.date, "")
+            } satisfies InternetResultItem;
+          }),
+          maxResults
+        );
+
+        return {
+          query,
+          provider: "serper",
+          fetchedAt: nowIso,
+          results
+        };
+      }
+    } catch {
+      // Fallback below.
+    }
+  }
+
+  try {
+    const url = new URL("https://api.duckduckgo.com/");
+    url.searchParams.set("q", query);
+    url.searchParams.set("format", "json");
+    url.searchParams.set("no_redirect", "1");
+    url.searchParams.set("no_html", "1");
+    url.searchParams.set("skip_disambig", "1");
+
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        Accept: "application/json"
+      },
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      return {
+        query,
+        provider: "duckduckgo",
+        fetchedAt: nowIso,
+        results: []
+      };
+    }
+
+    const payload = (await response.json()) as Record<string, unknown>;
+    const relatedTopics = Array.isArray(payload.RelatedTopics) ? payload.RelatedTopics : [];
+
+    const flatTopics: Array<Record<string, unknown>> = [];
+    for (const item of relatedTopics) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const row = item as Record<string, unknown>;
+      if (Array.isArray(row.Topics)) {
+        for (const nested of row.Topics) {
+          if (nested && typeof nested === "object") {
+            flatTopics.push(nested as Record<string, unknown>);
+          }
+        }
+      } else {
+        flatTopics.push(row);
+      }
+    }
+
+    const abstractText = stripHtmlTags(toText(payload.AbstractText, ""));
+    const abstractUrl = sanitizeUrl(toText(payload.AbstractURL, ""));
+    const abstractSource = toText(payload.AbstractSource, "duckduckgo");
+    const results: InternetResultItem[] = [];
+    if (abstractText && abstractUrl) {
+      results.push({
+        title: toText(payload.Heading, query),
+        url: abstractUrl,
+        snippet: abstractText,
+        source: abstractSource
+      });
+    }
+
+    for (const item of flatTopics) {
+      const firstUrl = sanitizeUrl(toText(item.FirstURL, ""));
+      const text = stripHtmlTags(toText(item.Text, ""));
+      if (!firstUrl || !text) {
+        continue;
+      }
+      const [title] = text.split(" - ");
+      results.push({
+        title: sanitizeAssistantText(title || text).slice(0, 220),
+        url: firstUrl,
+        snippet: sanitizeAssistantText(text).slice(0, 360),
+        source: "duckduckgo"
+      });
+      if (results.length >= maxResults * 2) {
+        break;
+      }
+    }
+
+    return {
+      query,
+      provider: "duckduckgo",
+      fetchedAt: nowIso,
+      results: normalizeInternetResults(results, maxResults)
+    };
+  } catch {
+    return {
+      query,
+      provider: "duckduckgo",
+      fetchedAt: nowIso,
+      results: []
+    };
+  }
+};
+
 const executeRequestModeStage = async (params: {
   apiKey: string;
   baseUrl: string;
@@ -3197,6 +3449,23 @@ const executePlanningStage = async (params: {
           }
         }
       }
+    },
+    {
+      type: "function",
+      function: {
+        name: "search_internet",
+        description: "Fetch concise external web/news context when internal market data is insufficient.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string" },
+            recencyDays: { type: "number" },
+            maxResults: { type: "number" },
+            reason: { type: "string" }
+          },
+          required: ["query"]
+        }
+      }
     }
   ];
 
@@ -3293,6 +3562,32 @@ const executePlanningStage = async (params: {
             })
           });
         }
+      }
+
+      if (name === "search_internet") {
+        const query = toText(args.query, getLastUserPrompt(turns));
+        const recencyDays = clamp(Math.round(toNumber(args.recencyDays, 3)), 1, 30);
+        const maxResults = clamp(Math.round(toNumber(args.maxResults, 5)), 1, 8);
+        const internetContext = await fetchInternetContext({
+          query,
+          recencyDays,
+          maxResults
+        });
+        toolState.internetContext = internetContext;
+
+        toolAwareMessages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify({
+            ok: true,
+            query: internetContext.query,
+            provider: internetContext.provider,
+            fetchedAt: internetContext.fetchedAt,
+            count: internetContext.results.length,
+            results: internetContext.results
+          })
+        });
+        continue;
       }
     }
   }
@@ -3432,7 +3727,8 @@ const executeDataAnalysisStage = async (params: {
       count: recentWindowCandles.length,
       candles: recentWindowCandles.slice(-260)
     },
-    indicators: indicatorSnapshot
+    indicators: indicatorSnapshot,
+    internetContext: toolState.internetContext
   };
 
   try {
@@ -3520,6 +3816,7 @@ const executeReasoningStage = async (params: {
       candles: recentWindowCandles.slice(-300)
     },
     indicators: indicatorSnapshot,
+    internetContext: toolState.internetContext,
     clickhouse:
       toolState.clickhouseCandles.length > 0
         ? {
@@ -3662,6 +3959,7 @@ const executeCodingStage = async (params: {
       context,
       clickhouseCandles: toolState.clickhouseCandles
     }),
+    internetContext: toolState.internetContext,
     availableSources: {
       history: context.historyRows.length,
       backtest: context.backtest.trades.length,
@@ -4753,6 +5051,7 @@ export async function POST(request: Request) {
   const heuristicRequestMode = classifyRequestMode(lastUserPrompt);
   const indicatorComputationRequested = isIndicatorComputationRequest(lastUserPrompt);
   const requestedIndicators = extractRequestedIndicators(lastUserPrompt);
+  const internetContextRequested = INTERNET_CONTEXT_RE.test(lastUserPrompt);
 
   try {
     const toolsUsed = new Set<string>();
@@ -4957,6 +5256,7 @@ export async function POST(request: Request) {
             context,
             clickhouseCandles: []
           }),
+          internetContext: null,
           usedClickhouse: false,
           clickhouseMeta: null,
           backtestDataIncluded: context.backtest.dataIncluded,
@@ -4974,7 +5274,8 @@ export async function POST(request: Request) {
     const toolState: ToolState = {
       clickhouseCandles: [],
       clickhouseMeta: null,
-      requestedBacktestData: false
+      requestedBacktestData: false,
+      internetContext: null
     };
 
     if (
@@ -5022,6 +5323,34 @@ export async function POST(request: Request) {
         },
         modelTrace: null
       });
+    }
+
+    const shouldAutofetchInternet =
+      !socialOnlyRequest &&
+      toolState.internetContext === null &&
+      (Boolean(planningResult.planning.needsInternetData) || internetContextRequested);
+
+    if (shouldAutofetchInternet) {
+      const internetQuery = buildAutoInternetQuery({
+        prompt: lastUserPrompt,
+        planningQuery: planningResult.planning.internetQuery
+      });
+      if (internetQuery.query) {
+        const contextResult = await fetchInternetContext({
+          query: internetQuery.query,
+          recencyDays: toNumber(internetQuery.recencyDays, 3),
+          maxResults: toNumber(internetQuery.maxResults, 5)
+        });
+        toolState.internetContext = contextResult;
+        planningResult.planning.needsInternetData = true;
+        planningResult.planning.internetQuery = internetQuery;
+        if (contextResult.results.length > 0) {
+          toolsUsed.add("internet_search");
+        }
+      }
+    }
+    if (toolState.internetContext && toolState.internetContext.results.length > 0) {
+      toolsUsed.add("internet_search");
     }
 
     const shouldAutofetchClickhouse =
@@ -5546,8 +5875,23 @@ export async function POST(request: Request) {
       toolsUsed
     });
 
+    const responseRuntimeClock = buildRuntimeClock({
+      nowMs: runtimeNowMs,
+      context,
+      clickhouseCandles: toolState.clickhouseCandles
+    });
+    const responseInternetContext = toolState.internetContext
+      ? {
+          provider: toolState.internetContext.provider,
+          query: toolState.internetContext.query,
+          count: toolState.internetContext.results.length,
+          fetchedAt: toolState.internetContext.fetchedAt
+        }
+      : null;
+
     // Ensure request-scope data is explicitly released after shaping response.
     toolState.clickhouseCandles = [];
+    toolState.internetContext = null;
 
     return NextResponse.json({
       status: "ok",
@@ -5567,11 +5911,8 @@ export async function POST(request: Request) {
         requestMode: requestMode.mode,
         requestChecklistPlan,
         executionPlan,
-        runtimeClock: buildRuntimeClock({
-          nowMs: runtimeNowMs,
-          context,
-          clickhouseCandles: toolState.clickhouseCandles
-        }),
+        runtimeClock: responseRuntimeClock,
+        internetContext: responseInternetContext,
         requestModeHints: {
           needsClickhouse: mergedClickhouseHint,
           clickhouseCount: mergedClickhouseCountHint || null,

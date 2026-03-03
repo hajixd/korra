@@ -596,6 +596,31 @@ function TradeDetailsModalImpl({
     };
   }, [onClose]);
 
+  const [compactViewport, setCompactViewport] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return window.innerWidth <= 920;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const onResize = () => {
+      setCompactViewport(window.innerWidth <= 920);
+    };
+
+    onResize();
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
+  }, []);
+
   const fmt = (v, d = 3) =>
     Number.isFinite(v)
       ? Number(v).toLocaleString(undefined, { maximumFractionDigits: d })
@@ -727,14 +752,14 @@ function TradeDetailsModalImpl({
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        padding: 18,
+        padding: compactViewport ? 10 : 18,
       }}
     >
       <div
         style={{
-          width: "min(1120px, 96vw)",
-          height: "min(900px, 90vh)",
-          borderRadius: 18,
+          width: compactViewport ? "min(1120px, 99vw)" : "min(1120px, 96vw)",
+          height: compactViewport ? "min(900px, 96vh)" : "min(900px, 90vh)",
+          borderRadius: compactViewport ? 13 : 18,
           border: "1px solid rgba(255,255,255,0.10)",
           background: "rgba(12,12,12,0.96)",
           boxShadow: "0 28px 120px rgba(0,0,0,0.65)",
@@ -746,25 +771,25 @@ function TradeDetailsModalImpl({
         {/* Header */}
         <div
           style={{
-            padding: "14px 16px",
+            padding: compactViewport ? "12px 12px" : "14px 16px",
             borderBottom: "1px solid rgba(255,255,255,0.08)",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: 12,
+            gap: compactViewport ? 9 : 12,
           }}
         >
           <div
             style={{
               display: "flex",
               alignItems: "baseline",
-              gap: 10,
+              gap: compactViewport ? 7 : 10,
               flexWrap: "wrap",
             }}
           >
             <div
               style={{
-                fontSize: 16,
+                fontSize: compactViewport ? 14 : 16,
                 fontWeight: 900,
                 color: "rgba(255,255,255,0.92)",
               }}
@@ -773,7 +798,7 @@ function TradeDetailsModalImpl({
             </div>
             <div
               style={{
-                fontSize: 12,
+                fontSize: compactViewport ? 11 : 12,
                 fontWeight: 900,
                 padding: "3px 10px",
                 borderRadius: 999,
@@ -787,7 +812,7 @@ function TradeDetailsModalImpl({
             {(trade as any).entryModel ?? (trade as any).model ? (
               <div
                 style={{
-                  fontSize: 12,
+                  fontSize: compactViewport ? 11 : 12,
                   opacity: 0.85,
                   color: "rgba(255,255,255,0.72)",
                 }}
@@ -806,13 +831,13 @@ function TradeDetailsModalImpl({
           <button
             onClick={onClose}
             style={{
-              height: 34,
-              padding: "0 12px",
+              height: compactViewport ? 31 : 34,
+              padding: compactViewport ? "0 10px" : "0 12px",
               borderRadius: 10,
               border: "1px solid rgba(255,255,255,0.14)",
               background: "rgba(255,255,255,0.06)",
               color: "rgba(255,255,255,0.86)",
-              fontSize: 12,
+              fontSize: compactViewport ? 11 : 12,
               fontWeight: 800,
               cursor: "pointer",
             }}
@@ -822,7 +847,7 @@ function TradeDetailsModalImpl({
         </div>
 
         {/* AI Cluster Info */}
-        <div style={{ padding: "12px 16px" }}>
+        <div style={{ padding: compactViewport ? "10px 12px" : "12px 16px" }}>
           <div
             style={{
               display: "flex",
@@ -883,9 +908,11 @@ function TradeDetailsModalImpl({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-              gap: 10,
-              marginBottom: 10,
+              gridTemplateColumns: compactViewport
+                ? "repeat(2, minmax(0, 1fr))"
+                : "repeat(4, minmax(0, 1fr))",
+              gap: compactViewport ? 8 : 10,
+              marginBottom: compactViewport ? 8 : 10,
             }}
           >
             <InfoBox
@@ -935,8 +962,8 @@ function TradeDetailsModalImpl({
             style={{
               display: "grid",
               gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-              gap: 10,
-              marginBottom: 10,
+              gap: compactViewport ? 8 : 10,
+              marginBottom: compactViewport ? 8 : 10,
             }}
           >
             <InfoBox
@@ -956,9 +983,11 @@ function TradeDetailsModalImpl({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-              gap: 10,
-              marginBottom: 10,
+              gridTemplateColumns: compactViewport
+                ? "repeat(2, minmax(0, 1fr))"
+                : "repeat(4, minmax(0, 1fr))",
+              gap: compactViewport ? 8 : 10,
+              marginBottom: compactViewport ? 8 : 10,
             }}
           >
             <InfoBox
@@ -995,8 +1024,10 @@ function TradeDetailsModalImpl({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-              gap: 10,
+              gridTemplateColumns: compactViewport
+                ? "repeat(1, minmax(0, 1fr))"
+                : "repeat(3, minmax(0, 1fr))",
+              gap: compactViewport ? 8 : 10,
             }}
           >
             <InfoBox

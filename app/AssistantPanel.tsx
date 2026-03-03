@@ -272,7 +272,7 @@ const takeTail = <T,>(rows: T[], count: number): T[] => {
 const inferThinkingStages = (prompt: string): string[] => {
   const text = prompt.trim().toLowerCase();
   if (!text) {
-    return ["Planning", "Reasoning"];
+    return ["Intent Parsing", "Quantitative Reasoning", "Response Drafting"];
   }
 
   const isSocialOnly =
@@ -282,30 +282,36 @@ const inferThinkingStages = (prompt: string): string[] => {
     !ANIMATION_STAGE_RE.test(text);
 
   if (isSocialOnly) {
-    return ["Understanding Request", "Composing Reply"];
+    return ["Intent Parsing", "Conversation Drafting"];
   }
 
   if (ANIMATION_STAGE_RE.test(text)) {
-    return ["Planning Animation", "Preparing Chart Data", "Rendering Animation"];
+    return ["Intent Parsing", "Data Retrieval", "Action Sequencing", "Animation Rendering"];
   }
 
   if (DRAW_STAGE_RE.test(text)) {
-    return ["Planning Drawings", "Preparing Chart Data", "Drawing on Chart"];
+    return ["Intent Parsing", "Market Structure Reasoning", "Annotation Planning", "Chart Rendering"];
   }
 
   if (INDICATOR_STAGE_RE.test(text)) {
-    return ["Planning", "Fetching Data", "Coding", "Reasoning"];
+    return [
+      "Intent Parsing",
+      "Data Retrieval",
+      "Indicator Coding",
+      "Quantitative Reasoning",
+      "Response Drafting"
+    ];
   }
 
   if (GRAPH_STAGE_RE.test(text)) {
-    return ["Planning Graph", "Preparing Data", "Building Graph"];
+    return ["Intent Parsing", "Data Retrieval", "Statistical Reasoning", "Graph Construction"];
   }
 
   if (DATA_STAGE_RE.test(text)) {
-    return ["Planning", "Fetching Data", "Reasoning"];
+    return ["Intent Parsing", "Data Retrieval", "Quantitative Reasoning", "Response Drafting"];
   }
 
-  return ["Planning", "Reasoning"];
+  return ["Intent Parsing", "Quantitative Reasoning", "Response Drafting"];
 };
 
 const isValidChatTurn = (
@@ -392,7 +398,9 @@ export default function AssistantPanel(props: AssistantPanelProps) {
   const [turns, setTurns] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
   const [input, setInput] = useState("");
   const [isPending, setIsPending] = useState(false);
-  const [thinkingStage, setThinkingStage] = useState("Analyzing");
+  const [thinkingStage, setThinkingStage] = useState("Intent Parsing");
+  const [thinkingStagePlan, setThinkingStagePlan] = useState<string[]>([]);
+  const [thinkingStageIndex, setThinkingStageIndex] = useState(0);
   const [activeAnimation, setActiveAnimation] = useState<AssistantChartAnimation | null>(null);
   const [detailsExpandedByMessageId, setDetailsExpandedByMessageId] = useState<
     Record<string, boolean>
@@ -450,7 +458,9 @@ export default function AssistantPanel(props: AssistantPanelProps) {
     ]);
     setTurns([]);
     setInput("");
-    setThinkingStage("Analyzing");
+    setThinkingStage("Intent Parsing");
+    setThinkingStagePlan([]);
+    setThinkingStageIndex(0);
     setIsPending(false);
     setActiveAnimation(null);
     setDetailsExpandedByMessageId({});
@@ -565,10 +575,19 @@ export default function AssistantPanel(props: AssistantPanelProps) {
       setTurns(nextTurns);
       setIsPending(true);
       const stagePlan = inferThinkingStages(prompt);
-      setThinkingStage(stagePlan[0] ?? "Planning");
+      const safeStagePlan =
+        stagePlan.length > 0
+          ? stagePlan
+          : ["Intent Parsing", "Quantitative Reasoning", "Response Drafting"];
+      setThinkingStagePlan(safeStagePlan);
+      setThinkingStageIndex(0);
+      setThinkingStage(safeStagePlan[0] ?? "Intent Parsing");
 
-      const stageTimers = stagePlan.slice(1).map((stage, index) =>
-        window.setTimeout(() => setThinkingStage(stage), 320 + index * 520)
+      const stageTimers = safeStagePlan.slice(1).map((stage, index) =>
+        window.setTimeout(() => {
+          setThinkingStage(stage);
+          setThinkingStageIndex(index + 1);
+        }, 340 + index * 640)
       );
 
       try {
@@ -665,7 +684,9 @@ export default function AssistantPanel(props: AssistantPanelProps) {
       } finally {
         stageTimers.forEach((timerId) => window.clearTimeout(timerId));
         setIsPending(false);
-        setThinkingStage("Analyzing");
+        setThinkingStage("Intent Parsing");
+        setThinkingStagePlan([]);
+        setThinkingStageIndex(0);
       }
     },
     [input, isPending, onRunChartActions, runAssistantRequest, turns]
@@ -1019,6 +1040,24 @@ export default function AssistantPanel(props: AssistantPanelProps) {
               <span>Gideon</span>
               <small className="ai-stage">{thinkingStage}</small>
             </header>
+            {thinkingStagePlan.length > 0 ? (
+              <div className="ai-stage-track" aria-label="assistant execution stages">
+                {thinkingStagePlan.map((stage, index) => (
+                  <span
+                    key={`stage-${stage}-${index}`}
+                    className={`ai-stage-pill ${
+                      index < thinkingStageIndex
+                        ? "done"
+                        : index === thinkingStageIndex
+                          ? "active"
+                          : ""
+                    }`}
+                  >
+                    {stage}
+                  </span>
+                ))}
+              </div>
+            ) : null}
             <div className="ai-thinking" aria-label="assistant thinking">
               <span />
               <span />
