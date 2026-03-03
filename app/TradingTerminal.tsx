@@ -32,6 +32,7 @@ import {
   type BacktestHistoryRow,
   type BacktestHistoryWorkerResponse
 } from "./backtestHistoryShared";
+import AssistantPanel from "./AssistantPanel";
 
 const loadRecharts = () => import("recharts");
 const ResponsiveContainer = dynamic<any>(() => loadRecharts().then((mod) => mod.ResponsiveContainer), {
@@ -14850,16 +14851,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
                   {activePanelTab === "ai" ? (
                     <div className="tab-view ai-tab">
-                      <div className="watchlist-head">
-                        <div>
-                          <h2>AI</h2>
-                          <p>Assistant module</p>
-                        </div>
-                      </div>
-                      <div className="ai-placeholder">
-                        <p>AI panel is reserved for upcoming features.</p>
-                        <p>No actions are connected yet.</p>
-                      </div>
+                      <AssistantPanel
+                        symbol={selectedSymbol}
+                        timeframe={selectedTimeframe}
+                        selectedCandles={selectedCandles}
+                        activeTrade={
+                          activeTrade
+                            ? {
+                                ...activeTrade,
+                                openedAt: Number(activeTrade.openedAt)
+                              }
+                            : null
+                        }
+                        historyRows={chartPanelHistoryRows}
+                        actionRows={actionRows}
+                        backtestHasRun={backtestHasRun}
+                        backtestTimeframe={appliedBacktestSettings.timeframe}
+                        backtestTrades={backtestTrades}
+                      />
                     </div>
                   ) : null}
                 </div>
