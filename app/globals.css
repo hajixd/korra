@@ -1353,7 +1353,7 @@ button {
 }
 
 .backtest-minute-precise-single {
-  width: 164px;
+  width: 100%;
 }
 
 .backtest-minute-precise-btn-title {
@@ -4118,23 +4118,25 @@ button {
   left: 50%;
   transform: translateX(-50%);
   z-index: 10;
-  padding: 4px 12px;
-  background: rgba(20, 26, 36, 0.85);
-  color: var(--text-muted, #8899aa);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
+  padding: 6px 16px;
+  background: rgba(5, 5, 5, 0.9);
+  color: rgba(245, 245, 245, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.36);
+  border-radius: 7px;
   font-size: 11px;
   font-family: inherit;
   cursor: pointer;
   backdrop-filter: blur(4px);
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  transition: color 0.15s, border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.38);
   pointer-events: all;
 }
 
 .chart-reset-btn:hover {
-  color: var(--text-base, #ccd6e0);
-  border-color: rgba(255, 255, 255, 0.25);
-  background: rgba(30, 38, 52, 0.95);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.58);
+  background: rgba(12, 12, 12, 0.97);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.46);
 }
 
 .chart-overlay-stack {
@@ -4992,6 +4994,30 @@ button {
   padding: 0.12rem 0.34rem;
   align-items: center;
   overflow: hidden;
+}
+
+.backtest-status-empty {
+  width: 100%;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.12rem 0.22rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.backtest-status-empty strong {
+  color: rgba(255, 255, 255, 0.94);
+  font-size: 0.58rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.backtest-status-empty span {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.58rem;
 }
 
 @media (max-width: 1120px) {

@@ -527,6 +527,20 @@ type BacktestSettingsSnapshot = {
   antiCheatEnabled: boolean;
   validationMode: AiValidationMode;
 };
+type BacktestFilterSettings = Pick<
+  BacktestSettingsSnapshot,
+  | "statsDateStart"
+  | "statsDateEnd"
+  | "enabledBacktestWeekdays"
+  | "enabledBacktestSessions"
+  | "enabledBacktestMonths"
+  | "enabledBacktestHours"
+  | "aiMode"
+  | "antiCheatEnabled"
+  | "validationMode"
+  | "selectedAiLibraries"
+  | "selectedAiLibrarySettings"
+>;
 
 type AiSettingsModalProps = {
   title: string;
@@ -2169,7 +2183,14 @@ const mergeRecentCandles = (
   }
 
   const firstLiveTime = liveWindow[0].time;
-  const merged = [...historical.filter((row) => row.time < firstLiveTime), ...liveWindow];
+  const lastLiveTime = liveWindow[liveWindow.length - 1].time;
+  const merged = [
+    ...historical.filter((row) => row.time < firstLiveTime),
+    ...liveWindow,
+    // Keep any candles newer than the sync window so stale API windows
+    // never move the chart backward during periodic refresh.
+    ...historical.filter((row) => row.time > lastLiveTime)
+  ];
   const deduped: Candle[] = [];
 
   for (const row of merged) {
@@ -6429,7 +6450,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           hasInitialSeed = true;
           setSeriesMap((prev) => ({
             ...prev,
-            [key]: mergeRecentCandles(prev[key] ?? [], liveCandles, historyLimit)
+            [key]: (() => {
+              const current = prev[key] ?? [];
+              const merged = mergeRecentCandles(current, liveCandles, historyLimit);
+              const currentLastTime = current[current.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
+              const mergedLastTime = merged[merged.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
+              return mergedLastTime < currentLastTime ? current : merged;
+            })()
           }));
         } catch {
           // Tick updates can continue even if the live candle window refresh fails.
@@ -7640,10 +7667,169 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const backtestSourceTrades = useMemo(() => {
     return chronologicalHistoryRows;
   }, [chronologicalHistoryRows]);
+  const chartPanelFilterSettings = useMemo<BacktestFilterSettings>(
+    () => ({
+      statsDateStart,
+      statsDateEnd,
+      enabledBacktestWeekdays: [...enabledBacktestWeekdays],
+      enabledBacktestSessions: [...enabledBacktestSessions],
+      enabledBacktestMonths: [...enabledBacktestMonths],
+      enabledBacktestHours: [...enabledBacktestHours],
+      aiMode,
+      antiCheatEnabled,
+      validationMode,
+      selectedAiLibraries: [...selectedAiLibraries],
+      selectedAiLibrarySettings: cloneAiLibrarySettings(selectedAiLibrarySettings)
+    }),
+    [
+      antiCheatEnabled,
+      aiMode,
+      enabledBacktestHours,
+      enabledBacktestMonths,
+      enabledBacktestSessions,
+      enabledBacktestWeekdays,
+      selectedAiLibraries,
+      selectedAiLibrarySettings,
+      statsDateEnd,
+      statsDateStart,
+      validationMode
+    ]
+  );
+  const chartPanelConfidenceGateDisabled = aiMode === "off";
+  const chartPanelEffectiveConfidenceThreshold = chartPanelConfidenceGateDisabled
+    ? 0
+    : confidenceThreshold;
+  const chartPanelAiModelEveryCandleMode = aiMode !== "off" && !aiFilterEnabled;
+  const chartPanelTradeBlueprints = useMemo(() => {
+    if (backtestModelProfiles.length === 0 || selectedCandles.length < 3) {
+      return [] as TradeBlueprint[];
+    }
+
+    const unitsPerMove = Math.max(
+      1,
+      Number.isFinite(dollarsPerMove)
+        ? dollarsPerMove
+        : 1
+    );
+    const blueprints = buildReplayTradeBlueprints({
+      candles: selectedCandles,
+      models: backtestModelProfiles,
+      symbol: selectedSymbol,
+      unitsPerMove,
+      windowBars: chunkBars,
+      aggressive: chartPanelAiModelEveryCandleMode
+    });
+
+    return enforceMaxConcurrentTradeBlueprints(blueprints, maxConcurrentTrades);
+  }, [
+    backtestModelProfiles,
+    chartPanelAiModelEveryCandleMode,
+    chunkBars,
+    dollarsPerMove,
+    maxConcurrentTrades,
+    selectedCandles,
+    selectedSymbol
+  ]);
+  const chartPanelOneMinuteCandlesBySymbol = useMemo<Record<string, Candle[]> | undefined>(() => {
+    if (selectedTimeframe === "1m" || !minutePreciseEnabled) {
+      return undefined;
+    }
+
+    const minuteKey = symbolTimeframeKey(selectedSymbol, "1m");
+    const minuteCandles = seriesMap[minuteKey] ?? backtestOneMinuteSeriesMap[minuteKey] ?? EMPTY_CANDLES;
+
+    if (minuteCandles.length === 0) {
+      return undefined;
+    }
+
+    return {
+      [selectedSymbol]: minuteCandles
+    };
+  }, [
+    backtestOneMinuteSeriesMap,
+    minutePreciseEnabled,
+    selectedSymbol,
+    selectedTimeframe,
+    seriesMap
+  ]);
+  const chartPanelModelNamesById = useMemo(() => {
+    const modelNamesById: Record<string, string> = {};
+
+    for (const blueprint of chartPanelTradeBlueprints) {
+      if (!modelNamesById[blueprint.modelId]) {
+        modelNamesById[blueprint.modelId] =
+          modelProfileById[blueprint.modelId]?.name ?? "Settings";
+      }
+    }
+
+    return modelNamesById;
+  }, [chartPanelTradeBlueprints, modelProfileById]);
+  const chartPanelReplayRows = useMemo(() => {
+    if (chartPanelTradeBlueprints.length === 0 || selectedCandles.length < 16) {
+      return [] as HistoryItem[];
+    }
+
+    const resolvedRows = normalizeBacktestHistoryRows(
+      finalizeBacktestHistoryRows(
+        computeBacktestHistoryRowsChunk({
+          blueprints: chartPanelTradeBlueprints,
+          candleSeriesBySymbol: {
+            [selectedSymbol]: selectedCandles
+          },
+          oneMinuteCandlesBySymbol: chartPanelOneMinuteCandlesBySymbol,
+          minutePreciseEnabled,
+          modelNamesById: chartPanelModelNamesById,
+          tpDollars,
+          slDollars,
+          stopMode,
+          breakEvenTriggerPct,
+          trailingStartPct,
+          trailingDistPct
+        }),
+        chartPanelTradeBlueprints.length
+      )
+    );
+
+    return enforceMaxConcurrentHistoryRows(
+      resolvedRows,
+      maxConcurrentTrades,
+      minutePreciseEnabled
+    );
+  }, [
+    breakEvenTriggerPct,
+    chartPanelModelNamesById,
+    chartPanelOneMinuteCandlesBySymbol,
+    chartPanelTradeBlueprints,
+    maxConcurrentTrades,
+    minutePreciseEnabled,
+    selectedCandles,
+    selectedSymbol,
+    slDollars,
+    stopMode,
+    tpDollars,
+    trailingDistPct,
+    trailingStartPct
+  ]);
+  const panelBacktestFilterSettings: BacktestFilterSettings =
+    selectedSurfaceTab === "chart"
+      ? chartPanelFilterSettings
+      : appliedBacktestSettings;
+  const panelConfidenceGateDisabled =
+    selectedSurfaceTab === "chart"
+      ? chartPanelConfidenceGateDisabled
+      : appliedConfidenceGateDisabled;
+  const panelEffectiveConfidenceThreshold =
+    selectedSurfaceTab === "chart"
+      ? chartPanelEffectiveConfidenceThreshold
+      : appliedEffectiveConfidenceThreshold;
+  const panelSourceTrades =
+    selectedSurfaceTab === "chart"
+      ? chartPanelReplayRows
+      : backtestSourceTrades;
   const antiCheatBacktestContext = useMemo(() => {
-    const startMs = getUtcDayStartMs(appliedBacktestSettings.statsDateStart);
-    const endExclusiveMs = getUtcDayEndExclusiveMs(appliedBacktestSettings.statsDateEnd);
-    const dateFilteredTrades = backtestSourceTrades.filter((trade) => {
+    const startMs = getUtcDayStartMs(panelBacktestFilterSettings.statsDateStart);
+    const endExclusiveMs = getUtcDayEndExclusiveMs(panelBacktestFilterSettings.statsDateEnd);
+    const dateFilteredTrades = panelSourceTrades.filter((trade) => {
       const tradeMs = Number(trade.entryTime) * 1000;
 
       if (!Number.isFinite(tradeMs)) {
@@ -7667,16 +7853,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const entryHour = getTradeHour(trade.entryTime);
 
       return (
-        appliedBacktestSettings.enabledBacktestWeekdays.includes(weekday) &&
-        appliedBacktestSettings.enabledBacktestSessions.includes(session) &&
-        appliedBacktestSettings.enabledBacktestMonths.includes(monthIndex) &&
-        appliedBacktestSettings.enabledBacktestHours.includes(entryHour)
+        panelBacktestFilterSettings.enabledBacktestWeekdays.includes(weekday) &&
+        panelBacktestFilterSettings.enabledBacktestSessions.includes(session) &&
+        panelBacktestFilterSettings.enabledBacktestMonths.includes(monthIndex) &&
+        panelBacktestFilterSettings.enabledBacktestHours.includes(entryHour)
       );
     });
     const confidenceById = new Map<string, number>();
     const usesSplitValidation =
-      appliedBacktestSettings.antiCheatEnabled &&
-      appliedBacktestSettings.validationMode === "split";
+      panelBacktestFilterSettings.antiCheatEnabled &&
+      panelBacktestFilterSettings.validationMode === "split";
     const splitIndex = usesSplitValidation
       ? Math.floor(timeFilteredBase.length * 0.5)
       : 0;
@@ -7688,8 +7874,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       : timeFilteredBase;
 
     if (
-      appliedBacktestSettings.aiMode === "off" ||
-      !appliedBacktestSettings.antiCheatEnabled ||
+      panelBacktestFilterSettings.aiMode === "off" ||
+      !panelBacktestFilterSettings.antiCheatEnabled ||
       timeFilteredBase.length === 0
     ) {
       return {
@@ -7701,8 +7887,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     const activeLibraryIds =
-      appliedBacktestSettings.selectedAiLibraries.length > 0
-        ? appliedBacktestSettings.selectedAiLibraries
+      panelBacktestFilterSettings.selectedAiLibraries.length > 0
+        ? panelBacktestFilterSettings.selectedAiLibraries
         : ["core"];
     const timeFilteredTrades = splitEvaluationTrades;
 
@@ -7711,7 +7897,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const defaults = definition?.defaults ?? {};
       return {
         ...(defaults as Record<string, AiLibrarySettingValue>),
-        ...((appliedBacktestSettings.selectedAiLibrarySettings[libraryId] ?? {}) as Record<
+        ...((panelBacktestFilterSettings.selectedAiLibrarySettings[libraryId] ?? {}) as Record<
           string,
           AiLibrarySettingValue
         >)
@@ -7936,7 +8122,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     for (let index = 0; index < timeFilteredBase.length; index += 1) {
       const trade = timeFilteredBase[index]!;
       const basePool =
-        appliedBacktestSettings.validationMode === "split"
+        panelBacktestFilterSettings.validationMode === "split"
           ? splitTrainingTrades
           : timeFilteredBase.slice(0, index);
 
@@ -7965,7 +8151,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         for (const candidate of source) {
           const similarityWeight = getSimilarityWeight(trade, candidate) * libraryWeight;
           const outcome =
-            appliedBacktestSettings.validationMode === "synthetic"
+            panelBacktestFilterSettings.validationMode === "synthetic"
               ? getSyntheticWinProb(candidate)
               : candidate.result === "Win"
                 ? 1
@@ -8006,18 +8192,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [
     aiLibraryDefById,
-    appliedBacktestSettings.aiMode,
-    appliedBacktestSettings.antiCheatEnabled,
-    appliedBacktestSettings.enabledBacktestHours,
-    appliedBacktestSettings.enabledBacktestMonths,
-    appliedBacktestSettings.enabledBacktestSessions,
-    appliedBacktestSettings.enabledBacktestWeekdays,
-    appliedBacktestSettings.selectedAiLibraries,
-    appliedBacktestSettings.selectedAiLibrarySettings,
-    appliedBacktestSettings.statsDateEnd,
-    appliedBacktestSettings.statsDateStart,
-    appliedBacktestSettings.validationMode,
-    backtestSourceTrades,
+    panelBacktestFilterSettings,
+    panelSourceTrades
   ]);
   const getEffectiveTradeConfidenceScore = useCallback(
     (trade: HistoryItem) => {
@@ -8030,16 +8206,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       .filter((trade) => {
         const confidence = getEffectiveTradeConfidenceScore(trade) * 100;
         return (
-          appliedConfidenceGateDisabled ||
-          confidence >= appliedEffectiveConfidenceThreshold
+          panelConfidenceGateDisabled ||
+          confidence >= panelEffectiveConfidenceThreshold
         );
       })
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime) || b.id.localeCompare(a.id));
   }, [
-    appliedConfidenceGateDisabled,
-    appliedEffectiveConfidenceThreshold,
     antiCheatBacktestContext,
-    getEffectiveTradeConfidenceScore
+    getEffectiveTradeConfidenceScore,
+    panelConfidenceGateDisabled,
+    panelEffectiveConfidenceThreshold
   ]);
 
   const activeTrade = useMemo<ActiveTrade | null>(() => {
@@ -8047,17 +8223,48 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return null;
     }
 
-    const trade = chartPanelHistoryRows[0];
+    const chartNowSec =
+      selectedCandles.length > 0
+        ? toUtcTimestamp(selectedCandles[selectedCandles.length - 1]!.time)
+        : Math.floor(referenceNowMs / 1000);
     const nowSec = Math.floor(Date.now() / 1000);
+    const replayActiveThresholdSec =
+      chartNowSec - timeframeMinutes[selectedTimeframe] * 2 * 60;
+    const trade =
+      chartPanelHistoryRows.find(
+        (candidate) => Number(candidate.exitTime) > replayActiveThresholdSec
+      ) ?? (selectedSurfaceTab === "chart" ? chartPanelHistoryRows[0] ?? null : null);
 
-    if (Number(trade.exitTime) <= nowSec) {
+    if (!trade) {
       return null;
     }
+
+    if (selectedSurfaceTab !== "chart" && Number(trade.exitTime) <= nowSec) {
+      return null;
+    }
+
+    const markPrice =
+      selectedSurfaceTab === "chart" && selectedCandles.length > 0
+        ? selectedCandles[selectedCandles.length - 1]!.close
+        : trade.outcomePrice;
+    const pnlValue =
+      trade.side === "Long"
+        ? (markPrice - trade.entryPrice) * trade.units
+        : (trade.entryPrice - markPrice) * trade.units;
+    const pnlPct =
+      trade.entryPrice > 0
+        ? trade.side === "Long"
+          ? ((markPrice - trade.entryPrice) / trade.entryPrice) * 100
+          : ((trade.entryPrice - markPrice) / trade.entryPrice) * 100
+        : 0;
+    const elapsedToSec =
+      selectedSurfaceTab === "chart"
+        ? Math.max(Number(trade.entryTime), chartNowSec)
+        : Math.floor(referenceNowMs / 1000);
 
     const riskDist = Math.abs(trade.entryPrice - trade.stopPrice);
     const rewardDist = Math.abs(trade.targetPrice - trade.entryPrice);
     const rr = riskDist > 0 ? rewardDist / riskDist : 0;
-    const markPrice = trade.outcomePrice;
     const progressRaw =
       trade.side === "Long"
         ? (markPrice - trade.stopPrice) / Math.max(0.000001, trade.targetPrice - trade.stopPrice)
@@ -8073,24 +8280,58 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       stopPrice: trade.stopPrice,
       openedAt: trade.entryTime,
       openedAtLabel: trade.entryAt,
-      elapsed: formatElapsed(Number(trade.entryTime), Math.floor(referenceNowMs / 1000)),
-      pnlPct: trade.pnlPct,
-      pnlValue: trade.pnlUsd,
+      elapsed: formatElapsed(Number(trade.entryTime), elapsedToSec),
+      pnlPct,
+      pnlValue,
       progressPct: clamp(progressRaw * 100, 0, 100),
       rr
     };
-  }, [chartPanelHistoryRows, referenceNowMs]);
+  }, [
+    chartPanelHistoryRows,
+    referenceNowMs,
+    selectedCandles,
+    selectedSurfaceTab,
+    selectedTimeframe
+  ]);
 
   const latestTradeBarsAgo = useMemo(() => {
-    if (deferredHistoryRows.length === 0) return null;
-    const latestExitTime = deferredHistoryRows.reduce(
+    const sourceRows =
+      selectedSurfaceTab === "chart"
+        ? chartPanelReplayRows
+        : deferredHistoryRows;
+
+    if (sourceRows.length === 0) {
+      return null;
+    }
+
+    const latestExitTime = sourceRows.reduce(
       (max, row) => Math.max(max, Number(row.exitTime)),
       0
     );
-    if (latestExitTime === 0) return null;
-    const barSeconds = timeframeMinutes[appliedBacktestSettings.timeframe] * 60;
-    return Math.max(0, Math.floor((referenceNowMs / 1000 - latestExitTime) / barSeconds));
-  }, [deferredHistoryRows, referenceNowMs, appliedBacktestSettings.timeframe]);
+    if (latestExitTime === 0) {
+      return null;
+    }
+
+    const activeTimeframe =
+      selectedSurfaceTab === "chart"
+        ? selectedTimeframe
+        : appliedBacktestSettings.timeframe;
+    const anchorNowSec =
+      selectedSurfaceTab === "chart" && selectedCandles.length > 0
+        ? toUtcTimestamp(selectedCandles[selectedCandles.length - 1]!.time)
+        : Math.floor(referenceNowMs / 1000);
+    const barSeconds = timeframeMinutes[activeTimeframe] * 60;
+
+    return Math.max(0, Math.floor((anchorNowSec - latestExitTime) / barSeconds));
+  }, [
+    deferredHistoryRows,
+    chartPanelReplayRows,
+    referenceNowMs,
+    appliedBacktestSettings.timeframe,
+    selectedCandles,
+    selectedSurfaceTab,
+    selectedTimeframe
+  ]);
 
   const backtestHistorySeriesBySymbol = useMemo(() => {
     const next: Record<string, Candle[]> = {};
@@ -11139,7 +11380,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const appliedFeatureCount = Object.values(applied.aiFeatureLevels).filter((l) => l > 0).length;
     const appliedDimCount = countConfiguredAiFeatureDimensions(applied.aiFeatureLevels, applied.aiFeatureModes, applied.chunkBars);
 
-    return [
+    const stats: BacktestHeroStatCard[] = [
       {
         label: "AI Method",
         value: appliedAiMode === "off" ? "OFF" : appliedAiMode.toUpperCase(),
@@ -11239,7 +11480,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         meta: "Configured feature dimensions"
       }
     ];
-  }, [appliedBacktestSettings, backtestSummary.averageConfidence, backtestTrades.length]);
+
+    if (!backtestHasRun) {
+      return stats.map((item) => ({
+        ...item,
+        value: "0",
+        tone: "neutral",
+        valueStyle: { color: "rgba(255,255,255,0.42)" },
+        meta: "Hold CTRL for 3 seconds to run backtest"
+      }));
+    }
+
+    return stats;
+  }, [appliedBacktestSettings, backtestHasRun, backtestSummary.averageConfidence, backtestTrades.length]);
 
   const mainStatsSessionRows = useMemo(() => {
     const map = new Map<string, { label: string; total: number; trades: number }>();
@@ -18211,37 +18464,45 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       ) : null}
 
       <footer className="statusbar backtest-statusbar">
-        <div
-          className="backtest-summary-strip backtest-summary-strip-compact"
-          aria-label="backtest rolling statistics"
-          style={{ "--backtest-stat-item-count": footerHeroStats.length } as React.CSSProperties}
-        >
-          <div className="backtest-summary-strip-track">
-            {[0, 1].map((sequenceIndex) => (
-              <div
-                key={sequenceIndex}
-                className="backtest-summary-strip-sequence"
-                aria-hidden={sequenceIndex === 1}
-              >
-                {footerHeroStats.map((item, itemIndex) => (
-                  <article
-                    key={`status-${sequenceIndex}-${item.label}-${itemIndex}`}
-                    className="backtest-summary-card backtest-summary-card-animated"
-                  >
-                    <span>{item.label}</span>
-                    <strong
-                      className={item.tone === "neutral" ? "" : item.tone}
-                      style={item.valueStyle}
+        {backtestHasRun ? (
+          <div
+            className="backtest-summary-strip backtest-summary-strip-compact"
+            aria-label="backtest rolling statistics"
+            style={{ "--backtest-stat-item-count": Math.max(1, footerHeroStats.length) } as React.CSSProperties}
+          >
+            <div className="backtest-summary-strip-track">
+              {[0, 1].map((sequenceIndex) => (
+                <div
+                  key={sequenceIndex}
+                  className="backtest-summary-strip-sequence"
+                  aria-hidden={sequenceIndex === 1}
+                >
+                  {footerHeroStats.map((item, itemIndex) => (
+                    <article
+                      key={`status-${sequenceIndex}-${item.label}-${itemIndex}`}
+                      className="backtest-summary-card backtest-summary-card-animated"
                     >
-                      {item.value}
-                    </strong>
-                    <small>{item.meta}</small>
-                  </article>
-                ))}
-              </div>
-            ))}
+                      <span>{item.label}</span>
+                      <strong
+                        className={item.tone === "neutral" ? "" : item.tone}
+                        style={item.valueStyle}
+                      >
+                        {item.value}
+                      </strong>
+                      <small>{item.meta}</small>
+                    </article>
+                  ))}
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="backtest-status-empty" aria-live="polite" aria-atomic="true">
+            <strong>No backtest run yet.</strong>
+            <span>Hold CTRL for 3 seconds to run your first backtest.</span>
+            <span>Tips: tune Date Range, timeframe, and Minute Precise first. Chart reset shortcut: Alt+R.</span>
+          </div>
+        )}
       </footer>
 
       {activeBacktestTradeDetails ? (
