@@ -7322,11 +7322,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       chartRenderWindowRef.current = { from: 0, to: -1 };
       chartVisibleGlobalRangeRef.current = null;
       chartPendingVisibleGlobalRangeRef.current = null;
+      chartViewCenterTimeMsRef.current = null;
       setChartRenderWindow((current) =>
         current.from === 0 && current.to === -1 ? current : { from: 0, to: -1 }
       );
       return;
     }
+
+    const syncCenterTimeFromVisibleRange = (visibleRange: ChartDataWindow) => {
+      if (candles.length === 0) {
+        chartViewCenterTimeMsRef.current = null;
+        return;
+      }
+
+      const centerIndex = Math.round((visibleRange.from + visibleRange.to) / 2);
+      const clampedIndex = Math.max(0, Math.min(centerIndex, candles.length - 1));
+      chartViewCenterTimeMsRef.current = candles[clampedIndex]?.time ?? null;
+    };
 
     const moveToLatest = () => {
       const visibleCount = timeframeVisibleCount[selectedTimeframe];
@@ -7336,6 +7348,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const visibleRange = { from: visibleFrom, to: visibleTo };
       const nextWindow = buildChartDataWindow(totalBars, visibleFrom, Math.min(visibleTo, totalBars - 1));
 
+      syncCenterTimeFromVisibleRange(visibleRange);
       chartVisibleGlobalRangeRef.current = visibleRange;
       chartPendingVisibleGlobalRangeRef.current = visibleRange;
       chartRenderWindowRef.current = nextWindow;
@@ -7366,6 +7379,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const visibleRange = { from: visibleFrom, to: visibleTo };
       const nextWindow = buildChartDataWindow(totalBars, visibleFrom, Math.min(visibleTo, totalBars - 1));
 
+      syncCenterTimeFromVisibleRange(visibleRange);
       chartVisibleGlobalRangeRef.current = visibleRange;
       chartPendingVisibleGlobalRangeRef.current = visibleRange;
       chartRenderWindowRef.current = nextWindow;
@@ -7386,16 +7400,30 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     if (totalBars < previousTotalBars) {
       const currentVisible = chartVisibleGlobalRangeRef.current ?? chartPendingVisibleGlobalRangeRef.current;
-      const fallbackVisible =
+      const visibleSpan =
         currentVisible !== null
-          ? clampChartDataWindow(totalBars, currentVisible.from, currentVisible.to)
-          : clampChartDataWindow(
+          ? Math.max(1, currentVisible.to - currentVisible.from)
+          : timeframeVisibleCount[selectedTimeframe];
+      const centerTimeMs = chartViewCenterTimeMsRef.current;
+      const centerIndexRaw =
+        centerTimeMs === null ? -1 : findCandleIndexAtOrBefore(candles, centerTimeMs);
+      const fallbackVisible =
+        centerIndexRaw >= 0
+          ? clampChartDataWindow(
               totalBars,
-              totalBars - 1 - timeframeVisibleCount[selectedTimeframe],
-              totalBars - 1
-            );
+              centerIndexRaw - visibleSpan / 2,
+              centerIndexRaw + visibleSpan / 2
+            )
+          : currentVisible !== null
+            ? clampChartDataWindow(totalBars, currentVisible.from, currentVisible.to)
+            : clampChartDataWindow(
+                totalBars,
+                totalBars - 1 - timeframeVisibleCount[selectedTimeframe],
+                totalBars - 1
+              );
       const nextWindow = buildChartDataWindow(totalBars, fallbackVisible.from, fallbackVisible.to);
 
+      syncCenterTimeFromVisibleRange(fallbackVisible);
       chartVisibleGlobalRangeRef.current = fallbackVisible;
       chartPendingVisibleGlobalRangeRef.current = fallbackVisible;
       chartRenderWindowRef.current = nextWindow;
@@ -7445,6 +7473,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     chartVisibleGlobalRangeRef.current = nextVisibleRange;
     chartPendingVisibleGlobalRangeRef.current = nextVisibleRange;
+    const visibleCandles = selectedChartCandlesRef.current;
+    if (visibleCandles.length > 0) {
+      const centerIndex = Math.round((nextVisibleRange.from + nextVisibleRange.to) / 2);
+      const clampedCenterIndex = Math.max(0, Math.min(centerIndex, visibleCandles.length - 1));
+      chartViewCenterTimeMsRef.current = visibleCandles[clampedCenterIndex]?.time ?? null;
+    }
 
     if (
       currentWindow.from === nextWindow.from &&
@@ -9594,6 +9628,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     } else {
       chartIsApplyingVisibleRangeRef.current = true;
       const savedLogicalRange = !pendingRange ? chart.timeScale().getVisibleLogicalRange() : null;
+      const savedVisibleSpan = savedLogicalRange ? Math.max(1, savedLogicalRange.to - savedLogicalRange.from) : 0;
       candleSeries.setData(candleData);
 
       if (pendingRange) {
@@ -9601,9 +9636,37 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           from: pendingRange.from - chartRenderWindow.from,
           to: pendingRange.to - chartRenderWindow.from
         });
+        const allCandles = selectedChartCandlesRef.current;
+        if (allCandles.length > 0) {
+          const centerIndex = Math.round((pendingRange.from + pendingRange.to) / 2);
+          const clampedCenterIndex = Math.max(0, Math.min(centerIndex, allCandles.length - 1));
+          chartViewCenterTimeMsRef.current = allCandles[clampedCenterIndex]?.time ?? null;
+        }
         chartPendingVisibleGlobalRangeRef.current = null;
       } else if (savedLogicalRange) {
-        chart.timeScale().setVisibleLogicalRange(savedLogicalRange);
+        const allCandles = selectedChartCandlesRef.current;
+        const centerTimeMs = chartViewCenterTimeMsRef.current;
+
+        if (centerTimeMs !== null && allCandles.length > 0) {
+          const centerIndexRaw = findCandleIndexAtOrBefore(allCandles, centerTimeMs);
+          const centerIndex = centerIndexRaw < 0 ? 0 : centerIndexRaw;
+          const anchoredVisibleRange = clampChartDataWindow(
+            allCandles.length,
+            centerIndex - savedVisibleSpan / 2,
+            centerIndex + savedVisibleSpan / 2
+          );
+          const anchoredCenterIndex = Math.round((anchoredVisibleRange.from + anchoredVisibleRange.to) / 2);
+          const clampedAnchorCenter = Math.max(0, Math.min(anchoredCenterIndex, allCandles.length - 1));
+
+          chartVisibleGlobalRangeRef.current = anchoredVisibleRange;
+          chart.timeScale().setVisibleLogicalRange({
+            from: anchoredVisibleRange.from - chartRenderWindow.from,
+            to: anchoredVisibleRange.to - chartRenderWindow.from
+          });
+          chartViewCenterTimeMsRef.current = allCandles[clampedAnchorCenter]?.time ?? null;
+        } else {
+          chart.timeScale().setVisibleLogicalRange(savedLogicalRange);
+        }
       }
 
       if (chartVisibleRangeSyncRafRef.current) {
