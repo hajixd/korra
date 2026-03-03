@@ -422,6 +422,18 @@ type AiLibraryDef = {
 };
 
 type StatsRefreshOverlayMode = "idle" | "hold" | "loading";
+type BacktestDatePreset =
+  | "custom"
+  | "pastWeek"
+  | "past2Weeks"
+  | "pastMonth"
+  | "past3Months"
+  | "past6Months"
+  | "pastYear"
+  | "past2Years"
+  | "past5Years"
+  | "pastDecade";
+type BacktestPresetRange = Exclude<BacktestDatePreset, "custom">;
 
 type BacktestSettingsSnapshot = {
   symbol: string;
@@ -1642,7 +1654,7 @@ const futuresAssets: FutureAsset[] = [
     symbol: "XAUUSD",
     name: "XAU / USD",
     basePrice: 2945.25,
-    openInterest: "CSV + LIVE",
+    openInterest: "CLICKHOUSE + LIVE",
     funding: "CFD"
   }
 ];
@@ -1705,6 +1717,17 @@ const backtestTabs: Array<{ id: BacktestTab; label: string }> = [
   { id: "dimensions", label: "Dimension Statistics" },
   { id: "propFirm", label: "Prop Firm Tool" }
 ];
+
+const backtestInlineLoaderTabs = new Set<BacktestTab>([
+  "mainStats",
+  "history",
+  "calendar",
+  "cluster",
+  "performanceStats",
+  "entryExit",
+  "dimensions",
+  "propFirm"
+]);
 
 const backtestWeekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const backtestSessionLabels = ["Tokyo", "London", "New York", "Sydney"] as const;
@@ -1788,19 +1811,129 @@ const BACKTEST_CLUSTER_LEGEND_DEFAULTS: Record<BacktestClusterLegendKey, boolean
   chop: true
 };
 
+const CHART_INITIAL_HISTORY_CANDLES = 5000;
+
 const chartHistoryCountByTimeframe: Record<Timeframe, number> = {
-  "1m": 40000,
-  "5m": 12000,
-  "15m": 8000,
+  "1m": CHART_INITIAL_HISTORY_CANDLES,
+  "5m": CHART_INITIAL_HISTORY_CANDLES,
+  "15m": CHART_INITIAL_HISTORY_CANDLES,
   "1H": 3000,
   "4H": 1500,
   "1D": 700,
   "1W": 180
 };
 
+const BACKTEST_DATE_PRESET_OPTIONS: Array<{ id: BacktestDatePreset; label: string }> = [
+  { id: "custom", label: "Custom" },
+  { id: "pastWeek", label: "Past Week" },
+  { id: "past2Weeks", label: "Past 2 Weeks" },
+  { id: "pastMonth", label: "Past Month" },
+  { id: "past3Months", label: "Past 3 Months" },
+  { id: "past6Months", label: "Past 6 Months" },
+  { id: "pastYear", label: "Past Year" },
+  { id: "past2Years", label: "Past 2 Years" },
+  { id: "past5Years", label: "Past 5 Years" },
+  { id: "pastDecade", label: "Past Decade" }
+];
+
+const BACKTEST_DATE_PRESET_SET = new Set<BacktestDatePreset>(
+  BACKTEST_DATE_PRESET_OPTIONS.map((option) => option.id)
+);
+
+const isBacktestDatePreset = (value: unknown): value is BacktestDatePreset => {
+  return typeof value === "string" && BACKTEST_DATE_PRESET_SET.has(value as BacktestDatePreset);
+};
+
+const toLocalDateInputValue = (value: Date) => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const startOfLocalDay = (value: Date) => {
+  const next = new Date(value);
+  next.setHours(0, 0, 0, 0);
+  return next;
+};
+
+const shiftLocalDateByMonths = (value: Date, monthsDelta: number) => {
+  const year = value.getFullYear();
+  const month = value.getMonth();
+  const day = value.getDate();
+  const target = new Date(year, month + monthsDelta, 1);
+  const maxDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  return new Date(target.getFullYear(), target.getMonth(), Math.min(day, maxDay));
+};
+
+const shiftLocalDateByYears = (value: Date, yearsDelta: number) => {
+  return shiftLocalDateByMonths(value, yearsDelta * 12);
+};
+
+const buildBacktestDateRangeFromPreset = (
+  preset: BacktestPresetRange,
+  now = new Date()
+): { startDate: string; endDate: string } => {
+  const endDate = startOfLocalDay(now);
+  const startDate = new Date(endDate);
+
+  switch (preset) {
+    case "pastWeek":
+      startDate.setDate(startDate.getDate() - 7);
+      break;
+    case "past2Weeks":
+      startDate.setDate(startDate.getDate() - 14);
+      break;
+    case "pastMonth":
+      return {
+        startDate: toLocalDateInputValue(shiftLocalDateByMonths(endDate, -1)),
+        endDate: toLocalDateInputValue(endDate)
+      };
+    case "past3Months":
+      return {
+        startDate: toLocalDateInputValue(shiftLocalDateByMonths(endDate, -3)),
+        endDate: toLocalDateInputValue(endDate)
+      };
+    case "past6Months":
+      return {
+        startDate: toLocalDateInputValue(shiftLocalDateByMonths(endDate, -6)),
+        endDate: toLocalDateInputValue(endDate)
+      };
+    case "pastYear":
+      return {
+        startDate: toLocalDateInputValue(shiftLocalDateByYears(endDate, -1)),
+        endDate: toLocalDateInputValue(endDate)
+      };
+    case "past2Years":
+      return {
+        startDate: toLocalDateInputValue(shiftLocalDateByYears(endDate, -2)),
+        endDate: toLocalDateInputValue(endDate)
+      };
+    case "past5Years":
+      return {
+        startDate: toLocalDateInputValue(shiftLocalDateByYears(endDate, -5)),
+        endDate: toLocalDateInputValue(endDate)
+      };
+    case "pastDecade":
+      return {
+        startDate: toLocalDateInputValue(shiftLocalDateByYears(endDate, -10)),
+        endDate: toLocalDateInputValue(endDate)
+      };
+    default:
+      break;
+  }
+
+  return {
+    startDate: toLocalDateInputValue(startDate),
+    endDate: toLocalDateInputValue(endDate)
+  };
+};
+
+const BACKTEST_DEFAULT_DATE_RANGE = buildBacktestDateRangeFromPreset("pastYear");
+
 const RECENT_ONE_MINUTE_LOOKBACK_DAYS = 31;
 const RECENT_ONE_MINUTE_WINDOW_MS = RECENT_ONE_MINUTE_LOOKBACK_DAYS * 24 * 60 * 60_000;
-const RECENT_ONE_MINUTE_FETCH_COUNT = 40_000;
+const RECENT_ONE_MINUTE_FETCH_COUNT = CHART_INITIAL_HISTORY_CANDLES;
 const BACKTEST_LOOKBACK_YEARS = 10;
 const BACKTEST_MAX_HISTORY_CANDLES = 400_000;
 const BACKTEST_ONE_MINUTE_FETCH_COUNT = 500_000;
@@ -2088,7 +2221,7 @@ const fetchHistoryApiCandles = async (timeframe: Timeframe, count: number): Prom
     count: String(count)
   });
 
-  const response = await fetch(`/api/history/candles?${params.toString()}`, {
+  const response = await fetch(`/api/clickhouse/candles?${params.toString()}`, {
     cache: "no-store"
   });
 
@@ -4666,6 +4799,25 @@ const TabIcon = ({ tab }: { tab: PanelTab }) => {
   );
 };
 
+const InlineLoadingBar = ({
+  label,
+  className = ""
+}: {
+  label: string;
+  className?: string;
+}) => {
+  const classes = ["inline-loading-bar", className].filter(Boolean).join(" ");
+
+  return (
+    <div className={classes} role="status" aria-live="polite">
+      <span className="inline-loading-label">{label}</span>
+      <div className="inline-loading-track" aria-hidden>
+        <div className="inline-loading-fill" />
+      </div>
+    </div>
+  );
+};
+
 const getAiZipTradeDisplayId = (trade: Pick<HistoryItem, "id" | "entryTime">) => {
   const rawId = String(trade.id ?? "").trim();
 
@@ -4867,6 +5019,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [seenNotificationIds, setSeenNotificationIds] = useState<string[]>([]);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>({});
+  const [chartHistoryLoadingKey, setChartHistoryLoadingKey] = useState<string | null>(null);
   const [backtestSeriesMap, setBacktestSeriesMap] = useState<Record<string, Candle[]>>({});
   const [backtestOneMinuteSeriesMap, setBacktestOneMinuteSeriesMap] = useState<Record<string, Candle[]>>({});
   const [backtestHistoryQuery, setBacktestHistoryQuery] = useState("");
@@ -4876,8 +5029,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [activeBacktestTradeDetails, setActiveBacktestTradeDetails] = useState<
     Record<string, unknown> | null
   >(null);
-  const [statsDateStart, setStatsDateStart] = useState("");
-  const [statsDateEnd, setStatsDateEnd] = useState("");
+  const [statsDateStart, setStatsDateStart] = useState(BACKTEST_DEFAULT_DATE_RANGE.startDate);
+  const [statsDateEnd, setStatsDateEnd] = useState(BACKTEST_DEFAULT_DATE_RANGE.endDate);
+  const [statsDatePreset, setStatsDatePreset] = useState<BacktestDatePreset>("pastYear");
+  const [statsDatePresetDdOpen, setStatsDatePresetDdOpen] = useState(false);
   const [statsTimeframeDdOpen, setStatsTimeframeDdOpen] = useState(false);
   const [performanceStatsCollapsed, setPerformanceStatsCollapsed] = useState(false);
   const [performanceStatsModel, setPerformanceStatsModel] = useState("All");
@@ -5075,6 +5230,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const tradeStopLineRef = useRef<ISeriesApi<"Line"> | null>(null);
   const tradePathLineRef = useRef<ISeriesApi<"Line"> | null>(null);
   const multiTradeSeriesRef = useRef<MultiTradeOverlaySeries[]>([]);
+  const chartHistoryReadyByKeyRef = useRef<Record<string, true>>({});
   const selectionRef = useRef<string>("");
   const focusTradeIdRef = useRef<string | null>(null);
   const notificationRef = useRef<HTMLDivElement | null>(null);
@@ -5109,6 +5265,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const appliedBacktestAiModeRef = useRef<BacktestSettingsSnapshot["aiMode"]>("off");
   const appliedBacktestAntiCheatEnabledRef = useRef(false);
   const appliedBacktestSelectedAiLibraryCountRef = useRef(0);
+  const appliedBacktestStatsDateStartRef = useRef("");
+  const appliedBacktestStatsDateEndRef = useRef("");
   const chartSizeRef = useRef({ width: 0, height: 0 });
   const chartRenderWindowRef = useRef<ChartDataWindow>({ from: 0, to: -1 });
   const chartVisibleGlobalRangeRef = useRef<ChartDataWindow | null>(null);
@@ -5126,6 +5284,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const chartLastBarTimeRef = useRef(0);
   const chartViewCenterTimeMsRef = useRef<number | null>(null);
   const selectedChartCandlesRef = useRef<Candle[]>([]);
+  const statsDatePresetDdRef = useRef<HTMLDivElement>(null);
   const statsTimeframeDdRef = useRef<HTMLDivElement>(null);
   const [chartRenderWindow, setChartRenderWindow] = useState<ChartDataWindow>({ from: 0, to: -1 });
 
@@ -5329,6 +5488,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [statsTimeframeDdOpen]);
+
+  useEffect(() => {
+    if (!statsDatePresetDdOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        statsDatePresetDdRef.current &&
+        !statsDatePresetDdRef.current.contains(e.target as Node)
+      ) {
+        setStatsDatePresetDdOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [statsDatePresetDdOpen]);
 
   useEffect(() => {
     return () => {
@@ -5810,12 +5983,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const key = selectedKey;
     const historyLimit = chartHistoryCountByTimeframe[selectedTimeframe];
     const recentOneMinutePromise = fetchRecentOneMinuteCandles();
+    const keyWasReady = Boolean(chartHistoryReadyByKeyRef.current[key]);
+
+    setChartHistoryLoadingKey(keyWasReady ? null : key);
 
     const connect = async () => {
+      let hasInitialSeed = false;
+
       try {
         const historicalCandles = await fetchHistoryCandles(selectedTimeframe, recentOneMinutePromise);
 
         if (!cancelled && historicalCandles.length > 0) {
+          hasInitialSeed = true;
           setSeriesMap((prev) => ({
             ...prev,
             [key]: historicalCandles
@@ -5833,6 +6012,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             return;
           }
 
+          hasInitialSeed = true;
           setSeriesMap((prev) => ({
             ...prev,
             [key]: mergeRecentCandles(prev[key] ?? [], liveCandles, historyLimit)
@@ -5847,6 +6027,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       if (cancelled) {
         return;
       }
+
+      if (hasInitialSeed) {
+        chartHistoryReadyByKeyRef.current[key] = true;
+      }
+
+      setChartHistoryLoadingKey((current) => (current === key ? null : current));
 
       liveSyncInterval = window.setInterval(() => {
         void syncLiveCandlesFromMarket();
@@ -6029,6 +6215,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const selectedCandles = useMemo(() => {
     return seriesMap[selectedKey] ?? EMPTY_CANDLES;
   }, [selectedKey, seriesMap]);
+  const isChartDataLoading =
+    selectedSurfaceTab === "chart" &&
+    chartHistoryLoadingKey === selectedKey &&
+    (seriesMap[selectedKey]?.length ?? 0) === 0;
 
   const selectedBacktestCandles = useMemo(() => {
     return (
@@ -7093,6 +7283,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   appliedBacktestTrailingDistPctRef.current = appliedBacktestSettings.trailingDistPct;
   appliedBacktestAiModeRef.current = appliedBacktestSettings.aiMode;
   appliedBacktestAntiCheatEnabledRef.current = appliedBacktestSettings.antiCheatEnabled;
+  appliedBacktestStatsDateStartRef.current = appliedBacktestSettings.statsDateStart;
+  appliedBacktestStatsDateEndRef.current = appliedBacktestSettings.statsDateEnd;
   appliedBacktestSelectedAiLibraryCountRef.current =
     appliedBacktestSettings.selectedAiLibraries.length;
 
@@ -7121,6 +7313,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       appliedBacktestAiModeRef.current !== "off" &&
       (appliedBacktestAntiCheatEnabledRef.current ||
         appliedBacktestSelectedAiLibraryCountRef.current > 0);
+    const statsDateStartSnapshot = appliedBacktestStatsDateStartRef.current;
+    const statsDateEndSnapshot = appliedBacktestStatsDateEndRef.current;
 
     const modelNamesById: Record<string, string> = {};
 
@@ -7155,11 +7349,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const analysisEndMsRaw = lastChronologicalBlueprint
       ? Math.max(lastChronologicalBlueprint.entryMs, lastChronologicalBlueprint.exitMs)
       : timelineEndMs;
-    const filterStartMs = appliedBacktestSettings.statsDateStart
-      ? new Date(appliedBacktestSettings.statsDateStart).getTime()
+    const filterStartMs = statsDateStartSnapshot
+      ? new Date(statsDateStartSnapshot).getTime()
       : NaN;
-    const filterEndMs = appliedBacktestSettings.statsDateEnd
-      ? new Date(appliedBacktestSettings.statsDateEnd + "T23:59:59.999").getTime()
+    const filterEndMs = statsDateEndSnapshot
+      ? new Date(statsDateEndSnapshot + "T23:59:59.999").getTime()
       : NaN;
     const analysisStartMs = Number.isFinite(filterStartMs)
       ? Math.max(timelineStartMs, filterStartMs)
@@ -7660,6 +7854,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     propTotalMaxLoss,
     propProfitTarget,
     propProjectionMethod,
+    statsDatePreset,
     statsDateStart,
     statsDateEnd,
   }), [
@@ -7675,7 +7870,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     kEntry, kExit, knnVoteMode, hdbMinClusterSize, hdbMinSamples, hdbEpsQuantile,
     hdbSampleCap, antiCheatEnabled, validationMode, realismLevel, propInitialBalance,
     propDailyMaxLoss, propTotalMaxLoss, propProfitTarget, propProjectionMethod,
-    statsDateStart, statsDateEnd,
+    statsDatePreset, statsDateStart, statsDateEnd,
   ]);
 
   const applySettings = useCallback((s: Record<string, any>) => {
@@ -7738,6 +7933,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (s.propTotalMaxLoss != null) setPropTotalMaxLoss(s.propTotalMaxLoss);
     if (s.propProfitTarget != null) setPropProfitTarget(s.propProfitTarget);
     if (s.propProjectionMethod != null) setPropProjectionMethod(s.propProjectionMethod);
+    if (isBacktestDatePreset(s.statsDatePreset)) setStatsDatePreset(s.statsDatePreset);
     if (s.statsDateStart != null) setStatsDateStart(s.statsDateStart);
     if (s.statsDateEnd != null) setStatsDateEnd(s.statsDateEnd);
   }, []);
@@ -7745,7 +7941,28 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   useEffect(() => {
     try {
       const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
-      if (raw) applySettings(JSON.parse(raw));
+      if (raw) {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const migrated = { ...parsed } as Record<string, unknown>;
+
+        if (!isBacktestDatePreset(migrated.statsDatePreset)) {
+          const hasStoredStart =
+            typeof migrated.statsDateStart === "string" && migrated.statsDateStart.trim() !== "";
+          const hasStoredEnd =
+            typeof migrated.statsDateEnd === "string" && migrated.statsDateEnd.trim() !== "";
+
+          if (!hasStoredStart && !hasStoredEnd) {
+            const defaultRange = buildBacktestDateRangeFromPreset("pastYear");
+            migrated.statsDatePreset = "pastYear";
+            migrated.statsDateStart = defaultRange.startDate;
+            migrated.statsDateEnd = defaultRange.endDate;
+          } else {
+            migrated.statsDatePreset = "custom";
+          }
+        }
+
+        applySettings(migrated);
+      }
     } catch { /* corrupt data – ignore */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -7816,8 +8033,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setPropTotalMaxLoss(10_000);
     setPropProfitTarget(10_000);
     setPropProjectionMethod("montecarlo");
-    setStatsDateStart("");
-    setStatsDateEnd("");
+    const defaultDateRange = buildBacktestDateRangeFromPreset("pastYear");
+    setStatsDatePreset("pastYear");
+    setStatsDateStart(defaultDateRange.startDate);
+    setStatsDateEnd(defaultDateRange.endDate);
   }, [availableAiModelNames, aiLibraryDefs]);
 
   const persistPresets = useCallback((presets: SavedPreset[]) => {
@@ -9262,23 +9481,39 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     backtestTimeFilteredTrades,
     getEffectiveTradeConfidenceScore
   ]);
+  const deferredBacktestTab = useDeferredValue(selectedBacktestTab);
   const deferredBacktestAnalyticsTrades = useDeferredValue(backtestTrades);
   const isBacktestAnalyticsVisible = selectedSurfaceTab === "backtest";
   const isHistoryBacktestTabActive =
-    isBacktestAnalyticsVisible && selectedBacktestTab === "history";
+    isBacktestAnalyticsVisible && deferredBacktestTab === "history";
   const isCalendarBacktestTabActive =
-    isBacktestAnalyticsVisible && selectedBacktestTab === "calendar";
+    isBacktestAnalyticsVisible && deferredBacktestTab === "calendar";
   const isClusterBacktestTabActive =
-    isBacktestAnalyticsVisible && selectedBacktestTab === "cluster";
+    isBacktestAnalyticsVisible && deferredBacktestTab === "cluster";
   const isPerformanceStatsBacktestTabActive =
-    isBacktestAnalyticsVisible && selectedBacktestTab === "performanceStats";
+    isBacktestAnalyticsVisible && deferredBacktestTab === "performanceStats";
   const isEntryExitBacktestTabActive =
-    isBacktestAnalyticsVisible && selectedBacktestTab === "entryExit";
+    isBacktestAnalyticsVisible && deferredBacktestTab === "entryExit";
   const isPropFirmBacktestTabActive =
-    isBacktestAnalyticsVisible && selectedBacktestTab === "propFirm";
+    isBacktestAnalyticsVisible && deferredBacktestTab === "propFirm";
   const shouldComputeAiLibraryInsights =
     isBacktestAnalyticsVisible &&
-    (selectedBacktestTab === "mainSettings" || selectedBacktestTab === "cluster");
+    (deferredBacktestTab === "mainSettings" || deferredBacktestTab === "cluster");
+  const isBacktestTabDataPending = selectedBacktestTab !== deferredBacktestTab;
+  const isBacktestTabHistoryPending = backtestHasRun && !backtestHistorySeedReady;
+  const shouldShowBacktestInlineLoader =
+    isBacktestSurfaceSettled &&
+    backtestInlineLoaderTabs.has(selectedBacktestTab) &&
+    (isBacktestTabDataPending || isBacktestTabHistoryPending);
+  const backtestInlineLoaderLabel =
+    selectedBacktestTab === "dimensions"
+      ? "Building dimension statistics..."
+      : isBacktestTabHistoryPending
+        ? "Loading backtest data..."
+        : "Loading tab data...";
+  const isDimensionTabLoading =
+    selectedBacktestTab === "dimensions" &&
+    (isBacktestTabDataPending || isBacktestTabHistoryPending);
 
   const mainStatsTrades = useMemo(() => backtestTrades, [backtestTrades]);
 
@@ -11505,7 +11740,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   };
 
   const dimensionStats = useMemo<DimensionStatsSummary | null>(() => {
-    if (!isBacktestAnalyticsVisible || selectedBacktestTab !== "dimensions") {
+    if (!isBacktestAnalyticsVisible || deferredBacktestTab !== "dimensions") {
       return null;
     }
 
@@ -11769,9 +12004,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedBacktestSettings.timeframe,
     appliedBacktestSettings.validationMode,
     backtestSeriesMap,
+    deferredBacktestTab,
     deferredBacktestAnalyticsTrades,
     isBacktestAnalyticsVisible,
-    selectedBacktestTab,
     seriesMap,
   ]);
 
@@ -12684,6 +12919,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               <div className="chart-stage">
                 <div ref={chartContainerRef} className="tv-chart" aria-label="trading chart" />
                 <div ref={countdownOverlayRef} className="candle-countdown-overlay" />
+                {isChartDataLoading ? (
+                  <InlineLoadingBar
+                    className="chart-inline-loading"
+                    label="Loading chart candles..."
+                  />
+                ) : null}
                 <button
                   type="button"
                   className="chart-reset-btn"
@@ -12843,7 +13084,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <div className="watchlist-head">
                         <div>
                           <h2>XAUUSD</h2>
-                          <p>OANDA history + market live feed</p>
+                          <p>ClickHouse history + market live feed</p>
                         </div>
                       </div>
 
@@ -13067,11 +13308,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <h3>Backtest Date Range</h3>
                   </div>
 
-                  <div className="backtest-stats-range" aria-label="global backtest date range">
+                  <div
+                    className="backtest-stats-range backtest-stats-range-main"
+                    aria-label="global backtest date range"
+                  >
                     <input
                       type="date"
                       value={statsDateStart}
-                      onChange={(event) => setStatsDateStart(event.target.value)}
+                      onChange={(event) => {
+                        setStatsDateStart(event.target.value);
+                        setStatsDatePreset("custom");
+                      }}
                       className="backtest-date-input"
                       aria-label="global backtest start date"
                     />
@@ -13079,7 +13326,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <input
                       type="date"
                       value={statsDateEnd}
-                      onChange={(event) => setStatsDateEnd(event.target.value)}
+                      onChange={(event) => {
+                        setStatsDateEnd(event.target.value);
+                        setStatsDatePreset("custom");
+                      }}
                       className="backtest-date-input"
                       aria-label="global backtest end date"
                     />
@@ -13090,11 +13340,64 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         onClick={() => {
                           setStatsDateStart("");
                           setStatsDateEnd("");
+                          setStatsDatePreset("custom");
                         }}
                       >
                         All
                       </button>
                     )}
+                  </div>
+                  <div className="backtest-date-preset-row">
+                    <span className="backtest-date-preset-label">Preset</span>
+                    <div ref={statsDatePresetDdRef} className="backtest-date-preset-wrap">
+                      <button
+                        type="button"
+                        className="backtest-date-preset-trigger"
+                        onClick={() => setStatsDatePresetDdOpen((open) => !open)}
+                        aria-haspopup="listbox"
+                        aria-expanded={statsDatePresetDdOpen}
+                        aria-label="Select backtest date preset"
+                      >
+                        {
+                          BACKTEST_DATE_PRESET_OPTIONS.find((option) => option.id === statsDatePreset)
+                            ?.label ?? "Custom"
+                        }
+                        <span className="backtest-date-preset-chevron" aria-hidden="true">
+                          {statsDatePresetDdOpen ? "▴" : "▾"}
+                        </span>
+                      </button>
+                      {statsDatePresetDdOpen ? (
+                        <div
+                          className="backtest-date-preset-dd"
+                          role="listbox"
+                          aria-label="Backtest date preset options"
+                        >
+                          {BACKTEST_DATE_PRESET_OPTIONS.map((option) => (
+                            <button
+                              key={option.id}
+                              type="button"
+                              role="option"
+                              aria-selected={statsDatePreset === option.id}
+                              className={`backtest-date-preset-option${
+                                statsDatePreset === option.id ? " active" : ""
+                              }`}
+                              onClick={() => {
+                                setStatsDatePreset(option.id);
+                                setStatsDatePresetDdOpen(false);
+                                if (option.id === "custom") {
+                                  return;
+                                }
+                                const range = buildBacktestDateRangeFromPreset(option.id);
+                                setStatsDateStart(range.startDate);
+                                setStatsDateEnd(range.endDate);
+                              }}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
                 <div className="backtest-toolbar-note">
@@ -13151,6 +13454,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     trade history again.
                   </p>
                 </div>
+              ) : null}
+
+              {shouldShowBacktestInlineLoader ? (
+                <InlineLoadingBar
+                  className="backtest-inline-loading"
+                  label={backtestInlineLoaderLabel}
+                />
               ) : null}
 
               {selectedBacktestTab === "mainStats" ? (
@@ -15897,7 +16207,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     </div>
                   </div>
 
-                  {!dimensionStats || dimensionStats.dims.length === 0 ? (
+                  {isDimensionTabLoading ? (
+                    <InlineLoadingBar
+                      className="backtest-inline-loading backtest-inline-loading-inset"
+                      label="Building dimension statistics..."
+                    />
+                  ) : !dimensionStats || dimensionStats.dims.length === 0 ? (
                     <div className="backtest-empty-inline">
                       {!aiModelEnabled && !aiFilterEnabled
                         ? "Turn on AI Model or AI Filter to view dimension statistics."

@@ -966,6 +966,59 @@ button {
   }
 }
 
+.inline-loading-bar {
+  display: grid;
+  gap: 0.32rem;
+  width: 100%;
+}
+
+.inline-loading-label {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  font-size: 0.61rem;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  color: rgba(226, 255, 240, 0.78);
+  text-transform: uppercase;
+}
+
+.inline-loading-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(8, 16, 12, 0.92);
+  border: 1px solid rgba(37, 58, 46, 0.9);
+}
+
+.inline-loading-fill {
+  width: 34%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #00cf7a 0%, #00ff9d 52%, #75ffcd 100%);
+  box-shadow: 0 0 14px rgba(0, 255, 157, 0.34);
+  animation: inline-loading-progress 1s linear infinite;
+}
+
+@keyframes inline-loading-progress {
+  0% {
+    transform: translateX(-118%);
+  }
+
+  100% {
+    transform: translateX(318%);
+  }
+}
+
+.backtest-inline-loading {
+  max-width: 16rem;
+  margin-top: 0.12rem;
+}
+
+.backtest-inline-loading-inset {
+  margin-top: 0.68rem;
+  max-width: 20rem;
+}
+
 .backtest-empty-inline {
   padding: 0.72rem 0.8rem;
   font-size: 0.72rem;
@@ -1068,6 +1121,104 @@ button {
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
   font-weight: 900;
   cursor: pointer;
+}
+
+.backtest-stats-range-main {
+  width: 100%;
+}
+
+.backtest-date-preset-row {
+  width: 100%;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.backtest-date-preset-label {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 0.66rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.backtest-date-preset-wrap {
+  position: relative;
+}
+
+.backtest-date-preset-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 32px;
+  min-width: 170px;
+  padding: 0 0.72rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: border-color 0.15s;
+}
+
+.backtest-date-preset-trigger:hover {
+  border-color: rgba(255, 255, 255, 0.26);
+}
+
+.backtest-date-preset-chevron {
+  font-size: 0.55rem;
+  opacity: 0.55;
+  line-height: 1;
+}
+
+.backtest-date-preset-dd {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 220;
+  min-width: 180px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(6, 12, 12, 0.97);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 255, 157, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.backtest-date-preset-option {
+  width: 100%;
+  padding: 0.48rem 0.72rem;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.71rem;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.backtest-date-preset-option:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.backtest-date-preset-option.active {
+  background: rgba(0, 255, 157, 0.09);
+  color: #00ff9d;
 }
 
 .stats-timeframe-wrap {
@@ -3747,6 +3898,15 @@ button {
   min-height: 0;
   height: 100%;
   position: relative;
+}
+
+.chart-inline-loading {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: min(320px, calc(100% - 24px));
+  z-index: 8;
+  pointer-events: none;
 }
 
 .tv-chart {
