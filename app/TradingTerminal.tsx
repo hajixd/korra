@@ -6915,20 +6915,41 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               Number.isFinite(baselineVolumeRaw) && baselineVolumeRaw > 0
                 ? baselineVolumeRaw
                 : baselineVolumeFallback;
+            const latestChartCandles = selectedChartCandlesRef.current;
+            const latestCandle = latestChartCandles[latestChartCandles.length - 1];
+            const previousCandle = latestChartCandles[latestChartCandles.length - 2];
+            const currentCandleVolume = Number(
+              latestCandle?.time === candleStartMs ? latestCandle?.volume : Number.NaN
+            );
+            const observedCurrentVolume =
+              Number.isFinite(currentCandleVolume) && currentCandleVolume > 0 ? currentCandleVolume : 0;
+            const projectedObservedFinalVolume =
+              observedCurrentVolume > 0 ? observedCurrentVolume / progressSafe : Number.NaN;
+            const previousCandleVolume = Number(previousCandle?.volume);
+            const recentVolumeBias =
+              Number.isFinite(previousCandleVolume) && previousCandleVolume > 0
+                ? clamp(previousCandleVolume / Math.max(1, baselineVolume), 0.85, 1.9)
+                : 1;
 
-            const projectedTicks = nowcastState.tickCount / progressSafe;
-            const tickPaceRatio = projectedTicks / Math.max(1, baselineVolume);
             const avgSpreadNow =
               nowcastState.spreadCount > 0
                 ? nowcastState.spreadSum / nowcastState.spreadCount
                 : Math.max(price * 0.00002, 0.01);
             const normalizedMove = nowcastState.absMidMove / Math.max(avgSpreadNow, 0.000001);
-            const projectedMove = normalizedMove / progressSafe;
-            const moveRatio = projectedMove / Math.max(1, baselineVolume * 0.35);
-            const activityMultiplier = clamp(0.55 + tickPaceRatio * 0.3 + moveRatio * 0.15, 0.45, 2.6);
-            const estimatedFinalVolume = baselineVolume * activityMultiplier;
-            const progressCurve = Math.pow(progressRatio, 0.92);
-            const estimatedCurrentVolume = estimatedFinalVolume * progressCurve;
+            const projectedMove = normalizedMove / Math.max(progressSafe, 0.2);
+            const tickLift = clamp(nowcastState.tickCount / Math.max(4, progressSafe * 18), 0, 1.2);
+            const moveLift = clamp(projectedMove / 18, 0, 1.25);
+            const flowMultiplier = 1 + tickLift * 0.18 + moveLift * 0.12;
+            const baselineProjectedFinal = baselineVolume * recentVolumeBias * flowMultiplier;
+            const estimatedFinalVolume = Math.max(
+              baselineProjectedFinal,
+              Number.isFinite(projectedObservedFinalVolume) ? projectedObservedFinalVolume * 1.04 : 0
+            );
+            const progressCurve = Math.pow(progressRatio, 0.98);
+            const estimatedCurrentVolume = Math.max(
+              estimatedFinalVolume * progressCurve,
+              observedCurrentVolume
+            );
             const confidence = clamp(progressRatio * 0.55 + Math.min(1, nowcastState.tickCount / 25) * 0.45, 0, 1);
 
             if (
@@ -7300,18 +7321,33 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     );
     const baselineVolume = Number.isFinite(baselineVolumeRaw) && baselineVolumeRaw > 0 ? baselineVolumeRaw : 20;
     const progressRatio = clamp((nowMs - candleStartMs) / candleDurationMs, 0.0001, 1);
+    const progressSafe = Math.max(progressRatio, 0.12);
     const currentCandleVolume = Number(
       selectedCandles[selectedCandles.length - 1]?.time === candleStartMs
         ? selectedCandles[selectedCandles.length - 1]?.volume
         : Number.NaN
     );
-    const estimatedCurrentVolume =
+    const previousCandleVolume = Number(selectedCandles[selectedCandles.length - 2]?.volume);
+    const recentVolumeBias =
+      Number.isFinite(previousCandleVolume) && previousCandleVolume > 0
+        ? clamp(previousCandleVolume / Math.max(1, baselineVolume), 0.85, 1.9)
+        : 1;
+    const estimatedCurrentVolumeBase =
       Number.isFinite(currentCandleVolume) && currentCandleVolume > 0
         ? currentCandleVolume
-        : baselineVolume * Math.pow(progressRatio, 0.92);
+        : baselineVolume * recentVolumeBias * Math.pow(progressRatio, 0.98);
+    const projectedObservedFinalVolume =
+      Number.isFinite(currentCandleVolume) && currentCandleVolume > 0
+        ? currentCandleVolume / progressSafe
+        : Number.NaN;
     const estimatedFinalVolume = Math.max(
-      baselineVolume,
-      estimatedCurrentVolume / Math.max(progressRatio, 0.12)
+      baselineVolume * recentVolumeBias,
+      estimatedCurrentVolumeBase / progressSafe,
+      Number.isFinite(projectedObservedFinalVolume) ? projectedObservedFinalVolume * 1.04 : 0
+    );
+    const estimatedCurrentVolume = Math.max(
+      estimatedCurrentVolumeBase,
+      Number.isFinite(currentCandleVolume) && currentCandleVolume > 0 ? currentCandleVolume : 0
     );
     const estimatedTickCount = Math.max(1, Math.round(estimatedCurrentVolume));
     const confidence = clamp(

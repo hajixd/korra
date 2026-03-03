@@ -935,18 +935,75 @@ const isTechnicalDrawRequest = (prompt: string): boolean => {
   return TECHNICAL_DRAW_RE.test(text);
 };
 
-const symbolToClickhousePair = (symbol: string): string => {
-  const direct = symbol.trim().toUpperCase();
+const inferClickhousePair = (rawValue: string): string | null => {
+  const direct = rawValue.trim().toUpperCase();
+  if (!direct) {
+    return null;
+  }
+
   if (CLICKHOUSE_PAIR_RE.test(direct)) {
     return direct;
   }
 
-  const compact = direct.replace(/[^A-Z0-9]/g, "");
-  if (compact.length >= 6) {
+  let compact = direct.replace(/[^A-Z0-9]/g, "");
+  if (!compact) {
+    return null;
+  }
+
+  if (direct.includes(".") && compact.endsWith("P") && compact.length > 6) {
+    compact = compact.slice(0, -1);
+  }
+
+  if (compact.endsWith("PERP") && compact.length > 8) {
+    compact = compact.slice(0, -4);
+  }
+
+  const quoteTokens = [
+    "USDT",
+    "USDC",
+    "USD",
+    "EUR",
+    "JPY",
+    "GBP",
+    "AUD",
+    "CAD",
+    "CHF",
+    "NZD",
+    "BTC",
+    "ETH",
+    "XAU",
+    "XAG"
+  ];
+
+  for (const quote of quoteTokens) {
+    if (!compact.endsWith(quote)) {
+      continue;
+    }
+    const base = compact.slice(0, compact.length - quote.length);
+    if (base.length >= 2) {
+      return `${base}_${quote}`;
+    }
+  }
+
+  const alphaNum = compact.match(/^([A-Z]{2,12})(\d{2,8})$/);
+  if (alphaNum) {
+    return `${alphaNum[1]}_${alphaNum[2]}`;
+  }
+
+  const numAlpha = compact.match(/^(\d{2,8})([A-Z]{2,12})$/);
+  if (numAlpha) {
+    return `${numAlpha[1]}_${numAlpha[2]}`;
+  }
+
+  if (compact.length === 6) {
     return `${compact.slice(0, 3)}_${compact.slice(3, 6)}`;
   }
 
-  return "XAU_USD";
+  return null;
+};
+
+const symbolToClickhousePair = (symbol: string): string => {
+  return inferClickhousePair(symbol) ?? "XAU_USD";
 };
 
 const getRecentWindowCount = (timeframe: string): number => {
@@ -1033,6 +1090,22 @@ const getRecentWindowCandles = (params: {
   }
 
   return context.liveCandles.slice(-windowCount);
+};
+
+const getDrawWindowCandles = (params: {
+  context: AssistantContext;
+  clickhouseCandles: CandleRow[];
+}): CandleRow[] => {
+  const { context, clickhouseCandles } = params;
+  const windowCount = getRecentWindowCount(context.timeframe);
+  const liveTail = context.liveCandles.slice(-windowCount);
+
+  // Prefer live stream candles for draw accuracy on the active chart.
+  if (liveTail.length >= 24) {
+    return liveTail;
+  }
+
+  return getRecentWindowCandles({ context, clickhouseCandles });
 };
 
 const getPriceQuantile = (values: number[], quantile: number): number | null => {
@@ -1332,17 +1405,7 @@ const buildDefaultAnimationActions = (candles: CandleRow[]): Array<Record<string
 };
 
 const normalizeClickhousePair = (pair: string): string => {
-  const normalized = pair.trim().toUpperCase();
-  if (CLICKHOUSE_PAIR_RE.test(normalized)) {
-    return normalized;
-  }
-
-  const compact = normalized.replace(/[^A-Z0-9]/g, "");
-  if (compact.length >= 6) {
-    return `${compact.slice(0, 3)}_${compact.slice(3, 6)}`;
-  }
-
-  return "XAU_USD";
+  return inferClickhousePair(pair) ?? "XAU_USD";
 };
 
 const mapTimeframeToClickhouse = (timeframe: string): string => {
@@ -2583,21 +2646,21 @@ export async function POST(request: Request) {
       ? buildChartsFromPlans(codingResult.chartPlans, context, toolState)
       : [];
     let chartActions = codingResult.chartActions;
-    if (explicitDrawRequest && chartActions.length === 0) {
-      const fallbackDrawActions = buildDrawActionsFromPrompt({
+    if (explicitDrawRequest) {
+      const dataAnchoredDrawActions = buildDrawActionsFromPrompt({
         prompt: lastUserPrompt,
-        candles: getRecentWindowCandles({
+        candles: getDrawWindowCandles({
           context,
           clickhouseCandles: toolState.clickhouseCandles
         })
       });
-      chartActions = normalizeChartActions(fallbackDrawActions);
+      chartActions = normalizeChartActions(dataAnchoredDrawActions);
     }
 
     if (wantsAnimation && chartActions.length === 0) {
       chartActions = normalizeChartActions(
         buildDefaultAnimationActions(
-          getRecentWindowCandles({
+          getDrawWindowCandles({
             context,
             clickhouseCandles: toolState.clickhouseCandles
           })
