@@ -442,6 +442,7 @@ type BacktestSettingsSnapshot = {
   breakEvenTriggerPct: number;
   trailingStartPct: number;
   trailingDistPct: number;
+  maxConcurrentTrades: number;
   aiModelStates: Record<string, AiModelState>;
   aiFeatureLevels: Record<string, AiFeatureLevel>;
   aiFeatureModes: Record<string, AiFeatureMode>;
@@ -4022,11 +4023,21 @@ const generateTradeBlueprints = (
   return blueprints.sort((a, b) => b.exitMs - a.exitMs);
 };
 
-const enforceSingleActiveTradeBlueprints = (
-  blueprints: TradeBlueprint[]
+const insertSortedExit = (activeExitMs: number[], exitMs: number) => {
+  let insertAt = activeExitMs.length;
+  while (insertAt > 0 && activeExitMs[insertAt - 1]! > exitMs) {
+    insertAt -= 1;
+  }
+  activeExitMs.splice(insertAt, 0, exitMs);
+};
+
+const enforceMaxConcurrentTradeBlueprints = (
+  blueprints: TradeBlueprint[],
+  maxConcurrentTrades: number
 ): TradeBlueprint[] => {
-  if (blueprints.length <= 1) {
-    return blueprints;
+  const limit = clamp(Math.floor(Number(maxConcurrentTrades) || 0), 0, 500);
+  if (limit <= 0 || blueprints.length === 0) {
+    return [];
   }
 
   const chronological = [...blueprints]
@@ -4043,18 +4054,68 @@ const enforceSingleActiveTradeBlueprints = (
         left.id.localeCompare(right.id)
     );
   const selected: TradeBlueprint[] = [];
-  let activeTradeExitMs = Number.NEGATIVE_INFINITY;
+  const activeExitMs: number[] = [];
 
   for (const blueprint of chronological) {
-    if (blueprint.entryMs < activeTradeExitMs) {
+    while (activeExitMs.length > 0 && activeExitMs[0]! <= blueprint.entryMs) {
+      activeExitMs.shift();
+    }
+
+    if (activeExitMs.length >= limit) {
       continue;
     }
 
     selected.push(blueprint);
-    activeTradeExitMs = blueprint.exitMs;
+    insertSortedExit(activeExitMs, blueprint.exitMs);
   }
 
   return selected.sort((left, right) => right.exitMs - left.exitMs);
+};
+
+const enforceMaxConcurrentHistoryRows = (
+  rows: HistoryItem[],
+  maxConcurrentTrades: number
+): HistoryItem[] => {
+  const limit = clamp(Math.floor(Number(maxConcurrentTrades) || 0), 0, 500);
+  if (limit <= 0 || rows.length === 0) {
+    return [];
+  }
+
+  const chronological = [...rows]
+    .filter((row) => {
+      const entrySec = Number(row.entryTime);
+      const exitSec = Number(row.exitTime);
+      return Number.isFinite(entrySec) && Number.isFinite(exitSec) && exitSec > entrySec;
+    })
+    .sort(
+      (left, right) =>
+        Number(left.entryTime) - Number(right.entryTime) ||
+        Number(left.exitTime) - Number(right.exitTime) ||
+        left.id.localeCompare(right.id)
+    );
+  const selected: HistoryItem[] = [];
+  const activeExitSec: number[] = [];
+
+  for (const row of chronological) {
+    const entrySec = Number(row.entryTime);
+    const exitSec = Number(row.exitTime);
+
+    while (activeExitSec.length > 0 && activeExitSec[0]! <= entrySec) {
+      activeExitSec.shift();
+    }
+
+    if (activeExitSec.length >= limit) {
+      continue;
+    }
+
+    selected.push(row);
+    insertSortedExit(activeExitSec, exitSec);
+  }
+
+  return selected.sort(
+    (left, right) =>
+      Number(left.exitTime) - Number(right.exitTime) || left.id.localeCompare(right.id)
+  );
 };
 
 const summarizeBacktestTrades = (
@@ -4340,6 +4401,7 @@ const doesBacktestHistoryGenerationInputChange = (
   if (previous.breakEvenTriggerPct !== next.breakEvenTriggerPct) return true;
   if (previous.trailingStartPct !== next.trailingStartPct) return true;
   if (previous.trailingDistPct !== next.trailingDistPct) return true;
+  if (previous.maxConcurrentTrades !== next.maxConcurrentTrades) return true;
   return false;
 };
 
@@ -4460,6 +4522,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [slDollars, setSlDollars] = useState(1000);
   const [dollarsPerMove, setDollarsPerMove] = useState(25);
   const [maxBarsInTrade, setMaxBarsInTrade] = useState(0);
+  const [maxConcurrentTrades, setMaxConcurrentTrades] = useState(1);
   const [stopMode, setStopMode] = useState(0); // 0=Off, 1=Break-Even, 2=Trailing
   const [breakEvenTriggerPct, setBreakEvenTriggerPct] = useState(50);
   const [trailingStartPct, setTrailingStartPct] = useState(50);
@@ -4557,6 +4620,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     breakEvenTriggerPct,
     trailingStartPct,
     trailingDistPct,
+    maxConcurrentTrades,
     aiModelStates: { ...aiModelStates },
     aiFeatureLevels: { ...aiFeatureLevels },
     aiFeatureModes: { ...aiFeatureModes },
@@ -5950,7 +6014,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     if (appliedAiModelEveryCandleMode) {
-      return enforceSingleActiveTradeBlueprints(everyCandleTradeBlueprints).slice(
+      return enforceMaxConcurrentTradeBlueprints(
+        everyCandleTradeBlueprints,
+        appliedBacktestSettings.maxConcurrentTrades
+      ).slice(
         0,
         backtestTargetTrades
       );
@@ -5978,10 +6045,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       );
     });
 
-    return enforceSingleActiveTradeBlueprints(blueprints).slice(0, backtestTargetTrades);
+    return enforceMaxConcurrentTradeBlueprints(
+      blueprints,
+      appliedBacktestSettings.maxConcurrentTrades
+    ).slice(0, backtestTargetTrades);
   }, [
     appliedAiModelEveryCandleMode,
     appliedBacktestModelProfiles,
+    appliedBacktestSettings.maxConcurrentTrades,
     appliedBacktestSettings.dollarsPerMove,
     backtestBlueprintRange,
     everyCandleTradeBlueprints,
@@ -6000,10 +6071,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const deferredHistoryRows = useDeferredValue(boundedHistoryRows);
   const backtestHistoryJobIdRef = useRef(0);
   const chronologicalHistoryRows = useMemo(() => {
-    return [...deferredHistoryRows].sort(
-      (a, b) => Number(a.exitTime) - Number(b.exitTime) || a.id.localeCompare(b.id)
+    return enforceMaxConcurrentHistoryRows(
+      deferredHistoryRows,
+      appliedBacktestSettings.maxConcurrentTrades
     );
-  }, [deferredHistoryRows]);
+  }, [appliedBacktestSettings.maxConcurrentTrades, deferredHistoryRows]);
   const backtestSourceTrades = useMemo(() => {
     return chronologicalHistoryRows;
   }, [chronologicalHistoryRows]);
@@ -7007,6 +7079,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     slDollars,
     dollarsPerMove,
     maxBarsInTrade,
+    maxConcurrentTrades,
     stopMode,
     breakEvenTriggerPct,
     trailingStartPct,
@@ -7049,7 +7122,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     enabledBacktestMonths, enabledBacktestHours, aiMode, aiModelEnabled, aiFilterEnabled,
     staticLibrariesClusters, confidenceThreshold, aiExitStrictness, aiExitLossTolerance,
     aiExitWinTolerance, useMitExit, complexity, volatilityPercentile, tpDollars, slDollars,
-    dollarsPerMove, maxBarsInTrade, stopMode, breakEvenTriggerPct, trailingStartPct,
+    dollarsPerMove, maxBarsInTrade, maxConcurrentTrades, stopMode, breakEvenTriggerPct, trailingStartPct,
     trailingDistPct, aiModelStates, aiFeatureLevels, aiFeatureModes,
     selectedAiLibraries, selectedAiLibrarySettings, selectedAiLibraryId, aiBulkScope,
     aiBulkWeight, aiBulkStride, aiBulkMaxSamples, chunkBars, distanceMetric,
@@ -7082,6 +7155,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (s.slDollars != null) setSlDollars(s.slDollars);
     if (s.dollarsPerMove != null) setDollarsPerMove(s.dollarsPerMove);
     if (s.maxBarsInTrade != null) setMaxBarsInTrade(s.maxBarsInTrade);
+    if (s.maxConcurrentTrades != null) {
+      setMaxConcurrentTrades(clamp(Math.floor(Number(s.maxConcurrentTrades) || 1), 1, 500));
+    }
     if (s.stopMode != null) setStopMode(s.stopMode);
     if (s.breakEvenTriggerPct != null) setBreakEvenTriggerPct(s.breakEvenTriggerPct);
     if (s.trailingStartPct != null) setTrailingStartPct(s.trailingStartPct);
@@ -7159,6 +7235,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setSlDollars(1000);
     setDollarsPerMove(25);
     setMaxBarsInTrade(0);
+    setMaxConcurrentTrades(1);
     setStopMode(0);
     setBreakEvenTriggerPct(50);
     setTrailingStartPct(50);
@@ -13074,6 +13151,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               onChange={(event) => {
                                 setMaxBarsInTrade(
                                   Math.max(0, Math.floor(Number(event.target.value) || 0))
+                                );
+                              }}
+                              className="ai-zip-input"
+                            />
+                          </label>
+                          <label className="ai-zip-field">
+                            <span className="ai-zip-label">Maximum Trades at a Time</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={500}
+                              step={1}
+                              value={maxConcurrentTrades}
+                              onChange={(event) => {
+                                setMaxConcurrentTrades(
+                                  clamp(Math.floor(Number(event.target.value) || 1), 1, 500)
                                 );
                               }}
                               className="ai-zip-input"
