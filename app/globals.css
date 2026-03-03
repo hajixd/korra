@@ -2781,7 +2781,8 @@ button {
 
 .stats-refresh-loading-shell {
   width: min(920px, calc(100vw - 2.5rem));
-  padding: 1.45rem 1.55rem;
+  min-height: 230px;
+  padding: 1.6rem 1.7rem;
   border-radius: 20px;
   border: 1px solid rgba(0, 255, 157, 0.16);
   background: rgba(3, 8, 8, 0.78);
@@ -2798,12 +2799,13 @@ button {
 
 .stats-refresh-loading-status,
 .stats-refresh-loading-pct,
+.stats-refresh-loading-meta,
 .stats-refresh-loading-detail,
 .stats-refresh-loading-range {
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 900;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -2816,8 +2818,16 @@ button {
   color: rgba(117, 255, 205, 0.95);
 }
 
+.stats-refresh-loading-meta {
+  margin-bottom: 0.42rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  color: rgba(173, 255, 220, 0.72);
+}
+
 .stats-refresh-loading-detail {
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.68rem;
   color: rgba(201, 255, 230, 0.72);
 }
 

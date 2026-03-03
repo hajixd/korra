@@ -4805,6 +4805,31 @@ const getStatsRefreshStatusDetail = (status: string): string => {
   return "Updating backtest statistics.";
 };
 
+const buildStatsRefreshPhasePlan = ({
+  needsHistorySeedReload,
+  loadingLibraries
+}: {
+  needsHistorySeedReload: boolean;
+  loadingLibraries: boolean;
+}): string[] => {
+  const phases: string[] = [];
+
+  if (needsHistorySeedReload) {
+    phases.push("Loading Candle History");
+  }
+
+  phases.push("Preparing Backtest Replay");
+  phases.push("Replaying Backtest Trades");
+
+  if (loadingLibraries) {
+    phases.push("Loading AI Libraries");
+  }
+
+  phases.push("Finalizing Statistics");
+
+  return phases;
+};
+
 export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProps) {
   const modelProfiles = useMemo(() => {
     return buildModelProfiles(aiZipModelNames);
@@ -4979,6 +5004,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [statsRefreshProgress, setStatsRefreshProgress] = useState(0);
   const [statsRefreshLoadingDisplayProgress, setStatsRefreshLoadingDisplayProgress] = useState(0);
   const [statsRefreshStatus, setStatsRefreshStatus] = useState("Updating Backtest Statistics");
+  const [statsRefreshPhasePlan, setStatsRefreshPhasePlan] = useState<string[]>([]);
   const [statsRefreshProgressLabel, setStatsRefreshProgressLabel] = useState("");
   const [statsRefreshTimelineRange, setStatsRefreshTimelineRange] = useState<{
     startMs: number;
@@ -5157,6 +5183,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         setStatsRefreshProgress(0);
         setStatsRefreshLoadingDisplayProgress(0);
         setStatsRefreshStatus("Updating Backtest Statistics");
+        setStatsRefreshPhasePlan([]);
         setStatsRefreshProgressLabel("");
         statsRefreshResetTimeoutRef.current = 0;
       };
@@ -5192,11 +5219,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     },
     [clearStatsRefreshResetTimeout, updateStatsRefreshOverlayMode]
   );
-  const applyBacktestSettingsSnapshot = useCallback(() => {
+  const applyBacktestSettingsSnapshot = useCallback((options?: { forceFullReload?: boolean }) => {
+    const forceFullReload = options?.forceFullReload ?? false;
     const nextSettings = liveBacktestSettingsRef.current;
     const previousSettings = appliedBacktestSettings;
     const hasBacktestRun = backtestRunCount > 0;
     const settingsChanged =
+      forceFullReload ||
       serializeBacktestSettingsSnapshot(previousSettings) !==
       serializeBacktestSettingsSnapshot(nextSettings);
 
@@ -5205,14 +5234,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       setStatsRefreshProgress(0);
       setStatsRefreshLoadingDisplayProgress(0);
       setStatsRefreshStatus("Updating Backtest Statistics");
+      setStatsRefreshPhasePlan([]);
       setStatsRefreshProgressLabel("");
       return;
     }
 
     const needsHistoryRecompute =
+      forceFullReload ||
       !hasBacktestRun ||
       doesBacktestHistoryGenerationInputChange(previousSettings, nextSettings);
     const needsHistorySeedReload =
+      forceFullReload ||
       !hasBacktestRun ||
       previousSettings.symbol !== nextSettings.symbol ||
       previousSettings.timeframe !== nextSettings.timeframe;
@@ -5230,6 +5262,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       updateStatsRefreshOverlayMode("loading");
       setStatsRefreshProgress(0);
       setStatsRefreshLoadingDisplayProgress(0);
+      setStatsRefreshPhasePlan(
+        buildStatsRefreshPhasePlan({
+          needsHistorySeedReload,
+          loadingLibraries
+        })
+      );
       setStatsRefreshStatus(
         needsHistorySeedReload
           ? "Loading Candle History"
@@ -5265,6 +5303,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       setStatsRefreshProgress(0);
       setStatsRefreshLoadingDisplayProgress(0);
       setStatsRefreshStatus("Updating Backtest Statistics");
+      setStatsRefreshPhasePlan([]);
       setStatsRefreshProgressLabel("");
     }
     setPropResult(null);
@@ -5308,6 +5347,37 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   useEffect(() => {
     statsRefreshStatusRef.current = statsRefreshStatus;
   }, [statsRefreshStatus]);
+
+  useEffect(() => {
+    if (statsRefreshOverlayMode !== "loading") {
+      return;
+    }
+
+    setStatsRefreshPhasePlan((current) => {
+      let next = current.length > 0 ? [...current] : [statsRefreshStatus];
+
+      if (statsRefreshStatus === "No Trades In Selected Range") {
+        next = next.filter(
+          (phase) =>
+            phase !== "Finalizing Statistics" &&
+            phase !== "Loading AI Libraries" &&
+            phase !== "No Trades In Selected Range"
+        );
+        next.push("No Trades In Selected Range");
+        return next;
+      }
+
+      if (statsRefreshStatus === "Finalizing Statistics") {
+        next = next.filter((phase) => phase !== "No Trades In Selected Range");
+      }
+
+      if (!next.includes(statsRefreshStatus)) {
+        next.push(statsRefreshStatus);
+      }
+
+      return next;
+    });
+  }, [statsRefreshOverlayMode, statsRefreshStatus]);
 
   useEffect(() => {
     setStatsRefreshLoadingDisplayProgress(statsRefreshProgress);
@@ -8481,7 +8551,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         frameId = 0;
       }
 
-      applyBacktestSettingsSnapshot();
+      applyBacktestSettingsSnapshot({ forceFullReload: true });
     };
 
     const tick = (timestamp: number) => {
@@ -12329,6 +12399,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const statsRefreshRangeEndLabel = formatStatsRefreshDateLabel(statsRefreshTimelineRange.endMs);
   const statsRefreshCurrentDateLabel =
     statsRefreshProgressLabel || statsRefreshRangeStartLabel;
+  const statsRefreshPhaseCount = Math.max(1, statsRefreshPhasePlan.length);
+  const statsRefreshPhaseIndex = Math.max(1, statsRefreshPhasePlan.indexOf(statsRefreshStatus) + 1);
+  const statsRefreshPhaseLabel = `${statsRefreshPhaseIndex} out of ${statsRefreshPhaseCount} phases`;
+  const statsRefreshContextLabel =
+    `${appliedBacktestSettings.symbol} · ${appliedBacktestSettings.timeframe} · ` +
+    `${appliedBacktestSettings.aiMode === "off" ? "AI Off" : "AI On"}`;
 
   return (
     <main className="terminal">
@@ -16545,6 +16621,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   {`${Math.round(statsRefreshDisplayProgress)}%`}
                 </div>
               </div>
+              <div className="stats-refresh-loading-meta">
+                <span>{statsRefreshPhaseLabel}</span>
+                <span>{statsRefreshContextLabel}</span>
+              </div>
               <div className="stats-refresh-loading-detail">{statsRefreshStatusDetail}</div>
               <div
                 key={statsRefreshStatus}
@@ -16570,7 +16650,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         ) : (
           <div className="stats-refresh-overlay" aria-live="polite" aria-atomic="true">
             <div className="stats-refresh-card">
-              {`Hold CTRL for ${statsRefreshSecondsRemaining.toFixed(1)}s to apply updates`}
+              {`Hold CTRL for ${statsRefreshSecondsRemaining.toFixed(1)}s to reload all backtest data`}
             </div>
           </div>
         )
