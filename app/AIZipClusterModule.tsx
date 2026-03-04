@@ -11970,6 +11970,9 @@ function ClusterMapViewport3D({
   searchHighlightId,
   resetKey,
   lowPowerMode,
+  nodeSizeMul,
+  nodeOutlineMul,
+  mapSpreadMul,
   onSelectId,
 }: {
   nodes: any[];
@@ -11977,6 +11980,9 @@ function ClusterMapViewport3D({
   searchHighlightId: string | null;
   resetKey: number;
   lowPowerMode: boolean;
+  nodeSizeMul: number;
+  nodeOutlineMul: number;
+  mapSpreadMul: number;
   onSelectId: (id: string | null) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -11988,9 +11994,12 @@ function ClusterMapViewport3D({
   const controlsRef = useRef<any>(null);
   const nodeGeoRef = useRef<any>(null);
   const nodeMatRef = useRef<any>(null);
+  const outlineMatRef = useRef<any>(null);
   const instRef = useRef<any>(null);
+  const instOutlineRef = useRef<any>(null);
   const tmpObjRef = useRef<any>(null);
   const tmpColorRef = useRef<any>(null);
+  const tmpOutlineColorRef = useRef<any>(null);
   const nodeIdsRef = useRef<string[]>([]);
   const capacityRef = useRef<number>(0);
   const shouldFrameRef = useRef<boolean>(true);
@@ -12062,17 +12071,29 @@ function ClusterMapViewport3D({
       const scene = sceneRef.current;
       const nodeGeo = nodeGeoRef.current;
       const nodeMat = nodeMatRef.current;
+      const outlineMat = outlineMatRef.current;
       const curInst = instRef.current;
+      const curOutline = instOutlineRef.current;
       const needed = Math.max(1, Number(neededCount) || 1);
-      if (!scene || !nodeGeo || !nodeMat || !curInst) return;
+      if (!scene || !nodeGeo || !nodeMat || !outlineMat || !curInst || !curOutline)
+        return;
       if (needed <= capacityRef.current) return;
 
       const nextCapacity = Math.max(needed, Math.ceil(capacityRef.current * 1.5), 64);
       const nextInst = new (THREE as any).InstancedMesh(nodeGeo, nodeMat, nextCapacity);
+      const nextOutline = new (THREE as any).InstancedMesh(
+        nodeGeo,
+        outlineMat,
+        nextCapacity
+      );
       nextInst.count = curInst.count || 0;
+      nextOutline.count = curOutline.count || 0;
       scene.remove(curInst);
+      scene.remove(curOutline);
+      scene.add(nextOutline);
       scene.add(nextInst);
       instRef.current = nextInst;
+      instOutlineRef.current = nextOutline;
       capacityRef.current = nextCapacity;
     },
     []
@@ -12165,10 +12186,25 @@ function ClusterMapViewport3D({
       vertexColors: true,
       toneMapped: false,
     });
+    const outlineMat = new (THREE as any).MeshBasicMaterial({
+      vertexColors: true,
+      side: (THREE as any).BackSide,
+      transparent: true,
+      opacity: 0.98,
+      depthWrite: false,
+      toneMapped: false,
+    });
     const tmpObj = new (THREE as any).Object3D();
     const tmpColor = new (THREE as any).Color(0xffffff);
+    const tmpOutlineColor = new (THREE as any).Color(0xffffff);
     const initialCapacity = Math.max(1, nodes.length || 1);
+    const instOutline = new (THREE as any).InstancedMesh(
+      nodeGeo,
+      outlineMat,
+      initialCapacity
+    );
     const inst = new (THREE as any).InstancedMesh(nodeGeo, nodeMat, initialCapacity);
+    scene.add(instOutline);
     scene.add(inst);
 
     rendererRef.current = renderer;
@@ -12177,9 +12213,12 @@ function ClusterMapViewport3D({
     controlsRef.current = controls;
     nodeGeoRef.current = nodeGeo;
     nodeMatRef.current = nodeMat;
+    outlineMatRef.current = outlineMat;
     instRef.current = inst;
+    instOutlineRef.current = instOutline;
     tmpObjRef.current = tmpObj;
     tmpColorRef.current = tmpColor;
+    tmpOutlineColorRef.current = tmpOutlineColor;
     capacityRef.current = initialCapacity;
     shouldFrameRef.current = true;
 
@@ -12267,10 +12306,16 @@ function ClusterMapViewport3D({
         controls.dispose();
       } catch {}
       try {
+        instOutlineRef.current?.dispose?.();
+      } catch {}
+      try {
         instRef.current?.dispose?.();
       } catch {}
       try {
         nodeGeo.dispose();
+      } catch {}
+      try {
+        outlineMat.dispose();
       } catch {}
       try {
         nodeMat.dispose();
@@ -12284,9 +12329,12 @@ function ClusterMapViewport3D({
       controlsRef.current = null;
       nodeGeoRef.current = null;
       nodeMatRef.current = null;
+      outlineMatRef.current = null;
       instRef.current = null;
+      instOutlineRef.current = null;
       tmpObjRef.current = null;
       tmpColorRef.current = null;
+      tmpOutlineColorRef.current = null;
       nodeIdsRef.current = [];
       capacityRef.current = 0;
       renderNowRef.current = () => {};
@@ -12296,15 +12344,28 @@ function ClusterMapViewport3D({
   useEffect(() => {
     if (!runtimeReady || !THREE) return;
     const inst = instRef.current;
+    const instOutline = instOutlineRef.current;
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     const tmpObj = tmpObjRef.current;
     const tmpColor = tmpColorRef.current;
-    if (!inst || !camera || !controls || !tmpObj || !tmpColor) return;
+    const tmpOutlineColor = tmpOutlineColorRef.current;
+    if (
+      !inst ||
+      !instOutline ||
+      !camera ||
+      !controls ||
+      !tmpObj ||
+      !tmpColor ||
+      !tmpOutlineColor
+    ) {
+      return;
+    }
 
     ensureInstCapacity(nodes.length);
     const instNow = instRef.current;
-    if (!instNow) return;
+    const instOutlineNow = instOutlineRef.current;
+    if (!instNow || !instOutlineNow) return;
 
     const nodeIds: string[] = new Array(Math.max(1, nodes.length)).fill("");
     const worldPts: Array<[number, number, number]> = [];
@@ -12358,24 +12419,43 @@ function ClusterMapViewport3D({
       : 1;
     const rawSpan = Math.max(spanRawX, spanRawY, spanRawZ, 1e-6);
     const norm = 3.4 / rawSpan;
+    const spread3d = Math.max(0.35, Math.min(4.5, Number(mapSpreadMul) || 1));
+    const sizeMul = Math.max(0.25, Math.min(4, Number(nodeSizeMul) || 1));
+    const outlineMul = Math.max(0.25, Math.min(4, Number(nodeOutlineMul) || 1));
+    const outlineScaleMul = 1 + 0.12 * outlineMul;
 
     for (let i = 0; i < rawPts.length; i++) {
       const item = rawPts[i];
       const n = item.node;
       const id = item.id;
-      const x = (item.x - cxRaw) * norm;
-      const y = (item.y - cyRaw) * norm;
-      const z = (item.z - czRaw) * norm;
+      const x = (item.x - cxRaw) * norm * spread3d;
+      const y = (item.y - cyRaw) * norm * spread3d;
+      const z = (item.z - czRaw) * norm * spread3d;
       worldPts.push([x, y, z]);
 
       const baseR = Math.max(
         0.032,
         Math.min(0.16, (Number((n as any)?.r) || 6) / 72)
-      );
+      ) * sizeMul;
       const isHighlighted =
         (selectedId != null && String(selectedId) === id) ||
         (searchHighlightId != null && String(searchHighlightId) === id);
       const r = isHighlighted ? baseR * 1.42 : baseR;
+
+      tmpObj.position.set(x, y, z);
+      tmpObj.scale.setScalar(r * outlineScaleMul);
+      tmpObj.updateMatrix();
+      instOutlineNow.setMatrixAt(i, tmpObj.matrix);
+      const dir = Number((n as any)?.dir ?? (n as any)?.direction ?? 0);
+      const outlineHex = isHighlighted
+        ? 0xffffff
+        : dir === 1
+        ? 0x1eb450
+        : dir === -1
+        ? 0xb43232
+        : 0x9ca3af;
+      tmpOutlineColor.setHex(outlineHex);
+      instOutlineNow.setColorAt(i, tmpOutlineColor);
 
       tmpObj.position.set(x, y, z);
       tmpObj.scale.setScalar(r);
@@ -12385,6 +12465,9 @@ function ClusterMapViewport3D({
       instNow.setColorAt(i, tmpColor);
     }
 
+    instOutlineNow.count = nodes.length;
+    instOutlineNow.instanceMatrix.needsUpdate = true;
+    if (instOutlineNow.instanceColor) instOutlineNow.instanceColor.needsUpdate = true;
     instNow.count = nodes.length;
     instNow.instanceMatrix.needsUpdate = true;
     if (instNow.instanceColor) instNow.instanceColor.needsUpdate = true;
@@ -12422,6 +12505,9 @@ function ClusterMapViewport3D({
     nodes,
     selectedId,
     searchHighlightId,
+    nodeSizeMul,
+    nodeOutlineMul,
+    mapSpreadMul,
     ensureInstCapacity,
     toNodeColor,
     requestRender,
@@ -19782,6 +19868,9 @@ export function ClusterMap({
             searchHighlightId={searchHighlightId}
             resetKey={resetKey}
             lowPowerMode={lowPowerMode}
+            nodeSizeMul={nodeSizeMul}
+            nodeOutlineMul={nodeOutlineMul}
+            mapSpreadMul={mapSpreadMul}
             onSelectId={handle3dSelectId}
           />
         )}
