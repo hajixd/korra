@@ -441,6 +441,36 @@ const computeBacktestAnalyticsOnServer = async (
       data.performanceStatsTemporalCharts && typeof data.performanceStatsTemporalCharts === "object"
         ? (data.performanceStatsTemporalCharts as PerformanceStatsTemporalCharts)
         : { ...EMPTY_PERFORMANCE_STATS_TEMPORAL_CHARTS },
+    entryExitStats:
+      data.entryExitStats && typeof data.entryExitStats === "object"
+        ? {
+            entry: Array.isArray((data.entryExitStats as any).entry)
+              ? ((data.entryExitStats as any).entry as Array<[string, number]>)
+              : [],
+            exit: Array.isArray((data.entryExitStats as any).exit)
+              ? ((data.entryExitStats as any).exit as Array<[string, number]>)
+              : []
+          }
+        : { entry: [], exit: [] },
+    entryExitChartData:
+      data.entryExitChartData && typeof data.entryExitChartData === "object"
+        ? {
+            entry: Array.isArray((data.entryExitChartData as any).entry)
+              ? ((data.entryExitChartData as any).entry as Array<{
+                  bucket: string;
+                  count: number;
+                  share: number;
+                }>)
+              : [],
+            exit: Array.isArray((data.entryExitChartData as any).exit)
+              ? ((data.entryExitChartData as any).exit as Array<{
+                  bucket: string;
+                  count: number;
+                  share: number;
+                }>)
+              : []
+          }
+        : { entry: [], exit: [] },
     backtestClusterData:
       data.backtestClusterData && typeof data.backtestClusterData === "object"
         ? {
@@ -599,6 +629,7 @@ type BacktestAnalyticsServerPayload = {
   performanceStatsModel: string;
   isCalendarBacktestTabActive: boolean;
   isPerformanceStatsBacktestTabActive: boolean;
+  isEntryExitBacktestTabActive: boolean;
   isClusterBacktestTabActive: boolean;
 };
 
@@ -617,6 +648,14 @@ type BacktestAnalyticsServerResponse = {
   selectedBacktestDayTrades: HistoryItem[];
   performanceStatsModelOptions: string[];
   performanceStatsTemporalCharts: PerformanceStatsTemporalCharts;
+  entryExitStats: {
+    entry: Array<[string, number]>;
+    exit: Array<[string, number]>;
+  };
+  entryExitChartData: {
+    entry: Array<{ bucket: string; count: number; share: number }>;
+    exit: Array<{ bucket: string; count: number; share: number }>;
+  };
   backtestClusterData: {
     total: number;
     nodes: BacktestClusterNode[];
@@ -694,6 +733,14 @@ const EMPTY_BACKTEST_ANALYTICS_RESPONSE: BacktestAnalyticsServerResponse = {
   selectedBacktestDayTrades: [],
   performanceStatsModelOptions: ["All"],
   performanceStatsTemporalCharts: { ...EMPTY_PERFORMANCE_STATS_TEMPORAL_CHARTS },
+  entryExitStats: {
+    entry: [],
+    exit: []
+  },
+  entryExitChartData: {
+    entry: [],
+    exit: []
+  },
   backtestClusterData: {
     total: 0,
     nodes: [],
@@ -12131,6 +12178,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         performanceStatsModel,
         isCalendarBacktestTabActive,
         isPerformanceStatsBacktestTabActive,
+        isEntryExitBacktestTabActive,
         isClusterBacktestTabActive
       },
       controller.signal
@@ -12159,6 +12207,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     deferredBacktestAnalyticsTrades,
     isCalendarBacktestTabActive,
     isClusterBacktestTabActive,
+    isEntryExitBacktestTabActive,
     isPerformanceStatsBacktestTabActive,
     panelAnalyticsData.confidenceByIdEntries,
     performanceStatsModel,
@@ -12174,6 +12223,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const mainStatsAiEfficiency = backtestAnalyticsData.mainStatsAiEfficiency;
   const mainStatsAiEffectivenessPct = backtestAnalyticsData.mainStatsAiEffectivenessPct;
   const mainStatsAiEfficacyPct = backtestAnalyticsData.mainStatsAiEfficacyPct;
+  const entryExitStats = backtestAnalyticsData.entryExitStats;
+  const entryExitChartData = backtestAnalyticsData.entryExitChartData;
 
   const aiLibraryInsights = useMemo(() => {
     if (!shouldComputeAiLibraryInsights) {
@@ -14306,50 +14357,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return new Set(dimensionStats.keptKeys);
   }, [dimensionStats]);
-
-  const entryExitStats = useMemo(() => {
-    if (!isEntryExitBacktestTabActive) {
-      return {
-        entry: [] as Array<[string, number]>,
-        exit: [] as Array<[string, number]>
-      };
-    }
-
-    const entryCounts: Record<string, number> = {};
-    const exitCounts: Record<string, number> = {};
-
-    for (const trade of deferredBacktestAnalyticsTrades) {
-      const entryKey = trade.entrySource || "Unknown";
-      const exitKey = trade.exitReason || "None";
-      entryCounts[entryKey] = (entryCounts[entryKey] ?? 0) + 1;
-      exitCounts[exitKey] = (exitCounts[exitKey] ?? 0) + 1;
-    }
-
-    const toSorted = (counts: Record<string, number>) => {
-      return Object.entries(counts).sort((left, right) => right[1] - left[1]);
-    };
-
-    return {
-      entry: toSorted(entryCounts),
-      exit: toSorted(exitCounts)
-    };
-  }, [deferredBacktestAnalyticsTrades, isEntryExitBacktestTabActive]);
-
-  const entryExitChartData = useMemo(() => {
-    const toRows = (source: Array<[string, number]>) => {
-      const total = source.reduce((sum, [, count]) => sum + count, 0);
-      return source.map(([bucket, count]) => ({
-        bucket,
-        count,
-        share: total > 0 ? (count / total) * 100 : 0
-      }));
-    };
-
-    return {
-      entry: toRows(entryExitStats.entry),
-      exit: toRows(entryExitStats.exit)
-    };
-  }, [entryExitStats]);
 
   const runPropFirm = () => {
     if (backtestTrades.length === 0) {
