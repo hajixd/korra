@@ -12146,6 +12146,19 @@ function ClusterMapViewport3D({
     scene.add(grid);
 
     const nodeGeo = new (THREE as any).IcosahedronGeometry(1, 1);
+    // Instanced colors in Three.js still route through the `color` vertex path.
+    // Ensure a white base vertex-color attribute exists, otherwise nodes multiply
+    // against (0,0,0) and appear black.
+    if (!(nodeGeo as any).getAttribute("color")) {
+      const posAttr = (nodeGeo as any).getAttribute("position");
+      const vCount = Number(posAttr?.count || 0);
+      const baseColors = new Float32Array(Math.max(0, vCount * 3));
+      baseColors.fill(1);
+      (nodeGeo as any).setAttribute(
+        "color",
+        new (THREE as any).BufferAttribute(baseColors, 3)
+      );
+    }
     // Unlit material keeps node colors faithful to 2D palette and avoids
     // dark/black shading artifacts across devices/GPUs.
     const nodeMat = new (THREE as any).MeshBasicMaterial({
