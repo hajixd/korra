@@ -319,6 +319,160 @@ const computeBacktestRowsOnServer = async (
   return normalizeBacktestHistoryRows(rows);
 };
 
+type PanelAnalyticsServerPayload = {
+  panelSourceTrades: HistoryItem[];
+  panelBacktestFilterSettings: BacktestFilterSettings;
+  panelConfidenceGateDisabled: boolean;
+  panelEffectiveConfidenceThreshold: number;
+  activePanelSourceTrades: HistoryItem[];
+  activePanelBacktestFilterSettings: BacktestFilterSettings;
+  activePanelConfidenceGateDisabled: boolean;
+  activePanelEffectiveConfidenceThreshold: number;
+  aiLibraryDefaultsById: Record<string, Record<string, AiLibrarySettingValue>>;
+};
+
+type PanelAnalyticsServerResponse = {
+  dateFilteredTrades: HistoryItem[];
+  libraryCandidateTrades: HistoryItem[];
+  timeFilteredTrades: HistoryItem[];
+  confidenceByIdEntries: Array<[string, number]>;
+  chartPanelHistoryRows: HistoryItem[];
+  activePanelHistoryRows: HistoryItem[];
+};
+
+const computePanelAnalyticsOnServer = async (
+  payload: PanelAnalyticsServerPayload,
+  signal?: AbortSignal
+): Promise<PanelAnalyticsServerResponse> => {
+  const response = await fetch("/api/backtest/panel-analytics", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+    signal
+  });
+
+  if (!response.ok) {
+    throw new Error(`Panel analytics server compute failed (${response.status}).`);
+  }
+
+  const data = (await response.json()) as Partial<PanelAnalyticsServerResponse>;
+  return {
+    dateFilteredTrades: Array.isArray(data.dateFilteredTrades) ? data.dateFilteredTrades : [],
+    libraryCandidateTrades: Array.isArray(data.libraryCandidateTrades)
+      ? data.libraryCandidateTrades
+      : [],
+    timeFilteredTrades: Array.isArray(data.timeFilteredTrades) ? data.timeFilteredTrades : [],
+    confidenceByIdEntries: Array.isArray(data.confidenceByIdEntries)
+      ? (data.confidenceByIdEntries as Array<[string, number]>)
+      : [],
+    chartPanelHistoryRows: Array.isArray(data.chartPanelHistoryRows) ? data.chartPanelHistoryRows : [],
+    activePanelHistoryRows: Array.isArray(data.activePanelHistoryRows) ? data.activePanelHistoryRows : []
+  };
+};
+
+const computeBacktestAnalyticsOnServer = async (
+  payload: BacktestAnalyticsServerPayload,
+  signal?: AbortSignal
+): Promise<BacktestAnalyticsServerResponse> => {
+  const response = await fetch("/api/backtest/analytics", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+    signal
+  });
+
+  if (!response.ok) {
+    throw new Error(`Backtest analytics server compute failed (${response.status}).`);
+  }
+
+  const data = (await response.json()) as Partial<BacktestAnalyticsServerResponse>;
+  return {
+    backtestSummary:
+      data.backtestSummary && typeof data.backtestSummary === "object"
+        ? { ...EMPTY_BACKTEST_SUMMARY_STATS, ...(data.backtestSummary as BacktestSummaryStats) }
+        : { ...EMPTY_BACKTEST_SUMMARY_STATS },
+    baselineMainStatsSummary:
+      data.baselineMainStatsSummary && typeof data.baselineMainStatsSummary === "object"
+        ? {
+            ...EMPTY_BACKTEST_SUMMARY_STATS,
+            ...(data.baselineMainStatsSummary as BacktestSummaryStats)
+          }
+        : { ...EMPTY_BACKTEST_SUMMARY_STATS },
+    mainStatsSummary:
+      data.mainStatsSummary && typeof data.mainStatsSummary === "object"
+        ? { ...EMPTY_BACKTEST_SUMMARY_STATS, ...(data.mainStatsSummary as BacktestSummaryStats) }
+        : { ...EMPTY_BACKTEST_SUMMARY_STATS },
+    mainStatsSessionRows: Array.isArray(data.mainStatsSessionRows)
+      ? (data.mainStatsSessionRows as MainStatsBucketRow[])
+      : [],
+    mainStatsModelRows: Array.isArray(data.mainStatsModelRows)
+      ? (data.mainStatsModelRows as MainStatsBucketRow[])
+      : [],
+    mainStatsMonthRows: Array.isArray(data.mainStatsMonthRows)
+      ? (data.mainStatsMonthRows as MainStatsMonthRow[])
+      : [],
+    mainStatsAiEfficiency:
+      typeof data.mainStatsAiEfficiency === "number" ? data.mainStatsAiEfficiency : null,
+    mainStatsAiEffectivenessPct:
+      typeof data.mainStatsAiEffectivenessPct === "number"
+        ? data.mainStatsAiEffectivenessPct
+        : null,
+    mainStatsAiEfficacyPct:
+      typeof data.mainStatsAiEfficacyPct === "number" ? data.mainStatsAiEfficacyPct : null,
+    availableBacktestMonths: Array.isArray(data.availableBacktestMonths)
+      ? data.availableBacktestMonths.map((value) => String(value))
+      : [],
+    calendarActivityEntries: Array.isArray(data.calendarActivityEntries)
+      ? (data.calendarActivityEntries as Array<[string, { count: number; wins: number; pnl: number }]>)
+      : [],
+    selectedBacktestDayTrades: Array.isArray(data.selectedBacktestDayTrades)
+      ? (data.selectedBacktestDayTrades as HistoryItem[])
+      : [],
+    performanceStatsModelOptions: Array.isArray(data.performanceStatsModelOptions)
+      ? data.performanceStatsModelOptions.map((value) => String(value))
+      : ["All"],
+    performanceStatsTemporalCharts:
+      data.performanceStatsTemporalCharts && typeof data.performanceStatsTemporalCharts === "object"
+        ? (data.performanceStatsTemporalCharts as PerformanceStatsTemporalCharts)
+        : { ...EMPTY_PERFORMANCE_STATS_TEMPORAL_CHARTS },
+    backtestClusterData:
+      data.backtestClusterData && typeof data.backtestClusterData === "object"
+        ? {
+            total: Number((data.backtestClusterData as any).total) || 0,
+            nodes: Array.isArray((data.backtestClusterData as any).nodes)
+              ? ((data.backtestClusterData as any).nodes as BacktestClusterNode[])
+              : [],
+            groups: Array.isArray((data.backtestClusterData as any).groups)
+              ? ((data.backtestClusterData as any).groups as BacktestClusterGroup[])
+              : []
+          }
+        : { total: 0, nodes: [], groups: [] },
+    backtestClusterViewOptions:
+      data.backtestClusterViewOptions && typeof data.backtestClusterViewOptions === "object"
+        ? {
+            sessions: Array.isArray((data.backtestClusterViewOptions as any).sessions)
+              ? ((data.backtestClusterViewOptions as any).sessions as string[])
+              : [],
+            months: Array.isArray((data.backtestClusterViewOptions as any).months)
+              ? ((data.backtestClusterViewOptions as any).months as number[])
+              : [],
+            weekdays: Array.isArray((data.backtestClusterViewOptions as any).weekdays)
+              ? ((data.backtestClusterViewOptions as any).weekdays as number[])
+              : [],
+            hours: Array.isArray((data.backtestClusterViewOptions as any).hours)
+              ? ((data.backtestClusterViewOptions as any).hours as number[])
+              : []
+          }
+        : { sessions: [], months: [], weekdays: [], hours: [] }
+  };
+};
+
 type BacktestClusterGroupId = "momentum" | "trend" | "trap" | "chop";
 type BacktestClusterLegendKey = "closedWin" | "closedLoss" | BacktestClusterGroupId;
 
@@ -364,6 +518,193 @@ type BacktestClusterGroup = {
   border: string;
   glow: string;
   members: string[];
+};
+
+type BacktestSummaryStats = {
+  tradeCount: number;
+  netPnl: number;
+  totalPnl: number;
+  winRate: number;
+  profitFactor: number;
+  avgPnl: number;
+  avgHoldMinutes: number;
+  avgWinDurationMin: number;
+  avgLossDurationMin: number;
+  avgR: number;
+  avgWin: number;
+  avgLoss: number;
+  averageConfidence: number;
+  tradesPerDay: number;
+  tradesPerWeek: number;
+  tradesPerMonth: number;
+  consistencyPerDay: number;
+  consistencyPerWeek: number;
+  consistencyPerMonth: number;
+  consistencyPerTrade: number;
+  avgPnlPerDay: number;
+  avgPnlPerWeek: number;
+  avgPnlPerMonth: number;
+  avgPeakPerTrade: number;
+  avgMaxDrawdownPerTrade: number;
+  avgTimeInProfitMin: number;
+  avgTimeInDeficitMin: number;
+  sharpe: number;
+  sortino: number;
+  wins: number;
+  losses: number;
+  grossWins: number;
+  grossLosses: number;
+  maxWin: number;
+  maxLoss: number;
+  maxDrawdown: number;
+  bestDay: { key: string; count: number; pnl: number } | null;
+  worstDay: { key: string; count: number; pnl: number } | null;
+};
+
+type MainStatsBucketRow = {
+  label: string;
+  total: number;
+  trades: number;
+};
+
+type MainStatsMonthRow = {
+  key: string;
+  total: number;
+  trades: number;
+  months: number;
+  avgPerTrade: number;
+};
+
+type TemporalChartRow = {
+  bucket: string;
+  pnl: number;
+  count: number;
+};
+
+type PerformanceStatsTemporalCharts = {
+  hours: TemporalChartRow[];
+  weekday: TemporalChartRow[];
+  month: TemporalChartRow[];
+  year: TemporalChartRow[];
+  hasData: boolean;
+};
+
+type BacktestAnalyticsServerPayload = {
+  backtestTrades: HistoryItem[];
+  baselineMainStatsTrades: HistoryItem[];
+  confidenceByIdEntries: Array<[string, number]>;
+  aiMode: "off" | "knn" | "hdbscan";
+  confidenceGateDisabled: boolean;
+  selectedBacktestDateKey: string;
+  performanceStatsModel: string;
+  isCalendarBacktestTabActive: boolean;
+  isPerformanceStatsBacktestTabActive: boolean;
+  isClusterBacktestTabActive: boolean;
+};
+
+type BacktestAnalyticsServerResponse = {
+  backtestSummary: BacktestSummaryStats;
+  baselineMainStatsSummary: BacktestSummaryStats;
+  mainStatsSummary: BacktestSummaryStats;
+  mainStatsSessionRows: MainStatsBucketRow[];
+  mainStatsModelRows: MainStatsBucketRow[];
+  mainStatsMonthRows: MainStatsMonthRow[];
+  mainStatsAiEfficiency: number | null;
+  mainStatsAiEffectivenessPct: number | null;
+  mainStatsAiEfficacyPct: number | null;
+  availableBacktestMonths: string[];
+  calendarActivityEntries: Array<[string, { count: number; wins: number; pnl: number }]>;
+  selectedBacktestDayTrades: HistoryItem[];
+  performanceStatsModelOptions: string[];
+  performanceStatsTemporalCharts: PerformanceStatsTemporalCharts;
+  backtestClusterData: {
+    total: number;
+    nodes: BacktestClusterNode[];
+    groups: BacktestClusterGroup[];
+  };
+  backtestClusterViewOptions: {
+    sessions: string[];
+    months: number[];
+    weekdays: number[];
+    hours: number[];
+  };
+};
+
+const EMPTY_BACKTEST_SUMMARY_STATS: BacktestSummaryStats = {
+  tradeCount: 0,
+  netPnl: 0,
+  totalPnl: 0,
+  winRate: 0,
+  profitFactor: 0,
+  avgPnl: 0,
+  avgHoldMinutes: 0,
+  avgWinDurationMin: 0,
+  avgLossDurationMin: 0,
+  avgR: 0,
+  avgWin: 0,
+  avgLoss: 0,
+  averageConfidence: 0,
+  tradesPerDay: 0,
+  tradesPerWeek: 0,
+  tradesPerMonth: 0,
+  consistencyPerDay: 0,
+  consistencyPerWeek: 0,
+  consistencyPerMonth: 0,
+  consistencyPerTrade: 0,
+  avgPnlPerDay: 0,
+  avgPnlPerWeek: 0,
+  avgPnlPerMonth: 0,
+  avgPeakPerTrade: 0,
+  avgMaxDrawdownPerTrade: 0,
+  avgTimeInProfitMin: 0,
+  avgTimeInDeficitMin: 0,
+  sharpe: 0,
+  sortino: 0,
+  wins: 0,
+  losses: 0,
+  grossWins: 0,
+  grossLosses: 0,
+  maxWin: 0,
+  maxLoss: 0,
+  maxDrawdown: 0,
+  bestDay: null,
+  worstDay: null
+};
+
+const EMPTY_PERFORMANCE_STATS_TEMPORAL_CHARTS: PerformanceStatsTemporalCharts = {
+  hours: [],
+  weekday: [],
+  month: [],
+  year: [],
+  hasData: false
+};
+
+const EMPTY_BACKTEST_ANALYTICS_RESPONSE: BacktestAnalyticsServerResponse = {
+  backtestSummary: { ...EMPTY_BACKTEST_SUMMARY_STATS },
+  baselineMainStatsSummary: { ...EMPTY_BACKTEST_SUMMARY_STATS },
+  mainStatsSummary: { ...EMPTY_BACKTEST_SUMMARY_STATS },
+  mainStatsSessionRows: [],
+  mainStatsModelRows: [],
+  mainStatsMonthRows: [],
+  mainStatsAiEfficiency: null,
+  mainStatsAiEffectivenessPct: null,
+  mainStatsAiEfficacyPct: null,
+  availableBacktestMonths: [],
+  calendarActivityEntries: [],
+  selectedBacktestDayTrades: [],
+  performanceStatsModelOptions: ["All"],
+  performanceStatsTemporalCharts: { ...EMPTY_PERFORMANCE_STATS_TEMPORAL_CHARTS },
+  backtestClusterData: {
+    total: 0,
+    nodes: [],
+    groups: []
+  },
+  backtestClusterViewOptions: {
+    sessions: [],
+    months: [],
+    weekdays: [],
+    hours: []
+  }
 };
 
 type ActionItem = {
@@ -2790,22 +3131,8 @@ const getTradeMonthIndex = (timestampSeconds: UTCTimestamp): number => {
   return new Date(Number(timestampSeconds) * 1000).getUTCMonth();
 };
 
-const getTradeCalendarMonthKey = (timestampSeconds: UTCTimestamp): string => {
-  return String(getTradeMonthIndex(timestampSeconds) + 1).padStart(2, "0");
-};
-
 const getTradeHour = (timestampSeconds: UTCTimestamp): number => {
   return new Date(Number(timestampSeconds) * 1000).getUTCHours();
-};
-
-const getTradeWeekKey = (timestampSeconds: UTCTimestamp): string => {
-  const date = new Date(Number(timestampSeconds) * 1000);
-  const day = date.getUTCDay();
-  const weekStart = new Date(
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - day)
-  );
-
-  return weekStart.toISOString().slice(0, 10);
 };
 
 const getMonthLabel = (monthKey: string): string => {
@@ -5532,159 +5859,6 @@ const enforceMaxConcurrentHistoryRows = (
     (left, right) =>
       Number(left.exitTime) - Number(right.exitTime) || left.id.localeCompare(right.id)
   );
-};
-
-const summarizeBacktestTrades = (
-  trades: HistoryItem[],
-  confidenceResolver: (trade: HistoryItem) => number = getTradeConfidenceScore
-) => {
-  let netPnl = 0;
-  let grossWins = 0;
-  let grossLosses = 0;
-  let wins = 0;
-  let losses = 0;
-  let totalHoldMinutes = 0;
-  let totalWinHoldMinutes = 0;
-  let totalLossHoldMinutes = 0;
-  let maxWin = 0;
-  let maxLoss = 0;
-  let totalR = 0;
-  let totalConfidence = 0;
-  let estimatedPeakTotal = 0;
-  let estimatedDrawdownTotal = 0;
-  let estimatedProfitMinutes = 0;
-  let estimatedDeficitMinutes = 0;
-  let runningPnl = 0;
-  let peakPnl = 0;
-  let maxDrawdown = 0;
-  const dayMap = new Map<string, { key: string; count: number; pnl: number }>();
-  const weekMap = new Map<string, { key: string; count: number; pnl: number }>();
-  const monthMap = new Map<string, { key: string; count: number; pnl: number }>();
-  const pnlSeries: number[] = [];
-
-  for (const trade of trades) {
-    const holdMinutes = Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
-    const targetPotentialUsd = Math.abs(trade.targetPrice - trade.entryPrice) * Math.max(1, trade.units);
-    const stopPotentialUsd = Math.abs(trade.entryPrice - trade.stopPrice) * Math.max(1, trade.units);
-    const favorableShare = trade.result === "Win" ? 0.68 : 0.32;
-    netPnl += trade.pnlUsd;
-    runningPnl += trade.pnlUsd;
-    peakPnl = Math.max(peakPnl, runningPnl);
-    maxDrawdown = Math.min(maxDrawdown, runningPnl - peakPnl);
-    maxWin = Math.max(maxWin, trade.pnlUsd);
-    maxLoss = Math.min(maxLoss, trade.pnlUsd);
-    totalHoldMinutes += holdMinutes;
-    totalConfidence += confidenceResolver(trade) * 100;
-    estimatedPeakTotal += Math.max(Math.max(trade.pnlUsd, 0), targetPotentialUsd);
-    estimatedDrawdownTotal += Math.max(Math.abs(Math.min(trade.pnlUsd, 0)), stopPotentialUsd);
-    estimatedProfitMinutes += holdMinutes * favorableShare;
-    estimatedDeficitMinutes += holdMinutes * (1 - favorableShare);
-    pnlSeries.push(trade.pnlUsd);
-
-    if (trade.pnlUsd >= 0) {
-      grossWins += trade.pnlUsd;
-      totalWinHoldMinutes += holdMinutes;
-    } else {
-      grossLosses += trade.pnlUsd;
-      losses += 1;
-      totalLossHoldMinutes += holdMinutes;
-    }
-
-    if (trade.result === "Win") {
-      wins += 1;
-    }
-
-    const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
-    const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
-    totalR += rewardDistance / riskDistance;
-
-    const dayKey = getTradeDayKey(trade.exitTime);
-    const currentDay = dayMap.get(dayKey) ?? { key: dayKey, count: 0, pnl: 0 };
-    currentDay.count += 1;
-    currentDay.pnl += trade.pnlUsd;
-    dayMap.set(dayKey, currentDay);
-
-    const weekKey = getTradeWeekKey(trade.exitTime);
-    const currentWeek = weekMap.get(weekKey) ?? { key: weekKey, count: 0, pnl: 0 };
-    currentWeek.count += 1;
-    currentWeek.pnl += trade.pnlUsd;
-    weekMap.set(weekKey, currentWeek);
-
-    const monthKey = getTradeMonthKey(trade.exitTime);
-    const currentMonth = monthMap.get(monthKey) ?? { key: monthKey, count: 0, pnl: 0 };
-    currentMonth.count += 1;
-    currentMonth.pnl += trade.pnlUsd;
-    monthMap.set(monthKey, currentMonth);
-  }
-
-  const dayRows = Array.from(dayMap.values()).sort((a, b) => a.key.localeCompare(b.key));
-  const weekRows = Array.from(weekMap.values()).sort((a, b) => a.key.localeCompare(b.key));
-  const monthRows = Array.from(monthMap.values()).sort((a, b) => a.key.localeCompare(b.key));
-  const bestDay = [...dayRows].sort((a, b) => b.pnl - a.pnl)[0] ?? null;
-  const worstDay = [...dayRows].sort((a, b) => a.pnl - b.pnl)[0] ?? null;
-  const tradeCount = trades.length;
-  const avgPnl = tradeCount > 0 ? netPnl / tradeCount : 0;
-  const avgWin = wins > 0 ? grossWins / wins : 0;
-  const avgLoss = losses > 0 ? grossLosses / losses : 0;
-  const mean = avgPnl;
-  const variance =
-    tradeCount > 0
-      ? pnlSeries.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(1, tradeCount)
-      : 0;
-  const stdDev = Math.sqrt(variance);
-  const downsideValues = pnlSeries.filter((value) => value < 0);
-  const downsideVariance =
-    downsideValues.length > 0
-      ? downsideValues.reduce((sum, value) => sum + value ** 2, 0) / downsideValues.length
-      : 0;
-  const downsideDeviation = Math.sqrt(downsideVariance);
-  const positiveDays = dayRows.filter((row) => row.pnl >= 0).length;
-  const positiveWeeks = weekRows.filter((row) => row.pnl >= 0).length;
-  const positiveMonths = monthRows.filter((row) => row.pnl >= 0).length;
-  const sharpe = stdDev > 0 ? mean / stdDev : 0;
-  const sortino = downsideDeviation > 0 ? mean / downsideDeviation : 0;
-
-  return {
-    tradeCount,
-    netPnl,
-    totalPnl: netPnl,
-    winRate: tradeCount > 0 ? (wins / tradeCount) * 100 : 0,
-    profitFactor:
-      grossLosses === 0 ? (grossWins > 0 ? grossWins : 0) : grossWins / Math.abs(grossLosses),
-    avgPnl,
-    avgHoldMinutes: tradeCount > 0 ? totalHoldMinutes / tradeCount : 0,
-    avgWinDurationMin: wins > 0 ? totalWinHoldMinutes / wins : 0,
-    avgLossDurationMin: losses > 0 ? totalLossHoldMinutes / losses : 0,
-    avgR: tradeCount > 0 ? totalR / tradeCount : 0,
-    avgWin,
-    avgLoss,
-    averageConfidence: tradeCount > 0 ? totalConfidence / tradeCount : 0,
-    tradesPerDay: dayRows.length > 0 ? tradeCount / dayRows.length : 0,
-    tradesPerWeek: weekRows.length > 0 ? tradeCount / weekRows.length : 0,
-    tradesPerMonth: monthRows.length > 0 ? tradeCount / monthRows.length : 0,
-    consistencyPerDay: dayRows.length > 0 ? (positiveDays / dayRows.length) * 100 : 0,
-    consistencyPerWeek: weekRows.length > 0 ? (positiveWeeks / weekRows.length) * 100 : 0,
-    consistencyPerMonth: monthRows.length > 0 ? (positiveMonths / monthRows.length) * 100 : 0,
-    consistencyPerTrade: tradeCount > 0 ? (wins / tradeCount) * 100 : 0,
-    avgPnlPerDay: dayRows.length > 0 ? netPnl / dayRows.length : 0,
-    avgPnlPerWeek: weekRows.length > 0 ? netPnl / weekRows.length : 0,
-    avgPnlPerMonth: monthRows.length > 0 ? netPnl / monthRows.length : 0,
-    avgPeakPerTrade: tradeCount > 0 ? estimatedPeakTotal / tradeCount : 0,
-    avgMaxDrawdownPerTrade: tradeCount > 0 ? estimatedDrawdownTotal / tradeCount : 0,
-    avgTimeInProfitMin: tradeCount > 0 ? estimatedProfitMinutes / tradeCount : 0,
-    avgTimeInDeficitMin: tradeCount > 0 ? estimatedDeficitMinutes / tradeCount : 0,
-    sharpe,
-    sortino,
-    wins,
-    losses,
-    grossWins,
-    grossLosses,
-    maxWin,
-    maxLoss,
-    maxDrawdown,
-    bestDay,
-    worstDay
-  };
 };
 
 const TabIcon = ({ tab }: { tab: PanelTab }) => {
@@ -9244,461 +9418,107 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     usesChartPanelLiveSimulationForHistory
       ? chartPanelReplayRows
       : backtestSourceTrades;
-  const antiCheatBacktestContext = useMemo(() => {
-    const startMs = getUtcDayStartMs(panelBacktestFilterSettings.statsDateStart);
-    const endExclusiveMs = getUtcDayEndExclusiveMs(panelBacktestFilterSettings.statsDateEnd);
-    const dateFilteredTrades = panelSourceTrades.filter((trade) => {
-      const tradeMs = Number(trade.entryTime) * 1000;
-
-      if (!Number.isFinite(tradeMs)) {
-        return false;
-      }
-
-      if (startMs !== null && tradeMs < startMs) {
-        return false;
-      }
-
-      if (endExclusiveMs !== null && tradeMs >= endExclusiveMs) {
-        return false;
-      }
-
-      return true;
-    });
-    const timeFilteredBase = dateFilteredTrades.filter((trade) => {
-      const weekday = getWeekdayLabel(getTradeDayKey(trade.exitTime));
-      const session = getSessionLabel(trade.entryTime);
-      const monthIndex = getTradeMonthIndex(trade.exitTime);
-      const entryHour = getTradeHour(trade.entryTime);
-
-      return (
-        panelBacktestFilterSettings.enabledBacktestWeekdays.includes(weekday) &&
-        panelBacktestFilterSettings.enabledBacktestSessions.includes(session) &&
-        panelBacktestFilterSettings.enabledBacktestMonths.includes(monthIndex) &&
-        panelBacktestFilterSettings.enabledBacktestHours.includes(entryHour)
-      );
-    });
-    const confidenceById = new Map<string, number>();
-    const usesSplitValidation =
-      panelBacktestFilterSettings.antiCheatEnabled &&
-      panelBacktestFilterSettings.validationMode === "split";
-    const splitIndex = usesSplitValidation
-      ? Math.floor(timeFilteredBase.length * 0.5)
-      : 0;
-    const splitTrainingTrades = usesSplitValidation
-      ? timeFilteredBase.slice(0, splitIndex)
-      : timeFilteredBase;
-    const splitEvaluationTrades = usesSplitValidation
-      ? timeFilteredBase.slice(splitIndex)
-      : timeFilteredBase;
-
-    if (
-      panelBacktestFilterSettings.aiMode === "off" ||
-      !panelBacktestFilterSettings.antiCheatEnabled ||
-      timeFilteredBase.length === 0
-    ) {
-      return {
-        dateFilteredTrades,
-        libraryCandidateTrades: splitTrainingTrades,
-        timeFilteredTrades: splitEvaluationTrades,
-        confidenceById
-      };
+  const aiLibraryDefaultsById = useMemo(() => {
+    const next: Record<string, Record<string, AiLibrarySettingValue>> = {};
+    for (const [libraryId, definition] of Object.entries(aiLibraryDefById)) {
+      next[libraryId] = { ...(definition.defaults ?? {}) };
     }
+    return next;
+  }, [aiLibraryDefById]);
+  const [panelAnalyticsData, setPanelAnalyticsData] = useState<PanelAnalyticsServerResponse>({
+    dateFilteredTrades: [],
+    libraryCandidateTrades: [],
+    timeFilteredTrades: [],
+    confidenceByIdEntries: [],
+    chartPanelHistoryRows: [],
+    activePanelHistoryRows: []
+  });
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
 
-    const activeLibraryIds =
-      panelBacktestFilterSettings.selectedAiLibraries.length > 0
-        ? panelBacktestFilterSettings.selectedAiLibraries
-        : ["core"];
-    const timeFilteredTrades = splitEvaluationTrades;
-
-    const getLibrarySettings = (libraryId: string) => {
-      const definition = aiLibraryDefById[libraryId];
-      const defaults = definition?.defaults ?? {};
-      return {
-        ...(defaults as Record<string, AiLibrarySettingValue>),
-        ...((panelBacktestFilterSettings.selectedAiLibrarySettings[libraryId] ?? {}) as Record<
-          string,
-          AiLibrarySettingValue
-        >)
-      };
-    };
-
-    const getLibraryWeight = (libraryId: string) => {
-      const raw = Number(getLibrarySettings(libraryId).weight ?? 100);
-      const pct = raw <= 10 ? raw * 100 : raw;
-      return clamp(pct, 0, 5000) / 100;
-    };
-
-    const getLibraryStride = (libraryId: string) => {
-      return clamp(
-        Math.floor(Number(getLibrarySettings(libraryId).stride ?? 0) || 0),
-        0,
-        5000
-      );
-    };
-
-    const getLibraryMaxSamples = (libraryId: string, fallback = 96) => {
-      return clamp(
-        Math.floor(Number(getLibrarySettings(libraryId).maxSamples ?? fallback) || fallback),
-        0,
-        100000
-      );
-    };
-
-    const getLibraryCount = (libraryId: string, fallback = 24) => {
-      return clamp(
-        Math.floor(Number(getLibrarySettings(libraryId).count ?? fallback) || fallback),
-        0,
-        100000
-      );
-    };
-
-    const getTradeRiskReward = (trade: HistoryItem) => {
-      const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
-      const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
-      return rewardDistance / riskDistance;
-    };
-
-    const getSyntheticWinProb = (trade: HistoryItem) => {
-      const session = getSessionLabel(trade.entryTime);
-      const entryHour = getTradeHour(trade.entryTime);
-      const rr = getTradeRiskReward(trade);
-      const seed = hashSeedFromText(
-        `${trade.symbol}|${trade.entrySource}|${trade.side}|${trade.entryTime}`
-      );
-      let score = 0.5 + (((seed % 1000) / 999) - 0.5) * 0.12;
-
-      if (trade.side === "Long") {
-        score += 0.015;
-      }
-
-      if (session === "London") {
-        score += 0.035;
-      } else if (session === "New York") {
-        score += 0.025;
-      } else if (session === "Tokyo") {
-        score -= 0.01;
-      }
-
-      score += Math.sin((entryHour / 24) * Math.PI * 2) * 0.035;
-      score += clamp((rr - 1.1) * 0.045, -0.08, 0.08);
-
-      return clamp(score, 0.08, 0.92);
-    };
-
-    const pickLibrarySource = (
-      libraryId: string,
-      pool: HistoryItem[],
-      currentTrade: HistoryItem
-    ) => {
-      const settings = getLibrarySettings(libraryId);
-      const normalizedId = libraryId.toLowerCase();
-      const maxSamples = getLibraryMaxSamples(libraryId, 96);
-      const stride = getLibraryStride(libraryId);
-      let source: HistoryItem[] = [];
-
-      if (normalizedId === "suppressed") {
-        source = collectCappedItems(pool, {
-          cap: maxSamples,
-          stride,
-          predicate: (trade) => trade.result === "Loss"
-        });
-      } else if (normalizedId === "recent") {
-        const windowTrades = clamp(
-          Math.floor(Number(settings.windowTrades ?? 150) || 150),
-          0,
-          5000
-        );
-        const startIndex = Math.max(0, pool.length - windowTrades);
-        source =
-          windowTrades > 0
-            ? collectCappedItems(pool, {
-                cap: maxSamples,
-                stride,
-                startIndex,
-                endIndex: pool.length
-              })
-            : [];
-      } else if (normalizedId === "tokyo") {
-        source = collectCappedItems(pool, {
-          cap: maxSamples,
-          stride,
-          predicate: (trade) => getSessionLabel(trade.entryTime) === "Tokyo"
-        });
-      } else if (normalizedId === "sydney") {
-        source = collectCappedItems(pool, {
-          cap: maxSamples,
-          stride,
-          predicate: (trade) => getSessionLabel(trade.entryTime) === "Sydney"
-        });
-      } else if (normalizedId === "london") {
-        source = collectCappedItems(pool, {
-          cap: maxSamples,
-          stride,
-          predicate: (trade) => getSessionLabel(trade.entryTime) === "London"
-        });
-      } else if (normalizedId === "newyork") {
-        source = collectCappedItems(pool, {
-          cap: maxSamples,
-          stride,
-          predicate: (trade) => getSessionLabel(trade.entryTime) === "New York"
-        });
-      } else if (normalizedId === "terrific") {
-        const count = getLibraryCount(libraryId, 96);
-        const effectiveCap = Math.min(maxSamples, count);
-        const capped = collectCappedItems(pool, {
-          cap: effectiveCap
-        });
-        source = applyStrideToItems(
-          [...capped].sort((left, right) => right.pnlUsd - left.pnlUsd),
-          stride
-        );
-      } else if (normalizedId === "terrible") {
-        const count = getLibraryCount(libraryId, 96);
-        const effectiveCap = Math.min(maxSamples, count);
-        const capped = collectCappedItems(pool, {
-          cap: effectiveCap
-        });
-        source = applyStrideToItems(
-          [...capped].sort((left, right) => left.pnlUsd - right.pnlUsd),
-          stride
-        );
-      } else if ((settings.kind as string | undefined) === "model_sim") {
-        const targetModel = String(settings.model ?? currentTrade.entrySource);
-        source = collectCappedItems(pool, {
-          cap: maxSamples,
-          stride,
-          predicate: (trade) => trade.entrySource === targetModel
-        });
-      } else {
-        source = collectCappedItems(pool, {
-          cap: maxSamples,
-          stride
-        });
-      }
-
-      const baselineWinRate = getOutcomeWinRatePercent(
-        source,
-        (candidate) => candidate.result === "Win"
-      );
-      const targetWinRate = resolveAiLibraryTargetWinRate(
-        settings,
-        baselineWinRate,
-        source.length
-      );
-
-      return rebalanceItemsToTargetWinRate(
-        source,
-        maxSamples,
-        targetWinRate,
-        (candidate) => candidate.result === "Win",
-        normalizedId === "terrific" || normalizedId === "terrible"
-      );
-    };
-
-    const getSimilarityWeight = (currentTrade: HistoryItem, candidateTrade: HistoryItem) => {
-      let weight = 0.35;
-
-      if (candidateTrade.side === currentTrade.side) {
-        weight += 0.18;
-      }
-
-      if (candidateTrade.entrySource === currentTrade.entrySource) {
-        weight += 0.24;
-      }
-
-      if (candidateTrade.symbol === currentTrade.symbol) {
-        weight += 0.1;
-      }
-
-      if (getSessionLabel(candidateTrade.entryTime) === getSessionLabel(currentTrade.entryTime)) {
-        weight += 0.12;
-      }
-
-      const hourGap = Math.abs(
-        getTradeHour(candidateTrade.entryTime) - getTradeHour(currentTrade.entryTime)
-      );
-
-      if (hourGap === 0) {
-        weight += 0.08;
-      } else if (hourGap <= 2) {
-        weight += 0.04;
-      }
-
-      const rrGap = Math.abs(
-        getTradeRiskReward(candidateTrade) - getTradeRiskReward(currentTrade)
-      );
-      weight *= 1 / (1 + rrGap * 0.65);
-
-      const timeGapHours = Math.abs(
-        Number(currentTrade.entryTime) - Number(candidateTrade.entryTime)
-      ) / 3600;
-      weight *= 1 / (1 + timeGapHours / 72);
-
-      return clamp(weight, 0.02, 2);
-    };
-
-    for (let index = 0; index < timeFilteredBase.length; index += 1) {
-      const trade = timeFilteredBase[index]!;
-      const basePool =
-        panelBacktestFilterSettings.validationMode === "split"
-          ? splitTrainingTrades
-          : timeFilteredBase.slice(0, index);
-
-      if (basePool.length === 0) {
-        confidenceById.set(trade.id, getSyntheticWinProb(trade));
-        continue;
-      }
-
-      const baselineWinRate =
-        basePool.reduce((sum, candidate) => sum + (candidate.result === "Win" ? 1 : 0), 0) /
-        basePool.length;
-      let weightedWins = 0;
-      let weightedTotal = 0;
-      let similarityTotal = 0;
-      let sampleCount = 0;
-
-      for (const libraryId of activeLibraryIds) {
-        const libraryWeight = getLibraryWeight(libraryId);
-
-        if (libraryWeight <= 0) {
-          continue;
+    computePanelAnalyticsOnServer(
+      {
+        panelSourceTrades,
+        panelBacktestFilterSettings,
+        panelConfidenceGateDisabled,
+        panelEffectiveConfidenceThreshold,
+        activePanelSourceTrades:
+          usesChartPanelLiveSimulationForActive
+            ? chartPanelReplayRows
+            : backtestSourceTrades,
+        activePanelBacktestFilterSettings:
+          usesChartPanelLiveSimulationForActive
+            ? chartPanelFilterSettings
+            : appliedBacktestSettings,
+        activePanelConfidenceGateDisabled:
+          usesChartPanelLiveSimulationForActive
+            ? chartPanelConfidenceGateDisabled
+            : appliedConfidenceGateDisabled,
+        activePanelEffectiveConfidenceThreshold:
+          usesChartPanelLiveSimulationForActive
+            ? chartPanelEffectiveConfidenceThreshold
+            : appliedEffectiveConfidenceThreshold,
+        aiLibraryDefaultsById
+      },
+      controller.signal
+    )
+      .then((result) => {
+        if (cancelled || controller.signal.aborted) {
+          return;
         }
-
-        const source = pickLibrarySource(libraryId, basePool, trade);
-
-        for (const candidate of source) {
-          const similarityWeight = getSimilarityWeight(trade, candidate) * libraryWeight;
-          const outcome =
-            panelBacktestFilterSettings.validationMode === "synthetic"
-              ? getSyntheticWinProb(candidate)
-              : candidate.result === "Win"
-                ? 1
-                : 0;
-
-          weightedWins += similarityWeight * outcome;
-          weightedTotal += similarityWeight;
-          similarityTotal += similarityWeight;
-          sampleCount += 1;
+        setPanelAnalyticsData(result);
+      })
+      .catch(() => {
+        if (cancelled || controller.signal.aborted) {
+          return;
         }
-      }
+        setPanelAnalyticsData({
+          dateFilteredTrades: [],
+          libraryCandidateTrades: [],
+          timeFilteredTrades: [],
+          confidenceByIdEntries: [],
+          chartPanelHistoryRows: [],
+          activePanelHistoryRows: []
+        });
+      });
 
-      if (sampleCount === 0 || weightedTotal <= 0) {
-        confidenceById.set(
-          trade.id,
-          clamp(0.5 + (baselineWinRate - 0.5) * 0.2, 0.18, 0.82)
-        );
-        continue;
-      }
-
-      const weightedWinRate = weightedWins / weightedTotal;
-      const labelVariance = weightedWinRate * (1 - weightedWinRate) * 4;
-      const matchStrength = clamp(similarityTotal / Math.max(1, sampleCount), 0, 1);
-      const coverage = clamp(sampleCount / 12, 0, 1);
-      const shrink =
-        coverage * (0.2 + matchStrength * 0.8) * (0.35 + labelVariance * 0.65);
-      const confidence =
-        baselineWinRate + (weightedWinRate - baselineWinRate) * shrink;
-
-      confidenceById.set(trade.id, clamp(confidence, 0.02, 0.98));
-    }
-
-    return {
-      dateFilteredTrades,
-      libraryCandidateTrades: splitTrainingTrades,
-      timeFilteredTrades,
-      confidenceById
+    return () => {
+      cancelled = true;
+      controller.abort();
     };
   }, [
-    aiLibraryDefById,
+    aiLibraryDefaultsById,
+    panelSourceTrades,
     panelBacktestFilterSettings,
-    panelSourceTrades
+    panelConfidenceGateDisabled,
+    panelEffectiveConfidenceThreshold,
+    usesChartPanelLiveSimulationForActive,
+    chartPanelReplayRows,
+    backtestSourceTrades,
+    chartPanelFilterSettings,
+    appliedBacktestSettings,
+    chartPanelConfidenceGateDisabled,
+    appliedConfidenceGateDisabled,
+    chartPanelEffectiveConfidenceThreshold,
+    appliedEffectiveConfidenceThreshold
   ]);
+  const antiCheatBacktestContext = useMemo(() => {
+    return {
+      dateFilteredTrades: panelAnalyticsData.dateFilteredTrades,
+      libraryCandidateTrades: panelAnalyticsData.libraryCandidateTrades,
+      timeFilteredTrades: panelAnalyticsData.timeFilteredTrades,
+      confidenceById: new Map<string, number>(panelAnalyticsData.confidenceByIdEntries)
+    };
+  }, [panelAnalyticsData]);
   const getEffectiveTradeConfidenceScore = useCallback(
     (trade: HistoryItem) => {
       return antiCheatBacktestContext.confidenceById.get(trade.id) ?? getTradeConfidenceScore(trade);
     },
     [antiCheatBacktestContext]
   );
-  const chartPanelHistoryRows = useMemo(() => {
-    return antiCheatBacktestContext.timeFilteredTrades
-      .filter((trade) => {
-        const confidence = getEffectiveTradeConfidenceScore(trade) * 100;
-        return (
-          panelConfidenceGateDisabled ||
-          confidence >= panelEffectiveConfidenceThreshold
-        );
-      })
-      .sort((a, b) => Number(b.exitTime) - Number(a.exitTime) || b.id.localeCompare(a.id));
-  }, [
-    antiCheatBacktestContext,
-    getEffectiveTradeConfidenceScore,
-    panelConfidenceGateDisabled,
-    panelEffectiveConfidenceThreshold
-  ]);
-  const activePanelBacktestFilterSettings: BacktestFilterSettings =
-    usesChartPanelLiveSimulationForActive
-      ? chartPanelFilterSettings
-      : appliedBacktestSettings;
-  const activePanelConfidenceGateDisabled =
-    usesChartPanelLiveSimulationForActive
-      ? chartPanelConfidenceGateDisabled
-      : appliedConfidenceGateDisabled;
-  const activePanelEffectiveConfidenceThreshold =
-    usesChartPanelLiveSimulationForActive
-      ? chartPanelEffectiveConfidenceThreshold
-      : appliedEffectiveConfidenceThreshold;
-  const activePanelSourceTrades =
-    usesChartPanelLiveSimulationForActive
-      ? chartPanelReplayRows
-      : backtestSourceTrades;
-  const activePanelHistoryRows = useMemo(() => {
-    const startMs = getUtcDayStartMs(activePanelBacktestFilterSettings.statsDateStart);
-    const endExclusiveMs = getUtcDayEndExclusiveMs(activePanelBacktestFilterSettings.statsDateEnd);
-
-    return activePanelSourceTrades
-      .filter((trade) => {
-        const tradeMs = Number(trade.entryTime) * 1000;
-
-        if (!Number.isFinite(tradeMs)) {
-          return false;
-        }
-
-        if (startMs !== null && tradeMs < startMs) {
-          return false;
-        }
-
-        if (endExclusiveMs !== null && tradeMs >= endExclusiveMs) {
-          return false;
-        }
-
-        const weekday = getWeekdayLabel(getTradeDayKey(trade.exitTime));
-        const session = getSessionLabel(trade.entryTime);
-        const monthIndex = getTradeMonthIndex(trade.exitTime);
-        const entryHour = getTradeHour(trade.entryTime);
-
-        if (
-          !activePanelBacktestFilterSettings.enabledBacktestWeekdays.includes(weekday) ||
-          !activePanelBacktestFilterSettings.enabledBacktestSessions.includes(session) ||
-          !activePanelBacktestFilterSettings.enabledBacktestMonths.includes(monthIndex) ||
-          !activePanelBacktestFilterSettings.enabledBacktestHours.includes(entryHour)
-        ) {
-          return false;
-        }
-
-        const confidence = getEffectiveTradeConfidenceScore(trade) * 100;
-        return (
-          activePanelConfidenceGateDisabled ||
-          confidence >= activePanelEffectiveConfidenceThreshold
-        );
-      })
-      .sort((a, b) => Number(b.exitTime) - Number(a.exitTime) || b.id.localeCompare(a.id));
-  }, [
-    activePanelBacktestFilterSettings,
-    activePanelConfidenceGateDisabled,
-    activePanelEffectiveConfidenceThreshold,
-    activePanelSourceTrades,
-    getEffectiveTradeConfidenceScore
-  ]);
+  const chartPanelHistoryRows = panelAnalyticsData.chartPanelHistoryRows;
+  const activePanelHistoryRows = panelAnalyticsData.activePanelHistoryRows;
 
   const activeTrade = useMemo<ActiveTrade | null>(() => {
     if (activePanelHistoryRows.length === 0) {
@@ -12290,16 +12110,70 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         ? "Loading backtest data..."
         : "Loading tab data...";
 
-  const mainStatsTrades = useMemo(() => backtestTrades, [backtestTrades]);
-
   const baselineMainStatsTrades = useMemo(
     () => backtestTimeFilteredTrades,
     [backtestTimeFilteredTrades]
   );
+  const [backtestAnalyticsData, setBacktestAnalyticsData] =
+    useState<BacktestAnalyticsServerResponse>(EMPTY_BACKTEST_ANALYTICS_RESPONSE);
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
 
-  const backtestSummary = useMemo(() => {
-    return summarizeBacktestTrades(backtestTrades, getEffectiveTradeConfidenceScore);
-  }, [backtestTrades, getEffectiveTradeConfidenceScore]);
+    computeBacktestAnalyticsOnServer(
+      {
+        backtestTrades: deferredBacktestAnalyticsTrades,
+        baselineMainStatsTrades,
+        confidenceByIdEntries: panelAnalyticsData.confidenceByIdEntries,
+        aiMode: appliedBacktestSettings.aiMode,
+        confidenceGateDisabled: appliedConfidenceGateDisabled,
+        selectedBacktestDateKey,
+        performanceStatsModel,
+        isCalendarBacktestTabActive,
+        isPerformanceStatsBacktestTabActive,
+        isClusterBacktestTabActive
+      },
+      controller.signal
+    )
+      .then((result) => {
+        if (cancelled || controller.signal.aborted) {
+          return;
+        }
+        setBacktestAnalyticsData(result);
+      })
+      .catch(() => {
+        if (cancelled || controller.signal.aborted) {
+          return;
+        }
+        setBacktestAnalyticsData(EMPTY_BACKTEST_ANALYTICS_RESPONSE);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [
+    appliedBacktestSettings.aiMode,
+    appliedConfidenceGateDisabled,
+    baselineMainStatsTrades,
+    deferredBacktestAnalyticsTrades,
+    isCalendarBacktestTabActive,
+    isClusterBacktestTabActive,
+    isPerformanceStatsBacktestTabActive,
+    panelAnalyticsData.confidenceByIdEntries,
+    performanceStatsModel,
+    selectedBacktestDateKey
+  ]);
+
+  const backtestSummary = backtestAnalyticsData.backtestSummary;
+  const baselineMainStatsSummary = backtestAnalyticsData.baselineMainStatsSummary;
+  const mainStatsSummary = backtestAnalyticsData.mainStatsSummary;
+  const mainStatsSessionRows = backtestAnalyticsData.mainStatsSessionRows;
+  const mainStatsModelRows = backtestAnalyticsData.mainStatsModelRows;
+  const mainStatsMonthRows = backtestAnalyticsData.mainStatsMonthRows;
+  const mainStatsAiEfficiency = backtestAnalyticsData.mainStatsAiEfficiency;
+  const mainStatsAiEffectivenessPct = backtestAnalyticsData.mainStatsAiEffectivenessPct;
+  const mainStatsAiEfficacyPct = backtestAnalyticsData.mainStatsAiEfficacyPct;
 
   const aiLibraryInsights = useMemo(() => {
     if (!shouldComputeAiLibraryInsights) {
@@ -12667,14 +12541,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       )
     : 50;
 
-  const baselineMainStatsSummary = useMemo(() => {
-    return summarizeBacktestTrades(baselineMainStatsTrades, getEffectiveTradeConfidenceScore);
-  }, [baselineMainStatsTrades, getEffectiveTradeConfidenceScore]);
-
-  const mainStatsSummary = useMemo(() => {
-    return summarizeBacktestTrades(mainStatsTrades, getEffectiveTradeConfidenceScore);
-  }, [getEffectiveTradeConfidenceScore, mainStatsTrades]);
-
   const mainStatsTitle = "Main Statistics";
 
   const backtestDateRangeStartLabel = useMemo(() => {
@@ -12958,186 +12824,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return stats;
   }, [appliedBacktestSettings, backtestHasRun, backtestSummary.averageConfidence, backtestTrades.length]);
 
-  const mainStatsSessionRows = useMemo(() => {
-    const map = new Map<string, { label: string; total: number; trades: number }>();
-
-    for (const trade of mainStatsTrades) {
-      const label = getSessionLabel(trade.entryTime);
-      const current = map.get(label) ?? { label, total: 0, trades: 0 };
-      current.total += trade.pnlUsd;
-      current.trades += 1;
-      map.set(label, current);
-    }
-
-    return Array.from(map.values()).sort((left, right) => {
-      const leftIndex = backtestSessionLabels.indexOf(left.label as (typeof backtestSessionLabels)[number]);
-      const rightIndex = backtestSessionLabels.indexOf(right.label as (typeof backtestSessionLabels)[number]);
-
-      if (leftIndex !== -1 || rightIndex !== -1) {
-        if (leftIndex === -1) {
-          return 1;
-        }
-
-        if (rightIndex === -1) {
-          return -1;
-        }
-
-        return leftIndex - rightIndex;
-      }
-
-      return left.label.localeCompare(right.label);
-    });
-  }, [mainStatsTrades]);
-
-  const mainStatsModelRows = useMemo(() => {
-    const map = new Map<string, { label: string; total: number; trades: number }>();
-
-    for (const trade of mainStatsTrades) {
-      const label = trade.entrySource || "Unknown";
-      const current = map.get(label) ?? { label, total: 0, trades: 0 };
-      current.total += trade.pnlUsd;
-      current.trades += 1;
-      map.set(label, current);
-    }
-
-    return Array.from(map.values()).sort((left, right) => left.label.localeCompare(right.label));
-  }, [mainStatsTrades]);
-
-  const mainStatsMonthRows = useMemo(() => {
-    const monthBuckets = new Map<string, { key: string; pnl: number; trades: number }>();
-
-    for (const trade of mainStatsTrades) {
-      const key = getTradeMonthKey(trade.exitTime);
-      const monthKey = getTradeCalendarMonthKey(trade.exitTime);
-      const current = monthBuckets.get(key) ?? { key: monthKey, pnl: 0, trades: 0 };
-      current.pnl += trade.pnlUsd;
-      current.trades += 1;
-      monthBuckets.set(key, current);
-    }
-
-    const map = new Map<
-      string,
-      { key: string; total: number; trades: number; months: number; avgPerTrade: number }
-    >();
-
-    for (const bucket of monthBuckets.values()) {
-      const current = map.get(bucket.key) ?? {
-        key: bucket.key,
-        total: 0,
-        trades: 0,
-        months: 0,
-        avgPerTrade: 0
-      };
-      current.total += bucket.pnl;
-      current.trades += bucket.trades;
-      current.months += 1;
-      map.set(bucket.key, current);
-    }
-
-    return Array.from(map.values())
-      .map((row) => ({
-        ...row,
-        avgPerTrade: row.trades > 0 ? row.total / row.trades : 0,
-        total: row.months > 0 ? row.total / row.months : 0
-      }))
-      .sort((left, right) => Number(left.key) - Number(right.key));
-  }, [mainStatsTrades]);
-
-  const mainStatsAiEfficiency = useMemo(() => {
-    if (appliedBacktestSettings.aiMode === "off" || mainStatsTrades.length < 10) {
-      return null;
-    }
-
-    const points = mainStatsTrades.map((trade) => ({
-      score: getEffectiveTradeConfidenceScore(trade),
-      outcome: trade.pnlUsd >= 0 ? 1 : 0
-    }));
-    const positives = points.filter((point) => point.outcome === 1).length;
-    const negatives = points.length - positives;
-
-    if (positives < 2 || negatives < 2) {
-      return null;
-    }
-
-    points.sort((left, right) => left.score - right.score);
-
-    let positiveRankTotal = 0;
-    let index = 0;
-
-    while (index < points.length) {
-      let nextIndex = index + 1;
-
-      while (nextIndex < points.length && points[nextIndex].score === points[index].score) {
-        nextIndex += 1;
-      }
-
-      const averageRank = (index + 1 + nextIndex) / 2;
-
-      for (let offset = index; offset < nextIndex; offset += 1) {
-        if (points[offset].outcome === 1) {
-          positiveRankTotal += averageRank;
-        }
-      }
-
-      index = nextIndex;
-    }
-
-    const auc =
-      (positiveRankTotal - (positives * (positives + 1)) / 2) / (Math.max(1, positives) * Math.max(1, negatives));
-
-    return clamp(auc, 0, 1);
-  }, [appliedBacktestSettings.aiMode, getEffectiveTradeConfidenceScore, mainStatsTrades]);
-
-  const mainStatsAiEffectivenessPct = useMemo(() => {
-    if (
-      appliedBacktestSettings.aiMode === "off" ||
-      appliedConfidenceGateDisabled
-    ) {
-      return null;
-    }
-
-    if (baselineMainStatsTrades.length < 5 || mainStatsTrades.length < 5) {
-      return null;
-    }
-
-    return mainStatsSummary.winRate - baselineMainStatsSummary.winRate;
-  }, [
-    appliedConfidenceGateDisabled,
-    appliedBacktestSettings.aiMode,
-    baselineMainStatsSummary.winRate,
-    baselineMainStatsTrades.length,
-    mainStatsSummary.winRate,
-    mainStatsTrades.length
-  ]);
-
-  const mainStatsAiEfficacyPct = useMemo(() => {
-    if (
-      appliedBacktestSettings.aiMode === "off" ||
-      appliedConfidenceGateDisabled
-    ) {
-      return null;
-    }
-
-    if (baselineMainStatsTrades.length < 5 || mainStatsTrades.length < 5) {
-      return null;
-    }
-
-    const baselinePnl = baselineMainStatsSummary.totalPnl;
-    const currentPnl = mainStatsSummary.totalPnl;
-    const denominator =
-      Math.abs(baselinePnl) > 0.000000001
-        ? Math.abs(baselinePnl)
-        : Math.max(0.000000001, Math.abs(currentPnl));
-
-    return ((currentPnl - baselinePnl) / denominator) * 100;
-  }, [
-    appliedConfidenceGateDisabled,
-    appliedBacktestSettings.aiMode,
-    baselineMainStatsSummary.totalPnl,
-    baselineMainStatsTrades.length,
-    mainStatsSummary.totalPnl,
-    mainStatsTrades.length
-  ]);
 
   const activeMainStatsModelPnlIndex =
     mainStatsModelRows.length > 0 ? wrapIndex(mainStatsModelPnlIndex, mainStatsModelRows.length) : 0;
@@ -13765,39 +13451,30 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return stats;
   }, [mainStatisticsCards, mainStatsModelRows, mainStatsSessionRows, mainStatsMonthRows]);
 
-  const availableBacktestMonths = useMemo(() => {
-    if (!isCalendarBacktestTabActive) {
-      return [] as string[];
-    }
-
-    const monthKeys = new Set<string>();
-
-    for (const trade of deferredBacktestAnalyticsTrades) {
-      monthKeys.add(getTradeMonthKey(trade.exitTime));
-    }
-
-    return Array.from(monthKeys).sort((a, b) => b.localeCompare(a));
-  }, [deferredBacktestAnalyticsTrades, isCalendarBacktestTabActive]);
+  const availableBacktestMonths = backtestAnalyticsData.availableBacktestMonths;
 
   const backtestCalendarAgg = useMemo(() => {
-    if (!isCalendarBacktestTabActive) {
-      return new Map<string, { count: number; wins: number; pnl: number; items: HistoryItem[] }>();
-    }
-
     const map = new Map<string, { count: number; wins: number; pnl: number; items: HistoryItem[] }>();
 
-    for (const trade of deferredBacktestAnalyticsTrades) {
-      const dateKey = getTradeDayKey(trade.exitTime);
-      const bucket = map.get(dateKey) ?? { count: 0, wins: 0, pnl: 0, items: [] };
-      bucket.count += 1;
-      bucket.wins += trade.result === "Win" ? 1 : 0;
-      bucket.pnl += trade.pnlUsd;
-      bucket.items.push(trade);
-      map.set(dateKey, bucket);
+    for (const entry of backtestAnalyticsData.calendarActivityEntries) {
+      if (!Array.isArray(entry) || entry.length < 2) {
+        continue;
+      }
+      const dateKey = String(entry[0] ?? "");
+      const value = entry[1] as { count?: number; wins?: number; pnl?: number } | undefined;
+      if (!dateKey || !value) {
+        continue;
+      }
+      map.set(dateKey, {
+        count: Number(value.count) || 0,
+        wins: Number(value.wins) || 0,
+        pnl: Number(value.pnl) || 0,
+        items: []
+      });
     }
 
     return map;
-  }, [deferredBacktestAnalyticsTrades, isCalendarBacktestTabActive]);
+  }, [backtestAnalyticsData.calendarActivityEntries]);
 
   const activeBacktestMonthKey = selectedBacktestMonthKey || getCurrentTradeMonthKey();
   const calendarMonthLabel = getMonthLabel(activeBacktestMonthKey);
@@ -13846,19 +13523,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       .map((cell) => cell.dateKey);
   }, [backtestCalendarGrid]);
 
-  const selectedBacktestDayTrades = useMemo(() => {
-    if (!isCalendarBacktestTabActive) {
-      return [] as HistoryItem[];
-    }
-
-    const bucket = backtestCalendarAgg.get(selectedBacktestDateKey);
-
-    if (!bucket) {
-      return [];
-    }
-
-    return [...bucket.items].sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
-  }, [backtestCalendarAgg, isCalendarBacktestTabActive, selectedBacktestDateKey]);
+  const selectedBacktestDayTrades = backtestAnalyticsData.selectedBacktestDayTrades;
 
   useEffect(() => {
     if (!isCalendarBacktestTabActive) {
@@ -14013,21 +13678,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setAiZipClusterTimelineIdx(Math.max(0, aiZipClusterCandles.length - 1));
   }, [aiZipClusterCandles.length, isClusterBacktestTabActive]);
 
-  const performanceStatsModelOptions = useMemo(() => {
-    if (!isPerformanceStatsBacktestTabActive) {
-      return ["All"];
-    }
-
-    const models = Array.from(
-      new Set(
-        deferredBacktestAnalyticsTrades
-          .map((trade) => trade.entrySource.trim())
-          .filter((name) => name.length > 0)
-      )
-    );
-
-    return ["All", ...models];
-  }, [deferredBacktestAnalyticsTrades, isPerformanceStatsBacktestTabActive]);
+  const performanceStatsModelOptions = backtestAnalyticsData.performanceStatsModelOptions;
 
   useEffect(() => {
     if (!isPerformanceStatsBacktestTabActive) {
@@ -14039,101 +13690,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
   }, [isPerformanceStatsBacktestTabActive, performanceStatsModel, performanceStatsModelOptions]);
 
-  const performanceStatsTemporalCharts = useMemo(() => {
-    if (!isPerformanceStatsBacktestTabActive) {
-      return {
-        hours: [] as { bucket: string; pnl: number; count: number }[],
-        weekday: [] as { bucket: string; pnl: number; count: number }[],
-        month: [] as { bucket: string; pnl: number; count: number }[],
-        year: [] as { bucket: string; pnl: number; count: number }[],
-        hasData: false
-      };
-    }
-
-    const modelTrades = deferredBacktestAnalyticsTrades.filter((trade) => {
-      const modelName = trade.entrySource.trim();
-
-      if (!modelName) {
-        return false;
-      }
-
-      if (performanceStatsModel === "All") {
-        return true;
-      }
-
-      return modelName === performanceStatsModel;
-    });
-
-    const buildSeries = (range: "hours" | "weekday" | "month" | "year") => {
-      const buckets = new Map<string, { pnl: number; count: number }>();
-
-      for (const trade of modelTrades) {
-        const timestampSeconds = Number(trade.entryTime ?? trade.exitTime);
-
-        if (!Number.isFinite(timestampSeconds)) {
-          continue;
-        }
-
-        const date = new Date(timestampSeconds * 1000);
-        let key = "";
-
-        if (range === "hours") {
-          key = backtestHourLabels[date.getUTCHours()] ?? String(date.getUTCHours());
-        } else if (range === "weekday") {
-          key = backtestWeekdayLabels[date.getUTCDay()] ?? String(date.getUTCDay());
-        } else if (range === "month") {
-          key = backtestMonthLabels[date.getUTCMonth()] ?? String(date.getUTCMonth() + 1);
-        } else {
-          key = String(date.getUTCFullYear());
-        }
-
-        const current = buckets.get(key) ?? { pnl: 0, count: 0 };
-        buckets.set(key, {
-          pnl: current.pnl + trade.pnlUsd,
-          count: current.count + 1
-        });
-      }
-
-      let orderedBuckets: string[] = [];
-
-      if (range === "hours") {
-        orderedBuckets = [...backtestHourLabels];
-      } else if (range === "weekday") {
-        orderedBuckets = [...backtestWeekdayLabels];
-      } else if (range === "month") {
-        orderedBuckets = [...backtestMonthLabels];
-      } else {
-        orderedBuckets = Array.from(buckets.keys())
-          .map((bucket) => Number(bucket))
-          .filter((value) => Number.isFinite(value))
-          .sort((left, right) => left - right)
-          .map((value) => String(value));
-      }
-
-      return orderedBuckets.map((bucket) => {
-        const record = buckets.get(bucket) ?? { pnl: 0, count: 0 };
-        return {
-          bucket,
-          pnl: Number(record.pnl.toFixed(2)),
-          count: record.count
-        };
-      });
-    };
-
-    const hours = buildSeries("hours");
-    const weekday = buildSeries("weekday");
-    const month = buildSeries("month");
-    const year = buildSeries("year");
-    const hasData = [hours, weekday, month, year].some((series) =>
-      series.some((row) => row.count > 0)
-    );
-
-    return { hours, weekday, month, year, hasData };
-  }, [
-    deferredBacktestAnalyticsTrades,
-    isPerformanceStatsBacktestTabActive,
-    performanceStatsModel
-  ]);
+  const performanceStatsTemporalCharts = backtestAnalyticsData.performanceStatsTemporalCharts;
   const performanceStatsTemporalSections = useMemo(
     () => [
       { key: "hours", label: "Hours", data: performanceStatsTemporalCharts.hours },
@@ -14144,105 +13701,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     [performanceStatsTemporalCharts]
   );
 
-  const backtestClusterData = useMemo(() => {
-    if (!isClusterBacktestTabActive) {
-      return {
-        total: 0,
-        nodes: [] as BacktestClusterNode[],
-        groups: [] as BacktestClusterGroup[]
-      };
-    }
-
-    const holds = deferredBacktestAnalyticsTrades.map((trade) =>
-      Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60)
-    );
-    const sortedHolds = [...holds].sort((a, b) => a - b);
-    const medianHold =
-      sortedHolds.length > 0 ? sortedHolds[Math.floor(sortedHolds.length / 2)] : 0;
-    const maxHold = holds.length > 0 ? Math.max(1, ...holds) : 1;
-    const maxUnits =
-      deferredBacktestAnalyticsTrades.length > 0
-        ? Math.max(1, ...deferredBacktestAnalyticsTrades.map((trade) => trade.units))
-        : 1;
-    const maxAbsPnl =
-      deferredBacktestAnalyticsTrades.length > 0
-        ? Math.max(1, ...deferredBacktestAnalyticsTrades.map((trade) => Math.abs(trade.pnlPct)))
-        : 1;
-
-    const nodes: BacktestClusterNode[] = deferredBacktestAnalyticsTrades.map((trade) => {
-      const holdMinutes = Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
-      const clusterId: BacktestClusterGroupId =
-        trade.result === "Win"
-          ? holdMinutes <= medianHold
-            ? "momentum"
-            : "trend"
-          : Math.abs(trade.pnlPct) >= 0.22
-            ? "trap"
-            : "chop";
-      const seed = hashSeedFromText(`cluster-node-${trade.id}`);
-      const jitterX = ((((seed >>> 3) & 255) / 255) * 2 - 1) * 5;
-      const jitterY = ((((seed >>> 11) & 255) / 255) * 2 - 1) * 5;
-      const baseX = 14 + ((trade.pnlPct + maxAbsPnl) / (maxAbsPnl * 2)) * 72;
-      const baseY = 86 - (holdMinutes / maxHold) * 66;
-
-      return {
-        id: trade.id,
-        trade,
-        clusterId,
-        x: clamp(baseX + jitterX, 8, 92),
-        y: clamp(baseY + jitterY, 10, 90),
-        r: 2.8 + (trade.units / maxUnits) * 3.8,
-        tone: trade.pnlUsd >= 0 ? "up" : "down",
-        holdMinutes,
-        confidence: getEffectiveTradeConfidenceScore(trade) * 100,
-        session: getSessionLabel(trade.entryTime),
-        monthIndex: getTradeMonthIndex(trade.entryTime),
-        weekdayIndex: new Date(Number(trade.entryTime) * 1000).getUTCDay(),
-        hour: getTradeHour(trade.entryTime),
-        sideLabel: trade.side === "Long" ? "Buy" : "Sell"
-      };
-    });
-
-    return {
-      total: deferredBacktestAnalyticsTrades.length,
-      nodes,
-      groups: buildBacktestClusterGroups(nodes)
-    };
-  }, [
-    deferredBacktestAnalyticsTrades,
-    getEffectiveTradeConfidenceScore,
-    isClusterBacktestTabActive
-  ]);
-
-  const backtestClusterViewOptions = useMemo(() => {
-    if (!isClusterBacktestTabActive) {
-      return {
-        sessions: [] as string[],
-        months: [] as number[],
-        weekdays: [] as number[],
-        hours: [] as number[]
-      };
-    }
-
-    const sessions = new Set<string>();
-    const months = new Set<number>();
-    const weekdays = new Set<number>();
-    const hours = new Set<number>();
-
-    for (const node of backtestClusterData.nodes) {
-      sessions.add(node.session);
-      months.add(node.monthIndex);
-      weekdays.add(node.weekdayIndex);
-      hours.add(node.hour);
-    }
-
-    return {
-      sessions: backtestSessionLabels.filter((label) => sessions.has(label)),
-      months: Array.from(months).sort((a, b) => a - b),
-      weekdays: Array.from(weekdays).sort((a, b) => a - b),
-      hours: Array.from(hours).sort((a, b) => a - b)
-    };
-  }, [backtestClusterData.nodes, isClusterBacktestTabActive]);
+  const backtestClusterData = backtestAnalyticsData.backtestClusterData;
+  const backtestClusterViewOptions = backtestAnalyticsData.backtestClusterViewOptions;
 
   useEffect(() => {
     if (!isClusterBacktestTabActive) {
