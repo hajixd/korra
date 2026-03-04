@@ -11187,7 +11187,191 @@ function dbscan2D(points: [number, number][], eps: number, minSamples: number) {
 }
 
 const clusterMapDrawOrderCache = new WeakMap<any[], any[]>();
+const clusterMapKnnEdgeCache = new WeakMap<any[], Map<string, any[]>>();
 const CLUSTER_MAP_LOW_POWER_KEY = "clusterMapLowPower";
+
+function isLiveNodeForKnn(node: any) {
+  if (!node) return false;
+  const kind = String((node as any).kind ?? "").toLowerCase();
+  const isLib =
+    kind === "library" ||
+    (node as any).libId != null ||
+    String((node as any).id || "").startsWith("lib|");
+  if (isLib) return false;
+  if (kind === "potential" || kind === "ghost") return false;
+  return kind === "trade" || kind === "close" || kind === "";
+}
+
+function getKnnEdgesForClusterMap(
+  nodes: any[],
+  kRaw: number,
+  dim: "2d" | "3d"
+) {
+  const k = Math.max(0, Math.min(36, Math.floor(Number(kRaw) || 0)));
+  if (!Array.isArray(nodes) || nodes.length < 2 || k <= 0) return [];
+
+  let modeCache = clusterMapKnnEdgeCache.get(nodes as any[]);
+  if (!modeCache) {
+    modeCache = new Map<string, any[]>();
+    clusterMapKnnEdgeCache.set(nodes as any[], modeCache);
+  }
+  const cacheKey = `${dim}|${k}`;
+  const cached = modeCache.get(cacheKey);
+  if (cached) return cached;
+
+  const pts: Array<{ id: string; x: number; y: number; z: number }> = [];
+  for (const n of nodes) {
+    if (!isLiveNodeForKnn(n)) continue;
+    const id = String((n as any)?.id ?? "").trim();
+    if (!id) continue;
+    const x =
+      dim === "3d" && Number.isFinite(Number((n as any)?.x3))
+        ? Number((n as any).x3)
+        : Number((n as any)?.x);
+    const y =
+      dim === "3d" && Number.isFinite(Number((n as any)?.y3))
+        ? Number((n as any).y3)
+        : Number((n as any)?.y);
+    const z =
+      dim === "3d" && Number.isFinite(Number((n as any)?.z3))
+        ? Number((n as any).z3)
+        : 0;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z))
+      continue;
+    pts.push({ id, x, y, z });
+  }
+
+  if (pts.length < 2) {
+    modeCache.set(cacheKey, []);
+    return [];
+  }
+
+  const useK = Math.min(k, pts.length - 1);
+  const edgeMap = new Map<string, { a: string; b: string; d: number }>();
+
+  for (let i = 0; i < pts.length; i++) {
+    const pi = pts[i];
+    const nearest: Array<{ j: number; d: number }> = [];
+    for (let j = 0; j < pts.length; j++) {
+      if (i === j) continue;
+      const pj = pts[j];
+      const dx = pi.x - pj.x;
+      const dy = pi.y - pj.y;
+      const dz = dim === "3d" ? pi.z - pj.z : 0;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+      if (nearest.length < useK) {
+        nearest.push({ j, d });
+        nearest.sort((a, b) => b.d - a.d); // descending
+      } else if (d < nearest[0].d) {
+        nearest[0] = { j, d };
+        nearest.sort((a, b) => b.d - a.d);
+      }
+    }
+
+    for (const nb of nearest) {
+      const aId = pi.id;
+      const bId = pts[nb.j].id;
+      const a = aId < bId ? aId : bId;
+      const b = aId < bId ? bId : aId;
+      const key = `${a}|${b}`;
+      const prev = edgeMap.get(key);
+      if (!prev || nb.d < prev.d) edgeMap.set(key, { a, b, d: nb.d });
+    }
+  }
+
+  const edges = Array.from(edgeMap.values());
+  modeCache.set(cacheKey, edges);
+  return edges;
+}
+
+function marchingSquaresSegments(
+  field: number[],
+  nx: number,
+  ny: number,
+  levels: number[]
+) {
+  const segs: Array<{ level: number; a: [number, number]; b: [number, number] }> = [];
+  if (!field || nx < 2 || ny < 2 || !levels || levels.length === 0) return segs;
+
+  const edgePoint = (
+    edge: number,
+    x: number,
+    y: number,
+    v0: number,
+    v1: number,
+    v2: number,
+    v3: number,
+    level: number
+  ): [number, number] => {
+    const interp = (a: number, b: number) => {
+      const den = b - a;
+      if (!Number.isFinite(den) || Math.abs(den) < 1e-12) return 0.5;
+      return Math.max(0, Math.min(1, (level - a) / den));
+    };
+    if (edge === 0) {
+      const t = interp(v0, v1);
+      return [x + t, y];
+    }
+    if (edge === 1) {
+      const t = interp(v1, v2);
+      return [x + 1, y + t];
+    }
+    if (edge === 2) {
+      const t = interp(v3, v2);
+      return [x + t, y + 1];
+    }
+    const t = interp(v0, v3);
+    return [x, y + t];
+  };
+
+  const caseToEdges: Record<number, Array<[number, number]>> = {
+    0: [],
+    1: [[3, 0]],
+    2: [[0, 1]],
+    3: [[3, 1]],
+    4: [[1, 2]],
+    5: [[3, 2], [0, 1]],
+    6: [[0, 2]],
+    7: [[3, 2]],
+    8: [[2, 3]],
+    9: [[0, 2]],
+    10: [[0, 1], [2, 3]],
+    11: [[1, 2]],
+    12: [[1, 3]],
+    13: [[0, 1]],
+    14: [[3, 0]],
+    15: [],
+  };
+
+  const idx = (x: number, y: number) => y * nx + x;
+  for (const level of levels) {
+    for (let y = 0; y < ny - 1; y++) {
+      for (let x = 0; x < nx - 1; x++) {
+        const v0 = Number(field[idx(x, y)] || 0);
+        const v1 = Number(field[idx(x + 1, y)] || 0);
+        const v2 = Number(field[idx(x + 1, y + 1)] || 0);
+        const v3 = Number(field[idx(x, y + 1)] || 0);
+
+        const c0 = v0 >= level ? 1 : 0;
+        const c1 = v1 >= level ? 1 : 0;
+        const c2 = v2 >= level ? 1 : 0;
+        const c3 = v3 >= level ? 1 : 0;
+        const mask = c0 | (c1 << 1) | (c2 << 2) | (c3 << 3);
+        const edges = caseToEdges[mask] || [];
+        if (!edges.length) continue;
+
+        for (const [ea, eb] of edges) {
+          const a = edgePoint(ea, x, y, v0, v1, v2, v3, level);
+          const b = edgePoint(eb, x, y, v0, v1, v2, v3, level);
+          segs.push({ level, a, b });
+        }
+      }
+    }
+  }
+
+  return segs;
+}
 
 function drawClusterMapCanvas(
   canvas,
@@ -11214,6 +11398,14 @@ function drawClusterMapCanvas(
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   const lowPowerMode = !!(renderOpts as any)?.lowPowerMode;
+  const knnLinkK = Math.max(
+    0,
+    Math.min(36, Math.floor(Number((renderOpts as any)?.knnLinkK) || 0))
+  );
+  const knnLinkOpacity = Math.max(
+    0,
+    Math.min(1, Number((renderOpts as any)?.knnLinkOpacity ?? 0.34))
+  );
   const dpr = lowPowerMode
     ? Math.min(1, window.devicePixelRatio || 1)
     : window.devicePixelRatio || 1;
@@ -11714,6 +11906,50 @@ function drawClusterMapCanvas(
       }
     }
 
+    // KNN topology web (live node neighborhood links).
+    if (knnLinkK > 0 && knnLinkOpacity > 0.001) {
+      const edges = getKnnEdgesForClusterMap(nodes as any[], knnLinkK, "2d");
+      if (edges.length) {
+        let minD = Infinity;
+        let maxD = -Infinity;
+        for (const e of edges as any[]) {
+          const d = Number((e as any)?.d);
+          if (!Number.isFinite(d)) continue;
+          if (d < minD) minD = d;
+          if (d > maxD) maxD = d;
+        }
+        const den = Math.max(1e-6, maxD - minD);
+
+        ctx.save();
+        if (!lowPowerMode) {
+          ctx.shadowBlur = 12;
+        }
+        for (const e of edges as any[]) {
+          const pa = screenPositions[(e as any).a];
+          const pb = screenPositions[(e as any).b];
+          if (!pa || !pb) continue;
+          const d = Number((e as any).d);
+          if (!Number.isFinite(d)) continue;
+          const tRaw = 1 - (d - minD) / den; // near => 1, far => 0
+          const t = Math.max(0, Math.min(1, tRaw));
+          const alpha = Math.min(0.94, knnLinkOpacity * (0.18 + t * 0.92));
+          const width = (lowPowerMode ? 0.75 : 1.05) + t * (lowPowerMode ? 1.8 : 3.6);
+          const hue = 206 - t * 56;
+          const sat = 86;
+          const lit = 58 + t * 12;
+          const col = `hsla(${hue}, ${sat}%, ${lit}%, ${alpha})`;
+          ctx.lineWidth = width;
+          ctx.strokeStyle = col;
+          if (!lowPowerMode) ctx.shadowColor = col;
+          ctx.beginPath();
+          ctx.moveTo(pa.sx, pa.sy);
+          ctx.lineTo(pb.sx, pb.sy);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+
     const isTop = (n: any) => {
       const kind = String((n as any).kind ?? "").toLowerCase();
       const isLib =
@@ -11975,8 +12211,11 @@ function ClusterMapViewport3D({
   groupOverlayOpacity,
   selectionMode,
   heatmapOn,
+  heatmapMode3d = "a",
   nodeSizeMul,
   nodeOutlineMul,
+  knnLinkK = 0,
+  knnLinkOpacity = 0.34,
   mapSpreadMul,
   onSelectId,
   onSelectionIdsChange,
@@ -11992,8 +12231,11 @@ function ClusterMapViewport3D({
   groupOverlayOpacity: number;
   selectionMode: boolean;
   heatmapOn: boolean;
+  heatmapMode3d?: "a" | "b" | "d";
   nodeSizeMul: number;
   nodeOutlineMul: number;
+  knnLinkK?: number;
+  knnLinkOpacity?: number;
   mapSpreadMul: number;
   onSelectId: (id: string | null) => void;
   onSelectionIdsChange?: (ids: string[]) => void;
@@ -12015,6 +12257,7 @@ function ClusterMapViewport3D({
   const tmpColorRef = useRef<any>(null);
   const tmpOutlineColorRef = useRef<any>(null);
   const clusterOverlayLayerRef = useRef<any>(null);
+  const knnLayerRef = useRef<any>(null);
   const heatmapLayerRef = useRef<any>(null);
   const worldPointsRef = useRef<Array<{ id: string; x: number; y: number; z: number }>>(
     []
@@ -12282,11 +12525,14 @@ function ClusterMapViewport3D({
     const inst = new (THREE as any).InstancedMesh(nodeGeo, nodeMat, initialCapacity);
     const clusterOverlayLayer = new (THREE as any).Group();
     clusterOverlayLayer.name = "hdb-overlay-3d";
+    const knnLayer = new (THREE as any).Group();
+    knnLayer.name = "knn-overlay-3d";
     const heatmapLayer = new (THREE as any).Group();
     heatmapLayer.name = "heatmap-3d";
     scene.add(instOutline);
     scene.add(inst);
     scene.add(clusterOverlayLayer);
+    scene.add(knnLayer);
     scene.add(heatmapLayer);
 
     rendererRef.current = renderer;
@@ -12302,6 +12548,7 @@ function ClusterMapViewport3D({
     tmpColorRef.current = tmpColor;
     tmpOutlineColorRef.current = tmpOutlineColor;
     clusterOverlayLayerRef.current = clusterOverlayLayer;
+    knnLayerRef.current = knnLayer;
     heatmapLayerRef.current = heatmapLayer;
     capacityRef.current = initialCapacity;
     shouldFrameRef.current = true;
@@ -12514,6 +12761,29 @@ function ClusterMapViewport3D({
         }
       } catch {}
       try {
+        const layer = knnLayerRef.current;
+        if (layer && layer.children) {
+          while (layer.children.length) {
+            const ch = layer.children.pop();
+            if (!ch) break;
+            try {
+              layer.remove(ch);
+            } catch {}
+            const mats = Array.isArray((ch as any).material)
+              ? (ch as any).material
+              : [(ch as any).material];
+            for (const m of mats) {
+              try {
+                m?.dispose?.();
+              } catch {}
+            }
+            try {
+              (ch as any).geometry?.dispose?.();
+            } catch {}
+          }
+        }
+      } catch {}
+      try {
         const layer = heatmapLayerRef.current;
         if (layer && layer.children) {
           while (layer.children.length) {
@@ -12567,6 +12837,7 @@ function ClusterMapViewport3D({
       tmpColorRef.current = null;
       tmpOutlineColorRef.current = null;
       clusterOverlayLayerRef.current = null;
+      knnLayerRef.current = null;
       heatmapLayerRef.current = null;
       worldPointsRef.current = [];
       selectedIdsRef.current = new Set();
@@ -12801,15 +13072,201 @@ function ClusterMapViewport3D({
     };
 
     const overlayLayer = clusterOverlayLayerRef.current;
+    const knnLayer = knnLayerRef.current;
     const heatLayer = heatmapLayerRef.current;
     clearLayer(overlayLayer);
+    clearLayer(knnLayer);
     clearLayer(heatLayer);
 
     const heatOn = !!heatmapOn;
+    const heatModeRaw = String(heatmapMode3d || "a").toLowerCase();
+    const heatMode =
+      heatModeRaw === "b" || heatModeRaw === "d" ? heatModeRaw : "a";
+    const knnKInt = Math.max(0, Math.min(36, Math.floor(Number(knnLinkK) || 0)));
+    const knnAlpha = Math.max(0, Math.min(1, Number(knnLinkOpacity ?? 0.34)));
     instNow.visible = !heatOn;
     instOutlineNow.visible = !heatOn;
     if (overlayLayer) overlayLayer.visible = !heatOn;
+    if (knnLayer) knnLayer.visible = !heatOn;
     if (heatLayer) heatLayer.visible = heatOn;
+
+    if (
+      !heatOn &&
+      knnLayer &&
+      knnKInt > 0 &&
+      knnAlpha > 0.001 &&
+      worldPts.length > 1
+    ) {
+      const liveIdx: number[] = [];
+      for (let i = 0; i < rawPts.length; i++) {
+        const n = rawPts[i]?.node;
+        if (!isLiveNodeForKnn(n)) continue;
+        liveIdx.push(i);
+      }
+
+      if (liveIdx.length > 1) {
+        const useK = Math.min(knnKInt, liveIdx.length - 1);
+        const edgeMap = new Map<string, { aI: number; bI: number; d: number }>();
+        for (let ii = 0; ii < liveIdx.length; ii++) {
+          const i = liveIdx[ii];
+          const pi = worldPts[i];
+          if (!pi) continue;
+          const nearest: Array<{ j: number; d: number }> = [];
+
+          for (let jj = 0; jj < liveIdx.length; jj++) {
+            if (ii === jj) continue;
+            const j = liveIdx[jj];
+            const pj = worldPts[j];
+            if (!pj) continue;
+            const dx = pi[0] - pj[0];
+            const dy = pi[1] - pj[1];
+            const dz = pi[2] - pj[2];
+            const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (!Number.isFinite(d)) continue;
+
+            if (nearest.length < useK) {
+              nearest.push({ j, d });
+              nearest.sort((a, b) => b.d - a.d);
+            } else if (d < nearest[0].d) {
+              nearest[0] = { j, d };
+              nearest.sort((a, b) => b.d - a.d);
+            }
+          }
+
+          for (const nb of nearest) {
+            const aI = Math.min(i, nb.j);
+            const bI = Math.max(i, nb.j);
+            const key = `${aI}|${bI}`;
+            const prev = edgeMap.get(key);
+            if (!prev || nb.d < prev.d) edgeMap.set(key, { aI, bI, d: nb.d });
+          }
+        }
+
+        const edges = Array.from(edgeMap.values());
+        if (edges.length > 0) {
+          let minD = Infinity;
+          let maxD = -Infinity;
+          for (const e of edges) {
+            if (e.d < minD) minD = e.d;
+            if (e.d > maxD) maxD = e.d;
+          }
+          const dDen = Math.max(1e-6, maxD - minD);
+
+          const cylGeo = new (THREE as any).CylinderGeometry(
+            1,
+            1,
+            1,
+            lowPowerMode ? 6 : 8,
+            1,
+            true
+          );
+          if (!(cylGeo as any).getAttribute("color")) {
+            const posAttr = (cylGeo as any).getAttribute("position");
+            const vCount = Number(posAttr?.count || 0);
+            const baseColors = new Float32Array(Math.max(0, vCount * 3));
+            baseColors.fill(1);
+            (cylGeo as any).setAttribute(
+              "color",
+              new (THREE as any).BufferAttribute(baseColors, 3)
+            );
+          }
+          const cylMat = new (THREE as any).MeshBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: Math.min(0.95, 0.16 + knnAlpha * 0.84),
+            depthWrite: false,
+            depthTest: true,
+            blending: (THREE as any).AdditiveBlending,
+            toneMapped: false,
+          });
+          const cylInst = new (THREE as any).InstancedMesh(
+            cylGeo,
+            cylMat,
+            edges.length
+          );
+          cylInst.renderOrder = 14;
+          const tmpEdgeObj = new (THREE as any).Object3D();
+          const upVec = new (THREE as any).Vector3(0, 1, 0);
+          const dirVec = new (THREE as any).Vector3(0, 1, 0);
+          const edgeCol = new (THREE as any).Color(0xffffff);
+
+          const pos = new Float32Array(edges.length * 2 * 3);
+          const col = new Float32Array(edges.length * 2 * 3);
+
+          for (let ei = 0; ei < edges.length; ei++) {
+            const e = edges[ei];
+            const pa = worldPts[e.aI];
+            const pb = worldPts[e.bI];
+            if (!pa || !pb) continue;
+            const dx = pb[0] - pa[0];
+            const dy = pb[1] - pa[1];
+            const dz = pb[2] - pa[2];
+            const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (!Number.isFinite(len) || len < 1e-9) continue;
+
+            const tRaw = 1 - (e.d - minD) / dDen;
+            const t = Math.max(0, Math.min(1, tRaw));
+            const radius =
+              (lowPowerMode ? 0.007 : 0.009) +
+              t * (lowPowerMode ? 0.010 : 0.020);
+
+            tmpEdgeObj.position.set(
+              (pa[0] + pb[0]) * 0.5,
+              (pa[1] + pb[1]) * 0.5,
+              (pa[2] + pb[2]) * 0.5
+            );
+            dirVec.set(dx / len, dy / len, dz / len);
+            tmpEdgeObj.quaternion.setFromUnitVectors(upVec, dirVec);
+            tmpEdgeObj.scale.set(radius, len * 0.5, radius);
+            tmpEdgeObj.updateMatrix();
+            cylInst.setMatrixAt(ei, tmpEdgeObj.matrix);
+
+            edgeCol.setHSL((0.60 - t * 0.18 + 1) % 1, 0.88, 0.60 + t * 0.08);
+            cylInst.setColorAt(ei, edgeCol);
+
+            const off = ei * 6;
+            pos[off + 0] = pa[0];
+            pos[off + 1] = pa[1];
+            pos[off + 2] = pa[2];
+            pos[off + 3] = pb[0];
+            pos[off + 4] = pb[1];
+            pos[off + 5] = pb[2];
+            col[off + 0] = edgeCol.r * 0.45;
+            col[off + 1] = edgeCol.g * 0.45;
+            col[off + 2] = edgeCol.b * 0.45;
+            col[off + 3] = Math.min(1.6, edgeCol.r * 1.12);
+            col[off + 4] = Math.min(1.6, edgeCol.g * 1.12);
+            col[off + 5] = Math.min(1.6, edgeCol.b * 1.12);
+          }
+
+          cylInst.instanceMatrix.needsUpdate = true;
+          if (cylInst.instanceColor) cylInst.instanceColor.needsUpdate = true;
+          knnLayer.add(cylInst);
+
+          const lineGeo = new (THREE as any).BufferGeometry();
+          lineGeo.setAttribute(
+            "position",
+            new (THREE as any).BufferAttribute(pos, 3)
+          );
+          lineGeo.setAttribute(
+            "color",
+            new (THREE as any).BufferAttribute(col, 3)
+          );
+          const lineMat = new (THREE as any).LineBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: Math.min(0.85, 0.12 + knnAlpha * 0.5),
+            depthWrite: false,
+            depthTest: true,
+            blending: (THREE as any).AdditiveBlending,
+            toneMapped: false,
+          });
+          const lineSeg = new (THREE as any).LineSegments(lineGeo, lineMat);
+          lineSeg.renderOrder = 15;
+          knnLayer.add(lineSeg);
+        }
+      }
+    }
 
     if (heatOn && heatLayer && worldPts.length > 0) {
       let minX = Infinity,
@@ -12929,128 +13386,385 @@ function ClusterMapViewport3D({
         }
       }
       if (cells.length > 0) {
-        const heatGeo = new (THREE as any).IcosahedronGeometry(
-          1,
-          lowPowerMode ? 1 : 2
-        );
-        if (!(heatGeo as any).getAttribute("color")) {
-          const posAttr = (heatGeo as any).getAttribute("position");
-          const vCount = Number(posAttr?.count || 0);
-          const baseColors = new Float32Array(Math.max(0, vCount * 3));
-          baseColors.fill(1);
-          (heatGeo as any).setAttribute(
-            "color",
-            new (THREE as any).BufferAttribute(baseColors, 3)
-          );
-        }
-        const heatOuterMat = new (THREE as any).MeshBasicMaterial({
-          vertexColors: true,
-          transparent: true,
-          opacity: lowPowerMode ? 0.26 : 0.30,
-          depthWrite: false,
-          depthTest: true,
-          blending: (THREE as any).AdditiveBlending,
-          toneMapped: false,
-        });
-        const heatCoreMat = new (THREE as any).MeshBasicMaterial({
-          vertexColors: true,
-          transparent: true,
-          opacity: lowPowerMode ? 0.55 : 0.64,
-          depthWrite: false,
-          depthTest: true,
-          blending: (THREE as any).AdditiveBlending,
-          toneMapped: false,
-        });
-        const heatOuterInst = new (THREE as any).InstancedMesh(
-          heatGeo,
-          heatOuterMat,
-          cells.length
-        );
-        const heatCoreInst = new (THREE as any).InstancedMesh(
-          heatGeo,
-          heatCoreMat,
-          cells.length
-        );
-        heatOuterInst.renderOrder = 22;
-        heatCoreInst.renderOrder = 23;
-        const tmpCellObj = new (THREE as any).Object3D();
-        const tmpCellColor = new (THREE as any).Color(0xffffff);
-        const cellBase = Math.max(1e-6, Math.min(cellDx, cellDy, cellDz));
-        for (let i = 0; i < cells.length; i++) {
-          const c = cells[i];
-          const radius = cellBase * (0.78 + c.dens * (lowPowerMode ? 1.55 : 2.05));
-          const outerY = radius * (1.25 + c.dens * 0.75);
-          const outerXZ = radius * (1.35 + c.dens * 0.9);
-          const core = radius * (0.62 + c.dens * 0.42);
-
-          tmpCellObj.position.set(c.cx, c.cy, c.cz);
-          tmpCellObj.scale.set(outerXZ, outerY, outerXZ);
-          tmpCellObj.updateMatrix();
-          heatOuterInst.setMatrixAt(i, tmpCellObj.matrix);
-          tmpCellColor.setRGB(c.color[0], c.color[1], c.color[2]);
-          heatOuterInst.setColorAt(i, tmpCellColor);
-
-          tmpCellObj.position.set(c.cx, c.cy, c.cz);
-          tmpCellObj.scale.set(core, core, core);
-          tmpCellObj.updateMatrix();
-          heatCoreInst.setMatrixAt(i, tmpCellObj.matrix);
-          tmpCellColor.setRGB(
-            Math.min(2.0, c.color[0] * 1.22),
-            Math.min(2.0, c.color[1] * 1.22),
-            Math.min(2.0, c.color[2] * 1.22)
-          );
-          heatCoreInst.setColorAt(i, tmpCellColor);
-        }
-        heatOuterInst.instanceMatrix.needsUpdate = true;
-        heatCoreInst.instanceMatrix.needsUpdate = true;
-        if (heatOuterInst.instanceColor) heatOuterInst.instanceColor.needsUpdate = true;
-        if (heatCoreInst.instanceColor) heatCoreInst.instanceColor.needsUpdate = true;
-        heatLayer.add(heatOuterInst);
-        heatLayer.add(heatCoreInst);
-
-        const sortedByDensity = cells
-          .slice()
-          .sort((a, b) => b.dens - a.dens)
-          .slice(0, Math.min(lowPowerMode ? 80 : 180, cells.length));
-        if (sortedByDensity.length > 0) {
-          const floorY = minY - spanY * 0.44;
-          const pos = new Float32Array(sortedByDensity.length * 2 * 3);
-          const col = new Float32Array(sortedByDensity.length * 2 * 3);
-          for (let i = 0; i < sortedByDensity.length; i++) {
-            const c = sortedByDensity[i];
-            const off = i * 6;
-            pos[off + 0] = c.cx;
-            pos[off + 1] = floorY;
-            pos[off + 2] = c.cz;
-            pos[off + 3] = c.cx;
-            pos[off + 4] = c.cy;
-            pos[off + 5] = c.cz;
-
-            col[off + 0] = c.color[0] * 0.1;
-            col[off + 1] = c.color[1] * 0.1;
-            col[off + 2] = c.color[2] * 0.1;
-            col[off + 3] = Math.min(1.6, c.color[0] * (0.7 + c.dens * 0.6));
-            col[off + 4] = Math.min(1.6, c.color[1] * (0.7 + c.dens * 0.6));
-            col[off + 5] = Math.min(1.6, c.color[2] * (0.7 + c.dens * 0.6));
+        if (heatMode === "b") {
+          const cubeGeo = new (THREE as any).BoxGeometry(1, 1, 1);
+          if (!(cubeGeo as any).getAttribute("color")) {
+            const posAttr = (cubeGeo as any).getAttribute("position");
+            const vCount = Number(posAttr?.count || 0);
+            const baseColors = new Float32Array(Math.max(0, vCount * 3));
+            baseColors.fill(1);
+            (cubeGeo as any).setAttribute(
+              "color",
+              new (THREE as any).BufferAttribute(baseColors, 3)
+            );
           }
-          const beamGeo = new (THREE as any).BufferGeometry();
-          beamGeo.setAttribute(
-            "position",
-            new (THREE as any).BufferAttribute(pos, 3)
-          );
-          beamGeo.setAttribute("color", new (THREE as any).BufferAttribute(col, 3));
-          const beamMat = new (THREE as any).LineBasicMaterial({
+          const cubeMat = new (THREE as any).MeshBasicMaterial({
             vertexColors: true,
             transparent: true,
-            opacity: lowPowerMode ? 0.32 : 0.42,
+            opacity: lowPowerMode ? 0.32 : 0.40,
             depthWrite: false,
             depthTest: true,
             blending: (THREE as any).AdditiveBlending,
             toneMapped: false,
           });
-          const beams = new (THREE as any).LineSegments(beamGeo, beamMat);
-          beams.renderOrder = 21;
-          heatLayer.add(beams);
+          const cubeInst = new (THREE as any).InstancedMesh(
+            cubeGeo,
+            cubeMat,
+            cells.length
+          );
+          cubeInst.renderOrder = 22;
+          const tmpCellObj = new (THREE as any).Object3D();
+          const tmpCellColor = new (THREE as any).Color(0xffffff);
+          for (let i = 0; i < cells.length; i++) {
+            const c = cells[i];
+            const s = 0.42 + c.dens * (lowPowerMode ? 0.7 : 1.02);
+            tmpCellObj.position.set(c.cx, c.cy, c.cz);
+            tmpCellObj.scale.set(cellDx * s, cellDy * s, cellDz * s);
+            tmpCellObj.updateMatrix();
+            cubeInst.setMatrixAt(i, tmpCellObj.matrix);
+            tmpCellColor.setRGB(
+              Math.min(2.0, c.color[0] * (0.86 + c.dens * 0.9)),
+              Math.min(2.0, c.color[1] * (0.86 + c.dens * 0.9)),
+              Math.min(2.0, c.color[2] * (0.86 + c.dens * 0.9))
+            );
+            cubeInst.setColorAt(i, tmpCellColor);
+          }
+          cubeInst.instanceMatrix.needsUpdate = true;
+          if (cubeInst.instanceColor) cubeInst.instanceColor.needsUpdate = true;
+          heatLayer.add(cubeInst);
+        } else if (heatMode === "d") {
+          const mx = nx;
+          const mz = nz;
+          const flatCnt = new Float32Array(mx * mz);
+          const flatGp = new Float32Array(mx * mz);
+          const flatGl = new Float32Array(mx * mz);
+          const flatIdx = (ix: number, iz: number) => iz * mx + ix;
+          for (let iz = 0; iz < nz; iz++) {
+            for (let ix = 0; ix < nx; ix++) {
+              let cSum = 0;
+              let gpSum = 0;
+              let glSum = 0;
+              for (let iy = 0; iy < ny; iy++) {
+                const idc = toIdx(ix, iy, iz);
+                cSum += cnt[idc];
+                gpSum += gp[idc];
+                glSum += gl[idc];
+              }
+              const fid = flatIdx(ix, iz);
+              flatCnt[fid] = cSum;
+              flatGp[fid] = gpSum;
+              flatGl[fid] = glSum;
+            }
+          }
+          let flatMax = 0;
+          for (let i = 0; i < flatCnt.length; i++) {
+            if (flatCnt[i] > flatMax) flatMax = flatCnt[i];
+          }
+          const flatDen = Math.max(1e-6, flatMax);
+          const floorY = minY - spanY * 0.46;
+          const wallX = minX - spanX * 0.09;
+          const wallZ = minZ - spanZ * 0.09;
+          const hScale = spanY * (lowPowerMode ? 0.78 : 0.94);
+
+          const posArr = new Float32Array(mx * mz * 3);
+          const colArr = new Float32Array(mx * mz * 3);
+          const idxArr: number[] = [];
+          const tmpHsl2 = new (THREE as any).Color(0xffffff);
+          const densField = new Array(mx * mz).fill(0);
+
+          for (let iz = 0; iz < mz; iz++) {
+            for (let ix = 0; ix < mx; ix++) {
+              const fid = flatIdx(ix, iz);
+              const dens = Math.max(0, Math.min(1, flatCnt[fid] / flatDen));
+              densField[fid] = dens;
+              const gpp = flatGp[fid];
+              const gll = flatGl[fid];
+              let pf = 0;
+              if (gll > 1e-6) pf = gpp / gll;
+              else if (gpp > 1e-6) pf = pfCap;
+              pf = Math.max(0.05, Math.min(pfCap, pf));
+              const t = Math.max(
+                0,
+                Math.min(1, (Math.log(pf) - minLogPf) * invPf)
+              );
+              const hue = 0.66 - t * 0.62;
+              const sat = 0.82 + dens * 0.16;
+              const lit = 0.30 + dens * 0.30;
+              tmpHsl2.setHSL((hue + 1) % 1, Math.min(1, sat), Math.min(0.8, lit));
+              const glow = 0.72 + dens * 0.95;
+              const xw = minX + (ix / Math.max(1, mx - 1)) * spanX;
+              const zw = minZ + (iz / Math.max(1, mz - 1)) * spanZ;
+              const yw = floorY + Math.pow(dens, 0.72) * hScale;
+              const voff = fid * 3;
+              posArr[voff + 0] = xw;
+              posArr[voff + 1] = yw;
+              posArr[voff + 2] = zw;
+              colArr[voff + 0] = Math.min(1.8, tmpHsl2.r * glow);
+              colArr[voff + 1] = Math.min(1.8, tmpHsl2.g * glow);
+              colArr[voff + 2] = Math.min(1.8, tmpHsl2.b * glow);
+            }
+          }
+          for (let iz = 0; iz < mz - 1; iz++) {
+            for (let ix = 0; ix < mx - 1; ix++) {
+              const a = flatIdx(ix, iz);
+              const b = flatIdx(ix + 1, iz);
+              const c = flatIdx(ix, iz + 1);
+              const d = flatIdx(ix + 1, iz + 1);
+              idxArr.push(a, c, b, b, c, d);
+            }
+          }
+
+          const surfGeo = new (THREE as any).BufferGeometry();
+          surfGeo.setAttribute(
+            "position",
+            new (THREE as any).BufferAttribute(posArr, 3)
+          );
+          surfGeo.setAttribute(
+            "color",
+            new (THREE as any).BufferAttribute(colArr, 3)
+          );
+          surfGeo.setIndex(idxArr);
+          surfGeo.computeVertexNormals();
+
+          const surfMat = new (THREE as any).MeshStandardMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: lowPowerMode ? 0.78 : 0.86,
+            roughness: 0.34,
+            metalness: 0.05,
+            side: (THREE as any).DoubleSide,
+            depthWrite: true,
+            toneMapped: false,
+          });
+          const surf = new (THREE as any).Mesh(surfGeo, surfMat);
+          surf.renderOrder = 22;
+          heatLayer.add(surf);
+
+          const wire = new (THREE as any).LineSegments(
+            new (THREE as any).WireframeGeometry(surfGeo),
+            new (THREE as any).LineBasicMaterial({
+              color: 0x84e3ff,
+              transparent: true,
+              opacity: lowPowerMode ? 0.24 : 0.34,
+              depthWrite: false,
+              depthTest: true,
+              toneMapped: false,
+            })
+          );
+          wire.renderOrder = 23;
+          heatLayer.add(wire);
+
+          const contourLevels = lowPowerMode
+            ? [0.24, 0.46, 0.68, 0.86]
+            : [0.16, 0.30, 0.44, 0.58, 0.72, 0.86];
+          const contourSegs = marchingSquaresSegments(
+            densField as any,
+            mx,
+            mz,
+            contourLevels
+          );
+          const cap = lowPowerMode ? 1200 : 2600;
+          const segs = contourSegs.slice(0, cap);
+          if (segs.length) {
+            const pos = new Float32Array(segs.length * 3 * 2 * 3);
+            const col = new Float32Array(segs.length * 3 * 2 * 3);
+            const levelColor = new (THREE as any).Color(0xffffff);
+            let ptr = 0;
+            for (const seg of segs) {
+              const x1 = minX + (seg.a[0] / Math.max(1, mx - 1)) * spanX;
+              const z1 = minZ + (seg.a[1] / Math.max(1, mz - 1)) * spanZ;
+              const x2 = minX + (seg.b[0] / Math.max(1, mx - 1)) * spanX;
+              const z2 = minZ + (seg.b[1] / Math.max(1, mz - 1)) * spanZ;
+              const yL = floorY + Math.max(0, Math.min(1, seg.level)) * hScale;
+              const t = Math.max(0, Math.min(1, seg.level));
+              levelColor.setHSL((0.70 - t * 0.54 + 1) % 1, 0.92, 0.65);
+              const cR = Math.min(1.7, levelColor.r * 1.08);
+              const cG = Math.min(1.7, levelColor.g * 1.08);
+              const cB = Math.min(1.7, levelColor.b * 1.08);
+
+              const pushSeg = (
+                ax: number,
+                ay: number,
+                az: number,
+                bx: number,
+                by: number,
+                bz: number
+              ) => {
+                pos[ptr + 0] = ax;
+                pos[ptr + 1] = ay;
+                pos[ptr + 2] = az;
+                pos[ptr + 3] = bx;
+                pos[ptr + 4] = by;
+                pos[ptr + 5] = bz;
+                col[ptr + 0] = cR;
+                col[ptr + 1] = cG;
+                col[ptr + 2] = cB;
+                col[ptr + 3] = cR;
+                col[ptr + 4] = cG;
+                col[ptr + 5] = cB;
+                ptr += 6;
+              };
+
+              // Floor contour.
+              pushSeg(x1, floorY, z1, x2, floorY, z2);
+              // Projected wall contours.
+              pushSeg(wallX, yL, z1, wallX, yL, z2);
+              pushSeg(x1, yL, wallZ, x2, yL, wallZ);
+            }
+            const contourGeo = new (THREE as any).BufferGeometry();
+            contourGeo.setAttribute(
+              "position",
+              new (THREE as any).BufferAttribute(pos.subarray(0, ptr), 3)
+            );
+            contourGeo.setAttribute(
+              "color",
+              new (THREE as any).BufferAttribute(col.subarray(0, ptr), 3)
+            );
+            const contourMat = new (THREE as any).LineBasicMaterial({
+              vertexColors: true,
+              transparent: true,
+              opacity: lowPowerMode ? 0.46 : 0.58,
+              depthWrite: false,
+              depthTest: true,
+              blending: (THREE as any).AdditiveBlending,
+              toneMapped: false,
+            });
+            const contourLines = new (THREE as any).LineSegments(
+              contourGeo,
+              contourMat
+            );
+            contourLines.renderOrder = 24;
+            heatLayer.add(contourLines);
+          }
+        } else {
+          const heatGeo = new (THREE as any).IcosahedronGeometry(
+            1,
+            lowPowerMode ? 1 : 2
+          );
+          if (!(heatGeo as any).getAttribute("color")) {
+            const posAttr = (heatGeo as any).getAttribute("position");
+            const vCount = Number(posAttr?.count || 0);
+            const baseColors = new Float32Array(Math.max(0, vCount * 3));
+            baseColors.fill(1);
+            (heatGeo as any).setAttribute(
+              "color",
+              new (THREE as any).BufferAttribute(baseColors, 3)
+            );
+          }
+          const heatOuterMat = new (THREE as any).MeshBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: lowPowerMode ? 0.26 : 0.30,
+            depthWrite: false,
+            depthTest: true,
+            blending: (THREE as any).AdditiveBlending,
+            toneMapped: false,
+          });
+          const heatCoreMat = new (THREE as any).MeshBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: lowPowerMode ? 0.55 : 0.64,
+            depthWrite: false,
+            depthTest: true,
+            blending: (THREE as any).AdditiveBlending,
+            toneMapped: false,
+          });
+          const heatOuterInst = new (THREE as any).InstancedMesh(
+            heatGeo,
+            heatOuterMat,
+            cells.length
+          );
+          const heatCoreInst = new (THREE as any).InstancedMesh(
+            heatGeo,
+            heatCoreMat,
+            cells.length
+          );
+          heatOuterInst.renderOrder = 22;
+          heatCoreInst.renderOrder = 23;
+          const tmpCellObj = new (THREE as any).Object3D();
+          const tmpCellColor = new (THREE as any).Color(0xffffff);
+          const cellBase = Math.max(1e-6, Math.min(cellDx, cellDy, cellDz));
+          for (let i = 0; i < cells.length; i++) {
+            const c = cells[i];
+            const radius = cellBase * (0.78 + c.dens * (lowPowerMode ? 1.55 : 2.05));
+            const outerY = radius * (1.25 + c.dens * 0.75);
+            const outerXZ = radius * (1.35 + c.dens * 0.9);
+            const core = radius * (0.62 + c.dens * 0.42);
+
+            tmpCellObj.position.set(c.cx, c.cy, c.cz);
+            tmpCellObj.scale.set(outerXZ, outerY, outerXZ);
+            tmpCellObj.updateMatrix();
+            heatOuterInst.setMatrixAt(i, tmpCellObj.matrix);
+            tmpCellColor.setRGB(c.color[0], c.color[1], c.color[2]);
+            heatOuterInst.setColorAt(i, tmpCellColor);
+
+            tmpCellObj.position.set(c.cx, c.cy, c.cz);
+            tmpCellObj.scale.set(core, core, core);
+            tmpCellObj.updateMatrix();
+            heatCoreInst.setMatrixAt(i, tmpCellObj.matrix);
+            tmpCellColor.setRGB(
+              Math.min(2.0, c.color[0] * 1.22),
+              Math.min(2.0, c.color[1] * 1.22),
+              Math.min(2.0, c.color[2] * 1.22)
+            );
+            heatCoreInst.setColorAt(i, tmpCellColor);
+          }
+          heatOuterInst.instanceMatrix.needsUpdate = true;
+          heatCoreInst.instanceMatrix.needsUpdate = true;
+          if (heatOuterInst.instanceColor)
+            heatOuterInst.instanceColor.needsUpdate = true;
+          if (heatCoreInst.instanceColor)
+            heatCoreInst.instanceColor.needsUpdate = true;
+          heatLayer.add(heatOuterInst);
+          heatLayer.add(heatCoreInst);
+
+          const sortedByDensity = cells
+            .slice()
+            .sort((a, b) => b.dens - a.dens)
+            .slice(0, Math.min(lowPowerMode ? 80 : 180, cells.length));
+          if (sortedByDensity.length > 0) {
+            const floorY = minY - spanY * 0.44;
+            const pos = new Float32Array(sortedByDensity.length * 2 * 3);
+            const col = new Float32Array(sortedByDensity.length * 2 * 3);
+            for (let i = 0; i < sortedByDensity.length; i++) {
+              const c = sortedByDensity[i];
+              const off = i * 6;
+              pos[off + 0] = c.cx;
+              pos[off + 1] = floorY;
+              pos[off + 2] = c.cz;
+              pos[off + 3] = c.cx;
+              pos[off + 4] = c.cy;
+              pos[off + 5] = c.cz;
+
+              col[off + 0] = c.color[0] * 0.1;
+              col[off + 1] = c.color[1] * 0.1;
+              col[off + 2] = c.color[2] * 0.1;
+              col[off + 3] = Math.min(1.6, c.color[0] * (0.7 + c.dens * 0.6));
+              col[off + 4] = Math.min(1.6, c.color[1] * (0.7 + c.dens * 0.6));
+              col[off + 5] = Math.min(1.6, c.color[2] * (0.7 + c.dens * 0.6));
+            }
+            const beamGeo = new (THREE as any).BufferGeometry();
+            beamGeo.setAttribute(
+              "position",
+              new (THREE as any).BufferAttribute(pos, 3)
+            );
+            beamGeo.setAttribute(
+              "color",
+              new (THREE as any).BufferAttribute(col, 3)
+            );
+            const beamMat = new (THREE as any).LineBasicMaterial({
+              vertexColors: true,
+              transparent: true,
+              opacity: lowPowerMode ? 0.32 : 0.42,
+              depthWrite: false,
+              depthTest: true,
+              blending: (THREE as any).AdditiveBlending,
+              toneMapped: false,
+            });
+            const beams = new (THREE as any).LineSegments(beamGeo, beamMat);
+            beams.renderOrder = 21;
+            heatLayer.add(beams);
+          }
         }
       }
     }
@@ -13242,10 +13956,13 @@ function ClusterMapViewport3D({
     selectedId,
     searchHighlightId,
     heatmapOn,
+    heatmapMode3d,
     lowPowerMode,
     selectionRevision,
     nodeSizeMul,
     nodeOutlineMul,
+    knnLinkK,
+    knnLinkOpacity,
     mapSpreadMul,
     hdbOverlay,
     showGroupOverlays,
@@ -13308,7 +14025,16 @@ function ClusterMapViewport3D({
             userSelect: "none",
           }}
         >
-          3D Heatmap
+          {(() => {
+            const m = String(heatmapMode3d || "a").toUpperCase();
+            const name =
+              m === "B"
+                ? "Volumetric Cubes"
+                : m === "D"
+                ? "Density Mountain"
+                : "Nebula";
+            return `3D Heatmap · Option ${m} (${name})`;
+          })()}
         </div>
       ) : null}
       {selectionMode && selectionRectPx ? (
@@ -13766,6 +14492,22 @@ export function ClusterMap({
           !e.shiftKey &&
           (code === "KeyH" || k === "h" || (e as any).keyCode === 72)
         );
+        const isToggle3DModeB = !!(
+          !isTyping &&
+          e.altKey &&
+          !e.metaKey &&
+          !e.ctrlKey &&
+          !e.shiftKey &&
+          (code === "KeyB" || k === "b" || (e as any).keyCode === 66)
+        );
+        const isToggle3DModeD = !!(
+          !isTyping &&
+          e.altKey &&
+          !e.metaKey &&
+          !e.ctrlKey &&
+          !e.shiftKey &&
+          (code === "KeyD" || k === "d" || (e as any).keyCode === 68)
+        );
 
         if (isToggle3DSelect) {
           e.preventDefault();
@@ -13780,6 +14522,24 @@ export function ClusterMap({
           if (lowPowerMode) return;
           setBoxSelectMode3d(false);
           setHeatmapOn((v) => !v);
+          return;
+        }
+        if (isToggle3DModeB) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (lowPowerMode) return;
+          setBoxSelectMode3d(false);
+          setHeatmap3dMode("b");
+          setHeatmapOn(true);
+          return;
+        }
+        if (isToggle3DModeD) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (lowPowerMode) return;
+          setBoxSelectMode3d(false);
+          setHeatmap3dMode("d");
+          setHeatmapOn(true);
           return;
         }
         if (k === "escape") {
@@ -15144,6 +15904,11 @@ export function ClusterMap({
   const [ghostLegendColored, setGhostLegendColored] = useState(false);
 
   const [groupOverlayOpacity, setGroupOverlayOpacity] = React.useState(1);
+  const [knnLinkK, setKnnLinkK] = React.useState(6);
+  const [knnLinkOpacity, setKnnLinkOpacity] = React.useState(0.36);
+  const [heatmap3dMode, setHeatmap3dMode] = React.useState<"a" | "b" | "d">(
+    "a"
+  );
   const showGroupOverlays = (Number(groupOverlayOpacity) || 0) > 0.001;
   const effectiveGroupOverlayOpacity = lowPowerMode ? 0 : groupOverlayOpacity;
   const suppressedLibraryActive = React.useMemo(() => {
@@ -15154,8 +15919,12 @@ export function ClusterMap({
     return false;
   }, [activeLibraries]);
   const drawRenderOpts = React.useMemo(
-    () => ({ lowPowerMode }),
-    [lowPowerMode]
+    () => ({
+      lowPowerMode,
+      knnLinkK,
+      knnLinkOpacity,
+    }),
+    [lowPowerMode, knnLinkK, knnLinkOpacity]
   );
   const [nodeSizeMul, setNodeSizeMul] = React.useState(1);
   const [nodeOutlineMul, setNodeOutlineMul] = React.useState(1);
@@ -20561,6 +21330,73 @@ export function ClusterMap({
               Low-Power {lowPowerMode ? "ON" : "OFF"}
             </button>
 
+            {clusterMapView === "3d" ? (
+              <div
+                style={{
+                  display: "inline-flex",
+                  borderRadius: 10,
+                  border: "1px solid rgba(255,255,255,0.18)",
+                  background:
+                    "linear-gradient(135deg, rgba(20,45,70,0.28), rgba(0,0,0,0.36))",
+                  overflow: "hidden",
+                  boxShadow: "0 8px 18px rgba(0,0,0,0.35)",
+                }}
+                title="3D heat styles: Option B (⌥B), Option D (⌥D)"
+              >
+                {[
+                  { key: "a", label: "A", sub: "Nebula" },
+                  { key: "b", label: "B", sub: "Blocks" },
+                  { key: "d", label: "D", sub: "Mountain" },
+                ].map((opt) => {
+                  const active = heatmap3dMode === (opt.key as any);
+                  return (
+                    <button
+                      key={opt.key}
+                      onClick={() => {
+                        if (lowPowerMode) return;
+                        setHeatmap3dMode(opt.key as any);
+                        setHeatmapOn(true);
+                      }}
+                      style={{
+                        border: "none",
+                        borderLeft:
+                          opt.key === "a"
+                            ? "none"
+                            : "1px solid rgba(255,255,255,0.12)",
+                        background: active
+                          ? "linear-gradient(135deg, rgba(100,190,255,0.36), rgba(80,130,255,0.22))"
+                          : "transparent",
+                        color: active
+                          ? "rgba(230,245,255,0.98)"
+                          : "rgba(220,235,255,0.84)",
+                        borderRadius: 0,
+                        padding: "6px 8px",
+                        minWidth: 54,
+                        display: "grid",
+                        gap: 1,
+                        justifyItems: "center",
+                        cursor: lowPowerMode ? "not-allowed" : "pointer",
+                        opacity: lowPowerMode ? 0.45 : 1,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 950,
+                          letterSpacing: "0.02em",
+                        }}
+                      >
+                        {opt.label}
+                      </span>
+                      <span style={{ fontSize: 9, fontWeight: 800, opacity: 0.8 }}>
+                        {opt.sub}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{ position: "relative" }}>
                 <input
@@ -20779,8 +21615,11 @@ export function ClusterMap({
             groupOverlayOpacity={effectiveGroupOverlayOpacity}
             selectionMode={boxSelectMode}
             heatmapOn={heatmapOn}
+            heatmapMode3d={heatmap3dMode}
             nodeSizeMul={nodeSizeMul}
             nodeOutlineMul={nodeOutlineMul}
+            knnLinkK={knnLinkK}
+            knnLinkOpacity={knnLinkOpacity}
             mapSpreadMul={mapSpreadMul}
             onSelectId={handle3dSelectId}
             onSelectionIdsChange={handle3dSelectionIds}
@@ -22631,7 +23470,175 @@ export function ClusterMap({
             />
           </div>
 
-          {/* Row 3 (span) */}
+          {/* Row 3 */}
+          <div
+            className="rounded-xl border border-neutral-800"
+            style={{
+              padding: "8px 10px",
+              background:
+                "linear-gradient(180deg, rgba(16,34,58,0.66), rgba(8,16,34,0.72))",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: 10,
+                color: "rgba(255,255,255,0.78)",
+              }}
+            >
+              <span>KNN Topology (k)</span>
+              <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>
+                {Math.max(0, Math.floor(Number(knnLinkK) || 0))}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={24}
+              step={1}
+              value={knnLinkK}
+              onChange={(e) => setKnnLinkK(Number((e as any).target.value))}
+              className="theme-slider"
+              style={{
+                ...sliderVars(knnLinkK, 0, 24),
+                width: "100%",
+                height: 6,
+                cursor: "pointer",
+              }}
+            />
+            <div style={{ marginTop: 3, fontSize: 9, opacity: 0.72 }}>
+              0 disables the topology web.
+            </div>
+          </div>
+
+          <div
+            className="rounded-xl border border-neutral-800"
+            style={{
+              padding: "8px 10px",
+              background:
+                "linear-gradient(180deg, rgba(16,34,58,0.66), rgba(8,16,34,0.72))",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: 10,
+                color: "rgba(255,255,255,0.78)",
+              }}
+            >
+              <span>KNN Link Opacity</span>
+              <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>
+                {Math.round(
+                  Math.max(0, Math.min(1, Number(knnLinkOpacity) || 0)) * 100
+                )}
+                %
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={knnLinkOpacity}
+              onChange={(e) =>
+                setKnnLinkOpacity(Number((e as any).target.value))
+              }
+              className="theme-slider"
+              style={{
+                ...sliderVars(knnLinkOpacity, 0, 1),
+                width: "100%",
+                height: 6,
+                cursor: "pointer",
+              }}
+            />
+            <div style={{ marginTop: 3, fontSize: 9, opacity: 0.72 }}>
+              Nearer neighbors render thicker in 2D and 3D.
+            </div>
+          </div>
+
+          {clusterMapView === "3d" ? (
+            <div
+              className="rounded-xl border border-neutral-800"
+              style={{
+                gridColumn: "1 / -1",
+                padding: "8px 10px",
+                background:
+                  "linear-gradient(180deg, rgba(22,42,72,0.78), rgba(10,18,34,0.78))",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.8)" }}>
+                  3D Heatmap Style
+                </div>
+                <div style={{ fontSize: 9, opacity: 0.72 }}>
+                  ⌥B = Option B · ⌥D = Option D
+                </div>
+              </div>
+              <div
+                style={{
+                  marginTop: 6,
+                  display: "grid",
+                  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                  gap: 7,
+                }}
+              >
+                {[
+                  { key: "a", label: "Option A", sub: "Nebula Heat" },
+                  { key: "b", label: "Option B", sub: "Volumetric Cubes" },
+                  { key: "d", label: "Option D", sub: "Density Mountain" },
+                ].map((opt) => {
+                  const active = heatmap3dMode === (opt.key as any);
+                  return (
+                    <button
+                      key={opt.key}
+                      onClick={() => {
+                        if (lowPowerMode) return;
+                        setHeatmap3dMode(opt.key as any);
+                        setHeatmapOn(true);
+                      }}
+                      style={{
+                        border: active
+                          ? "1px solid rgba(145,210,255,0.72)"
+                          : "1px solid rgba(255,255,255,0.16)",
+                        background: active
+                          ? "linear-gradient(135deg, rgba(95,180,255,0.34), rgba(75,120,255,0.22))"
+                          : "rgba(0,0,0,0.26)",
+                        color: active
+                          ? "rgba(240,250,255,0.98)"
+                          : "rgba(230,235,255,0.86)",
+                        borderRadius: 10,
+                        padding: "7px 8px",
+                        display: "grid",
+                        justifyItems: "center",
+                        gap: 2,
+                        cursor: lowPowerMode ? "not-allowed" : "pointer",
+                        opacity: lowPowerMode ? 0.45 : 1,
+                        boxShadow: active
+                          ? "0 8px 16px rgba(60,140,255,0.25)"
+                          : undefined,
+                      }}
+                    >
+                      <span style={{ fontSize: 10, fontWeight: 950 }}>
+                        {opt.label}
+                      </span>
+                      <span style={{ fontSize: 9, opacity: 0.8 }}>{opt.sub}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          {/* Row 4 (span) */}
           <div
             style={{
               display: "grid",
