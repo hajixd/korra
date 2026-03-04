@@ -11979,6 +11979,8 @@ function ClusterMapViewport3D({
   nodeOutlineMul,
   mapSpreadMul,
   onSelectId,
+  onSelectionIdsChange,
+  selectionClearNonce,
 }: {
   nodes: any[];
   selectedId: string | null;
@@ -11994,6 +11996,8 @@ function ClusterMapViewport3D({
   nodeOutlineMul: number;
   mapSpreadMul: number;
   onSelectId: (id: string | null) => void;
+  onSelectionIdsChange?: (ids: string[]) => void;
+  selectionClearNonce?: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<number | null>(null);
@@ -12108,16 +12112,24 @@ function ClusterMapViewport3D({
       dragStartRef.current = null;
       setSelectionRectPx(null);
       suppressClickRef.current = false;
-      if (selectedIdsRef.current.size > 0) {
-        selectedIdsRef.current = new Set();
-        setSelectionCount3d(0);
-        setSelectionRevision((v) => v + 1);
-      } else {
-        setSelectionCount3d(0);
-      }
     }
+    setSelectionCount3d(selectedIdsRef.current.size || 0);
     requestRender();
   }, [selectionMode, requestRender]);
+
+  useEffect(() => {
+    if (!Number.isFinite(Number(selectionClearNonce))) return;
+    if (selectedIdsRef.current.size > 0) {
+      selectedIdsRef.current = new Set();
+      setSelectionCount3d(0);
+      setSelectionRevision((v) => v + 1);
+      onSelectionIdsChange?.([]);
+    } else {
+      setSelectionCount3d(0);
+      onSelectionIdsChange?.([]);
+    }
+    requestRender();
+  }, [selectionClearNonce, onSelectionIdsChange, requestRender]);
 
   useEffect(() => {
     heatmapOnRef.current = !!heatmapOn;
@@ -12371,8 +12383,9 @@ function ClusterMapViewport3D({
       selectedIdsRef.current = sel;
       setSelectionCount3d(sel.size);
       setSelectionRevision((n) => n + 1);
+      onSelectionIdsChange?.(Array.from(sel));
       if (sel.size === 1) onSelectId(Array.from(sel)[0] || null);
-      else if (sel.size === 0) onSelectId(null);
+      else onSelectId(null);
       requestRender();
     };
     const onMouseDown = (ev: MouseEvent) => {
@@ -12557,12 +12570,20 @@ function ClusterMapViewport3D({
       heatmapLayerRef.current = null;
       worldPointsRef.current = [];
       selectedIdsRef.current = new Set();
+      onSelectionIdsChange?.([]);
       suppressClickRef.current = false;
       nodeIdsRef.current = [];
       capacityRef.current = 0;
       renderNowRef.current = () => {};
     };
-  }, [runtimeReady, resetKey, onSelectId, requestRender, lowPowerMode]);
+  }, [
+    runtimeReady,
+    resetKey,
+    onSelectId,
+    onSelectionIdsChange,
+    requestRender,
+    lowPowerMode,
+  ]);
 
   useEffect(() => {
     const controls = controlsRef.current;
@@ -12737,6 +12758,18 @@ function ClusterMapViewport3D({
     instNow.instanceMatrix.needsUpdate = true;
     if (instNow.instanceColor) instNow.instanceColor.needsUpdate = true;
     nodeIdsRef.current = nodeIds;
+    if (selectedIdsRef.current.size > 0) {
+      const valid = new Set(nodeIds.filter(Boolean));
+      const nextSel = new Set<string>();
+      for (const id of selectedIdsRef.current) {
+        if (valid.has(id)) nextSel.add(id);
+      }
+      if (nextSel.size !== selectedIdsRef.current.size) {
+        selectedIdsRef.current = nextSel;
+        setSelectionCount3d(nextSel.size);
+        onSelectionIdsChange?.(Array.from(nextSel));
+      }
+    }
     worldPointsRef.current = nodeIds
       .map((id, i) => {
         const p = worldPts[i];
@@ -12796,9 +12829,9 @@ function ClusterMapViewport3D({
       const spanX = Math.max(1e-6, maxX - minX);
       const spanY = Math.max(1e-6, maxY - minY);
       const spanZ = Math.max(1e-6, maxZ - minZ);
-      const nx = lowPowerMode ? 10 : 16;
-      const ny = lowPowerMode ? 6 : 10;
-      const nz = lowPowerMode ? 10 : 16;
+      const nx = lowPowerMode ? 11 : 18;
+      const ny = lowPowerMode ? 8 : 14;
+      const nz = lowPowerMode ? 11 : 18;
       const nCells = nx * ny * nz;
       const cnt = new Float32Array(nCells);
       const gp = new Float32Array(nCells);
@@ -12852,12 +12885,13 @@ function ClusterMapViewport3D({
         cx: number;
         cy: number;
         cz: number;
-        s: number;
-        rgb: [number, number, number];
+        dens: number;
+        color: [number, number, number];
       }> = [];
       const cellDx = spanX / nx;
       const cellDy = spanY / ny;
       const cellDz = spanZ / nz;
+      const tmpHsl = new (THREE as any).Color(0xffffff);
       for (let iz = 0; iz < nz; iz++) {
         for (let iy = 0; iy < ny; iy++) {
           for (let ix = 0; ix < nx; ix++) {
@@ -12875,50 +12909,149 @@ function ClusterMapViewport3D({
               0,
               Math.min(1, (Math.log(pf) - minLogPf) * invPf)
             );
-            const rr = (30 + (245 - 30) * t) / 255;
-            const gg = (22 + (60 - 22) * (1 - Math.abs(t - 0.5) * 2)) / 255;
-            const bb = (245 - (245 - 30) * t) / 255;
-            const bright = 0.58 + dens * 0.52;
+            const hue = 0.66 - t * 0.62;
+            const sat = 0.84 + dens * 0.14;
+            const lit = 0.38 + dens * 0.26;
+            tmpHsl.setHSL((hue + 1) % 1, Math.min(1, sat), Math.min(0.78, lit));
+            const glow = 0.88 + dens * 0.85;
             cells.push({
               cx: minX + (ix + 0.5) * cellDx,
               cy: minY + (iy + 0.5) * cellDy,
               cz: minZ + (iz + 0.5) * cellDz,
-              s: 0.42 + dens * 0.92,
-              rgb: [rr * bright, gg * bright, bb * bright],
+              dens,
+              color: [
+                Math.min(1.8, tmpHsl.r * glow),
+                Math.min(1.8, tmpHsl.g * glow),
+                Math.min(1.8, tmpHsl.b * glow),
+              ],
             });
           }
         }
       }
       if (cells.length > 0) {
-        const heatGeo = new (THREE as any).BoxGeometry(1, 1, 1);
-        const heatMat = new (THREE as any).MeshBasicMaterial({
+        const heatGeo = new (THREE as any).IcosahedronGeometry(
+          1,
+          lowPowerMode ? 1 : 2
+        );
+        if (!(heatGeo as any).getAttribute("color")) {
+          const posAttr = (heatGeo as any).getAttribute("position");
+          const vCount = Number(posAttr?.count || 0);
+          const baseColors = new Float32Array(Math.max(0, vCount * 3));
+          baseColors.fill(1);
+          (heatGeo as any).setAttribute(
+            "color",
+            new (THREE as any).BufferAttribute(baseColors, 3)
+          );
+        }
+        const heatOuterMat = new (THREE as any).MeshBasicMaterial({
           vertexColors: true,
           transparent: true,
-          opacity: 0.92,
-          depthWrite: true,
+          opacity: lowPowerMode ? 0.26 : 0.30,
+          depthWrite: false,
           depthTest: true,
+          blending: (THREE as any).AdditiveBlending,
           toneMapped: false,
         });
-        const heatInst = new (THREE as any).InstancedMesh(
+        const heatCoreMat = new (THREE as any).MeshBasicMaterial({
+          vertexColors: true,
+          transparent: true,
+          opacity: lowPowerMode ? 0.55 : 0.64,
+          depthWrite: false,
+          depthTest: true,
+          blending: (THREE as any).AdditiveBlending,
+          toneMapped: false,
+        });
+        const heatOuterInst = new (THREE as any).InstancedMesh(
           heatGeo,
-          heatMat,
+          heatOuterMat,
           cells.length
         );
-        heatInst.renderOrder = 22;
+        const heatCoreInst = new (THREE as any).InstancedMesh(
+          heatGeo,
+          heatCoreMat,
+          cells.length
+        );
+        heatOuterInst.renderOrder = 22;
+        heatCoreInst.renderOrder = 23;
         const tmpCellObj = new (THREE as any).Object3D();
         const tmpCellColor = new (THREE as any).Color(0xffffff);
+        const cellBase = Math.max(1e-6, Math.min(cellDx, cellDy, cellDz));
         for (let i = 0; i < cells.length; i++) {
           const c = cells[i];
+          const radius = cellBase * (0.78 + c.dens * (lowPowerMode ? 1.55 : 2.05));
+          const outerY = radius * (1.25 + c.dens * 0.75);
+          const outerXZ = radius * (1.35 + c.dens * 0.9);
+          const core = radius * (0.62 + c.dens * 0.42);
+
           tmpCellObj.position.set(c.cx, c.cy, c.cz);
-          tmpCellObj.scale.set(cellDx * c.s, cellDy * c.s, cellDz * c.s);
+          tmpCellObj.scale.set(outerXZ, outerY, outerXZ);
           tmpCellObj.updateMatrix();
-          heatInst.setMatrixAt(i, tmpCellObj.matrix);
-          tmpCellColor.setRGB(c.rgb[0], c.rgb[1], c.rgb[2]);
-          heatInst.setColorAt(i, tmpCellColor);
+          heatOuterInst.setMatrixAt(i, tmpCellObj.matrix);
+          tmpCellColor.setRGB(c.color[0], c.color[1], c.color[2]);
+          heatOuterInst.setColorAt(i, tmpCellColor);
+
+          tmpCellObj.position.set(c.cx, c.cy, c.cz);
+          tmpCellObj.scale.set(core, core, core);
+          tmpCellObj.updateMatrix();
+          heatCoreInst.setMatrixAt(i, tmpCellObj.matrix);
+          tmpCellColor.setRGB(
+            Math.min(2.0, c.color[0] * 1.22),
+            Math.min(2.0, c.color[1] * 1.22),
+            Math.min(2.0, c.color[2] * 1.22)
+          );
+          heatCoreInst.setColorAt(i, tmpCellColor);
         }
-        heatInst.instanceMatrix.needsUpdate = true;
-        if (heatInst.instanceColor) heatInst.instanceColor.needsUpdate = true;
-        heatLayer.add(heatInst);
+        heatOuterInst.instanceMatrix.needsUpdate = true;
+        heatCoreInst.instanceMatrix.needsUpdate = true;
+        if (heatOuterInst.instanceColor) heatOuterInst.instanceColor.needsUpdate = true;
+        if (heatCoreInst.instanceColor) heatCoreInst.instanceColor.needsUpdate = true;
+        heatLayer.add(heatOuterInst);
+        heatLayer.add(heatCoreInst);
+
+        const sortedByDensity = cells
+          .slice()
+          .sort((a, b) => b.dens - a.dens)
+          .slice(0, Math.min(lowPowerMode ? 80 : 180, cells.length));
+        if (sortedByDensity.length > 0) {
+          const floorY = minY - spanY * 0.44;
+          const pos = new Float32Array(sortedByDensity.length * 2 * 3);
+          const col = new Float32Array(sortedByDensity.length * 2 * 3);
+          for (let i = 0; i < sortedByDensity.length; i++) {
+            const c = sortedByDensity[i];
+            const off = i * 6;
+            pos[off + 0] = c.cx;
+            pos[off + 1] = floorY;
+            pos[off + 2] = c.cz;
+            pos[off + 3] = c.cx;
+            pos[off + 4] = c.cy;
+            pos[off + 5] = c.cz;
+
+            col[off + 0] = c.color[0] * 0.1;
+            col[off + 1] = c.color[1] * 0.1;
+            col[off + 2] = c.color[2] * 0.1;
+            col[off + 3] = Math.min(1.6, c.color[0] * (0.7 + c.dens * 0.6));
+            col[off + 4] = Math.min(1.6, c.color[1] * (0.7 + c.dens * 0.6));
+            col[off + 5] = Math.min(1.6, c.color[2] * (0.7 + c.dens * 0.6));
+          }
+          const beamGeo = new (THREE as any).BufferGeometry();
+          beamGeo.setAttribute(
+            "position",
+            new (THREE as any).BufferAttribute(pos, 3)
+          );
+          beamGeo.setAttribute("color", new (THREE as any).BufferAttribute(col, 3));
+          const beamMat = new (THREE as any).LineBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: lowPowerMode ? 0.32 : 0.42,
+            depthWrite: false,
+            depthTest: true,
+            blending: (THREE as any).AdditiveBlending,
+            toneMapped: false,
+          });
+          const beams = new (THREE as any).LineSegments(beamGeo, beamMat);
+          beams.renderOrder = 21;
+          heatLayer.add(beams);
+        }
       }
     }
 
@@ -13015,6 +13148,64 @@ function ClusterMapViewport3D({
         meshFill.scale.set(sx, sy, sz);
         meshFill.renderOrder = 16;
         overlayLayer.add(meshFill);
+
+        const haloGeo = new (THREE as any).IcosahedronGeometry(1, 2);
+        const haloMat = new (THREE as any).MeshBasicMaterial({
+          color: clusterHex,
+          transparent: true,
+          opacity: Math.min(0.52, 0.14 + fillAlpha * 0.36),
+          depthWrite: false,
+          depthTest: true,
+          blending: (THREE as any).AdditiveBlending,
+          side: (THREE as any).DoubleSide,
+          toneMapped: false,
+        });
+        const haloMesh = new (THREE as any).Mesh(haloGeo, haloMat);
+        haloMesh.position.set(cx, cy, cz);
+        haloMesh.scale.set(sx * 1.08, sy * 1.08, sz * 1.08);
+        haloMesh.renderOrder = 15;
+        overlayLayer.add(haloMesh);
+
+        const step = Math.max(1, Math.floor(pts.length / (lowPowerMode ? 26 : 54)));
+        const spokePts: number[] = [];
+        const spokeCols: number[] = [];
+        const clusterCol = new (THREE as any).Color(clusterHex);
+        const edgeCol = clusterCol.clone().offsetHSL(0, 0.1, 0.15);
+        for (let i = 0; i < pts.length; i += step) {
+          const p = pts[i];
+          spokePts.push(cx, cy, cz, p[0], p[1], p[2]);
+          spokeCols.push(
+            clusterCol.r * 0.55,
+            clusterCol.g * 0.55,
+            clusterCol.b * 0.55,
+            edgeCol.r * 1.15,
+            edgeCol.g * 1.15,
+            edgeCol.b * 1.15
+          );
+        }
+        if (spokePts.length >= 6) {
+          const spokeGeo = new (THREE as any).BufferGeometry();
+          spokeGeo.setAttribute(
+            "position",
+            new (THREE as any).Float32BufferAttribute(spokePts, 3)
+          );
+          spokeGeo.setAttribute(
+            "color",
+            new (THREE as any).Float32BufferAttribute(spokeCols, 3)
+          );
+          const spokeMat = new (THREE as any).LineBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: Math.min(0.88, 0.22 + fillAlpha * 0.58),
+            depthWrite: false,
+            depthTest: true,
+            blending: (THREE as any).AdditiveBlending,
+            toneMapped: false,
+          });
+          const spokes = new (THREE as any).LineSegments(spokeGeo, spokeMat);
+          spokes.renderOrder = 17;
+          overlayLayer.add(spokes);
+        }
       }
     }
 
@@ -13062,6 +13253,7 @@ function ClusterMapViewport3D({
     ensureInstCapacity,
     toNodeColor,
     toClusterHex,
+    onSelectionIdsChange,
     requestRender,
   ]);
 
@@ -13279,7 +13471,10 @@ export function ClusterMap({
   // Box selection (2D only)
   // - Toggle selection mode with Option+T (and a clickable UI toggle; Option+T is less likely to be blocked by the browser)
   // - In selection mode: click (left or right) to set corner A, move mouse to preview, click again to set corner B.
-  const [boxSelectMode, setBoxSelectMode] = useState(false);
+  const [boxSelectMode2d, setBoxSelectMode2d] = useState(false);
+  const [boxSelectMode3d, setBoxSelectMode3d] = useState(false);
+  const [selectionClearNonce3d, setSelectionClearNonce3d] = useState(0);
+  const [selectedIds3d, setSelectedIds3d] = useState<string[]>([]);
   const [boxStart, setBoxStart] = useState<null | { x: number; y: number }>(
     null
   );
@@ -13576,18 +13771,20 @@ export function ClusterMap({
           e.preventDefault();
           e.stopPropagation();
           setHeatmapOn(false);
-          setBoxSelectMode((v) => !v);
+          setBoxSelectMode3d((v) => !v);
           return;
         }
         if (isToggle3DHeat) {
           e.preventDefault();
           e.stopPropagation();
           if (lowPowerMode) return;
-          setBoxSelectMode(false);
+          setBoxSelectMode3d(false);
           setHeatmapOn((v) => !v);
           return;
         }
         if (k === "escape") {
+          setBoxSelectMode3d(false);
+          setSelectionClearNonce3d((v) => v + 1);
           setHeatHover(null);
           setPinnedWorld(null);
           setPinnedHeatHover(null);
@@ -13604,7 +13801,7 @@ export function ClusterMap({
       if (isToggle) {
         e.preventDefault();
         e.stopPropagation();
-        setBoxSelectMode((v) => !v);
+        setBoxSelectMode2d((v) => !v);
         return;
       }
 
@@ -13654,7 +13851,7 @@ export function ClusterMap({
 
       if (k === "escape") {
         // Escape exits selection mode and clears the in-progress rectangle preview.
-        setBoxSelectMode(false);
+        setBoxSelectMode2d(false);
         setBoxStart(null);
         setBoxEnd(null);
         setBoxPreview(null);
@@ -16794,21 +16991,9 @@ export function ClusterMap({
   const viewRef = useRef(view);
   const [isDragging, setIsDragging] = useState(false);
   const is3dMapActive = clusterMapView === "3d";
+  const boxSelectMode = is3dMapActive ? boxSelectMode3d : boxSelectMode2d;
 
   useEffect(() => {
-    if (!is3dMapActive) return;
-    setHeatmapOn(false);
-    setHeatHover(null);
-    setPinnedHeatHover(null);
-    setBoxSelectMode(false);
-    setBoxStart(null);
-    setBoxEnd(null);
-    setBoxPreview(null);
-    setSelShape(null);
-    setLassoFinal(null);
-    setLassoIsDrawing(false);
-    lassoRef.current.drawing = false;
-    lassoRef.current.pts = [];
     setTooltip(null);
     setHoveredId(null);
     hoveredIdRef.current = null;
@@ -16816,12 +17001,37 @@ export function ClusterMap({
       hoveredGroupRef.current = null;
       setHoveredGroup(null);
     }
+    if (is3dMapActive) {
+      // Keep 2D and 3D selection modes independent, but clear transient 2D drawing state.
+      setHeatHover(null);
+      setPinnedHeatHover(null);
+      setBoxStart(null);
+      setBoxEnd(null);
+      setBoxPreview(null);
+      setSelShape(null);
+      setLassoFinal(null);
+      setLassoIsDrawing(false);
+      lassoRef.current.drawing = false;
+      lassoRef.current.pts = [];
+    } else {
+      // 3D selection is local to the 3D viewport; clear parent copy when returning to 2D.
+      setSelectedIds3d([]);
+    }
   }, [is3dMapActive]);
 
   const handle3dSelectId = React.useCallback((id: string | null) => {
     setSelectedId(id);
     setSelectedGroup(null);
     selectedGroupRef.current = null;
+  }, []);
+
+  const handle3dSelectionIds = React.useCallback((ids: string[]) => {
+    const normalized = Array.isArray(ids)
+      ? ids
+          .map((x) => String(x ?? "").trim())
+          .filter((x) => x.length > 0)
+      : [];
+    setSelectedIds3d(normalized);
   }, []);
 
   const computeHeatHover = React.useCallback((wx: number, wy: number) => {
@@ -18201,82 +18411,79 @@ export function ClusterMap({
 
   // User-facing selection stats should reflect exactly what the map is showing.
   // In HDBSCAN mode this includes post-hoc promotion/demotion.
+  const summarizeSelectionSlice = React.useCallback((list: any[]) => {
+    let count = 0;
+    let totalPnl = 0;
+    let grossProfit = 0;
+    let grossLoss = 0;
+    let wins = 0;
+
+    for (const n of list) {
+      const pnl =
+        typeof (n as any).unrealizedPnl === "number" &&
+        Number.isFinite((n as any).unrealizedPnl)
+          ? (n as any).unrealizedPnl
+          : typeof (n as any).pnl === "number" && Number.isFinite((n as any).pnl)
+          ? (n as any).pnl
+          : 0;
+      count++;
+      totalPnl += pnl;
+
+      const hasWin = typeof (n as any).win === "boolean";
+      const isWin = hasWin ? !!(n as any).win : pnl >= 0;
+      if (isWin) {
+        wins++;
+        if (pnl > 0) grossProfit += pnl;
+      } else if (pnl < 0) {
+        grossLoss += Math.abs(pnl);
+      }
+    }
+
+    const losses = Math.max(0, count - wins);
+    const winRate = count > 0 ? wins / count : 0;
+    const expValue = count > 0 ? totalPnl / count : 0;
+    const profitFactor =
+      grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : NaN;
+    const avgWin = wins > 0 ? grossProfit / wins : 0;
+    const avgLoss = losses > 0 ? grossLoss / losses : 0;
+
+    return {
+      count,
+      totalPnl,
+      grossProfit,
+      grossLoss,
+      wins,
+      losses,
+      winRate,
+      expValue,
+      profitFactor,
+      avgWin,
+      avgLoss,
+    };
+  }, []);
+
+  const summarizeSelectionStats = React.useCallback(
+    (pickedAll: any[]) => {
+      const all = summarizeSelectionSlice(pickedAll);
+      const buy = summarizeSelectionSlice(
+        pickedAll.filter((n) => ((n as any).dir ?? (n as any).direction) === 1)
+      );
+      const sell = summarizeSelectionSlice(
+        pickedAll.filter((n) => ((n as any).dir ?? (n as any).direction) === -1)
+      );
+      return { all, buy, sell, buys: buy.count, sells: sell.count };
+    },
+    [summarizeSelectionSlice]
+  );
+
   const boxStats = useMemo(() => {
     if (!boxRect) return null;
     const { x0, y0, x1, y1 } = boxRect;
-    const picked = (displayNodes as any[]).filter(
+    const pickedAll = (displayNodes as any[]).filter(
       (n) => n && n.x >= x0 && n.x <= x1 && n.y >= y0 && n.y <= y1
     );
-    // Count *all* picked nodes (trades, library points, helpers, potentials, etc.).
-    // This makes box selection reflect the full set of rendered points, regardless of kind.
-    const pickedAll = picked;
-
-    const summarize = (list: any[]) => {
-      let count = 0;
-      let totalPnl = 0;
-      let grossProfit = 0;
-      let grossLoss = 0;
-      let wins = 0;
-
-      for (const n of list) {
-        const pnl =
-          typeof (n as any).unrealizedPnl === "number" &&
-          Number.isFinite((n as any).unrealizedPnl)
-            ? (n as any).unrealizedPnl
-            : typeof (n as any).pnl === "number" &&
-              Number.isFinite((n as any).pnl)
-            ? (n as any).pnl
-            : 0;
-        count++;
-        totalPnl += pnl;
-
-        const hasWin = typeof (n as any).win === "boolean";
-        const isWin = hasWin ? !!(n as any).win : pnl >= 0;
-        if (isWin) {
-          wins++;
-          if (pnl > 0) grossProfit += pnl;
-        } else {
-          if (pnl < 0) grossLoss += Math.abs(pnl);
-        }
-      }
-
-      const losses = Math.max(0, count - wins);
-      const winRate = count > 0 ? wins / count : 0;
-      const expValue = count > 0 ? totalPnl / count : 0;
-      const profitFactor =
-        grossLoss > 0
-          ? grossProfit / grossLoss
-          : grossProfit > 0
-          ? Infinity
-          : NaN;
-      const avgWin = wins > 0 ? grossProfit / wins : 0;
-      const avgLoss = losses > 0 ? grossLoss / losses : 0;
-
-      return {
-        count,
-        totalPnl,
-        grossProfit,
-        grossLoss,
-        wins,
-        losses,
-        winRate,
-        expValue,
-        profitFactor,
-        avgWin,
-        avgLoss,
-      };
-    };
-
-    const all = summarize(pickedAll);
-    const buy = summarize(
-      pickedAll.filter((n) => ((n as any).dir ?? (n as any).direction) === 1)
-    );
-    const sell = summarize(
-      pickedAll.filter((n) => ((n as any).dir ?? (n as any).direction) === -1)
-    );
-
-    return { all, buy, sell, buys: buy.count, sells: sell.count };
-  }, [boxRect, displayNodes]);
+    return summarizeSelectionStats(pickedAll);
+  }, [boxRect, displayNodes, summarizeSelectionStats]);
 
   const lassoStats = useMemo(() => {
     const poly = lassoFinal;
@@ -18301,78 +18508,21 @@ export function ClusterMap({
       return inside;
     };
 
-    const picked = (displayNodes as any[]).filter(
+    const pickedAll = (displayNodes as any[]).filter(
       (n) => n && pointInPoly(n.x, n.y, poly)
     );
-    // Count *all* picked nodes (trades, library points, helpers, potentials, etc.).
-    const pickedAll = picked;
+    return summarizeSelectionStats(pickedAll);
+  }, [displayNodes, lassoFinal, summarizeSelectionStats]);
 
-    const summarize = (list: any[]) => {
-      let count = 0;
-      let totalPnl = 0;
-      let grossProfit = 0;
-      let grossLoss = 0;
-      let wins = 0;
-
-      for (const n of list) {
-        const pnl =
-          typeof (n as any).unrealizedPnl === "number" &&
-          Number.isFinite((n as any).unrealizedPnl)
-            ? (n as any).unrealizedPnl
-            : typeof (n as any).pnl === "number" &&
-              Number.isFinite((n as any).pnl)
-            ? (n as any).pnl
-            : 0;
-        count++;
-        totalPnl += pnl;
-
-        const hasWin = typeof (n as any).win === "boolean";
-        const isWin = hasWin ? !!(n as any).win : pnl >= 0;
-        if (isWin) {
-          wins++;
-          if (pnl > 0) grossProfit += pnl;
-        } else {
-          if (pnl < 0) grossLoss += Math.abs(pnl);
-        }
-      }
-
-      const losses = Math.max(0, count - wins);
-      const winRate = count > 0 ? wins / count : 0;
-      const expValue = count > 0 ? totalPnl / count : 0;
-      const profitFactor =
-        grossLoss > 0
-          ? grossProfit / grossLoss
-          : grossProfit > 0
-          ? Infinity
-          : NaN;
-      const avgWin = wins > 0 ? grossProfit / wins : 0;
-      const avgLoss = losses > 0 ? grossLoss / losses : 0;
-
-      return {
-        count,
-        totalPnl,
-        grossProfit,
-        grossLoss,
-        wins,
-        losses,
-        winRate,
-        expValue,
-        profitFactor,
-        avgWin,
-        avgLoss,
-      };
-    };
-
-    const all = summarize(pickedAll);
-    const buy = summarize(
-      pickedAll.filter((n) => ((n as any).dir ?? (n as any).direction) === 1)
+  const boxStats3d = useMemo(() => {
+    if (!selectedIds3d || selectedIds3d.length === 0) return null;
+    const idSet = new Set(selectedIds3d);
+    const pickedAll = (displayNodes as any[]).filter(
+      (n) => n && idSet.has(String((n as any).id ?? ""))
     );
-    const sell = summarize(
-      pickedAll.filter((n) => ((n as any).dir ?? (n as any).direction) === -1)
-    );
-
-    return { all, buy, sell, buys: buy.count, sells: sell.count };
-  }, [displayNodes, lassoFinal]);
+    if (!pickedAll.length) return null;
+    return summarizeSelectionStats(pickedAll);
+  }, [displayNodes, selectedIds3d, summarizeSelectionStats]);
 
   const counts = useMemo(() => {
     // "Live/Normal" = non-library nodes (trades/potential), libraries are tracked separately.
@@ -20633,6 +20783,8 @@ export function ClusterMap({
             nodeOutlineMul={nodeOutlineMul}
             mapSpreadMul={mapSpreadMul}
             onSelectId={handle3dSelectId}
+            onSelectionIdsChange={handle3dSelectionIds}
+            selectionClearNonce={selectionClearNonce3d}
           />
         )}
 
@@ -21025,20 +21177,30 @@ export function ClusterMap({
           </div>
         )}
 
-        {(boxSelectMode ||
-          boxStart ||
-          boxStats ||
-          lassoIsDrawing ||
-          lassoFinal ||
-          lassoStats) &&
+        {((is3dMapActive && (boxSelectMode3d || boxStats3d)) ||
+          (!is3dMapActive &&
+            (boxSelectMode2d ||
+              boxStart ||
+              boxStats ||
+              lassoIsDrawing ||
+              lassoFinal ||
+              lassoStats))) &&
           (() => {
-            const isRect = selShape === "rect";
-            const isLasso = selShape === "lasso";
+            const is3dSelectionPanel = is3dMapActive;
+            const isRect = !is3dSelectionPanel && selShape === "rect";
+            const isLasso = !is3dSelectionPanel && selShape === "lasso";
             const hasRect = isRect && !!boxRect;
             const hasA = isRect && !!boxStart;
             const hasB = isRect && !!boxEnd;
             const hasLasso = isLasso && !!lassoFinal && lassoFinal.length >= 3;
-            const stats = isLasso ? lassoStats : boxStats;
+            const selectionModeActive = is3dSelectionPanel
+              ? boxSelectMode3d
+              : boxSelectMode2d;
+            const stats = is3dSelectionPanel
+              ? boxStats3d
+              : isLasso
+              ? lassoStats
+              : boxStats;
             const mode = clusterGroupStatsMode;
             const ms = stats
               ? mode === "Buy"
@@ -21048,7 +21210,15 @@ export function ClusterMap({
                 : (stats as any).all
               : null;
 
-            const hint = boxSelectMode
+            const hint = is3dSelectionPanel
+              ? selectionModeActive
+                ? stats
+                  ? "Selection locked — drag another box to replace it (or Clear)."
+                  : "Selection mode ON — left-drag to create a 3D selection box."
+                : stats
+                ? "Selection mode OFF — press ⌥T to start a new selection."
+                : "Press ⌥T to enter selection mode."
+              : selectionModeActive
               ? isLasso
                 ? lassoIsDrawing
                   ? "Free draw — release to finish the selection."
@@ -21069,12 +21239,20 @@ export function ClusterMap({
                 style={{
                   position: "absolute",
                   left: 12,
-                  top: heatmapOn ? 128 : 12,
+                  top: is3dSelectionPanel
+                    ? selectionModeActive
+                      ? 46
+                      : heatmapOn
+                      ? 72
+                      : 12
+                    : heatmapOn
+                    ? 128
+                    : 12,
                   minWidth: 240,
                   maxWidth: 340,
                   padding: 10,
                   borderRadius: 14,
-                  border: boxSelectMode
+                  border: selectionModeActive
                     ? "1px solid rgba(210,170,255,0.55)"
                     : "1px solid rgba(160,90,255,0.35)",
                   background:
@@ -21104,13 +21282,19 @@ export function ClusterMap({
                         color: "rgba(210,170,255,0.98)",
                       }}
                     >
-                      Box Selection
+                      {is3dSelectionPanel ? "3D Selection" : "Box Selection"}
                     </div>
                     <button
-                      onClick={() => setBoxSelectMode((v) => !v)}
+                      onClick={() => {
+                        if (is3dSelectionPanel) {
+                          setBoxSelectMode3d((v) => !v);
+                        } else {
+                          setBoxSelectMode2d((v) => !v);
+                        }
+                      }}
                       style={{
                         border: "1px solid rgba(255,255,255,0.14)",
-                        background: boxSelectMode
+                        background: selectionModeActive
                           ? "rgba(210,170,255,0.14)"
                           : "rgba(255,255,255,0.06)",
                         color: "rgba(255,255,255,0.86)",
@@ -21122,19 +21306,27 @@ export function ClusterMap({
                       }}
                       title="Toggle selection mode (⌥T)"
                     >
-                      {boxSelectMode ? "ON" : "OFF"} · ⌥T
+                      {selectionModeActive ? "ON" : "OFF"} · ⌥T
                     </button>
                   </div>
                   <button
                     onClick={() => {
-                      setBoxStart(null);
-                      setBoxEnd(null);
-                      setBoxPreview(null);
-                      setSelShape(null);
-                      setLassoFinal(null);
-                      setLassoIsDrawing(false);
-                      lassoRef.current.drawing = false;
-                      lassoRef.current.pts = [];
+                      if (is3dSelectionPanel) {
+                        setSelectedIds3d([]);
+                        setSelectionClearNonce3d((v) => v + 1);
+                        setSelectedId(null);
+                        setSelectedGroup(null);
+                        selectedGroupRef.current = null;
+                      } else {
+                        setBoxStart(null);
+                        setBoxEnd(null);
+                        setBoxPreview(null);
+                        setSelShape(null);
+                        setLassoFinal(null);
+                        setLassoIsDrawing(false);
+                        lassoRef.current.drawing = false;
+                        lassoRef.current.pts = [];
+                      }
                     }}
                     style={{
                       border: "1px solid rgba(255,255,255,0.12)",
@@ -21320,7 +21512,9 @@ export function ClusterMap({
                       color: "rgba(255,255,255,0.86)",
                     }}
                   >
-                    Make a selection to define the box.
+                    {is3dSelectionPanel
+                      ? "Drag-select in the 3D viewport to populate stats."
+                      : "Make a selection to define the box."}
                   </div>
                 )}
               </div>
