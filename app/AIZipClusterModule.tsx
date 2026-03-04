@@ -12382,13 +12382,24 @@ function ClusterMapViewport3D({
       const id = String((n as any)?.id ?? "");
       nodeIds[i] = id;
 
-      const xRaw = Number((n as any)?.x) || 0;
-      const yRaw = -(Number((n as any)?.y) || 0);
-      const order =
-        Number((n as any)?.signalIndex ?? (n as any)?.entryIndex ?? i) || 0;
-      const zChrono = ((order % 180) - 90) / 40;
-      const zJitter = (stableHashToUnit(`${id}|z3d`) - 0.5) * 1.2;
-      const zRaw = zChrono * 0.58 + zJitter;
+      const x3Raw = Number((n as any)?.x3);
+      const y3Raw = Number((n as any)?.y3);
+      const z3Raw = Number((n as any)?.z3);
+      const hasEmbedded3D =
+        Number.isFinite(x3Raw) &&
+        Number.isFinite(y3Raw) &&
+        Number.isFinite(z3Raw);
+
+      const xRaw = hasEmbedded3D ? x3Raw : Number((n as any)?.x) || 0;
+      const yRaw = hasEmbedded3D ? -y3Raw : -(Number((n as any)?.y) || 0);
+      let zRaw = hasEmbedded3D ? z3Raw : 0;
+      if (!hasEmbedded3D) {
+        const order =
+          Number((n as any)?.signalIndex ?? (n as any)?.entryIndex ?? i) || 0;
+        const zChrono = ((order % 180) - 90) / 40;
+        const zJitter = (stableHashToUnit(`${id}|z3d`) - 0.5) * 1.2;
+        zRaw = zChrono * 0.58 + zJitter;
+      }
 
       rawPts.push({ x: xRaw, y: yRaw, z: zRaw, id, node: n });
       if (xRaw < minRawX) minRawX = xRaw;
@@ -13941,6 +13952,19 @@ export function ClusterMap({
       sampleN: 1500,
     });
     const embedding = um.emb;
+    const shouldEmbed3D = clusterMapView === "3d";
+    const um3 = shouldEmbed3D
+      ? computeUMAPEmbedding3D(stdData, pc1, pc2, {
+          seedKey: "cluster-map-3d",
+          nNeighbors: 18,
+          nEpochs: 220,
+          negRate: 4,
+          learningRate: 1.0,
+          maxN: 2500,
+          sampleN: 1600,
+        })
+      : null;
+    const embedding3 = (um3 as any)?.emb || [];
 
     let minX = Infinity,
       maxX = -Infinity,
@@ -13964,6 +13988,53 @@ export function ClusterMap({
     }
     const dx = Math.max(1e-6, maxX - minX);
     const dy = Math.max(1e-6, maxY - minY);
+
+    let minX3 = -1,
+      maxX3 = 1,
+      minY3 = -1,
+      maxY3 = 1,
+      minZ3 = -1,
+      maxZ3 = 1;
+    if (shouldEmbed3D) {
+      minX3 = Infinity;
+      maxX3 = -Infinity;
+      minY3 = Infinity;
+      maxY3 = -Infinity;
+      minZ3 = Infinity;
+      maxZ3 = -Infinity;
+      for (const p of embedding3) {
+        if (!p) continue;
+        if (
+          !Number.isFinite((p as any).x) ||
+          !Number.isFinite((p as any).y) ||
+          !Number.isFinite((p as any).z)
+        ) {
+          continue;
+        }
+        if ((p as any).x < minX3) minX3 = (p as any).x;
+        if ((p as any).x > maxX3) maxX3 = (p as any).x;
+        if ((p as any).y < minY3) minY3 = (p as any).y;
+        if ((p as any).y > maxY3) maxY3 = (p as any).y;
+        if ((p as any).z < minZ3) minZ3 = (p as any).z;
+        if ((p as any).z > maxZ3) maxZ3 = (p as any).z;
+      }
+      if (!Number.isFinite(minX3) || !Number.isFinite(maxX3)) {
+        minX3 = -1;
+        maxX3 = 1;
+      }
+      if (!Number.isFinite(minY3) || !Number.isFinite(maxY3)) {
+        minY3 = -1;
+        maxY3 = 1;
+      }
+      if (!Number.isFinite(minZ3) || !Number.isFinite(maxZ3)) {
+        minZ3 = -1;
+        maxZ3 = 1;
+      }
+    }
+    const dx3 = Math.max(1e-6, maxX3 - minX3);
+    const dy3 = Math.max(1e-6, maxY3 - minY3);
+    const dz3 = Math.max(1e-6, maxZ3 - minZ3);
+
     projectionRef.current = {
       mean,
       stdev,
@@ -13987,23 +14058,44 @@ export function ClusterMap({
     const JITTER_PX = 50;
     const mapWidth = 2000;
     const mapHeight = 900;
+    const mapDepth = 1200;
     const out: any[] = [];
     for (let i = 0; i < goodEntries.length; i++) {
       const e: any = goodEntries[i];
       const p: any = embedding[i];
       if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) continue; // skip node
+      const p3: any = embedding3[i];
 
       const jxSeed = stableHashToUnit(e.id + "jx");
       const jySeed = stableHashToUnit(e.id + "jy");
+      const jzSeed = stableHashToUnit(e.id + "jz3");
       const jx = (jxSeed - 0.5) * JITTER_PX;
       const jy = (jySeed - 0.5) * JITTER_PX;
+      const jz = (jzSeed - 0.5) * JITTER_PX;
       const r = (e.baseR ?? 7.2) * 1.25;
+      const x2 = ((p.x - minX) / dx - 0.5) * mapWidth + jx;
+      const y2 = ((p.y - minY) / dy - 0.5) * mapHeight + jy;
+      const has3 =
+        p3 &&
+        Number.isFinite((p3 as any).x) &&
+        Number.isFinite((p3 as any).y) &&
+        Number.isFinite((p3 as any).z);
+      const x3 = has3 ? (((p3 as any).x - minX3) / dx3 - 0.5) * mapWidth + jx : x2;
+      const y3 = has3
+        ? (((p3 as any).y - minY3) / dy3 - 0.5) * mapHeight + jy
+        : y2;
+      const z3 = has3
+        ? (((p3 as any).z - minZ3) / dz3 - 0.5) * mapDepth + jz
+        : (((Number(e.signalIndex ?? e.entryIndex ?? i) % 180) - 90) / 40) * 120 + jz;
       out.push({
         id: e.id,
         uid: (e as any).uid || (e as any).tradeUid || e.id || null,
         libId: (e as any).libId ?? null,
-        x: ((p.x - minX) / dx - 0.5) * mapWidth + jx,
-        y: ((p.y - minY) / dy - 0.5) * mapHeight + jy,
+        x: x2,
+        y: y2,
+        x3,
+        y3,
+        z3,
         r,
         kind: e.kind,
         pnl: e.pnl,
@@ -14133,6 +14225,7 @@ export function ClusterMap({
     antiCheatEnabled,
     nodeChronologyValue,
     nodeStableKey,
+    clusterMapView,
   ]);
 
   const tradeNodeByUidAll = useMemo(() => {
@@ -14485,6 +14578,9 @@ export function ClusterMap({
           time: tRaw,
           x: normX + jx,
           y: normY + jy,
+          x3: (staticNode as any).x3,
+          y3: (staticNode as any).y3,
+          z3: (staticNode as any).z3,
           r: staticNode.r,
           kind: "close",
           isOpen: true,
@@ -15362,6 +15458,9 @@ export function ClusterMap({
             // geometry / vectors (needed for map + clustering context)
             x: (n as any).x,
             y: (n as any).y,
+            x3: (n as any).x3,
+            y3: (n as any).y3,
+            z3: (n as any).z3,
             r: (n as any).r,
             baseR: (n as any).baseR,
             chunk: (n as any).chunk,
@@ -15458,6 +15557,9 @@ export function ClusterMap({
             // geometry / vectors
             x: (n as any).x,
             y: (n as any).y,
+            x3: (n as any).x3,
+            y3: (n as any).y3,
+            z3: (n as any).z3,
             r: (n as any).r,
             baseR: (n as any).baseR,
             chunk: (n as any).chunk,
