@@ -58,6 +58,14 @@ export type BacktestHistoryWorkerRequest = {
   trailingDistPct: number;
 };
 
+export type BacktestHistoryComputeRequest = Omit<BacktestHistoryWorkerRequest, "requestId"> & {
+  limit: number;
+};
+
+export type BacktestHistoryComputeResponse = {
+  rows: BacktestHistoryRow[];
+};
+
 export type BacktestHistoryWorkerProgressResponse = {
   requestId: number;
   type: "progress";

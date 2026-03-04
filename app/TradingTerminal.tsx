@@ -33,10 +33,8 @@ import type {
   UTCTimestamp
 } from "lightweight-charts";
 import {
-  computeBacktestHistoryRowsChunk,
-  finalizeBacktestHistoryRows,
   type BacktestHistoryRow,
-  type BacktestHistoryWorkerResponse
+  type BacktestHistoryComputeRequest
 } from "./backtestHistoryShared";
 import AssistantPanel from "./AssistantPanel";
 import {
@@ -296,6 +294,29 @@ const normalizeBacktestHistoryRows = (rows: BacktestHistoryRow[]): HistoryItem[]
     entryTime: row.entryTime as UTCTimestamp,
     exitTime: row.exitTime as UTCTimestamp
   }));
+};
+
+const computeBacktestRowsOnServer = async (
+  payload: BacktestHistoryComputeRequest,
+  signal?: AbortSignal
+): Promise<HistoryItem[]> => {
+  const response = await fetch("/api/backtest/history", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+    signal
+  });
+
+  if (!response.ok) {
+    throw new Error(`Backtest server compute failed (${response.status}).`);
+  }
+
+  const data = (await response.json()) as { rows?: unknown };
+  const rows = Array.isArray(data.rows) ? (data.rows as BacktestHistoryRow[]) : [];
+  return normalizeBacktestHistoryRows(rows);
 };
 
 type BacktestClusterGroupId = "momentum" | "trend" | "trap" | "chop";
@@ -8246,17 +8267,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedAiModelEveryCandleMode &&
     (appliedBacktestSettings.antiCheatEnabled || selectedBacktestTab === "cluster");
 
-  const sharedLibraryCandidateTrades = useMemo(() => {
-    if (!backtestHasRun || !backtestHistorySeedReady) {
-      return [] as HistoryItem[];
-    }
-
-    if (!shouldBuildSharedLibraryCandidateTrades) {
-      return [] as HistoryItem[];
+  const [sharedLibraryCandidateTrades, setSharedLibraryCandidateTrades] = useState<HistoryItem[]>([]);
+  useEffect(() => {
+    if (!backtestHasRun || !backtestHistorySeedReady || !shouldBuildSharedLibraryCandidateTrades) {
+      setSharedLibraryCandidateTrades([]);
+      return;
     }
 
     if (everyCandleTradeBlueprints.length === 0) {
-      return [] as HistoryItem[];
+      setSharedLibraryCandidateTrades([]);
+      return;
     }
 
     const modelNamesById: Record<string, string> = {};
@@ -8290,8 +8310,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
     }
 
-    const rows = finalizeBacktestHistoryRows(
-      computeBacktestHistoryRowsChunk({
+    const controller = new AbortController();
+    let cancelled = false;
+
+    computeBacktestRowsOnServer(
+      {
         blueprints: everyCandleTradeBlueprints,
         candleSeriesBySymbol,
         oneMinuteCandlesBySymbol:
@@ -8303,12 +8326,28 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         breakEvenTriggerPct: appliedBacktestSettings.breakEvenTriggerPct,
         trailingStartPct: appliedBacktestSettings.trailingStartPct,
         trailingDistPct: appliedBacktestSettings.trailingDistPct,
-        minutePreciseEnabled: appliedBacktestSettings.minutePreciseEnabled
-      }),
-      everyCandleTradeBlueprints.length
-    );
+        minutePreciseEnabled: appliedBacktestSettings.minutePreciseEnabled,
+        limit: everyCandleTradeBlueprints.length
+      },
+      controller.signal
+    )
+      .then((rows) => {
+        if (cancelled || controller.signal.aborted) {
+          return;
+        }
+        setSharedLibraryCandidateTrades(rows);
+      })
+      .catch(() => {
+        if (cancelled || controller.signal.aborted) {
+          return;
+        }
+        setSharedLibraryCandidateTrades([]);
+      });
 
-    return normalizeBacktestHistoryRows(rows);
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [
     backtestHasRun,
     backtestHistorySeedReady,
@@ -9116,41 +9155,63 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return modelNamesById;
   }, [chartPanelTradeBlueprints, modelProfileById]);
-  const chartPanelReplayRows = useMemo(() => {
+  const [chartPanelReplayRows, setChartPanelReplayRows] = useState<HistoryItem[]>([]);
+  useEffect(() => {
     if (!shouldBuildChartPanelReplayRows) {
-      return [] as HistoryItem[];
+      setChartPanelReplayRows([]);
+      return;
     }
 
     if (chartPanelTradeBlueprints.length === 0 || selectedCandles.length < 16) {
-      return [] as HistoryItem[];
+      setChartPanelReplayRows([]);
+      return;
     }
 
-    const resolvedRows = normalizeBacktestHistoryRows(
-      finalizeBacktestHistoryRows(
-        computeBacktestHistoryRowsChunk({
-          blueprints: chartPanelTradeBlueprints,
-          candleSeriesBySymbol: {
-            [selectedSymbol]: selectedCandles
-          },
-          oneMinuteCandlesBySymbol: chartPanelOneMinuteCandlesBySymbol,
-          minutePreciseEnabled,
-          modelNamesById: chartPanelModelNamesById,
-          tpDollars,
-          slDollars,
-          stopMode,
-          breakEvenTriggerPct,
-          trailingStartPct,
-          trailingDistPct
-        }),
-        chartPanelTradeBlueprints.length
-      )
-    );
+    const controller = new AbortController();
+    let cancelled = false;
 
-    return enforceMaxConcurrentHistoryRows(
-      resolvedRows,
-      maxConcurrentTrades,
-      minutePreciseEnabled
-    );
+    computeBacktestRowsOnServer(
+      {
+        blueprints: chartPanelTradeBlueprints,
+        candleSeriesBySymbol: {
+          [selectedSymbol]: selectedCandles
+        },
+        oneMinuteCandlesBySymbol: chartPanelOneMinuteCandlesBySymbol,
+        minutePreciseEnabled,
+        modelNamesById: chartPanelModelNamesById,
+        tpDollars,
+        slDollars,
+        stopMode,
+        breakEvenTriggerPct,
+        trailingStartPct,
+        trailingDistPct,
+        limit: chartPanelTradeBlueprints.length
+      },
+      controller.signal
+    )
+      .then((rows) => {
+        if (cancelled || controller.signal.aborted) {
+          return;
+        }
+        setChartPanelReplayRows(
+          enforceMaxConcurrentHistoryRows(
+            rows,
+            maxConcurrentTrades,
+            minutePreciseEnabled
+          )
+        );
+      })
+      .catch(() => {
+        if (cancelled || controller.signal.aborted) {
+          return;
+        }
+        setChartPanelReplayRows([]);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [
     breakEvenTriggerPct,
     chartPanelModelNamesById,
@@ -9873,7 +9934,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         left.entryMs - right.entryMs ||
         left.id.localeCompare(right.id)
     );
-    const firstChronologicalBlueprint = chronologicalTradeBlueprints[0] ?? null;
     const lastChronologicalBlueprint =
       chronologicalTradeBlueprints[chronologicalTradeBlueprints.length - 1] ?? null;
     const analysisEndMsRaw = lastChronologicalBlueprint
@@ -9921,43 +9981,28 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(cursorMs));
     };
 
-    const computeSynchronously = (): HistoryItem[] => {
-      return normalizeBacktestHistoryRows(
-        finalizeBacktestHistoryRows(
-          computeBacktestHistoryRowsChunk({
-            blueprints: chronologicalTradeBlueprints,
-            candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
-            oneMinuteCandlesBySymbol: backtestOneMinuteCandlesBySymbolSnapshot,
-            modelNamesById,
-            tpDollars: tpDollarsSnapshot,
-            slDollars: slDollarsSnapshot,
-            stopMode: stopModeSnapshot,
-            breakEvenTriggerPct: breakEvenTriggerPctSnapshot,
-            trailingStartPct: trailingStartPctSnapshot,
-            trailingDistPct: trailingDistPctSnapshot,
-            minutePreciseEnabled: minutePreciseEnabledSnapshot
-          }),
-          backtestTargetTradesSnapshot
-        )
-      );
-    };
-
     let cancelled = false;
-    let failed = false;
     let settled = false;
-    const workers: Worker[] = [];
     let phaseTransitionTimeoutId = 0;
-    let fallbackTimeoutId = window.setTimeout(() => {
-      handleFallback();
-    }, 45_000);
+    let progressTimeoutId = 0;
+    let requestTimeoutId = 0;
+    const requestController = new AbortController();
 
-    const clearFallbackTimeout = () => {
-      if (!fallbackTimeoutId) {
+    const clearProgressTimeout = () => {
+      if (!progressTimeoutId) {
         return;
       }
 
-      window.clearTimeout(fallbackTimeoutId);
-      fallbackTimeoutId = 0;
+      window.clearTimeout(progressTimeoutId);
+      progressTimeoutId = 0;
+    };
+    const clearRequestTimeout = () => {
+      if (!requestTimeoutId) {
+        return;
+      }
+
+      window.clearTimeout(requestTimeoutId);
+      requestTimeoutId = 0;
     };
     const clearPhaseTransitionTimeout = () => {
       if (!phaseTransitionTimeoutId) {
@@ -9978,108 +10023,39 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       settled = true;
-      clearFallbackTimeout();
+      clearProgressTimeout();
+      clearRequestTimeout();
       clearPhaseTransitionTimeout();
       startTransition(() => {
         setHistoryRows(rows);
       });
     };
 
-    const handleFallback = () => {
-      if (failed || cancelled || settled) {
+    const failWithEmptyRows = () => {
+      if (cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
         return;
       }
 
-      failed = true;
-      clearPhaseTransitionTimeout();
-      workers.forEach((worker) => worker.terminate());
       setStatsRefreshStatus("Finalizing Statistics");
-
-      try {
-        commitRows(computeSynchronously());
-      } catch {
-        commitRows([]);
-      }
+      setLoadingProgressFromRatio(1);
+      commitRows([]);
     };
 
     setStatsRefreshProgress(0);
     setStatsRefreshLoadingDisplayProgress(0);
     setStatsRefreshStatus("Replaying Backtest Trades");
     setLoadingProgressFromRatio(0);
+    setLoadingProgressFromRatio(0.1);
+    progressTimeoutId = window.setTimeout(() => {
+      setLoadingProgressFromRatio(0.6);
+    }, 350);
+    requestTimeoutId = window.setTimeout(() => {
+      requestController.abort();
+      failWithEmptyRows();
+    }, 90_000);
 
-    if (typeof Worker === "undefined") {
-      handleFallback();
-      return () => {
-        cancelled = true;
-        clearFallbackTimeout();
-        clearPhaseTransitionTimeout();
-      };
-    }
-
-    let worker: Worker;
-    try {
-      worker = new Worker(new URL("./backtestHistoryWorker.ts", import.meta.url));
-    } catch {
-      handleFallback();
-      return () => {
-        cancelled = true;
-        clearFallbackTimeout();
-        clearPhaseTransitionTimeout();
-      };
-    }
-    workers.push(worker);
-
-    worker.onmessage = (event: MessageEvent<BacktestHistoryWorkerResponse>) => {
-      const message = event.data;
-
-      if (failed || cancelled || message.requestId !== nextJobId) {
-        return;
-      }
-
-      if (message.type === "progress") {
-        const total = Math.max(1, message.total);
-        setStatsRefreshStatus("Replaying Backtest Trades");
-        setLoadingProgressFromRatio(message.processed / total);
-        return;
-      }
-
-      worker.terminate();
-      setLoadingProgressFromRatio(1);
-      const finalizedRows = normalizeBacktestHistoryRows(
-        finalizeBacktestHistoryRows(
-          message.rows,
-          backtestTargetTradesSnapshot
-        )
-      );
-      const commitFinalizingPhase = () => {
-        if (failed || cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
-          return;
-        }
-
-        setStatsRefreshStatus("Finalizing Statistics");
-        commitRows(finalizedRows);
-      };
-
-      if (hasAiLibraryPass) {
-        setStatsRefreshStatus("Loading AI Libraries");
-        clearPhaseTransitionTimeout();
-        phaseTransitionTimeoutId = window.setTimeout(() => {
-          commitFinalizingPhase();
-        }, getStatsRefreshPhaseDurationMs("Loading AI Libraries"));
-        return;
-      }
-
-      commitFinalizingPhase();
-    };
-
-    worker.onerror = () => {
-      worker.terminate();
-      handleFallback();
-    };
-
-    try {
-      worker.postMessage({
-        requestId: nextJobId,
+    computeBacktestRowsOnServer(
+      {
         blueprints: chronologicalTradeBlueprints,
         candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
         oneMinuteCandlesBySymbol: backtestOneMinuteCandlesBySymbolSnapshot,
@@ -10090,18 +10066,56 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         breakEvenTriggerPct: breakEvenTriggerPctSnapshot,
         trailingStartPct: trailingStartPctSnapshot,
         trailingDistPct: trailingDistPctSnapshot,
-        minutePreciseEnabled: minutePreciseEnabledSnapshot
+        minutePreciseEnabled: minutePreciseEnabledSnapshot,
+        limit: backtestTargetTradesSnapshot
+      },
+      requestController.signal
+    )
+      .then((finalizedRows) => {
+        if (
+          cancelled ||
+          settled ||
+          requestController.signal.aborted ||
+          backtestHistoryJobIdRef.current !== nextJobId
+        ) {
+          return;
+        }
+
+        setLoadingProgressFromRatio(1);
+        const commitFinalizingPhase = () => {
+          if (cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
+            return;
+          }
+
+          setStatsRefreshStatus("Finalizing Statistics");
+          commitRows(finalizedRows);
+        };
+
+        if (hasAiLibraryPass) {
+          setStatsRefreshStatus("Loading AI Libraries");
+          clearPhaseTransitionTimeout();
+          phaseTransitionTimeoutId = window.setTimeout(() => {
+            commitFinalizingPhase();
+          }, getStatsRefreshPhaseDurationMs("Loading AI Libraries"));
+          return;
+        }
+
+        commitFinalizingPhase();
+      })
+      .catch(() => {
+        if (cancelled || requestController.signal.aborted) {
+          return;
+        }
+
+        failWithEmptyRows();
       });
-    } catch {
-      worker.terminate();
-      handleFallback();
-    }
 
     return () => {
       cancelled = true;
-      clearFallbackTimeout();
+      requestController.abort();
+      clearProgressTimeout();
+      clearRequestTimeout();
       clearPhaseTransitionTimeout();
-      worker.terminate();
     };
   }, [
     backtestHasRun,
