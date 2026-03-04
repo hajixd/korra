@@ -12029,8 +12029,20 @@ function ClusterMapViewport3D({
       kind === "library" ||
       (n as any).libId != null ||
       String((n as any).id || "").startsWith("lib|");
-    if (kind === "potential") return 0xc88cff;
     if (kind === "close") return 0xff8c00;
+    if (kind === "potential") return 0xc88cff;
+    if (kind === "ghost") {
+      if ((n as any)?.isOpen) return 0x00d2ff;
+      const ghostPnl = Number((n as any)?.pnl ?? (n as any)?.unrealizedPnl ?? 0);
+      return ghostPnl >= 0 ? 0x3cdc78 : 0xe65050;
+    }
+    if (isLib) {
+      const libKey = String((n as any)?.libId ?? (n as any)?.metaLib ?? "").toLowerCase();
+      if (libKey === "suppressed") {
+        const suppPnl = Number((n as any)?.pnl ?? (n as any)?.unrealizedPnl ?? 0);
+        return suppPnl >= 0 ? 0x3cdc78 : 0xe65050;
+      }
+    }
     if ((n as any)?.isOpen && kind === "trade" && !isLib) return 0x00d2ff;
     const pnl = Number((n as any)?.pnl ?? (n as any)?.unrealizedPnl ?? 0);
     return pnl >= 0 ? 0x3cdc78 : 0xe65050;
@@ -12090,9 +12102,9 @@ function ClusterMapViewport3D({
         : Math.min(2, window.devicePixelRatio || 1)
     );
     renderer.outputColorSpace = (THREE as any).SRGBColorSpace;
-    if ((THREE as any).ACESFilmicToneMapping != null) {
-      renderer.toneMapping = (THREE as any).ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.12;
+    if ((THREE as any).NoToneMapping != null) {
+      renderer.toneMapping = (THREE as any).NoToneMapping;
+      renderer.toneMappingExposure = 1;
     }
     renderer.setClearColor(0x081223, 1);
 
@@ -12134,12 +12146,11 @@ function ClusterMapViewport3D({
     scene.add(grid);
 
     const nodeGeo = new (THREE as any).IcosahedronGeometry(1, 1);
-    const nodeMat = new (THREE as any).MeshStandardMaterial({
+    // Unlit material keeps node colors faithful to 2D palette and avoids
+    // dark/black shading artifacts across devices/GPUs.
+    const nodeMat = new (THREE as any).MeshBasicMaterial({
       vertexColors: true,
-      roughness: 0.32,
-      metalness: 0.12,
-      emissive: 0x10243a,
-      emissiveIntensity: 0.34,
+      toneMapped: false,
     });
     const tmpObj = new (THREE as any).Object3D();
     const tmpColor = new (THREE as any).Color(0xffffff);
