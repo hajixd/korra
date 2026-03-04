@@ -11970,6 +11970,9 @@ function ClusterMapViewport3D({
   searchHighlightId,
   resetKey,
   lowPowerMode,
+  hdbOverlay,
+  showGroupOverlays,
+  groupOverlayOpacity,
   nodeSizeMul,
   nodeOutlineMul,
   mapSpreadMul,
@@ -11980,6 +11983,9 @@ function ClusterMapViewport3D({
   searchHighlightId: string | null;
   resetKey: number;
   lowPowerMode: boolean;
+  hdbOverlay: any;
+  showGroupOverlays: boolean;
+  groupOverlayOpacity: number;
   nodeSizeMul: number;
   nodeOutlineMul: number;
   mapSpreadMul: number;
@@ -12000,6 +12006,7 @@ function ClusterMapViewport3D({
   const tmpObjRef = useRef<any>(null);
   const tmpColorRef = useRef<any>(null);
   const tmpOutlineColorRef = useRef<any>(null);
+  const clusterOverlayLayerRef = useRef<any>(null);
   const nodeIdsRef = useRef<string[]>([]);
   const capacityRef = useRef<number>(0);
   const shouldFrameRef = useRef<boolean>(true);
@@ -12055,6 +12062,15 @@ function ClusterMapViewport3D({
     if ((n as any)?.isOpen && kind === "trade" && !isLib) return 0x00d2ff;
     const pnl = Number((n as any)?.pnl ?? (n as any)?.unrealizedPnl ?? 0);
     return pnl >= 0 ? 0x3cdc78 : 0xe65050;
+  }, []);
+
+  const toClusterHex = React.useCallback((clusterId: any) => {
+    if (!THREE) return 0x6aa6ff;
+    const t = stableHashToUnit(`hdb-3d-cluster-${String(clusterId ?? "na")}`);
+    const h = (0.08 + t * 0.84) % 1;
+    const c = new (THREE as any).Color();
+    c.setHSL(h, 0.78, 0.56);
+    return c.getHex();
   }, []);
 
   const requestRender = React.useCallback(() => {
@@ -12204,6 +12220,9 @@ function ClusterMapViewport3D({
       initialCapacity
     );
     const inst = new (THREE as any).InstancedMesh(nodeGeo, nodeMat, initialCapacity);
+    const clusterOverlayLayer = new (THREE as any).Group();
+    clusterOverlayLayer.name = "hdb-overlay-3d";
+    scene.add(clusterOverlayLayer);
     scene.add(instOutline);
     scene.add(inst);
 
@@ -12219,6 +12238,7 @@ function ClusterMapViewport3D({
     tmpObjRef.current = tmpObj;
     tmpColorRef.current = tmpColor;
     tmpOutlineColorRef.current = tmpOutlineColor;
+    clusterOverlayLayerRef.current = clusterOverlayLayer;
     capacityRef.current = initialCapacity;
     shouldFrameRef.current = true;
 
@@ -12306,6 +12326,29 @@ function ClusterMapViewport3D({
         controls.dispose();
       } catch {}
       try {
+        const layer = clusterOverlayLayerRef.current;
+        if (layer && layer.children) {
+          while (layer.children.length) {
+            const ch = layer.children.pop();
+            if (!ch) break;
+            try {
+              layer.remove(ch);
+            } catch {}
+            const mats = Array.isArray((ch as any).material)
+              ? (ch as any).material
+              : [(ch as any).material];
+            for (const m of mats) {
+              try {
+                m?.dispose?.();
+              } catch {}
+            }
+            try {
+              (ch as any).geometry?.dispose?.();
+            } catch {}
+          }
+        }
+      } catch {}
+      try {
         instOutlineRef.current?.dispose?.();
       } catch {}
       try {
@@ -12335,6 +12378,7 @@ function ClusterMapViewport3D({
       tmpObjRef.current = null;
       tmpColorRef.current = null;
       tmpOutlineColorRef.current = null;
+      clusterOverlayLayerRef.current = null;
       nodeIdsRef.current = [];
       capacityRef.current = 0;
       renderNowRef.current = () => {};
@@ -12369,6 +12413,12 @@ function ClusterMapViewport3D({
 
     const nodeIds: string[] = new Array(Math.max(1, nodes.length)).fill("");
     const worldPts: Array<[number, number, number]> = [];
+    const worldByKey = new Map<string, [number, number, number]>();
+    const xyWorldSamples: Array<{
+      x: number;
+      y: number;
+      w: [number, number, number];
+    }> = [];
     const rawPts: Array<{ x: number; y: number; z: number; id: string; node: any }> = [];
     let minRawX = Infinity;
     let minRawY = Infinity;
@@ -12443,10 +12493,26 @@ function ClusterMapViewport3D({
       const y = (item.y - cyRaw) * norm * spread3d;
       const z = (item.z - czRaw) * norm * spread3d;
       worldPts.push([x, y, z]);
+      xyWorldSamples.push({
+        x: Number((n as any)?.x) || 0,
+        y: Number((n as any)?.y) || 0,
+        w: [x, y, z],
+      });
+      const putKey = (k: any) => {
+        const kk = String(k ?? "").trim();
+        if (!kk) return;
+        if (!worldByKey.has(kk)) worldByKey.set(kk, [x, y, z]);
+      };
+      putKey(id);
+      putKey((n as any)?.uid);
+      putKey((n as any)?.tradeUid);
+      putKey((n as any)?.metaOrigId);
+      putKey((n as any)?.metaOrigUid);
+      putKey((n as any)?.parentId);
 
       const baseR = Math.max(
-        0.032,
-        Math.min(0.16, (Number((n as any)?.r) || 6) / 72)
+        0.022,
+        Math.min(0.105, (Number((n as any)?.r) || 6) / 92)
       ) * sizeMul;
       const isHighlighted =
         (selectedId != null && String(selectedId) === id) ||
@@ -12484,6 +12550,141 @@ function ClusterMapViewport3D({
     if (instNow.instanceColor) instNow.instanceColor.needsUpdate = true;
     nodeIdsRef.current = nodeIds;
 
+    const overlayLayer = clusterOverlayLayerRef.current;
+    if (overlayLayer && overlayLayer.children) {
+      while (overlayLayer.children.length) {
+        const ch = overlayLayer.children.pop();
+        if (!ch) break;
+        try {
+          overlayLayer.remove(ch);
+        } catch {}
+        const mats = Array.isArray((ch as any).material)
+          ? (ch as any).material
+          : [(ch as any).material];
+        for (const m of mats) {
+          try {
+            m?.dispose?.();
+          } catch {}
+        }
+        try {
+          (ch as any).geometry?.dispose?.();
+        } catch {}
+      }
+    }
+    if (
+      overlayLayer &&
+      showGroupOverlays &&
+      (Number(groupOverlayOpacity) || 0) > 0.001 &&
+      hdbOverlay &&
+      Array.isArray((hdbOverlay as any).clusters)
+    ) {
+      const opacityMul = Math.max(
+        0,
+        Math.min(5, Number(groupOverlayOpacity) || 0)
+      );
+      const fillAlpha = Math.min(0.6, 0.07 + opacityMul * 0.1);
+      const lineAlpha = Math.min(0.96, 0.18 + opacityMul * 0.18);
+      for (const c of (hdbOverlay as any).clusters as any[]) {
+        const members = Array.isArray((c as any)?.memberNodes)
+          ? ((c as any).memberNodes as any[])
+          : [];
+        if (!members.length) continue;
+        const pts: Array<[number, number, number]> = [];
+        for (const m of members) {
+          if (!m) continue;
+          const keys = [
+            (m as any).id,
+            (m as any).uid,
+            (m as any).tradeUid,
+            (m as any).metaOrigId,
+            (m as any).metaOrigUid,
+          ];
+          let wp: [number, number, number] | undefined;
+          for (const k of keys) {
+            const kk = String(k ?? "").trim();
+            if (!kk) continue;
+            const got = worldByKey.get(kk);
+            if (got) {
+              wp = got;
+              break;
+            }
+          }
+          if (wp) pts.push(wp);
+        }
+        if (pts.length < 4 && Array.isArray((c as any)?.hull) && xyWorldSamples.length) {
+          for (const hp of (c as any).hull as [number, number][]) {
+            if (!hp || hp.length < 2) continue;
+            let best: [number, number, number] | null = null;
+            let bestD = Infinity;
+            for (const s of xyWorldSamples) {
+              const dx = Number(hp[0]) - s.x;
+              const dy = Number(hp[1]) - s.y;
+              const d2 = dx * dx + dy * dy;
+              if (d2 < bestD) {
+                bestD = d2;
+                best = s.w;
+              }
+            }
+            if (best) pts.push(best);
+          }
+        }
+        if (pts.length < 4) continue;
+
+        let minX = Infinity,
+          minY = Infinity,
+          minZ = Infinity;
+        let maxX = -Infinity,
+          maxY = -Infinity,
+          maxZ = -Infinity;
+        for (const p of pts) {
+          if (p[0] < minX) minX = p[0];
+          if (p[1] < minY) minY = p[1];
+          if (p[2] < minZ) minZ = p[2];
+          if (p[0] > maxX) maxX = p[0];
+          if (p[1] > maxY) maxY = p[1];
+          if (p[2] > maxZ) maxZ = p[2];
+        }
+
+        const cx = (minX + maxX) * 0.5;
+        const cy = (minY + maxY) * 0.5;
+        const cz = (minZ + maxZ) * 0.5;
+        const sx = Math.max(0.24, (maxX - minX) * 0.58 + 0.12);
+        const sy = Math.max(0.24, (maxY - minY) * 0.58 + 0.12);
+        const sz = Math.max(0.24, (maxZ - minZ) * 0.58 + 0.12);
+        const clusterHex = toClusterHex((c as any)?.id);
+
+        const geoFill = new (THREE as any).IcosahedronGeometry(1, 2);
+        const matFill = new (THREE as any).MeshBasicMaterial({
+          color: clusterHex,
+          transparent: true,
+          opacity: fillAlpha,
+          depthWrite: false,
+          depthTest: false,
+          side: (THREE as any).DoubleSide,
+          toneMapped: false,
+        });
+        const meshFill = new (THREE as any).Mesh(geoFill, matFill);
+        meshFill.position.set(cx, cy, cz);
+        meshFill.scale.set(sx, sy, sz);
+        overlayLayer.add(meshFill);
+
+        const geoWire = new (THREE as any).IcosahedronGeometry(1, 1);
+        const matWire = new (THREE as any).MeshBasicMaterial({
+          color: clusterHex,
+          wireframe: true,
+          transparent: true,
+          opacity: lineAlpha,
+          depthWrite: false,
+          depthTest: false,
+          toneMapped: false,
+        });
+        const meshWire = new (THREE as any).Mesh(geoWire, matWire);
+        meshWire.position.copy(meshFill.position);
+        meshWire.scale.set(sx * 1.06, sy * 1.06, sz * 1.06);
+        overlayLayer.add(meshWire);
+      }
+    }
+
     if (shouldFrameRef.current && worldPts.length > 0) {
       let minX = Infinity,
         minY = Infinity,
@@ -12519,8 +12720,12 @@ function ClusterMapViewport3D({
     nodeSizeMul,
     nodeOutlineMul,
     mapSpreadMul,
+    hdbOverlay,
+    showGroupOverlays,
+    groupOverlayOpacity,
     ensureInstCapacity,
     toNodeColor,
+    toClusterHex,
     requestRender,
   ]);
 
@@ -12947,19 +13152,51 @@ export function ClusterMap({
       const k = key.toLowerCase();
       const code = String((e as any).code || "");
 
+      // H/T toggles are disabled while typing in form controls.
+      const active =
+        document && document.activeElement
+          ? (document.activeElement as any)
+          : null;
+      const tag = String(active?.tagName || "").toUpperCase();
+      const isTyping =
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        !!active?.isContentEditable;
+
       if (is3dMode) {
-        const is2dToggle = !!(
+        const isToggle3DSelect = !!(
+          !isTyping &&
           e.altKey &&
-          (code === "KeyT" ||
-            code === "KeyH" ||
-            k === "t" ||
-            k === "h" ||
-            (e as any).keyCode === 84 ||
-            (e as any).keyCode === 72)
+          (code === "KeyT" || k === "t" || (e as any).keyCode === 84)
         );
-        if (is2dToggle) {
+        const isToggle3DHeat = !!(
+          !isTyping &&
+          e.altKey &&
+          !e.metaKey &&
+          !e.ctrlKey &&
+          !e.shiftKey &&
+          (code === "KeyH" || k === "h" || (e as any).keyCode === 72)
+        );
+
+        // Selection + heatmap are currently 2D workflows.
+        // From 3D, route these hotkeys into 2D and keep their toggles working.
+        if (isToggle3DSelect) {
           e.preventDefault();
           e.stopPropagation();
+          onToggleClusterMapView?.();
+          setHeatmapOn(false);
+          setBoxSelectMode((v) => !v);
+          return;
+        }
+        if (isToggle3DHeat) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (lowPowerMode) return;
+          onToggleClusterMapView?.();
+          setBoxSelectMode(false);
+          setHeatmapOn((v) => !v);
+          return;
         }
         if (k === "escape") {
           setHeatHover(null);
@@ -12981,18 +13218,6 @@ export function ClusterMap({
         setBoxSelectMode((v) => !v);
         return;
       }
-
-      // H toggles heatmap mode (avoid toggling while typing in inputs).
-      const active =
-        document && document.activeElement
-          ? (document.activeElement as any)
-          : null;
-      const tag = String(active?.tagName || "").toUpperCase();
-      const isTyping =
-        tag === "INPUT" ||
-        tag === "TEXTAREA" ||
-        tag === "SELECT" ||
-        !!active?.isContentEditable;
 
       // macOS Option+H can emit a special character, so prefer e.code ("KeyH").
       // User requested Option+H for heatmap.
@@ -13060,7 +13285,7 @@ export function ClusterMap({
         onKeyDown as any,
         { capture: true } as any
       );
-  }, [clusterMapView, lowPowerMode]);
+  }, [clusterMapView, lowPowerMode, onToggleClusterMapView]);
   const hoveredIdRef = useRef(null);
   const projectionRef = useRef(null);
   const [tooltip, setTooltip] = useState(null);
@@ -19970,6 +20195,9 @@ export function ClusterMap({
             searchHighlightId={searchHighlightId}
             resetKey={resetKey}
             lowPowerMode={lowPowerMode}
+            hdbOverlay={hdbOverlay}
+            showGroupOverlays={showGroupOverlays}
+            groupOverlayOpacity={effectiveGroupOverlayOpacity}
             nodeSizeMul={nodeSizeMul}
             nodeOutlineMul={nodeOutlineMul}
             mapSpreadMul={mapSpreadMul}
