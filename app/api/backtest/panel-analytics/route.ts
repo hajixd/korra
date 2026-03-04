@@ -896,15 +896,25 @@ export async function POST(request: Request) {
   }
 
   const panelSourceTrades = normalizeTrades(body.panelSourceTrades);
-  const activePanelSourceTrades = normalizeTrades(body.activePanelSourceTrades);
   const panelBacktestFilterSettings = normalizeFilterSettings(body.panelBacktestFilterSettings);
-  const activePanelBacktestFilterSettings = normalizeFilterSettings(
-    body.activePanelBacktestFilterSettings
-  );
   const panelConfidenceGateDisabled = body.panelConfidenceGateDisabled === true;
   const panelEffectiveConfidenceThreshold = toNumeric(body.panelEffectiveConfidenceThreshold);
-  const activePanelConfidenceGateDisabled = body.activePanelConfidenceGateDisabled === true;
-  const activePanelEffectiveConfidenceThreshold = toNumeric(body.activePanelEffectiveConfidenceThreshold);
+  const activePanelSourceTrades =
+    body.activePanelSourceTrades === undefined
+      ? panelSourceTrades
+      : normalizeTrades(body.activePanelSourceTrades);
+  const activePanelBacktestFilterSettings =
+    body.activePanelBacktestFilterSettings === undefined
+      ? panelBacktestFilterSettings
+      : normalizeFilterSettings(body.activePanelBacktestFilterSettings);
+  const activePanelConfidenceGateDisabled =
+    body.activePanelConfidenceGateDisabled === undefined
+      ? panelConfidenceGateDisabled
+      : body.activePanelConfidenceGateDisabled === true;
+  const activePanelEffectiveConfidenceThreshold =
+    body.activePanelEffectiveConfidenceThreshold === undefined
+      ? panelEffectiveConfidenceThreshold
+      : toNumeric(body.activePanelEffectiveConfidenceThreshold);
   const aiLibraryDefaultsById = normalizeAiLibraryDefaultsById(body.aiLibraryDefaultsById);
 
   const antiCheatBacktestContext = computeAntiCheatBacktestContext({

@@ -288,6 +288,24 @@ type HistoryItem = {
   units: number;
 };
 
+type ServerTradePayload = {
+  id: string;
+  symbol: string;
+  side: TradeSide;
+  result: TradeResult;
+  entrySource: string;
+  exitReason: string;
+  pnlPct: number;
+  pnlUsd: number;
+  entryTime: number;
+  exitTime: number;
+  entryPrice: number;
+  targetPrice: number;
+  stopPrice: number;
+  outcomePrice: number;
+  units: number;
+};
+
 const normalizeBacktestHistoryRows = (rows: BacktestHistoryRow[]): HistoryItem[] => {
   return rows.map((row) => ({
     ...row,
@@ -295,6 +313,24 @@ const normalizeBacktestHistoryRows = (rows: BacktestHistoryRow[]): HistoryItem[]
     exitTime: row.exitTime as UTCTimestamp
   }));
 };
+
+const toServerTradePayload = (trade: HistoryItem): ServerTradePayload => ({
+  id: trade.id,
+  symbol: trade.symbol,
+  side: trade.side,
+  result: trade.result,
+  entrySource: trade.entrySource,
+  exitReason: trade.exitReason,
+  pnlPct: trade.pnlPct,
+  pnlUsd: trade.pnlUsd,
+  entryTime: Number(trade.entryTime),
+  exitTime: Number(trade.exitTime),
+  entryPrice: trade.entryPrice,
+  targetPrice: trade.targetPrice,
+  stopPrice: trade.stopPrice,
+  outcomePrice: trade.outcomePrice,
+  units: trade.units
+});
 
 const computeBacktestRowsOnServer = async (
   payload: BacktestHistoryComputeRequest,
@@ -324,10 +360,10 @@ type PanelAnalyticsServerPayload = {
   panelBacktestFilterSettings: BacktestFilterSettings;
   panelConfidenceGateDisabled: boolean;
   panelEffectiveConfidenceThreshold: number;
-  activePanelSourceTrades: HistoryItem[];
-  activePanelBacktestFilterSettings: BacktestFilterSettings;
-  activePanelConfidenceGateDisabled: boolean;
-  activePanelEffectiveConfidenceThreshold: number;
+  activePanelSourceTrades?: HistoryItem[];
+  activePanelBacktestFilterSettings?: BacktestFilterSettings;
+  activePanelConfidenceGateDisabled?: boolean;
+  activePanelEffectiveConfidenceThreshold?: number;
   aiLibraryDefaultsById: Record<string, Record<string, AiLibrarySettingValue>>;
 };
 
@@ -344,12 +380,33 @@ const computePanelAnalyticsOnServer = async (
   payload: PanelAnalyticsServerPayload,
   signal?: AbortSignal
 ): Promise<PanelAnalyticsServerResponse> => {
+  const requestBody: Record<string, unknown> = {
+    panelSourceTrades: payload.panelSourceTrades.map(toServerTradePayload),
+    panelBacktestFilterSettings: payload.panelBacktestFilterSettings,
+    panelConfidenceGateDisabled: payload.panelConfidenceGateDisabled,
+    panelEffectiveConfidenceThreshold: payload.panelEffectiveConfidenceThreshold,
+    aiLibraryDefaultsById: payload.aiLibraryDefaultsById
+  };
+
+  if (payload.activePanelSourceTrades) {
+    requestBody.activePanelSourceTrades = payload.activePanelSourceTrades.map(toServerTradePayload);
+  }
+  if (payload.activePanelBacktestFilterSettings) {
+    requestBody.activePanelBacktestFilterSettings = payload.activePanelBacktestFilterSettings;
+  }
+  if (typeof payload.activePanelConfidenceGateDisabled === "boolean") {
+    requestBody.activePanelConfidenceGateDisabled = payload.activePanelConfidenceGateDisabled;
+  }
+  if (typeof payload.activePanelEffectiveConfidenceThreshold === "number") {
+    requestBody.activePanelEffectiveConfidenceThreshold = payload.activePanelEffectiveConfidenceThreshold;
+  }
+
   const response = await fetch("/api/backtest/panel-analytics", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(requestBody),
     cache: "no-store",
     signal
   });
@@ -377,12 +434,18 @@ const computeBacktestAnalyticsOnServer = async (
   payload: BacktestAnalyticsServerPayload,
   signal?: AbortSignal
 ): Promise<BacktestAnalyticsServerResponse> => {
+  const requestBody = {
+    ...payload,
+    backtestTrades: payload.backtestTrades.map(toServerTradePayload),
+    baselineMainStatsTrades: payload.baselineMainStatsTrades.map(toServerTradePayload)
+  };
+
   const response = await fetch("/api/backtest/analytics", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(requestBody),
     cache: "no-store",
     signal
   });
@@ -9483,6 +9546,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
+    const shouldSendActivePanelOverrides =
+      usesChartPanelLiveSimulationForActive !== usesChartPanelLiveSimulationForHistory;
 
     computePanelAnalyticsOnServer(
       {
@@ -9490,22 +9555,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         panelBacktestFilterSettings,
         panelConfidenceGateDisabled,
         panelEffectiveConfidenceThreshold,
-        activePanelSourceTrades:
-          usesChartPanelLiveSimulationForActive
-            ? chartPanelReplayRows
-            : backtestSourceTrades,
-        activePanelBacktestFilterSettings:
-          usesChartPanelLiveSimulationForActive
-            ? chartPanelFilterSettings
-            : appliedBacktestSettings,
-        activePanelConfidenceGateDisabled:
-          usesChartPanelLiveSimulationForActive
-            ? chartPanelConfidenceGateDisabled
-            : appliedConfidenceGateDisabled,
-        activePanelEffectiveConfidenceThreshold:
-          usesChartPanelLiveSimulationForActive
-            ? chartPanelEffectiveConfidenceThreshold
-            : appliedEffectiveConfidenceThreshold,
+        ...(shouldSendActivePanelOverrides
+          ? {
+              activePanelSourceTrades: usesChartPanelLiveSimulationForActive
+                ? chartPanelReplayRows
+                : backtestSourceTrades,
+              activePanelBacktestFilterSettings: usesChartPanelLiveSimulationForActive
+                ? chartPanelFilterSettings
+                : appliedBacktestSettings,
+              activePanelConfidenceGateDisabled: usesChartPanelLiveSimulationForActive
+                ? chartPanelConfidenceGateDisabled
+                : appliedConfidenceGateDisabled,
+              activePanelEffectiveConfidenceThreshold: usesChartPanelLiveSimulationForActive
+                ? chartPanelEffectiveConfidenceThreshold
+                : appliedEffectiveConfidenceThreshold
+            }
+          : {}),
         aiLibraryDefaultsById
       },
       controller.signal
@@ -9541,6 +9606,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     panelConfidenceGateDisabled,
     panelEffectiveConfidenceThreshold,
     usesChartPanelLiveSimulationForActive,
+    usesChartPanelLiveSimulationForHistory,
     chartPanelReplayRows,
     backtestSourceTrades,
     chartPanelFilterSettings,
@@ -12164,12 +12230,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [backtestAnalyticsData, setBacktestAnalyticsData] =
     useState<BacktestAnalyticsServerResponse>(EMPTY_BACKTEST_ANALYTICS_RESPONSE);
   useEffect(() => {
+    if (!isBacktestAnalyticsVisible || !backtestHasRun || !backtestHistorySeedReady) {
+      return;
+    }
+
     const controller = new AbortController();
     let cancelled = false;
 
     computeBacktestAnalyticsOnServer(
       {
-        backtestTrades: deferredBacktestAnalyticsTrades,
+        backtestTrades,
         baselineMainStatsTrades,
         confidenceByIdEntries: panelAnalyticsData.confidenceByIdEntries,
         aiMode: appliedBacktestSettings.aiMode,
@@ -12193,7 +12263,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         if (cancelled || controller.signal.aborted) {
           return;
         }
-        setBacktestAnalyticsData(EMPTY_BACKTEST_ANALYTICS_RESPONSE);
       });
 
     return () => {
@@ -12204,7 +12273,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedBacktestSettings.aiMode,
     appliedConfidenceGateDisabled,
     baselineMainStatsTrades,
-    deferredBacktestAnalyticsTrades,
+    backtestHasRun,
+    backtestHistorySeedReady,
+    backtestTrades,
+    isBacktestAnalyticsVisible,
     isCalendarBacktestTabActive,
     isClusterBacktestTabActive,
     isEntryExitBacktestTabActive,
