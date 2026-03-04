@@ -12211,13 +12211,14 @@ function ClusterMapViewport3D({
   groupOverlayOpacity,
   selectionMode,
   heatmapOn,
-  heatmapMode3d = "a",
   nodeSizeMul,
   nodeOutlineMul,
   knnLinkK = 0,
   knnLinkOpacity = 0.34,
   mapSpreadMul,
   onSelectId,
+  onSelectGroup,
+  selectedGroupId,
   onSelectionIdsChange,
   selectionClearNonce,
 }: {
@@ -12231,13 +12232,14 @@ function ClusterMapViewport3D({
   groupOverlayOpacity: number;
   selectionMode: boolean;
   heatmapOn: boolean;
-  heatmapMode3d?: "a" | "b" | "d";
   nodeSizeMul: number;
   nodeOutlineMul: number;
   knnLinkK?: number;
   knnLinkOpacity?: number;
   mapSpreadMul: number;
   onSelectId: (id: string | null) => void;
+  onSelectGroup?: (group: any | null) => void;
+  selectedGroupId?: any;
   onSelectionIdsChange?: (ids: string[]) => void;
   selectionClearNonce?: number;
 }) {
@@ -12271,6 +12273,22 @@ function ClusterMapViewport3D({
   const capacityRef = useRef<number>(0);
   const shouldFrameRef = useRef<boolean>(true);
   const renderNowRef = useRef<() => void>(() => {});
+  const navFocusRef = useRef<boolean>(false);
+  const navStateRef = useRef<{
+    forward: boolean;
+    back: boolean;
+    left: boolean;
+    right: boolean;
+    fast: boolean;
+  }>({
+    forward: false,
+    back: false,
+    left: false,
+    right: false,
+    fast: false,
+  });
+  const navFrameRef = useRef<number | null>(null);
+  const navLastTsRef = useRef<number>(0);
   const [selectionRectPx, setSelectionRectPx] = useState<{
     x0: number;
     y0: number;
@@ -12582,7 +12600,31 @@ function ClusterMapViewport3D({
       raycaster.setFromCamera(pointer, cam);
       const hits = raycaster.intersectObject(instNow, false);
       if (!hits || hits.length === 0) {
+        const overlayNow = clusterOverlayLayerRef.current;
+        if (overlayNow && overlayNow.visible && overlayNow.children?.length) {
+          const groupHits = raycaster.intersectObjects(
+            overlayNow.children,
+            true
+          );
+          if (groupHits && groupHits.length) {
+            let cur: any = (groupHits[0] as any)?.object || null;
+            while (cur) {
+              const pick = (cur as any)?.userData?.clusterPick;
+              if (pick && (pick as any).id != null) {
+                onSelectId(null);
+                onSelectGroup?.({
+                  type: "hdb",
+                  id: (pick as any).id,
+                  stats: (pick as any).stats || {},
+                });
+                return;
+              }
+              cur = cur.parent || null;
+            }
+          }
+        }
         onSelectId(null);
+        onSelectGroup?.(null);
         return;
       }
       const idx = Number((hits[0] as any)?.instanceId);
@@ -12590,6 +12632,7 @@ function ClusterMapViewport3D({
       if (!Number.isFinite(idx) || idx < 0 || idx >= nodeIds.length) return;
       const id = nodeIds[idx] || null;
       onSelectId(id);
+      onSelectGroup?.(null);
     };
     const toLocalCanvasXY = (ev: MouseEvent) => {
       const rect = canvas.getBoundingClientRect();
@@ -12680,6 +12723,172 @@ function ClusterMapViewport3D({
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
 
+    const stopNavLoop = () => {
+      if (navFrameRef.current != null) {
+        cancelAnimationFrame(navFrameRef.current);
+        navFrameRef.current = null;
+      }
+    };
+    const clearNavState = () => {
+      navStateRef.current = {
+        forward: false,
+        back: false,
+        left: false,
+        right: false,
+        fast: false,
+      };
+      navLastTsRef.current = 0;
+    };
+    const navMoveForward = new (THREE as any).Vector3();
+    const navMoveRight = new (THREE as any).Vector3();
+    const navMoveDelta = new (THREE as any).Vector3();
+    const navUpVec = new (THREE as any).Vector3(0, 1, 0);
+    const stepNav = (ts: number) => {
+      const nav = navStateRef.current;
+      const hasMove = nav.forward || nav.back || nav.left || nav.right;
+      if (!hasMove) {
+        navLastTsRef.current = 0;
+        stopNavLoop();
+        return;
+      }
+      const cam = cameraRef.current;
+      const ctl = controlsRef.current;
+      if (!cam || !ctl) {
+        stopNavLoop();
+        return;
+      }
+      const prevTs = navLastTsRef.current || ts;
+      const dt = Math.max(0.001, Math.min(0.05, (ts - prevTs) / 1000));
+      navLastTsRef.current = ts;
+
+      navMoveForward
+        .copy((ctl as any).target)
+        .sub((cam as any).position);
+      if (navMoveForward.lengthSq() <= 1e-8) {
+        (cam as any).getWorldDirection(navMoveForward);
+      }
+      navMoveForward.y = 0;
+      if (navMoveForward.lengthSq() <= 1e-8) navMoveForward.set(0, 0, -1);
+      navMoveForward.normalize();
+
+      navMoveRight.crossVectors(navMoveForward, navUpVec);
+      if (navMoveRight.lengthSq() <= 1e-8) navMoveRight.set(1, 0, 0);
+      navMoveRight.normalize();
+
+      const fb = (nav.forward ? 1 : 0) - (nav.back ? 1 : 0);
+      const lr = (nav.right ? 1 : 0) - (nav.left ? 1 : 0);
+      navMoveDelta.set(0, 0, 0);
+      if (fb !== 0) navMoveDelta.addScaledVector(navMoveForward, fb);
+      if (lr !== 0) navMoveDelta.addScaledVector(navMoveRight, lr);
+      if (navMoveDelta.lengthSq() > 1e-8) {
+        navMoveDelta.normalize();
+        const speed = nav.fast ? 6.4 : 3.5;
+        navMoveDelta.multiplyScalar(speed * dt);
+        (cam as any).position.add(navMoveDelta);
+        (ctl as any).target.add(navMoveDelta);
+      }
+      requestRender();
+      navFrameRef.current = requestAnimationFrame(stepNav);
+    };
+    const ensureNavLoop = () => {
+      if (navFrameRef.current != null) return;
+      navFrameRef.current = requestAnimationFrame(stepNav);
+    };
+    const navKeyField = (code: string):
+      | "forward"
+      | "back"
+      | "left"
+      | "right"
+      | null => {
+      if (code === "KeyW" || code === "ArrowUp") return "forward";
+      if (code === "KeyS" || code === "ArrowDown") return "back";
+      if (code === "KeyA" || code === "ArrowLeft") return "left";
+      if (code === "KeyD" || code === "ArrowRight") return "right";
+      return null;
+    };
+    const isTypingInInput = () => {
+      const active =
+        document && document.activeElement
+          ? (document.activeElement as any)
+          : null;
+      const tag = String(active?.tagName || "").toUpperCase();
+      return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        !!active?.isContentEditable
+      );
+    };
+    const onNavKeyDown = (e: KeyboardEvent) => {
+      if (!navFocusRef.current) return;
+      if (isTypingInInput()) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const field = navKeyField(String((e as any).code || ""));
+      if (!field && String((e as any).code || "") !== "ShiftLeft" && String((e as any).code || "") !== "ShiftRight") {
+        return;
+      }
+      const next = { ...navStateRef.current };
+      let changed = false;
+      if (field && !next[field]) {
+        next[field] = true;
+        changed = true;
+      }
+      if (e.shiftKey && !next.fast) {
+        next.fast = true;
+        changed = true;
+      }
+      navStateRef.current = next;
+      if (changed) {
+        e.preventDefault();
+        e.stopPropagation();
+        ensureNavLoop();
+      }
+    };
+    const onNavKeyUp = (e: KeyboardEvent) => {
+      const field = navKeyField(String((e as any).code || ""));
+      const isShift =
+        String((e as any).code || "") === "ShiftLeft" ||
+        String((e as any).code || "") === "ShiftRight";
+      if (!field && !isShift) return;
+      const next = { ...navStateRef.current };
+      let changed = false;
+      if (field && next[field]) {
+        next[field] = false;
+        changed = true;
+      }
+      if (isShift && next.fast) {
+        next.fast = false;
+        changed = true;
+      }
+      navStateRef.current = next;
+      if (changed && navFocusRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      if (!next.forward && !next.back && !next.left && !next.right) {
+        navLastTsRef.current = 0;
+        stopNavLoop();
+      }
+    };
+    const onNavFocusEnter = () => {
+      navFocusRef.current = true;
+    };
+    const onNavFocusLeave = () => {
+      navFocusRef.current = false;
+      clearNavState();
+      stopNavLoop();
+    };
+    const onWindowBlur = () => {
+      clearNavState();
+      stopNavLoop();
+    };
+    canvas.addEventListener("pointerenter", onNavFocusEnter);
+    canvas.addEventListener("pointerleave", onNavFocusLeave);
+    canvas.addEventListener("pointerdown", onNavFocusEnter);
+    window.addEventListener("keydown", onNavKeyDown, { passive: false });
+    window.addEventListener("keyup", onNavKeyUp, { passive: false });
+    window.addEventListener("blur", onWindowBlur);
+
     const resize = () => {
       const rr = rendererRef.current;
       const cam = cameraRef.current;
@@ -12714,6 +12923,15 @@ function ClusterMapViewport3D({
         canvas.removeEventListener("click", onClick);
       } catch {}
       try {
+        canvas.removeEventListener("pointerenter", onNavFocusEnter);
+      } catch {}
+      try {
+        canvas.removeEventListener("pointerleave", onNavFocusLeave);
+      } catch {}
+      try {
+        canvas.removeEventListener("pointerdown", onNavFocusEnter);
+      } catch {}
+      try {
         canvas.removeEventListener("mousedown", onMouseDown);
       } catch {}
       try {
@@ -12723,10 +12941,22 @@ function ClusterMapViewport3D({
         window.removeEventListener("mouseup", onMouseUp);
       } catch {}
       try {
+        window.removeEventListener("keydown", onNavKeyDown as any);
+      } catch {}
+      try {
+        window.removeEventListener("keyup", onNavKeyUp as any);
+      } catch {}
+      try {
+        window.removeEventListener("blur", onWindowBlur as any);
+      } catch {}
+      try {
         window.removeEventListener("resize", resize);
       } catch {}
       try {
         if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
+      } catch {}
+      try {
+        stopNavLoop();
       } catch {}
       try {
         if (renderRafRef.current != null) cancelAnimationFrame(renderRafRef.current);
@@ -12843,6 +13073,8 @@ function ClusterMapViewport3D({
       selectedIdsRef.current = new Set();
       onSelectionIdsChange?.([]);
       suppressClickRef.current = false;
+      navFocusRef.current = false;
+      clearNavState();
       nodeIdsRef.current = [];
       capacityRef.current = 0;
       renderNowRef.current = () => {};
@@ -12851,6 +13083,7 @@ function ClusterMapViewport3D({
     runtimeReady,
     resetKey,
     onSelectId,
+    onSelectGroup,
     onSelectionIdsChange,
     requestRender,
     lowPowerMode,
@@ -13079,9 +13312,7 @@ function ClusterMapViewport3D({
     clearLayer(heatLayer);
 
     const heatOn = !!heatmapOn;
-    const heatModeRaw = String(heatmapMode3d || "a").toLowerCase();
-    const heatMode =
-      heatModeRaw === "b" || heatModeRaw === "d" ? heatModeRaw : "a";
+    const heatMode: "a" | "b" | "d" = "d";
     const knnKInt = Math.max(0, Math.min(36, Math.floor(Number(knnLinkK) || 0)));
     const knnAlpha = Math.max(0, Math.min(1, Number(knnLinkOpacity ?? 0.34)));
     instNow.visible = !heatOn;
@@ -13781,7 +14012,18 @@ function ClusterMapViewport3D({
         0,
         Math.min(1, Number(groupOverlayOpacity) || 0)
       );
+      const selectedGroupStr =
+        selectedGroupId == null
+          ? ""
+          : typeof selectedGroupId === "object"
+          ? String((selectedGroupId as any)?.id ?? "")
+          : String(selectedGroupId);
       for (const c of (hdbOverlay as any).clusters as any[]) {
+        const clusterIdRaw = (c as any)?.id;
+        const clusterIdStr =
+          clusterIdRaw == null ? "" : String(clusterIdRaw);
+        const isSelectedGroup =
+          selectedGroupStr.length > 0 && selectedGroupStr === clusterIdStr;
         const members = Array.isArray((c as any)?.memberNodes)
           ? ((c as any).memberNodes as any[])
           : [];
@@ -13850,14 +14092,22 @@ function ClusterMapViewport3D({
         const geoFill = new (THREE as any).IcosahedronGeometry(1, 3);
         const matFill = new (THREE as any).MeshBasicMaterial({
           color: clusterHex,
-          transparent: fillAlpha < 0.999,
-          opacity: fillAlpha,
+          transparent: fillAlpha < 0.999 || isSelectedGroup,
+          opacity: isSelectedGroup ? Math.min(0.98, fillAlpha + 0.28) : fillAlpha,
           depthWrite: true,
           depthTest: true,
           side: (THREE as any).DoubleSide,
           toneMapped: false,
         });
         const meshFill = new (THREE as any).Mesh(geoFill, matFill);
+        (meshFill as any).userData = {
+          ...(meshFill as any).userData,
+          clusterPick: {
+            type: "hdb",
+            id: clusterIdRaw,
+            stats: (c as any)?.stats || {},
+          },
+        };
         meshFill.position.set(cx, cy, cz);
         meshFill.scale.set(sx, sy, sz);
         meshFill.renderOrder = 16;
@@ -13867,7 +14117,9 @@ function ClusterMapViewport3D({
         const haloMat = new (THREE as any).MeshBasicMaterial({
           color: clusterHex,
           transparent: true,
-          opacity: Math.min(0.52, 0.14 + fillAlpha * 0.36),
+          opacity: isSelectedGroup
+            ? Math.min(0.86, 0.32 + fillAlpha * 0.52)
+            : Math.min(0.52, 0.14 + fillAlpha * 0.36),
           depthWrite: false,
           depthTest: true,
           blending: (THREE as any).AdditiveBlending,
@@ -13875,8 +14127,20 @@ function ClusterMapViewport3D({
           toneMapped: false,
         });
         const haloMesh = new (THREE as any).Mesh(haloGeo, haloMat);
+        (haloMesh as any).userData = {
+          ...(haloMesh as any).userData,
+          clusterPick: {
+            type: "hdb",
+            id: clusterIdRaw,
+            stats: (c as any)?.stats || {},
+          },
+        };
         haloMesh.position.set(cx, cy, cz);
-        haloMesh.scale.set(sx * 1.08, sy * 1.08, sz * 1.08);
+        haloMesh.scale.set(
+          sx * (isSelectedGroup ? 1.18 : 1.08),
+          sy * (isSelectedGroup ? 1.18 : 1.08),
+          sz * (isSelectedGroup ? 1.18 : 1.08)
+        );
         haloMesh.renderOrder = 15;
         overlayLayer.add(haloMesh);
 
@@ -13910,13 +14174,23 @@ function ClusterMapViewport3D({
           const spokeMat = new (THREE as any).LineBasicMaterial({
             vertexColors: true,
             transparent: true,
-            opacity: Math.min(0.88, 0.22 + fillAlpha * 0.58),
+            opacity: isSelectedGroup
+              ? Math.min(0.98, 0.38 + fillAlpha * 0.66)
+              : Math.min(0.88, 0.22 + fillAlpha * 0.58),
             depthWrite: false,
             depthTest: true,
             blending: (THREE as any).AdditiveBlending,
             toneMapped: false,
           });
           const spokes = new (THREE as any).LineSegments(spokeGeo, spokeMat);
+          (spokes as any).userData = {
+            ...(spokes as any).userData,
+            clusterPick: {
+              type: "hdb",
+              id: clusterIdRaw,
+              stats: (c as any)?.stats || {},
+            },
+          };
           spokes.renderOrder = 17;
           overlayLayer.add(spokes);
         }
@@ -13956,7 +14230,6 @@ function ClusterMapViewport3D({
     selectedId,
     searchHighlightId,
     heatmapOn,
-    heatmapMode3d,
     lowPowerMode,
     selectionRevision,
     nodeSizeMul,
@@ -13965,6 +14238,7 @@ function ClusterMapViewport3D({
     knnLinkOpacity,
     mapSpreadMul,
     hdbOverlay,
+    selectedGroupId,
     showGroupOverlays,
     groupOverlayOpacity,
     ensureInstCapacity,
@@ -14025,18 +14299,28 @@ function ClusterMapViewport3D({
             userSelect: "none",
           }}
         >
-          {(() => {
-            const m = String(heatmapMode3d || "a").toUpperCase();
-            const name =
-              m === "B"
-                ? "Volumetric Cubes"
-                : m === "D"
-                ? "Density Mountain"
-                : "Nebula";
-            return `3D Heatmap · Option ${m} (${name})`;
-          })()}
+          3D Heatmap · Density Mountain
         </div>
       ) : null}
+      <div
+        style={{
+          position: "absolute",
+          left: 10,
+          bottom: 10,
+          padding: "4px 8px",
+          borderRadius: 999,
+          border: "1px solid rgba(255,255,255,0.18)",
+          background: "rgba(5,16,30,0.64)",
+          color: "rgba(220,236,255,0.9)",
+          fontSize: 10,
+          fontWeight: 900,
+          letterSpacing: "0.01em",
+          pointerEvents: "none",
+          userSelect: "none",
+        }}
+      >
+        Move: WASD / Arrows (Shift = faster)
+      </div>
       {selectionMode && selectionRectPx ? (
         <div
           style={{
@@ -14168,6 +14452,7 @@ export function ClusterMap({
   hdbMinSamples,
   hdbEpsQuantile,
   staticLibrariesClusters,
+  kEntry,
   confidenceThreshold,
   statsDateStart,
   statsDateEnd,
@@ -14492,22 +14777,6 @@ export function ClusterMap({
           !e.shiftKey &&
           (code === "KeyH" || k === "h" || (e as any).keyCode === 72)
         );
-        const isToggle3DModeB = !!(
-          !isTyping &&
-          e.altKey &&
-          !e.metaKey &&
-          !e.ctrlKey &&
-          !e.shiftKey &&
-          (code === "KeyB" || k === "b" || (e as any).keyCode === 66)
-        );
-        const isToggle3DModeD = !!(
-          !isTyping &&
-          e.altKey &&
-          !e.metaKey &&
-          !e.ctrlKey &&
-          !e.shiftKey &&
-          (code === "KeyD" || k === "d" || (e as any).keyCode === 68)
-        );
 
         if (isToggle3DSelect) {
           e.preventDefault();
@@ -14522,24 +14791,6 @@ export function ClusterMap({
           if (lowPowerMode) return;
           setBoxSelectMode3d(false);
           setHeatmapOn((v) => !v);
-          return;
-        }
-        if (isToggle3DModeB) {
-          e.preventDefault();
-          e.stopPropagation();
-          if (lowPowerMode) return;
-          setBoxSelectMode3d(false);
-          setHeatmap3dMode("b");
-          setHeatmapOn(true);
-          return;
-        }
-        if (isToggle3DModeD) {
-          e.preventDefault();
-          e.stopPropagation();
-          if (lowPowerMode) return;
-          setBoxSelectMode3d(false);
-          setHeatmap3dMode("d");
-          setHeatmapOn(true);
           return;
         }
         if (k === "escape") {
@@ -15904,13 +16155,16 @@ export function ClusterMap({
   const [ghostLegendColored, setGhostLegendColored] = useState(false);
 
   const [groupOverlayOpacity, setGroupOverlayOpacity] = React.useState(1);
-  const [knnLinkK, setKnnLinkK] = React.useState(6);
   const [knnLinkOpacity, setKnnLinkOpacity] = React.useState(0.36);
-  const [heatmap3dMode, setHeatmap3dMode] = React.useState<"a" | "b" | "d">(
-    "a"
-  );
   const showGroupOverlays = (Number(groupOverlayOpacity) || 0) > 0.001;
   const effectiveGroupOverlayOpacity = lowPowerMode ? 0 : groupOverlayOpacity;
+  const knnTopologyEnabled = aiMethod === "knn";
+  const knnLinkK = React.useMemo(() => {
+    if (!knnTopologyEnabled) return 0;
+    const k = Math.floor(Number(kEntry) || 0);
+    return Math.max(0, Math.min(36, k));
+  }, [knnTopologyEnabled, kEntry]);
+  const effectiveKnnLinkOpacity = knnTopologyEnabled ? knnLinkOpacity : 0;
   const suppressedLibraryActive = React.useMemo(() => {
     const libs = Array.isArray(activeLibraries) ? (activeLibraries as any[]) : [];
     for (const v of libs) {
@@ -15922,9 +16176,9 @@ export function ClusterMap({
     () => ({
       lowPowerMode,
       knnLinkK,
-      knnLinkOpacity,
+      knnLinkOpacity: effectiveKnnLinkOpacity,
     }),
-    [lowPowerMode, knnLinkK, knnLinkOpacity]
+    [lowPowerMode, knnLinkK, effectiveKnnLinkOpacity]
   );
   const [nodeSizeMul, setNodeSizeMul] = React.useState(1);
   const [nodeOutlineMul, setNodeOutlineMul] = React.useState(1);
@@ -17792,6 +18046,18 @@ export function ClusterMap({
     setSelectedId(id);
     setSelectedGroup(null);
     selectedGroupRef.current = null;
+  }, []);
+
+  const handle3dSelectGroup = React.useCallback((grp: any | null) => {
+    setSelectedId(null);
+    const gid =
+      grp && typeof grp === "object"
+        ? (grp as any).id ?? null
+        : grp != null
+        ? grp
+        : null;
+    selectedGroupRef.current = gid as any;
+    setSelectedGroup(gid as any);
   }, []);
 
   const handle3dSelectionIds = React.useCallback((ids: string[]) => {
@@ -21330,73 +21596,6 @@ export function ClusterMap({
               Low-Power {lowPowerMode ? "ON" : "OFF"}
             </button>
 
-            {clusterMapView === "3d" ? (
-              <div
-                style={{
-                  display: "inline-flex",
-                  borderRadius: 10,
-                  border: "1px solid rgba(255,255,255,0.18)",
-                  background:
-                    "linear-gradient(135deg, rgba(20,45,70,0.28), rgba(0,0,0,0.36))",
-                  overflow: "hidden",
-                  boxShadow: "0 8px 18px rgba(0,0,0,0.35)",
-                }}
-                title="3D heat styles: Option B (⌥B), Option D (⌥D)"
-              >
-                {[
-                  { key: "a", label: "A", sub: "Nebula" },
-                  { key: "b", label: "B", sub: "Blocks" },
-                  { key: "d", label: "D", sub: "Mountain" },
-                ].map((opt) => {
-                  const active = heatmap3dMode === (opt.key as any);
-                  return (
-                    <button
-                      key={opt.key}
-                      onClick={() => {
-                        if (lowPowerMode) return;
-                        setHeatmap3dMode(opt.key as any);
-                        setHeatmapOn(true);
-                      }}
-                      style={{
-                        border: "none",
-                        borderLeft:
-                          opt.key === "a"
-                            ? "none"
-                            : "1px solid rgba(255,255,255,0.12)",
-                        background: active
-                          ? "linear-gradient(135deg, rgba(100,190,255,0.36), rgba(80,130,255,0.22))"
-                          : "transparent",
-                        color: active
-                          ? "rgba(230,245,255,0.98)"
-                          : "rgba(220,235,255,0.84)",
-                        borderRadius: 0,
-                        padding: "6px 8px",
-                        minWidth: 54,
-                        display: "grid",
-                        gap: 1,
-                        justifyItems: "center",
-                        cursor: lowPowerMode ? "not-allowed" : "pointer",
-                        opacity: lowPowerMode ? 0.45 : 1,
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 950,
-                          letterSpacing: "0.02em",
-                        }}
-                      >
-                        {opt.label}
-                      </span>
-                      <span style={{ fontSize: 9, fontWeight: 800, opacity: 0.8 }}>
-                        {opt.sub}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
-
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{ position: "relative" }}>
                 <input
@@ -21572,7 +21771,7 @@ export function ClusterMap({
         style={{
           marginTop: 10,
           position: "relative",
-          height: 440,
+          height: 560,
           borderRadius: 11,
           // Clear visual "armed" state while in selection mode
           border: heatmapOn
@@ -21615,13 +21814,14 @@ export function ClusterMap({
             groupOverlayOpacity={effectiveGroupOverlayOpacity}
             selectionMode={boxSelectMode}
             heatmapOn={heatmapOn}
-            heatmapMode3d={heatmap3dMode}
             nodeSizeMul={nodeSizeMul}
             nodeOutlineMul={nodeOutlineMul}
             knnLinkK={knnLinkK}
-            knnLinkOpacity={knnLinkOpacity}
+            knnLinkOpacity={effectiveKnnLinkOpacity}
             mapSpreadMul={mapSpreadMul}
             onSelectId={handle3dSelectId}
+            onSelectGroup={handle3dSelectGroup}
+            selectedGroupId={selectedGroup}
             onSelectionIdsChange={handle3dSelectionIds}
             selectionClearNonce={selectionClearNonce3d}
           />
@@ -23471,169 +23671,52 @@ export function ClusterMap({
           </div>
 
           {/* Row 3 */}
-          <div
-            className="rounded-xl border border-neutral-800"
-            style={{
-              padding: "8px 10px",
-              background:
-                "linear-gradient(180deg, rgba(16,34,58,0.66), rgba(8,16,34,0.72))",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: 10,
-                color: "rgba(255,255,255,0.78)",
-              }}
-            >
-              <span>KNN Topology (k)</span>
-              <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>
-                {Math.max(0, Math.floor(Number(knnLinkK) || 0))}
-              </span>
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={24}
-              step={1}
-              value={knnLinkK}
-              onChange={(e) => setKnnLinkK(Number((e as any).target.value))}
-              className="theme-slider"
-              style={{
-                ...sliderVars(knnLinkK, 0, 24),
-                width: "100%",
-                height: 6,
-                cursor: "pointer",
-              }}
-            />
-            <div style={{ marginTop: 3, fontSize: 9, opacity: 0.72 }}>
-              0 disables the topology web.
-            </div>
-          </div>
-
-          <div
-            className="rounded-xl border border-neutral-800"
-            style={{
-              padding: "8px 10px",
-              background:
-                "linear-gradient(180deg, rgba(16,34,58,0.66), rgba(8,16,34,0.72))",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: 10,
-                color: "rgba(255,255,255,0.78)",
-              }}
-            >
-              <span>KNN Link Opacity</span>
-              <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>
-                {Math.round(
-                  Math.max(0, Math.min(1, Number(knnLinkOpacity) || 0)) * 100
-                )}
-                %
-              </span>
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={knnLinkOpacity}
-              onChange={(e) =>
-                setKnnLinkOpacity(Number((e as any).target.value))
-              }
-              className="theme-slider"
-              style={{
-                ...sliderVars(knnLinkOpacity, 0, 1),
-                width: "100%",
-                height: 6,
-                cursor: "pointer",
-              }}
-            />
-            <div style={{ marginTop: 3, fontSize: 9, opacity: 0.72 }}>
-              Nearer neighbors render thicker in 2D and 3D.
-            </div>
-          </div>
-
-          {clusterMapView === "3d" ? (
+          {aiMethod === "knn" ? (
             <div
               className="rounded-xl border border-neutral-800"
               style={{
                 gridColumn: "1 / -1",
                 padding: "8px 10px",
                 background:
-                  "linear-gradient(180deg, rgba(22,42,72,0.78), rgba(10,18,34,0.78))",
+                  "linear-gradient(180deg, rgba(16,34,58,0.66), rgba(8,16,34,0.72))",
               }}
             >
               <div
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 8,
+                  fontSize: 10,
+                  color: "rgba(255,255,255,0.78)",
                 }}
               >
-                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.8)" }}>
-                  3D Heatmap Style
-                </div>
-                <div style={{ fontSize: 9, opacity: 0.72 }}>
-                  ⌥B = Option B · ⌥D = Option D
-                </div>
+                <span>KNN Link Opacity</span>
+                <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>
+                  {Math.round(
+                    Math.max(0, Math.min(1, Number(knnLinkOpacity) || 0)) * 100
+                  )}
+                  %
+                </span>
               </div>
-              <div
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={knnLinkOpacity}
+                onChange={(e) =>
+                  setKnnLinkOpacity(Number((e as any).target.value))
+                }
+                className="theme-slider"
                 style={{
-                  marginTop: 6,
-                  display: "grid",
-                  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                  gap: 7,
+                  ...sliderVars(knnLinkOpacity, 0, 1),
+                  width: "100%",
+                  height: 6,
+                  cursor: "pointer",
                 }}
-              >
-                {[
-                  { key: "a", label: "Option A", sub: "Nebula Heat" },
-                  { key: "b", label: "Option B", sub: "Volumetric Cubes" },
-                  { key: "d", label: "Option D", sub: "Density Mountain" },
-                ].map((opt) => {
-                  const active = heatmap3dMode === (opt.key as any);
-                  return (
-                    <button
-                      key={opt.key}
-                      onClick={() => {
-                        if (lowPowerMode) return;
-                        setHeatmap3dMode(opt.key as any);
-                        setHeatmapOn(true);
-                      }}
-                      style={{
-                        border: active
-                          ? "1px solid rgba(145,210,255,0.72)"
-                          : "1px solid rgba(255,255,255,0.16)",
-                        background: active
-                          ? "linear-gradient(135deg, rgba(95,180,255,0.34), rgba(75,120,255,0.22))"
-                          : "rgba(0,0,0,0.26)",
-                        color: active
-                          ? "rgba(240,250,255,0.98)"
-                          : "rgba(230,235,255,0.86)",
-                        borderRadius: 10,
-                        padding: "7px 8px",
-                        display: "grid",
-                        justifyItems: "center",
-                        gap: 2,
-                        cursor: lowPowerMode ? "not-allowed" : "pointer",
-                        opacity: lowPowerMode ? 0.45 : 1,
-                        boxShadow: active
-                          ? "0 8px 16px rgba(60,140,255,0.25)"
-                          : undefined,
-                      }}
-                    >
-                      <span style={{ fontSize: 10, fontWeight: 950 }}>
-                        {opt.label}
-                      </span>
-                      <span style={{ fontSize: 9, opacity: 0.8 }}>{opt.sub}</span>
-                    </button>
-                  );
-                })}
+              />
+              <div style={{ marginTop: 3, fontSize: 9, opacity: 0.72 }}>
+                K comes from AI Settings. Nearer neighbors render thicker in 2D
+                and 3D.
               </div>
             </div>
           ) : null}
@@ -38818,6 +38901,7 @@ export default function App() {
                   setClusterMapView((v) => (v === "3d" ? "2d" : "3d"))
                 }
                 aiMethod={aiMethod}
+                kEntry={kEntry}
                 confidenceThreshold={effectiveConfidenceThreshold}
                 statsDateStart={statsDateStart}
                 statsDateEnd={statsDateEnd}
@@ -38862,6 +38946,7 @@ export default function App() {
                   setClusterMapView((v) => (v === "3d" ? "2d" : "3d"))
                 }
                 aiMethod={aiMethod}
+                kEntry={kEntry}
                 confidenceThreshold={effectiveConfidenceThreshold}
                 hdbMinClusterSize={hdbMinClusterSize}
                 hdbMinSamples={hdbMinSamples}
