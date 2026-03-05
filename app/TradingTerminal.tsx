@@ -9055,17 +9055,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     shouldBuildSharedLibraryCandidateTrades
   ]);
 
-  // Keep deep backtest history off the live chart path by default.
-  // We only hydrate deep candles when a chart overlay/details flow explicitly needs it.
-  const isChartOverlayHydrationActive =
-    selectedSurfaceTab === "chart" &&
-    (showAllTradesOnChart || showActiveTradeOnChart || selectedHistoryId !== null);
-  const isBacktestClusterHydrationActive =
-    selectedSurfaceTab === "backtest" &&
-    selectedBacktestTab === "cluster";
   const shouldHydrateBacktestChartData =
-    isChartOverlayHydrationActive ||
-    isBacktestClusterHydrationActive ||
+    selectedSurfaceTab === "chart" ||
+    selectedBacktestTab === "cluster" ||
+    showAllTradesOnChart ||
+    showActiveTradeOnChart ||
+    selectedHistoryId !== null ||
     activeBacktestTradeDetails !== null;
   const deepChartCandles = shouldHydrateBacktestChartData
     ? backtestSeriesMap[selectedKey] ?? null
@@ -10478,9 +10473,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [chartPanelHistoryRows, selectedSymbol]);
 
   const shouldBuildCandleIndexByUnix =
-    isChartOverlayHydrationActive ||
-    isBacktestClusterHydrationActive ||
-    (selectedSurfaceTab === "backtest" && selectedBacktestTab === "history") ||
+    selectedSurfaceTab === "chart" ||
+    selectedBacktestTab === "cluster" ||
+    selectedBacktestTab === "history" ||
     selectedHistoryId !== null ||
     activeBacktestTradeDetails !== null;
   const candleIndexByUnix = useMemo(() => {
