@@ -33,6 +33,8 @@ import type {
   UTCTimestamp
 } from "lightweight-charts";
 import {
+  computeBacktestHistoryRowsChunk,
+  finalizeBacktestHistoryRows,
   type BacktestHistoryRow,
   type BacktestHistoryComputeRequest
 } from "./backtestHistoryShared";
@@ -332,27 +334,59 @@ const toServerTradePayload = (trade: HistoryItem): ServerTradePayload => ({
   units: trade.units
 });
 
+const computeBacktestRowsLocally = (
+  payload: BacktestHistoryComputeRequest
+): HistoryItem[] => {
+  const rows = finalizeBacktestHistoryRows(
+    computeBacktestHistoryRowsChunk({
+      blueprints: payload.blueprints,
+      candleSeriesBySymbol: payload.candleSeriesBySymbol,
+      oneMinuteCandlesBySymbol: payload.oneMinuteCandlesBySymbol,
+      minutePreciseEnabled: payload.minutePreciseEnabled,
+      modelNamesById: payload.modelNamesById,
+      tpDollars: payload.tpDollars,
+      slDollars: payload.slDollars,
+      stopMode: payload.stopMode,
+      breakEvenTriggerPct: payload.breakEvenTriggerPct,
+      trailingStartPct: payload.trailingStartPct,
+      trailingDistPct: payload.trailingDistPct
+    }),
+    payload.limit
+  );
+
+  return normalizeBacktestHistoryRows(rows);
+};
+
 const computeBacktestRowsOnServer = async (
   payload: BacktestHistoryComputeRequest,
   signal?: AbortSignal
 ): Promise<HistoryItem[]> => {
-  const response = await fetch("/api/backtest/history", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload),
-    cache: "no-store",
-    signal
-  });
+  try {
+    const response = await fetch("/api/backtest/history", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload),
+      cache: "no-store",
+      signal
+    });
 
-  if (!response.ok) {
-    throw new Error(`Backtest server compute failed (${response.status}).`);
+    if (!response.ok) {
+      throw new Error(`Backtest server compute failed (${response.status}).`);
+    }
+
+    const data = (await response.json()) as { rows?: unknown };
+    const rows = Array.isArray(data.rows) ? (data.rows as BacktestHistoryRow[]) : [];
+    return normalizeBacktestHistoryRows(rows);
+  } catch (error) {
+    if (signal?.aborted) {
+      throw error;
+    }
+
+    // Prevent false "0 trades" outcomes when the server compute path fails.
+    return computeBacktestRowsLocally(payload);
   }
-
-  const data = (await response.json()) as { rows?: unknown };
-  const rows = Array.isArray(data.rows) ? (data.rows as BacktestHistoryRow[]) : [];
-  return normalizeBacktestHistoryRows(rows);
 };
 
 type PanelAnalyticsServerPayload = {
