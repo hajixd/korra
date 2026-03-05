@@ -205,7 +205,18 @@ type LiveQuoteSnapshot = {
   updatedAtMs: number;
 };
 
-type Mt5AccountStatus = "Connected" | "Disconnected";
+type Mt5AccountStatus = "Connected" | "Disconnected" | "Error";
+
+type Mt5OpenPosition = {
+  positionTicket: number;
+  signalId: string;
+  side: TradeSide;
+  symbol: string;
+  openedAt: number;
+  entryPrice: number;
+  takeProfit: number | null;
+  stopLoss: number | null;
+};
 
 type Mt5Account = {
   id: string;
@@ -213,6 +224,28 @@ type Mt5Account = {
   server: string;
   status: Mt5AccountStatus;
   paused: boolean;
+  symbol: string;
+  timeframe: Timeframe;
+  lot: number;
+  running: boolean;
+  lastError: string | null;
+  lastHeartbeatAt: number | null;
+  lastSignalId: string | null;
+  lastSignalSide: TradeSide | null;
+  lastActionAt: number | null;
+  openPosition: Mt5OpenPosition | null;
+};
+
+type Mt5WorkerStatus = {
+  running: boolean;
+  startedAt: number | null;
+  tickInFlight: boolean;
+  loopMs: number;
+};
+
+type Mt5AccountsApiResponse = {
+  accounts: Mt5Account[];
+  worker: Mt5WorkerStatus;
 };
 
 const EMPTY_CANDLES: Candle[] = [];
@@ -223,10 +256,7 @@ const WORKSPACE_PANEL_MIN_WIDTH = 350;
 const WORKSPACE_PANEL_DEFAULT_WIDTH = 430;
 const WORKSPACE_PANEL_MAX_WIDTH = 980;
 const WORKSPACE_CHART_MIN_WIDTH = 360;
-
-const buildMt5AccountRuntimeId = () => {
-  return `mt5-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-};
+const MAX_TRADECOPIER_ACCOUNTS = 3;
 
 const TIMEFRAME_DISPLAY_LABELS: Record<Timeframe, string> = {
   "1m": "1 Minute",
@@ -598,6 +628,215 @@ const computeBacktestAnalyticsOnServer = async (
           }
         : { sessions: [], months: [], weekdays: [], hours: [] }
   };
+};
+
+const parseCopyTradeError = async (response: Response, fallback: string): Promise<string> => {
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    if (typeof body.error === "string" && body.error.trim()) {
+      return body.error.trim();
+    }
+  } catch {
+    // ignore invalid payload
+  }
+  return fallback;
+};
+
+const normalizeMt5AccountFromApi = (value: unknown): Mt5Account | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const row = value as Record<string, unknown>;
+  const id = typeof row.id === "string" ? row.id : "";
+  const login = typeof row.login === "string" ? row.login : "";
+  const server = typeof row.server === "string" ? row.server : "";
+
+  if (!id || !login || !server) {
+    return null;
+  }
+
+  const statusRaw = row.status;
+  const status: Mt5AccountStatus =
+    statusRaw === "Connected" || statusRaw === "Disconnected" || statusRaw === "Error"
+      ? statusRaw
+      : "Disconnected";
+  const timeframeRaw = row.timeframe;
+  const timeframe: Timeframe =
+    timeframeRaw === "1m" ||
+    timeframeRaw === "5m" ||
+    timeframeRaw === "15m" ||
+    timeframeRaw === "1H" ||
+    timeframeRaw === "4H" ||
+    timeframeRaw === "1D" ||
+    timeframeRaw === "1W"
+      ? timeframeRaw
+      : "15m";
+  const openPositionRaw =
+    row.openPosition && typeof row.openPosition === "object"
+      ? (row.openPosition as Record<string, unknown>)
+      : null;
+  const sideRaw = openPositionRaw?.side;
+  const side: TradeSide = sideRaw === "Long" || sideRaw === "Short" ? sideRaw : "Long";
+  const openPosition: Mt5OpenPosition | null = openPositionRaw
+    ? {
+        positionTicket: Math.max(0, Math.trunc(Number(openPositionRaw.positionTicket) || 0)),
+        signalId: String(openPositionRaw.signalId ?? ""),
+        side,
+        symbol: String(openPositionRaw.symbol ?? "XAUUSD"),
+        openedAt: Number(openPositionRaw.openedAt) || 0,
+        entryPrice: Number(openPositionRaw.entryPrice) || 0,
+        takeProfit:
+          typeof openPositionRaw.takeProfit === "number" && Number.isFinite(openPositionRaw.takeProfit)
+            ? openPositionRaw.takeProfit
+            : null,
+        stopLoss:
+          typeof openPositionRaw.stopLoss === "number" && Number.isFinite(openPositionRaw.stopLoss)
+            ? openPositionRaw.stopLoss
+            : null
+      }
+    : null;
+
+  return {
+    id,
+    login,
+    server,
+    status,
+    paused: row.paused === true,
+    symbol: typeof row.symbol === "string" ? row.symbol : "XAUUSD",
+    timeframe,
+    lot: Number.isFinite(Number(row.lot)) ? Math.max(0.01, Number(row.lot)) : 0.01,
+    running: row.running === true,
+    lastError: typeof row.lastError === "string" ? row.lastError : null,
+    lastHeartbeatAt:
+      typeof row.lastHeartbeatAt === "number" && Number.isFinite(row.lastHeartbeatAt)
+        ? row.lastHeartbeatAt
+        : null,
+    lastSignalId: typeof row.lastSignalId === "string" ? row.lastSignalId : null,
+    lastSignalSide:
+      row.lastSignalSide === "Long" || row.lastSignalSide === "Short"
+        ? row.lastSignalSide
+        : null,
+    lastActionAt:
+      typeof row.lastActionAt === "number" && Number.isFinite(row.lastActionAt)
+        ? row.lastActionAt
+        : null,
+    openPosition:
+      openPosition && openPosition.positionTicket > 0 && openPosition.signalId
+        ? openPosition
+        : null
+  };
+};
+
+const fetchMt5AccountsFromServer = async (): Promise<Mt5AccountsApiResponse> => {
+  const response = await fetch("/api/copytrade/accounts", {
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await parseCopyTradeError(response, "Failed to load TradeCopier account settings.")
+    );
+  }
+
+  const payload = (await response.json()) as Partial<Mt5AccountsApiResponse>;
+  return {
+    accounts: Array.isArray(payload.accounts)
+      ? payload.accounts
+          .map((entry) => normalizeMt5AccountFromApi(entry))
+          .filter((entry): entry is Mt5Account => entry !== null)
+      : [],
+    worker:
+      payload.worker && typeof payload.worker === "object"
+        ? {
+            running: (payload.worker as Mt5WorkerStatus).running === true,
+            startedAt:
+              typeof (payload.worker as Mt5WorkerStatus).startedAt === "number"
+                ? (payload.worker as Mt5WorkerStatus).startedAt
+                : null,
+            tickInFlight: (payload.worker as Mt5WorkerStatus).tickInFlight === true,
+            loopMs:
+              typeof (payload.worker as Mt5WorkerStatus).loopMs === "number"
+                ? Math.max(1000, Math.trunc((payload.worker as Mt5WorkerStatus).loopMs))
+                : 15000
+          }
+        : {
+            running: false,
+            startedAt: null,
+            tickInFlight: false,
+            loopMs: 15000
+          }
+  };
+};
+
+const createMt5AccountOnServer = async (payload: {
+  login: string;
+  password: string;
+  server: string;
+}): Promise<void> => {
+  const response = await fetch("/api/copytrade/accounts", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseCopyTradeError(response, "Failed to save TradeCopier account."));
+  }
+};
+
+const updateMt5AccountOnServer = async (
+  accountId: string,
+  payload: {
+    login: string;
+    server: string;
+    password?: string;
+  }
+): Promise<void> => {
+  const response = await fetch(`/api/copytrade/accounts/${encodeURIComponent(accountId)}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseCopyTradeError(response, "Failed to update TradeCopier account."));
+  }
+};
+
+const toggleMt5PauseOnServer = async (accountId: string, paused: boolean): Promise<void> => {
+  const response = await fetch(
+    `/api/copytrade/accounts/${encodeURIComponent(accountId)}/pause`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ paused }),
+      cache: "no-store"
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(await parseCopyTradeError(response, "Failed to update account state."));
+  }
+};
+
+const deleteMt5AccountOnServer = async (accountId: string): Promise<void> => {
+  const response = await fetch(`/api/copytrade/accounts/${encodeURIComponent(accountId)}`, {
+    method: "DELETE",
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseCopyTradeError(response, "Failed to remove TradeCopier account."));
+  }
 };
 
 type BacktestClusterGroupId = "momentum" | "trend" | "trap" | "chop";
@@ -6701,6 +6940,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     clientX: number;
     clientY: number;
   } | null>(null);
+  const [mt5WorkerStatus, setMt5WorkerStatus] = useState<Mt5WorkerStatus | null>(null);
+  const [mt5Syncing, setMt5Syncing] = useState(false);
+  const [mt5ActionBusy, setMt5ActionBusy] = useState(false);
+  const [mt5Error, setMt5Error] = useState<string | null>(null);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [selectedHistoryInteractionTick, setSelectedHistoryInteractionTick] = useState(0);
   const [showAllTradesOnChart, setShowAllTradesOnChart] = useState(false);
@@ -6972,14 +7215,55 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setMt5ContextMenu(null);
   }, [mt5Accounts, mt5ContextMenu]);
 
+  const refreshMt5Accounts = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent === true;
+
+    if (!silent) {
+      setMt5Syncing(true);
+    }
+
+    try {
+      const payload = await fetchMt5AccountsFromServer();
+      setMt5Accounts(payload.accounts);
+      setMt5WorkerStatus(payload.worker);
+      setMt5Error(null);
+    } catch (error) {
+      setMt5Error((error as Error).message || "Unable to sync TradeCopier accounts.");
+    } finally {
+      if (!silent) {
+        setMt5Syncing(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshMt5Accounts();
+
+    const intervalId = window.setInterval(() => {
+      void refreshMt5Accounts({ silent: true });
+    }, 8_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [refreshMt5Accounts]);
+
   const handleShowMt5AddForm = useCallback(() => {
+    if (mt5Accounts.length >= MAX_TRADECOPIER_ACCOUNTS) {
+      setMt5Error(
+        `TradeCopier account limit reached (${MAX_TRADECOPIER_ACCOUNTS}). Remove one to add another.`
+      );
+      return;
+    }
+
     setMt5EditingAccountId(null);
     setMt5LoginInput("");
     setMt5PasswordInput("");
     setMt5ServerInput("");
     setMt5FormOpen(true);
     setMt5ContextMenu(null);
-  }, []);
+    setMt5Error(null);
+  }, [mt5Accounts.length]);
 
   const handleEditMt5Account = useCallback(
     (accountId: string) => {
@@ -6996,53 +7280,72 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       setMt5ServerInput(targetAccount.server);
       setMt5FormOpen(true);
       setMt5ContextMenu(null);
+      setMt5Error(null);
     },
     [mt5Accounts]
   );
 
-  const handleConnectMt5Account = useCallback(() => {
-    const nextLogin = mt5LoginInput.trim() || `Demo-${Date.now().toString().slice(-6)}`;
-    const nextServer = mt5ServerInput.trim() || "Server Unspecified";
+  const handleConnectMt5Account = useCallback(async () => {
+    const nextLogin = mt5LoginInput.trim();
+    const nextServer = mt5ServerInput.trim();
+    const nextPassword = mt5PasswordInput;
 
-    if (mt5EditingAccountId) {
-      setMt5Accounts((current) =>
-        current.map((account) => {
-          if (account.id !== mt5EditingAccountId) {
-            return account;
-          }
-
-          return {
-            ...account,
-            login: nextLogin,
-            server: nextServer,
-            status: "Disconnected"
-          };
-        })
-      );
-      setSelectedMt5AccountId(mt5EditingAccountId);
-    } else {
-      const nextId = buildMt5AccountRuntimeId();
-
-      setMt5Accounts((current) => [
-        {
-          id: nextId,
-          login: nextLogin,
-          server: nextServer,
-          status: "Disconnected",
-          paused: false
-        },
-        ...current
-      ]);
-      setSelectedMt5AccountId(nextId);
+    if (!nextLogin || !nextServer) {
+      setMt5Error("Login and server are required.");
+      return;
     }
 
-    setMt5LoginInput("");
-    setMt5PasswordInput("");
-    setMt5ServerInput("");
-    setMt5EditingAccountId(null);
-    setMt5FormOpen(false);
-    setMt5ContextMenu(null);
-  }, [mt5EditingAccountId, mt5LoginInput, mt5ServerInput]);
+    if (!mt5EditingAccountId && !nextPassword) {
+      setMt5Error("Password is required for a new account.");
+      return;
+    }
+
+    if (!mt5EditingAccountId && mt5Accounts.length >= MAX_TRADECOPIER_ACCOUNTS) {
+      setMt5Error(
+        `TradeCopier account limit reached (${MAX_TRADECOPIER_ACCOUNTS}). Remove one to add another.`
+      );
+      return;
+    }
+
+    setMt5ActionBusy(true);
+    setMt5Error(null);
+
+    try {
+      if (mt5EditingAccountId) {
+        await updateMt5AccountOnServer(mt5EditingAccountId, {
+          login: nextLogin,
+          server: nextServer,
+          ...(nextPassword ? { password: nextPassword } : {})
+        });
+        setSelectedMt5AccountId(mt5EditingAccountId);
+      } else {
+        await createMt5AccountOnServer({
+          login: nextLogin,
+          password: nextPassword,
+          server: nextServer
+        });
+      }
+
+      setMt5LoginInput("");
+      setMt5PasswordInput("");
+      setMt5ServerInput("");
+      setMt5EditingAccountId(null);
+      setMt5FormOpen(false);
+      setMt5ContextMenu(null);
+      await refreshMt5Accounts({ silent: true });
+    } catch (error) {
+      setMt5Error((error as Error).message || "Unable to save TradeCopier account.");
+    } finally {
+      setMt5ActionBusy(false);
+    }
+  }, [
+    mt5EditingAccountId,
+    mt5Accounts.length,
+    mt5LoginInput,
+    mt5PasswordInput,
+    mt5ServerInput,
+    refreshMt5Accounts
+  ]);
 
   const handleCancelMt5Form = useCallback(() => {
     setMt5FormOpen(false);
@@ -7050,23 +7353,52 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setMt5LoginInput("");
     setMt5PasswordInput("");
     setMt5ServerInput("");
+    setMt5Error(null);
   }, []);
 
-  const handleToggleMt5Pause = useCallback((accountId: string) => {
-    setMt5Accounts((current) =>
-      current.map((account) => {
-        if (account.id !== accountId) {
-          return account;
+  const handleToggleMt5Pause = useCallback(
+    async (accountId: string) => {
+      const target = mt5Accounts.find((account) => account.id === accountId);
+      if (!target) {
+        return;
+      }
+
+      setMt5ActionBusy(true);
+      setMt5Error(null);
+
+      try {
+        await toggleMt5PauseOnServer(accountId, !target.paused);
+        await refreshMt5Accounts({ silent: true });
+      } catch (error) {
+        setMt5Error((error as Error).message || "Unable to update account state.");
+      } finally {
+        setMt5ActionBusy(false);
+        setMt5ContextMenu(null);
+      }
+    },
+    [mt5Accounts, refreshMt5Accounts]
+  );
+
+  const handleRemoveMt5Account = useCallback(
+    async (accountId: string) => {
+      setMt5ActionBusy(true);
+      setMt5Error(null);
+
+      try {
+        await deleteMt5AccountOnServer(accountId);
+        if (selectedMt5AccountId === accountId) {
+          setSelectedMt5AccountId(null);
         }
-
-        return {
-          ...account,
-          paused: !account.paused
-        };
-      })
-    );
-    setMt5ContextMenu(null);
-  }, []);
+        await refreshMt5Accounts({ silent: true });
+      } catch (error) {
+        setMt5Error((error as Error).message || "Unable to remove TradeCopier account.");
+      } finally {
+        setMt5ActionBusy(false);
+        setMt5ContextMenu(null);
+      }
+    },
+    [refreshMt5Accounts, selectedMt5AccountId]
+  );
 
   const handleMt5AccountContextMenu = useCallback(
     (event: ReactMouseEvent<HTMLDivElement>, accountId: string) => {
@@ -16175,13 +16507,26 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         </div>
                       </div>
                       <div className="copytrade-body" onClick={() => setMt5ContextMenu(null)}>
+                        <p className="copytrade-note">
+                          TradeCopier.cloud profile manager. Save up to{" "}
+                          {MAX_TRADECOPIER_ACCOUNTS} accounts here.
+                          {mt5WorkerStatus?.tickInFlight ? " Syncing..." : ""}
+                        </p>
+
+                        {mt5Error ? <p className="copytrade-error-note">{mt5Error}</p> : null}
+
                         <div className="copytrade-actions" role="group" aria-label="MT5 account actions">
                           <button
                             type="button"
                             className="panel-action-btn copytrade-action-btn"
                             onClick={handleShowMt5AddForm}
+                            disabled={mt5ActionBusy || mt5Accounts.length >= MAX_TRADECOPIER_ACCOUNTS}
                           >
-                            Add Account
+                            {mt5Syncing
+                              ? "Syncing..."
+                              : mt5Accounts.length >= MAX_TRADECOPIER_ACCOUNTS
+                                ? "Limit Reached"
+                                : "Add Account"}
                           </button>
                         </div>
 
@@ -16189,7 +16534,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           <div className="copytrade-form-shell">
                             <div className="copytrade-form" aria-label="MT5 credentials form">
                               <label className="copytrade-field">
-                                <span>MT5 Login</span>
+                                <span>Account Login</span>
                                 <input
                                   className="copytrade-input"
                                   type="text"
@@ -16198,19 +16543,25 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   autoComplete="username"
                                   value={mt5LoginInput}
                                   onChange={(event) => setMt5LoginInput(event.target.value)}
+                                  disabled={mt5ActionBusy}
                                 />
                               </label>
 
                               <label className="copytrade-field">
-                                <span>MT5 Password</span>
+                                <span>Account Password</span>
                                 <input
                                   className="copytrade-input"
                                   type="password"
                                   name="mt5-password"
-                                  placeholder="Password"
+                                  placeholder={
+                                    mt5EditingAccountId
+                                      ? "Leave blank to keep current password"
+                                      : "Password"
+                                  }
                                   autoComplete="current-password"
                                   value={mt5PasswordInput}
                                   onChange={(event) => setMt5PasswordInput(event.target.value)}
+                                  disabled={mt5ActionBusy}
                                 />
                               </label>
 
@@ -16224,6 +16575,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   autoComplete="off"
                                   value={mt5ServerInput}
                                   onChange={(event) => setMt5ServerInput(event.target.value)}
+                                  disabled={mt5ActionBusy}
                                 />
                               </label>
                             </div>
@@ -16233,13 +16585,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 type="button"
                                 className="panel-action-btn copytrade-submit"
                                 onClick={handleConnectMt5Account}
+                                disabled={mt5ActionBusy}
                               >
-                                {mt5EditingAccountId ? "Save Account" : "Connect to MT5"}
+                                {mt5ActionBusy
+                                  ? "Saving..."
+                                  : mt5EditingAccountId
+                                    ? "Save Account"
+                                    : "Add Account"}
                               </button>
                               <button
                                 type="button"
                                 className="panel-action-btn copytrade-cancel-btn"
                                 onClick={handleCancelMt5Form}
+                                disabled={mt5ActionBusy}
                               >
                                 Cancel
                               </button>
@@ -16272,14 +16630,39 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 >
                                   <span className="copytrade-account-main">
                                     <strong>{account.login}</strong>
-                                    <small>{account.server}</small>
+                                    <small>
+                                      {account.server} · {account.symbol} · {account.timeframe} ·{" "}
+                                      {account.lot.toFixed(2)} lot
+                                    </small>
+                                    {account.lastError ? (
+                                      <small className="copytrade-account-error">{account.lastError}</small>
+                                    ) : null}
                                   </span>
 
                                   <span className="copytrade-account-right">
                                     <span className="copytrade-account-badges">
-                                      <span className="copytrade-status-badge disconnected">
-                                        Disconnected
+                                      <span
+                                        className={`copytrade-status-badge ${
+                                          account.paused
+                                            ? "paused"
+                                            : account.status === "Error"
+                                              ? "error"
+                                              : account.status === "Connected"
+                                                ? "connected"
+                                                : "disconnected"
+                                        }`}
+                                      >
+                                        {account.paused
+                                          ? "Paused"
+                                          : account.status === "Connected"
+                                            ? "Running"
+                                            : account.status}
                                       </span>
+                                      {account.openPosition ? (
+                                        <span className="copytrade-status-badge active">
+                                          {account.openPosition.side} #{account.openPosition.positionTicket}
+                                        </span>
+                                      ) : null}
                                     </span>
                                   </span>
                                 </div>
@@ -16287,7 +16670,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             ))}
                           </ul>
                         ) : (
-                          <p className="copytrade-note">No MT5 accounts yet. Press Add Account to begin.</p>
+                          <p className="copytrade-note">
+                            No accounts yet. Press Add Account to save TradeCopier credentials.
+                          </p>
                         )}
 
                         {mt5ContextMenu && mt5ContextAccount ? (
@@ -16303,6 +16688,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               type="button"
                               className="copytrade-context-item"
                               onClick={() => handleToggleMt5Pause(mt5ContextAccount.id)}
+                              disabled={mt5ActionBusy}
                             >
                               {mt5ContextAccount.paused ? "Resume" : "Pause"}
                             </button>
@@ -16310,8 +16696,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               type="button"
                               className="copytrade-context-item"
                               onClick={() => handleEditMt5Account(mt5ContextAccount.id)}
+                              disabled={mt5ActionBusy}
                             >
                               Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="copytrade-context-item copytrade-context-item-danger"
+                              onClick={() => handleRemoveMt5Account(mt5ContextAccount.id)}
+                              disabled={mt5ActionBusy}
+                            >
+                              Remove
                             </button>
                           </div>
                         ) : null}
