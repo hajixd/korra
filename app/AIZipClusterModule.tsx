@@ -6065,6 +6065,65 @@ function drawClusterMapCanvas(
     0,
     Math.min(1, Number((renderOpts as any)?.knnLinkOpacity ?? 0.34))
   );
+  const aiMethod2d = String((renderOpts as any)?.aiMethod ?? "").toLowerCase();
+  const selectedIdRaw = (renderOpts as any)?.selectedId;
+  const normalizeId = (v: any): string | null => {
+    if (v === null || v === undefined) return null;
+    const s = String(v).trim();
+    return s ? s : null;
+  };
+  const normalizeGroupId = (v: any): string | null => {
+    if (v === null || v === undefined) return null;
+    if (typeof v === "object") return normalizeGroupId((v as any)?.id ?? null);
+    return normalizeId(v);
+  };
+  const selectedRequestedId = normalizeId(selectedIdRaw);
+  const selectedGroupId = normalizeGroupId(selectedGroup);
+  const hoveredGroupId = normalizeGroupId(hoveredGroup);
+  const edgeKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const matchesNodeId = (n: any, id: string) =>
+    String((n as any)?.id ?? "") === id ||
+    String((n as any)?.uid ?? "") === id ||
+    String((n as any)?.tradeUid ?? "") === id ||
+    String((n as any)?.metaUid ?? "") === id ||
+    String((n as any)?.metaTradeUid ?? "") === id;
+  const pointInPolyWorld = (
+    px: number,
+    py: number,
+    poly: [number, number][]
+  ): boolean => {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i][0],
+        yi = poly[i][1];
+      const xj = poly[j][0],
+        yj = poly[j][1];
+      const intersect =
+        yi > py !== yj > py &&
+        px < ((xj - xi) * (py - yi)) / (yj - yi + 1e-12) + xi;
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  };
+  const expandHullWorld = (
+    hull: [number, number][],
+    mul = 1.08
+  ): [number, number][] => {
+    if (!Array.isArray(hull) || hull.length < 3) return [];
+    let cx = 0;
+    let cy = 0;
+    for (const p of hull) {
+      cx += Number(p?.[0]) || 0;
+      cy += Number(p?.[1]) || 0;
+    }
+    cx /= hull.length;
+    cy /= hull.length;
+    return hull.map((p) => {
+      const dx = (Number(p?.[0]) || 0) - cx;
+      const dy = (Number(p?.[1]) || 0) - cy;
+      return [cx + dx * mul, cy + dy * mul] as [number, number];
+    });
+  };
   const dpr = lowPowerMode
     ? Math.min(1, window.devicePixelRatio || 1)
     : window.devicePixelRatio || 1;
@@ -6473,6 +6532,137 @@ function drawClusterMapCanvas(
     }
 
     const screenPositions: any = {};
+    const selectedNodeObj =
+      selectedRequestedId != null
+        ? ((nodes || []).find(
+            (n: any) => n && matchesNodeId(n, selectedRequestedId)
+          ) as any) || null
+        : null;
+    const selectedNodeId =
+      normalizeId((selectedNodeObj as any)?.id) ?? selectedRequestedId ?? null;
+    const knnFocusActive = aiMethod2d === "knn" && selectedNodeId != null;
+
+    let selectedNodeHdbClusterId: string | null = null;
+    if (
+      aiMethod2d === "hdbscan" &&
+      selectedNodeObj &&
+      hdbOverlay &&
+      Array.isArray((hdbOverlay as any).clusters)
+    ) {
+      const sx = Number((selectedNodeObj as any).x);
+      const sy = Number((selectedNodeObj as any).y);
+      if (Number.isFinite(sx) && Number.isFinite(sy)) {
+        for (const c of (hdbOverlay as any).clusters as any[]) {
+          const hull =
+            c && (c as any).hull ? ((c as any).hull as [number, number][]) : null;
+          if (!hull || hull.length < 3) continue;
+          const poly = expandHullWorld(hull, 1.08);
+          if (!poly.length) continue;
+          if (pointInPolyWorld(sx, sy, poly)) {
+            selectedNodeHdbClusterId = normalizeGroupId((c as any).id);
+            break;
+          }
+        }
+      }
+    }
+
+    const activeHdbGroupId =
+      aiMethod2d === "hdbscan"
+        ? selectedGroupId ?? selectedNodeHdbClusterId
+        : null;
+    const hdbFocusActive = activeHdbGroupId != null;
+    let activeHdbPoly: [number, number][] | null = null;
+    if (
+      hdbFocusActive &&
+      hdbOverlay &&
+      Array.isArray((hdbOverlay as any).clusters)
+    ) {
+      for (const c of (hdbOverlay as any).clusters as any[]) {
+        if (normalizeGroupId((c as any).id) !== activeHdbGroupId) continue;
+        const hull =
+          c && (c as any).hull ? ((c as any).hull as [number, number][]) : null;
+        if (!hull || hull.length < 3) break;
+        const poly = expandHullWorld(hull, 1.08);
+        if (poly.length >= 3) activeHdbPoly = poly;
+        break;
+      }
+    }
+    const activeHdbNodeIds = new Set<string>();
+    if (hdbFocusActive && activeHdbPoly) {
+      for (const n of nodes as any[]) {
+        const nid = normalizeId((n as any)?.id);
+        if (!nid) continue;
+        const x = Number((n as any)?.x);
+        const y = Number((n as any)?.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        if (!pointInPolyWorld(x, y, activeHdbPoly)) continue;
+        activeHdbNodeIds.add(nid);
+      }
+    }
+    if (hdbFocusActive && selectedNodeId) activeHdbNodeIds.add(selectedNodeId);
+
+    const knnFocusNodeIds = new Set<string>();
+    const knnFocusEdgeIds = new Set<string>();
+    const knnFallbackFocusEdges: Array<{ a: string; b: string; d: number }> = [];
+    const effectiveKnnK = knnFocusActive ? Math.max(6, knnLinkK) : knnLinkK;
+    const knnEdges =
+      effectiveKnnK > 0 && (knnLinkOpacity > 0.001 || knnFocusActive)
+        ? getKnnEdgesForClusterMap(nodes as any[], effectiveKnnK, "2d")
+        : [];
+
+    if (knnFocusActive && selectedNodeId) {
+      knnFocusNodeIds.add(selectedNodeId);
+      for (const e of knnEdges as any[]) {
+        const aId = normalizeId((e as any)?.a);
+        const bId = normalizeId((e as any)?.b);
+        if (!aId || !bId) continue;
+        if (aId === selectedNodeId || bId === selectedNodeId) {
+          const otherId = aId === selectedNodeId ? bId : aId;
+          knnFocusNodeIds.add(otherId);
+          knnFocusEdgeIds.add(edgeKey(aId, bId));
+        }
+      }
+
+      // Fallback for non-live selections: connect the selected node to nearest live points.
+      if (knnFocusNodeIds.size <= 1 && selectedNodeObj) {
+        const sx = Number((selectedNodeObj as any)?.x);
+        const sy = Number((selectedNodeObj as any)?.y);
+        if (Number.isFinite(sx) && Number.isFinite(sy)) {
+          const fallbackN = Math.max(3, Math.min(12, effectiveKnnK || 6));
+          const nearest: Array<{ id: string; d: number }> = [];
+          for (const n of nodes as any[]) {
+            if (!isLiveNodeForKnn(n)) continue;
+            const nid = normalizeId((n as any)?.id);
+            if (!nid || nid === selectedNodeId) continue;
+            const x = Number((n as any)?.x);
+            const y = Number((n as any)?.y);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+            const dx = sx - x;
+            const dy = sy - y;
+            const d = Math.sqrt(dx * dx + dy * dy);
+            if (!Number.isFinite(d)) continue;
+            nearest.push({ id: nid, d });
+          }
+          nearest.sort((a, b) => a.d - b.d);
+          const picked = nearest.slice(0, fallbackN);
+          for (const n of picked) {
+            knnFocusNodeIds.add(n.id);
+            knnFocusEdgeIds.add(edgeKey(selectedNodeId, n.id));
+            knnFallbackFocusEdges.push({ a: selectedNodeId, b: n.id, d: n.d });
+          }
+        }
+      }
+    }
+
+    const hasKnnFocusSet = knnFocusActive && knnFocusNodeIds.size > 0;
+    const hasHdbFocusSet = hdbFocusActive && activeHdbNodeIds.size > 0;
+    const focusModeActive = hasKnnFocusSet || hasHdbFocusSet;
+    const isNodeInFocus = (nid: string | null): boolean => {
+      if (!nid) return false;
+      if (hasKnnFocusSet) return knnFocusNodeIds.has(nid);
+      if (hasHdbFocusSet) return activeHdbNodeIds.has(nid);
+      return false;
+    };
 
     // HDBSCAN visualization (2D only): draw cluster hulls behind nodes
     if (
@@ -6486,6 +6676,18 @@ function drawClusterMapCanvas(
         const hull = c.hull as [number, number][];
         if (!hull || hull.length < 3) continue;
         const col = colorForLibrary("hdbscan_cluster_" + String(c.id));
+        const clusterId = normalizeGroupId((c as any).id);
+        const isSelectedCluster =
+          activeHdbGroupId != null && clusterId === activeHdbGroupId;
+        const isHoveredCluster =
+          hoveredGroupId != null && clusterId === hoveredGroupId;
+        const emphasize = isSelectedCluster || (!activeHdbGroupId && isHoveredCluster);
+        const dimCluster = activeHdbGroupId != null && !isSelectedCluster;
+        const fillAlpha = emphasize ? 0.34 : dimCluster ? 0.07 : 0.22;
+        const outerAlpha = emphasize ? 0.96 : dimCluster ? 0.22 : 0.72;
+        const innerAlpha = emphasize ? 0.56 : dimCluster ? 0.14 : 0.35;
+        const outerWidth = emphasize ? 4.8 : dimCluster ? 2 : 3.5;
+        const innerWidth = emphasize ? 2.25 : 1.5;
 
         // Expand the hull in screen-space so the grouping extends beyond the nodes.
         const spts = hull.map((p) => toScreen(p[0], p[1]));
@@ -6514,11 +6716,11 @@ function drawClusterMapCanvas(
         // darker + more noticeable
         if (!lowPowerMode) {
           ctx.shadowColor = col;
-          ctx.shadowBlur = 18;
+          ctx.shadowBlur = emphasize ? 22 : dimCluster ? 5 : 18;
         }
 
         // fill
-        ctx.globalAlpha = 0.22 * (Number(groupOverlayOpacity) || 0);
+        ctx.globalAlpha = fillAlpha * (Number(groupOverlayOpacity) || 0);
         ctx.beginPath();
         for (let i = 0; i < expPts.length; i++) {
           const sp = expPts[i];
@@ -6530,8 +6732,8 @@ function drawClusterMapCanvas(
 
         // outer stroke
         ctx.shadowBlur = 0;
-        ctx.globalAlpha = 0.72 * (Number(groupOverlayOpacity) || 0);
-        ctx.lineWidth = 3.5;
+        ctx.globalAlpha = outerAlpha * (Number(groupOverlayOpacity) || 0);
+        ctx.lineWidth = outerWidth;
         ctx.beginPath();
         for (let i = 0; i < expPts.length; i++) {
           const sp = expPts[i];
@@ -6542,8 +6744,8 @@ function drawClusterMapCanvas(
         ctx.stroke();
 
         // inner definition stroke
-        ctx.globalAlpha = 0.35 * Math.min(1, Number(groupOverlayOpacity) || 0);
-        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = innerAlpha * Math.min(1, Number(groupOverlayOpacity) || 0);
+        ctx.lineWidth = innerWidth;
         ctx.strokeStyle = "rgba(0,0,0,0.55)";
         ctx.beginPath();
         for (let i = 0; i < expPts.length; i++) {
@@ -6566,8 +6768,8 @@ function drawClusterMapCanvas(
     }
 
     // KNN topology web (live node neighborhood links).
-    if (knnLinkK > 0 && knnLinkOpacity > 0.001) {
-      const edges = getKnnEdgesForClusterMap(nodes as any[], knnLinkK, "2d");
+    if (knnEdges.length && (knnLinkOpacity > 0.001 || knnFocusActive)) {
+      const edges = knnEdges;
       if (edges.length) {
         let minD = Infinity;
         let maxD = -Infinity;
@@ -6580,30 +6782,77 @@ function drawClusterMapCanvas(
         const den = Math.max(1e-6, maxD - minD);
 
         ctx.save();
-        if (!lowPowerMode) {
-          ctx.shadowBlur = 12;
-        }
         for (const e of edges as any[]) {
-          const pa = screenPositions[(e as any).a];
-          const pb = screenPositions[(e as any).b];
+          const aId = normalizeId((e as any)?.a);
+          const bId = normalizeId((e as any)?.b);
+          if (!aId || !bId) continue;
+          const pa = screenPositions[aId];
+          const pb = screenPositions[bId];
           if (!pa || !pb) continue;
           const d = Number((e as any).d);
           if (!Number.isFinite(d)) continue;
           const tRaw = 1 - (d - minD) / den; // near => 1, far => 0
           const t = Math.max(0, Math.min(1, tRaw));
-          const alpha = Math.min(0.94, knnLinkOpacity * (0.18 + t * 0.92));
-          const width = (lowPowerMode ? 0.75 : 1.05) + t * (lowPowerMode ? 1.8 : 3.6);
-          const hue = 206 - t * 56;
-          const sat = 86;
-          const lit = 58 + t * 12;
-          const col = `hsla(${hue}, ${sat}%, ${lit}%, ${alpha})`;
+          const focusedEdge =
+            knnFocusActive && knnFocusEdgeIds.has(edgeKey(aId, bId));
+          const dimEdge = knnFocusActive && !focusedEdge;
+          let col = "";
+          let width = 1;
+
+          if (dimEdge) {
+            const alpha = lowPowerMode ? 0.08 : 0.12;
+            col = `rgba(110,110,110,${alpha})`;
+            width = lowPowerMode ? 0.65 : 0.85;
+          } else if (focusedEdge) {
+            const alpha = Math.min(0.98, 0.56 + t * 0.38);
+            const hue = 194 - t * 22;
+            const lit = 66 + t * 11;
+            col = `hsla(${hue}, 95%, ${lit}%, ${alpha})`;
+            width = (lowPowerMode ? 1.45 : 2.2) + t * (lowPowerMode ? 2 : 3.4);
+          } else {
+            const alpha = Math.min(0.94, knnLinkOpacity * (0.18 + t * 0.92));
+            const width0 =
+              (lowPowerMode ? 0.75 : 1.05) + t * (lowPowerMode ? 1.8 : 3.6);
+            const hue = 206 - t * 56;
+            const sat = 86;
+            const lit = 58 + t * 12;
+            col = `hsla(${hue}, ${sat}%, ${lit}%, ${alpha})`;
+            width = width0;
+          }
+
           ctx.lineWidth = width;
           ctx.strokeStyle = col;
-          if (!lowPowerMode) ctx.shadowColor = col;
+          if (!lowPowerMode) {
+            if (focusedEdge) {
+              ctx.shadowColor = col;
+              ctx.shadowBlur = 14;
+            } else {
+              ctx.shadowBlur = 0;
+            }
+          }
           ctx.beginPath();
           ctx.moveTo(pa.sx, pa.sy);
           ctx.lineTo(pb.sx, pb.sy);
           ctx.stroke();
+        }
+
+        if (knnFocusActive && knnFallbackFocusEdges.length > 0) {
+          for (const e of knnFallbackFocusEdges) {
+            const pa = screenPositions[e.a];
+            const pb = screenPositions[e.b];
+            if (!pa || !pb) continue;
+            const col = "rgba(95,220,255,0.88)";
+            ctx.lineWidth = lowPowerMode ? 2.2 : 3.2;
+            ctx.strokeStyle = col;
+            if (!lowPowerMode) {
+              ctx.shadowColor = "rgba(95,220,255,0.55)";
+              ctx.shadowBlur = 12;
+            }
+            ctx.beginPath();
+            ctx.moveTo(pa.sx, pa.sy);
+            ctx.lineTo(pb.sx, pb.sy);
+            ctx.stroke();
+          }
         }
         ctx.restore();
       }
@@ -6634,6 +6883,16 @@ function drawClusterMapCanvas(
 
       const isHovered = hoveredId === n.id;
       const isSearch = searchHighlightId === n.id;
+      const nodeId = normalizeId((n as any).id);
+      const isSelectedNode = selectedNodeId != null && nodeId === selectedNodeId;
+      const isKnnNeighbor =
+        hasKnnFocusSet &&
+        nodeId != null &&
+        !isSelectedNode &&
+        knnFocusNodeIds.has(nodeId);
+      const isHdbFocused = hasHdbFocusSet && nodeId != null && activeHdbNodeIds.has(nodeId);
+      const isFocusNode = isSearch || isSelectedNode || isKnnNeighbor || isHdbFocused;
+      const dimNode = focusModeActive && !isFocusNode;
       const r = (Number(n.r) || 0) * (Number(nodeSizeMul) || 1);
       let fill: string;
       let outline: string;
@@ -6675,6 +6934,25 @@ function drawClusterMapCanvas(
         outline = n.dir === 1 ? "rgba(30,180,80,1.0)" : "rgba(180,50,50,1.0)";
       }
 
+      if (dimNode) {
+        fill = "rgba(102,102,102,0.28)";
+        outline = "rgba(132,132,132,0.35)";
+      }
+      if (!isSearch && !isSelectedNode && isKnnNeighbor) {
+        fill = "rgba(95,205,255,0.94)";
+        outline = "rgba(220,245,255,0.98)";
+      }
+      if (!isSearch && !isSelectedNode && !isKnnNeighbor && isHdbFocused) {
+        outline = "rgba(245,245,245,0.9)";
+      }
+      if (!isSearch && isSelectedNode) {
+        fill = "rgba(255,255,255,0.99)";
+        outline =
+          aiMethod2d === "knn"
+            ? "rgba(120,220,255,1.0)"
+            : "rgba(255,255,255,1.0)";
+      }
+
       // Search spotlight: make the searched node unmistakable.
       if (isSearch) {
         fill = "rgba(255,255,255,0.98)";
@@ -6685,16 +6963,23 @@ function drawClusterMapCanvas(
       if (
         !lowPowerMode &&
         (isSearch ||
+          isSelectedNode ||
+          isKnnNeighbor ||
+          isHdbFocused ||
           n.kind === "close" ||
           n.kind === "potential" ||
           (n.isOpen && !isLib))
       ) {
         ctx.beginPath();
-        const glowR = r * 2.3;
+        const glowR = r * (isSelectedNode ? 2.95 : isKnnNeighbor ? 2.55 : 2.3);
         ctx.arc(sx, sy, glowR * (isHovered ? 1.3 : 1.0), 0, Math.PI * 2);
         let glowColor: string;
-        if (isSearch) {
-          glowColor = "rgba(255,255,255,0.40)";
+        if (isSearch || isSelectedNode) {
+          glowColor = "rgba(255,255,255,0.44)";
+        } else if (isKnnNeighbor) {
+          glowColor = "rgba(95,220,255,0.42)";
+        } else if (isHdbFocused) {
+          glowColor = "rgba(240,240,255,0.33)";
         } else if (kind === "potential") {
           glowColor = "rgba(200,140,255,0.45)";
         } else if (kind === "close") {
@@ -6706,14 +6991,41 @@ function drawClusterMapCanvas(
         ctx.fill();
       }
 
+      const focusScale = isSelectedNode ? 1.34 : isKnnNeighbor ? 1.16 : isHdbFocused ? 1.06 : 1;
       ctx.beginPath();
-      ctx.arc(sx, sy, r * (isHovered ? 1.25 : 1.0), 0, Math.PI * 2);
+      ctx.arc(sx, sy, r * (isHovered ? 1.25 : 1.0) * focusScale, 0, Math.PI * 2);
       ctx.fillStyle = fill;
       ctx.fill();
       const outlineBase = lowPowerMode ? (isHovered ? 2.2 : 1.1) : isHovered ? 4 : 2;
-      ctx.lineWidth = outlineBase * (Number(nodeOutlineMul) || 1);
+      const focusOutlineMul = isSelectedNode ? 1.85 : isKnnNeighbor ? 1.4 : isHdbFocused ? 1.2 : 1;
+      const dimOutlineMul = dimNode ? 0.72 : 1;
+      ctx.lineWidth =
+        outlineBase * (Number(nodeOutlineMul) || 1) * focusOutlineMul * dimOutlineMul;
       ctx.strokeStyle = outline;
       ctx.stroke();
+
+      if (!dimNode && (isSelectedNode || isKnnNeighbor || isHdbFocused)) {
+        const ringR =
+          Math.max(4, r * focusScale) +
+          (isSelectedNode ? 6 : isKnnNeighbor ? 4.5 : 3.2);
+        ctx.save();
+        ctx.lineWidth = lowPowerMode ? 1.2 : 1.9;
+        ctx.strokeStyle = isSelectedNode
+          ? "rgba(255,255,255,0.95)"
+          : isKnnNeighbor
+          ? "rgba(170,235,255,0.92)"
+          : "rgba(245,245,245,0.72)";
+        if (!lowPowerMode) {
+          ctx.shadowColor = isKnnNeighbor
+            ? "rgba(110,220,255,0.45)"
+            : "rgba(255,255,255,0.36)";
+          ctx.shadowBlur = 8;
+        }
+        ctx.beginPath();
+        ctx.arc(sx, sy, ringR, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
     };
 
     const bgNodes = ordered.filter((n: any) => !isTop(n));
@@ -6724,24 +7036,45 @@ function drawClusterMapCanvas(
 
     // Open ↔ Live links (thinner, and above background nodes)
     ctx.save();
-    ctx.lineWidth = lowPowerMode ? 2.2 : 4;
-    ctx.strokeStyle = "rgba(255,80,220,0.86)";
-    if (!lowPowerMode) {
-      ctx.shadowColor = "rgba(255,80,220,0.45)";
-      ctx.shadowBlur = 9;
-    }
-    ctx.beginPath();
     for (const n of nodes) {
       if (n.kind === "close" && (n as any).parentId) {
-        const parent = screenPositions[(n as any).parentId];
-        const child = screenPositions[n.id];
+        const parentId = normalizeId((n as any).parentId);
+        const childId = normalizeId((n as any).id);
+        const parent = parentId ? screenPositions[parentId] : null;
+        const child = childId ? screenPositions[childId] : null;
         if (parent && child) {
+          const focusedLink =
+            focusModeActive &&
+            (isNodeInFocus(parentId) || isNodeInFocus(childId));
+          if (focusModeActive && !focusedLink) {
+            ctx.lineWidth = lowPowerMode ? 1.05 : 1.35;
+            ctx.strokeStyle = "rgba(120,120,120,0.2)";
+            if (!lowPowerMode) ctx.shadowBlur = 0;
+          } else if (focusModeActive) {
+            const col = hasKnnFocusSet
+              ? "rgba(125,225,255,0.9)"
+              : "rgba(255,170,230,0.9)";
+            ctx.lineWidth = lowPowerMode ? 2.6 : 4.5;
+            ctx.strokeStyle = col;
+            if (!lowPowerMode) {
+              ctx.shadowColor = col;
+              ctx.shadowBlur = 10;
+            }
+          } else {
+            ctx.lineWidth = lowPowerMode ? 2.2 : 4;
+            ctx.strokeStyle = "rgba(255,80,220,0.86)";
+            if (!lowPowerMode) {
+              ctx.shadowColor = "rgba(255,80,220,0.45)";
+              ctx.shadowBlur = 9;
+            }
+          }
+          ctx.beginPath();
           ctx.moveTo(parent.sx, parent.sy);
           ctx.lineTo(child.sx, child.sy);
+          ctx.stroke();
         }
       }
     }
-    ctx.stroke();
     ctx.restore();
 
     // Top nodes last (Open Trades + Live Trade points + Potential)
@@ -6749,7 +7082,7 @@ function drawClusterMapCanvas(
 
     // Ensure the searched/selected node is rendered on top of everything.
     // This makes the white "search-selected" node visually come to the front even in dense regions.
-    const pinId = searchHighlightId || null;
+    const pinId = searchHighlightId || selectedNodeId || null;
     if (pinId != null) {
       const pid = String(pinId);
       const pin =
@@ -10471,8 +10804,10 @@ export function ClusterMap({
       lowPowerMode,
       knnLinkK,
       knnLinkOpacity,
+      aiMethod,
+      selectedId,
     }),
-    [lowPowerMode, knnLinkK, knnLinkOpacity]
+    [lowPowerMode, knnLinkK, knnLinkOpacity, aiMethod, selectedId]
   );
   const [nodeSizeMul, setNodeSizeMul] = React.useState(1);
   const [nodeOutlineMul, setNodeOutlineMul] = React.useState(1);
