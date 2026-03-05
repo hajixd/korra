@@ -8615,11 +8615,25 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         ];
 
         const [deepHistoryCandles, oneMinuteCandles] = await Promise.all(promises);
+        let replaySeedCandles = deepHistoryCandles;
 
-        if (!cancelled && deepHistoryCandles.length >= MIN_SEED_CANDLES) {
+        // If deep-history fetch fails or returns too little data, fall back to
+        // chart-sized history so replay generation does not collapse to zero trades.
+        if (replaySeedCandles.length < MIN_SEED_CANDLES) {
+          const fallbackHistoryCandles = await fetchHistoryCandles(
+            appliedBacktestSettings.timeframe,
+            recentOneMinutePromise
+          ).catch(() => []);
+
+          if (fallbackHistoryCandles.length >= MIN_SEED_CANDLES) {
+            replaySeedCandles = fallbackHistoryCandles;
+          }
+        }
+
+        if (!cancelled && replaySeedCandles.length >= MIN_SEED_CANDLES) {
           setBacktestSeriesMap((prev) => ({
             ...prev,
-            [key]: deepHistoryCandles
+            [key]: replaySeedCandles
           }));
         }
 
