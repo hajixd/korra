@@ -817,6 +817,341 @@ const EMPTY_BACKTEST_ANALYTICS_RESPONSE: BacktestAnalyticsServerResponse = {
   }
 };
 
+const getTradeWeekKey = (timestampSeconds: UTCTimestamp): string => {
+  const date = new Date(Number(timestampSeconds) * 1000);
+  const day = date.getUTCDay();
+  const weekStart = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - day)
+  );
+
+  return weekStart.toISOString().slice(0, 10);
+};
+
+const summarizeBacktestTradesFallback = (
+  trades: HistoryItem[],
+  confidenceResolver: (trade: HistoryItem) => number
+): BacktestSummaryStats => {
+  let netPnl = 0;
+  let grossWins = 0;
+  let grossLosses = 0;
+  let wins = 0;
+  let losses = 0;
+  let totalHoldMinutes = 0;
+  let totalWinHoldMinutes = 0;
+  let totalLossHoldMinutes = 0;
+  let maxWin = 0;
+  let maxLoss = 0;
+  let totalR = 0;
+  let totalConfidence = 0;
+  let estimatedPeakTotal = 0;
+  let estimatedDrawdownTotal = 0;
+  let estimatedProfitMinutes = 0;
+  let estimatedDeficitMinutes = 0;
+  let runningPnl = 0;
+  let peakPnl = 0;
+  let maxDrawdown = 0;
+  const dayMap = new Map<string, { key: string; count: number; pnl: number }>();
+  const weekMap = new Map<string, { key: string; count: number; pnl: number }>();
+  const monthMap = new Map<string, { key: string; count: number; pnl: number }>();
+  const pnlSeries: number[] = [];
+
+  for (const trade of trades) {
+    const holdMinutes = Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
+    const targetPotentialUsd = Math.abs(trade.targetPrice - trade.entryPrice) * Math.max(1, trade.units);
+    const stopPotentialUsd = Math.abs(trade.entryPrice - trade.stopPrice) * Math.max(1, trade.units);
+    const favorableShare = trade.result === "Win" ? 0.68 : 0.32;
+    netPnl += trade.pnlUsd;
+    runningPnl += trade.pnlUsd;
+    peakPnl = Math.max(peakPnl, runningPnl);
+    maxDrawdown = Math.min(maxDrawdown, runningPnl - peakPnl);
+    maxWin = Math.max(maxWin, trade.pnlUsd);
+    maxLoss = Math.min(maxLoss, trade.pnlUsd);
+    totalHoldMinutes += holdMinutes;
+    totalConfidence += confidenceResolver(trade) * 100;
+    estimatedPeakTotal += Math.max(Math.max(trade.pnlUsd, 0), targetPotentialUsd);
+    estimatedDrawdownTotal += Math.max(Math.abs(Math.min(trade.pnlUsd, 0)), stopPotentialUsd);
+    estimatedProfitMinutes += holdMinutes * favorableShare;
+    estimatedDeficitMinutes += holdMinutes * (1 - favorableShare);
+    pnlSeries.push(trade.pnlUsd);
+
+    if (trade.pnlUsd >= 0) {
+      grossWins += trade.pnlUsd;
+      totalWinHoldMinutes += holdMinutes;
+    } else {
+      grossLosses += trade.pnlUsd;
+      losses += 1;
+      totalLossHoldMinutes += holdMinutes;
+    }
+
+    if (trade.result === "Win") {
+      wins += 1;
+    }
+
+    const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
+    const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
+    totalR += rewardDistance / riskDistance;
+
+    const dayKey = getTradeDayKey(trade.exitTime);
+    const currentDay = dayMap.get(dayKey) ?? { key: dayKey, count: 0, pnl: 0 };
+    currentDay.count += 1;
+    currentDay.pnl += trade.pnlUsd;
+    dayMap.set(dayKey, currentDay);
+
+    const weekKey = getTradeWeekKey(trade.exitTime);
+    const currentWeek = weekMap.get(weekKey) ?? { key: weekKey, count: 0, pnl: 0 };
+    currentWeek.count += 1;
+    currentWeek.pnl += trade.pnlUsd;
+    weekMap.set(weekKey, currentWeek);
+
+    const monthKey = getTradeMonthKey(trade.exitTime);
+    const currentMonth = monthMap.get(monthKey) ?? { key: monthKey, count: 0, pnl: 0 };
+    currentMonth.count += 1;
+    currentMonth.pnl += trade.pnlUsd;
+    monthMap.set(monthKey, currentMonth);
+  }
+
+  const dayRows = Array.from(dayMap.values()).sort((a, b) => a.key.localeCompare(b.key));
+  const weekRows = Array.from(weekMap.values()).sort((a, b) => a.key.localeCompare(b.key));
+  const monthRows = Array.from(monthMap.values()).sort((a, b) => a.key.localeCompare(b.key));
+  const bestDay = [...dayRows].sort((a, b) => b.pnl - a.pnl)[0] ?? null;
+  const worstDay = [...dayRows].sort((a, b) => a.pnl - b.pnl)[0] ?? null;
+  const tradeCount = trades.length;
+  const avgPnl = tradeCount > 0 ? netPnl / tradeCount : 0;
+  const avgWin = wins > 0 ? grossWins / wins : 0;
+  const avgLoss = losses > 0 ? grossLosses / losses : 0;
+  const mean = avgPnl;
+  const variance =
+    tradeCount > 0
+      ? pnlSeries.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(1, tradeCount)
+      : 0;
+  const stdDev = Math.sqrt(variance);
+  const downsideValues = pnlSeries.filter((value) => value < 0);
+  const downsideVariance =
+    downsideValues.length > 0
+      ? downsideValues.reduce((sum, value) => sum + value ** 2, 0) / downsideValues.length
+      : 0;
+  const downsideDeviation = Math.sqrt(downsideVariance);
+  const positiveDays = dayRows.filter((row) => row.pnl >= 0).length;
+  const positiveWeeks = weekRows.filter((row) => row.pnl >= 0).length;
+  const positiveMonths = monthRows.filter((row) => row.pnl >= 0).length;
+  const sharpe = stdDev > 0 ? mean / stdDev : 0;
+  const sortino = downsideDeviation > 0 ? mean / downsideDeviation : 0;
+
+  return {
+    tradeCount,
+    netPnl,
+    totalPnl: netPnl,
+    winRate: tradeCount > 0 ? (wins / tradeCount) * 100 : 0,
+    profitFactor:
+      grossLosses === 0 ? (grossWins > 0 ? grossWins : 0) : grossWins / Math.abs(grossLosses),
+    avgPnl,
+    avgHoldMinutes: tradeCount > 0 ? totalHoldMinutes / tradeCount : 0,
+    avgWinDurationMin: wins > 0 ? totalWinHoldMinutes / wins : 0,
+    avgLossDurationMin: losses > 0 ? totalLossHoldMinutes / losses : 0,
+    avgR: tradeCount > 0 ? totalR / tradeCount : 0,
+    avgWin,
+    avgLoss,
+    averageConfidence: tradeCount > 0 ? totalConfidence / tradeCount : 0,
+    tradesPerDay: dayRows.length > 0 ? tradeCount / dayRows.length : 0,
+    tradesPerWeek: weekRows.length > 0 ? tradeCount / weekRows.length : 0,
+    tradesPerMonth: monthRows.length > 0 ? tradeCount / monthRows.length : 0,
+    consistencyPerDay: dayRows.length > 0 ? (positiveDays / dayRows.length) * 100 : 0,
+    consistencyPerWeek: weekRows.length > 0 ? (positiveWeeks / weekRows.length) * 100 : 0,
+    consistencyPerMonth: monthRows.length > 0 ? (positiveMonths / monthRows.length) * 100 : 0,
+    consistencyPerTrade: tradeCount > 0 ? (wins / tradeCount) * 100 : 0,
+    avgPnlPerDay: dayRows.length > 0 ? netPnl / dayRows.length : 0,
+    avgPnlPerWeek: weekRows.length > 0 ? netPnl / weekRows.length : 0,
+    avgPnlPerMonth: monthRows.length > 0 ? netPnl / monthRows.length : 0,
+    avgPeakPerTrade: tradeCount > 0 ? estimatedPeakTotal / tradeCount : 0,
+    avgMaxDrawdownPerTrade: tradeCount > 0 ? estimatedDrawdownTotal / tradeCount : 0,
+    avgTimeInProfitMin: tradeCount > 0 ? estimatedProfitMinutes / tradeCount : 0,
+    avgTimeInDeficitMin: tradeCount > 0 ? estimatedDeficitMinutes / tradeCount : 0,
+    sharpe,
+    sortino,
+    wins,
+    losses,
+    grossWins,
+    grossLosses,
+    maxWin,
+    maxLoss,
+    maxDrawdown,
+    bestDay,
+    worstDay
+  };
+};
+
+const computeMainStatsSessionRowsFallback = (trades: HistoryItem[]): MainStatsBucketRow[] => {
+  const map = new Map<string, MainStatsBucketRow>();
+
+  for (const trade of trades) {
+    const label = getSessionLabel(trade.entryTime);
+    const current = map.get(label) ?? { label, total: 0, trades: 0 };
+    current.total += trade.pnlUsd;
+    current.trades += 1;
+    map.set(label, current);
+  }
+
+  return Array.from(map.values()).sort((left, right) => {
+    const leftIndex = backtestSessionLabels.indexOf(left.label as (typeof backtestSessionLabels)[number]);
+    const rightIndex = backtestSessionLabels.indexOf(
+      right.label as (typeof backtestSessionLabels)[number]
+    );
+
+    if (leftIndex !== -1 || rightIndex !== -1) {
+      if (leftIndex === -1) {
+        return 1;
+      }
+
+      if (rightIndex === -1) {
+        return -1;
+      }
+
+      return leftIndex - rightIndex;
+    }
+
+    return left.label.localeCompare(right.label);
+  });
+};
+
+const computeMainStatsModelRowsFallback = (trades: HistoryItem[]): MainStatsBucketRow[] => {
+  const map = new Map<string, MainStatsBucketRow>();
+
+  for (const trade of trades) {
+    const label = trade.entrySource || "Unknown";
+    const current = map.get(label) ?? { label, total: 0, trades: 0 };
+    current.total += trade.pnlUsd;
+    current.trades += 1;
+    map.set(label, current);
+  }
+
+  return Array.from(map.values()).sort((left, right) => left.label.localeCompare(right.label));
+};
+
+const computeMainStatsMonthRowsFallback = (trades: HistoryItem[]): MainStatsMonthRow[] => {
+  const monthBuckets = new Map<string, { key: string; pnl: number; trades: number }>();
+
+  for (const trade of trades) {
+    const key = getTradeMonthKey(trade.exitTime);
+    const monthKey = String(getTradeMonthIndex(trade.exitTime) + 1).padStart(2, "0");
+    const current = monthBuckets.get(key) ?? { key: monthKey, pnl: 0, trades: 0 };
+    current.pnl += trade.pnlUsd;
+    current.trades += 1;
+    monthBuckets.set(key, current);
+  }
+
+  const map = new Map<string, MainStatsMonthRow>();
+
+  for (const bucket of monthBuckets.values()) {
+    const current = map.get(bucket.key) ?? {
+      key: bucket.key,
+      total: 0,
+      trades: 0,
+      months: 0,
+      avgPerTrade: 0
+    };
+    current.total += bucket.pnl;
+    current.trades += bucket.trades;
+    current.months += 1;
+    map.set(bucket.key, current);
+  }
+
+  return Array.from(map.values())
+    .map((row) => ({
+      ...row,
+      avgPerTrade: row.trades > 0 ? row.total / row.trades : 0,
+      total: row.months > 0 ? row.total / row.months : 0
+    }))
+    .sort((left, right) => Number(left.key) - Number(right.key));
+};
+
+const buildBacktestAnalyticsFallbackResponse = (params: {
+  backtestTrades: HistoryItem[];
+  baselineMainStatsTrades: HistoryItem[];
+  selectedBacktestDateKey: string;
+  confidenceResolver: (trade: HistoryItem) => number;
+}): BacktestAnalyticsServerResponse => {
+  const {
+    backtestTrades,
+    baselineMainStatsTrades,
+    selectedBacktestDateKey,
+    confidenceResolver
+  } = params;
+  const backtestSummary = summarizeBacktestTradesFallback(backtestTrades, confidenceResolver);
+  const baselineMainStatsSummary = summarizeBacktestTradesFallback(
+    baselineMainStatsTrades,
+    confidenceResolver
+  );
+  const mainStatsSummary = summarizeBacktestTradesFallback(backtestTrades, confidenceResolver);
+
+  const dayMap = new Map<string, { count: number; wins: number; pnl: number }>();
+  for (const trade of backtestTrades) {
+    const dayKey = getTradeDayKey(trade.entryTime);
+    const current = dayMap.get(dayKey) ?? { count: 0, wins: 0, pnl: 0 };
+    current.count += 1;
+    current.wins += trade.result === "Win" ? 1 : 0;
+    current.pnl += trade.pnlUsd;
+    dayMap.set(dayKey, current);
+  }
+
+  const monthKeys = Array.from(
+    new Set(backtestTrades.map((trade) => getTradeDayKey(trade.entryTime).slice(0, 7)))
+  ).sort((a, b) => b.localeCompare(a));
+  const selectedBacktestDayTrades = selectedBacktestDateKey
+    ? backtestTrades.filter((trade) => getTradeDayKey(trade.entryTime) === selectedBacktestDateKey)
+    : [];
+
+  const entryCounts: Record<string, number> = {};
+  const exitCounts: Record<string, number> = {};
+  for (const trade of backtestTrades) {
+    const entryKey = trade.entrySource || "Unknown";
+    const exitKey = trade.exitReason || "None";
+    entryCounts[entryKey] = (entryCounts[entryKey] ?? 0) + 1;
+    exitCounts[exitKey] = (exitCounts[exitKey] ?? 0) + 1;
+  }
+
+  const entryExitStats = {
+    entry: Object.entries(entryCounts).sort((left, right) => right[1] - left[1]),
+    exit: Object.entries(exitCounts).sort((left, right) => right[1] - left[1])
+  };
+  const toRows = (source: Array<[string, number]>) => {
+    const total = source.reduce((sum, [, count]) => sum + count, 0);
+    return source.map(([bucket, count]) => ({
+      bucket,
+      count,
+      share: total > 0 ? (count / total) * 100 : 0
+    }));
+  };
+
+  const confidenceDiff =
+    baselineMainStatsTrades.length > 0
+      ? backtestSummary.averageConfidence - baselineMainStatsSummary.averageConfidence
+      : null;
+
+  return {
+    ...EMPTY_BACKTEST_ANALYTICS_RESPONSE,
+    backtestSummary,
+    baselineMainStatsSummary,
+    mainStatsSummary,
+    mainStatsSessionRows: computeMainStatsSessionRowsFallback(backtestTrades),
+    mainStatsModelRows: computeMainStatsModelRowsFallback(backtestTrades),
+    mainStatsMonthRows: computeMainStatsMonthRowsFallback(backtestTrades),
+    mainStatsAiEfficiency: null,
+    mainStatsAiEffectivenessPct:
+      baselineMainStatsTrades.length > 0
+        ? mainStatsSummary.winRate - baselineMainStatsSummary.winRate
+        : null,
+    mainStatsAiEfficacyPct: confidenceDiff,
+    availableBacktestMonths: monthKeys,
+    calendarActivityEntries: Array.from(dayMap.entries()),
+    selectedBacktestDayTrades,
+    entryExitStats,
+    entryExitChartData: {
+      entry: toRows(entryExitStats.entry),
+      exit: toRows(entryExitStats.exit)
+    }
+  };
+};
+
 type ActionItem = {
   id: string;
   tradeId: string;
@@ -3334,6 +3669,75 @@ const getSessionLabel = (timestampSeconds: UTCTimestamp): string => {
   }
 
   return "London";
+};
+
+const getUtcDayStartMsFromYmd = (ymd: string): number | null => {
+  if (!ymd) {
+    return null;
+  }
+
+  const value = Date.parse(`${ymd}T00:00:00Z`);
+  return Number.isFinite(value) ? value : null;
+};
+
+const getUtcDayEndExclusiveMsFromYmd = (ymd: string): number | null => {
+  const startMs = getUtcDayStartMsFromYmd(ymd);
+  if (startMs === null) {
+    return null;
+  }
+
+  return startMs + 86_400_000;
+};
+
+const filterTradesByDateRange = (
+  trades: HistoryItem[],
+  startYmd: string,
+  endYmd: string
+): HistoryItem[] => {
+  const startMs = getUtcDayStartMsFromYmd(startYmd);
+  const endExclusiveMs = getUtcDayEndExclusiveMsFromYmd(endYmd);
+
+  return trades.filter((trade) => {
+    const tradeMs = Number(trade.entryTime) * 1000;
+    if (!Number.isFinite(tradeMs)) {
+      return false;
+    }
+
+    if (startMs !== null && tradeMs < startMs) {
+      return false;
+    }
+
+    if (endExclusiveMs !== null && tradeMs >= endExclusiveMs) {
+      return false;
+    }
+
+    return true;
+  });
+};
+
+const filterTradesBySessionBuckets = (
+  trades: HistoryItem[],
+  settings: Pick<
+    BacktestFilterSettings,
+    | "enabledBacktestWeekdays"
+    | "enabledBacktestSessions"
+    | "enabledBacktestMonths"
+    | "enabledBacktestHours"
+  >
+): HistoryItem[] => {
+  return trades.filter((trade) => {
+    const weekday = getWeekdayLabel(getTradeDayKey(trade.exitTime));
+    const session = getSessionLabel(trade.entryTime);
+    const monthIndex = getTradeMonthIndex(trade.exitTime);
+    const entryHour = getTradeHour(trade.entryTime);
+
+    return (
+      settings.enabledBacktestWeekdays.includes(weekday) &&
+      settings.enabledBacktestSessions.includes(session) &&
+      settings.enabledBacktestMonths.includes(monthIndex) &&
+      settings.enabledBacktestHours.includes(entryHour)
+    );
+  });
 };
 
 const formatMinutesCompact = (minutes: number): string => {
@@ -6267,8 +6671,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [selectedHistoryInteractionTick, setSelectedHistoryInteractionTick] = useState(0);
   const [showAllTradesOnChart, setShowAllTradesOnChart] = useState(false);
   const [showActiveTradeOnChart, setShowActiveTradeOnChart] = useState(false);
-  const [chartPanelLiveSimulationEnabled, setChartPanelLiveSimulationEnabled] = useState(true);
-  const [activePanelLiveSimulationEnabled, setActivePanelLiveSimulationEnabled] = useState(true);
+  const [chartPanelLiveSimulationEnabled, setChartPanelLiveSimulationEnabled] = useState(false);
+  const [activePanelLiveSimulationEnabled, setActivePanelLiveSimulationEnabled] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [seenNotificationIds, setSeenNotificationIds] = useState<string[]>([]);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
@@ -9333,8 +9737,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     selectedSurfaceTab === "chart" && chartPanelLiveSimulationEnabled;
   const usesChartPanelLiveSimulationForActive =
     selectedSurfaceTab === "chart" && activePanelLiveSimulationEnabled;
+  const canBuildChartPanelReplayRows = historyRows.length <= 800;
   const shouldBuildChartPanelReplayRows =
     selectedSurfaceTab === "chart" &&
+    canBuildChartPanelReplayRows &&
     (chartPanelLiveSimulationEnabled || activePanelLiveSimulationEnabled);
   const chartPanelFilterSettings = useMemo<BacktestFilterSettings>(
     () => ({
@@ -9543,11 +9949,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     chartPanelHistoryRows: [],
     activePanelHistoryRows: []
   });
+  const [panelAnalyticsStatus, setPanelAnalyticsStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
     const shouldSendActivePanelOverrides =
       usesChartPanelLiveSimulationForActive !== usesChartPanelLiveSimulationForHistory;
+    setPanelAnalyticsStatus("loading");
 
     computePanelAnalyticsOnServer(
       {
@@ -9580,19 +9988,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           return;
         }
         setPanelAnalyticsData(result);
+        setPanelAnalyticsStatus("ready");
       })
       .catch(() => {
         if (cancelled || controller.signal.aborted) {
           return;
         }
-        setPanelAnalyticsData({
-          dateFilteredTrades: [],
-          libraryCandidateTrades: [],
-          timeFilteredTrades: [],
-          confidenceByIdEntries: [],
-          chartPanelHistoryRows: [],
-          activePanelHistoryRows: []
-        });
+        setPanelAnalyticsStatus("error");
       });
 
     return () => {
@@ -10514,8 +10916,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setSelectedSymbol(futuresAssets[0].symbol);
     setSelectedTimeframe("15m");
     setSelectedBacktestTimeframe("15m");
-    setChartPanelLiveSimulationEnabled(true);
-    setActivePanelLiveSimulationEnabled(true);
+    setChartPanelLiveSimulationEnabled(false);
+    setActivePanelLiveSimulationEnabled(false);
     setMinutePreciseEnabled(false);
     setEnabledBacktestWeekdays([...backtestWeekdayLabels]);
     setEnabledBacktestSessions([...backtestSessionLabels]);
@@ -12166,17 +12568,54 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     toGaplessUtc
   ]);
 
+  const fallbackBacktestDateFilteredTrades = useMemo(() => {
+    return filterTradesByDateRange(
+      backtestSourceTrades,
+      appliedBacktestSettings.statsDateStart,
+      appliedBacktestSettings.statsDateEnd
+    );
+  }, [
+    appliedBacktestSettings.statsDateEnd,
+    appliedBacktestSettings.statsDateStart,
+    backtestSourceTrades
+  ]);
+
+  const fallbackBacktestTimeFilteredTrades = useMemo(() => {
+    return filterTradesBySessionBuckets(fallbackBacktestDateFilteredTrades, {
+      enabledBacktestWeekdays: appliedBacktestSettings.enabledBacktestWeekdays,
+      enabledBacktestSessions: appliedBacktestSettings.enabledBacktestSessions,
+      enabledBacktestMonths: appliedBacktestSettings.enabledBacktestMonths,
+      enabledBacktestHours: appliedBacktestSettings.enabledBacktestHours
+    });
+  }, [
+    appliedBacktestSettings.enabledBacktestHours,
+    appliedBacktestSettings.enabledBacktestMonths,
+    appliedBacktestSettings.enabledBacktestSessions,
+    appliedBacktestSettings.enabledBacktestWeekdays,
+    fallbackBacktestDateFilteredTrades
+  ]);
+
   const backtestDateFilteredTrades = useMemo(() => {
-    return antiCheatBacktestContext.dateFilteredTrades;
-  }, [antiCheatBacktestContext]);
+    return panelAnalyticsStatus === "ready"
+      ? antiCheatBacktestContext.dateFilteredTrades
+      : fallbackBacktestDateFilteredTrades;
+  }, [antiCheatBacktestContext.dateFilteredTrades, fallbackBacktestDateFilteredTrades, panelAnalyticsStatus]);
 
   const backtestTimeFilteredTrades = useMemo(() => {
-    return antiCheatBacktestContext.timeFilteredTrades;
-  }, [antiCheatBacktestContext]);
+    return panelAnalyticsStatus === "ready"
+      ? antiCheatBacktestContext.timeFilteredTrades
+      : fallbackBacktestTimeFilteredTrades;
+  }, [antiCheatBacktestContext.timeFilteredTrades, fallbackBacktestTimeFilteredTrades, panelAnalyticsStatus]);
 
   const backtestLibraryCandidateTrades = useMemo(() => {
-    return antiCheatBacktestContext.libraryCandidateTrades;
-  }, [antiCheatBacktestContext]);
+    return panelAnalyticsStatus === "ready"
+      ? antiCheatBacktestContext.libraryCandidateTrades
+      : fallbackBacktestTimeFilteredTrades;
+  }, [
+    antiCheatBacktestContext.libraryCandidateTrades,
+    fallbackBacktestTimeFilteredTrades,
+    panelAnalyticsStatus
+  ]);
 
   const backtestTrades = useMemo(() => {
     return backtestTimeFilteredTrades.filter((trade) => {
@@ -12227,6 +12666,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     () => backtestTimeFilteredTrades,
     [backtestTimeFilteredTrades]
   );
+  const backtestAnalyticsConfidenceEntries = useMemo(
+    () => (panelAnalyticsStatus === "ready" ? panelAnalyticsData.confidenceByIdEntries : []),
+    [panelAnalyticsData.confidenceByIdEntries, panelAnalyticsStatus]
+  );
   const [backtestAnalyticsData, setBacktestAnalyticsData] =
     useState<BacktestAnalyticsServerResponse>(EMPTY_BACKTEST_ANALYTICS_RESPONSE);
   useEffect(() => {
@@ -12241,7 +12684,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       {
         backtestTrades,
         baselineMainStatsTrades,
-        confidenceByIdEntries: panelAnalyticsData.confidenceByIdEntries,
+        confidenceByIdEntries: backtestAnalyticsConfidenceEntries,
         aiMode: appliedBacktestSettings.aiMode,
         confidenceGateDisabled: appliedConfidenceGateDisabled,
         selectedBacktestDateKey,
@@ -12263,6 +12706,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         if (cancelled || controller.signal.aborted) {
           return;
         }
+        setBacktestAnalyticsData(
+          buildBacktestAnalyticsFallbackResponse({
+            backtestTrades,
+            baselineMainStatsTrades,
+            selectedBacktestDateKey,
+            confidenceResolver: getEffectiveTradeConfidenceScore
+          })
+        );
       });
 
     return () => {
@@ -12276,12 +12727,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     backtestHasRun,
     backtestHistorySeedReady,
     backtestTrades,
+    getEffectiveTradeConfidenceScore,
     isBacktestAnalyticsVisible,
     isCalendarBacktestTabActive,
     isClusterBacktestTabActive,
     isEntryExitBacktestTabActive,
     isPerformanceStatsBacktestTabActive,
-    panelAnalyticsData.confidenceByIdEntries,
+    backtestAnalyticsConfidenceEntries,
     performanceStatsModel,
     selectedBacktestDateKey
   ]);
