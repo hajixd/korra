@@ -7523,6 +7523,31 @@ input[style*="background: rgba(255,255,255,0.06)"] {
   padding: 1.02rem;
 }
 
+.copytrade-body.copytrade-body-surface.copytrade-body-surface-empty {
+  min-height: clamp(420px, 64vh, 760px);
+  justify-content: center;
+  align-items: center;
+}
+
+.copytrade-body.copytrade-body-surface.copytrade-body-surface-empty > * {
+  width: min(760px, 100%);
+}
+
+.copytrade-body.copytrade-body-surface.copytrade-body-surface-empty > .copytrade-note,
+.copytrade-body.copytrade-body-surface.copytrade-body-surface-empty > .copytrade-error-note {
+  text-align: center;
+}
+
+.copytrade-body.copytrade-body-surface.copytrade-body-surface-empty .copytrade-actions {
+  width: min(260px, 100%);
+  justify-items: center;
+  margin-inline: auto;
+}
+
+.copytrade-body.copytrade-body-surface.copytrade-body-surface-empty .copytrade-action-btn {
+  width: 100%;
+}
+
 .copytrade-body::-webkit-scrollbar,
 .copytrade-dashboard-history-card::-webkit-scrollbar {
   width: 8px;
@@ -7943,6 +7968,12 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 @media (max-width: 760px) {
   .copytrade-body {
     padding: 0.86rem 0.7rem 0.96rem;
+  }
+
+  .copytrade-body.copytrade-body-surface.copytrade-body-surface-empty {
+    min-height: 0;
+    justify-content: flex-start;
+    align-items: stretch;
   }
 
   .copytrade-form-shell {

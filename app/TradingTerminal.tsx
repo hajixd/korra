@@ -17285,12 +17285,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         {selectedSurfaceTab === "copytrade" ? (
           <section className="copytrade-surface" aria-label="copy trade workspace">
             <div className="copytrade-surface-shell">
-              <div className="copytrade-surface-head">
-                <h2>Copy-Trade</h2>
-                <p>TradeCopier.cloud onboarding and account management.</p>
-              </div>
-
-              <div className="copytrade-body copytrade-body-surface" onClick={() => setMt5ContextMenu(null)}>
+              <div
+                className={`copytrade-body copytrade-body-surface ${
+                  mt5Accounts.length === 0 ? "copytrade-body-surface-empty" : ""
+                }`}
+                onClick={() => setMt5ContextMenu(null)}
+              >
                 <p className="copytrade-note">
                   Add your MT5 login, password, and server. After linking, TradeCopier.cloud can run each
                   account in the cloud (around $8/account plan). Current limit: {mt5MaxAccounts}
@@ -17463,227 +17463,231 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   </p>
                 )}
 
-                <section className="copytrade-dashboard-shell" aria-label="Selected account dashboard">
-                  <div className="copytrade-dashboard-head">
-                    <div>
-                      <h3>Account Dashboard</h3>
-                      <p>
-                        {selectedMt5Account
-                          ? `${selectedMt5Account.login} · ${selectedMt5Account.server}`
-                          : "Select an account to view its live dashboard."}
-                      </p>
+                {mt5Accounts.length > 0 ? (
+                  <section className="copytrade-dashboard-shell" aria-label="Selected account dashboard">
+                    <div className="copytrade-dashboard-head">
+                      <div>
+                        <h3>Account Dashboard</h3>
+                        <p>
+                          {selectedMt5Account
+                            ? `${selectedMt5Account.login} · ${selectedMt5Account.server}`
+                            : "Select an account to view its live dashboard."}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="panel-action-btn copytrade-dashboard-refresh-btn"
+                        onClick={handleRefreshSelectedMt5Dashboard}
+                        disabled={!selectedMt5Account || selectedMt5DashboardLoading}
+                      >
+                        {selectedMt5DashboardLoading ? "Refreshing..." : "Refresh"}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      className="panel-action-btn copytrade-dashboard-refresh-btn"
-                      onClick={handleRefreshSelectedMt5Dashboard}
-                      disabled={!selectedMt5Account || selectedMt5DashboardLoading}
-                    >
-                      {selectedMt5DashboardLoading ? "Refreshing..." : "Refresh"}
-                    </button>
-                  </div>
 
-                  {selectedMt5Account ? (
-                    selectedMt5Dashboard ? (
-                      <div className="copytrade-dashboard-grid">
-                        <section className="copytrade-dashboard-main-card">
-                          <div className="copytrade-dashboard-banner">
-                            <div className="copytrade-dashboard-banner-copy">
-                              <span className="copytrade-dashboard-kicker">
-                                {selectedMt5Dashboard.broker || "MetaTrader Account"}
-                              </span>
-                              <h4>
-                                {selectedMt5Dashboard.login} @ {selectedMt5Dashboard.server}
-                              </h4>
+                    {selectedMt5Account ? (
+                      selectedMt5Dashboard ? (
+                        <div className="copytrade-dashboard-grid">
+                          <section className="copytrade-dashboard-main-card">
+                            <div className="copytrade-dashboard-banner">
+                              <div className="copytrade-dashboard-banner-copy">
+                                <span className="copytrade-dashboard-kicker">
+                                  {selectedMt5Dashboard.broker || "MetaTrader Account"}
+                                </span>
+                                <h4>
+                                  {selectedMt5Dashboard.login} @ {selectedMt5Dashboard.server}
+                                </h4>
+                              </div>
+                              <div className="copytrade-dashboard-banner-balance">
+                                <span>Equity</span>
+                                <strong>
+                                  {formatAccountMoney(
+                                    selectedMt5Dashboard.equity ?? selectedMt5Dashboard.balance,
+                                    selectedMt5Dashboard.currency
+                                  )}
+                                </strong>
+                              </div>
                             </div>
-                            <div className="copytrade-dashboard-banner-balance">
-                              <span>Equity</span>
-                              <strong>
-                                {formatAccountMoney(
-                                  selectedMt5Dashboard.equity ?? selectedMt5Dashboard.balance,
-                                  selectedMt5Dashboard.currency
-                                )}
-                              </strong>
+
+                            <div className="copytrade-dashboard-metrics">
+                              <article className="copytrade-dashboard-stat">
+                                <span>Balance</span>
+                                <strong>
+                                  {formatAccountMoney(
+                                    selectedMt5Dashboard.balance,
+                                    selectedMt5Dashboard.currency
+                                  )}
+                                </strong>
+                              </article>
+                              <article className="copytrade-dashboard-stat">
+                                <span>Free Margin</span>
+                                <strong>
+                                  {formatAccountMoney(
+                                    selectedMt5Dashboard.freeMargin,
+                                    selectedMt5Dashboard.currency
+                                  )}
+                                </strong>
+                              </article>
+                              <article className="copytrade-dashboard-stat">
+                                <span>Used Margin</span>
+                                <strong>
+                                  {formatAccountMoney(
+                                    selectedMt5Dashboard.margin,
+                                    selectedMt5Dashboard.currency
+                                  )}
+                                </strong>
+                              </article>
+                              <article className="copytrade-dashboard-stat">
+                                <span>Open PnL</span>
+                                <strong
+                                  className={
+                                    (selectedMt5Dashboard.netOpenProfit || 0) >= 0 ? "up" : "down"
+                                  }
+                                >
+                                  {formatSignedAccountMoney(
+                                    selectedMt5Dashboard.netOpenProfit,
+                                    selectedMt5Dashboard.currency
+                                  )}
+                                </strong>
+                              </article>
+                              <article className="copytrade-dashboard-stat">
+                                <span>24h Closed PnL</span>
+                                <strong
+                                  className={
+                                    (selectedMt5Dashboard.dayClosedPnl || 0) >= 0 ? "up" : "down"
+                                  }
+                                >
+                                  {formatSignedAccountMoney(
+                                    selectedMt5Dashboard.dayClosedPnl,
+                                    selectedMt5Dashboard.currency
+                                  )}
+                                </strong>
+                              </article>
+                              <article className="copytrade-dashboard-stat">
+                                <span>Margin Level</span>
+                                <strong>
+                                  {selectedMt5Dashboard.marginLevel !== null
+                                    ? `${selectedMt5Dashboard.marginLevel.toFixed(1)}%`
+                                    : "--"}
+                                </strong>
+                              </article>
+                              <article className="copytrade-dashboard-stat">
+                                <span>Leverage</span>
+                                <strong>
+                                  {selectedMt5Dashboard.leverage !== null
+                                    ? `1:${Math.trunc(selectedMt5Dashboard.leverage)}`
+                                    : "--"}
+                                </strong>
+                              </article>
+                              <article className="copytrade-dashboard-stat">
+                                <span>Trading</span>
+                                <strong>
+                                  {selectedMt5Dashboard.tradeAllowed === null
+                                    ? "--"
+                                    : selectedMt5Dashboard.tradeAllowed
+                                      ? "Allowed"
+                                      : "Restricted"}
+                                </strong>
+                              </article>
                             </div>
-                          </div>
 
-                          <div className="copytrade-dashboard-metrics">
-                            <article className="copytrade-dashboard-stat">
-                              <span>Balance</span>
-                              <strong>
-                                {formatAccountMoney(
-                                  selectedMt5Dashboard.balance,
-                                  selectedMt5Dashboard.currency
-                                )}
-                              </strong>
-                            </article>
-                            <article className="copytrade-dashboard-stat">
-                              <span>Free Margin</span>
-                              <strong>
-                                {formatAccountMoney(
-                                  selectedMt5Dashboard.freeMargin,
-                                  selectedMt5Dashboard.currency
-                                )}
-                              </strong>
-                            </article>
-                            <article className="copytrade-dashboard-stat">
-                              <span>Used Margin</span>
-                              <strong>
-                                {formatAccountMoney(
-                                  selectedMt5Dashboard.margin,
-                                  selectedMt5Dashboard.currency
-                                )}
-                              </strong>
-                            </article>
-                            <article className="copytrade-dashboard-stat">
-                              <span>Open PnL</span>
-                              <strong
-                                className={
-                                  (selectedMt5Dashboard.netOpenProfit || 0) >= 0 ? "up" : "down"
-                                }
-                              >
-                                {formatSignedAccountMoney(
-                                  selectedMt5Dashboard.netOpenProfit,
-                                  selectedMt5Dashboard.currency
-                                )}
-                              </strong>
-                            </article>
-                            <article className="copytrade-dashboard-stat">
-                              <span>24h Closed PnL</span>
-                              <strong
-                                className={
-                                  (selectedMt5Dashboard.dayClosedPnl || 0) >= 0 ? "up" : "down"
-                                }
-                              >
-                                {formatSignedAccountMoney(
-                                  selectedMt5Dashboard.dayClosedPnl,
-                                  selectedMt5Dashboard.currency
-                                )}
-                              </strong>
-                            </article>
-                            <article className="copytrade-dashboard-stat">
-                              <span>Margin Level</span>
-                              <strong>
-                                {selectedMt5Dashboard.marginLevel !== null
-                                  ? `${selectedMt5Dashboard.marginLevel.toFixed(1)}%`
-                                  : "--"}
-                              </strong>
-                            </article>
-                            <article className="copytrade-dashboard-stat">
-                              <span>Leverage</span>
-                              <strong>
-                                {selectedMt5Dashboard.leverage !== null
-                                  ? `1:${Math.trunc(selectedMt5Dashboard.leverage)}`
-                                  : "--"}
-                              </strong>
-                            </article>
-                            <article className="copytrade-dashboard-stat">
-                              <span>Trading</span>
-                              <strong>
-                                {selectedMt5Dashboard.tradeAllowed === null
-                                  ? "--"
-                                  : selectedMt5Dashboard.tradeAllowed
-                                    ? "Allowed"
-                                    : "Restricted"}
-                              </strong>
-                            </article>
-                          </div>
+                            <div className="copytrade-open-positions-card">
+                              <div className="copytrade-dashboard-subhead">
+                                <h5>Open Positions</h5>
+                                <span>{selectedMt5Dashboard.openPositions.length}</span>
+                              </div>
 
-                          <div className="copytrade-open-positions-card">
+                              {selectedMt5Dashboard.openPositions.length > 0 ? (
+                                <ul className="copytrade-open-position-list">
+                                  {selectedMt5Dashboard.openPositions.map((position) => (
+                                    <li key={position.id}>
+                                      <article className="copytrade-open-position-item">
+                                        <header>
+                                          <strong>{position.symbol}</strong>
+                                          <span
+                                            className={
+                                              (position.profit || 0) >= 0
+                                                ? "copytrade-pill up"
+                                                : "copytrade-pill down"
+                                            }
+                                          >
+                                            {position.side} ·{" "}
+                                            {formatSignedAccountMoney(
+                                              position.profit,
+                                              selectedMt5Dashboard.currency
+                                            )}
+                                          </span>
+                                        </header>
+                                        <p>
+                                          Vol {position.volume.toFixed(2)} · Open{" "}
+                                          {position.openPrice !== null
+                                            ? formatPrice(position.openPrice)
+                                            : "--"}{" "}
+                                          · Current{" "}
+                                          {position.currentPrice !== null
+                                            ? formatPrice(position.currentPrice)
+                                            : "--"}
+                                        </p>
+                                      </article>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <p className="copytrade-dashboard-empty">No open positions on this account.</p>
+                              )}
+                            </div>
+                          </section>
+
+                          <aside className="copytrade-dashboard-history-card">
                             <div className="copytrade-dashboard-subhead">
-                              <h5>Open Positions</h5>
-                              <span>{selectedMt5Dashboard.openPositions.length}</span>
+                              <h5>Recent History</h5>
+                              <span>
+                                Updated {formatDashboardDateTime(selectedMt5Dashboard.lastSyncedAt)}
+                              </span>
                             </div>
 
-                            {selectedMt5Dashboard.openPositions.length > 0 ? (
-                              <ul className="copytrade-open-position-list">
-                                {selectedMt5Dashboard.openPositions.map((position) => (
-                                  <li key={position.id}>
-                                    <article className="copytrade-open-position-item">
+                            {selectedMt5Dashboard.recentDeals.length > 0 ? (
+                              <ul className="copytrade-deal-list">
+                                {selectedMt5Dashboard.recentDeals.map((deal) => (
+                                  <li key={deal.id}>
+                                    <article className="copytrade-deal-item">
                                       <header>
-                                        <strong>{position.symbol}</strong>
-                                        <span
-                                          className={
-                                            (position.profit || 0) >= 0 ? "copytrade-pill up" : "copytrade-pill down"
-                                          }
-                                        >
-                                          {position.side} ·{" "}
+                                        <strong>{deal.symbol}</strong>
+                                        <span className={(deal.profit || 0) >= 0 ? "up" : "down"}>
                                           {formatSignedAccountMoney(
-                                            position.profit,
+                                            deal.profit,
                                             selectedMt5Dashboard.currency
                                           )}
                                         </span>
                                       </header>
                                       <p>
-                                        Vol {position.volume.toFixed(2)} · Open{" "}
-                                        {position.openPrice !== null
-                                          ? formatPrice(position.openPrice)
-                                          : "--"}{" "}
-                                        · Current{" "}
-                                        {position.currentPrice !== null
-                                          ? formatPrice(position.currentPrice)
-                                          : "--"}
+                                        {deal.side} · {deal.entryType.replace("DEAL_ENTRY_", "")}
                                       </p>
+                                      <small>
+                                        {deal.price !== null ? `@ ${formatPrice(deal.price)} · ` : ""}
+                                        {formatDashboardDateTime(deal.time)}
+                                      </small>
                                     </article>
                                   </li>
                                 ))}
                               </ul>
                             ) : (
-                              <p className="copytrade-dashboard-empty">No open positions on this account.</p>
+                              <p className="copytrade-dashboard-empty">No recent deal history available yet.</p>
                             )}
-                          </div>
-                        </section>
-
-                        <aside className="copytrade-dashboard-history-card">
-                          <div className="copytrade-dashboard-subhead">
-                            <h5>Recent History</h5>
-                            <span>
-                              Updated {formatDashboardDateTime(selectedMt5Dashboard.lastSyncedAt)}
-                            </span>
-                          </div>
-
-                          {selectedMt5Dashboard.recentDeals.length > 0 ? (
-                            <ul className="copytrade-deal-list">
-                              {selectedMt5Dashboard.recentDeals.map((deal) => (
-                                <li key={deal.id}>
-                                  <article className="copytrade-deal-item">
-                                    <header>
-                                      <strong>{deal.symbol}</strong>
-                                      <span className={(deal.profit || 0) >= 0 ? "up" : "down"}>
-                                        {formatSignedAccountMoney(
-                                          deal.profit,
-                                          selectedMt5Dashboard.currency
-                                        )}
-                                      </span>
-                                    </header>
-                                    <p>
-                                      {deal.side} · {deal.entryType.replace("DEAL_ENTRY_", "")}
-                                    </p>
-                                    <small>
-                                      {deal.price !== null ? `@ ${formatPrice(deal.price)} · ` : ""}
-                                      {formatDashboardDateTime(deal.time)}
-                                    </small>
-                                  </article>
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p className="copytrade-dashboard-empty">No recent deal history available yet.</p>
-                          )}
-                        </aside>
-                      </div>
+                          </aside>
+                        </div>
+                      ) : (
+                        <p className="copytrade-note">
+                          {selectedMt5DashboardError ||
+                            (selectedMt5DashboardLoading
+                              ? "Loading account dashboard..."
+                              : "Dashboard data is not available yet for this account.")}
+                        </p>
+                      )
                     ) : (
-                      <p className="copytrade-note">
-                        {selectedMt5DashboardError ||
-                          (selectedMt5DashboardLoading
-                            ? "Loading account dashboard..."
-                            : "Dashboard data is not available yet for this account.")}
-                      </p>
-                    )
-                  ) : (
-                    <p className="copytrade-note">Select an account to view its live dashboard.</p>
-                  )}
-                </section>
+                      <p className="copytrade-note">Select an account to view its live dashboard.</p>
+                    )}
+                  </section>
+                ) : null}
 
                 {mt5ContextMenu && mt5ContextAccount ? (
                   <div
