@@ -5848,78 +5848,6 @@ function dbscan2D(points: [number, number][], eps: number, minSamples: number) {
 const clusterMapDrawOrderCache = new WeakMap<any[], any[]>();
 const clusterMapKnnEdgeCache = new WeakMap<any[], Map<string, any[]>>();
 const CLUSTER_MAP_LOW_POWER_KEY = "clusterMapLowPower";
-const CLUSTER_MAP_ENGINE_KEY = "clusterMapEngine";
-
-type ClusterMapEngineId =
-  | "auto"
-  | "canvas2d"
-  | "three-standard"
-  | "three-compat"
-  | "three-performance";
-
-type ClusterMapEngine = {
-  id: ClusterMapEngineId;
-  label: string;
-  hint: string;
-  forcedView: "manual" | "2d" | "3d";
-  threeVariant: "standard" | "compat" | "performance";
-  lowPowerOverride: boolean | null;
-};
-
-const CLUSTER_MAP_ENGINE_DEFAULT: ClusterMapEngineId = "auto";
-const CLUSTER_MAP_ENGINES: ClusterMapEngine[] = [
-  {
-    id: "auto",
-    label: "Auto (Use 2D/3D Toggle)",
-    hint: "Keeps manual 2D/3D switching with current settings.",
-    forcedView: "manual",
-    threeVariant: "standard",
-    lowPowerOverride: null,
-  },
-  {
-    id: "canvas2d",
-    label: "Canvas 2D Engine",
-    hint: "CPU canvas renderer only (no WebGL).",
-    forcedView: "2d",
-    threeVariant: "standard",
-    lowPowerOverride: null,
-  },
-  {
-    id: "three-standard",
-    label: "Three.js WebGL Standard",
-    hint: "Default Three.js WebGL renderer.",
-    forcedView: "3d",
-    threeVariant: "standard",
-    lowPowerOverride: null,
-  },
-  {
-    id: "three-compat",
-    label: "Three.js WebGL Compatibility",
-    hint: "Safer WebGL context settings for older GPUs.",
-    forcedView: "3d",
-    threeVariant: "compat",
-    lowPowerOverride: true,
-  },
-  {
-    id: "three-performance",
-    label: "Three.js WebGL Performance",
-    hint: "Higher-throughput WebGL profile with reduced overhead.",
-    forcedView: "3d",
-    threeVariant: "performance",
-    lowPowerOverride: false,
-  },
-];
-
-function getClusterMapEngine(id: any): ClusterMapEngine {
-  const key = String(id ?? "").trim();
-  for (const engine of CLUSTER_MAP_ENGINES) {
-    if (engine.id === key) return engine;
-  }
-  for (const engine of CLUSTER_MAP_ENGINES) {
-    if (engine.id === CLUSTER_MAP_ENGINE_DEFAULT) return engine;
-  }
-  return CLUSTER_MAP_ENGINES[0];
-}
 
 function normalizeClusterMapToken(v: any): string | null {
   const s = String(v ?? "").trim();
@@ -7505,7 +7433,6 @@ function ClusterMapViewport3D({
   searchHighlightId,
   resetKey,
   lowPowerMode,
-  engineVariant = "standard",
   hdbOverlay,
   showGroupOverlays,
   groupOverlayOpacity,
@@ -7527,7 +7454,6 @@ function ClusterMapViewport3D({
   searchHighlightId: string | null;
   resetKey: number;
   lowPowerMode: boolean;
-  engineVariant?: "standard" | "compat" | "performance";
   hdbOverlay: any;
   showGroupOverlays: boolean;
   groupOverlayOpacity: number;
@@ -7727,17 +7653,12 @@ function ClusterMapViewport3D({
     if (!canvas) return;
 
     let renderer: any = null;
-    const variant = String(engineVariant || "standard").toLowerCase();
-    const compatMode = variant === "compat";
-    const performanceMode = variant === "performance";
     try {
       renderer = new (THREE as any).WebGLRenderer({
         canvas,
-        antialias: compatMode ? false : performanceMode ? false : !lowPowerMode,
+        antialias: !lowPowerMode,
         alpha: false,
-        powerPreference: compatMode ? "low-power" : "high-performance",
-        failIfMajorPerformanceCaveat: compatMode,
-        precision: compatMode ? "lowp" : "mediump",
+        powerPreference: lowPowerMode ? "low-power" : "high-performance",
       });
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : String(error));
@@ -7745,12 +7666,7 @@ function ClusterMapViewport3D({
     }
     setRuntimeError(null);
     const dprRaw = window.devicePixelRatio || 1;
-    const dprCap = compatMode ? 1 : performanceMode ? 1.35 : 2;
-    renderer.setPixelRatio(
-      lowPowerMode
-        ? Math.min(1, dprRaw)
-        : Math.min(dprCap, dprRaw)
-    );
+    renderer.setPixelRatio(lowPowerMode ? Math.min(1, dprRaw) : Math.min(2, dprRaw));
     renderer.outputColorSpace = (THREE as any).SRGBColorSpace;
     if ((THREE as any).NoToneMapping != null) {
       renderer.toneMapping = (THREE as any).NoToneMapping;
@@ -8164,7 +8080,6 @@ function ClusterMapViewport3D({
     onSelectionIdsChange,
     requestRender,
     lowPowerMode,
-    engineVariant,
   ]);
 
   useEffect(() => {
@@ -9446,27 +9361,6 @@ export function ClusterMap({
   const [heatmapOn, setHeatmapOn] = useState(false);
   const [heatHoverLive, setHeatHover] = useState<null | any>(null);
   const heatmapRef = useRef<any>(null);
-  const [clusterMapEngineId, setClusterMapEngineId] = useState<ClusterMapEngineId>(
-    () => {
-      if (typeof window === "undefined") return CLUSTER_MAP_ENGINE_DEFAULT;
-      try {
-        const raw = localStorage.getItem(CLUSTER_MAP_ENGINE_KEY);
-        if (raw == null) return CLUSTER_MAP_ENGINE_DEFAULT;
-        return getClusterMapEngine(raw).id;
-      } catch {
-        return CLUSTER_MAP_ENGINE_DEFAULT;
-      }
-    }
-  );
-  const clusterMapEngine = useMemo(
-    () => getClusterMapEngine(clusterMapEngineId),
-    [clusterMapEngineId]
-  );
-  useEffect(() => {
-    try {
-      localStorage.setItem(CLUSTER_MAP_ENGINE_KEY, clusterMapEngine.id);
-    } catch {}
-  }, [clusterMapEngine.id]);
 
   const [lowPowerModeUser, setLowPowerModeUser] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
@@ -9479,10 +9373,7 @@ export function ClusterMap({
       return false;
     }
   });
-  const lowPowerMode =
-    clusterMapEngine.lowPowerOverride == null
-      ? lowPowerModeUser
-      : clusterMapEngine.lowPowerOverride;
+  const lowPowerMode = lowPowerModeUser;
   useEffect(() => {
     try {
       localStorage.setItem(CLUSTER_MAP_LOW_POWER_KEY, lowPowerModeUser ? "1" : "0");
@@ -9506,13 +9397,6 @@ export function ClusterMap({
     setHeatHover(null);
     setPinnedHeatHover(null);
   }, [lowPowerMode]);
-  useEffect(() => {
-    if (clusterMapEngine.forcedView === "manual") return;
-    const target3d = clusterMapEngine.forcedView === "3d";
-    const is3d = clusterMapView === "3d";
-    if (target3d === is3d) return;
-    onToggleClusterMapView();
-  }, [clusterMapEngine.forcedView, clusterMapView, onToggleClusterMapView]);
 
   // Track whether the mouse is currently over the map so WASD/arrow panning doesn't steal keys elsewhere.
   const mapFocusRef = useRef(false);
@@ -16786,10 +16670,7 @@ export function ClusterMap({
               Reset
             </button>
             <button
-              onClick={() => {
-                if (clusterMapEngine.forcedView !== "manual") return;
-                onToggleClusterMapView();
-              }}
+              onClick={onToggleClusterMapView}
               style={{
                 border: "1px solid rgba(255,255,255,0.18)",
                 background: "rgba(0,0,0,0.35)",
@@ -16798,25 +16679,14 @@ export function ClusterMap({
                 padding: "6px 10px",
                 fontSize: 11,
                 fontWeight: 900,
-                cursor:
-                  clusterMapEngine.forcedView === "manual"
-                    ? "pointer"
-                    : "not-allowed",
-                opacity: clusterMapEngine.forcedView === "manual" ? 1 : 0.6,
+                cursor: "pointer",
               }}
-              title={
-                clusterMapEngine.forcedView === "manual"
-                  ? "Toggle 2D / 3D (V)"
-                  : `Locked by Engine (${clusterMapEngine.label})`
-              }
+              title="Toggle 2D / 3D (V)"
             >
               {clusterMapView === "3d" ? "2D" : "3D"}
             </button>
             <button
-              onClick={() => {
-                if (clusterMapEngine.lowPowerOverride != null) return;
-                setLowPowerModeUser((v) => !v);
-              }}
+              onClick={() => setLowPowerModeUser((v) => !v)}
               style={{
                 border: lowPowerMode
                   ? "1px solid rgba(120,255,150,0.55)"
@@ -16829,17 +16699,9 @@ export function ClusterMap({
                 padding: "6px 10px",
                 fontSize: 11,
                 fontWeight: 900,
-                cursor:
-                  clusterMapEngine.lowPowerOverride == null
-                    ? "pointer"
-                    : "not-allowed",
-                opacity: clusterMapEngine.lowPowerOverride == null ? 1 : 0.6,
+                cursor: "pointer",
               }}
-              title={
-                clusterMapEngine.lowPowerOverride == null
-                  ? "Aggressive performance mode for weak GPUs/CPUs"
-                  : "Low-Power state is controlled by selected Engine"
-              }
+              title="Aggressive performance mode for weak GPUs/CPUs"
             >
               Low-Power {lowPowerMode ? "ON" : "OFF"}
             </button>
@@ -17057,7 +16919,6 @@ export function ClusterMap({
             searchHighlightId={searchHighlightId}
             resetKey={resetKey}
             lowPowerMode={lowPowerMode}
-            engineVariant={clusterMapEngine.threeVariant}
             hdbOverlay={hdbOverlay}
             showGroupOverlays={showGroupOverlays}
             groupOverlayOpacity={effectiveGroupOverlayOpacity}
@@ -19117,55 +18978,6 @@ export function ClusterMap({
             />
             <div style={{ marginTop: 3, fontSize: 9, opacity: 0.72 }}>
               Topology count follows K Entry. Nearer neighbors render thicker.
-            </div>
-          </div>
-
-          <div
-            className="rounded-xl border border-neutral-800"
-            style={{
-              padding: "8px 10px",
-              background:
-                "linear-gradient(180deg, rgba(22,40,58,0.66), rgba(8,16,28,0.72))",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: 10,
-                color: "rgba(255,255,255,0.78)",
-                marginBottom: 6,
-              }}
-            >
-              <span>Engine</span>
-              <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>
-                {clusterMapEngine.forcedView === "manual"
-                  ? "Manual View"
-                  : clusterMapEngine.forcedView.toUpperCase()}
-              </span>
-            </div>
-            <select
-              value={clusterMapEngineId}
-              onChange={(e) =>
-                setClusterMapEngineId(
-                  getClusterMapEngine((e as any)?.target?.value).id
-                )
-              }
-              style={{
-                ...mapSelectStyle,
-                width: "100%",
-                fontSize: 11,
-                padding: "7px 9px",
-              }}
-            >
-              {CLUSTER_MAP_ENGINES.map((engine) => (
-                <option key={engine.id} value={engine.id}>
-                  {engine.label}
-                </option>
-              ))}
-            </select>
-            <div style={{ marginTop: 6, fontSize: 9, opacity: 0.72 }}>
-              {clusterMapEngine.hint}
             </div>
           </div>
 
