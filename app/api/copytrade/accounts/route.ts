@@ -5,15 +5,14 @@ import {
   listCopyTradeAccounts
 } from "../../../../lib/copyTradeService";
 import type { CopyTradeTimeframe } from "../../../../lib/copyTradeSignalEngine";
+import { ensureCopyTradeWorker, getCopyTradeWorkerStatus } from "../../../../lib/copyTradeWorker";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const cloudServiceWorkerStatus = {
-  running: false,
-  startedAt: null,
-  tickInFlight: false,
-  loopMs: 15_000
+const getWorkerStatus = () => {
+  ensureCopyTradeWorker();
+  return getCopyTradeWorkerStatus();
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -33,11 +32,12 @@ const parseTimeframe = (value: unknown): CopyTradeTimeframe | undefined => {
 
 export async function GET() {
   const accounts = await listCopyTradeAccounts();
+  const worker = getWorkerStatus();
 
   return NextResponse.json(
     {
       accounts,
-      worker: cloudServiceWorkerStatus,
+      worker,
       maxAccounts: COPYTRADE_MAX_ACCOUNTS
     },
     {
@@ -96,11 +96,12 @@ export async function POST(request: Request) {
       trailingDistPct:
         typeof payload.trailingDistPct === "number" ? payload.trailingDistPct : undefined
     });
+    const worker = getWorkerStatus();
 
     return NextResponse.json(
       {
         account,
-        worker: cloudServiceWorkerStatus,
+        worker,
         maxAccounts: COPYTRADE_MAX_ACCOUNTS
       },
       {

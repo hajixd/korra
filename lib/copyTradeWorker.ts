@@ -211,6 +211,7 @@ const closePositionIfNeeded = async (account: CopyTradeAccountWorkerRecord): Pro
         password: account.password,
         server: account.server
       },
+      providerAccountId: account.providerAccountId || undefined,
       symbol: normalizeMt5Symbol(account.symbol),
       positionTicket: account.openPosition.positionTicket,
       comment: "Korra close"
@@ -341,6 +342,7 @@ const processCopyTradeAccount = async (
         password: account.password,
         server: account.server
       },
+      providerAccountId: account.providerAccountId || undefined,
       symbol: normalizeMt5Symbol(account.symbol),
       side: signal.side === "Long" ? "BUY" : "SELL",
       volume: lot,
@@ -355,6 +357,7 @@ const processCopyTradeAccount = async (
       lastHeartbeatAt: heartbeat,
       lastSignalId: signalId,
       lastSignalSide: signalSide,
+      ...(openResult.providerAccountId ? { providerAccountId: openResult.providerAccountId } : {}),
       lastActionAt: heartbeat,
       openPosition: {
         positionTicket: openResult.positionTicket,

@@ -2,6 +2,11 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { CopyTradeTimeframe } from "./copyTradeSignalEngine";
+import {
+  deleteMetaApiAccountById,
+  ensureMetaApiAccount,
+  getMetaApiAccountSnapshotById
+} from "./metaApiCloud";
 
 export type CopyTradeAccountStatus = "Connected" | "Disconnected" | "Error";
 export type CopyTradeSignalSide = "Long" | "Short";
@@ -22,6 +27,10 @@ type CopyTradeAccountRecord = {
   login: string;
   server: string;
   encryptedPassword: string;
+  provider?: "metaapi";
+  providerAccountId?: string | null;
+  providerState?: string | null;
+  providerConnectionStatus?: string | null;
   status: CopyTradeAccountStatus;
   paused: boolean;
   symbol: string;
@@ -90,7 +99,11 @@ const DEFAULT_STATE: CopyTradeState = {
   accounts: []
 };
 
-export const COPYTRADE_MAX_ACCOUNTS = 3;
+const configuredMaxAccounts = Math.trunc(
+  Number(process.env.COPYTRADE_MAX_ACCOUNTS ?? process.env.METAAPI_MAX_ACCOUNTS ?? "100")
+);
+export const COPYTRADE_MAX_ACCOUNTS =
+  Number.isFinite(configuredMaxAccounts) && configuredMaxAccounts > 0 ? configuredMaxAccounts : 100;
 
 const DATA_DIR_PATH = path.join(process.cwd(), "data");
 const STATE_FILE_PATH = path.join(DATA_DIR_PATH, "copytrade-state.json");
@@ -282,6 +295,119 @@ const normalizeMaxConcurrentTrades = (value: unknown): number => {
   return Math.min(50, Math.max(1, numeric));
 };
 
+const mapProviderStatusToCopyStatus = (
+  providerState: string | null | undefined,
+  providerConnectionStatus: string | null | undefined
+): CopyTradeAccountStatus => {
+  const state = String(providerState || "").toUpperCase();
+  const connection = String(providerConnectionStatus || "").toUpperCase();
+
+  if (
+    state.includes("FAILED") ||
+    state === "DELETE_FAILED" ||
+    state === "UNDEPLOY_FAILED" ||
+    state === "REDEPLOY_FAILED"
+  ) {
+    return "Error";
+  }
+
+  if (state === "DEPLOYED" && connection === "CONNECTED") {
+    return "Connected";
+  }
+
+  if (state === "CREATED" || state === "DEPLOYING" || state === "UNDEPLOYING") {
+    return "Disconnected";
+  }
+
+  if (state === "DEPLOYED" && connection && connection !== "CONNECTED") {
+    return "Disconnected";
+  }
+
+  return "Disconnected";
+};
+
+const syncAccountProviderRuntime = async (
+  account: CopyTradeAccountRecord
+): Promise<{ changed: boolean; errorMessage: string | null }> => {
+  if (account.provider !== "metaapi" || !account.providerAccountId) {
+    return { changed: false, errorMessage: null };
+  }
+
+  const snapshot = await getMetaApiAccountSnapshotById(account.providerAccountId);
+  const now = Date.now();
+
+  if (!snapshot) {
+    let changed = false;
+    if (account.status !== "Error") {
+      account.status = "Error";
+      changed = true;
+    }
+    if (account.lastError !== "MetaApi account not found.") {
+      account.lastError = "MetaApi account not found.";
+      changed = true;
+    }
+    if (account.lastHeartbeatAt !== now) {
+      account.lastHeartbeatAt = now;
+      changed = true;
+    }
+    if (account.providerState !== "MISSING") {
+      account.providerState = "MISSING";
+      changed = true;
+    }
+    if (account.providerConnectionStatus !== null) {
+      account.providerConnectionStatus = null;
+      changed = true;
+    }
+    return { changed, errorMessage: "MetaApi account not found." };
+  }
+
+  let changed = false;
+  const nextStatus = mapProviderStatusToCopyStatus(snapshot.state, snapshot.connectionStatus);
+
+  if (account.providerAccountId !== snapshot.id) {
+    account.providerAccountId = snapshot.id;
+    changed = true;
+  }
+  if (account.providerState !== snapshot.state) {
+    account.providerState = snapshot.state;
+    changed = true;
+  }
+  if (account.providerConnectionStatus !== snapshot.connectionStatus) {
+    account.providerConnectionStatus = snapshot.connectionStatus;
+    changed = true;
+  }
+  if (account.status !== nextStatus) {
+    account.status = nextStatus;
+    changed = true;
+  }
+  if (account.lastHeartbeatAt !== now) {
+    account.lastHeartbeatAt = now;
+    changed = true;
+  }
+  if (snapshot.login && account.login !== snapshot.login) {
+    account.login = snapshot.login;
+    changed = true;
+  }
+  if (snapshot.server && account.server !== snapshot.server) {
+    account.server = snapshot.server;
+    changed = true;
+  }
+
+  if (nextStatus === "Connected" && account.lastError !== null) {
+    account.lastError = null;
+    changed = true;
+  }
+
+  if (nextStatus === "Error" && !account.lastError) {
+    const fallbackError = `MetaApi account state ${snapshot.state} (${snapshot.connectionStatus})`;
+    account.lastError = fallbackError;
+    changed = true;
+    return { changed, errorMessage: fallbackError };
+  }
+
+  return { changed, errorMessage: null };
+};
+
 const buildRuntimeId = (): string => {
   return `cta-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 };
@@ -297,6 +423,36 @@ const toPublicAccount = (account: CopyTradeAccountRecord): CopyTradeAccountPubli
 export const listCopyTradeAccounts = async (): Promise<CopyTradeAccountPublic[]> => {
   return enqueue(async () => {
     const state = await loadState();
+
+    let changed = false;
+    for (const account of state.accounts) {
+      try {
+        const sync = await syncAccountProviderRuntime(account);
+        if (sync.changed) {
+          changed = true;
+        }
+      } catch (error) {
+        const message = (error as Error).message || "MetaApi status sync failed.";
+        if (account.status !== "Error") {
+          account.status = "Error";
+          changed = true;
+        }
+        if (account.lastError !== message) {
+          account.lastError = message;
+          changed = true;
+        }
+        const now = Date.now();
+        if (account.lastHeartbeatAt !== now) {
+          account.lastHeartbeatAt = now;
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) {
+      await saveStateToDisk(state);
+    }
+
     return state.accounts.map(toPublicAccount);
   });
 };
@@ -343,12 +499,27 @@ export const createCopyTradeAccount = async (
       throw new Error("MT5 login, password, and server are required.");
     }
 
+    const providerSnapshot = await ensureMetaApiAccount({
+      login,
+      password,
+      server,
+      name: `Korra ${login}@${server}`
+    });
+    const providerStatus = mapProviderStatusToCopyStatus(
+      providerSnapshot.state,
+      providerSnapshot.connectionStatus
+    );
+
     const account: CopyTradeAccountRecord = {
       id: buildRuntimeId(),
       login,
       server,
       encryptedPassword: encryptPassword(password),
-      status: "Connected",
+      provider: "metaapi",
+      providerAccountId: providerSnapshot.id,
+      providerState: providerSnapshot.state,
+      providerConnectionStatus: providerSnapshot.connectionStatus,
+      status: providerStatus,
       paused: false,
       symbol: normalizeSymbol(input.symbol),
       timeframe: normalizeTimeframe(input.timeframe),
@@ -363,8 +534,11 @@ export const createCopyTradeAccount = async (
       breakEvenTriggerPct: normalizePct(input.breakEvenTriggerPct, 50),
       trailingStartPct: normalizePct(input.trailingStartPct, 50),
       trailingDistPct: normalizePct(input.trailingDistPct, 30),
-      lastError: null,
-      lastHeartbeatAt: null,
+      lastError:
+        providerStatus === "Error"
+          ? `MetaApi account state ${providerSnapshot.state} (${providerSnapshot.connectionStatus})`
+          : null,
+      lastHeartbeatAt: Date.now(),
       lastSignalId: null,
       lastSignalSide: null,
       lastActionAt: null,
@@ -393,6 +567,9 @@ export const updateCopyTradeAccount = async (
     }
 
     const now = Date.now();
+    const previousLogin = account.login;
+    const previousServer = account.server;
+    const previousProviderAccountId = account.providerAccountId || null;
 
     if (input.login !== undefined) {
       const nextLogin = normalizeLogin(input.login);
@@ -482,6 +659,45 @@ export const updateCopyTradeAccount = async (
       account.lastError = input.lastError;
     }
 
+    const loginChanged = previousLogin !== account.login;
+    const serverChanged = previousServer !== account.server;
+    const credentialsUpdated = input.password !== undefined;
+    const shouldSyncProvider =
+      loginChanged ||
+      serverChanged ||
+      credentialsUpdated ||
+      !account.providerAccountId ||
+      account.provider !== "metaapi";
+
+    if (shouldSyncProvider) {
+      if ((loginChanged || serverChanged || !account.providerAccountId) && !credentialsUpdated) {
+        throw new Error("Password is required when changing MT5 login/server.");
+      }
+
+      const providerSnapshot = await ensureMetaApiAccount({
+        existingAccountId: previousProviderAccountId || undefined,
+        login: account.login,
+        server: account.server,
+        password: credentialsUpdated ? normalizePassword(input.password) : undefined,
+        name: `Korra ${account.login}@${account.server}`
+      });
+
+      account.provider = "metaapi";
+      account.providerAccountId = providerSnapshot.id;
+      account.providerState = providerSnapshot.state;
+      account.providerConnectionStatus = providerSnapshot.connectionStatus;
+      account.status = mapProviderStatusToCopyStatus(
+        providerSnapshot.state,
+        providerSnapshot.connectionStatus
+      );
+      account.lastHeartbeatAt = Date.now();
+      if (account.status === "Connected") {
+        account.lastError = null;
+      } else if (account.status === "Error") {
+        account.lastError = `MetaApi account state ${providerSnapshot.state} (${providerSnapshot.connectionStatus})`;
+      }
+    }
+
     account.updatedAt = now;
 
     await saveStateToDisk(state);
@@ -499,6 +715,7 @@ export const setCopyTradeAccountPaused = async (
 export const deleteCopyTradeAccount = async (accountId: string): Promise<boolean> => {
   return enqueue(async () => {
     const state = await loadState();
+    const accountToRemove = state.accounts.find((account) => account.id === accountId) || null;
     const nextAccounts = state.accounts.filter((account) => account.id !== accountId);
 
     if (nextAccounts.length === state.accounts.length) {
@@ -507,6 +724,11 @@ export const deleteCopyTradeAccount = async (accountId: string): Promise<boolean
 
     state.accounts = nextAccounts;
     await saveStateToDisk(state);
+
+    if (accountToRemove?.provider === "metaapi" && accountToRemove.providerAccountId) {
+      await deleteMetaApiAccountById(accountToRemove.providerAccountId).catch(() => undefined);
+    }
+
     return true;
   });
 };
@@ -519,6 +741,9 @@ export type CopyTradeAccountRuntimePatch = {
   lastSignalSide?: CopyTradeSignalSide | null;
   lastActionAt?: number | null;
   openPosition?: CopyTradeRuntimePosition | null;
+  providerAccountId?: string | null;
+  providerState?: string | null;
+  providerConnectionStatus?: string | null;
   paused?: boolean;
 };
 
@@ -550,6 +775,11 @@ export const patchCopyTradeAccountRuntime = async (
     if (patch.lastSignalSide !== undefined) assign("lastSignalSide", patch.lastSignalSide);
     if (patch.lastActionAt !== undefined) assign("lastActionAt", patch.lastActionAt);
     if (patch.openPosition !== undefined) assign("openPosition", patch.openPosition);
+    if (patch.providerAccountId !== undefined) assign("providerAccountId", patch.providerAccountId);
+    if (patch.providerState !== undefined) assign("providerState", patch.providerState);
+    if (patch.providerConnectionStatus !== undefined) {
+      assign("providerConnectionStatus", patch.providerConnectionStatus);
+    }
     if (patch.paused !== undefined) assign("paused", patch.paused);
 
     if (changed) {

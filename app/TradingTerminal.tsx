@@ -243,9 +243,61 @@ type Mt5WorkerStatus = {
   loopMs: number;
 };
 
+type Mt5DashboardPosition = {
+  id: number;
+  side: string;
+  symbol: string;
+  volume: number;
+  openPrice: number | null;
+  currentPrice: number | null;
+  profit: number;
+  time: number | null;
+  comment: string | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+};
+
+type Mt5DashboardDeal = {
+  id: string;
+  side: string;
+  entryType: string;
+  symbol: string;
+  time: number | null;
+  price: number | null;
+  volume: number | null;
+  profit: number;
+  comment: string | null;
+};
+
+type Mt5Dashboard = {
+  providerAccountId: string;
+  login: string;
+  server: string;
+  broker: string | null;
+  currency: string;
+  balance: number | null;
+  equity: number | null;
+  margin: number | null;
+  freeMargin: number | null;
+  marginLevel: number | null;
+  leverage: number | null;
+  tradeAllowed: boolean | null;
+  openPositions: Mt5DashboardPosition[];
+  recentDeals: Mt5DashboardDeal[];
+  netOpenProfit: number;
+  dayClosedPnl: number;
+  lastSyncedAt: number;
+};
+
 type Mt5AccountsApiResponse = {
   accounts: Mt5Account[];
   worker: Mt5WorkerStatus;
+  maxAccounts: number;
+};
+
+type Mt5DashboardApiResponse = {
+  dashboard: Mt5Dashboard | null;
+  error?: string;
 };
 
 const EMPTY_CANDLES: Candle[] = [];
@@ -256,7 +308,7 @@ const WORKSPACE_PANEL_MIN_WIDTH = 350;
 const WORKSPACE_PANEL_DEFAULT_WIDTH = 430;
 const WORKSPACE_PANEL_MAX_WIDTH = 980;
 const WORKSPACE_CHART_MIN_WIDTH = 360;
-const MAX_TRADECOPIER_ACCOUNTS = 3;
+const DEFAULT_TRADECOPIER_MAX_ACCOUNTS = 100;
 
 const TIMEFRAME_DISPLAY_LABELS: Record<Timeframe, string> = {
   "1m": "1 Minute",
@@ -728,6 +780,115 @@ const normalizeMt5AccountFromApi = (value: unknown): Mt5Account | null => {
   };
 };
 
+const normalizeDashboardPositionFromApi = (value: unknown): Mt5DashboardPosition | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const row = value as Record<string, unknown>;
+  const idRaw = Number(row.id);
+  if (!Number.isFinite(idRaw) || idRaw <= 0) {
+    return null;
+  }
+
+  const toNumberOrNull = (input: unknown): number | null => {
+    const numeric = Number(input);
+    return Number.isFinite(numeric) ? numeric : null;
+  };
+
+  return {
+    id: Math.trunc(idRaw),
+    side: typeof row.side === "string" && row.side.trim() ? row.side.trim() : "N/A",
+    symbol: typeof row.symbol === "string" && row.symbol.trim() ? row.symbol.trim() : "N/A",
+    volume: Number(row.volume) || 0,
+    openPrice: toNumberOrNull(row.openPrice),
+    currentPrice: toNumberOrNull(row.currentPrice),
+    profit: Number.isFinite(Number(row.profit)) ? Number(row.profit) : 0,
+    time: Number.isFinite(Number(row.time)) ? Number(row.time) : null,
+    comment: typeof row.comment === "string" && row.comment.trim() ? row.comment.trim() : null,
+    stopLoss: toNumberOrNull(row.stopLoss),
+    takeProfit: toNumberOrNull(row.takeProfit)
+  };
+};
+
+const normalizeDashboardDealFromApi = (value: unknown): Mt5DashboardDeal | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const row = value as Record<string, unknown>;
+  const id = typeof row.id === "string" ? row.id.trim() : "";
+  if (!id) {
+    return null;
+  }
+
+  const toNumberOrNull = (input: unknown): number | null => {
+    const numeric = Number(input);
+    return Number.isFinite(numeric) ? numeric : null;
+  };
+
+  return {
+    id,
+    side: typeof row.side === "string" && row.side.trim() ? row.side.trim() : "N/A",
+    entryType:
+      typeof row.entryType === "string" && row.entryType.trim() ? row.entryType.trim() : "N/A",
+    symbol: typeof row.symbol === "string" && row.symbol.trim() ? row.symbol.trim() : "N/A",
+    time: Number.isFinite(Number(row.time)) ? Number(row.time) : null,
+    price: toNumberOrNull(row.price),
+    volume: toNumberOrNull(row.volume),
+    profit: Number.isFinite(Number(row.profit)) ? Number(row.profit) : 0,
+    comment: typeof row.comment === "string" && row.comment.trim() ? row.comment.trim() : null
+  };
+};
+
+const normalizeMt5DashboardFromApi = (value: unknown): Mt5Dashboard | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const row = value as Record<string, unknown>;
+  const providerAccountId =
+    typeof row.providerAccountId === "string" ? row.providerAccountId.trim() : "";
+  const login = typeof row.login === "string" ? row.login.trim() : "";
+  const server = typeof row.server === "string" ? row.server.trim() : "";
+  if (!providerAccountId || !login || !server) {
+    return null;
+  }
+
+  const toNumberOrNull = (input: unknown): number | null => {
+    const numeric = Number(input);
+    return Number.isFinite(numeric) ? numeric : null;
+  };
+
+  return {
+    providerAccountId,
+    login,
+    server,
+    broker: typeof row.broker === "string" && row.broker.trim() ? row.broker.trim() : null,
+    currency: typeof row.currency === "string" && row.currency.trim() ? row.currency.trim() : "USD",
+    balance: toNumberOrNull(row.balance),
+    equity: toNumberOrNull(row.equity),
+    margin: toNumberOrNull(row.margin),
+    freeMargin: toNumberOrNull(row.freeMargin),
+    marginLevel: toNumberOrNull(row.marginLevel),
+    leverage: toNumberOrNull(row.leverage),
+    tradeAllowed: typeof row.tradeAllowed === "boolean" ? row.tradeAllowed : null,
+    openPositions: Array.isArray(row.openPositions)
+      ? row.openPositions
+          .map((entry) => normalizeDashboardPositionFromApi(entry))
+          .filter((entry): entry is Mt5DashboardPosition => entry !== null)
+      : [],
+    recentDeals: Array.isArray(row.recentDeals)
+      ? row.recentDeals
+          .map((entry) => normalizeDashboardDealFromApi(entry))
+          .filter((entry): entry is Mt5DashboardDeal => entry !== null)
+      : [],
+    netOpenProfit: Number.isFinite(Number(row.netOpenProfit)) ? Number(row.netOpenProfit) : 0,
+    dayClosedPnl: Number.isFinite(Number(row.dayClosedPnl)) ? Number(row.dayClosedPnl) : 0,
+    lastSyncedAt: Number.isFinite(Number(row.lastSyncedAt)) ? Number(row.lastSyncedAt) : Date.now()
+  };
+};
+
 const fetchMt5AccountsFromServer = async (): Promise<Mt5AccountsApiResponse> => {
   const response = await fetch("/api/copytrade/accounts", {
     cache: "no-store"
@@ -740,6 +901,7 @@ const fetchMt5AccountsFromServer = async (): Promise<Mt5AccountsApiResponse> => 
   }
 
   const payload = (await response.json()) as Partial<Mt5AccountsApiResponse>;
+  const parsedMaxAccounts = Math.trunc(Number(payload.maxAccounts));
   return {
     accounts: Array.isArray(payload.accounts)
       ? payload.accounts
@@ -765,7 +927,31 @@ const fetchMt5AccountsFromServer = async (): Promise<Mt5AccountsApiResponse> => 
             startedAt: null,
             tickInFlight: false,
             loopMs: 15000
-          }
+          },
+    maxAccounts:
+      Number.isFinite(parsedMaxAccounts) && parsedMaxAccounts > 0
+        ? parsedMaxAccounts
+        : DEFAULT_TRADECOPIER_MAX_ACCOUNTS
+  };
+};
+
+const fetchMt5AccountDashboardFromServer = async (accountId: string): Promise<Mt5DashboardApiResponse> => {
+  const response = await fetch(`/api/copytrade/accounts/${encodeURIComponent(accountId)}/dashboard`, {
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseCopyTradeError(response, "Failed to load account dashboard."));
+  }
+
+  const payload = (await response.json()) as Partial<Mt5DashboardApiResponse> & {
+    dashboard?: unknown;
+    error?: unknown;
+  };
+
+  return {
+    dashboard: normalizeMt5DashboardFromApi(payload.dashboard),
+    ...(typeof payload.error === "string" && payload.error.trim() ? { error: payload.error } : {})
   };
 };
 
@@ -2898,7 +3084,7 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
 const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
   { id: "chart", label: "Chart" },
   { id: "backtest", label: "Backtest" },
-  { id: "copytrade", label: "Copy Trading" }
+  { id: "copytrade", label: "Copy-Trade" }
 ];
 
 const backtestTabs: Array<{ id: BacktestTab; label: string }> = [
@@ -3806,6 +3992,47 @@ const formatUsd = (value: number): string => {
 
 const formatSignedUsd = (value: number): string => {
   return `${value >= 0 ? "+" : "-"}$${formatUsd(Math.abs(value))}`;
+};
+
+const formatAccountMoney = (value: number | null, currency: string): string => {
+  if (value === null || !Number.isFinite(value)) {
+    return "--";
+  }
+
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency || "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(value);
+  } catch {
+    return `${currency || "USD"} ${formatUsd(value)}`;
+  }
+};
+
+const formatSignedAccountMoney = (value: number | null, currency: string): string => {
+  if (value === null || !Number.isFinite(value)) {
+    return "--";
+  }
+
+  const absValue = Math.abs(value);
+  const prefix = value >= 0 ? "+" : "-";
+  const formatted = formatAccountMoney(absValue, currency);
+  return `${prefix}${formatted}`;
+};
+
+const formatDashboardDateTime = (timestampMs: number | null): string => {
+  if (timestampMs === null || !Number.isFinite(timestampMs)) {
+    return "N/A";
+  }
+
+  return new Date(timestampMs).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
 };
 
 const formatChartUsd = (value: number): string => {
@@ -6936,6 +7163,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [mt5FormOpen, setMt5FormOpen] = useState(false);
   const [mt5EditingAccountId, setMt5EditingAccountId] = useState<string | null>(null);
   const [mt5Accounts, setMt5Accounts] = useState<Mt5Account[]>([]);
+  const [mt5MaxAccounts, setMt5MaxAccounts] = useState(DEFAULT_TRADECOPIER_MAX_ACCOUNTS);
   const [selectedMt5AccountId, setSelectedMt5AccountId] = useState<string | null>(null);
   const [mt5ContextMenu, setMt5ContextMenu] = useState<{
     accountId: string;
@@ -6943,6 +7171,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     clientY: number;
   } | null>(null);
   const [mt5WorkerStatus, setMt5WorkerStatus] = useState<Mt5WorkerStatus | null>(null);
+  const [mt5DashboardsByAccountId, setMt5DashboardsByAccountId] = useState<
+    Record<string, Mt5Dashboard>
+  >({});
+  const [mt5DashboardLoadingByAccountId, setMt5DashboardLoadingByAccountId] = useState<
+    Record<string, boolean>
+  >({});
+  const [mt5DashboardErrorByAccountId, setMt5DashboardErrorByAccountId] = useState<
+    Record<string, string | null>
+  >({});
   const [mt5Syncing, setMt5Syncing] = useState(false);
   const [mt5ActionBusy, setMt5ActionBusy] = useState(false);
   const [mt5Error, setMt5Error] = useState<string | null>(null);
@@ -7197,6 +7434,40 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setSelectedMt5AccountId(mt5Accounts[0].id);
   }, [mt5Accounts, selectedMt5AccountId]);
 
+  useEffect(() => {
+    if (mt5Accounts.length === 0) {
+      setMt5DashboardsByAccountId({});
+      setMt5DashboardLoadingByAccountId({});
+      setMt5DashboardErrorByAccountId({});
+      return;
+    }
+
+    const validIds = new Set(mt5Accounts.map((account) => account.id));
+    setMt5DashboardsByAccountId((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([accountId]) => validIds.has(accountId))
+      )
+    );
+    setMt5DashboardLoadingByAccountId((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([accountId]) => validIds.has(accountId))
+      )
+    );
+    setMt5DashboardErrorByAccountId((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([accountId]) => validIds.has(accountId))
+      )
+    );
+  }, [mt5Accounts]);
+
+  const selectedMt5Account = useMemo(() => {
+    if (!selectedMt5AccountId) {
+      return null;
+    }
+
+    return mt5Accounts.find((account) => account.id === selectedMt5AccountId) ?? null;
+  }, [mt5Accounts, selectedMt5AccountId]);
+
   const mt5ContextAccount = useMemo(() => {
     if (!mt5ContextMenu) {
       return null;
@@ -7204,6 +7475,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return mt5Accounts.find((account) => account.id === mt5ContextMenu.accountId) ?? null;
   }, [mt5Accounts, mt5ContextMenu]);
+
+  const selectedMt5Dashboard = selectedMt5Account
+    ? mt5DashboardsByAccountId[selectedMt5Account.id] ?? null
+    : null;
+  const selectedMt5DashboardLoading = selectedMt5Account
+    ? mt5DashboardLoadingByAccountId[selectedMt5Account.id] === true
+    : false;
+  const selectedMt5DashboardError = selectedMt5Account
+    ? mt5DashboardErrorByAccountId[selectedMt5Account.id] ?? null
+    : null;
 
   useEffect(() => {
     if (!mt5ContextMenu) {
@@ -7228,6 +7509,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const payload = await fetchMt5AccountsFromServer();
       setMt5Accounts(payload.accounts);
       setMt5WorkerStatus(payload.worker);
+      setMt5MaxAccounts(payload.maxAccounts);
       setMt5Error(null);
     } catch (error) {
       setMt5Error((error as Error).message || "Unable to sync TradeCopier accounts.");
@@ -7237,6 +7519,56 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
     }
   }, []);
+
+  const refreshMt5Dashboard = useCallback(
+    async (accountId: string, options?: { silent?: boolean }) => {
+      if (!accountId) {
+        return;
+      }
+
+      const silent = options?.silent === true;
+
+      if (!silent) {
+        setMt5DashboardLoadingByAccountId((current) => ({
+          ...current,
+          [accountId]: true
+        }));
+      }
+
+      setMt5DashboardErrorByAccountId((current) => ({
+        ...current,
+        [accountId]: null
+      }));
+
+      try {
+        const payload = await fetchMt5AccountDashboardFromServer(accountId);
+        if (payload.dashboard) {
+          setMt5DashboardsByAccountId((current) => ({
+            ...current,
+            [accountId]: payload.dashboard as Mt5Dashboard
+          }));
+        }
+
+        if (payload.error) {
+          setMt5DashboardErrorByAccountId((current) => ({
+            ...current,
+            [accountId]: payload.error || "Dashboard data is currently unavailable."
+          }));
+        }
+      } catch (error) {
+        setMt5DashboardErrorByAccountId((current) => ({
+          ...current,
+          [accountId]: (error as Error).message || "Unable to sync account dashboard."
+        }));
+      } finally {
+        setMt5DashboardLoadingByAccountId((current) => ({
+          ...current,
+          [accountId]: false
+        }));
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     void refreshMt5Accounts();
@@ -7250,10 +7582,26 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [refreshMt5Accounts]);
 
+  useEffect(() => {
+    if (!selectedMt5AccountId || selectedSurfaceTab !== "copytrade") {
+      return;
+    }
+
+    void refreshMt5Dashboard(selectedMt5AccountId);
+
+    const intervalId = window.setInterval(() => {
+      void refreshMt5Dashboard(selectedMt5AccountId, { silent: true });
+    }, 12_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [refreshMt5Dashboard, selectedMt5AccountId, selectedSurfaceTab]);
+
   const handleShowMt5AddForm = useCallback(() => {
-    if (mt5Accounts.length >= MAX_TRADECOPIER_ACCOUNTS) {
+    if (mt5Accounts.length >= mt5MaxAccounts) {
       setMt5Error(
-        `TradeCopier account limit reached (${MAX_TRADECOPIER_ACCOUNTS}). Remove one to add another.`
+        `TradeCopier account limit reached (${mt5MaxAccounts}). Remove one to add another.`
       );
       return;
     }
@@ -7265,7 +7613,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setMt5FormOpen(true);
     setMt5ContextMenu(null);
     setMt5Error(null);
-  }, [mt5Accounts.length]);
+  }, [mt5Accounts.length, mt5MaxAccounts]);
 
   const handleStartCopyTradeFromChart = useCallback(() => {
     setSelectedSurfaceTab("copytrade");
@@ -7309,9 +7657,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return;
     }
 
-    if (!mt5EditingAccountId && mt5Accounts.length >= MAX_TRADECOPIER_ACCOUNTS) {
+    if (!mt5EditingAccountId && mt5Accounts.length >= mt5MaxAccounts) {
       setMt5Error(
-        `TradeCopier account limit reached (${MAX_TRADECOPIER_ACCOUNTS}). Remove one to add another.`
+        `TradeCopier account limit reached (${mt5MaxAccounts}). Remove one to add another.`
       );
       return;
     }
@@ -7352,6 +7700,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [
     mt5EditingAccountId,
     mt5Accounts.length,
+    mt5MaxAccounts,
     mt5LoginInput,
     mt5PasswordInput,
     mt5ServerInput,
@@ -7426,6 +7775,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     },
     []
   );
+
+  const handleRefreshSelectedMt5Dashboard = useCallback(() => {
+    if (!selectedMt5AccountId) {
+      return;
+    }
+
+    void refreshMt5Dashboard(selectedMt5AccountId);
+  }, [refreshMt5Dashboard, selectedMt5AccountId]);
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -16141,14 +16498,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 <div className="chart-stage-actions">
                   <button
                     type="button"
-                    className="chart-copytrade-btn"
-                    onClick={handleStartCopyTradeFromChart}
-                    title="Open copy trade account setup"
-                  >
-                    Copy Trade
-                  </button>
-                  <button
-                    type="button"
                     className="chart-reset-btn"
                     onClick={resetChart}
                     title="Reset chart view (⌥R)"
@@ -16565,13 +16914,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="tab-view copytrade-tab">
                       <div className="watchlist-head">
                         <div>
-                          <h2>Copy Trade</h2>
+                          <h2>Copy-Trade</h2>
                         </div>
                       </div>
                       <div className="copytrade-body" onClick={() => setMt5ContextMenu(null)}>
                         <p className="copytrade-note">
-                          TradeCopier.cloud profile manager. Click Copy Trade on the chart, then add
-                          your account below. Save up to {MAX_TRADECOPIER_ACCOUNTS} accounts here.
+                          TradeCopier.cloud profile manager. Use Add Account below to connect MT5
+                          credentials and run cloud copy-trading.
                           {mt5WorkerStatus?.tickInFlight ? " Syncing..." : ""}
                         </p>
 
@@ -16582,11 +16931,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             type="button"
                             className="panel-action-btn copytrade-action-btn"
                             onClick={handleShowMt5AddForm}
-                            disabled={mt5ActionBusy || mt5Accounts.length >= MAX_TRADECOPIER_ACCOUNTS}
+                            disabled={mt5ActionBusy || mt5Accounts.length >= mt5MaxAccounts}
                           >
                             {mt5Syncing
                               ? "Syncing..."
-                              : mt5Accounts.length >= MAX_TRADECOPIER_ACCOUNTS
+                              : mt5Accounts.length >= mt5MaxAccounts
                                 ? "Limit Reached"
                                 : "Add Account"}
                           </button>
@@ -16937,14 +17286,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           <section className="copytrade-surface" aria-label="copy trade workspace">
             <div className="copytrade-surface-shell">
               <div className="copytrade-surface-head">
-                <h2>Copy Trading</h2>
+                <h2>Copy-Trade</h2>
                 <p>TradeCopier.cloud onboarding and account management.</p>
               </div>
 
               <div className="copytrade-body copytrade-body-surface" onClick={() => setMt5ContextMenu(null)}>
                 <p className="copytrade-note">
                   Add your MT5 login, password, and server. After linking, TradeCopier.cloud can run each
-                  account in the cloud (around $8/account plan).
+                  account in the cloud (around $8/account plan). Current limit: {mt5MaxAccounts}
+                  account{mt5MaxAccounts === 1 ? "" : "s"}.
                   {mt5WorkerStatus?.tickInFlight ? " Syncing..." : ""}
                 </p>
 
@@ -16955,11 +17305,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     type="button"
                     className="panel-action-btn copytrade-action-btn"
                     onClick={handleShowMt5AddForm}
-                    disabled={mt5ActionBusy || mt5Accounts.length >= MAX_TRADECOPIER_ACCOUNTS}
+                    disabled={mt5ActionBusy || mt5Accounts.length >= mt5MaxAccounts}
                   >
                     {mt5Syncing
                       ? "Syncing..."
-                      : mt5Accounts.length >= MAX_TRADECOPIER_ACCOUNTS
+                      : mt5Accounts.length >= mt5MaxAccounts
                         ? "Limit Reached"
                         : "Add Account"}
                   </button>
@@ -17112,6 +17462,228 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     No accounts yet. Press Add Account to connect a TradeCopier cloud account.
                   </p>
                 )}
+
+                <section className="copytrade-dashboard-shell" aria-label="Selected account dashboard">
+                  <div className="copytrade-dashboard-head">
+                    <div>
+                      <h3>Account Dashboard</h3>
+                      <p>
+                        {selectedMt5Account
+                          ? `${selectedMt5Account.login} · ${selectedMt5Account.server}`
+                          : "Select an account to view its live dashboard."}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="panel-action-btn copytrade-dashboard-refresh-btn"
+                      onClick={handleRefreshSelectedMt5Dashboard}
+                      disabled={!selectedMt5Account || selectedMt5DashboardLoading}
+                    >
+                      {selectedMt5DashboardLoading ? "Refreshing..." : "Refresh"}
+                    </button>
+                  </div>
+
+                  {selectedMt5Account ? (
+                    selectedMt5Dashboard ? (
+                      <div className="copytrade-dashboard-grid">
+                        <section className="copytrade-dashboard-main-card">
+                          <div className="copytrade-dashboard-banner">
+                            <div className="copytrade-dashboard-banner-copy">
+                              <span className="copytrade-dashboard-kicker">
+                                {selectedMt5Dashboard.broker || "MetaTrader Account"}
+                              </span>
+                              <h4>
+                                {selectedMt5Dashboard.login} @ {selectedMt5Dashboard.server}
+                              </h4>
+                            </div>
+                            <div className="copytrade-dashboard-banner-balance">
+                              <span>Equity</span>
+                              <strong>
+                                {formatAccountMoney(
+                                  selectedMt5Dashboard.equity ?? selectedMt5Dashboard.balance,
+                                  selectedMt5Dashboard.currency
+                                )}
+                              </strong>
+                            </div>
+                          </div>
+
+                          <div className="copytrade-dashboard-metrics">
+                            <article className="copytrade-dashboard-stat">
+                              <span>Balance</span>
+                              <strong>
+                                {formatAccountMoney(
+                                  selectedMt5Dashboard.balance,
+                                  selectedMt5Dashboard.currency
+                                )}
+                              </strong>
+                            </article>
+                            <article className="copytrade-dashboard-stat">
+                              <span>Free Margin</span>
+                              <strong>
+                                {formatAccountMoney(
+                                  selectedMt5Dashboard.freeMargin,
+                                  selectedMt5Dashboard.currency
+                                )}
+                              </strong>
+                            </article>
+                            <article className="copytrade-dashboard-stat">
+                              <span>Used Margin</span>
+                              <strong>
+                                {formatAccountMoney(
+                                  selectedMt5Dashboard.margin,
+                                  selectedMt5Dashboard.currency
+                                )}
+                              </strong>
+                            </article>
+                            <article className="copytrade-dashboard-stat">
+                              <span>Open PnL</span>
+                              <strong
+                                className={
+                                  (selectedMt5Dashboard.netOpenProfit || 0) >= 0 ? "up" : "down"
+                                }
+                              >
+                                {formatSignedAccountMoney(
+                                  selectedMt5Dashboard.netOpenProfit,
+                                  selectedMt5Dashboard.currency
+                                )}
+                              </strong>
+                            </article>
+                            <article className="copytrade-dashboard-stat">
+                              <span>24h Closed PnL</span>
+                              <strong
+                                className={
+                                  (selectedMt5Dashboard.dayClosedPnl || 0) >= 0 ? "up" : "down"
+                                }
+                              >
+                                {formatSignedAccountMoney(
+                                  selectedMt5Dashboard.dayClosedPnl,
+                                  selectedMt5Dashboard.currency
+                                )}
+                              </strong>
+                            </article>
+                            <article className="copytrade-dashboard-stat">
+                              <span>Margin Level</span>
+                              <strong>
+                                {selectedMt5Dashboard.marginLevel !== null
+                                  ? `${selectedMt5Dashboard.marginLevel.toFixed(1)}%`
+                                  : "--"}
+                              </strong>
+                            </article>
+                            <article className="copytrade-dashboard-stat">
+                              <span>Leverage</span>
+                              <strong>
+                                {selectedMt5Dashboard.leverage !== null
+                                  ? `1:${Math.trunc(selectedMt5Dashboard.leverage)}`
+                                  : "--"}
+                              </strong>
+                            </article>
+                            <article className="copytrade-dashboard-stat">
+                              <span>Trading</span>
+                              <strong>
+                                {selectedMt5Dashboard.tradeAllowed === null
+                                  ? "--"
+                                  : selectedMt5Dashboard.tradeAllowed
+                                    ? "Allowed"
+                                    : "Restricted"}
+                              </strong>
+                            </article>
+                          </div>
+
+                          <div className="copytrade-open-positions-card">
+                            <div className="copytrade-dashboard-subhead">
+                              <h5>Open Positions</h5>
+                              <span>{selectedMt5Dashboard.openPositions.length}</span>
+                            </div>
+
+                            {selectedMt5Dashboard.openPositions.length > 0 ? (
+                              <ul className="copytrade-open-position-list">
+                                {selectedMt5Dashboard.openPositions.map((position) => (
+                                  <li key={position.id}>
+                                    <article className="copytrade-open-position-item">
+                                      <header>
+                                        <strong>{position.symbol}</strong>
+                                        <span
+                                          className={
+                                            (position.profit || 0) >= 0 ? "copytrade-pill up" : "copytrade-pill down"
+                                          }
+                                        >
+                                          {position.side} ·{" "}
+                                          {formatSignedAccountMoney(
+                                            position.profit,
+                                            selectedMt5Dashboard.currency
+                                          )}
+                                        </span>
+                                      </header>
+                                      <p>
+                                        Vol {position.volume.toFixed(2)} · Open{" "}
+                                        {position.openPrice !== null
+                                          ? formatPrice(position.openPrice)
+                                          : "--"}{" "}
+                                        · Current{" "}
+                                        {position.currentPrice !== null
+                                          ? formatPrice(position.currentPrice)
+                                          : "--"}
+                                      </p>
+                                    </article>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="copytrade-dashboard-empty">No open positions on this account.</p>
+                            )}
+                          </div>
+                        </section>
+
+                        <aside className="copytrade-dashboard-history-card">
+                          <div className="copytrade-dashboard-subhead">
+                            <h5>Recent History</h5>
+                            <span>
+                              Updated {formatDashboardDateTime(selectedMt5Dashboard.lastSyncedAt)}
+                            </span>
+                          </div>
+
+                          {selectedMt5Dashboard.recentDeals.length > 0 ? (
+                            <ul className="copytrade-deal-list">
+                              {selectedMt5Dashboard.recentDeals.map((deal) => (
+                                <li key={deal.id}>
+                                  <article className="copytrade-deal-item">
+                                    <header>
+                                      <strong>{deal.symbol}</strong>
+                                      <span className={(deal.profit || 0) >= 0 ? "up" : "down"}>
+                                        {formatSignedAccountMoney(
+                                          deal.profit,
+                                          selectedMt5Dashboard.currency
+                                        )}
+                                      </span>
+                                    </header>
+                                    <p>
+                                      {deal.side} · {deal.entryType.replace("DEAL_ENTRY_", "")}
+                                    </p>
+                                    <small>
+                                      {deal.price !== null ? `@ ${formatPrice(deal.price)} · ` : ""}
+                                      {formatDashboardDateTime(deal.time)}
+                                    </small>
+                                  </article>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="copytrade-dashboard-empty">No recent deal history available yet.</p>
+                          )}
+                        </aside>
+                      </div>
+                    ) : (
+                      <p className="copytrade-note">
+                        {selectedMt5DashboardError ||
+                          (selectedMt5DashboardLoading
+                            ? "Loading account dashboard..."
+                            : "Dashboard data is not available yet for this account.")}
+                      </p>
+                    )
+                  ) : (
+                    <p className="copytrade-note">Select an account to view its live dashboard.</p>
+                  )}
+                </section>
 
                 {mt5ContextMenu && mt5ContextAccount ? (
                   <div

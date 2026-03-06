@@ -6,15 +6,14 @@ import {
   updateCopyTradeAccount
 } from "../../../../../lib/copyTradeService";
 import type { CopyTradeTimeframe } from "../../../../../lib/copyTradeSignalEngine";
+import { ensureCopyTradeWorker, getCopyTradeWorkerStatus } from "../../../../../lib/copyTradeWorker";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const cloudServiceWorkerStatus = {
-  running: false,
-  startedAt: null,
-  tickInFlight: false,
-  loopMs: 15_000
+const getWorkerStatus = () => {
+  ensureCopyTradeWorker();
+  return getCopyTradeWorkerStatus();
 };
 
 type RouteContext = {
@@ -46,6 +45,7 @@ const parseTimeframe = (value: unknown): CopyTradeTimeframe | undefined => {
 export async function GET(_request: Request, context: RouteContext) {
   const { accountId } = await context.params;
   const account = await getCopyTradeAccountById(accountId);
+  const worker = getWorkerStatus();
 
   if (!account) {
     return NextResponse.json({ error: "Copy-trade account not found." }, { status: 404 });
@@ -54,7 +54,7 @@ export async function GET(_request: Request, context: RouteContext) {
   return NextResponse.json(
     {
       account,
-      worker: cloudServiceWorkerStatus,
+      worker,
       maxAccounts: COPYTRADE_MAX_ACCOUNTS
     },
     {
@@ -117,11 +117,12 @@ export async function PATCH(request: Request, context: RouteContext) {
         ? { status: "Connected" as const, lastError: null }
         : {})
     });
+    const worker = getWorkerStatus();
 
     return NextResponse.json(
       {
         account,
-        worker: cloudServiceWorkerStatus,
+        worker,
         maxAccounts: COPYTRADE_MAX_ACCOUNTS
       },
       {
@@ -144,6 +145,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
   const { accountId } = await context.params;
 
   const removed = await deleteCopyTradeAccount(accountId);
+  const worker = getWorkerStatus();
 
   if (!removed) {
     return NextResponse.json({ error: "Copy-trade account not found." }, { status: 404 });
@@ -152,7 +154,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
   return NextResponse.json(
     {
       ok: true,
-      worker: cloudServiceWorkerStatus,
+      worker,
       maxAccounts: COPYTRADE_MAX_ACCOUNTS
     },
     {
