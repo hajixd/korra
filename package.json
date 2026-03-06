@@ -10,6 +10,10 @@
     "backfill:xauusd": "node scripts/backfill-xauusd-1m.mjs"
   },
   "dependencies": {
+    "@deck.gl/aggregation-layers": "^9.2.11",
+    "@deck.gl/core": "^9.2.11",
+    "@deck.gl/layers": "^9.2.11",
+    "@deck.gl/react": "^9.2.11",
     "lightweight-charts": "^4.2.3",
     "next": "^15.2.0",
     "react": "^19.0.0",
