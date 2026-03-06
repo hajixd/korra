@@ -17291,13 +17291,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 }`}
                 onClick={() => setMt5ContextMenu(null)}
               >
-                <p className="copytrade-note">
-                  Add your MT5 login, password, and server. After linking, TradeCopier.cloud can run each
-                  account in the cloud (around $8/account plan). Current limit: {mt5MaxAccounts}
-                  account{mt5MaxAccounts === 1 ? "" : "s"}.
-                  {mt5WorkerStatus?.tickInFlight ? " Syncing..." : ""}
-                </p>
-
                 {mt5Error ? <p className="copytrade-error-note">{mt5Error}</p> : null}
 
                 <div className="copytrade-actions" role="group" aria-label="MT5 account actions">
