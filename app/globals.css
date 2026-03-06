@@ -7456,28 +7456,27 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 /* ---- COPY TRADE UI POLISH ---- */
 .copytrade-tab,
 .copytrade-surface {
-  --ct-bg-0: #06111e;
-  --ct-bg-1: #0b1728;
-  --ct-bg-2: #13233b;
-  --ct-card: #0f1c2f;
-  --ct-card-soft: #13253f;
-  --ct-border: rgba(125, 169, 230, 0.3);
-  --ct-border-strong: rgba(154, 197, 255, 0.44);
-  --ct-text: #eaf3ff;
-  --ct-text-dim: #9db2d3;
-  --ct-accent: #67b2ff;
-  --ct-accent-strong: #3b8ff4;
-  --ct-success: #66dfaa;
-  --ct-danger: #ff9c9c;
-  --ct-shadow: 0 24px 48px rgba(0, 0, 0, 0.4);
+  --ct-bg-0: #080c12;
+  --ct-bg-1: #0b1017;
+  --ct-bg-2: #101722;
+  --ct-card: #0f141d;
+  --ct-card-soft: #151d28;
+  --ct-border: rgba(212, 218, 229, 0.12);
+  --ct-border-strong: rgba(212, 218, 229, 0.24);
+  --ct-text: var(--text);
+  --ct-text-dim: var(--text-dim);
+  --ct-accent: rgba(212, 218, 229, 0.62);
+  --ct-success: var(--up);
+  --ct-danger: var(--down);
+  --ct-shadow: 0 18px 36px rgba(0, 0, 0, 0.42);
 }
 
 .copytrade-tab {
   position: relative;
   overflow: hidden;
   background:
-    radial-gradient(140% 90% at 0% 0%, rgba(86, 151, 239, 0.16), transparent 58%),
-    radial-gradient(90% 120% at 100% 10%, rgba(59, 138, 225, 0.08), transparent 60%),
+    radial-gradient(140% 90% at 0% 0%, rgba(255, 255, 255, 0.05), transparent 58%),
+    radial-gradient(90% 120% at 100% 10%, rgba(255, 255, 255, 0.03), transparent 60%),
     linear-gradient(180deg, var(--ct-bg-1), var(--ct-bg-0) 62%);
 }
 
@@ -7492,11 +7491,11 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 .copytrade-tab .watchlist-head {
   position: relative;
   z-index: 1;
-  border-bottom: 1px solid rgba(131, 173, 230, 0.26);
+  border-bottom: 1px solid rgba(212, 218, 229, 0.12);
   background: linear-gradient(
     180deg,
-    rgba(17, 31, 52, 0.86) 0%,
-    rgba(11, 22, 38, 0.86) 100%
+    rgba(18, 24, 34, 0.9) 0%,
+    rgba(12, 17, 25, 0.9) 100%
   );
   box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.04);
 }
@@ -7518,8 +7517,8 @@ input[style*="background: rgba(255,255,255,0.06)"] {
   border-radius: 20px;
   border: 1px solid var(--ct-border);
   background:
-    radial-gradient(160% 110% at 0% 0%, rgba(95, 167, 255, 0.12), transparent 58%),
-    linear-gradient(180deg, rgba(16, 28, 46, 0.94), rgba(8, 14, 24, 0.94));
+    radial-gradient(160% 110% at 0% 0%, rgba(255, 255, 255, 0.04), transparent 58%),
+    linear-gradient(180deg, rgba(16, 22, 32, 0.94), rgba(10, 14, 21, 0.94));
   box-shadow: var(--ct-shadow);
   padding: 1.02rem;
 }
@@ -7532,14 +7531,14 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 
 .copytrade-body::-webkit-scrollbar-thumb,
 .copytrade-dashboard-history-card::-webkit-scrollbar-thumb {
-  background: rgba(145, 181, 231, 0.32);
+  background: rgba(212, 218, 229, 0.22);
   border-radius: 999px;
 }
 
 .copytrade-surface {
   background:
-    radial-gradient(140% 100% at 0% 0%, rgba(90, 154, 237, 0.12), transparent 52%),
-    linear-gradient(180deg, #091321 0%, #060f1b 100%);
+    radial-gradient(140% 100% at 0% 0%, rgba(255, 255, 255, 0.04), transparent 52%),
+    linear-gradient(180deg, #090d13 0%, #070b11 100%);
 }
 
 .copytrade-surface-shell {
@@ -7552,8 +7551,8 @@ input[style*="background: rgba(255,255,255,0.06)"] {
   border-radius: 20px;
   border: 1px solid var(--ct-border);
   background:
-    radial-gradient(130% 150% at 100% 0%, rgba(93, 160, 244, 0.18), transparent 58%),
-    linear-gradient(180deg, rgba(16, 30, 49, 0.92), rgba(8, 15, 26, 0.92));
+    radial-gradient(130% 150% at 100% 0%, rgba(255, 255, 255, 0.08), transparent 58%),
+    linear-gradient(180deg, rgba(18, 24, 34, 0.92), rgba(11, 16, 24, 0.92));
   box-shadow: var(--ct-shadow);
   padding: 1rem 1.06rem;
 }
@@ -7565,7 +7564,7 @@ input[style*="background: rgba(255,255,255,0.06)"] {
   left: 0;
   right: 0;
   height: 2px;
-  background: linear-gradient(90deg, transparent, rgba(171, 208, 255, 0.9), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.46), transparent);
 }
 
 .copytrade-surface-head h2 {
@@ -7581,17 +7580,17 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 
 .copytrade-note {
   border-radius: 12px;
-  border: 1px solid rgba(127, 165, 219, 0.42);
-  background: linear-gradient(180deg, rgba(18, 32, 53, 0.82), rgba(11, 21, 36, 0.82));
+  border: 1px solid rgba(212, 218, 229, 0.18);
+  background: linear-gradient(180deg, rgba(19, 26, 36, 0.82), rgba(13, 18, 26, 0.82));
   color: var(--ct-text-dim);
   font-size: 0.66rem;
   padding: 0.72rem 0.8rem;
 }
 
 .copytrade-target-note {
-  border-color: rgba(95, 159, 241, 0.56);
-  background: linear-gradient(180deg, rgba(30, 53, 85, 0.76), rgba(17, 33, 56, 0.76));
-  color: #c9defd;
+  border-color: rgba(212, 218, 229, 0.24);
+  background: linear-gradient(180deg, rgba(22, 30, 42, 0.76), rgba(14, 20, 30, 0.76));
+  color: #cfd6e2;
 }
 
 .copytrade-error-note {
@@ -7604,16 +7603,16 @@ input[style*="background: rgba(255,255,255,0.06)"] {
   gap: 0.62rem;
   padding: 0.68rem;
   border-radius: 14px;
-  border: 1px solid rgba(123, 164, 224, 0.34);
-  background: linear-gradient(180deg, rgba(14, 25, 42, 0.92), rgba(11, 20, 34, 0.92));
+  border: 1px solid rgba(212, 218, 229, 0.16);
+  background: linear-gradient(180deg, rgba(16, 23, 33, 0.92), rgba(11, 16, 24, 0.92));
 }
 
 .copytrade-form {
   gap: 0.64rem;
   padding: 0.82rem;
   border-radius: 13px;
-  border: 1px solid rgba(126, 168, 226, 0.36);
-  background: linear-gradient(180deg, rgba(16, 30, 49, 0.86), rgba(11, 22, 38, 0.86));
+  border: 1px solid rgba(212, 218, 229, 0.18);
+  background: linear-gradient(180deg, rgba(17, 24, 34, 0.86), rgba(12, 17, 25, 0.86));
 }
 
 .copytrade-body.copytrade-body-surface .copytrade-form {
@@ -7625,28 +7624,28 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 }
 
 .copytrade-field span {
-  color: #95add1;
+  color: var(--ct-text-dim);
   font-size: 0.58rem;
   letter-spacing: 0.09em;
 }
 
 .copytrade-input {
-  border: 1px solid rgba(130, 172, 233, 0.34);
+  border: 1px solid rgba(212, 218, 229, 0.2);
   border-radius: 11px;
-  background: rgba(10, 20, 34, 0.9);
+  background: rgba(10, 14, 20, 0.9);
   color: var(--ct-text);
   padding: 0.62rem 0.68rem;
   font-size: 0.72rem;
 }
 
 .copytrade-input::placeholder {
-  color: rgba(145, 165, 197, 0.68);
+  color: rgba(139, 148, 168, 0.78);
 }
 
 .copytrade-input:focus {
   border-color: var(--ct-accent);
-  background: rgba(14, 26, 43, 0.94);
-  box-shadow: 0 0 0 1px rgba(88, 160, 248, 0.36);
+  background: rgba(12, 18, 26, 0.94);
+  box-shadow: 0 0 0 1px rgba(212, 218, 229, 0.18);
 }
 
 .copytrade-actions {
@@ -7658,9 +7657,9 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 .copytrade-dashboard-refresh-btn,
 .copytrade-context-item {
   border-radius: 10px;
-  border: 1px solid rgba(123, 170, 236, 0.46);
-  background: linear-gradient(180deg, rgba(42, 95, 168, 0.88), rgba(27, 69, 130, 0.9));
-  color: #e8f2ff;
+  border: 1px solid rgba(212, 218, 229, 0.22);
+  background: linear-gradient(180deg, rgba(29, 37, 50, 0.9), rgba(18, 24, 34, 0.9));
+  color: var(--ct-text);
   transition: transform 0.16s ease, filter 0.16s ease, border-color 0.16s ease;
 }
 
@@ -7668,8 +7667,8 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 .copytrade-submit:hover,
 .copytrade-dashboard-refresh-btn:hover,
 .copytrade-context-item:hover {
-  border-color: rgba(166, 208, 255, 0.76);
-  filter: brightness(1.08);
+  border-color: rgba(212, 218, 229, 0.34);
+  filter: brightness(1.06);
   transform: translateY(-1px);
 }
 
@@ -7694,8 +7693,8 @@ input[style*="background: rgba(255,255,255,0.06)"] {
   position: relative;
   overflow: hidden;
   border-radius: 13px;
-  border: 1px solid rgba(123, 167, 226, 0.35);
-  background: linear-gradient(180deg, rgba(18, 33, 55, 0.84), rgba(12, 23, 38, 0.84));
+  border: 1px solid rgba(212, 218, 229, 0.16);
+  background: linear-gradient(180deg, rgba(19, 27, 38, 0.84), rgba(12, 18, 27, 0.84));
   padding: 0.68rem 0.72rem;
   transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
 }
@@ -7707,22 +7706,22 @@ input[style*="background: rgba(255,255,255,0.06)"] {
   top: 0;
   bottom: 0;
   width: 3px;
-  background: linear-gradient(180deg, rgba(100, 179, 255, 0.96), rgba(73, 127, 232, 0.42));
+  background: linear-gradient(180deg, rgba(212, 218, 229, 0.62), rgba(212, 218, 229, 0.12));
   opacity: 0.5;
 }
 
 .copytrade-account-row:hover {
   transform: translateY(-1px);
   border-color: var(--ct-border-strong);
-  background: linear-gradient(180deg, rgba(22, 39, 65, 0.88), rgba(14, 27, 46, 0.88));
+  background: linear-gradient(180deg, rgba(24, 33, 45, 0.88), rgba(15, 22, 32, 0.88));
   box-shadow: 0 12px 26px rgba(0, 0, 0, 0.28);
 }
 
 .copytrade-account-row.selected {
-  border-color: rgba(156, 205, 255, 0.76);
-  background: linear-gradient(180deg, rgba(30, 58, 96, 0.92), rgba(18, 39, 66, 0.92));
+  border-color: rgba(212, 218, 229, 0.34);
+  background: linear-gradient(180deg, rgba(30, 40, 54, 0.92), rgba(19, 27, 39, 0.92));
   box-shadow:
-    inset 0 0 0 1px rgba(176, 217, 255, 0.28),
+    inset 0 0 0 1px rgba(212, 218, 229, 0.14),
     0 14px 28px rgba(0, 0, 0, 0.26);
 }
 
@@ -7732,7 +7731,7 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 }
 
 .copytrade-account-main small {
-  color: #a3b7d4;
+  color: var(--ct-text-dim);
   font-size: 0.62rem;
 }
 
@@ -7773,9 +7772,9 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 }
 
 .copytrade-status-badge.active {
-  border-color: rgba(145, 188, 255, 0.62);
-  color: #e5efff;
-  background: rgba(48, 86, 150, 0.4);
+  border-color: rgba(212, 218, 229, 0.34);
+  color: #e5e9f1;
+  background: rgba(42, 49, 61, 0.42);
 }
 
 .copytrade-context-menu {
@@ -7783,8 +7782,8 @@ input[style*="background: rgba(255,255,255,0.06)"] {
   gap: 0.28rem;
   min-width: 164px;
   border-radius: 12px;
-  border: 1px solid rgba(137, 176, 232, 0.52);
-  background: linear-gradient(180deg, rgba(16, 31, 52, 0.96), rgba(11, 22, 38, 0.96));
+  border: 1px solid rgba(212, 218, 229, 0.26);
+  background: linear-gradient(180deg, rgba(17, 24, 35, 0.96), rgba(12, 17, 25, 0.96));
   box-shadow: 0 16px 30px rgba(0, 0, 0, 0.45);
 }
 
@@ -7822,8 +7821,8 @@ input[style*="background: rgba(255,255,255,0.06)"] {
   border-radius: 16px;
   border: 1px solid var(--ct-border);
   background:
-    radial-gradient(140% 120% at 0% 0%, rgba(93, 160, 245, 0.12), transparent 54%),
-    linear-gradient(180deg, rgba(16, 30, 49, 0.92), rgba(10, 18, 30, 0.92));
+    radial-gradient(140% 120% at 0% 0%, rgba(255, 255, 255, 0.04), transparent 54%),
+    linear-gradient(180deg, rgba(18, 24, 34, 0.92), rgba(12, 16, 24, 0.92));
   box-shadow: var(--ct-shadow);
   padding: 0.88rem;
 }
@@ -7834,28 +7833,28 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 
 .copytrade-dashboard-banner {
   border-radius: 13px;
-  border: 1px solid rgba(133, 181, 248, 0.5);
+  border: 1px solid rgba(212, 218, 229, 0.22);
   background:
-    radial-gradient(110% 150% at 100% 0%, rgba(109, 180, 255, 0.28), transparent 58%),
-    linear-gradient(135deg, rgba(30, 62, 104, 0.9), rgba(14, 29, 50, 0.92));
+    radial-gradient(110% 150% at 100% 0%, rgba(255, 255, 255, 0.08), transparent 58%),
+    linear-gradient(135deg, rgba(28, 38, 52, 0.9), rgba(16, 23, 34, 0.92));
   padding: 0.72rem 0.76rem;
 }
 
 .copytrade-dashboard-kicker {
-  color: rgba(200, 225, 255, 0.86);
+  color: var(--ct-text-dim);
 }
 
 .copytrade-dashboard-banner-copy h4 {
-  color: #f0f6ff;
+  color: var(--ct-text);
   font-size: 0.8rem;
 }
 
 .copytrade-dashboard-banner-balance span {
-  color: rgba(193, 220, 255, 0.86);
+  color: var(--ct-text-dim);
 }
 
 .copytrade-dashboard-banner-balance strong {
-  color: #8af5c8;
+  color: var(--ct-text);
   font-size: 1.14rem;
 }
 
@@ -7866,13 +7865,13 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 
 .copytrade-dashboard-stat {
   border-radius: 11px;
-  border: 1px solid rgba(128, 168, 223, 0.34);
-  background: linear-gradient(180deg, rgba(16, 31, 52, 0.88), rgba(11, 23, 39, 0.88));
+  border: 1px solid rgba(212, 218, 229, 0.16);
+  background: linear-gradient(180deg, rgba(19, 27, 39, 0.88), rgba(13, 18, 27, 0.88));
   padding: 0.52rem 0.56rem;
 }
 
 .copytrade-dashboard-stat span {
-  color: #9cb0ce;
+  color: var(--ct-text-dim);
 }
 
 .copytrade-dashboard-stat strong {
@@ -7889,23 +7888,23 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 
 .copytrade-open-positions-card {
   border-radius: 12px;
-  border: 1px solid rgba(130, 170, 224, 0.34);
-  background: linear-gradient(180deg, rgba(14, 27, 46, 0.9), rgba(10, 20, 34, 0.9));
+  border: 1px solid rgba(212, 218, 229, 0.16);
+  background: linear-gradient(180deg, rgba(16, 23, 34, 0.9), rgba(11, 16, 25, 0.9));
   padding: 0.66rem;
 }
 
 .copytrade-open-position-item,
 .copytrade-deal-item {
   border-radius: 11px;
-  border: 1px solid rgba(130, 171, 227, 0.28);
-  background: linear-gradient(180deg, rgba(17, 31, 53, 0.86), rgba(11, 23, 40, 0.86));
+  border: 1px solid rgba(212, 218, 229, 0.14);
+  background: linear-gradient(180deg, rgba(18, 25, 36, 0.86), rgba(12, 17, 25, 0.86));
   padding: 0.5rem 0.56rem;
 }
 
 .copytrade-open-position-item p,
 .copytrade-deal-item p,
 .copytrade-deal-item small {
-  color: #9fb2cf;
+  color: var(--ct-text-dim);
 }
 
 .copytrade-pill.up {
@@ -7926,9 +7925,9 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 
 .copytrade-dashboard-empty {
   border-radius: 10px;
-  border: 1px dashed rgba(134, 171, 222, 0.44);
-  color: #9bb1d1;
-  background: rgba(13, 24, 39, 0.76);
+  border: 1px dashed rgba(212, 218, 229, 0.24);
+  color: var(--ct-text-dim);
+  background: rgba(14, 20, 30, 0.76);
 }
 
 @media (max-width: 1080px) {
