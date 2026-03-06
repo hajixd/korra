@@ -13742,6 +13742,49 @@ export function ClusterMap({
     return out;
   }, [timelineNodesCheat, legendToggles]);
 
+  // Spatial hash for 2D hit-testing (pointer move/click): keeps picking near O(k) instead of O(n).
+  const displayNodePickIndex = useMemo(() => {
+    const src = Array.isArray(displayNodes) ? (displayNodes as any[]) : [];
+    if (!src.length) return null;
+
+    let maxR = 0;
+    let sumR = 0;
+    let nR = 0;
+    for (const n of src) {
+      const x = Number((n as any)?.x);
+      const y = Number((n as any)?.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      const r = Number((n as any)?.r);
+      const rr = Number.isFinite(r) && r > 0 ? r : 2;
+      if (rr > maxR) maxR = rr;
+      sumR += rr;
+      nR++;
+    }
+    if (nR <= 0) return null;
+
+    const avgR = sumR / nR;
+    const cellSize = Math.max(2, Math.min(24, avgR * 3.2));
+    const buckets = new Map<string, any[]>();
+
+    for (const n of src) {
+      const x = Number((n as any)?.x);
+      const y = Number((n as any)?.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      const gx = Math.floor(x / cellSize);
+      const gy = Math.floor(y / cellSize);
+      const key = `${gx}|${gy}`;
+      const arr = buckets.get(key);
+      if (arr) arr.push(n);
+      else buckets.set(key, [n]);
+    }
+
+    return {
+      cellSize,
+      maxR: Math.max(maxR, avgR, 1.25),
+      buckets,
+    };
+  }, [displayNodes]);
+
   // Post-hoc trade list (used by parent so all stats/views match the Cluster Map).
   // NOTE: Includes open + closed trades; parent can filter as needed.
   // Post-hoc trade list (used by parent so all stats/views match the Cluster Map).
@@ -14548,13 +14591,38 @@ export function ClusterMap({
         x: (sx - ev.ox) / (ev.scale || 1),
         y: (sy - ev.oy) / (ev.scale || 1),
       };
+      let candidates: any[] = displayNodes as any[];
+      const idx = displayNodePickIndex as any;
+      if (idx && idx.buckets && idx.buckets.size > 0) {
+        const cellSize = Number(idx.cellSize) || 4;
+        const maxR = Number(idx.maxR) || 2;
+        const probeWorld = maxR * 1.5 + 6 / (ev.scale || 1);
+        const radiusCells = Math.max(1, Math.ceil(probeWorld / cellSize));
+        const cx = Math.floor(w.x / cellSize);
+        const cy = Math.floor(w.y / cellSize);
+        const nearby: any[] = [];
+        for (let gy = cy - radiusCells; gy <= cy + radiusCells; gy++) {
+          for (let gx = cx - radiusCells; gx <= cx + radiusCells; gx++) {
+            const key = `${gx}|${gy}`;
+            const bucket = idx.buckets.get(key);
+            if (bucket && bucket.length) nearby.push(...bucket);
+          }
+        }
+        if (nearby.length) candidates = nearby;
+      }
       let best = null;
-      for (const n of displayNodes as any[]) {
-        const dx = n.x - w.x;
-        const dy = n.y - w.y;
-        const d = Math.sqrt(dx * dx + dy * dy);
-        const hit = n.r * 1.35 + 3 / (ev.scale || 1);
-        if (d <= hit) {
+      for (const n of candidates as any[]) {
+        const nx = Number((n as any)?.x);
+        const ny = Number((n as any)?.y);
+        if (!Number.isFinite(nx) || !Number.isFinite(ny)) continue;
+        const dx = nx - w.x;
+        const dy = ny - w.y;
+        const d2 = dx * dx + dy * dy;
+        const rr = Number((n as any)?.r);
+        const hit = (Number.isFinite(rr) ? rr : 2) * 1.35 + 3 / (ev.scale || 1);
+        const hit2 = hit * hit;
+        if (d2 <= hit2) {
+          const d = Math.sqrt(d2);
           if (!best || d < best.d) best = { id: n.id, d };
         }
       }
@@ -15390,6 +15458,7 @@ export function ClusterMap({
   }, [
     is3dMapActive,
     displayNodes,
+    displayNodePickIndex,
     parseMode,
     boxSelectMode,
     boxStart,
