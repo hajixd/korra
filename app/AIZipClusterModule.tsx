@@ -28,7 +28,6 @@ import {
   Legend,
   Customized,
 } from "recharts";
-import { ClusterMapDeckViewport } from "./components/ClusterMapDeckViewport";
 
 let THREE: any = null;
 let OrbitControls: any = null;
@@ -12943,7 +12942,6 @@ export function ClusterMap({
   const viewRef = useRef(view);
   const [isDragging, setIsDragging] = useState(false);
   const is3dMapActive = clusterMapView === "3d";
-  const useDeckClusterEngine = true;
   const boxSelectMode = is3dMapActive ? boxSelectMode3d : boxSelectMode2d;
 
   useEffect(() => {
@@ -14764,10 +14762,6 @@ export function ClusterMap({
 
   // Keep a stable redraw function for ResizeObserver/visibility changes.
   useEffect(() => {
-    if (useDeckClusterEngine) {
-      redrawRef.current = () => {};
-      return;
-    }
     redrawRef.current = () => {
       const c = canvasRef.current;
       if (!c) return;
@@ -14797,7 +14791,6 @@ export function ClusterMap({
   });
 
   useEffect(() => {
-    if (useDeckClusterEngine) return;
     const el = canvasWrapRef.current;
     if (!el) return;
     let ro: any = null;
@@ -14821,7 +14814,6 @@ export function ClusterMap({
   }, []);
 
   useEffect(() => {
-    if (useDeckClusterEngine) return;
     if (is3dMapActive) return;
     const c = canvasRef.current;
     if (!c) return;
@@ -14866,7 +14858,6 @@ export function ClusterMap({
     drawRenderOpts,
   ]);
   useEffect(() => {
-    if (useDeckClusterEngine) return;
     if (is3dMapActive) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -16163,7 +16154,7 @@ export function ClusterMap({
     setSearchFocus(false);
 
     // Center view on the found node (CSS pixels, not the devicePixel canvas buffer).
-    const c = (canvasRef.current as any) || (canvasWrapRef.current as any);
+    const c = canvasRef.current as any;
     const rect =
       c && c.getBoundingClientRect ? c.getBoundingClientRect() : null;
     const w = (rect && rect.width) || 1200;
@@ -16905,75 +16896,45 @@ export function ClusterMap({
           overflow: "hidden",
         }}
       >
-        <ClusterMapDeckViewport
-          nodes={displayNodes}
-          viewMode={is3dMapActive ? "3d" : "2d"}
-          view2d={view}
-          onView2dChange={(nv) => {
-            viewRef.current = nv as any;
-            setView(nv as any);
-          }}
-          selectedId={selectedId}
-          searchHighlightId={searchHighlightId}
-          lowPowerMode={lowPowerMode}
-          heatmapOn={heatmapOn}
-          hdbOverlay={hdbOverlay}
-          showGroupOverlays={showGroupOverlays}
-          groupOverlayOpacity={effectiveGroupOverlayOpacity}
-          nodeSizeMul={nodeSizeMul}
-          nodeOutlineMul={nodeOutlineMul}
-          knnLinkK={knnLinkK}
-          knnLinkOpacity={knnLinkOpacity}
-          mapSpreadMul={mapSpreadMul}
-          resetKey={resetKey}
-          selectionMode={boxSelectMode}
-          selectionClearNonce={is3dMapActive ? selectionClearNonce3d : undefined}
-          onSelectId={(id) => {
-            if (is3dMapActive) {
-              handle3dSelectId(id as any);
-            } else {
-              setSelectedId(id as any);
-              setSelectedGroup(null);
-              selectedGroupRef.current = null;
-            }
-          }}
-          onHoverId={(id) => {
-            hoveredIdRef.current = id as any;
-            setHoveredId(id as any);
-          }}
-          onHoverGroup={(grp) => {
-            hoveredGroupRef.current = grp as any;
-            setHoveredGroup(grp as any);
-          }}
-          onSelectGroup={(grp) => {
-            selectedGroupRef.current = grp as any;
-            setSelectedGroup(grp as any);
-            setSelectedId(null);
-            setSelectedLink(null);
-          }}
-          onSelectLink={(link) => {
-            setSelectedLink(link as any);
-          }}
-          onHoverWorld={(p) => {
-            mapFocusRef.current = !!p;
-            if (!pinnedRef.current) setHoverWorld((p as any) ?? null);
-            if (!pinnedRef.current && !heatmapOn) setHeatHover(null);
-          }}
-          onHeatHover={(h) => {
-            if (is3dMapActive) {
-              if (!pinnedRef.current) setHeatHover(null);
-              return;
-            }
-            if (!pinnedRef.current) setHeatHover((h as any) ?? null);
-          }}
-          onSelectionIdsChange={(ids) => {
-            if (is3dMapActive) {
-              handle3dSelectionIds((ids as any) || []);
-            } else {
-              setSelectedIds3d([]);
-            }
-          }}
-        />
+        {!is3dMapActive ? (
+          <canvas
+            style={{
+              width: "100%",
+              height: "100%",
+              display: "block",
+              cursor: boxSelectMode
+                ? "crosshair"
+                : isDragging
+                ? "grabbing"
+                : "grab",
+              touchAction: "none",
+            }}
+            ref={canvasRef}
+          />
+        ) : (
+          <ClusterMapViewport3D
+            nodes={displayNodes}
+            selectedId={selectedId}
+            searchHighlightId={searchHighlightId}
+            resetKey={resetKey}
+            lowPowerMode={lowPowerMode}
+            hdbOverlay={hdbOverlay}
+            showGroupOverlays={showGroupOverlays}
+            groupOverlayOpacity={effectiveGroupOverlayOpacity}
+            selectionMode={boxSelectMode}
+            heatmapOn={heatmapOn}
+            heatmapInterp={heatmapInterp}
+            heatmapSmoothness={heatmapSmoothness}
+            nodeSizeMul={nodeSizeMul}
+            nodeOutlineMul={nodeOutlineMul}
+            knnLinkK={knnLinkK}
+            knnLinkOpacity={knnLinkOpacity}
+            mapSpreadMul={mapSpreadMul}
+            onSelectId={handle3dSelectId}
+            onSelectionIdsChange={handle3dSelectionIds}
+            selectionClearNonce={selectionClearNonce3d}
+          />
+        )}
 
         {hoverWorldShown && (
           <div
