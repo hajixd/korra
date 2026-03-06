@@ -5849,16 +5849,122 @@ const clusterMapDrawOrderCache = new WeakMap<any[], any[]>();
 const clusterMapKnnEdgeCache = new WeakMap<any[], Map<string, any[]>>();
 const CLUSTER_MAP_LOW_POWER_KEY = "clusterMapLowPower";
 
+function normalizeClusterMapToken(v: any): string | null {
+  const s = String(v ?? "").trim();
+  return s ? s : null;
+}
+
+function isLibraryNodeForKnn(node: any) {
+  if (!node) return false;
+  const kind = String((node as any).kind ?? "").toLowerCase();
+  return (
+    kind === "library" ||
+    (node as any).libId != null ||
+    String((node as any).id || "").startsWith("lib|")
+  );
+}
+
 function isLiveNodeForKnn(node: any) {
   if (!node) return false;
   const kind = String((node as any).kind ?? "").toLowerCase();
-  const isLib =
-    kind === "library" ||
-    (node as any).libId != null ||
-    String((node as any).id || "").startsWith("lib|");
-  if (isLib) return false;
+  if (isLibraryNodeForKnn(node)) return false;
   if (kind === "potential" || kind === "ghost") return false;
   return kind === "trade" || kind === "close" || kind === "";
+}
+
+function isEntrySourceNodeForKnn(node: any) {
+  if (!node) return false;
+  const kind = String((node as any).kind ?? "").toLowerCase();
+  if (kind === "ghost" || kind === "close") return false;
+  if (isLibraryNodeForKnn(node)) return false;
+  return kind === "trade" || kind === "potential" || kind === "";
+}
+
+function nodeCoordsForClusterMapKnn(node: any, dim: "2d" | "3d") {
+  if (!node) return null;
+  const x =
+    dim === "3d" && Number.isFinite(Number((node as any)?.x3))
+      ? Number((node as any).x3)
+      : Number((node as any)?.x);
+  const y =
+    dim === "3d" && Number.isFinite(Number((node as any)?.y3))
+      ? Number((node as any).y3)
+      : Number((node as any)?.y);
+  const z =
+    dim === "3d" && Number.isFinite(Number((node as any)?.z3))
+      ? Number((node as any).z3)
+      : 0;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z))
+    return null;
+  return { x, y, z };
+}
+
+function addClusterMapAlias(
+  aliasMap: Map<string, Set<string>>,
+  token: any,
+  id: string
+) {
+  const t = normalizeClusterMapToken(token);
+  if (!t) return;
+  let ids = aliasMap.get(t);
+  if (!ids) {
+    ids = new Set<string>();
+    aliasMap.set(t, ids);
+  }
+  ids.add(id);
+}
+
+function buildLegacyKnnEdgesForClusterMap(
+  nodes: any[],
+  kRaw: number,
+  dim: "2d" | "3d"
+) {
+  const k = Math.max(0, Math.min(36, Math.floor(Number(kRaw) || 0)));
+  if (!Array.isArray(nodes) || nodes.length < 2 || k <= 0) return [];
+
+  const pts: Array<{ id: string; x: number; y: number; z: number }> = [];
+  for (const n of nodes) {
+    if (!isLiveNodeForKnn(n)) continue;
+    const id = normalizeClusterMapToken((n as any)?.id);
+    if (!id) continue;
+    const c = nodeCoordsForClusterMapKnn(n, dim);
+    if (!c) continue;
+    pts.push({ id, x: c.x, y: c.y, z: c.z });
+  }
+  if (pts.length < 2) return [];
+
+  const useK = Math.min(k, pts.length - 1);
+  const edgeMap = new Map<string, { a: string; b: string; d: number }>();
+  for (let i = 0; i < pts.length; i++) {
+    const pi = pts[i];
+    const nearest: Array<{ j: number; d: number }> = [];
+    for (let j = 0; j < pts.length; j++) {
+      if (i === j) continue;
+      const pj = pts[j];
+      const dx = pi.x - pj.x;
+      const dy = pi.y - pj.y;
+      const dz = dim === "3d" ? pi.z - pj.z : 0;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (!Number.isFinite(d)) continue;
+      if (nearest.length < useK) {
+        nearest.push({ j, d });
+        nearest.sort((a, b) => b.d - a.d);
+      } else if (d < nearest[0].d) {
+        nearest[0] = { j, d };
+        nearest.sort((a, b) => b.d - a.d);
+      }
+    }
+    for (const nb of nearest) {
+      const aId = pi.id;
+      const bId = pts[nb.j].id;
+      const a = aId < bId ? aId : bId;
+      const b = aId < bId ? bId : aId;
+      const key = `${a}|${b}`;
+      const prev = edgeMap.get(key);
+      if (!prev || nb.d < prev.d) edgeMap.set(key, { a, b, d: nb.d });
+    }
+  }
+  return Array.from(edgeMap.values());
 }
 
 function getKnnEdgesForClusterMap(
@@ -5874,72 +5980,208 @@ function getKnnEdgesForClusterMap(
     modeCache = new Map<string, any[]>();
     clusterMapKnnEdgeCache.set(nodes as any[], modeCache);
   }
-  const cacheKey = `${dim}|${k}`;
+  const cacheKey = `causal-v3|${dim}|${k}`;
   const cached = modeCache.get(cacheKey);
   if (cached) return cached;
 
-  const pts: Array<{ id: string; x: number; y: number; z: number }> = [];
-  for (const n of nodes) {
-    if (!isLiveNodeForKnn(n)) continue;
-    const id = String((n as any)?.id ?? "").trim();
+  const nodeById = new Map<string, any>();
+  const nodeCoordById = new Map<string, { x: number; y: number; z: number }>();
+  const aliasToIds = new Map<string, Set<string>>();
+
+  for (const n of nodes as any[]) {
+    const id = normalizeClusterMapToken((n as any)?.id);
     if (!id) continue;
-    const x =
-      dim === "3d" && Number.isFinite(Number((n as any)?.x3))
-        ? Number((n as any).x3)
-        : Number((n as any)?.x);
-    const y =
-      dim === "3d" && Number.isFinite(Number((n as any)?.y3))
-        ? Number((n as any).y3)
-        : Number((n as any)?.y);
-    const z =
-      dim === "3d" && Number.isFinite(Number((n as any)?.z3))
-        ? Number((n as any).z3)
-        : 0;
-    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z))
-      continue;
-    pts.push({ id, x, y, z });
+    const c = nodeCoordsForClusterMapKnn(n, dim);
+    if (!c) continue;
+    nodeById.set(id, n);
+    nodeCoordById.set(id, c);
+    addClusterMapAlias(aliasToIds, id, id);
+    addClusterMapAlias(aliasToIds, (n as any)?.uid, id);
+    addClusterMapAlias(aliasToIds, (n as any)?.tradeUid, id);
+    addClusterMapAlias(aliasToIds, (n as any)?.metaUid, id);
+    addClusterMapAlias(aliasToIds, (n as any)?.metaTradeUid, id);
+    addClusterMapAlias(aliasToIds, (n as any)?.metaOrigId, id);
+    addClusterMapAlias(aliasToIds, (n as any)?.metaOrigUid, id);
+    addClusterMapAlias(aliasToIds, (n as any)?.metaId, id);
+    addClusterMapAlias(aliasToIds, (n as any)?.parentId, id);
+    addClusterMapAlias(aliasToIds, (n as any)?.closestClusterUid, id);
+
+    const t = normalizeClusterMapToken(
+      (n as any)?.entryTime ?? (n as any)?.metaTime ?? (n as any)?.time
+    );
+    if (t) {
+      addClusterMapAlias(aliasToIds, `t:${t}`, id);
+      const model = normalizeClusterMapToken(
+        (n as any)?.entryModel ?? (n as any)?.chunkType ?? (n as any)?.model
+      );
+      const dirNum = Number((n as any)?.dir ?? (n as any)?.direction);
+      if (model) addClusterMapAlias(aliasToIds, `tm:${t}|${model}`, id);
+      if (Number.isFinite(dirNum)) {
+        addClusterMapAlias(aliasToIds, `td:${t}|${String(dirNum)}`, id);
+        if (model) {
+          addClusterMapAlias(aliasToIds, `tmd:${t}|${model}|${String(dirNum)}`, id);
+        }
+      }
+    }
   }
 
-  if (pts.length < 2) {
+  if (nodeById.size < 2) {
     modeCache.set(cacheKey, []);
     return [];
   }
 
-  const useK = Math.min(k, pts.length - 1);
-  const edgeMap = new Map<string, { a: string; b: string; d: number }>();
-
-  for (let i = 0; i < pts.length; i++) {
-    const pi = pts[i];
-    const nearest: Array<{ j: number; d: number }> = [];
-    for (let j = 0; j < pts.length; j++) {
-      if (i === j) continue;
-      const pj = pts[j];
-      const dx = pi.x - pj.x;
-      const dy = pi.y - pj.y;
-      const dz = dim === "3d" ? pi.z - pj.z : 0;
-      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-      if (nearest.length < useK) {
-        nearest.push({ j, d });
-        nearest.sort((a, b) => b.d - a.d); // descending
-      } else if (d < nearest[0].d) {
-        nearest[0] = { j, d };
-        nearest.sort((a, b) => b.d - a.d);
+  const pickFromAlias = (
+    token: string,
+    sourceCoord: { x: number; y: number; z: number } | null
+  ): string | null => {
+    const ids = aliasToIds.get(token);
+    if (!ids || ids.size <= 0) return null;
+    if (ids.size === 1) return ids.values().next().value ?? null;
+    if (!sourceCoord) return ids.values().next().value ?? null;
+    let bestId: string | null = null;
+    let bestD = Infinity;
+    for (const id of ids) {
+      const c = nodeCoordById.get(id);
+      if (!c) continue;
+      const dx = sourceCoord.x - c.x;
+      const dy = sourceCoord.y - c.y;
+      const dz = dim === "3d" ? sourceCoord.z - c.z : 0;
+      const d = dx * dx + dy * dy + dz * dz;
+      if (d < bestD) {
+        bestD = d;
+        bestId = id;
       }
     }
+    return bestId ?? ids.values().next().value ?? null;
+  };
 
-    for (const nb of nearest) {
-      const aId = pi.id;
-      const bId = pts[nb.j].id;
-      const a = aId < bId ? aId : bId;
-      const b = aId < bId ? bId : aId;
+  const resolveNeighborId = (
+    nb: any,
+    sourceNode: any,
+    sourceCoord: { x: number; y: number; z: number } | null
+  ): string | null => {
+    const tr = (nb as any)?.t ?? null;
+    const rawCandidates = [
+      (nb as any)?.targetId,
+      (nb as any)?.nodeId,
+      (nb as any)?.id,
+      (nb as any)?.metaId,
+      (nb as any)?.uid,
+      (nb as any)?.metaUid,
+      (nb as any)?.tradeUid,
+      (nb as any)?.metaTradeUid,
+      (nb as any)?.labelUid,
+      (nb as any)?.closestClusterUid,
+      (tr as any)?.id,
+      (tr as any)?.uid,
+      (tr as any)?.tradeUid,
+      (tr as any)?.tradeId,
+      (tr as any)?.metaUid,
+      (tr as any)?.metaTradeUid,
+      (tr as any)?.metaId,
+    ];
+
+    for (const raw of rawCandidates) {
+      const t = normalizeClusterMapToken(raw);
+      if (!t) continue;
+      if (nodeById.has(t)) return t;
+      const hit = pickFromAlias(t, sourceCoord);
+      if (hit) return hit;
+    }
+
+    const timeTok = normalizeClusterMapToken(
+      (nb as any)?.metaTime ??
+        (nb as any)?.time ??
+        (nb as any)?.entryTime ??
+        (tr as any)?.entryTime ??
+        (tr as any)?.time
+    );
+    if (!timeTok) return null;
+
+    const modelTok = normalizeClusterMapToken(
+      (nb as any)?.model ??
+        (nb as any)?.metaModel ??
+        (tr as any)?.model ??
+        (sourceNode as any)?.entryModel ??
+        (sourceNode as any)?.chunkType
+    );
+    const dirRaw = Number(
+      (nb as any)?.dir ??
+        (tr as any)?.dir ??
+        (tr as any)?.direction ??
+        (sourceNode as any)?.dir ??
+        (sourceNode as any)?.direction
+    );
+    const fallbackKeys: string[] = [];
+    if (modelTok && Number.isFinite(dirRaw))
+      fallbackKeys.push(`tmd:${timeTok}|${modelTok}|${String(dirRaw)}`);
+    if (modelTok) fallbackKeys.push(`tm:${timeTok}|${modelTok}`);
+    if (Number.isFinite(dirRaw)) fallbackKeys.push(`td:${timeTok}|${String(dirRaw)}`);
+    fallbackKeys.push(`t:${timeTok}`);
+    for (const key of fallbackKeys) {
+      const hit = pickFromAlias(key, sourceCoord);
+      if (hit) return hit;
+    }
+    return null;
+  };
+
+  const edgeMap = new Map<string, { a: string; b: string; d: number }>();
+  for (const src of nodes as any[]) {
+    if (!isEntrySourceNodeForKnn(src)) continue;
+    const srcId = normalizeClusterMapToken((src as any)?.id);
+    if (!srcId) continue;
+    const srcCoord = nodeCoordById.get(srcId) || null;
+    if (!srcCoord) continue;
+    const nbsRaw =
+      (src as any)?.entryNeighbors ??
+      (src as any)?.neighbors ??
+      (src as any)?.kNeighbors ??
+      null;
+    if (!Array.isArray(nbsRaw) || nbsRaw.length <= 0) continue;
+
+    const nbs = nbsRaw.slice().sort((a: any, b: any) => {
+      const da = Number((a as any)?.d);
+      const db = Number((b as any)?.d);
+      const aa = Number.isFinite(da) ? da : Infinity;
+      const bb = Number.isFinite(db) ? db : Infinity;
+      return aa - bb;
+    });
+
+    const useK = Math.min(k, nbs.length);
+    let accepted = 0;
+    for (const nb of nbs as any[]) {
+      if (accepted >= useK) break;
+      const dstId = resolveNeighborId(nb, src, srcCoord);
+      if (!dstId || dstId === srcId) continue;
+      const dstNode = nodeById.get(dstId);
+      if (!dstNode) continue;
+      if (String((dstNode as any)?.kind ?? "").toLowerCase() === "close") continue;
+      const dstCoord = nodeCoordById.get(dstId);
+      if (!dstCoord) continue;
+
+      let d = Number((nb as any)?.d);
+      if (!Number.isFinite(d)) {
+        const dx = srcCoord.x - dstCoord.x;
+        const dy = srcCoord.y - dstCoord.y;
+        const dz = dim === "3d" ? srcCoord.z - dstCoord.z : 0;
+        d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      }
+      if (!Number.isFinite(d)) continue;
+
+      const a = srcId < dstId ? srcId : dstId;
+      const b = srcId < dstId ? dstId : srcId;
       const key = `${a}|${b}`;
       const prev = edgeMap.get(key);
-      if (!prev || nb.d < prev.d) edgeMap.set(key, { a, b, d: nb.d });
+      if (!prev || d < prev.d) edgeMap.set(key, { a, b, d });
+      accepted++;
     }
   }
 
-  const edges = Array.from(edgeMap.values());
+  const causalEdges = Array.from(edgeMap.values());
+  const edges =
+    causalEdges.length > 0
+      ? causalEdges
+      : buildLegacyKnnEdgesForClusterMap(nodes, k, dim);
   modeCache.set(cacheKey, edges);
   return edges;
 }
@@ -6611,8 +6853,7 @@ function drawClusterMapCanvas(
 
     const knnFocusNodeIds = new Set<string>();
     const knnFocusEdgeIds = new Set<string>();
-    const knnFallbackFocusEdges: Array<{ a: string; b: string; d: number }> = [];
-    const effectiveKnnK = knnFocusActive ? Math.max(6, knnLinkK) : knnLinkK;
+    const effectiveKnnK = knnLinkK;
     const knnEdges =
       effectiveKnnK > 0 && (knnLinkOpacity > 0.001 || knnFocusActive)
         ? getKnnEdgesForClusterMap(nodes as any[], effectiveKnnK, "2d")
@@ -6628,36 +6869,6 @@ function drawClusterMapCanvas(
           const otherId = aId === selectedNodeId ? bId : aId;
           knnFocusNodeIds.add(otherId);
           knnFocusEdgeIds.add(edgeKey(aId, bId));
-        }
-      }
-
-      // Fallback for non-live selections: connect the selected node to nearest live points.
-      if (knnFocusNodeIds.size <= 1 && selectedNodeObj) {
-        const sx = Number((selectedNodeObj as any)?.x);
-        const sy = Number((selectedNodeObj as any)?.y);
-        if (Number.isFinite(sx) && Number.isFinite(sy)) {
-          const fallbackN = Math.max(3, Math.min(12, effectiveKnnK || 6));
-          const nearest: Array<{ id: string; d: number }> = [];
-          for (const n of nodes as any[]) {
-            if (!isLiveNodeForKnn(n)) continue;
-            const nid = normalizeId((n as any)?.id);
-            if (!nid || nid === selectedNodeId) continue;
-            const x = Number((n as any)?.x);
-            const y = Number((n as any)?.y);
-            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-            const dx = sx - x;
-            const dy = sy - y;
-            const d = Math.sqrt(dx * dx + dy * dy);
-            if (!Number.isFinite(d)) continue;
-            nearest.push({ id: nid, d });
-          }
-          nearest.sort((a, b) => a.d - b.d);
-          const picked = nearest.slice(0, fallbackN);
-          for (const n of picked) {
-            knnFocusNodeIds.add(n.id);
-            knnFocusEdgeIds.add(edgeKey(selectedNodeId, n.id));
-            knnFallbackFocusEdges.push({ a: selectedNodeId, b: n.id, d: n.d });
-          }
         }
       }
     }
@@ -6775,7 +6986,7 @@ function drawClusterMapCanvas(
       }
     }
 
-    // KNN topology web (live node neighborhood links).
+    // KNN topology web: entry-causal links from each point's stored nearest-k neighbors.
     if (knnEdges.length && (knnLinkOpacity > 0.001 || knnFocusActive)) {
       const edges = knnEdges;
       if (edges.length) {
@@ -6853,25 +7064,6 @@ function drawClusterMapCanvas(
           ctx.moveTo(pa.sx, pa.sy);
           ctx.lineTo(pb.sx, pb.sy);
           ctx.stroke();
-        }
-
-        if (knnFocusActive && knnFallbackFocusEdges.length > 0) {
-          for (const e of knnFallbackFocusEdges) {
-            const pa = screenPositions[e.a];
-            const pb = screenPositions[e.b];
-            if (!pa || !pb) continue;
-            const col = "rgba(95,220,255,0.88)";
-            ctx.lineWidth = lowPowerMode ? 2.2 : 3.2;
-            ctx.strokeStyle = col;
-            if (!lowPowerMode) {
-              ctx.shadowColor = "rgba(95,220,255,0.55)";
-              ctx.shadowBlur = 12;
-            }
-            ctx.beginPath();
-            ctx.moveTo(pa.sx, pa.sy);
-            ctx.lineTo(pb.sx, pb.sy);
-            ctx.stroke();
-          }
         }
         ctx.restore();
       }
@@ -8128,49 +8320,38 @@ function ClusterMapViewport3D({
       knnAlpha > 0.001 &&
       worldPts.length > 1
     ) {
-      const liveIdx: number[] = [];
-      for (let i = 0; i < rawPts.length; i++) {
-        const n = rawPts[i]?.node;
-        if (!isLiveNodeForKnn(n)) continue;
-        liveIdx.push(i);
-      }
-
-      if (liveIdx.length > 1) {
-        const useK = Math.min(knnKInt, liveIdx.length - 1);
+      const edgePairs = getKnnEdgesForClusterMap(nodes as any[], knnKInt, "3d");
+      if (edgePairs.length > 0) {
+        const idToIdx = new Map<string, number>();
+        for (let i = 0; i < nodeIds.length; i++) {
+          const id = normalizeClusterMapToken(nodeIds[i]);
+          if (!id) continue;
+          idToIdx.set(id, i);
+        }
         const edgeMap = new Map<string, { aI: number; bI: number; d: number }>();
-        for (let ii = 0; ii < liveIdx.length; ii++) {
-          const i = liveIdx[ii];
-          const pi = worldPts[i];
-          if (!pi) continue;
-          const nearest: Array<{ j: number; d: number }> = [];
-
-          for (let jj = 0; jj < liveIdx.length; jj++) {
-            if (ii === jj) continue;
-            const j = liveIdx[jj];
-            const pj = worldPts[j];
-            if (!pj) continue;
-            const dx = pi[0] - pj[0];
-            const dy = pi[1] - pj[1];
-            const dz = pi[2] - pj[2];
-            const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            if (!Number.isFinite(d)) continue;
-
-            if (nearest.length < useK) {
-              nearest.push({ j, d });
-              nearest.sort((a, b) => b.d - a.d);
-            } else if (d < nearest[0].d) {
-              nearest[0] = { j, d };
-              nearest.sort((a, b) => b.d - a.d);
-            }
+        for (const e of edgePairs as any[]) {
+          const aId = normalizeClusterMapToken((e as any)?.a);
+          const bId = normalizeClusterMapToken((e as any)?.b);
+          if (!aId || !bId || aId === bId) continue;
+          const aiRaw = idToIdx.get(aId);
+          const biRaw = idToIdx.get(bId);
+          if (aiRaw == null || biRaw == null) continue;
+          const aI = Math.min(aiRaw, biRaw);
+          const bI = Math.max(aiRaw, biRaw);
+          const pa = worldPts[aI];
+          const pb = worldPts[bI];
+          if (!pa || !pb) continue;
+          let d = Number((e as any)?.d);
+          if (!Number.isFinite(d)) {
+            const dx = pa[0] - pb[0];
+            const dy = pa[1] - pb[1];
+            const dz = pa[2] - pb[2];
+            d = Math.sqrt(dx * dx + dy * dy + dz * dz);
           }
-
-          for (const nb of nearest) {
-            const aI = Math.min(i, nb.j);
-            const bI = Math.max(i, nb.j);
-            const key = `${aI}|${bI}`;
-            const prev = edgeMap.get(key);
-            if (!prev || nb.d < prev.d) edgeMap.set(key, { aI, bI, d: nb.d });
-          }
+          if (!Number.isFinite(d)) continue;
+          const key = `${aI}|${bI}`;
+          const prev = edgeMap.get(key);
+          if (!prev || d < prev.d) edgeMap.set(key, { aI, bI, d });
         }
 
         const edges = Array.from(edgeMap.values());
@@ -9938,6 +10119,11 @@ export function ClusterMap({
         exitReason: t.exitReason,
         entryPrice: t.entryPrice,
         suppressed: !!(t as any).suppressed,
+        entryNeighbors:
+          (t as any).entryNeighbors ??
+          (t as any).neighbors ??
+          (t as any).kNeighbors ??
+          [],
       });
     }
     const hasLiveOpenTrade = trades.some((t) => !!t.isOpen);
@@ -9995,6 +10181,11 @@ export function ClusterMap({
           potentialMargin: potential.margin,
           entryTime: tRaw,
           chunkType: potential.model,
+          entryNeighbors:
+            (potential as any).entryNeighbors ??
+            (potential as any).neighbors ??
+            (potential as any).kNeighbors ??
+            [],
         });
       }
     }
@@ -10095,6 +10286,11 @@ export function ClusterMap({
           dir: g.dir,
           entryTime: g.entryTime,
           aiMode: (g as any).aiMode ?? null,
+          entryNeighbors:
+            (g as any).entryNeighbors ??
+            (g as any).neighbors ??
+            (g as any).kNeighbors ??
+            [],
           closestClusterUid:
             (g as any).labelUid ?? (g as any).closestClusterUid ?? null,
           closestCluster: (g as any).label ?? undefined,
@@ -10183,6 +10379,7 @@ export function ClusterMap({
               );
           out.push({
             id: `lib-fallback|${lid}|${String(seq)}`,
+            uid: `lib-fallback|${lid}|${String(seq)}`,
             libId: lid,
             model: a ? a.model : "Momentum",
             signalIndex: sIdx,
@@ -10358,6 +10555,8 @@ export function ClusterMap({
           (p as any).id ??
           (p as any).uid ??
           `lib-${libId}-${modelKey}-${String(sIdxClamped)}-${String(li)}`,
+        uid: (p as any).uid ?? (p as any).metaUid ?? null,
+        metaUid: (p as any).metaUid ?? (p as any).uid ?? null,
         chunk,
         meta,
         timeFeature,
@@ -10616,6 +10815,7 @@ export function ClusterMap({
       out.push({
         id: e.id,
         uid: (e as any).uid || (e as any).tradeUid || e.id || null,
+        metaUid: (e as any).metaUid ?? null,
         libId: (e as any).libId ?? null,
         x: x2,
         y: y2,
@@ -10647,6 +10847,21 @@ export function ClusterMap({
         entryIndex: e.entryIndex,
         exitIndex: e.exitIndex,
         entryPrice: e.entryPrice,
+        entryNeighbors:
+          (e as any).entryNeighbors ??
+          (e as any).neighbors ??
+          (e as any).kNeighbors ??
+          [],
+        neighbors:
+          (e as any).neighbors ??
+          (e as any).entryNeighbors ??
+          (e as any).kNeighbors ??
+          [],
+        kNeighbors:
+          (e as any).kNeighbors ??
+          (e as any).entryNeighbors ??
+          (e as any).neighbors ??
+          [],
       });
     }
 
@@ -12053,6 +12268,11 @@ export function ClusterMap({
             entryModel: (n as any).entryModel ?? null,
             exitModel: (n as any).exitModel ?? null,
             chunkType: (n as any).chunkType ?? (n as any).model ?? null,
+            entryNeighbors:
+              (n as any).entryNeighbors ??
+              (n as any).neighbors ??
+              (n as any).kNeighbors ??
+              [],
             // Preserve exitReason exactly as-is. We do NOT relabel anything as "Model".
             exitReason: (n as any).exitReason ?? null,
             entryPrice: (n as any).entryPrice ?? null,
@@ -14766,10 +14986,7 @@ export function ClusterMap({
       );
       const selectedIdNow = String((drawRenderOpts as any)?.selectedId ?? "").trim();
       const aiMethodNow = String((drawRenderOpts as any)?.aiMethod ?? "").toLowerCase();
-      const effectiveK =
-        aiMethodNow === "knn" && selectedIdNow
-          ? Math.max(6, knnK)
-          : knnK;
+      const effectiveK = knnK;
       const tolPx = 8.5;
 
       let best: { score: number; link: any } | null = null;
