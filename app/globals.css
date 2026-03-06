@@ -656,6 +656,45 @@ button {
   background: #090d13;
 }
 
+.copytrade-surface {
+  min-height: 0;
+  height: 100%;
+  padding: 0.9rem;
+  overflow: auto;
+  background: #090d13;
+}
+
+.copytrade-surface-shell {
+  min-height: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.copytrade-surface-head {
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #0b0b0b;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.75);
+  padding: 0.88rem 0.95rem;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.copytrade-surface-head h2 {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 0.94rem;
+  letter-spacing: 0.02em;
+}
+
+.copytrade-surface-head p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 0.68rem;
+}
+
 .backtest-shell {
   min-height: 100%;
   display: flex;
@@ -4060,12 +4099,12 @@ button {
 
 .chart-stage.chart-stage-loading .tv-chart,
 .chart-stage.chart-stage-loading .candle-countdown-overlay,
-.chart-stage.chart-stage-loading .chart-reset-btn {
+.chart-stage.chart-stage-loading .chart-stage-actions {
   filter: blur(3px) saturate(0.82) brightness(0.72);
 }
 
 .chart-stage.chart-stage-loading .tv-chart,
-.chart-stage.chart-stage-loading .chart-reset-btn {
+.chart-stage.chart-stage-loading .chart-stage-actions {
   pointer-events: none;
 }
 
@@ -4112,12 +4151,20 @@ button {
   overflow: hidden;
 }
 
-.chart-reset-btn {
+.chart-stage-actions {
   position: absolute;
   bottom: 36px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: all;
+}
+
+.chart-reset-btn,
+.chart-copytrade-btn {
   padding: 6px 16px;
   background: rgba(5, 5, 5, 0.9);
   color: rgba(245, 245, 245, 0.92);
@@ -4137,6 +4184,18 @@ button {
   border-color: rgba(255, 255, 255, 0.58);
   background: rgba(12, 12, 12, 0.97);
   box-shadow: 0 5px 16px rgba(0, 0, 0, 0.46);
+}
+
+.chart-copytrade-btn {
+  border-color: #4f96ff;
+  background: rgba(30, 64, 118, 0.94);
+  color: #deebff;
+}
+
+.chart-copytrade-btn:hover {
+  border-color: #81b8ff;
+  background: rgba(38, 82, 148, 0.98);
+  color: #f0f7ff;
 }
 
 .chart-overlay-stack {
@@ -4884,6 +4943,15 @@ button {
   background: transparent;
 }
 
+.copytrade-body.copytrade-body-surface {
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #0b0b0b;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.75);
+  padding: 0.95rem;
+  overflow: visible;
+}
+
 .copytrade-field span {
   color: #888d97;
   font-size: 0.59rem;
@@ -5169,6 +5237,15 @@ button {
   border-radius: 10px;
   border: 1px dashed #454a55;
   background: rgba(21, 23, 29, 0.78);
+}
+
+.copytrade-target-note {
+  padding: 0.52rem 0.65rem;
+  font-size: 0.6rem;
+  border-style: solid;
+  border-color: #3f577e;
+  background: rgba(31, 48, 74, 0.42);
+  color: #cad9f5;
 }
 
 .copytrade-error-note {
@@ -6329,7 +6406,8 @@ button {
 }
 
 @media (max-width: 900px) {
-  .backtest-surface {
+  .backtest-surface,
+  .copytrade-surface {
     padding: 0.72rem;
   }
 
@@ -6435,7 +6513,8 @@ button {
     grid-template-columns: 1fr;
   }
 
-  .backtest-surface {
+  .backtest-surface,
+  .copytrade-surface {
     padding: 0.58rem;
   }
 

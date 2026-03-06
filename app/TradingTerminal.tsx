@@ -84,7 +84,7 @@ const SETTINGS_STORAGE_KEY = "korra-settings";
 const PRESETS_STORAGE_KEY = "korra-presets";
 type SavedPreset = { name: string; settings: Record<string, any>; savedAt: number };
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
-type SurfaceTab = "chart" | "backtest";
+type SurfaceTab = "chart" | "backtest" | "copytrade";
 type BacktestTab =
   | "mainSettings"
   | "mainStats"
@@ -773,6 +773,8 @@ const createMt5AccountOnServer = async (payload: {
   login: string;
   password: string;
   server: string;
+  symbol?: string;
+  timeframe?: Timeframe;
 }): Promise<void> => {
   const response = await fetch("/api/copytrade/accounts", {
     method: "POST",
@@ -2890,13 +2892,13 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
   { id: "active", label: "Active" },
   { id: "history", label: "History" },
   { id: "actions", label: "Action" },
-  { id: "ai", label: "AI" },
-  { id: "mt5", label: "Copy Trade" }
+  { id: "ai", label: "AI" }
 ];
 
 const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
   { id: "chart", label: "Chart" },
-  { id: "backtest", label: "Backtest" }
+  { id: "backtest", label: "Backtest" },
+  { id: "copytrade", label: "Copy Trading" }
 ];
 
 const backtestTabs: Array<{ id: BacktestTab; label: string }> = [
@@ -7265,6 +7267,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setMt5Error(null);
   }, [mt5Accounts.length]);
 
+  const handleStartCopyTradeFromChart = useCallback(() => {
+    setSelectedSurfaceTab("copytrade");
+    setChartContextMenu(null);
+    setMt5ContextMenu(null);
+    handleShowMt5AddForm();
+  }, [handleShowMt5AddForm]);
+
   const handleEditMt5Account = useCallback(
     (accountId: string) => {
       const targetAccount = mt5Accounts.find((account) => account.id === accountId);
@@ -7322,7 +7331,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         await createMt5AccountOnServer({
           login: nextLogin,
           password: nextPassword,
-          server: nextServer
+          server: nextServer,
+          symbol: selectedSymbol,
+          timeframe: selectedTimeframe
         });
       }
 
@@ -7344,6 +7355,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     mt5LoginInput,
     mt5PasswordInput,
     mt5ServerInput,
+    selectedSymbol,
+    selectedTimeframe,
     refreshMt5Accounts
   ]);
 
@@ -7505,6 +7518,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const chartFocusedPriceRangeResetRafRef = useRef(0);
   const chartIsApplyingVisibleRangeRef = useRef(false);
   const chartHoverCandleRef = useRef<MainChartContextMenuCandle | null>(null);
+  const chartContextMenuRef = useRef<HTMLDivElement | null>(null);
   const chartBarIndexByGaplessTimeRef = useRef<Map<number, number>>(new Map());
   const workspaceRef = useRef<HTMLElement | null>(null);
   const settingsFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -11503,6 +11517,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
     const onDown = (event: MouseEvent) => {
       if (event.button !== 2) {
+        const target = event.target as Node | null;
+        if (target && chartContextMenuRef.current?.contains(target)) {
+          return;
+        }
         close();
       }
     };
@@ -16120,14 +16138,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 {isChartDataLoading ? (
                   <ChartLoadingSpinner label="Loading chart candles..." />
                 ) : null}
-                <button
-                  type="button"
-                  className="chart-reset-btn"
-                  onClick={resetChart}
-                  title="Reset chart view (⌥R)"
-                >
-                  Reset Chart
-                </button>
+                <div className="chart-stage-actions">
+                  <button
+                    type="button"
+                    className="chart-copytrade-btn"
+                    onClick={handleStartCopyTradeFromChart}
+                    title="Open copy trade account setup"
+                  >
+                    Copy Trade
+                  </button>
+                  <button
+                    type="button"
+                    className="chart-reset-btn"
+                    onClick={resetChart}
+                    title="Reset chart view (⌥R)"
+                  >
+                    Reset Chart
+                  </button>
+                </div>
                 {chartContextMenu
                   ? (() => {
                       const { candle } = chartContextMenu;
@@ -16153,13 +16181,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         typeof window !== "undefined" ? window.innerWidth : Number.POSITIVE_INFINITY;
                       const viewportHeight =
                         typeof window !== "undefined" ? window.innerHeight : Number.POSITIVE_INFINITY;
+                      const contextMenuWidth = 250;
+                      const contextMenuHeight = 332;
                       let left = chartContextMenu.clientX + 4;
                       let top = chartContextMenu.clientY + 4;
-                      if (left + 250 > viewportWidth - 8) {
-                        left = chartContextMenu.clientX - 254;
+                      if (left + contextMenuWidth > viewportWidth - 8) {
+                        left = chartContextMenu.clientX - (contextMenuWidth + 4);
                       }
-                      if (top + 270 > viewportHeight - 8) {
-                        top = chartContextMenu.clientY - 274;
+                      if (top + contextMenuHeight > viewportHeight - 8) {
+                        top = chartContextMenu.clientY - (contextMenuHeight + 4);
                       }
                       const row = (label: string, value: string, color: string) => (
                         <div
@@ -16197,6 +16227,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
                       return (
                         <div
+                          ref={chartContextMenuRef}
                           style={{
                             position: "fixed",
                             left,
@@ -16280,6 +16311,37 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             candle.index === null ? "\u2014" : String(candle.index),
                             "rgba(255,255,255,0.35)"
                           )}
+                          <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", margin: "9px 0 8px" }} />
+                          <div
+                            style={{
+                              color: "rgba(255,255,255,0.52)",
+                              fontSize: 10,
+                              letterSpacing: "0.06em",
+                              textTransform: "uppercase",
+                              marginBottom: 6
+                            }}
+                          >
+                            {selectedSymbol} · {selectedTimeframe}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleStartCopyTradeFromChart}
+                            style={{
+                              width: "100%",
+                              border: "1px solid #3986ff",
+                              borderRadius: 8,
+                              background: "#1d3f77",
+                              color: "#deebff",
+                              fontSize: 11,
+                              fontWeight: 700,
+                              letterSpacing: "0.06em",
+                              textTransform: "uppercase",
+                              padding: "7px 10px",
+                              cursor: "pointer"
+                            }}
+                          >
+                            Copy Trade
+                          </button>
                         </div>
                       );
                     })()
@@ -16508,8 +16570,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       </div>
                       <div className="copytrade-body" onClick={() => setMt5ContextMenu(null)}>
                         <p className="copytrade-note">
-                          TradeCopier.cloud profile manager. Save up to{" "}
-                          {MAX_TRADECOPIER_ACCOUNTS} accounts here.
+                          TradeCopier.cloud profile manager. Click Copy Trade on the chart, then add
+                          your account below. Save up to {MAX_TRADECOPIER_ACCOUNTS} accounts here.
                           {mt5WorkerStatus?.tickInFlight ? " Syncing..." : ""}
                         </p>
 
@@ -16532,6 +16594,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
                         {mt5FormOpen ? (
                           <div className="copytrade-form-shell">
+                            <p className="copytrade-note copytrade-target-note">
+                              New account defaults: {selectedSymbol} · {selectedTimeframe}
+                            </p>
                             <div className="copytrade-form" aria-label="MT5 credentials form">
                               <label className="copytrade-field">
                                 <span>Account Login</span>
@@ -16867,6 +16932,226 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             </aside>
           </section>
         </div>
+
+        {selectedSurfaceTab === "copytrade" ? (
+          <section className="copytrade-surface" aria-label="copy trade workspace">
+            <div className="copytrade-surface-shell">
+              <div className="copytrade-surface-head">
+                <h2>Copy Trading</h2>
+                <p>TradeCopier.cloud onboarding and account management.</p>
+              </div>
+
+              <div className="copytrade-body copytrade-body-surface" onClick={() => setMt5ContextMenu(null)}>
+                <p className="copytrade-note">
+                  Add your MT5 login, password, and server. After linking, TradeCopier.cloud can run each
+                  account in the cloud (around $8/account plan).
+                  {mt5WorkerStatus?.tickInFlight ? " Syncing..." : ""}
+                </p>
+
+                {mt5Error ? <p className="copytrade-error-note">{mt5Error}</p> : null}
+
+                <div className="copytrade-actions" role="group" aria-label="MT5 account actions">
+                  <button
+                    type="button"
+                    className="panel-action-btn copytrade-action-btn"
+                    onClick={handleShowMt5AddForm}
+                    disabled={mt5ActionBusy || mt5Accounts.length >= MAX_TRADECOPIER_ACCOUNTS}
+                  >
+                    {mt5Syncing
+                      ? "Syncing..."
+                      : mt5Accounts.length >= MAX_TRADECOPIER_ACCOUNTS
+                        ? "Limit Reached"
+                        : "Add Account"}
+                  </button>
+                </div>
+
+                {mt5FormOpen ? (
+                  <div className="copytrade-form-shell">
+                    <p className="copytrade-note copytrade-target-note">
+                      New account defaults: {selectedSymbol} · {selectedTimeframe}
+                    </p>
+                    <div className="copytrade-form" aria-label="MT5 credentials form">
+                      <label className="copytrade-field">
+                        <span>Account Login</span>
+                        <input
+                          className="copytrade-input"
+                          type="text"
+                          name="mt5-login"
+                          placeholder="Account number"
+                          autoComplete="username"
+                          value={mt5LoginInput}
+                          onChange={(event) => setMt5LoginInput(event.target.value)}
+                          disabled={mt5ActionBusy}
+                        />
+                      </label>
+
+                      <label className="copytrade-field">
+                        <span>Account Password</span>
+                        <input
+                          className="copytrade-input"
+                          type="password"
+                          name="mt5-password"
+                          placeholder={
+                            mt5EditingAccountId
+                              ? "Leave blank to keep current password"
+                              : "Password"
+                          }
+                          autoComplete="current-password"
+                          value={mt5PasswordInput}
+                          onChange={(event) => setMt5PasswordInput(event.target.value)}
+                          disabled={mt5ActionBusy}
+                        />
+                      </label>
+
+                      <label className="copytrade-field">
+                        <span>Server</span>
+                        <input
+                          className="copytrade-input"
+                          type="text"
+                          name="mt5-server"
+                          placeholder="Broker server"
+                          autoComplete="off"
+                          value={mt5ServerInput}
+                          onChange={(event) => setMt5ServerInput(event.target.value)}
+                          disabled={mt5ActionBusy}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="copytrade-form-actions">
+                      <button
+                        type="button"
+                        className="panel-action-btn copytrade-submit"
+                        onClick={handleConnectMt5Account}
+                        disabled={mt5ActionBusy}
+                      >
+                        {mt5ActionBusy
+                          ? "Saving..."
+                          : mt5EditingAccountId
+                            ? "Save Account"
+                            : "Add Account"}
+                      </button>
+                      <button
+                        type="button"
+                        className="panel-action-btn copytrade-cancel-btn"
+                        onClick={handleCancelMt5Form}
+                        disabled={mt5ActionBusy}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {mt5Accounts.length > 0 ? (
+                  <ul className="copytrade-account-list" aria-label="MT5 accounts">
+                    {mt5Accounts.map((account) => (
+                      <li key={account.id}>
+                        <div
+                          className={`copytrade-account-row ${
+                            selectedMt5AccountId === account.id ? "selected" : ""
+                          }`}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => {
+                            setSelectedMt5AccountId(account.id);
+                            setMt5ContextMenu(null);
+                          }}
+                          onContextMenu={(event) => handleMt5AccountContextMenu(event, account.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              setSelectedMt5AccountId(account.id);
+                              setMt5ContextMenu(null);
+                            }
+                          }}
+                        >
+                          <span className="copytrade-account-main">
+                            <strong>{account.login}</strong>
+                            <small>
+                              {account.server} · {account.symbol} · {account.timeframe} ·{" "}
+                              {account.lot.toFixed(2)} lot
+                            </small>
+                            {account.lastError ? (
+                              <small className="copytrade-account-error">{account.lastError}</small>
+                            ) : null}
+                          </span>
+
+                          <span className="copytrade-account-right">
+                            <span className="copytrade-account-badges">
+                              <span
+                                className={`copytrade-status-badge ${
+                                  account.paused
+                                    ? "paused"
+                                    : account.status === "Error"
+                                      ? "error"
+                                      : account.status === "Connected"
+                                        ? "connected"
+                                        : "disconnected"
+                                }`}
+                              >
+                                {account.paused
+                                  ? "Paused"
+                                  : account.status === "Connected"
+                                    ? "Running"
+                                    : account.status}
+                              </span>
+                              {account.openPosition ? (
+                                <span className="copytrade-status-badge active">
+                                  {account.openPosition.side} #{account.openPosition.positionTicket}
+                                </span>
+                              ) : null}
+                            </span>
+                          </span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="copytrade-note">
+                    No accounts yet. Press Add Account to connect a TradeCopier cloud account.
+                  </p>
+                )}
+
+                {mt5ContextMenu && mt5ContextAccount ? (
+                  <div
+                    className="copytrade-context-menu"
+                    style={{
+                      left: `${mt5ContextMenu.clientX}px`,
+                      top: `${mt5ContextMenu.clientY}px`
+                    }}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      className="copytrade-context-item"
+                      onClick={() => handleToggleMt5Pause(mt5ContextAccount.id)}
+                      disabled={mt5ActionBusy}
+                    >
+                      {mt5ContextAccount.paused ? "Resume" : "Pause"}
+                    </button>
+                    <button
+                      type="button"
+                      className="copytrade-context-item"
+                      onClick={() => handleEditMt5Account(mt5ContextAccount.id)}
+                      disabled={mt5ActionBusy}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="copytrade-context-item copytrade-context-item-danger"
+                      onClick={() => handleRemoveMt5Account(mt5ContextAccount.id)}
+                      disabled={mt5ActionBusy}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </section>
+        ) : null}
 
         {selectedSurfaceTab === "backtest" ? (
           <section className="backtest-surface" aria-label="backtest workspace">
