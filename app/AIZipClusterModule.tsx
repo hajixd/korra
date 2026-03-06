@@ -5848,102 +5848,77 @@ function dbscan2D(points: [number, number][], eps: number, minSamples: number) {
 const clusterMapDrawOrderCache = new WeakMap<any[], any[]>();
 const clusterMapKnnEdgeCache = new WeakMap<any[], Map<string, any[]>>();
 const CLUSTER_MAP_LOW_POWER_KEY = "clusterMapLowPower";
-const CLUSTER_MAP_RENDER_PROFILE_KEY = "clusterMapRenderProfile";
+const CLUSTER_MAP_ENGINE_KEY = "clusterMapEngine";
 
-type ClusterMapRenderProfileId =
-  | "speed1"
-  | "speed2"
-  | "speed3"
-  | "speed4"
-  | "speed5";
+type ClusterMapEngineId =
+  | "auto"
+  | "canvas2d"
+  | "three-standard"
+  | "three-compat"
+  | "three-performance";
 
-type ClusterMapRenderProfile = {
-  id: ClusterMapRenderProfileId;
+type ClusterMapEngine = {
+  id: ClusterMapEngineId;
   label: string;
   hint: string;
-  lowPower: boolean;
-  knnKCap: number;
-  knnOpacityScale: number;
-  groupingOpacityScale: number;
-  showTradeLinks2d: boolean;
-  force2d: boolean;
-  nodeStride: number;
+  forcedView: "manual" | "2d" | "3d";
+  threeVariant: "standard" | "compat" | "performance";
+  lowPowerOverride: boolean | null;
 };
 
-const CLUSTER_MAP_RENDER_PROFILES: ClusterMapRenderProfile[] = [
+const CLUSTER_MAP_ENGINE_DEFAULT: ClusterMapEngineId = "auto";
+const CLUSTER_MAP_ENGINES: ClusterMapEngine[] = [
   {
-    id: "speed1",
-    label: "Speed 1 · Fast",
-    hint: "Keeps 2D/3D features with reduced link/group intensity.",
-    lowPower: true,
-    knnKCap: 10,
-    knnOpacityScale: 0.62,
-    groupingOpacityScale: 0.62,
-    showTradeLinks2d: true,
-    force2d: false,
-    nodeStride: 1,
+    id: "auto",
+    label: "Auto (Use 2D/3D Toggle)",
+    hint: "Keeps manual 2D/3D switching with current settings.",
+    forcedView: "manual",
+    threeVariant: "standard",
+    lowPowerOverride: null,
   },
   {
-    id: "speed2",
-    label: "Speed 2 · Faster",
-    hint: "Low-power renderer, lighter link/group load.",
-    lowPower: true,
-    knnKCap: 8,
-    knnOpacityScale: 0.48,
-    groupingOpacityScale: 0.38,
-    showTradeLinks2d: true,
-    force2d: false,
-    nodeStride: 1,
+    id: "canvas2d",
+    label: "Canvas 2D Engine",
+    hint: "CPU canvas renderer only (no WebGL).",
+    forcedView: "2d",
+    threeVariant: "standard",
+    lowPowerOverride: null,
   },
   {
-    id: "speed3",
-    label: "Speed 3 · Turbo (No KNN)",
-    hint: "Disables KNN links and sparsifies background nodes.",
-    lowPower: true,
-    knnKCap: 0,
-    knnOpacityScale: 0,
-    groupingOpacityScale: 0.28,
-    showTradeLinks2d: true,
-    force2d: false,
-    nodeStride: 2,
+    id: "three-standard",
+    label: "Three.js WebGL Standard",
+    hint: "Default Three.js WebGL renderer.",
+    forcedView: "3d",
+    threeVariant: "standard",
+    lowPowerOverride: null,
   },
   {
-    id: "speed4",
-    label: "Speed 4 · Turbo 2D",
-    hint: "Forces 2D and disables KNN/group overlays + trade links.",
-    lowPower: true,
-    knnKCap: 0,
-    knnOpacityScale: 0,
-    groupingOpacityScale: 0,
-    showTradeLinks2d: false,
-    force2d: true,
-    nodeStride: 2,
+    id: "three-compat",
+    label: "Three.js WebGL Compatibility",
+    hint: "Safer WebGL context settings for older GPUs.",
+    forcedView: "3d",
+    threeVariant: "compat",
+    lowPowerOverride: true,
   },
   {
-    id: "speed5",
-    label: "Speed 5 · Ultra 2D",
-    hint: "Most aggressive: 2D-only with sparse node rendering.",
-    lowPower: true,
-    knnKCap: 0,
-    knnOpacityScale: 0,
-    groupingOpacityScale: 0,
-    showTradeLinks2d: false,
-    force2d: true,
-    nodeStride: 3,
+    id: "three-performance",
+    label: "Three.js WebGL Performance",
+    hint: "Higher-throughput WebGL profile with reduced overhead.",
+    forcedView: "3d",
+    threeVariant: "performance",
+    lowPowerOverride: false,
   },
 ];
 
-const CLUSTER_MAP_RENDER_PROFILE_DEFAULT: ClusterMapRenderProfileId = "speed2";
-
-function getClusterMapRenderProfile(id: any): ClusterMapRenderProfile {
-  const key = String(id ?? "").trim() as ClusterMapRenderProfileId;
-  for (const p of CLUSTER_MAP_RENDER_PROFILES) {
-    if (p.id === key) return p;
+function getClusterMapEngine(id: any): ClusterMapEngine {
+  const key = String(id ?? "").trim();
+  for (const engine of CLUSTER_MAP_ENGINES) {
+    if (engine.id === key) return engine;
   }
-  for (const p of CLUSTER_MAP_RENDER_PROFILES) {
-    if (p.id === CLUSTER_MAP_RENDER_PROFILE_DEFAULT) return p;
+  for (const engine of CLUSTER_MAP_ENGINES) {
+    if (engine.id === CLUSTER_MAP_ENGINE_DEFAULT) return engine;
   }
-  return CLUSTER_MAP_RENDER_PROFILES[0];
+  return CLUSTER_MAP_ENGINES[0];
 }
 
 function normalizeClusterMapToken(v: any): string | null {
@@ -6404,7 +6379,6 @@ function drawClusterMapCanvas(
     0,
     Math.min(1, Number((renderOpts as any)?.knnLinkOpacity ?? 0.34))
   );
-  const showTradeLinks2d = (renderOpts as any)?.showTradeLinks2d !== false;
   const aiMethod2d = String((renderOpts as any)?.aiMethod ?? "").toLowerCase();
   const selectedIdRaw = (renderOpts as any)?.selectedId;
   const normalizeId = (v: any): string | null => {
@@ -7352,65 +7326,63 @@ function drawClusterMapCanvas(
     for (const n of bgNodes) drawOne(n);
 
     // Open ↔ Live links (thinner, and above background nodes)
-    if (showTradeLinks2d) {
-      ctx.save();
-      for (const n of nodes) {
-        if (n.kind === "close" && (n as any).parentId) {
-          const parentId = normalizeId((n as any).parentId);
-          const childId = normalizeId((n as any).id);
-          const parent = parentId ? screenPositions[parentId] : null;
-          const child = childId ? screenPositions[childId] : null;
-          if (parent && child) {
-            const ek =
-              parentId != null && childId != null
-                ? edgeKey(parentId, childId)
-                : null;
-            const selectedEdge =
-              ek != null &&
-              selectedLinkEdgeKey != null &&
-              ek === selectedLinkEdgeKey &&
-              (selectedLinkType === "open-close" || selectedLinkType === "");
-            const focusedLink =
-              focusModeActive &&
-              (isNodeInFocus(parentId) || isNodeInFocus(childId));
-            if (selectedEdge) {
-              ctx.lineWidth = lowPowerMode ? 2.8 : 4.3;
-              ctx.strokeStyle = "rgba(255,222,132,0.98)";
-              if (!lowPowerMode) {
-                ctx.shadowColor = "rgba(255,224,130,0.8)";
-                ctx.shadowBlur = 12;
-              }
-            } else if (focusModeActive && !focusedLink) {
-              ctx.lineWidth = lowPowerMode ? 1.05 : 1.35;
-              ctx.strokeStyle = "rgba(120,120,120,0.2)";
-              if (!lowPowerMode) ctx.shadowBlur = 0;
-            } else if (focusModeActive) {
-              const col = hasKnnFocusSet
-                ? "rgba(125,225,255,0.9)"
-                : "rgba(255,170,230,0.9)";
-              ctx.lineWidth = lowPowerMode ? 2.6 : 4.5;
-              ctx.strokeStyle = col;
-              if (!lowPowerMode) {
-                ctx.shadowColor = col;
-                ctx.shadowBlur = 10;
-              }
-            } else {
-              ctx.lineWidth = lowPowerMode ? 2.2 : 4;
-              ctx.strokeStyle = "rgba(255,80,220,0.86)";
-              if (!lowPowerMode) {
-                ctx.shadowColor = "rgba(255,80,220,0.45)";
-                ctx.shadowBlur = 9;
-              }
+    ctx.save();
+    for (const n of nodes) {
+      if (n.kind === "close" && (n as any).parentId) {
+        const parentId = normalizeId((n as any).parentId);
+        const childId = normalizeId((n as any).id);
+        const parent = parentId ? screenPositions[parentId] : null;
+        const child = childId ? screenPositions[childId] : null;
+        if (parent && child) {
+          const ek =
+            parentId != null && childId != null
+              ? edgeKey(parentId, childId)
+              : null;
+          const selectedEdge =
+            ek != null &&
+            selectedLinkEdgeKey != null &&
+            ek === selectedLinkEdgeKey &&
+            (selectedLinkType === "open-close" || selectedLinkType === "");
+          const focusedLink =
+            focusModeActive &&
+            (isNodeInFocus(parentId) || isNodeInFocus(childId));
+          if (selectedEdge) {
+            ctx.lineWidth = lowPowerMode ? 2.8 : 4.3;
+            ctx.strokeStyle = "rgba(255,222,132,0.98)";
+            if (!lowPowerMode) {
+              ctx.shadowColor = "rgba(255,224,130,0.8)";
+              ctx.shadowBlur = 12;
             }
-            ctx.beginPath();
-            ctx.moveTo(parent.sx, parent.sy);
-            ctx.lineTo(child.sx, child.sy);
-            ctx.stroke();
+          } else if (focusModeActive && !focusedLink) {
+            ctx.lineWidth = lowPowerMode ? 1.05 : 1.35;
+            ctx.strokeStyle = "rgba(120,120,120,0.2)";
+            if (!lowPowerMode) ctx.shadowBlur = 0;
+          } else if (focusModeActive) {
+            const col = hasKnnFocusSet
+              ? "rgba(125,225,255,0.9)"
+              : "rgba(255,170,230,0.9)";
+            ctx.lineWidth = lowPowerMode ? 2.6 : 4.5;
+            ctx.strokeStyle = col;
+            if (!lowPowerMode) {
+              ctx.shadowColor = col;
+              ctx.shadowBlur = 10;
+            }
+          } else {
+            ctx.lineWidth = lowPowerMode ? 2.2 : 4;
+            ctx.strokeStyle = "rgba(255,80,220,0.86)";
+            if (!lowPowerMode) {
+              ctx.shadowColor = "rgba(255,80,220,0.45)";
+              ctx.shadowBlur = 9;
+            }
           }
+          ctx.beginPath();
+          ctx.moveTo(parent.sx, parent.sy);
+          ctx.lineTo(child.sx, child.sy);
+          ctx.stroke();
         }
       }
-      ctx.restore();
     }
+    ctx.restore();
 
     // Top nodes last (Open Trades + Live Trade points + Potential)
     for (const n of topNodes) drawOne(n);
@@ -7533,6 +7505,7 @@ function ClusterMapViewport3D({
   searchHighlightId,
   resetKey,
   lowPowerMode,
+  engineVariant = "standard",
   hdbOverlay,
   showGroupOverlays,
   groupOverlayOpacity,
@@ -7554,6 +7527,7 @@ function ClusterMapViewport3D({
   searchHighlightId: string | null;
   resetKey: number;
   lowPowerMode: boolean;
+  engineVariant?: "standard" | "compat" | "performance";
   hdbOverlay: any;
   showGroupOverlays: boolean;
   groupOverlayOpacity: number;
@@ -7753,22 +7727,29 @@ function ClusterMapViewport3D({
     if (!canvas) return;
 
     let renderer: any = null;
+    const variant = String(engineVariant || "standard").toLowerCase();
+    const compatMode = variant === "compat";
+    const performanceMode = variant === "performance";
     try {
       renderer = new (THREE as any).WebGLRenderer({
         canvas,
-        antialias: !lowPowerMode,
+        antialias: compatMode ? false : performanceMode ? false : !lowPowerMode,
         alpha: false,
-        powerPreference: "high-performance",
+        powerPreference: compatMode ? "low-power" : "high-performance",
+        failIfMajorPerformanceCaveat: compatMode,
+        precision: compatMode ? "lowp" : "mediump",
       });
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : String(error));
       return;
     }
     setRuntimeError(null);
+    const dprRaw = window.devicePixelRatio || 1;
+    const dprCap = compatMode ? 1 : performanceMode ? 1.35 : 2;
     renderer.setPixelRatio(
       lowPowerMode
-        ? Math.min(1, window.devicePixelRatio || 1)
-        : Math.min(2, window.devicePixelRatio || 1)
+        ? Math.min(1, dprRaw)
+        : Math.min(dprCap, dprRaw)
     );
     renderer.outputColorSpace = (THREE as any).SRGBColorSpace;
     if ((THREE as any).NoToneMapping != null) {
@@ -8183,6 +8164,7 @@ function ClusterMapViewport3D({
     onSelectionIdsChange,
     requestRender,
     lowPowerMode,
+    engineVariant,
   ]);
 
   useEffect(() => {
@@ -9464,35 +9446,48 @@ export function ClusterMap({
   const [heatmapOn, setHeatmapOn] = useState(false);
   const [heatHoverLive, setHeatHover] = useState<null | any>(null);
   const heatmapRef = useRef<any>(null);
-  const [renderProfileId, setRenderProfileId] = useState<ClusterMapRenderProfileId>(
+  const [clusterMapEngineId, setClusterMapEngineId] = useState<ClusterMapEngineId>(
     () => {
-      if (typeof window === "undefined") return CLUSTER_MAP_RENDER_PROFILE_DEFAULT;
+      if (typeof window === "undefined") return CLUSTER_MAP_ENGINE_DEFAULT;
       try {
-        const rawProfile = localStorage.getItem(CLUSTER_MAP_RENDER_PROFILE_KEY);
-        if (rawProfile != null) {
-          return getClusterMapRenderProfile(rawProfile).id;
-        }
-        const rawLowPower = localStorage.getItem(CLUSTER_MAP_LOW_POWER_KEY);
-        if (rawLowPower != null) {
-          const v = String(rawLowPower).trim().toLowerCase();
-          const low = v === "1" || v === "true" || v === "on";
-          return low ? "speed2" : "speed1";
-        }
-      } catch {}
-      return CLUSTER_MAP_RENDER_PROFILE_DEFAULT;
+        const raw = localStorage.getItem(CLUSTER_MAP_ENGINE_KEY);
+        if (raw == null) return CLUSTER_MAP_ENGINE_DEFAULT;
+        return getClusterMapEngine(raw).id;
+      } catch {
+        return CLUSTER_MAP_ENGINE_DEFAULT;
+      }
     }
   );
-  const renderProfile = useMemo(
-    () => getClusterMapRenderProfile(renderProfileId),
-    [renderProfileId]
+  const clusterMapEngine = useMemo(
+    () => getClusterMapEngine(clusterMapEngineId),
+    [clusterMapEngineId]
   );
-  const lowPowerMode = !!renderProfile.lowPower;
   useEffect(() => {
     try {
-      localStorage.setItem(CLUSTER_MAP_RENDER_PROFILE_KEY, renderProfileId);
-      localStorage.setItem(CLUSTER_MAP_LOW_POWER_KEY, lowPowerMode ? "1" : "0");
+      localStorage.setItem(CLUSTER_MAP_ENGINE_KEY, clusterMapEngine.id);
     } catch {}
-  }, [renderProfileId, lowPowerMode]);
+  }, [clusterMapEngine.id]);
+
+  const [lowPowerModeUser, setLowPowerModeUser] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const raw = localStorage.getItem(CLUSTER_MAP_LOW_POWER_KEY);
+      if (raw == null) return false;
+      const v = String(raw).trim().toLowerCase();
+      return v === "1" || v === "true" || v === "on";
+    } catch {
+      return false;
+    }
+  });
+  const lowPowerMode =
+    clusterMapEngine.lowPowerOverride == null
+      ? lowPowerModeUser
+      : clusterMapEngine.lowPowerOverride;
+  useEffect(() => {
+    try {
+      localStorage.setItem(CLUSTER_MAP_LOW_POWER_KEY, lowPowerModeUser ? "1" : "0");
+    } catch {}
+  }, [lowPowerModeUser]);
 
   // Pinning: click the map to freeze hover coords (top-center) and heatmap stats (top-left).
   // Press Escape to clear the pin and resume live hover.
@@ -9512,10 +9507,12 @@ export function ClusterMap({
     setPinnedHeatHover(null);
   }, [lowPowerMode]);
   useEffect(() => {
-    if (!renderProfile.force2d) return;
-    if (clusterMapView !== "3d") return;
+    if (clusterMapEngine.forcedView === "manual") return;
+    const target3d = clusterMapEngine.forcedView === "3d";
+    const is3d = clusterMapView === "3d";
+    if (target3d === is3d) return;
     onToggleClusterMapView();
-  }, [renderProfile.force2d, clusterMapView, onToggleClusterMapView]);
+  }, [clusterMapEngine.forcedView, clusterMapView, onToggleClusterMapView]);
 
   // Track whether the mouse is currently over the map so WASD/arrow panning doesn't steal keys elsewhere.
   const mapFocusRef = useRef(false);
@@ -11204,34 +11201,8 @@ export function ClusterMap({
     Math.max(0, Math.min(36, Math.floor(Number(K_ENTRY) || 0)))
   );
   const [knnLinkOpacity, setKnnLinkOpacity] = React.useState(0.36);
-  const renderForce2d = !!(renderProfile as any)?.force2d;
-  const effectiveKnnLinkK = Math.max(
-    0,
-    Math.min(
-      Math.max(0, Math.floor(Number((renderProfile as any)?.knnKCap) || 0)),
-      Math.floor(Number(knnLinkK) || 0)
-    )
-  );
-  const effectiveKnnLinkOpacity =
-    Math.max(0, Math.min(1, Number(knnLinkOpacity) || 0)) *
-    Math.max(0, Math.min(1, Number((renderProfile as any)?.knnOpacityScale) || 0));
-  const effectiveGroupOverlayOpacity =
-    Math.max(0, Math.min(5, Number(groupOverlayOpacity) || 0)) *
-    Math.max(
-      0,
-      Math.min(1, Number((renderProfile as any)?.groupingOpacityScale) || 0)
-    );
-  const knnDisabledByProfile =
-    effectiveKnnLinkK <= 0 ||
-    Math.max(0, Math.min(1, Number((renderProfile as any)?.knnOpacityScale) || 0)) <=
-      0;
-  const groupingDisabledByProfile =
-    Math.max(
-      0,
-      Math.min(1, Number((renderProfile as any)?.groupingOpacityScale) || 0)
-    ) <= 0;
-  const showGroupOverlays = effectiveGroupOverlayOpacity > 0;
-  const showTradeLinks2d = (renderProfile as any)?.showTradeLinks2d !== false;
+  const showGroupOverlays = (Number(groupOverlayOpacity) || 0) > 0;
+  const effectiveGroupOverlayOpacity = lowPowerMode ? 0 : groupOverlayOpacity;
   const suppressedLibraryActive = React.useMemo(() => {
     const libs = Array.isArray(activeLibraries) ? (activeLibraries as any[]) : [];
     for (const v of libs) {
@@ -11242,22 +11213,13 @@ export function ClusterMap({
   const drawRenderOpts = React.useMemo(
     () => ({
       lowPowerMode,
-      knnLinkK: effectiveKnnLinkK,
-      knnLinkOpacity: effectiveKnnLinkOpacity,
-      showTradeLinks2d,
+      knnLinkK,
+      knnLinkOpacity,
       aiMethod,
       selectedId,
       selectedLink,
     }),
-    [
-      lowPowerMode,
-      effectiveKnnLinkK,
-      effectiveKnnLinkOpacity,
-      showTradeLinks2d,
-      aiMethod,
-      selectedId,
-      selectedLink,
-    ]
+    [lowPowerMode, knnLinkK, knnLinkOpacity, aiMethod, selectedId, selectedLink]
   );
   const [nodeSizeMul, setNodeSizeMul] = React.useState(1);
   const [nodeOutlineMul, setNodeOutlineMul] = React.useState(1);
@@ -12768,32 +12730,8 @@ export function ClusterMap({
 
       out.push(n);
     }
-    const stride = Math.max(
-      1,
-      Math.min(8, Math.floor(Number((renderProfile as any)?.nodeStride) || 1))
-    );
-    if (stride <= 1 || out.length <= 3) return out;
-
-    const sampled: any[] = [];
-    for (let i = 0; i < out.length; i++) {
-      const n = out[i];
-      const kind = String((n as any)?.kind || "").toLowerCase();
-      const isLib =
-        kind === "library" ||
-        (n as any)?.libId != null ||
-        String((n as any)?.id || "").startsWith("lib|");
-      const isTop =
-        kind === "close" ||
-        kind === "potential" ||
-        (!!(n as any)?.isOpen && kind === "trade" && !isLib);
-      const isPinned =
-        (selectedId != null && String((n as any)?.id) === String(selectedId)) ||
-        (searchHighlightId != null &&
-          String((n as any)?.id) === String(searchHighlightId));
-      if (isTop || isPinned || i % stride === 0) sampled.push(n);
-    }
-    return sampled.length > 0 ? sampled : out;
-  }, [timelineNodesCheat, legendToggles, renderProfile, selectedId, searchHighlightId]);
+    return out;
+  }, [timelineNodesCheat, legendToggles]);
   const selectedNodeRaw = useMemo(() => {
     if (!selectedId) return null;
     return displayNodesRaw.find((n) => n.id === selectedId) || null;
@@ -15164,7 +15102,6 @@ export function ClusterMap({
         0,
         Math.min(1, Number((drawRenderOpts as any)?.knnLinkOpacity ?? 0.34))
       );
-      const showTradeLinksNow = (drawRenderOpts as any)?.showTradeLinks2d !== false;
       const effectiveK = knnK;
       const tolPx = 8.5;
 
@@ -15210,12 +15147,10 @@ export function ClusterMap({
         }
       }
 
-      if (showTradeLinksNow) {
-        for (const n of displayNodes as any[]) {
-          if (!n) continue;
-          if (String((n as any).kind ?? "").toLowerCase() !== "close") continue;
-          considerLink("open-close", (n as any).parentId, (n as any).id, null);
-        }
+      for (const n of displayNodes as any[]) {
+        if (!n) continue;
+        if (String((n as any).kind ?? "").toLowerCase() !== "close") continue;
+        considerLink("open-close", (n as any).parentId, (n as any).id, null);
       }
 
       return best?.link ?? null;
@@ -16852,7 +16787,7 @@ export function ClusterMap({
             </button>
             <button
               onClick={() => {
-                if (renderForce2d && clusterMapView !== "3d") return;
+                if (clusterMapEngine.forcedView !== "manual") return;
                 onToggleClusterMapView();
               }}
               style={{
@@ -16864,20 +16799,49 @@ export function ClusterMap({
                 fontSize: 11,
                 fontWeight: 900,
                 cursor:
-                  renderForce2d && clusterMapView !== "3d"
-                    ? "not-allowed"
-                    : "pointer",
-                opacity: renderForce2d && clusterMapView !== "3d" ? 0.55 : 1,
+                  clusterMapEngine.forcedView === "manual"
+                    ? "pointer"
+                    : "not-allowed",
+                opacity: clusterMapEngine.forcedView === "manual" ? 1 : 0.6,
               }}
               title={
-                renderForce2d
-                  ? clusterMapView === "3d"
-                    ? "Force-2D profile active: switch back to 2D"
-                    : "Force-2D profile active: 3D disabled in this render mode"
-                  : "Toggle 2D / 3D (V)"
+                clusterMapEngine.forcedView === "manual"
+                  ? "Toggle 2D / 3D (V)"
+                  : `Locked by Engine (${clusterMapEngine.label})`
               }
             >
               {clusterMapView === "3d" ? "2D" : "3D"}
+            </button>
+            <button
+              onClick={() => {
+                if (clusterMapEngine.lowPowerOverride != null) return;
+                setLowPowerModeUser((v) => !v);
+              }}
+              style={{
+                border: lowPowerMode
+                  ? "1px solid rgba(120,255,150,0.55)"
+                  : "1px solid rgba(255,255,255,0.18)",
+                background: lowPowerMode
+                  ? "rgba(40,130,70,0.28)"
+                  : "rgba(0,0,0,0.35)",
+                color: "rgba(255,255,255,0.92)",
+                borderRadius: 10,
+                padding: "6px 10px",
+                fontSize: 11,
+                fontWeight: 900,
+                cursor:
+                  clusterMapEngine.lowPowerOverride == null
+                    ? "pointer"
+                    : "not-allowed",
+                opacity: clusterMapEngine.lowPowerOverride == null ? 1 : 0.6,
+              }}
+              title={
+                clusterMapEngine.lowPowerOverride == null
+                  ? "Aggressive performance mode for weak GPUs/CPUs"
+                  : "Low-Power state is controlled by selected Engine"
+              }
+            >
+              Low-Power {lowPowerMode ? "ON" : "OFF"}
             </button>
 
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -17093,6 +17057,7 @@ export function ClusterMap({
             searchHighlightId={searchHighlightId}
             resetKey={resetKey}
             lowPowerMode={lowPowerMode}
+            engineVariant={clusterMapEngine.threeVariant}
             hdbOverlay={hdbOverlay}
             showGroupOverlays={showGroupOverlays}
             groupOverlayOpacity={effectiveGroupOverlayOpacity}
@@ -17102,8 +17067,8 @@ export function ClusterMap({
             heatmapSmoothness={heatmapSmoothness}
             nodeSizeMul={nodeSizeMul}
             nodeOutlineMul={nodeOutlineMul}
-            knnLinkK={effectiveKnnLinkK}
-            knnLinkOpacity={effectiveKnnLinkOpacity}
+            knnLinkK={knnLinkK}
+            knnLinkOpacity={knnLinkOpacity}
             mapSpreadMul={mapSpreadMul}
             onSelectId={handle3dSelectId}
             onSelectionIdsChange={handle3dSelectionIds}
@@ -19087,7 +19052,7 @@ export function ClusterMap({
               <span
                 style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}
               >
-                {Math.round((Number(effectiveGroupOverlayOpacity) || 0) * 100)}%
+                {Math.round((Number(groupOverlayOpacity) || 0) * 100)}%
               </span>
             </div>
             <input
@@ -19099,21 +19064,14 @@ export function ClusterMap({
               onChange={(e) =>
                 setGroupOverlayOpacity(Number((e as any).target.value))
               }
-              disabled={groupingDisabledByProfile}
               className="theme-slider"
               style={{
                 ...sliderVars(groupOverlayOpacity, 0, 5),
                 width: "100%",
                 height: 6,
-                cursor: groupingDisabledByProfile ? "not-allowed" : "pointer",
-                opacity: groupingDisabledByProfile ? 0.55 : 1,
+                cursor: "pointer",
               }}
             />
-            <div style={{ marginTop: 3, fontSize: 9, opacity: 0.72 }}>
-              {groupingDisabledByProfile
-                ? "Disabled by selected render mode."
-                : "Cluster grouping overlay intensity."}
-            </div>
           </div>
 
           <div
@@ -19135,7 +19093,7 @@ export function ClusterMap({
               <span>KNN Link Opacity</span>
               <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>
                 {Math.round(
-                  Math.max(0, Math.min(1, Number(effectiveKnnLinkOpacity) || 0)) * 100
+                  Math.max(0, Math.min(1, Number(knnLinkOpacity) || 0)) * 100
                 )}
                 %
               </span>
@@ -19149,20 +19107,16 @@ export function ClusterMap({
               onChange={(e) =>
                 setKnnLinkOpacity(Number((e as any).target.value))
               }
-              disabled={knnDisabledByProfile}
               className="theme-slider"
               style={{
                 ...sliderVars(knnLinkOpacity, 0, 1),
                 width: "100%",
                 height: 6,
-                cursor: knnDisabledByProfile ? "not-allowed" : "pointer",
-                opacity: knnDisabledByProfile ? 0.55 : 1,
+                cursor: "pointer",
               }}
             />
             <div style={{ marginTop: 3, fontSize: 9, opacity: 0.72 }}>
-              {knnDisabledByProfile
-                ? "Disabled by selected render mode."
-                : "Topology count follows K Entry. Nearer neighbors render thicker."}
+              Topology count follows K Entry. Nearer neighbors render thicker.
             </div>
           </div>
 
@@ -19171,7 +19125,7 @@ export function ClusterMap({
             style={{
               padding: "8px 10px",
               background:
-                "linear-gradient(180deg, rgba(22,38,24,0.66), rgba(8,18,10,0.72))",
+                "linear-gradient(180deg, rgba(22,40,58,0.66), rgba(8,16,28,0.72))",
             }}
           >
             <div
@@ -19183,16 +19137,18 @@ export function ClusterMap({
                 marginBottom: 6,
               }}
             >
-              <span>Render Mode</span>
+              <span>Engine</span>
               <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>
-                {renderProfile.lowPower ? "Low-Power" : "Balanced"}
+                {clusterMapEngine.forcedView === "manual"
+                  ? "Manual View"
+                  : clusterMapEngine.forcedView.toUpperCase()}
               </span>
             </div>
             <select
-              value={renderProfileId}
+              value={clusterMapEngineId}
               onChange={(e) =>
-                setRenderProfileId(
-                  getClusterMapRenderProfile((e as any)?.target?.value).id
+                setClusterMapEngineId(
+                  getClusterMapEngine((e as any)?.target?.value).id
                 )
               }
               style={{
@@ -19202,14 +19158,14 @@ export function ClusterMap({
                 padding: "7px 9px",
               }}
             >
-              {CLUSTER_MAP_RENDER_PROFILES.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
+              {CLUSTER_MAP_ENGINES.map((engine) => (
+                <option key={engine.id} value={engine.id}>
+                  {engine.label}
                 </option>
               ))}
             </select>
             <div style={{ marginTop: 6, fontSize: 9, opacity: 0.72 }}>
-              {renderProfile.hint}
+              {clusterMapEngine.hint}
             </div>
           </div>
 
