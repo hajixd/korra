@@ -6081,6 +6081,14 @@ function drawClusterMapCanvas(
   const selectedGroupId = normalizeGroupId(selectedGroup);
   const hoveredGroupId = normalizeGroupId(hoveredGroup);
   const edgeKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const selectedLinkRaw = ((renderOpts as any)?.selectedLink as any) || null;
+  const selectedLinkType = String((selectedLinkRaw as any)?.type ?? "").toLowerCase();
+  const selectedLinkAId = normalizeId((selectedLinkRaw as any)?.aId);
+  const selectedLinkBId = normalizeId((selectedLinkRaw as any)?.bId);
+  const selectedLinkEdgeKey =
+    selectedLinkAId && selectedLinkBId
+      ? edgeKey(selectedLinkAId, selectedLinkBId)
+      : null;
   const matchesNodeId = (n: any, id: string) =>
     String((n as any)?.id ?? "") === id ||
     String((n as any)?.uid ?? "") === id ||
@@ -6793,13 +6801,21 @@ function drawClusterMapCanvas(
           if (!Number.isFinite(d)) continue;
           const tRaw = 1 - (d - minD) / den; // near => 1, far => 0
           const t = Math.max(0, Math.min(1, tRaw));
+          const ek = edgeKey(aId, bId);
+          const selectedEdge =
+            selectedLinkEdgeKey != null &&
+            selectedLinkEdgeKey === ek &&
+            (selectedLinkType === "knn" || selectedLinkType === "");
           const focusedEdge =
-            knnFocusActive && knnFocusEdgeIds.has(edgeKey(aId, bId));
+            selectedEdge || (knnFocusActive && knnFocusEdgeIds.has(ek));
           const dimEdge = knnFocusActive && !focusedEdge;
           let col = "";
           let width = 1;
 
-          if (dimEdge) {
+          if (selectedEdge) {
+            col = "rgba(255,222,132,0.98)";
+            width = lowPowerMode ? 2.6 : 3.9;
+          } else if (dimEdge) {
             const alpha = lowPowerMode ? 0.08 : 0.12;
             col = `rgba(110,110,110,${alpha})`;
             width = lowPowerMode ? 0.65 : 0.85;
@@ -6823,7 +6839,10 @@ function drawClusterMapCanvas(
           ctx.lineWidth = width;
           ctx.strokeStyle = col;
           if (!lowPowerMode) {
-            if (focusedEdge) {
+            if (selectedEdge) {
+              ctx.shadowColor = "rgba(255,225,135,0.8)";
+              ctx.shadowBlur = 16;
+            } else if (focusedEdge) {
               ctx.shadowColor = col;
               ctx.shadowBlur = 14;
             } else {
@@ -6934,14 +6953,6 @@ function drawClusterMapCanvas(
         outline = n.dir === 1 ? "rgba(30,180,80,1.0)" : "rgba(180,50,50,1.0)";
       }
 
-      if (dimNode) {
-        fill = "rgba(102,102,102,0.28)";
-        outline = "rgba(132,132,132,0.35)";
-      }
-      if (!isSearch && !isSelectedNode && isKnnNeighbor) {
-        fill = "rgba(95,205,255,0.94)";
-        outline = "rgba(220,245,255,0.98)";
-      }
       if (!isSearch && !isSelectedNode && !isKnnNeighbor && isHdbFocused) {
         outline = "rgba(245,245,245,0.9)";
       }
@@ -6962,6 +6973,7 @@ function drawClusterMapCanvas(
       // Glow for potential + open trades (but not libraries)
       if (
         !lowPowerMode &&
+        !dimNode &&
         (isSearch ||
           isSelectedNode ||
           isKnnNeighbor ||
@@ -6977,7 +6989,7 @@ function drawClusterMapCanvas(
         if (isSearch || isSelectedNode) {
           glowColor = "rgba(255,255,255,0.44)";
         } else if (isKnnNeighbor) {
-          glowColor = "rgba(95,220,255,0.42)";
+          glowColor = "rgba(255,255,255,0.24)";
         } else if (isHdbFocused) {
           glowColor = "rgba(240,240,255,0.33)";
         } else if (kind === "potential") {
@@ -6991,18 +7003,30 @@ function drawClusterMapCanvas(
         ctx.fill();
       }
 
-      const focusScale = isSelectedNode ? 1.34 : isKnnNeighbor ? 1.16 : isHdbFocused ? 1.06 : 1;
+      const focusScale =
+        isSelectedNode ? 1.34 : isKnnNeighbor ? 1.09 : isHdbFocused ? 1.06 : 1;
+      const baseRadius = r * (isHovered ? 1.25 : 1.0) * focusScale;
+      ctx.save();
+      ctx.globalAlpha = dimNode ? 0.36 : 1;
       ctx.beginPath();
-      ctx.arc(sx, sy, r * (isHovered ? 1.25 : 1.0) * focusScale, 0, Math.PI * 2);
+      ctx.arc(sx, sy, baseRadius, 0, Math.PI * 2);
       ctx.fillStyle = fill;
       ctx.fill();
       const outlineBase = lowPowerMode ? (isHovered ? 2.2 : 1.1) : isHovered ? 4 : 2;
-      const focusOutlineMul = isSelectedNode ? 1.85 : isKnnNeighbor ? 1.4 : isHdbFocused ? 1.2 : 1;
-      const dimOutlineMul = dimNode ? 0.72 : 1;
+      const focusOutlineMul =
+        isSelectedNode ? 1.85 : isKnnNeighbor ? 1.28 : isHdbFocused ? 1.2 : 1;
+      const dimOutlineMul = dimNode ? 0.82 : 1;
       ctx.lineWidth =
         outlineBase * (Number(nodeOutlineMul) || 1) * focusOutlineMul * dimOutlineMul;
       ctx.strokeStyle = outline;
       ctx.stroke();
+      if (dimNode) {
+        ctx.beginPath();
+        ctx.arc(sx, sy, Math.max(2.2, baseRadius * 1.02), 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(58,58,58,0.28)";
+        ctx.fill();
+      }
+      ctx.restore();
 
       if (!dimNode && (isSelectedNode || isKnnNeighbor || isHdbFocused)) {
         const ringR =
@@ -7013,11 +7037,11 @@ function drawClusterMapCanvas(
         ctx.strokeStyle = isSelectedNode
           ? "rgba(255,255,255,0.95)"
           : isKnnNeighbor
-          ? "rgba(170,235,255,0.92)"
+          ? "rgba(245,245,245,0.9)"
           : "rgba(245,245,245,0.72)";
         if (!lowPowerMode) {
           ctx.shadowColor = isKnnNeighbor
-            ? "rgba(110,220,255,0.45)"
+            ? "rgba(255,255,255,0.34)"
             : "rgba(255,255,255,0.36)";
           ctx.shadowBlur = 8;
         }
@@ -7043,10 +7067,26 @@ function drawClusterMapCanvas(
         const parent = parentId ? screenPositions[parentId] : null;
         const child = childId ? screenPositions[childId] : null;
         if (parent && child) {
+          const ek =
+            parentId != null && childId != null
+              ? edgeKey(parentId, childId)
+              : null;
+          const selectedEdge =
+            ek != null &&
+            selectedLinkEdgeKey != null &&
+            ek === selectedLinkEdgeKey &&
+            (selectedLinkType === "open-close" || selectedLinkType === "");
           const focusedLink =
             focusModeActive &&
             (isNodeInFocus(parentId) || isNodeInFocus(childId));
-          if (focusModeActive && !focusedLink) {
+          if (selectedEdge) {
+            ctx.lineWidth = lowPowerMode ? 2.8 : 4.3;
+            ctx.strokeStyle = "rgba(255,222,132,0.98)";
+            if (!lowPowerMode) {
+              ctx.shadowColor = "rgba(255,224,130,0.8)";
+              ctx.shadowBlur = 12;
+            }
+          } else if (focusModeActive && !focusedLink) {
             ctx.lineWidth = lowPowerMode ? 1.05 : 1.35;
             ctx.strokeStyle = "rgba(120,120,120,0.2)";
             if (!lowPowerMode) ctx.shadowBlur = 0;
@@ -9096,6 +9136,7 @@ export function ClusterMap({
   const redrawRef = useRef(() => {});
   const [hoveredId, setHoveredId] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
+  const [selectedLink, setSelectedLink] = useState<any>(null);
   const [hoveredGroup, setHoveredGroup] = useState<any>(null);
   const [selectedGroup, setSelectedGroup] = useState<any>(null);
   const hoveredGroupRef = useRef<any>(null);
@@ -9880,7 +9921,18 @@ export function ClusterMap({
         label: pnl >= 0 ? 1 : -1,
         closestCluster: t.closestCluster,
         closestClusterUid: (t as any).closestClusterUid ?? null,
-        entryMargin: (t as any).entryMargin ?? null,
+        entryMargin:
+          (t as any).entryMargin ??
+          (t as any).entryConfidence ??
+          (t as any).aiConfidence ??
+          (t as any).confidence ??
+          (t as any).margin ??
+          null,
+        entryConfidence: (t as any).entryConfidence ?? null,
+        aiConfidence: (t as any).aiConfidence ?? null,
+        confidence: (t as any).confidence ?? null,
+        aiMargin: (t as any).aiMargin ?? null,
+        margin: (t as any).margin ?? null,
         aiMode: (t as any).aiMode ?? null,
         chunkType: t.chunkType,
         exitReason: t.exitReason,
@@ -10004,7 +10056,18 @@ export function ClusterMap({
           libId: "suppressed",
           metaLib: "suppressed",
           uid,
-          entryMargin: Number((g as any).margin),
+          entryMargin:
+            (g as any).entryMargin ??
+            (g as any).entryConfidence ??
+            (g as any).aiConfidence ??
+            (g as any).confidence ??
+            (g as any).margin ??
+            null,
+          entryConfidence: (g as any).entryConfidence ?? null,
+          aiConfidence: (g as any).aiConfidence ?? null,
+          confidence: (g as any).confidence ?? null,
+          aiMargin: (g as any).aiMargin ?? null,
+          margin: (g as any).margin ?? null,
           session,
           monthKey,
           dow,
@@ -10031,7 +10094,6 @@ export function ClusterMap({
           suppressed: true,
           dir: g.dir,
           entryTime: g.entryTime,
-          entryMargin: (g as any).margin ?? null,
           aiMode: (g as any).aiMode ?? null,
           closestClusterUid:
             (g as any).labelUid ?? (g as any).closestClusterUid ?? null,
@@ -10326,7 +10388,18 @@ export function ClusterMap({
         closestCluster: (p as any).label ?? undefined,
         closestClusterPnl: null,
         closestClusterUid: (p as any).closestClusterUid ?? null,
-        entryMargin: null,
+        entryMargin:
+          (p as any).entryMargin ??
+          (p as any).entryConfidence ??
+          (p as any).aiConfidence ??
+          (p as any).confidence ??
+          (p as any).margin ??
+          null,
+        entryConfidence: (p as any).entryConfidence ?? null,
+        aiConfidence: (p as any).aiConfidence ?? null,
+        confidence: (p as any).confidence ?? null,
+        aiMargin: (p as any).aiMargin ?? null,
+        margin: (p as any).margin ?? null,
         aiMode: "library",
         chunkType: modelKey,
         exitReason: "Library",
@@ -10561,6 +10634,11 @@ export function ClusterMap({
         closestCluster: e.closestCluster,
         closestClusterUid: (e as any).closestClusterUid ?? null,
         entryMargin: (e as any).entryMargin ?? null,
+        entryConfidence: (e as any).entryConfidence ?? null,
+        aiConfidence: (e as any).aiConfidence ?? null,
+        confidence: (e as any).confidence ?? null,
+        aiMargin: (e as any).aiMargin ?? null,
+        margin: (e as any).margin ?? null,
         aiMode: (e as any).aiMode ?? null,
         potentialMargin: e.potentialMargin,
         chunkType: e.chunkType,
@@ -10806,8 +10884,9 @@ export function ClusterMap({
       knnLinkOpacity,
       aiMethod,
       selectedId,
+      selectedLink,
     }),
-    [lowPowerMode, knnLinkK, knnLinkOpacity, aiMethod, selectedId]
+    [lowPowerMode, knnLinkK, knnLinkOpacity, aiMethod, selectedId, selectedLink]
   );
   const [nodeSizeMul, setNodeSizeMul] = React.useState(1);
   const [nodeOutlineMul, setNodeOutlineMul] = React.useState(1);
@@ -12648,6 +12727,7 @@ export function ClusterMap({
   useEffect(() => {
     setTooltip(null);
     setHoveredId(null);
+    setSelectedLink(null);
     hoveredIdRef.current = null;
     if (hoveredGroupRef.current) {
       hoveredGroupRef.current = null;
@@ -12673,6 +12753,7 @@ export function ClusterMap({
 
   const handle3dSelectId = React.useCallback((id: string | null) => {
     setSelectedId(id);
+    setSelectedLink(null);
     setSelectedGroup(null);
     selectedGroupRef.current = null;
   }, []);
@@ -13614,10 +13695,17 @@ export function ClusterMap({
 
       // Non-HDBSCAN modes: keep the existing confidence signal.
       if (aiMethod !== "hdbscan") {
-        const em = Number((n as any).entryMargin);
-        if (Number.isFinite(em)) return clamp(em, 0, 1);
-        const pm = Number((n as any).potentialMargin);
-        if (Number.isFinite(pm)) return clamp(pm, 0, 1);
+        const raw =
+          (n as any).entryConfidence ??
+          (n as any).aiConfidence ??
+          (n as any).confidence ??
+          (n as any).entryMargin ??
+          (n as any).aiMargin ??
+          (n as any).potentialMargin ??
+          (n as any).margin ??
+          null;
+        const v = raw === null || raw === undefined ? NaN : Number(raw);
+        if (Number.isFinite(v)) return clamp(Math.abs(v), 0, 1);
         return 0;
       }
 
@@ -14629,6 +14717,112 @@ export function ClusterMap({
       return best?.id ?? null;
     };
 
+    const pickLink = (sx: number, sy: number) => {
+      const ev = effView();
+      const idToScreen = new Map<string, { sx: number; sy: number }>();
+      for (const n of displayNodes as any[]) {
+        if (!n) continue;
+        const id = String((n as any).id ?? "").trim();
+        if (!id) continue;
+        const x = Number((n as any).x);
+        const y = Number((n as any).y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        idToScreen.set(id, {
+          sx: x * (ev.scale || 1) + ev.ox,
+          sy: y * (ev.scale || 1) + ev.oy,
+        });
+      }
+
+      const pointToSegmentDistPx = (
+        px: number,
+        py: number,
+        ax: number,
+        ay: number,
+        bx: number,
+        by: number
+      ) => {
+        const vx = bx - ax;
+        const vy = by - ay;
+        const wx = px - ax;
+        const wy = py - ay;
+        const c1 = vx * wx + vy * wy;
+        const c2 = vx * vx + vy * vy;
+        const tRaw = c2 > 1e-9 ? c1 / c2 : 0;
+        const t = Math.max(0, Math.min(1, tRaw));
+        const qx = ax + t * vx;
+        const qy = ay + t * vy;
+        const dx = px - qx;
+        const dy = py - qy;
+        return Math.sqrt(dx * dx + dy * dy);
+      };
+
+      const knnK = Math.max(
+        0,
+        Math.min(36, Math.floor(Number((drawRenderOpts as any)?.knnLinkK) || 0))
+      );
+      const knnOpacity = Math.max(
+        0,
+        Math.min(1, Number((drawRenderOpts as any)?.knnLinkOpacity ?? 0.34))
+      );
+      const selectedIdNow = String((drawRenderOpts as any)?.selectedId ?? "").trim();
+      const aiMethodNow = String((drawRenderOpts as any)?.aiMethod ?? "").toLowerCase();
+      const effectiveK =
+        aiMethodNow === "knn" && selectedIdNow
+          ? Math.max(6, knnK)
+          : knnK;
+      const tolPx = 8.5;
+
+      let best: { score: number; link: any } | null = null;
+      const considerLink = (
+        type: "knn" | "open-close",
+        aIdRaw: any,
+        bIdRaw: any,
+        dVal?: number | null
+      ) => {
+        const aId = String(aIdRaw ?? "").trim();
+        const bId = String(bIdRaw ?? "").trim();
+        if (!aId || !bId || aId === bId) return;
+        const a = idToScreen.get(aId);
+        const b = idToScreen.get(bId);
+        if (!a || !b) return;
+        const distPx = pointToSegmentDistPx(sx, sy, a.sx, a.sy, b.sx, b.sy);
+        if (!Number.isFinite(distPx) || distPx > tolPx) return;
+        const len = Math.hypot(b.sx - a.sx, b.sy - a.sy);
+        const score = distPx + Math.min(2.2, len * 0.003);
+        if (!best || score < best.score) {
+          best = {
+            score,
+            link: {
+              type,
+              aId,
+              bId,
+              d:
+                dVal == null || !Number.isFinite(Number(dVal))
+                  ? null
+                  : Number(dVal),
+              lengthPx: Number.isFinite(len) ? len : null,
+              hitPx: distPx,
+            },
+          };
+        }
+      };
+
+      if (effectiveK > 0 && (knnOpacity > 0.001 || (aiMethodNow === "knn" && selectedIdNow))) {
+        const edges = getKnnEdgesForClusterMap(displayNodes as any[], effectiveK, "2d");
+        for (const e of edges as any[]) {
+          considerLink("knn", (e as any)?.a, (e as any)?.b, Number((e as any)?.d));
+        }
+      }
+
+      for (const n of displayNodes as any[]) {
+        if (!n) continue;
+        if (String((n as any).kind ?? "").toLowerCase() !== "close") continue;
+        considerLink("open-close", (n as any).parentId, (n as any).id, null);
+      }
+
+      return best?.link ?? null;
+    };
+
     // Overlay group picking (HDB hulls)
     const pointInPoly = (
       x: number,
@@ -15292,6 +15486,7 @@ export function ClusterMap({
 
         // Heatmap: click toggles a "locked" hover point (coords + heatmap stats).
         if (heatmapOn) {
+          setSelectedLink(null);
           if (pinnedRef.current) {
             setPinnedWorld(null);
             setPinnedHeatHover(null);
@@ -15316,19 +15511,29 @@ export function ClusterMap({
         const hitNode = pickNode(p.x, p.y);
         if (hitNode) {
           setSelectedId(hitNode);
+          setSelectedLink(null);
           setSelectedGroup(null);
           selectedGroupRef.current = null;
         } else {
-          const hitGrp = pickGroup(p.x, p.y);
-          setSelectedId(null);
-          {
-            const gid = hitGrp
-              ? typeof hitGrp === "object"
-                ? (hitGrp as any).id
-                : hitGrp
-              : null;
-            setSelectedGroup(gid);
-            selectedGroupRef.current = gid;
+          const hitLink = pickLink(p.x, p.y);
+          if (hitLink) {
+            setSelectedId(null);
+            setSelectedLink(hitLink);
+            setSelectedGroup(null);
+            selectedGroupRef.current = null;
+          } else {
+            const hitGrp = pickGroup(p.x, p.y);
+            setSelectedId(null);
+            setSelectedLink(null);
+            {
+              const gid = hitGrp
+                ? typeof hitGrp === "object"
+                  ? (hitGrp as any).id
+                  : hitGrp
+                : null;
+              setSelectedGroup(gid);
+              selectedGroupRef.current = gid;
+            }
           }
         }
       }
@@ -15726,6 +15931,7 @@ export function ClusterMap({
     const resolved = resolveNodeForSelection(hit) || hit;
 
     setSelectedId((resolved as any).id);
+    setSelectedLink(null);
     setSearchHighlightId((resolved as any).id);
     searchHighlightIdRef.current = (resolved as any).id;
     setSearchFocus(false);
@@ -17040,6 +17246,7 @@ export function ClusterMap({
                         setSelectedIds3d([]);
                         setSelectionClearNonce3d((v) => v + 1);
                         setSelectedId(null);
+                        setSelectedLink(null);
                         setSelectedGroup(null);
                         selectedGroupRef.current = null;
                       } else {
@@ -17490,7 +17697,10 @@ export function ClusterMap({
                     Selected
                   </div>
                   <button
-                    onClick={() => setSelectedId(null)}
+                    onClick={() => {
+                      setSelectedId(null);
+                      setSelectedLink(null);
+                    }}
                     style={{
                       border: "1px solid rgba(255,255,255,0.12)",
                       background: "rgba(255,255,255,0.06)",
@@ -17607,7 +17817,9 @@ export function ClusterMap({
                     })()}
                   </div>
 
-                  <div style={{ opacity: 0.65 }}>Cluster Win Rate</div>
+                  <div style={{ opacity: 0.65 }}>
+                    {aiMethod === "hdbscan" ? "Cluster Win Rate" : "Confidence"}
+                  </div>
                   <div
                     style={{ fontWeight: 900, color: "rgba(120,190,255,0.92)" }}
                   >
@@ -17622,7 +17834,12 @@ export function ClusterMap({
                           ? `${pct}% (HD #${cid})`
                           : `${pct}%`;
                       }
-                      const v = hdbConfidenceForNode(selectedNode);
+                      const c0 = hdbConfidenceForNode(selectedNode);
+                      const g0 = gateConfidenceForNode(selectedNode);
+                      const v =
+                        c0 > 0 || g0 == null || !Number.isFinite(Number(g0))
+                          ? c0
+                          : Number(g0);
                       return v == null ? "—" : `${Math.round(v * 100)}%`;
                     })()}
                   </div>
@@ -17687,6 +17904,150 @@ export function ClusterMap({
                         )}`
                       : "—"}
                   </div>
+                </div>
+              </div>
+            );
+          })()}
+
+        {selectedLink &&
+          !selectedNode &&
+          (() => {
+            const aId = String((selectedLink as any)?.aId ?? "").trim();
+            const bId = String((selectedLink as any)?.bId ?? "").trim();
+            if (!aId || !bId) return null;
+
+            const aNode = (nodeById as any).get(aId) || null;
+            const bNode = (nodeById as any).get(bId) || null;
+            const t = String((selectedLink as any)?.type ?? "").toLowerCase();
+            const isKnn = t === "knn";
+            const title = isKnn ? "Selected KNN Link" : "Selected Trade Link";
+            const accent = isKnn
+              ? "rgba(130,215,255,0.98)"
+              : "rgba(255,170,230,0.98)";
+            const bg = isKnn
+              ? "linear-gradient(135deg, rgba(95,170,255,0.22), rgba(0,0,0,0.64))"
+              : "linear-gradient(135deg, rgba(255,145,220,0.22), rgba(0,0,0,0.64))";
+            const border = isKnn
+              ? "1px solid rgba(130,210,255,0.45)"
+              : "1px solid rgba(255,170,230,0.45)";
+            const dRaw = Number((selectedLink as any)?.d);
+            const dVal = Number.isFinite(dRaw) ? dRaw : null;
+            const lenRaw = Number((selectedLink as any)?.lengthPx);
+            const lenVal = Number.isFinite(lenRaw) ? lenRaw : null;
+            const hitRaw = Number((selectedLink as any)?.hitPx);
+            const hitVal = Number.isFinite(hitRaw) ? hitRaw : null;
+            const confA = aNode ? hdbConfidenceForNode(aNode) : null;
+            const confB = bNode ? hdbConfidenceForNode(bNode) : null;
+            const confLabel = aiMethod === "hdbscan" ? "Cluster WR" : "Confidence";
+
+            return (
+              <div
+                style={{
+                  position: "absolute",
+                  right: 12,
+                  top: 12,
+                  minWidth: 220,
+                  maxWidth: 320,
+                  padding: 10,
+                  borderRadius: 14,
+                  border,
+                  background: bg,
+                  backdropFilter: "blur(10px)",
+                  boxShadow:
+                    "0 18px 40px rgba(0,0,0,0.60), 0 0 0 1px rgba(255,255,255,0.06)",
+                  color: "rgba(255,255,255,0.92)",
+                  pointerEvents: "auto",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 10,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontWeight: 950,
+                      fontSize: 12,
+                      letterSpacing: "0.02em",
+                      color: accent,
+                    }}
+                  >
+                    {title}
+                  </div>
+                  <button
+                    onClick={() => setSelectedLink(null)}
+                    style={{
+                      border: "1px solid rgba(255,255,255,0.12)",
+                      background: "rgba(255,255,255,0.06)",
+                      color: "rgba(255,255,255,0.86)",
+                      borderRadius: 10,
+                      padding: "4px 8px",
+                      fontSize: 11,
+                      fontWeight: 900,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 8,
+                    display: "grid",
+                    gridTemplateColumns: "110px 1fr",
+                    gap: "6px 10px",
+                    fontSize: 11,
+                    lineHeight: 1.2,
+                  }}
+                >
+                  <div style={{ opacity: 0.65 }}>Type</div>
+                  <div style={{ fontWeight: 900 }}>
+                    {isKnn ? "KNN Neighbor" : "Open ↔ Live"}
+                  </div>
+
+                  <div style={{ opacity: 0.65 }}>From</div>
+                  <div style={{ fontWeight: 900 }}>
+                    {aNode ? displayIdForNode(aNode as any) : aId}
+                  </div>
+
+                  <div style={{ opacity: 0.65 }}>To</div>
+                  <div style={{ fontWeight: 900 }}>
+                    {bNode ? displayIdForNode(bNode as any) : bId}
+                  </div>
+
+                  {dVal != null && (
+                    <>
+                      <div style={{ opacity: 0.65 }}>Distance</div>
+                      <div style={{ fontWeight: 900 }}>{formatNumber(dVal, 4)}</div>
+                    </>
+                  )}
+
+                  {lenVal != null && (
+                    <>
+                      <div style={{ opacity: 0.65 }}>Length (px)</div>
+                      <div style={{ fontWeight: 900 }}>{formatNumber(lenVal, 1)}</div>
+                    </>
+                  )}
+
+                  {hitVal != null && (
+                    <>
+                      <div style={{ opacity: 0.65 }}>Hit Dist (px)</div>
+                      <div style={{ fontWeight: 900 }}>{formatNumber(hitVal, 2)}</div>
+                    </>
+                  )}
+
+                  {confA != null && confB != null && (
+                    <>
+                      <div style={{ opacity: 0.65 }}>{confLabel}</div>
+                      <div style={{ fontWeight: 900 }}>
+                        {Math.round(((confA + confB) * 0.5 || 0) * 100)}%
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             );
@@ -19097,6 +19458,7 @@ export function ClusterMap({
                         key={String(r.key || r.type + "-" + r.id)}
                         onClick={() => {
                           const next = { type: r.type, id: r.id, stats: r };
+                          setSelectedLink(null);
                           selectedGroupRef.current = next;
                           setSelectedGroup(next);
                         }}
