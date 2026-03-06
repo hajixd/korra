@@ -570,7 +570,9 @@ export const getMetaApiAccountDashboard = async (input: {
     const endTime = new Date(now);
 
     const [accountInformation, positionsResponse, dealsResponse] = await Promise.all([
-      rpc.getAccountInformation({ refreshTerminalState: true }).catch(() => ({})),
+      rpc
+        .getAccountInformation({ refreshTerminalState: true })
+        .catch((): Awaited<ReturnType<MetaApiRpcConnectionLike["getAccountInformation"]>> => ({})),
       rpc.getPositions({ refreshTerminalState: true }).catch(() => []),
       rpc.getDealsByTimeRange(startTime, endTime, 0, dealsLimit).catch(() => ({ deals: [] }))
     ]);
