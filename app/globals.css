@@ -10462,3 +10462,878 @@ input[style*="background: rgba(255,255,255,0.06)"] {
     min-height: 100px;
   }
 }
+
+.copytrade-overview-shell-focus {
+  --copytrade-surface: #0f1218;
+  --copytrade-card: #13171f;
+  --copytrade-border: rgba(255, 255, 255, 0.08);
+  --copytrade-border-strong: rgba(255, 255, 255, 0.14);
+  --copytrade-text: #f4f7fb;
+  --copytrade-muted: #9aa4ba;
+  --copytrade-positive: #32c28f;
+  --copytrade-positive-soft: rgba(50, 194, 143, 0.14);
+  --copytrade-negative: #ff6d73;
+  --copytrade-negative-soft: rgba(255, 109, 115, 0.16);
+  --copytrade-neutral: #8f7bff;
+  --copytrade-neutral-soft: rgba(143, 123, 255, 0.16);
+  background:
+    radial-gradient(circle at top right, rgba(143, 123, 255, 0.14), transparent 32%),
+    linear-gradient(180deg, #080a0f 0%, #11151c 100%);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.34);
+}
+
+.copytrade-overview-shell-focus .copytrade-overview-masthead {
+  border-color: rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(18, 21, 29, 0.98), rgba(13, 16, 23, 0.98)),
+    #11151c;
+}
+
+.copytrade-overview-shell-focus .copytrade-overview-intro p,
+.copytrade-overview-shell-focus .copytrade-overview-card-head p,
+.copytrade-overview-shell-focus .copytrade-overview-field > span,
+.copytrade-overview-shell-focus .copytrade-overview-filter-block > span,
+.copytrade-overview-shell-focus .copytrade-overview-hero-aside span,
+.copytrade-overview-shell-focus .copytrade-overview-hero-aside small {
+  color: var(--copytrade-muted);
+}
+
+.copytrade-overview-shell-focus .copytrade-overview-meta span,
+.copytrade-overview-shell-focus .copytrade-overview-field,
+.copytrade-overview-shell-focus .copytrade-overview-nav button,
+.copytrade-overview-shell-focus .copytrade-overview-segmented button,
+.copytrade-overview-shell-focus .copytrade-overview-range-toggle button,
+.copytrade-overview-shell-focus .copytrade-overview-calendar-actions button,
+.copytrade-overview-shell-focus .copytrade-overview-action,
+.copytrade-overview-shell-focus .copytrade-overview-footer span {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--copytrade-text);
+}
+
+.copytrade-overview-shell-focus .copytrade-overview-field select,
+.copytrade-overview-shell-focus .copytrade-overview-date-copy strong,
+.copytrade-overview-shell-focus .copytrade-overview-field-icon,
+.copytrade-overview-shell-focus .copytrade-overview-nav-icon,
+.copytrade-overview-shell-focus .copytrade-overview-action-icon {
+  color: var(--copytrade-text);
+}
+
+.copytrade-overview-shell-focus .copytrade-overview-date-inputs input {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--copytrade-text);
+}
+
+.copytrade-overview-shell-focus .copytrade-overview-nav button:hover,
+.copytrade-overview-shell-focus .copytrade-overview-segmented button:hover,
+.copytrade-overview-shell-focus .copytrade-overview-range-toggle button:hover,
+.copytrade-overview-shell-focus .copytrade-overview-calendar-actions button:hover,
+.copytrade-overview-shell-focus .copytrade-overview-action:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.copytrade-overview-shell-focus .copytrade-overview-nav button.active,
+.copytrade-overview-shell-focus .copytrade-overview-segmented button.active,
+.copytrade-overview-shell-focus .copytrade-overview-range-toggle button.active {
+  border-color: rgba(143, 123, 255, 0.4);
+  background: rgba(143, 123, 255, 0.16);
+  color: #f8f7ff;
+  box-shadow: inset 0 0 0 1px rgba(143, 123, 255, 0.12);
+}
+
+.copytrade-overview-shell-focus .copytrade-overview-kicker,
+.copytrade-overview-shell-focus .copytrade-overview-section-label,
+.copytrade-focus-kicker {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(143, 123, 255, 0.14);
+  color: #bcb0ff;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.copytrade-overview-shell-focus .copytrade-overview-badge.preview {
+  background: rgba(143, 123, 255, 0.12);
+  border-color: rgba(143, 123, 255, 0.24);
+  color: #cbbfff;
+}
+
+.copytrade-overview-shell-focus .copytrade-overview-badge.live,
+.copytrade-overview-shell-focus .copytrade-overview-badge.positive {
+  background: rgba(50, 194, 143, 0.12);
+  border-color: rgba(50, 194, 143, 0.22);
+}
+
+.copytrade-overview-shell-focus .copytrade-overview-badge.negative {
+  background: rgba(255, 109, 115, 0.12);
+  border-color: rgba(255, 109, 115, 0.24);
+}
+
+.copytrade-overview-shell-focus .copytrade-overview-action-muted,
+.copytrade-focus-action {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--copytrade-text);
+}
+
+.copytrade-overview-shell-focus .copytrade-overview-action-primary,
+.copytrade-focus-action-primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #23203d, #7c5cff);
+  color: #ffffff;
+}
+
+.copytrade-focus-shell {
+  display: grid;
+  gap: 1rem;
+}
+
+.copytrade-focus-toolbar,
+.copytrade-focus-actions,
+.copytrade-focus-calendar-actions,
+.copytrade-tradeview-table-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+
+.copytrade-focus-toolbar {
+  justify-content: space-between;
+}
+
+.copytrade-focus-toggle {
+  display: inline-flex;
+  gap: 0.1rem;
+  padding: 0.2rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.copytrade-focus-toggle button,
+.copytrade-focus-action,
+.copytrade-focus-chip,
+.copytrade-focus-calendar-actions button {
+  min-height: 42px;
+  padding: 0 1rem;
+  border-radius: 12px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.copytrade-focus-action,
+.copytrade-focus-chip,
+.copytrade-focus-calendar-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--copytrade-text);
+}
+
+.copytrade-focus-toggle button {
+  border: none;
+  background: transparent;
+  color: var(--copytrade-muted);
+}
+
+.copytrade-focus-toggle button.active {
+  background: rgba(124, 92, 255, 0.42);
+  color: #ffffff;
+}
+
+.copytrade-focus-action:hover,
+.copytrade-focus-chip:hover,
+.copytrade-focus-calendar-actions button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.copytrade-focus-action-primary:hover,
+.copytrade-overview-shell-focus .copytrade-overview-action-primary:hover {
+  background: linear-gradient(135deg, #23203d, #6e51f0);
+}
+
+.copytrade-focus-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.copytrade-focus-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--copytrade-text);
+}
+
+.copytrade-focus-card {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1.15rem;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(20, 24, 32, 0.98), rgba(15, 18, 24, 0.98)),
+    #11151c;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.18);
+}
+
+.copytrade-focus-card-head,
+.copytrade-tradeview-table-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.copytrade-focus-card-head h4,
+.copytrade-tradeview-table-head h4 {
+  margin: 0.32rem 0 0;
+  color: var(--copytrade-text);
+  font-size: 1.2rem;
+  font-weight: 760;
+  letter-spacing: -0.03em;
+}
+
+.copytrade-tradeview-table-head p {
+  margin: 0.28rem 0 0;
+  color: var(--copytrade-muted);
+  font-size: 0.92rem;
+}
+
+.copytrade-focus-empty {
+  display: grid;
+  place-items: center;
+  min-height: 180px;
+  border-radius: 20px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--copytrade-muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+  text-align: center;
+  padding: 1rem;
+}
+
+.copytrade-dayview-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.8fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.copytrade-dayview-feed,
+.copytrade-dayview-sidebar {
+  display: grid;
+  gap: 1rem;
+}
+
+.copytrade-day-card {
+  --copytrade-day-line: #32c28f;
+  --copytrade-day-area: rgba(50, 194, 143, 0.22);
+  display: grid;
+  gap: 1rem;
+  padding: 1.1rem;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(19, 22, 29, 0.98), rgba(14, 16, 22, 0.98)),
+    #12161d;
+}
+
+.copytrade-day-card.negative {
+  --copytrade-day-line: #ff6d73;
+  --copytrade-day-area: rgba(255, 109, 115, 0.26);
+}
+
+.copytrade-day-card.selected {
+  border-color: rgba(124, 92, 255, 0.42);
+  box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.15);
+}
+
+.copytrade-day-card-head,
+.copytrade-day-card-title,
+.copytrade-day-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.copytrade-day-card-head {
+  justify-content: space-between;
+}
+
+.copytrade-day-card-title h4 {
+  margin: 0;
+  color: var(--copytrade-text);
+  font-size: 1.12rem;
+  font-weight: 760;
+  letter-spacing: -0.03em;
+}
+
+.copytrade-day-card-title p {
+  margin: 0.24rem 0 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.copytrade-day-card-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--copytrade-text);
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.copytrade-day-card-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.95fr);
+  gap: 1rem;
+  align-items: center;
+}
+
+.copytrade-day-card-chart-wrap {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 0.8rem;
+}
+
+.copytrade-day-card-yaxis {
+  display: grid;
+  align-content: space-between;
+  color: var(--copytrade-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.copytrade-day-card-stage {
+  display: grid;
+}
+
+.copytrade-day-card-chart {
+  width: 100%;
+  height: 188px;
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+}
+
+.copytrade-day-card-gridline {
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 1;
+}
+
+.copytrade-day-card-area {
+  fill: var(--copytrade-day-area);
+}
+
+.copytrade-day-card-line {
+  fill: none;
+  stroke: var(--copytrade-day-line);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.copytrade-day-card-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.copytrade-day-card-metrics > div,
+.copytrade-dayview-month-summary span,
+.copytrade-dayview-highlight-grid > div {
+  display: grid;
+  gap: 0.28rem;
+  min-height: 78px;
+  padding: 0.85rem 0.9rem;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.copytrade-day-card-metrics span,
+.copytrade-dayview-month-summary span,
+.copytrade-dayview-highlight-grid span {
+  color: var(--copytrade-muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.copytrade-day-card-metrics strong,
+.copytrade-dayview-month-summary strong,
+.copytrade-dayview-highlight-grid strong {
+  color: var(--copytrade-text);
+  font-size: 1rem;
+  font-weight: 760;
+}
+
+.copytrade-dayview-month-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.copytrade-focus-weekdays,
+.copytrade-focus-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.copytrade-focus-weekdays span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  border-radius: 12px;
+  color: var(--copytrade-muted);
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.copytrade-focus-calendar-cell {
+  min-height: 76px;
+  display: grid;
+  align-content: start;
+  gap: 0.22rem;
+  padding: 0.62rem;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--copytrade-text);
+  text-align: left;
+}
+
+.copytrade-focus-calendar-cell.outside {
+  opacity: 0.36;
+}
+
+.copytrade-focus-calendar-cell.up {
+  background: rgba(50, 194, 143, 0.16);
+  border-color: rgba(50, 194, 143, 0.28);
+}
+
+.copytrade-focus-calendar-cell.down {
+  background: rgba(255, 109, 115, 0.16);
+  border-color: rgba(255, 109, 115, 0.26);
+}
+
+.copytrade-focus-calendar-cell.flat {
+  background: rgba(143, 123, 255, 0.13);
+  border-color: rgba(143, 123, 255, 0.22);
+}
+
+.copytrade-focus-calendar-cell.selected {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
+}
+
+.copytrade-focus-calendar-day {
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.copytrade-focus-calendar-value {
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.copytrade-dayview-highlight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.copytrade-tradeview-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.copytrade-tradeview-kpi {
+  min-height: 240px;
+  align-content: start;
+}
+
+.copytrade-tradeview-kpi-value {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.copytrade-tradeview-kpi-value strong {
+  color: var(--copytrade-text);
+  font-size: clamp(2rem, 2.8vw, 3rem);
+  line-height: 0.95;
+  letter-spacing: -0.05em;
+  font-weight: 780;
+}
+
+.copytrade-tradeview-kpi-value small {
+  color: var(--copytrade-muted);
+  font-size: 0.88rem;
+}
+
+.copytrade-tradeview-kpi-chart {
+  width: 100%;
+  height: 112px;
+  margin-top: auto;
+}
+
+.copytrade-tradeview-kpi-area {
+  fill: rgba(50, 194, 143, 0.2);
+}
+
+.copytrade-tradeview-kpi-line {
+  fill: none;
+  stroke: #32c28f;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.copytrade-tradeview-kpi-ring-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.copytrade-tradeview-ring {
+  display: grid;
+  place-items: center;
+  width: 102px;
+  height: 102px;
+  border-radius: 50%;
+  padding: 10px;
+}
+
+.copytrade-tradeview-ring-core {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: #11151c;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.copytrade-tradeview-gauge-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: auto;
+}
+
+.copytrade-tradeview-gauge {
+  width: 132px;
+  height: 80px;
+}
+
+.copytrade-tradeview-gauge-track,
+.copytrade-tradeview-gauge-progress {
+  fill: none;
+  stroke-width: 11;
+  stroke-linecap: round;
+}
+
+.copytrade-tradeview-gauge-track {
+  stroke: rgba(255, 255, 255, 0.08);
+}
+
+.copytrade-tradeview-gauge-progress {
+  stroke: #32c28f;
+}
+
+.copytrade-tradeview-badge-row {
+  display: flex;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.copytrade-tradeview-badge {
+  min-width: 42px;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.copytrade-tradeview-badge.positive {
+  background: rgba(50, 194, 143, 0.14);
+}
+
+.copytrade-tradeview-badge.neutral {
+  background: rgba(143, 123, 255, 0.16);
+  color: #b9acff;
+}
+
+.copytrade-tradeview-badge.negative {
+  background: rgba(255, 109, 115, 0.14);
+}
+
+.copytrade-tradeview-split-bar {
+  display: flex;
+  height: 14px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.copytrade-tradeview-split-bar .positive {
+  background: #32c28f;
+}
+
+.copytrade-tradeview-split-bar .negative {
+  background: #ff6d73;
+}
+
+.copytrade-tradeview-split-values {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+  font-weight: 760;
+}
+
+.copytrade-tradeview-table-card {
+  gap: 1rem;
+}
+
+.copytrade-tradeview-table-wrap {
+  overflow: auto;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.copytrade-tradeview-table {
+  width: 100%;
+  min-width: 1240px;
+  border-collapse: collapse;
+}
+
+.copytrade-tradeview-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 1rem 0.95rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(24, 27, 36, 0.98);
+  color: #b0b8cf;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+}
+
+.copytrade-tradeview-table tbody tr {
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+
+.copytrade-tradeview-table tbody tr:hover,
+.copytrade-tradeview-table tbody tr.selected {
+  background: rgba(124, 92, 255, 0.1);
+}
+
+.copytrade-tradeview-table tbody td {
+  padding: 1rem 0.95rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--copytrade-text);
+  font-size: 0.92rem;
+  vertical-align: middle;
+}
+
+.copytrade-tradeview-table tbody td strong {
+  display: block;
+  font-size: 0.95rem;
+  font-weight: 760;
+}
+
+.copytrade-tradeview-table tbody td small {
+  display: block;
+  margin-top: 0.18rem;
+  color: var(--copytrade-muted);
+  font-size: 0.8rem;
+}
+
+.copytrade-tradeview-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 0.78rem;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.copytrade-tradeview-status.is-open {
+  background: rgba(143, 123, 255, 0.16);
+  color: #c2b8ff;
+}
+
+.copytrade-tradeview-status.is-win {
+  background: rgba(50, 194, 143, 0.14);
+  color: #46d49f;
+}
+
+.copytrade-tradeview-status.is-loss {
+  background: rgba(255, 109, 115, 0.14);
+  color: #ff7e83;
+}
+
+.copytrade-tradeview-status.is-flat {
+  background: rgba(255, 255, 255, 0.08);
+  color: #d2d7e4;
+}
+
+.copytrade-tradeview-scale-cell {
+  min-width: 126px;
+}
+
+.copytrade-tradeview-scale-track {
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.copytrade-tradeview-scale-track span {
+  display: block;
+  height: 100%;
+}
+
+.copytrade-tradeview-scale-track span.positive {
+  background: #32c28f;
+}
+
+.copytrade-tradeview-scale-track span.negative {
+  background: #ff6d73;
+}
+
+.copytrade-tradeview-table-footer,
+.copytrade-focus-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--copytrade-muted);
+  font-size: 0.86rem;
+}
+
+.copytrade-focus-footer span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+@media (max-width: 1480px) {
+  .copytrade-dayview-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .copytrade-tradeview-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1180px) {
+  .copytrade-day-card-body {
+    grid-template-columns: 1fr;
+  }
+
+  .copytrade-day-card-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .copytrade-focus-toolbar,
+  .copytrade-focus-card-head,
+  .copytrade-tradeview-table-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .copytrade-day-card-chart-wrap {
+    grid-template-columns: 1fr;
+  }
+
+  .copytrade-day-card-yaxis {
+    order: 2;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+
+  .copytrade-tradeview-kpis,
+  .copytrade-dayview-highlight-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .copytrade-day-card-metrics,
+  .copytrade-focus-calendar-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .copytrade-focus-weekdays {
+    display: none;
+  }
+
+  .copytrade-focus-toggle,
+  .copytrade-focus-actions {
+    width: 100%;
+  }
+
+  .copytrade-focus-toggle button,
+  .copytrade-focus-action {
+    flex: 1 1 0;
+    justify-content: center;
+  }
+
+  .copytrade-focus-card,
+  .copytrade-day-card {
+    padding: 0.95rem;
+  }
+
+  .copytrade-tradeview-kpis {
+    grid-template-columns: 1fr;
+  }
+
+  .copytrade-tradeview-table-footer,
+  .copytrade-focus-footer {
+    flex-direction: column;
+  }
+}
