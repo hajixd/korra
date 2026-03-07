@@ -322,7 +322,33 @@ type CopyTradeBalancePoint = {
   balance: number;
 };
 
-type CopyTradeStudioSection = "dashboard" | "performance" | "journal" | "calendar";
+type CopyTradeStudioSection =
+  | "dashboard"
+  | "dayView"
+  | "tradeView"
+  | "notebook"
+  | "reports"
+  | "strategies"
+  | "tradeReplay"
+  | "progressTracker"
+  | "resources";
+type CopyTradeIconKind =
+  | "dashboard"
+  | "dayView"
+  | "tradeView"
+  | "notebook"
+  | "reports"
+  | "strategies"
+  | "tradeReplay"
+  | "progressTracker"
+  | "resources"
+  | "account"
+  | "filter"
+  | "date"
+  | "preset"
+  | "refresh"
+  | "spark"
+  | "box";
 type CopyTradeLedgerTab = "recent" | "open";
 type CopyTradeRangeKey = "1D" | "1W" | "1M" | "6M" | "1Y" | "ALL";
 type CopyTradeDealFilterMode = "all" | "wins" | "losses";
@@ -492,13 +518,161 @@ const COPYTRADE_WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat
 const COPYTRADE_STUDIO_NAV_ITEMS: ReadonlyArray<{
   id: CopyTradeStudioSection;
   label: string;
-  targetId: string;
+  icon: CopyTradeIconKind;
 }> = [
-  { id: "dashboard", label: "Dashboard", targetId: "copytrade-dashboard-section" },
-  { id: "performance", label: "Performance", targetId: "copytrade-performance-section" },
-  { id: "journal", label: "Journal", targetId: "copytrade-journal-section" },
-  { id: "calendar", label: "Calendar", targetId: "copytrade-calendar-section" }
+  { id: "dashboard", label: "Dashboard", icon: "dashboard" },
+  { id: "dayView", label: "Day View", icon: "dayView" },
+  { id: "tradeView", label: "Trade View", icon: "tradeView" },
+  { id: "notebook", label: "Notebook", icon: "notebook" },
+  { id: "reports", label: "Reports", icon: "reports" },
+  { id: "strategies", label: "Strategies", icon: "strategies" },
+  { id: "tradeReplay", label: "Trade Replay", icon: "tradeReplay" },
+  { id: "progressTracker", label: "Progress Tracker", icon: "progressTracker" },
+  { id: "resources", label: "Resources", icon: "resources" }
 ] as const;
+
+const CopyTradeGlyph = ({
+  kind,
+  className
+}: {
+  kind: CopyTradeIconKind;
+  className?: string;
+}) => {
+  switch (kind) {
+    case "dashboard":
+      return (
+        <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+          <rect x="2" y="2" width="5" height="5" rx="1.1" />
+          <rect x="9" y="2" width="5" height="5" rx="1.1" />
+          <rect x="2" y="9" width="5" height="5" rx="1.1" />
+          <rect x="9" y="9" width="5" height="5" rx="1.1" />
+        </svg>
+      );
+    case "dayView":
+      return (
+        <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+          <circle cx="8" cy="8" r="5.5" />
+          <path d="M8 4.2V8l2.6 1.6" />
+        </svg>
+      );
+    case "tradeView":
+      return (
+        <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+          <path d="M3 12V6" />
+          <path d="M8 14V2" />
+          <path d="M13 10V4" />
+          <rect x="1.8" y="5" width="2.4" height="2.6" rx="0.8" />
+          <rect x="6.8" y="7" width="2.4" height="2.6" rx="0.8" />
+          <rect x="11.8" y="6" width="2.4" height="2.6" rx="0.8" />
+        </svg>
+      );
+    case "notebook":
+      return (
+        <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+          <rect x="3" y="2.2" width="9.6" height="11.6" rx="1.4" />
+          <path d="M5.2 5.3h5.2" />
+          <path d="M5.2 8h5.2" />
+          <path d="M5.2 10.7h3.2" />
+        </svg>
+      );
+    case "reports":
+      return (
+        <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+          <rect x="2" y="2.4" width="12" height="11.2" rx="1.6" />
+          <path d="M5 10.8V7.2" />
+          <path d="M8 10.8V5.6" />
+          <path d="M11 10.8V8.4" />
+        </svg>
+      );
+    case "strategies":
+      return (
+        <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+          <path d="M3 4h10" />
+          <path d="M3 8h10" />
+          <path d="M3 12h10" />
+          <circle cx="6" cy="4" r="1.3" fill="currentColor" stroke="none" />
+          <circle cx="10.5" cy="8" r="1.3" fill="currentColor" stroke="none" />
+          <circle cx="7.5" cy="12" r="1.3" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case "tradeReplay":
+      return (
+        <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+          <circle cx="8" cy="8" r="5.5" />
+          <path d="M6.6 5.6L10.6 8l-4 2.4V5.6Z" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case "progressTracker":
+      return (
+        <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+          <path d="M3 12.8V9.6" />
+          <path d="M7 12.8V6.8" />
+          <path d="M11 12.8V4.2" />
+          <path d="M2.5 12.8h11" />
+        </svg>
+      );
+    case "resources":
+      return (
+        <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+          <path d="M4 3.2h5.6a2.4 2.4 0 0 1 2.4 2.4v7.2H6.4A2.4 2.4 0 0 0 4 10.4V3.2Z" />
+          <path d="M12 12.8H6.4A2.4 2.4 0 0 0 4 15.2" />
+        </svg>
+      );
+    case "account":
+      return (
+        <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+          <rect x="2.2" y="3.2" width="11.6" height="9.6" rx="2" />
+          <path d="M5 6.2h6" />
+          <path d="M5 9.8h4" />
+        </svg>
+      );
+    case "filter":
+      return (
+        <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+          <path d="M2.5 3.5h11l-4.1 4.4v3.6l-2.8 1.2V7.9L2.5 3.5Z" />
+        </svg>
+      );
+    case "date":
+      return (
+        <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+          <rect x="2.2" y="3.2" width="11.6" height="10.2" rx="2" />
+          <path d="M5 1.8v2.6" />
+          <path d="M11 1.8v2.6" />
+          <path d="M2.2 6h11.6" />
+        </svg>
+      );
+    case "preset":
+      return (
+        <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+          <path d="M4 4.2h8l1.2 2.2L8 12.8 2.8 6.4 4 4.2Z" />
+          <circle cx="8" cy="6.1" r="1.2" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case "refresh":
+      return (
+        <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+          <path d="M13 8a5 5 0 1 1-1.4-3.5" />
+          <path d="M10.2 2.7H13v2.8" />
+        </svg>
+      );
+    case "spark":
+      return (
+        <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+          <path d="M8 2.4l1.4 4.2L13.6 8l-4.2 1.4L8 13.6 6.6 9.4 2.4 8l4.2-1.4L8 2.4Z" />
+        </svg>
+      );
+    case "box":
+      return (
+        <svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+          <path d="M8 2.2 13 5v6L8 13.8 3 11V5l5-2.8Z" />
+          <path d="M3 5l5 2.8L13 5" />
+          <path d="M8 7.8v6" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+};
 
 const TIMEFRAME_DISPLAY_LABELS: Record<Timeframe, string> = {
   "1m": "1 Minute",
@@ -4327,6 +4501,18 @@ const formatDashboardMonthDay = (timestampMs: number | null): string => {
   return new Date(timestampMs).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric"
+  });
+};
+
+const formatDashboardToolbarDate = (timestampMs: number | null): string => {
+  if (timestampMs === null || !Number.isFinite(timestampMs)) {
+    return "--";
+  }
+
+  return new Date(timestampMs).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
   });
 };
 
@@ -8562,7 +8748,33 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   const handleCopyTradeSidebarNavigate = useCallback((section: CopyTradeStudioSection) => {
     setCopyTradeSidebarSection(section);
-    const targetId = COPYTRADE_STUDIO_NAV_ITEMS.find((item) => item.id === section)?.targetId;
+    if (section === "tradeView") {
+      setCopyTradeLedgerTab("open");
+    } else if (section === "notebook") {
+      setCopyTradeLedgerTab("recent");
+    } else if (section === "strategies") {
+      setCopyTradeProfilePreset((current) => {
+        const currentIndex = COPYTRADE_PROFILE_PRESET_OPTIONS.indexOf(current);
+        const nextIndex = (currentIndex + 1) % COPYTRADE_PROFILE_PRESET_OPTIONS.length;
+        return COPYTRADE_PROFILE_PRESET_OPTIONS[nextIndex] ?? COPYTRADE_PROFILE_PRESET_OPTIONS[0];
+      });
+    } else if (section === "tradeReplay") {
+      setCopyTradeBalanceRange("1M");
+      setCopyTradeTradeRange("1M");
+    }
+
+    const targetId =
+      section === "dashboard" || section === "strategies"
+        ? "copytrade-dashboard-section"
+        : section === "reports" || section === "tradeReplay"
+          ? "copytrade-performance-section"
+          : section === "progressTracker"
+            ? "copytrade-score-section"
+            : section === "tradeView" || section === "notebook"
+              ? "copytrade-journal-section"
+              : section === "dayView"
+                ? "copytrade-calendar-section"
+                : "copytrade-footer-section";
     if (!targetId) {
       return;
     }
@@ -18688,9 +18900,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     {copyTradeDashboard ? (
                       <section className="copytrade-studio-shell">
                         <aside className="copytrade-studio-sidebar" aria-label="Copy trade dashboard sections">
-                          <div className="copytrade-studio-brand">
-                            <span className="copytrade-studio-brand-kicker">Copy Trade</span>
-                            <strong>Korra Dashboard</strong>
+                          <div className="copytrade-studio-sidebar-top">
+                            <div className="copytrade-studio-brand">
+                              <strong>Korra</strong>
+                            </div>
+
+                            <button
+                              type="button"
+                              className="copytrade-studio-collapse-btn"
+                              onClick={() => handleCopyTradeSidebarNavigate("dashboard")}
+                              aria-label="Focus dashboard"
+                            >
+                              «
+                            </button>
                           </div>
 
                           <nav className="copytrade-studio-nav">
@@ -18702,17 +18924,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 onClick={() => handleCopyTradeSidebarNavigate(item.id)}
                                 aria-current={copyTradeSidebarSection === item.id ? "page" : undefined}
                               >
+                                <CopyTradeGlyph
+                                  kind={item.icon}
+                                  className="copytrade-studio-nav-icon"
+                                />
                                 <span>{item.label}</span>
+                                {item.id === "tradeReplay" ? (
+                                  <small className="copytrade-studio-nav-badge">NEW</small>
+                                ) : null}
                               </button>
                             ))}
                           </nav>
 
                           <div className="copytrade-studio-sidebar-meta">
-                            <span>{copyTradeDashboard.server}</span>
+                            <span>MT5 {copyTradePreviewMode ? "Preview" : "Live"}</span>
                             <strong>{copyTradeDashboard.broker || "Cloud account"}</strong>
-                            <small>
-                              {copyTradePreviewMode ? "Preview mode" : copyTradeDashboardAccount.status}
-                            </small>
+                            <small>{copyTradeDashboard.server}</small>
                           </div>
                         </aside>
 
@@ -18720,14 +18947,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           <header className="copytrade-studio-topbar" id="copytrade-dashboard-section">
                             <div className="copytrade-studio-title">
                               <h3>Dashboard</h3>
-                              <p>
-                                Last import: {formatDashboardDateTime(copyTradeDashboard.lastSyncedAt)}
-                              </p>
                             </div>
 
                             <div className="copytrade-studio-toolbar">
-                              <label className="copytrade-studio-control">
-                                <span>Account</span>
+                              <label className="copytrade-studio-toolbar-pill copytrade-studio-toolbar-pill-select">
+                                <CopyTradeGlyph kind="account" className="copytrade-studio-toolbar-icon" />
                                 <select
                                   value={copyTradePreviewMode ? DEMO_MT5_ACCOUNT_ID : selectedMt5AccountId ?? ""}
                                   onChange={(event) => {
@@ -18742,15 +18966,59 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 >
                                   {copyTradeSelectableAccounts.map((account) => (
                                     <option key={account.id} value={account.id}>
-                                      MT5 {account.status === "Connected" ? "LIVE" : account.status} -{" "}
+                                      MT5 {account.status === "Connected" ? "LIVE" : account.status} ·{" "}
                                       {account.login}
                                     </option>
                                   ))}
                                 </select>
                               </label>
 
-                              <label className="copytrade-studio-control">
-                                <span>Preset</span>
+                              <button
+                                type="button"
+                                className="copytrade-studio-toolbar-pill"
+                                onClick={() => {
+                                  setCopyTradeSidebarSection("dashboard");
+                                  setCopyTradeDealFilterMode((current) => {
+                                    if (current === "all") {
+                                      return "wins";
+                                    }
+                                    if (current === "wins") {
+                                      return "losses";
+                                    }
+                                    return "all";
+                                  });
+                                }}
+                                aria-label="Toggle dashboard trade filter mode"
+                              >
+                                <CopyTradeGlyph kind="filter" className="copytrade-studio-toolbar-icon" />
+                                <span>Filters</span>
+                                <strong>{copyTradeFilterModeLabel}</strong>
+                              </button>
+
+                              <label className="copytrade-studio-toolbar-pill copytrade-studio-toolbar-pill-range">
+                                <CopyTradeGlyph kind="date" className="copytrade-studio-toolbar-icon" />
+                                <div className="copytrade-studio-toolbar-range-copy">
+                                  <span>
+                                    {formatDashboardToolbarDate(copyTradeDateRangeMs.startMs)} -{" "}
+                                    {formatDashboardToolbarDate(copyTradeDateRangeMs.endMs - 1)}
+                                  </span>
+                                </div>
+                                <div className="copytrade-studio-toolbar-range-inputs">
+                                  <input
+                                    type="date"
+                                    value={copyTradeDateStartInput}
+                                    onChange={(event) => setCopyTradeDateStartInput(event.target.value)}
+                                  />
+                                  <input
+                                    type="date"
+                                    value={copyTradeDateEndInput}
+                                    onChange={(event) => setCopyTradeDateEndInput(event.target.value)}
+                                  />
+                                </div>
+                              </label>
+
+                              <label className="copytrade-studio-toolbar-pill copytrade-studio-toolbar-pill-select">
+                                <CopyTradeGlyph kind="preset" className="copytrade-studio-toolbar-icon" />
                                 <select
                                   value={copyTradeProfilePreset}
                                   onChange={(event) => {
@@ -18766,26 +19034,44 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   ))}
                                 </select>
                               </label>
+                            </div>
+                          </header>
 
-                              <label className="copytrade-studio-control copytrade-studio-control-range">
-                                <span>Date range</span>
-                                <div className="copytrade-studio-range-inputs">
-                                  <input
-                                    type="date"
-                                    value={copyTradeDateStartInput}
-                                    onChange={(event) => setCopyTradeDateStartInput(event.target.value)}
+                          <div className="copytrade-studio-subbar">
+                            <div className="copytrade-studio-import-row">
+                              <strong>Last import:</strong>
+                              <span>{formatDashboardDateTime(copyTradeDashboard.lastSyncedAt)}</span>
+                              {!copyTradePreviewMode ? (
+                                <button
+                                  type="button"
+                                  className="copytrade-studio-resync-link"
+                                  onClick={handleRefreshSelectedMt5Dashboard}
+                                  disabled={!selectedMt5Account || copyTradeDashboardLoading}
+                                >
+                                  {copyTradeDashboardLoading ? "Syncing..." : "Resync"}
+                                </button>
+                              ) : null}
+                            </div>
+
+                            <div className="copytrade-studio-top-actions">
+                              {!copyTradePreviewMode ? (
+                                <button
+                                  type="button"
+                                  className="copytrade-studio-start-btn"
+                                  onClick={handleRefreshSelectedMt5Dashboard}
+                                  disabled={!selectedMt5Account || copyTradeDashboardLoading}
+                                >
+                                  <CopyTradeGlyph
+                                    kind="spark"
+                                    className="copytrade-studio-action-icon"
                                   />
-                                  <input
-                                    type="date"
-                                    value={copyTradeDateEndInput}
-                                    onChange={(event) => setCopyTradeDateEndInput(event.target.value)}
-                                  />
-                                </div>
-                              </label>
+                                  {copyTradeDashboardLoading ? "Syncing..." : "Start my day"}
+                                </button>
+                              ) : null}
 
                               <button
                                 type="button"
-                                className="copytrade-studio-toolbar-btn"
+                                className="copytrade-studio-icon-btn"
                                 onClick={() => {
                                   setCopyTradeSidebarSection("dashboard");
                                   setCopyTradeDealFilterMode((current) => {
@@ -18798,23 +19084,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     return "all";
                                   });
                                 }}
-                                aria-label="Toggle dashboard trade filter mode"
+                                aria-label="Cycle dashboard filter"
                               >
-                                Filter: {copyTradeFilterModeLabel}
+                                <CopyTradeGlyph kind="box" className="copytrade-studio-action-icon" />
                               </button>
-
-                              {!copyTradePreviewMode ? (
-                                <button
-                                  type="button"
-                                  className="copytrade-studio-toolbar-btn copytrade-studio-toolbar-btn-primary"
-                                  onClick={handleRefreshSelectedMt5Dashboard}
-                                  disabled={!selectedMt5Account || copyTradeDashboardLoading}
-                                >
-                                  {copyTradeDashboardLoading ? "Refreshing..." : "Resync"}
-                                </button>
-                              ) : null}
                             </div>
-                          </header>
+                          </div>
 
                           <section className="copytrade-studio-kpi-grid">
                             <article className="copytrade-studio-card copytrade-studio-kpi-card">
@@ -18948,9 +19223,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           </section>
 
                           <section className="copytrade-studio-analytics-grid" id="copytrade-performance-section">
-                            <article className="copytrade-studio-card copytrade-studio-score-card">
+                            <article
+                              className="copytrade-studio-card copytrade-studio-score-card"
+                              id="copytrade-score-section"
+                            >
                               <div className="copytrade-studio-card-head">
-                                <h4>Performance score</h4>
+                                <h4>Korra score</h4>
                                 <span>Multi-factor quality model</span>
                               </div>
 
@@ -19038,7 +19316,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                       type="button"
                                       className={copyTradeBalanceRange === range ? "active" : ""}
                                       onClick={() => {
-                                        setCopyTradeSidebarSection("performance");
+                                        setCopyTradeSidebarSection("reports");
                                         setCopyTradeBalanceRange(range);
                                       }}
                                     >
@@ -19056,8 +19334,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   >
                                     <defs>
                                       <linearGradient id="copytradeStudioCumulativeFill" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="0%" stopColor="rgba(116, 89, 211, 0.28)" />
-                                        <stop offset="100%" stopColor="rgba(116, 89, 211, 0.02)" />
+                                        <stop offset="0%" stopColor="rgba(48, 163, 112, 0.3)" />
+                                        <stop offset="100%" stopColor="rgba(48, 163, 112, 0.02)" />
                                       </linearGradient>
                                     </defs>
                                     <CartesianGrid stroke="rgba(255,255,255,0.09)" vertical={false} />
@@ -19246,7 +19524,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     type="button"
                                     className={copyTradeLedgerTab === "recent" ? "active" : ""}
                                     onClick={() => {
-                                      setCopyTradeSidebarSection("journal");
+                                      setCopyTradeSidebarSection("notebook");
                                       setCopyTradeLedgerTab("recent");
                                     }}
                                   >
@@ -19256,7 +19534,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     type="button"
                                     className={copyTradeLedgerTab === "open" ? "active" : ""}
                                     onClick={() => {
-                                      setCopyTradeSidebarSection("journal");
+                                      setCopyTradeSidebarSection("tradeView");
                                       setCopyTradeLedgerTab("open");
                                     }}
                                   >
@@ -19283,7 +19561,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                               copyTradeSelectedLedgerRowId === deal.id ? "selected" : undefined
                                             }
                                             onClick={() => {
-                                              setCopyTradeSidebarSection("journal");
+                                              setCopyTradeSidebarSection("notebook");
                                               setCopyTradeSelectedLedgerRowId(deal.id);
                                             }}
                                           >
@@ -19309,7 +19587,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                                 : undefined
                                             }
                                             onClick={() => {
-                                              setCopyTradeSidebarSection("journal");
+                                              setCopyTradeSidebarSection("tradeView");
                                               setCopyTradeSelectedLedgerRowId(`open-${position.id}`);
                                             }}
                                           >
@@ -19366,7 +19644,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     type="button"
                                     onClick={() =>
                                       {
-                                        setCopyTradeSidebarSection("calendar");
+                                        setCopyTradeSidebarSection("dayView");
                                         setCopyTradeCalendarMonthCursorMs(
                                           (current) =>
                                             Date.UTC(
@@ -19385,7 +19663,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     type="button"
                                     onClick={() =>
                                       {
-                                        setCopyTradeSidebarSection("calendar");
+                                        setCopyTradeSidebarSection("dayView");
                                         setCopyTradeCalendarMonthCursorMs(
                                           (current) =>
                                             Date.UTC(
@@ -19405,7 +19683,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   type="button"
                                   className="copytrade-studio-month-btn"
                                   onClick={() => {
-                                    setCopyTradeSidebarSection("calendar");
+                                    setCopyTradeSidebarSection("dayView");
                                     const now = new Date();
                                     setCopyTradeCalendarMonthCursorMs(
                                       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
@@ -19466,7 +19744,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     }`}
                                     onClick={() => {
                                       setCopyTradeSelectedCalendarDateKey(cell.dateKey);
-                                      setCopyTradeSidebarSection("calendar");
+                                      setCopyTradeSidebarSection("dayView");
                                     }}
                                   >
                                     <span className="copytrade-studio-calendar-day">{cell.day}</span>
@@ -19504,7 +19782,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             </article>
                           </section>
 
-                          <footer className="copytrade-studio-footer">
+                          <footer className="copytrade-studio-footer" id="copytrade-footer-section">
                             <span>UTC: {copyTradeUtcClockLabel}</span>
                             <span>Local: {copyTradeLocalClockLabel}</span>
                             <span>
