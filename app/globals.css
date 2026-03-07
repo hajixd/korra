@@ -8001,3 +8001,404 @@ input[style*="background: rgba(255,255,255,0.06)"] {
     text-align: left;
   }
 }
+
+/* ---- COPY TRADE LIVE DASHBOARD ---- */
+.copytrade-dashboard-shell.copytrade-dashboard-live {
+  margin-top: 0.6rem;
+  gap: 0.95rem;
+}
+
+.copytrade-live-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+}
+
+.copytrade-live-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.copytrade-live-title-wrap h3 {
+  margin: 0;
+  font-size: clamp(1.2rem, 1.6vw, 2rem);
+  letter-spacing: 0.02em;
+  color: #e8edf8;
+}
+
+.copytrade-live-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  padding: 0.18rem 0.58rem;
+  font-size: 0.83rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.copytrade-live-chip.amber {
+  border-color: rgba(248, 192, 73, 0.45);
+  background: rgba(82, 61, 16, 0.42);
+  color: #ffe8b0;
+}
+
+.copytrade-live-chip.blue {
+  border-color: rgba(92, 141, 225, 0.5);
+  background: rgba(18, 38, 80, 0.45);
+  color: #d5e7ff;
+}
+
+.copytrade-live-chip.green {
+  border-color: rgba(60, 201, 145, 0.45);
+  background: rgba(14, 59, 45, 0.42);
+  color: #c7ffe9;
+}
+
+.copytrade-live-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.copytrade-live-clock {
+  display: grid;
+  gap: 0.07rem;
+  font-size: 0.78rem;
+  color: rgba(229, 234, 246, 0.88);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.copytrade-live-clock span:last-child {
+  color: rgba(175, 189, 217, 0.86);
+}
+
+.copytrade-live-refresh-btn,
+.copytrade-live-mode-btn {
+  border-radius: 15px;
+  border: 1px solid rgba(224, 233, 252, 0.55);
+  background: rgba(9, 14, 22, 0.9);
+  color: #f1f6ff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.46rem 0.92rem;
+}
+
+.copytrade-live-mode-btn:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.copytrade-live-layout {
+  display: grid;
+  gap: 0.95rem;
+  grid-template-columns: minmax(0, 1.95fr) minmax(330px, 1fr);
+}
+
+.copytrade-live-chart-card,
+.copytrade-live-history-card {
+  border-radius: 22px;
+  border: 1px solid rgba(72, 113, 180, 0.35);
+  background:
+    radial-gradient(110% 140% at 0% 0%, rgba(35, 74, 143, 0.16), transparent 56%),
+    linear-gradient(180deg, rgba(7, 12, 22, 0.95), rgba(5, 9, 17, 0.96));
+  box-shadow: 0 20px 46px rgba(3, 7, 16, 0.68);
+}
+
+.copytrade-live-chart-card {
+  padding: 0.95rem;
+  display: grid;
+  gap: 0.84rem;
+}
+
+.copytrade-live-chart-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.copytrade-live-chart-head strong {
+  font-size: 1rem;
+  color: #edf3ff;
+  letter-spacing: 0.02em;
+}
+
+.copytrade-live-trade {
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.copytrade-live-trade.up {
+  color: #30d7a1;
+}
+
+.copytrade-live-trade.down {
+  color: #ff6767;
+}
+
+.copytrade-live-equity {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: clamp(1.35rem, 2vw, 2rem);
+  font-weight: 900;
+  color: #29d6a2;
+  line-height: 1;
+}
+
+.copytrade-live-dot {
+  border-radius: 999px;
+  border: 1px solid rgba(74, 233, 169, 0.72);
+  background: rgba(26, 143, 99, 0.38);
+  box-shadow: 0 0 22px rgba(48, 215, 161, 0.4);
+  color: #d5ffe9;
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+  padding: 0.26rem 0.58rem;
+}
+
+.copytrade-live-chart-wrap {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 0.55rem;
+}
+
+.copytrade-live-yaxis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding-block: 0.25rem;
+}
+
+.copytrade-live-yaxis span {
+  color: rgba(182, 201, 233, 0.82);
+  font-size: 0.76rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.copytrade-live-chart-svg {
+  width: 100%;
+  height: clamp(320px, 44vh, 520px);
+  border-radius: 12px;
+  border: 1px solid rgba(79, 110, 165, 0.48);
+  background: linear-gradient(180deg, rgba(4, 8, 16, 0.95), rgba(5, 9, 17, 0.98));
+}
+
+.copytrade-live-gridline {
+  stroke: rgba(91, 128, 189, 0.42);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.copytrade-live-path {
+  fill: none;
+  stroke: rgba(248, 250, 255, 0.96);
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.copytrade-live-endpoint {
+  fill: rgba(242, 247, 255, 0.96);
+  stroke: rgba(180, 198, 229, 0.85);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 6px rgba(226, 236, 255, 0.95));
+}
+
+.copytrade-live-strip-stack {
+  display: grid;
+  gap: 0.36rem;
+}
+
+.copytrade-live-strip {
+  height: 28px;
+  border-radius: 2px;
+  border: 1px solid rgba(80, 115, 172, 0.42);
+}
+
+.copytrade-live-strip.strip-1 {
+  background:
+    repeating-linear-gradient(
+      90deg,
+      #f4c02a 0 9%,
+      #f4943f 9% 16%,
+      #5f98de 16% 30%,
+      #43cd97 30% 35%,
+      #f4c02a 35% 46%
+    );
+}
+
+.copytrade-live-strip.strip-2 {
+  background:
+    repeating-linear-gradient(
+      90deg,
+      #64a7f3 0 5%,
+      #1e5cb6 5% 6.8%,
+      #64a7f3 6.8% 18%,
+      #0f3980 18% 20%,
+      #64a7f3 20% 33%
+    );
+}
+
+.copytrade-live-strip.strip-3 {
+  background:
+    repeating-linear-gradient(
+      90deg,
+      #f5f08a 0 1.2%,
+      #30ca7f 1.2% 4.2%,
+      #f06c6c 4.2% 5.8%,
+      #2c9ce5 5.8% 7.4%,
+      #f8d98b 7.4% 9.1%
+    );
+}
+
+.copytrade-live-history-card {
+  padding: 0.95rem;
+  max-height: min(760px, 72vh);
+  display: grid;
+  gap: 0.72rem;
+  overflow: auto;
+}
+
+.copytrade-live-history-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.copytrade-live-history-head h4 {
+  margin: 0;
+  color: #f0f5ff;
+  font-size: 1.02rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.copytrade-live-history-head span {
+  color: rgba(178, 194, 222, 0.86);
+  font-size: 0.74rem;
+}
+
+.copytrade-live-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.58rem;
+}
+
+.copytrade-live-history-item {
+  border-radius: 15px;
+  border: 1px solid transparent;
+  padding: 0.7rem 0.76rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.copytrade-live-history-item header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.copytrade-live-history-item header strong {
+  color: #f4f7ff;
+  font-size: 0.98rem;
+  letter-spacing: 0.01em;
+}
+
+.copytrade-live-history-item header span {
+  font-size: 0.93rem;
+  font-weight: 900;
+}
+
+.copytrade-live-history-item header span.up {
+  color: #2ed9a4;
+}
+
+.copytrade-live-history-item header span.down {
+  color: #ff535d;
+}
+
+.copytrade-live-history-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.2rem 0.65rem;
+}
+
+.copytrade-live-history-grid span {
+  color: rgba(219, 227, 244, 0.88);
+  font-size: 0.78rem;
+}
+
+.copytrade-live-history-item small {
+  color: rgba(184, 197, 220, 0.9);
+  font-size: 0.78rem;
+}
+
+.copytrade-live-history-item.active {
+  border-color: rgba(87, 149, 255, 0.88);
+  background: linear-gradient(180deg, rgba(22, 43, 79, 0.62), rgba(16, 33, 66, 0.62));
+  box-shadow: inset 0 0 0 1px rgba(99, 161, 255, 0.25);
+}
+
+.copytrade-live-history-item.loss {
+  border-color: rgba(178, 53, 72, 0.82);
+  background: linear-gradient(180deg, rgba(57, 18, 27, 0.82), rgba(45, 13, 22, 0.84));
+}
+
+.copytrade-live-history-item.win {
+  border-color: rgba(44, 157, 118, 0.82);
+  background: linear-gradient(180deg, rgba(11, 52, 41, 0.78), rgba(10, 42, 34, 0.8));
+}
+
+@media (max-width: 1280px) {
+  .copytrade-live-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .copytrade-live-history-card {
+    max-height: none;
+  }
+}
+
+@media (max-width: 840px) {
+  .copytrade-live-topbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .copytrade-live-topbar-right {
+    justify-content: space-between;
+  }
+
+  .copytrade-live-clock {
+    text-align: left;
+  }
+
+  .copytrade-live-chart-head {
+    grid-template-columns: 1fr;
+    align-items: flex-start;
+  }
+
+  .copytrade-live-yaxis {
+    display: none;
+  }
+
+  .copytrade-live-chart-wrap {
+    grid-template-columns: 1fr;
+  }
+
+  .copytrade-live-history-grid {
+    grid-template-columns: 1fr;
+  }
+}

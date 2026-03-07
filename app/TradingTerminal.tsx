@@ -300,6 +300,19 @@ type Mt5DashboardApiResponse = {
   error?: string;
 };
 
+type CopyTradeHistoryCard = {
+  id: string;
+  title: string;
+  side: "BUY" | "SELL";
+  pnl: number;
+  entry: number | null;
+  exit: number | null;
+  start: number | null;
+  end: number | null;
+  durationBars: number | null;
+  tone: "active" | "win" | "loss";
+};
+
 const DEMO_MT5_ACCOUNT_ID = "demo-preview-account";
 const DEMO_MT5_ACCOUNT: Mt5Account = {
   id: DEMO_MT5_ACCOUNT_ID,
@@ -4119,6 +4132,27 @@ const formatDashboardDateTime = (timestampMs: number | null): string => {
   });
 };
 
+const formatDashboardHistoryDateTime = (timestampMs: number | null): string => {
+  if (timestampMs === null || !Number.isFinite(timestampMs)) {
+    return "TBD";
+  }
+
+  return new Date(timestampMs).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+};
+
+const formatDashboardPriceLabel = (price: number | null): string => {
+  if (price === null || !Number.isFinite(price)) {
+    return "TBD";
+  }
+
+  return `$${formatPrice(price)}`;
+};
+
 const formatChartUsd = (value: number): string => {
   return `${value < 0 ? "-" : ""}$${formatUsd(Math.abs(value))}`;
 };
@@ -7267,6 +7301,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [mt5Syncing, setMt5Syncing] = useState(false);
   const [mt5ActionBusy, setMt5ActionBusy] = useState(false);
   const [mt5Error, setMt5Error] = useState<string | null>(null);
+  const [copyTradeClockMs, setCopyTradeClockMs] = useState(() => Date.now());
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [selectedHistoryInteractionTick, setSelectedHistoryInteractionTick] = useState(0);
   const [showAllTradesOnChart, setShowAllTradesOnChart] = useState(false);
@@ -7593,6 +7628,149 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const copyTradeDashboard = selectedMt5Dashboard ?? (copyTradePreviewMode ? DEMO_MT5_DASHBOARD : null);
   const copyTradeDashboardLoading = copyTradePreviewMode ? false : selectedMt5DashboardLoading;
   const copyTradeDashboardError = copyTradePreviewMode ? null : selectedMt5DashboardError;
+  const copyTradeBarMs = useMemo(() => {
+    const timeframe = copyTradeDashboardAccount?.timeframe ?? "15m";
+    const timeframeMins = timeframeMinutes[timeframe] ?? 15;
+    return timeframeMins * 60_000;
+  }, [copyTradeDashboardAccount?.timeframe]);
+  const copyTradeActivePosition = copyTradeDashboard?.openPositions[0] ?? null;
+  const copyTradeLiveSide =
+    copyTradeActivePosition?.side === "SELL" || copyTradeActivePosition?.side === "BUY"
+      ? copyTradeActivePosition.side
+      : "BUY";
+  const copyTradeLivePnl =
+    copyTradeActivePosition?.profit ??
+    copyTradeDashboard?.netOpenProfit ??
+    0;
+  const copyTradeChartSeries = useMemo(() => {
+    if (!copyTradeDashboard) {
+      return [] as number[];
+    }
+
+    const anchor = copyTradeDashboard.equity ?? copyTradeDashboard.balance ?? 5000;
+    const amplitude = Math.max(24, Math.abs(copyTradeDashboard.netOpenProfit || 0) * 0.12 + 26);
+    const points = 160;
+
+    return Array.from({ length: points }, (_, index) => {
+      const waveA = Math.sin(index * 0.08) * amplitude;
+      const waveB = Math.cos(index * 0.19) * (amplitude * 0.46);
+      const waveC = Math.sin(index * 0.015 + 0.8) * (amplitude * 1.12);
+      const drift = (index - points * 0.5) * 0.56;
+      return anchor + waveA + waveB + waveC + drift;
+    });
+  }, [copyTradeDashboard]);
+  const copyTradeChartGeometry = useMemo(() => {
+    if (copyTradeChartSeries.length < 2) {
+      return null;
+    }
+
+    const width = 1000;
+    const height = 460;
+    const min = Math.min(...copyTradeChartSeries);
+    const max = Math.max(...copyTradeChartSeries);
+    const span = Math.max(1, max - min);
+    const points = copyTradeChartSeries
+      .map((value, index) => {
+        const x = (index / (copyTradeChartSeries.length - 1)) * width;
+        const y = height - ((value - min) / span) * height;
+        return `${x.toFixed(2)},${y.toFixed(2)}`;
+      })
+      .join(" ");
+    const lastIndex = copyTradeChartSeries.length - 1;
+    const lastX = width;
+    const lastY =
+      height - ((copyTradeChartSeries[lastIndex]! - min) / span) * height;
+    const ticks = [max, max - span / 3, max - (span * 2) / 3, min];
+
+    return {
+      points,
+      lastX,
+      lastY,
+      ticks
+    };
+  }, [copyTradeChartSeries]);
+  const copyTradeHistoryCards = useMemo<CopyTradeHistoryCard[]>(() => {
+    if (!copyTradeDashboard) {
+      return [];
+    }
+
+    const cards: CopyTradeHistoryCard[] = [];
+    const active = copyTradeDashboard.openPositions[0] ?? null;
+
+    if (active) {
+      const side = active.side === "SELL" ? "SELL" : "BUY";
+      cards.push({
+        id: `active-${active.id}`,
+        title: "ACTIVE TRADE",
+        side,
+        pnl: Number(active.profit) || 0,
+        entry: active.openPrice,
+        exit: null,
+        start: active.time,
+        end: null,
+        durationBars: null,
+        tone: "active"
+      });
+    }
+
+    copyTradeDashboard.recentDeals.slice(0, 6).forEach((deal, index) => {
+      const side = deal.side === "SELL" ? "SELL" : "BUY";
+      const dealEnd = deal.time;
+      const defaultBars = 6 + index * 5;
+      const elapsedBars =
+        dealEnd !== null ? Math.round((copyTradeClockMs - dealEnd) / copyTradeBarMs) : defaultBars;
+      const durationBars = clamp(elapsedBars, 3, 42);
+      const start = dealEnd !== null ? dealEnd - durationBars * copyTradeBarMs : null;
+      const exit = deal.price;
+      const volume = Math.max(0.01, Number(deal.volume) || 0.1);
+      const pointsFromPnl = Math.abs(Number(deal.profit) || 0) / Math.max(1, volume * 120);
+      const entry =
+        exit !== null
+          ? side === "BUY"
+            ? exit - pointsFromPnl
+            : exit + pointsFromPnl
+          : null;
+      const rule = Number(deal.profit) >= 0 ? "TP" : "SL";
+
+      cards.push({
+        id: deal.id,
+        title: `${side} • ${rule}`,
+        side,
+        pnl: Number(deal.profit) || 0,
+        entry,
+        exit,
+        start,
+        end: dealEnd,
+        durationBars,
+        tone: Number(deal.profit) >= 0 ? "win" : "loss"
+      });
+    });
+
+    return cards.slice(0, 7);
+  }, [copyTradeBarMs, copyTradeClockMs, copyTradeDashboard]);
+  const copyTradeUtcClockLabel = useMemo(() => {
+    return new Date(copyTradeClockMs).toLocaleString("en-US", {
+      timeZone: "UTC",
+      month: "short",
+      day: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true
+    });
+  }, [copyTradeClockMs]);
+  const copyTradeLocalClockLabel = useMemo(() => {
+    return new Date(copyTradeClockMs).toLocaleString("en-US", {
+      month: "short",
+      day: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true
+    });
+  }, [copyTradeClockMs]);
 
   useEffect(() => {
     if (!mt5ContextMenu) {
@@ -7605,6 +7783,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     setMt5ContextMenu(null);
   }, [mt5Accounts, mt5ContextMenu]);
+
+  useEffect(() => {
+    if (selectedSurfaceTab !== "copytrade") {
+      return;
+    }
+
+    const timerId = window.setInterval(() => {
+      setCopyTradeClockMs(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [selectedSurfaceTab]);
 
   const refreshMt5Accounts = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent === true;
@@ -17578,211 +17770,151 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 )}
 
                 {copyTradeDashboardAccount ? (
-                  <section className="copytrade-dashboard-shell" aria-label="Selected account dashboard">
-                    <div className="copytrade-dashboard-head">
-                      <div>
-                        <h3>Account Dashboard</h3>
-                        <p>
-                          {copyTradeDashboardAccount
-                            ? `${copyTradeDashboardAccount.login} · ${copyTradeDashboardAccount.server}`
-                            : "Select an account to view its live dashboard."}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        className="panel-action-btn copytrade-dashboard-refresh-btn"
-                        onClick={handleRefreshSelectedMt5Dashboard}
-                        disabled={!selectedMt5Account || copyTradeDashboardLoading || copyTradePreviewMode}
-                      >
-                        {copyTradePreviewMode
-                          ? "Preview"
-                          : copyTradeDashboardLoading
-                            ? "Refreshing..."
-                            : "Refresh"}
-                      </button>
-                    </div>
-
-                    {copyTradeDashboardAccount ? (
-                      copyTradeDashboard ? (
-                        <div className="copytrade-dashboard-grid">
-                          <section className="copytrade-dashboard-main-card">
-                            <div className="copytrade-dashboard-banner">
-                              <div className="copytrade-dashboard-banner-copy">
-                                <span className="copytrade-dashboard-kicker">
-                                  {copyTradeDashboard.broker || "MetaTrader Account"}
-                                </span>
-                                <h4>
-                                  {copyTradeDashboard.login} @ {copyTradeDashboard.server}
-                                </h4>
-                              </div>
-                              <div className="copytrade-dashboard-banner-balance">
-                                <span>Equity</span>
-                                <strong>
-                                  {formatAccountMoney(
-                                    copyTradeDashboard.equity ?? copyTradeDashboard.balance,
-                                    copyTradeDashboard.currency
-                                  )}
-                                </strong>
-                              </div>
+                  <section
+                    className="copytrade-dashboard-shell copytrade-dashboard-live"
+                    aria-label="Selected account dashboard"
+                  >
+                    {copyTradeDashboard ? (
+                      <>
+                        <header className="copytrade-live-topbar">
+                          <div className="copytrade-live-title-wrap">
+                            <h3>Live Dashboard</h3>
+                            <span className="copytrade-live-chip amber">Summer</span>
+                            <span className="copytrade-live-chip blue">Day</span>
+                            <span className="copytrade-live-chip green">Sunshine</span>
+                          </div>
+                          <div className="copytrade-live-topbar-right">
+                            <div className="copytrade-live-clock">
+                              <span>UTC: {copyTradeUtcClockLabel}</span>
+                              <span>Local: {copyTradeLocalClockLabel}</span>
                             </div>
+                            {!copyTradePreviewMode ? (
+                              <button
+                                type="button"
+                                className="panel-action-btn copytrade-live-refresh-btn"
+                                onClick={handleRefreshSelectedMt5Dashboard}
+                                disabled={!selectedMt5Account || copyTradeDashboardLoading}
+                              >
+                                {copyTradeDashboardLoading ? "Refreshing..." : "Refresh"}
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="panel-action-btn copytrade-live-mode-btn"
+                              disabled
+                            >
+                              Light Mode
+                            </button>
+                          </div>
+                        </header>
 
-                            <div className="copytrade-dashboard-metrics">
-                              <article className="copytrade-dashboard-stat">
-                                <span>Balance</span>
-                                <strong>
-                                  {formatAccountMoney(
-                                    copyTradeDashboard.balance,
-                                    copyTradeDashboard.currency
-                                  )}
-                                </strong>
-                              </article>
-                              <article className="copytrade-dashboard-stat">
-                                <span>Free Margin</span>
-                                <strong>
-                                  {formatAccountMoney(
-                                    copyTradeDashboard.freeMargin,
-                                    copyTradeDashboard.currency
-                                  )}
-                                </strong>
-                              </article>
-                              <article className="copytrade-dashboard-stat">
-                                <span>Used Margin</span>
-                                <strong>
-                                  {formatAccountMoney(
-                                    copyTradeDashboard.margin,
-                                    copyTradeDashboard.currency
-                                  )}
-                                </strong>
-                              </article>
-                              <article className="copytrade-dashboard-stat">
-                                <span>Open PnL</span>
-                                <strong
-                                  className={
-                                    (copyTradeDashboard.netOpenProfit || 0) >= 0 ? "up" : "down"
-                                  }
-                                >
-                                  {formatSignedAccountMoney(
-                                    copyTradeDashboard.netOpenProfit,
-                                    copyTradeDashboard.currency
-                                  )}
-                                </strong>
-                              </article>
-                              <article className="copytrade-dashboard-stat">
-                                <span>24h Closed PnL</span>
-                                <strong
-                                  className={
-                                    (copyTradeDashboard.dayClosedPnl || 0) >= 0 ? "up" : "down"
-                                  }
-                                >
-                                  {formatSignedAccountMoney(
-                                    copyTradeDashboard.dayClosedPnl,
-                                    copyTradeDashboard.currency
-                                  )}
-                                </strong>
-                              </article>
-                              <article className="copytrade-dashboard-stat">
-                                <span>Margin Level</span>
-                                <strong>
-                                  {copyTradeDashboard.marginLevel !== null
-                                    ? `${copyTradeDashboard.marginLevel.toFixed(1)}%`
-                                    : "--"}
-                                </strong>
-                              </article>
-                              <article className="copytrade-dashboard-stat">
-                                <span>Leverage</span>
-                                <strong>
-                                  {copyTradeDashboard.leverage !== null
-                                    ? `1:${Math.trunc(copyTradeDashboard.leverage)}`
-                                    : "--"}
-                                </strong>
-                              </article>
-                              <article className="copytrade-dashboard-stat">
-                                <span>Trading</span>
-                                <strong>
-                                  {copyTradeDashboard.tradeAllowed === null
-                                    ? "--"
-                                    : copyTradeDashboard.tradeAllowed
-                                      ? "Allowed"
-                                      : "Restricted"}
-                                </strong>
-                              </article>
-                            </div>
-
-                            <div className="copytrade-open-positions-card">
-                              <div className="copytrade-dashboard-subhead">
-                                <h5>Open Positions</h5>
-                                <span>{copyTradeDashboard.openPositions.length}</span>
-                              </div>
-
-                              {copyTradeDashboard.openPositions.length > 0 ? (
-                                <ul className="copytrade-open-position-list">
-                                  {copyTradeDashboard.openPositions.map((position) => (
-                                    <li key={position.id}>
-                                      <article className="copytrade-open-position-item">
-                                        <header>
-                                          <strong>{position.symbol}</strong>
-                                          <span
-                                            className={
-                                              (position.profit || 0) >= 0
-                                                ? "copytrade-pill up"
-                                                : "copytrade-pill down"
-                                            }
-                                          >
-                                            {position.side} ·{" "}
-                                            {formatSignedAccountMoney(
-                                              position.profit,
-                                              copyTradeDashboard.currency
-                                            )}
-                                          </span>
-                                        </header>
-                                        <p>
-                                          Vol {position.volume.toFixed(2)} · Open{" "}
-                                          {position.openPrice !== null
-                                            ? formatPrice(position.openPrice)
-                                            : "--"}{" "}
-                                          · Current{" "}
-                                          {position.currentPrice !== null
-                                            ? formatPrice(position.currentPrice)
-                                            : "--"}
-                                        </p>
-                                      </article>
-                                    </li>
-                                  ))}
-                                </ul>
-                              ) : (
-                                <p className="copytrade-dashboard-empty">No open positions on this account.</p>
-                              )}
-                            </div>
-                          </section>
-
-                          <aside className="copytrade-dashboard-history-card">
-                            <div className="copytrade-dashboard-subhead">
-                              <h5>Recent History</h5>
-                              <span>
-                                Updated {formatDashboardDateTime(copyTradeDashboard.lastSyncedAt)}
+                        <div className="copytrade-live-layout">
+                          <section className="copytrade-live-chart-card">
+                            <div className="copytrade-live-chart-head">
+                              <strong>
+                                {copyTradeDashboardAccount.symbol} ({copyTradeDashboard.broker || "XAUUSD"}) -{" "}
+                                {copyTradeDashboardAccount.timeframe}
+                              </strong>
+                              <span className={`copytrade-live-trade ${copyTradeLivePnl >= 0 ? "up" : "down"}`}>
+                                In Trade: {copyTradeLiveSide} • PnL{" "}
+                                {formatSignedAccountMoney(copyTradeLivePnl, copyTradeDashboard.currency)}
+                              </span>
+                              <span className="copytrade-live-equity">
+                                <span className="copytrade-live-dot">LIVE</span>
+                                {formatAccountMoney(
+                                  copyTradeDashboard.equity ?? copyTradeDashboard.balance,
+                                  copyTradeDashboard.currency
+                                )}
                               </span>
                             </div>
 
-                            {copyTradeDashboard.recentDeals.length > 0 ? (
-                              <ul className="copytrade-deal-list">
-                                {copyTradeDashboard.recentDeals.map((deal) => (
-                                  <li key={deal.id}>
-                                    <article className="copytrade-deal-item">
+                            <div className="copytrade-live-chart-wrap">
+                              <div className="copytrade-live-yaxis">
+                                {copyTradeChartGeometry
+                                  ? copyTradeChartGeometry.ticks.map((value, index) => (
+                                      <span key={`tick-${index}`}>
+                                        {Math.round(value).toLocaleString("en-US")}
+                                      </span>
+                                    ))
+                                  : null}
+                              </div>
+                              <svg
+                                className="copytrade-live-chart-svg"
+                                viewBox="0 0 1000 460"
+                                preserveAspectRatio="none"
+                                aria-label="copy trade equity chart"
+                              >
+                                {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
+                                  <line
+                                    key={`h-${ratio}`}
+                                    className="copytrade-live-gridline"
+                                    x1={0}
+                                    y1={ratio * 460}
+                                    x2={1000}
+                                    y2={ratio * 460}
+                                  />
+                                ))}
+                                {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
+                                  <line
+                                    key={`v-${ratio}`}
+                                    className="copytrade-live-gridline"
+                                    x1={ratio * 1000}
+                                    y1={0}
+                                    x2={ratio * 1000}
+                                    y2={460}
+                                  />
+                                ))}
+                                {copyTradeChartGeometry ? (
+                                  <>
+                                    <polyline
+                                      className="copytrade-live-path"
+                                      points={copyTradeChartGeometry.points}
+                                    />
+                                    <circle
+                                      className="copytrade-live-endpoint"
+                                      cx={copyTradeChartGeometry.lastX}
+                                      cy={copyTradeChartGeometry.lastY}
+                                      r={8}
+                                    />
+                                  </>
+                                ) : null}
+                              </svg>
+                            </div>
+
+                            <div className="copytrade-live-strip-stack">
+                              <div className="copytrade-live-strip strip-1" />
+                              <div className="copytrade-live-strip strip-2" />
+                              <div className="copytrade-live-strip strip-3" />
+                            </div>
+                          </section>
+
+                          <aside className="copytrade-live-history-card">
+                            <div className="copytrade-live-history-head">
+                              <h4>Recent History</h4>
+                              <span>Updated {formatDashboardDateTime(copyTradeDashboard.lastSyncedAt)}</span>
+                            </div>
+
+                            {copyTradeHistoryCards.length > 0 ? (
+                              <ul className="copytrade-live-history-list">
+                                {copyTradeHistoryCards.map((item) => (
+                                  <li key={item.id}>
+                                    <article className={`copytrade-live-history-item ${item.tone}`}>
                                       <header>
-                                        <strong>{deal.symbol}</strong>
-                                        <span className={(deal.profit || 0) >= 0 ? "up" : "down"}>
-                                          {formatSignedAccountMoney(
-                                            deal.profit,
-                                            copyTradeDashboard.currency
-                                          )}
+                                        <strong>{item.title}</strong>
+                                        <span className={item.pnl >= 0 ? "up" : "down"}>
+                                          {item.side} •{" "}
+                                          {formatSignedAccountMoney(item.pnl, copyTradeDashboard.currency)}
                                         </span>
                                       </header>
-                                      <p>
-                                        {deal.side} · {deal.entryType.replace("DEAL_ENTRY_", "")}
-                                      </p>
+                                      <div className="copytrade-live-history-grid">
+                                        <span>Entry: {formatDashboardPriceLabel(item.entry)}</span>
+                                        <span>Exit: {formatDashboardPriceLabel(item.exit)}</span>
+                                        <span>Start: {formatDashboardHistoryDateTime(item.start)}</span>
+                                        <span>{item.tone === "active" ? "Ends" : "End"}: {formatDashboardHistoryDateTime(item.end)}</span>
+                                      </div>
                                       <small>
-                                        {deal.price !== null ? `@ ${formatPrice(deal.price)} · ` : ""}
-                                        {formatDashboardDateTime(deal.time)}
+                                        Duration:{" "}
+                                        {item.durationBars === null ? "TBD" : `${item.durationBars} bars`}
                                       </small>
                                     </article>
                                   </li>
@@ -17793,16 +17925,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             )}
                           </aside>
                         </div>
-                      ) : (
-                        <p className="copytrade-note">
-                          {copyTradeDashboardError ||
-                            (copyTradeDashboardLoading
-                              ? "Loading account dashboard..."
-                              : "Dashboard data is not available yet for this account.")}
-                        </p>
-                      )
+                      </>
                     ) : (
-                      <p className="copytrade-note">Select an account to view its live dashboard.</p>
+                      <p className="copytrade-note">
+                        {copyTradeDashboardError ||
+                          (copyTradeDashboardLoading
+                            ? "Loading account dashboard..."
+                            : "Dashboard data is not available yet for this account.")}
+                      </p>
                     )}
                   </section>
                 ) : null}
