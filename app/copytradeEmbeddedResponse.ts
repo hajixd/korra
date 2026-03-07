@@ -64,15 +64,6 @@ body {
   overflow: hidden;
   background: #ffffff;
 }
-
-[data-copytrade-hidden-drawer="true"] {
-  display: none !important;
-  width: 0 !important;
-  min-width: 0 !important;
-  max-width: 0 !important;
-  flex: 0 0 0 !important;
-  overflow: hidden !important;
-}
 `;
 
 const injectedScript = `
@@ -127,7 +118,6 @@ const injectedScript = `
     }
   };
   const MOCK_USER = ${JSON.stringify(mockUser)};
-  const EMBED_PATH = "/backtesting/dashboard";
   const API_HOST = "api.tradezella.com";
   const API_PATH_PREFIX = "/api";
   const LISTENER_EVENTS = [
@@ -143,6 +133,7 @@ const injectedScript = `
   const nativeFetch = window.fetch ? window.fetch.bind(window) : null;
   const nativePushState = history.pushState.bind(history);
   const nativeReplaceState = history.replaceState.bind(history);
+  let lastEmbeddedPath = window.location.pathname + window.location.search + window.location.hash;
 
   const safeUrl = (input) => {
     try {
@@ -160,18 +151,27 @@ const injectedScript = `
   const isTradezellaApiRequest = (input) => {
     const parsed = safeUrl(input);
     return Boolean(
-      parsed &&
+        parsed &&
         parsed.hostname === API_HOST &&
         parsed.pathname.startsWith(API_PATH_PREFIX)
     );
+  };
+
+  const rememberEmbeddedPath = (input) => {
+    const parsed = safeUrl(input);
+    if (!parsed || parsed.origin !== window.location.origin || parsed.pathname.startsWith("/auth/")) {
+      return;
+    }
+
+    lastEmbeddedPath = parsed.pathname + parsed.search + parsed.hash;
   };
 
   const persistAuthHeaders = () => {
     Object.entries(AUTH_HEADERS).forEach(([key, value]) => {
       localStorage.setItem(key, String(value));
     });
-    localStorage.setItem("drawerPosition", "false");
-    localStorage.setItem("openSidebar", "false");
+    localStorage.setItem("drawerPosition", "true");
+    localStorage.setItem("openSidebar", "true");
   };
 
   const cloneDefaultDashboardResponse = () =>
@@ -347,25 +347,9 @@ const injectedScript = `
     };
   };
 
-  const hideDrawer = () => {
-    const drawer = document.querySelector('[data-testid="drawer"]');
-    if (!drawer) {
-      return;
-    }
-
-    const drawerHost = drawer.parentElement;
-    if (drawerHost && drawerHost.getAttribute("data-copytrade-hidden-drawer") !== "true") {
-      drawerHost.setAttribute("data-copytrade-hidden-drawer", "true");
-    }
-
-    if (drawer instanceof HTMLElement) {
-      drawer.style.display = "none";
-    }
-  };
-
   const enforceEmbeddedRoute = () => {
     if (window.location.pathname.startsWith("/auth/")) {
-      nativeReplaceState(history.state, "", EMBED_PATH);
+      nativeReplaceState(history.state, "", lastEmbeddedPath);
       window.dispatchEvent(new PopStateEvent("popstate"));
     }
   };
@@ -375,14 +359,20 @@ const injectedScript = `
 
   history.pushState = function pushState(state, unused, url) {
     if (typeof url === "string" && isAuthRoute(url)) {
-      return nativePushState(state, unused, EMBED_PATH);
+      return nativePushState(state, unused, lastEmbeddedPath);
+    }
+    if (url) {
+      rememberEmbeddedPath(url);
     }
     return nativePushState(state, unused, url);
   };
 
   history.replaceState = function replaceState(state, unused, url) {
     if (typeof url === "string" && isAuthRoute(url)) {
-      return nativeReplaceState(state, unused, EMBED_PATH);
+      return nativeReplaceState(state, unused, lastEmbeddedPath);
+    }
+    if (url) {
+      rememberEmbeddedPath(url);
     }
     return nativeReplaceState(state, unused, url);
   };
@@ -616,21 +606,17 @@ const injectedScript = `
 
   window.XMLHttpRequest = EmbeddedCopytradeXHR;
 
-  hideDrawer();
   new MutationObserver(() => {
     persistAuthHeaders();
     enforceEmbeddedRoute();
-    hideDrawer();
   }).observe(document.documentElement, {
     childList: true,
     subtree: true
   });
-  window.addEventListener("load", hideDrawer);
-  window.setInterval(hideDrawer, 500);
 })();
 `;
 
-export async function GET() {
+export function createCopytradeDashboardResponse() {
   const html = `<!DOCTYPE html>
 <html lang="en" style="height:100%">
   <head>

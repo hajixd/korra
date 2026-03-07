@@ -16198,7 +16198,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             }}
           >
             <iframe
-              src="/backtesting/dashboard"
+              src="/tracking"
               title="Copy Trade Dashboard"
               style={{
                 display: "block",
