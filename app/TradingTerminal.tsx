@@ -374,48 +374,6 @@ type CopyTradeDailyStat = {
   pct: number;
 };
 
-type CopyTradeDayViewMode = "day" | "week";
-
-type CopyTradeMiniChartGeometry = {
-  points: string;
-  fillPoints: string;
-  yTicks: number[];
-};
-
-type CopyTradeDayViewPanel = {
-  id: string;
-  label: string;
-  timestamp: number;
-  endTimestamp: number;
-  netPnl: number;
-  totalTrades: number;
-  winners: number;
-  losers: number;
-  volume: number;
-  winRate: number;
-  profitFactor: number;
-  averageTrade: number;
-  chart: CopyTradeMiniChartGeometry;
-};
-
-type CopyTradeTradeViewRow = {
-  id: string;
-  status: "OPEN" | "WIN" | "LOSS" | "FLAT";
-  openTimestamp: number | null;
-  closeTimestamp: number | null;
-  symbol: string;
-  side: "BUY" | "SELL";
-  volume: number | null;
-  entryPrice: number | null;
-  exitPrice: number | null;
-  netPnl: number;
-  netRoi: number;
-  grossPnl: number;
-  scalePct: number;
-  accountName: string;
-  comment: string | null;
-};
-
 const DEMO_MT5_ACCOUNT_ID = "demo-preview-account";
 const DEMO_MT5_ACCOUNT: Mt5Account = {
   id: DEMO_MT5_ACCOUNT_ID,
@@ -4558,74 +4516,6 @@ const formatDashboardToolbarDate = (timestampMs: number | null): string => {
   });
 };
 
-const formatDashboardLongDateLabel = (timestampMs: number | null): string => {
-  if (timestampMs === null || !Number.isFinite(timestampMs)) {
-    return "--";
-  }
-
-  return new Date(timestampMs).toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    year: "numeric"
-  });
-};
-
-const formatDashboardWeekRangeLabel = (startTimestampMs: number, endTimestampMs: number): string => {
-  const endLabelDate = new Date(Math.max(startTimestampMs, endTimestampMs - 86_400_000));
-
-  return `${new Date(startTimestampMs).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric"
-  })} - ${endLabelDate.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric"
-  })}`;
-};
-
-const buildCopyTradeMiniChartGeometry = (
-  sourceValues: number[],
-  width: number,
-  height: number
-): CopyTradeMiniChartGeometry => {
-  if (sourceValues.length === 0) {
-    return {
-      points: "",
-      fillPoints: "",
-      yTicks: [0, 0, 0, 0]
-    };
-  }
-
-  const values = sourceValues.length === 1 ? [sourceValues[0]!, sourceValues[0]!] : sourceValues;
-  const minValue = Math.min(...values);
-  const maxValue = Math.max(...values);
-  const span = maxValue - minValue;
-  const lastIndex = Math.max(1, values.length - 1);
-  const resolveY = (value: number) => {
-    if (span === 0) {
-      return height / 2;
-    }
-
-    return height - ((value - minValue) / span) * height;
-  };
-  const points = values
-    .map((value, index) => {
-      const x = (index / lastIndex) * width;
-      return `${x.toFixed(2)},${resolveY(value).toFixed(2)}`;
-    })
-    .join(" ");
-
-  return {
-    points,
-    fillPoints: `0,${height} ${points} ${width},${height}`,
-    yTicks:
-      span === 0
-        ? [maxValue, maxValue, maxValue, maxValue]
-        : [maxValue, maxValue - span / 3, maxValue - (span * 2) / 3, minValue]
-  };
-};
-
 const formatDashboardHistoryDateTime = (timestampMs: number | null): string => {
   if (timestampMs === null || !Number.isFinite(timestampMs)) {
     return "TBD";
@@ -7809,7 +7699,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const now = new Date();
     return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
   });
-  const [copyTradeDayViewMode, setCopyTradeDayViewMode] = useState<CopyTradeDayViewMode>("day");
   const [copyTradeSidebarSection, setCopyTradeSidebarSection] =
     useState<CopyTradeStudioSection>("dashboard");
   const [copyTradeLedgerTab, setCopyTradeLedgerTab] = useState<CopyTradeLedgerTab>("recent");
@@ -8168,7 +8057,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setCopyTradeTradeRange("1M");
     setCopyTradeBalanceRange("1M");
     setCopyTradeDealFilterMode("all");
-    setCopyTradeDayViewMode("day");
     setCopyTradeSidebarSection("dashboard");
     setCopyTradeLedgerTab("recent");
     setCopyTradeSelectedLedgerRowId(null);
@@ -8524,139 +8412,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       .sort((left, right) => left.timestamp - right.timestamp);
   }, [copyTradeBalanceSeriesAll.points, copyTradeDealsForMetrics]);
 
-  const copyTradeDayViewPanelsByMode = useMemo<Record<CopyTradeDayViewMode, CopyTradeDayViewPanel[]>>(() => {
-    const buildPanels = (mode: CopyTradeDayViewMode): CopyTradeDayViewPanel[] => {
-      if (copyTradeDealsForMetrics.length === 0) {
-        return [];
-      }
-
-      const grouped = new Map<
-        string,
-        {
-          timestamp: number;
-          endTimestamp: number;
-          label: string;
-          deals: CopyTradeClosedDeal[];
-        }
-      >();
-
-      copyTradeDealsForMetrics.forEach((deal) => {
-        const dealDate = new Date(deal.time);
-        const dateKey = formatUtcDateInput(deal.time);
-        const dayStartMs = parseDateInputToUtcMs(dateKey, false) ?? deal.time;
-        const weekStartMs =
-          Date.UTC(
-            dealDate.getUTCFullYear(),
-            dealDate.getUTCMonth(),
-            dealDate.getUTCDate()
-          ) -
-          ((dealDate.getUTCDay() + 6) % 7) * 86_400_000;
-        const timestamp = mode === "day" ? dayStartMs : weekStartMs;
-        const endTimestamp = timestamp + (mode === "day" ? 86_400_000 : 7 * 86_400_000);
-        const key = `${mode}-${formatUtcDateInput(timestamp)}`;
-        const existing = grouped.get(key);
-
-        if (!existing) {
-          grouped.set(key, {
-            timestamp,
-            endTimestamp,
-            label:
-              mode === "day"
-                ? formatDashboardLongDateLabel(timestamp)
-                : formatDashboardWeekRangeLabel(timestamp, endTimestamp),
-            deals: [deal]
-          });
-          return;
-        }
-
-        existing.deals.push(deal);
-      });
-
-      return [...grouped.entries()]
-        .map(([id, panel]) => {
-          const sortedDeals = [...panel.deals].sort((left, right) => left.time - right.time);
-          let runningPnl = 0;
-          const cumulative = [0];
-          let netPnl = 0;
-          let grossWins = 0;
-          let grossLossAbs = 0;
-          let winners = 0;
-          let losers = 0;
-          let volume = 0;
-
-          sortedDeals.forEach((deal) => {
-            netPnl += deal.pnl;
-            runningPnl += deal.pnl;
-            cumulative.push(runningPnl);
-            grossWins += deal.pnl > 0 ? deal.pnl : 0;
-            grossLossAbs += deal.pnl < 0 ? Math.abs(deal.pnl) : 0;
-            winners += deal.pnl > 0 ? 1 : 0;
-            losers += deal.pnl < 0 ? 1 : 0;
-            volume += deal.volume ?? 0;
-          });
-
-          const resolvedTrades = winners + losers;
-          const totalTrades = sortedDeals.length;
-
-          return {
-            id,
-            label: panel.label,
-            timestamp: panel.timestamp,
-            endTimestamp: panel.endTimestamp,
-            netPnl,
-            totalTrades,
-            winners,
-            losers,
-            volume,
-            winRate: resolvedTrades > 0 ? (winners / resolvedTrades) * 100 : 0,
-            profitFactor:
-              grossLossAbs > 0
-                ? grossWins / grossLossAbs
-                : grossWins > 0
-                  ? Number.POSITIVE_INFINITY
-                  : 0,
-            averageTrade: totalTrades > 0 ? netPnl / totalTrades : 0,
-            chart: buildCopyTradeMiniChartGeometry(cumulative, 620, 188)
-          } satisfies CopyTradeDayViewPanel;
-        })
-        .sort((left, right) => right.timestamp - left.timestamp);
-    };
-
-    return {
-      day: buildPanels("day"),
-      week: buildPanels("week")
-    };
-  }, [copyTradeDealsForMetrics]);
-
-  const copyTradeDayViewPanels = useMemo(() => {
-    const panels = copyTradeDayViewPanelsByMode[copyTradeDayViewMode];
-    if (copyTradeDayViewMode !== "day" || !copyTradeSelectedCalendarDateKey) {
-      return panels;
-    }
-
-    const selectedPanelId = `day-${copyTradeSelectedCalendarDateKey}`;
-    const selectedPanel = panels.find((panel) => panel.id === selectedPanelId) ?? null;
-    if (!selectedPanel) {
-      return panels;
-    }
-
-    return [selectedPanel, ...panels.filter((panel) => panel.id !== selectedPanelId)];
-  }, [copyTradeDayViewMode, copyTradeDayViewPanelsByMode, copyTradeSelectedCalendarDateKey]);
-
-  const copyTradeDayViewActivePanels = useMemo(() => {
-    return copyTradeDayViewPanels.slice(0, 4);
-  }, [copyTradeDayViewPanels]);
-
-  const copyTradeDayViewHighlightedStat = useMemo(() => {
-    if (copyTradeSelectedCalendarDateKey) {
-      return (
-        copyTradeDailyStats.find((stat) => stat.dateKey === copyTradeSelectedCalendarDateKey) ?? null
-      );
-    }
-
-    return copyTradeDailyStats[copyTradeDailyStats.length - 1] ?? null;
-  }, [copyTradeDailyStats, copyTradeSelectedCalendarDateKey]);
-
   const copyTradeStats = useMemo(() => {
     const deals = copyTradeDealsForMetrics;
     const dailyStats = copyTradeDailyStats;
@@ -8911,121 +8666,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     copyTradeStats.wins
   ]);
 
-  const copyTradeTradeViewRows = useMemo<CopyTradeTradeViewRow[]>(() => {
-    const balancePoints = copyTradeBalanceSeriesAll.points;
-    const sortedOpenPositions = [...(copyTradeDashboard?.openPositions ?? [])].sort((left, right) => {
-      return (right.time ?? 0) - (left.time ?? 0);
-    });
-    const getBalanceAt = (timestamp: number | null) => {
-      if (timestamp === null || balancePoints.length === 0) {
-        return copyTradeBalanceSeriesAll.currentBalance;
-      }
-
-      let balance = balancePoints[0]!.balance;
-      for (let index = 0; index < balancePoints.length; index += 1) {
-        const point = balancePoints[index]!;
-        if (point.timestamp > timestamp) {
-          break;
-        }
-        balance = point.balance;
-      }
-      return balance;
-    };
-
-    const accountName = copyTradePreviewMode
-      ? "Preview feed"
-      : copyTradeDashboard?.broker || copyTradeDashboard?.server || `MT5 ${copyTradeDashboard?.login ?? ""}`.trim();
-    const openRows = sortedOpenPositions.map((position) => {
-      const balanceBase = Math.max(1, Math.abs(getBalanceAt(position.time)));
-
-      return {
-        id: `open-${position.id}`,
-        status: "OPEN",
-        openTimestamp: position.time,
-        closeTimestamp: null,
-        symbol: position.symbol,
-        side: position.side === "SELL" ? "SELL" : "BUY",
-        volume: typeof position.volume === "number" ? position.volume : null,
-        entryPrice:
-          typeof position.openPrice === "number" && Number.isFinite(position.openPrice)
-            ? position.openPrice
-            : null,
-        exitPrice: null,
-        netPnl: position.profit,
-        netRoi: (position.profit / balanceBase) * 100,
-        grossPnl: position.profit,
-        scalePct: 0,
-        accountName,
-        comment: position.comment
-      } satisfies CopyTradeTradeViewRow;
-    });
-
-    const closedRows = [...copyTradeDealsForMetrics]
-      .sort((left, right) => right.time - left.time)
-      .slice(0, 40)
-      .map((deal) => {
-        const balanceBase = Math.max(1, Math.abs(getBalanceAt(deal.time)));
-
-        return {
-          id: deal.id,
-          status: deal.pnl > 0 ? "WIN" : deal.pnl < 0 ? "LOSS" : "FLAT",
-          openTimestamp: null,
-          closeTimestamp: deal.time,
-          symbol: deal.symbol,
-          side: deal.side,
-          volume: deal.volume,
-          entryPrice: null,
-          exitPrice: deal.price,
-          netPnl: deal.pnl,
-          netRoi: (deal.pnl / balanceBase) * 100,
-          grossPnl: deal.pnl,
-          scalePct: 0,
-          accountName,
-          comment: deal.comment
-        } satisfies CopyTradeTradeViewRow;
-      });
-
-    const combinedRows = [...openRows, ...closedRows].sort((left, right) => {
-      const leftTimestamp = left.closeTimestamp ?? left.openTimestamp ?? 0;
-      const rightTimestamp = right.closeTimestamp ?? right.openTimestamp ?? 0;
-      return rightTimestamp - leftTimestamp;
-    });
-    const cappedRows = combinedRows.slice(0, 32);
-    const maxAbsGross = cappedRows.reduce((maxValue, row) => {
-      return Math.max(maxValue, Math.abs(row.grossPnl));
-    }, 0);
-
-    return cappedRows.map((row) => ({
-      ...row,
-      scalePct: maxAbsGross > 0 ? clamp((Math.abs(row.grossPnl) / maxAbsGross) * 100, 0, 100) : 0
-    }));
-  }, [
-    copyTradeBalanceSeriesAll.currentBalance,
-    copyTradeBalanceSeriesAll.points,
-    copyTradeDashboard?.broker,
-    copyTradeDashboard?.login,
-    copyTradeDashboard?.openPositions,
-    copyTradeDashboard?.server,
-    copyTradeDealsForMetrics,
-    copyTradePreviewMode
-  ]);
-
-  const copyTradeTradeViewCumulativeChart = useMemo(() => {
-    return buildCopyTradeMiniChartGeometry(
-      copyTradePerformance.visibleDailyRows.map((row) => row.cumulative),
-      420,
-      112
-    );
-  }, [copyTradePerformance.visibleDailyRows]);
-
-  const copyTradeSelectedTradeViewRow = useMemo(() => {
-    return (
-      copyTradeTradeViewRows.find((row) => row.id === copyTradeSelectedLedgerRowId) ??
-      copyTradeTradeViewRows[0] ??
-      null
-    );
-  }, [copyTradeSelectedLedgerRowId, copyTradeTradeViewRows]);
-
   const copyTradeRecentLedgerRows = useMemo(() => {
     return [...copyTradeDealsForMetrics].sort((left, right) => right.time - left.time).slice(0, 10);
   }, [copyTradeDealsForMetrics]);
@@ -9123,10 +8763,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       setCopyTradeTradeRange("1M");
     }
 
-    if (section === "dayView" || section === "tradeView") {
-      return;
-    }
-
     const targetId =
       section === "dashboard" || section === "strategies"
         ? "copytrade-dashboard-section"
@@ -9134,9 +8770,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           ? "copytrade-performance-section"
           : section === "progressTracker"
             ? "copytrade-score-section"
-            : section === "notebook"
+            : section === "tradeView" || section === "notebook"
               ? "copytrade-journal-section"
-              : "copytrade-footer-section";
+              : section === "dayView"
+                ? "copytrade-calendar-section"
+                : "copytrade-footer-section";
     if (!targetId) {
       return;
     }
@@ -9272,11 +8910,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       : copyTradeDealFilterMode === "losses"
         ? "Losses"
         : "All";
-  const copyTradeIsFocusView =
-    copyTradeSidebarSection === "dayView" || copyTradeSidebarSection === "tradeView";
-  const copyTradeProfitFactorGaugePercent = Number.isFinite(copyTradePerformance.profitFactor)
-    ? clamp((copyTradePerformance.profitFactor / 6) * 100, 0, 100)
-    : 100;
 
   const copyTradeUtcClockLabel = useMemo(() => {
     return new Date(copyTradeClockMs).toLocaleString("en-US", {
@@ -19265,11 +18898,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     aria-label="Selected account dashboard"
                   >
                     {copyTradeDashboard ? (
-                      <section
-                        className={`copytrade-overview-shell ${
-                          copyTradeIsFocusView ? "copytrade-overview-shell-focus" : ""
-                        }`}
-                      >
+                      <section className="copytrade-overview-shell">
                         <header className="copytrade-overview-masthead" id="copytrade-dashboard-section">
                           <div className="copytrade-overview-intro">
                             <span className="copytrade-overview-kicker">Performance overview</span>
@@ -19420,7 +19049,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                       key={mode}
                                       type="button"
                                       className={copyTradeDealFilterMode === mode ? "active" : ""}
-                                      onClick={() => setCopyTradeDealFilterMode(mode)}
+                                      onClick={() => {
+                                        setCopyTradeSidebarSection("dashboard");
+                                        setCopyTradeDealFilterMode(mode);
+                                      }}
                                     >
                                       {mode === "all"
                                         ? "All"
@@ -19483,758 +19115,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           </div>
                         </header>
 
-                        {copyTradeSidebarSection === "dayView" ? (
-                          <section className="copytrade-focus-shell copytrade-dayview-shell">
-                            <div className="copytrade-focus-toolbar">
-                              <div className="copytrade-focus-toggle" role="tablist" aria-label="Day view mode">
-                                {(["day", "week"] as const).map((mode) => (
-                                  <button
-                                    key={mode}
-                                    type="button"
-                                    className={copyTradeDayViewMode === mode ? "active" : ""}
-                                    onClick={() => setCopyTradeDayViewMode(mode)}
-                                    aria-pressed={copyTradeDayViewMode === mode}
-                                  >
-                                    {mode === "day" ? "Day" : "Week"}
-                                  </button>
-                                ))}
-                              </div>
-
-                              <div className="copytrade-focus-actions">
-                                <button
-                                  type="button"
-                                  className="copytrade-focus-action copytrade-focus-action-primary"
-                                  onClick={() => {
-                                    if (copyTradePreviewMode) {
-                                      setCopyTradeClockMs(Date.now());
-                                      return;
-                                    }
-
-                                    handleRefreshSelectedMt5Dashboard();
-                                  }}
-                                  disabled={
-                                    (!selectedMt5Account && !copyTradePreviewMode) ||
-                                    copyTradeDashboardLoading
-                                  }
-                                >
-                                  <CopyTradeGlyph
-                                    kind="spark"
-                                    className="copytrade-overview-action-icon"
-                                  />
-                                  {copyTradeDashboardLoading ? "Syncing..." : "Start my day"}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="copytrade-focus-action"
-                                  onClick={() => {
-                                    if (copyTradePreviewMode) {
-                                      setCopyTradeClockMs(Date.now());
-                                      return;
-                                    }
-
-                                    handleRefreshSelectedMt5Dashboard();
-                                  }}
-                                  disabled={
-                                    (!selectedMt5Account && !copyTradePreviewMode) ||
-                                    copyTradeDashboardLoading
-                                  }
-                                >
-                                  <CopyTradeGlyph
-                                    kind="refresh"
-                                    className="copytrade-overview-action-icon"
-                                  />
-                                  Resync
-                                </button>
-                              </div>
-                            </div>
-
-                            <div className="copytrade-dayview-layout">
-                              <div className="copytrade-dayview-feed">
-                                {copyTradeDayViewActivePanels.length > 0 ? (
-                                  copyTradeDayViewActivePanels.map((panel, index) => {
-                                    const isSelected =
-                                      copyTradeDayViewMode === "day"
-                                        ? copyTradeSelectedCalendarDateKey
-                                          ? panel.id === `day-${copyTradeSelectedCalendarDateKey}`
-                                          : index === 0
-                                        : index === 0;
-
-                                    return (
-                                      <article
-                                        key={panel.id}
-                                        className={`copytrade-day-card ${
-                                          panel.netPnl >= 0 ? "positive" : "negative"
-                                        } ${isSelected ? "selected" : ""}`}
-                                      >
-                                        <header className="copytrade-day-card-head">
-                                          <div className="copytrade-day-card-title">
-                                            <span className="copytrade-day-card-chevron" aria-hidden="true">
-                                              ›
-                                            </span>
-                                            <div>
-                                              <h4>{panel.label}</h4>
-                                              <p className={panel.netPnl >= 0 ? "positive" : "negative"}>
-                                                Net P&amp;L{" "}
-                                                {formatSignedAccountMoney(
-                                                  panel.netPnl,
-                                                  copyTradeDashboard.currency
-                                                )}
-                                              </p>
-                                            </div>
-                                          </div>
-
-                                          <div className="copytrade-day-card-actions">
-                                            <button
-                                              type="button"
-                                              className="copytrade-focus-chip"
-                                              onClick={() => handleCopyTradeSidebarNavigate("tradeReplay")}
-                                            >
-                                              Replay
-                                            </button>
-                                            <button
-                                              type="button"
-                                              className="copytrade-focus-chip"
-                                              onClick={() => {
-                                                const panelDate = new Date(panel.timestamp);
-                                                setCopyTradeSelectedCalendarDateKey(
-                                                  formatUtcDateInput(panel.timestamp)
-                                                );
-                                                setCopyTradeCalendarMonthCursorMs(
-                                                  Date.UTC(
-                                                    panelDate.getUTCFullYear(),
-                                                    panelDate.getUTCMonth(),
-                                                    1
-                                                  )
-                                                );
-                                              }}
-                                            >
-                                              Open day
-                                            </button>
-                                          </div>
-                                        </header>
-
-                                        <div className="copytrade-day-card-body">
-                                          <div className="copytrade-day-card-chart-wrap">
-                                            <div
-                                              className="copytrade-day-card-yaxis"
-                                              aria-hidden="true"
-                                            >
-                                              {panel.chart.yTicks.map((tick, tickIndex) => (
-                                                <span key={`${panel.id}-tick-${tickIndex}`}>
-                                                  {formatDashboardAxisMoney(
-                                                    tick,
-                                                    copyTradeDashboard.currency
-                                                  )}
-                                                </span>
-                                              ))}
-                                            </div>
-
-                                            <div className="copytrade-day-card-stage">
-                                              <svg
-                                                viewBox="0 0 620 188"
-                                                className="copytrade-day-card-chart"
-                                                aria-label={`${panel.label} performance`}
-                                              >
-                                                {[0, 1, 2, 3].map((gridIndex) => (
-                                                  <line
-                                                    key={`${panel.id}-grid-${gridIndex}`}
-                                                    x1="0"
-                                                    y1={(188 / 3) * gridIndex}
-                                                    x2="620"
-                                                    y2={(188 / 3) * gridIndex}
-                                                    className="copytrade-day-card-gridline"
-                                                  />
-                                                ))}
-                                                <polygon
-                                                  points={panel.chart.fillPoints}
-                                                  className="copytrade-day-card-area"
-                                                />
-                                                <polyline
-                                                  points={panel.chart.points}
-                                                  className="copytrade-day-card-line"
-                                                />
-                                              </svg>
-                                            </div>
-                                          </div>
-
-                                          <div className="copytrade-day-card-metrics">
-                                            <div>
-                                              <span>Total trades</span>
-                                              <strong>{panel.totalTrades}</strong>
-                                            </div>
-                                            <div>
-                                              <span>Winners / Losers</span>
-                                              <strong>
-                                                {panel.winners} / {panel.losers}
-                                              </strong>
-                                            </div>
-                                            <div>
-                                              <span>Win rate</span>
-                                              <strong>{panel.winRate.toFixed(2)}%</strong>
-                                            </div>
-                                            <div>
-                                              <span>Profit factor</span>
-                                              <strong>
-                                                {Number.isFinite(panel.profitFactor)
-                                                  ? panel.profitFactor.toFixed(2)
-                                                  : "∞"}
-                                              </strong>
-                                            </div>
-                                            <div>
-                                              <span>Volume</span>
-                                              <strong>{panel.volume.toFixed(2)}</strong>
-                                            </div>
-                                            <div>
-                                              <span>Avg trade</span>
-                                              <strong
-                                                className={
-                                                  panel.averageTrade >= 0 ? "positive" : "negative"
-                                                }
-                                              >
-                                                {formatSignedAccountMoney(
-                                                  panel.averageTrade,
-                                                  copyTradeDashboard.currency
-                                                )}
-                                              </strong>
-                                            </div>
-                                          </div>
-                                        </div>
-                                      </article>
-                                    );
-                                  })
-                                ) : (
-                                  <div className="copytrade-focus-empty">
-                                    No session groups match the current range and filter settings.
-                                  </div>
-                                )}
-                              </div>
-
-                              <aside className="copytrade-dayview-sidebar">
-                                <article
-                                  className="copytrade-focus-card copytrade-dayview-calendar-card"
-                                  id="copytrade-calendar-section"
-                                >
-                                  <header className="copytrade-focus-card-head">
-                                    <div>
-                                      <span className="copytrade-focus-kicker">Monthly calendar</span>
-                                      <h4>{copyTradeCalendarView.monthLabel}</h4>
-                                    </div>
-
-                                    <div className="copytrade-focus-calendar-actions">
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setCopyTradeCalendarMonthCursorMs((current) =>
-                                            Date.UTC(
-                                              new Date(current).getUTCFullYear(),
-                                              new Date(current).getUTCMonth() - 1,
-                                              1
-                                            )
-                                          )
-                                        }
-                                      >
-                                        ‹
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const now = new Date();
-                                          setCopyTradeCalendarMonthCursorMs(
-                                            Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
-                                          );
-                                        }}
-                                      >
-                                        This month
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setCopyTradeCalendarMonthCursorMs((current) =>
-                                            Date.UTC(
-                                              new Date(current).getUTCFullYear(),
-                                              new Date(current).getUTCMonth() + 1,
-                                              1
-                                            )
-                                          )
-                                        }
-                                      >
-                                        ›
-                                      </button>
-                                    </div>
-                                  </header>
-
-                                  <div className="copytrade-dayview-month-summary">
-                                    <span>
-                                      Trades
-                                      <strong>{copyTradeCalendarView.monthTrades}</strong>
-                                    </span>
-                                    <span>
-                                      Wins
-                                      <strong>{copyTradeCalendarView.monthWins}</strong>
-                                    </span>
-                                    <span>
-                                      Profit
-                                      <strong
-                                        className={
-                                          copyTradeCalendarView.monthProfit >= 0
-                                            ? "positive"
-                                            : "negative"
-                                        }
-                                      >
-                                        {formatSignedAccountMoney(
-                                          copyTradeCalendarView.monthProfit,
-                                          copyTradeDashboard.currency
-                                        )}
-                                      </strong>
-                                    </span>
-                                  </div>
-
-                                  <div className="copytrade-focus-weekdays">
-                                    {COPYTRADE_WEEKDAY_LABELS.map((day) => (
-                                      <span key={day}>{day}</span>
-                                    ))}
-                                  </div>
-
-                                  <div className="copytrade-focus-calendar-grid">
-                                    {copyTradeCalendarView.cells.map((cell) => (
-                                      <button
-                                        key={cell.dateKey}
-                                        type="button"
-                                        className={`copytrade-focus-calendar-cell ${
-                                          cell.inMonth ? "" : "outside"
-                                        } ${
-                                          cell.stat
-                                            ? cell.stat.pnl > 0
-                                              ? "up"
-                                              : cell.stat.pnl < 0
-                                                ? "down"
-                                                : "flat"
-                                            : ""
-                                        } ${
-                                          copyTradeSelectedCalendarDateKey === cell.dateKey
-                                            ? "selected"
-                                            : ""
-                                        }`}
-                                        onClick={() =>
-                                          setCopyTradeSelectedCalendarDateKey(cell.dateKey)
-                                        }
-                                      >
-                                        <span className="copytrade-focus-calendar-day">{cell.day}</span>
-                                        {cell.stat ? (
-                                          <span className="copytrade-focus-calendar-value">
-                                            {formatSignedAccountMoney(
-                                              cell.stat.pnl,
-                                              copyTradeDashboard.currency
-                                            )}
-                                          </span>
-                                        ) : null}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </article>
-
-                                <article className="copytrade-focus-card copytrade-dayview-highlight-card">
-                                  <header className="copytrade-focus-card-head">
-                                    <div>
-                                      <span className="copytrade-focus-kicker">Selected session</span>
-                                      <h4>
-                                        {copyTradeDayViewHighlightedStat
-                                          ? formatDashboardLongDateLabel(
-                                              copyTradeDayViewHighlightedStat.timestamp
-                                            )
-                                          : "No session selected"}
-                                      </h4>
-                                    </div>
-                                  </header>
-
-                                  {copyTradeDayViewHighlightedStat ? (
-                                    <div className="copytrade-dayview-highlight-grid">
-                                      <div>
-                                        <span>Net P&amp;L</span>
-                                        <strong
-                                          className={
-                                            copyTradeDayViewHighlightedStat.pnl >= 0
-                                              ? "positive"
-                                              : "negative"
-                                          }
-                                        >
-                                          {formatSignedAccountMoney(
-                                            copyTradeDayViewHighlightedStat.pnl,
-                                            copyTradeDashboard.currency
-                                          )}
-                                        </strong>
-                                      </div>
-                                      <div>
-                                        <span>Trades</span>
-                                        <strong>{copyTradeDayViewHighlightedStat.trades}</strong>
-                                      </div>
-                                      <div>
-                                        <span>Wins</span>
-                                        <strong>{copyTradeDayViewHighlightedStat.wins}</strong>
-                                      </div>
-                                      <div>
-                                        <span>Losses</span>
-                                        <strong>{copyTradeDayViewHighlightedStat.losses}</strong>
-                                      </div>
-                                      <div>
-                                        <span>Return</span>
-                                        <strong
-                                          className={
-                                            copyTradeDayViewHighlightedStat.pct >= 0
-                                              ? "positive"
-                                              : "negative"
-                                          }
-                                        >
-                                          {formatCopyTradePercent(copyTradeDayViewHighlightedStat.pct)}
-                                        </strong>
-                                      </div>
-                                      <div>
-                                        <span>Mode</span>
-                                        <strong>
-                                          {copyTradeDayViewMode === "day"
-                                            ? "Daily session"
-                                            : "Weekly rollup"}
-                                        </strong>
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <div className="copytrade-focus-empty">
-                                      Pick a session from the cards or calendar to inspect the day.
-                                    </div>
-                                  )}
-                                </article>
-                              </aside>
-                            </div>
-
-                            <footer className="copytrade-focus-footer" id="copytrade-footer-section">
-                              <span>{copyTradeDashboard.broker || "Cloud account"}</span>
-                              <span>UTC {copyTradeUtcClockLabel}</span>
-                              <span>Local {copyTradeLocalClockLabel}</span>
-                              <span>
-                                Free margin{" "}
-                                {formatAccountMoney(
-                                  copyTradeDashboard.freeMargin,
-                                  copyTradeDashboard.currency
-                                )}
-                              </span>
-                              <span>
-                                Leverage 1:
-                                {typeof copyTradeDashboard.leverage === "number"
-                                  ? copyTradeDashboard.leverage.toFixed(0)
-                                  : "--"}
-                              </span>
-                            </footer>
-                          </section>
-                        ) : copyTradeSidebarSection === "tradeView" ? (
-                          <section className="copytrade-focus-shell copytrade-tradeview-shell">
-                            <section className="copytrade-tradeview-kpis">
-                              <article className="copytrade-focus-card copytrade-tradeview-kpi">
-                                <span className="copytrade-focus-kicker">
-                                  Net cumulative P&amp;L
-                                </span>
-                                <div className="copytrade-tradeview-kpi-value">
-                                  <strong
-                                    className={
-                                      copyTradePerformance.totalNetPnl >= 0
-                                        ? "positive"
-                                        : "negative"
-                                    }
-                                  >
-                                    {formatSignedAccountMoney(
-                                      copyTradePerformance.totalNetPnl,
-                                      copyTradeDashboard.currency
-                                    )}
-                                  </strong>
-                                  <small>{copyTradeStats.trades} closed trades</small>
-                                </div>
-
-                                <svg
-                                  viewBox="0 0 420 112"
-                                  className="copytrade-tradeview-kpi-chart"
-                                  aria-label="Net cumulative P&L"
-                                >
-                                  <polygon
-                                    points={copyTradeTradeViewCumulativeChart.fillPoints}
-                                    className="copytrade-tradeview-kpi-area"
-                                  />
-                                  <polyline
-                                    points={copyTradeTradeViewCumulativeChart.points}
-                                    className="copytrade-tradeview-kpi-line"
-                                  />
-                                </svg>
-                              </article>
-
-                              <article className="copytrade-focus-card copytrade-tradeview-kpi">
-                                <span className="copytrade-focus-kicker">Profit factor</span>
-                                <div className="copytrade-tradeview-kpi-ring-row">
-                                  <div className="copytrade-tradeview-kpi-value">
-                                    <strong>
-                                      {Number.isFinite(copyTradePerformance.profitFactor)
-                                        ? copyTradePerformance.profitFactor.toFixed(2)
-                                        : "∞"}
-                                    </strong>
-                                    <small>
-                                      Gross wins{" "}
-                                      {formatAccountMoney(
-                                        copyTradePerformance.grossWins,
-                                        copyTradeDashboard.currency
-                                      )}
-                                    </small>
-                                  </div>
-
-                                  <div
-                                    className="copytrade-tradeview-ring"
-                                    style={{
-                                      background: `conic-gradient(#2fc58f ${copyTradeProfitFactorGaugePercent}%, rgba(255,255,255,0.08) 0)`
-                                    }}
-                                    aria-hidden="true"
-                                  >
-                                    <div className="copytrade-tradeview-ring-core" />
-                                  </div>
-                                </div>
-                              </article>
-
-                              <article className="copytrade-focus-card copytrade-tradeview-kpi">
-                                <span className="copytrade-focus-kicker">Trade win %</span>
-                                <div className="copytrade-tradeview-kpi-value">
-                                  <strong>{copyTradePerformance.tradeWinPercent.toFixed(2)}%</strong>
-                                  <small>
-                                    {copyTradePerformance.positiveTrades +
-                                      copyTradePerformance.negativeTrades}{" "}
-                                    resolved trades
-                                  </small>
-                                </div>
-
-                                <div className="copytrade-tradeview-gauge-wrap" aria-hidden="true">
-                                  <svg
-                                    viewBox="0 0 120 72"
-                                    className="copytrade-tradeview-gauge"
-                                  >
-                                    <path
-                                      d="M12 60 A48 48 0 0 1 108 60"
-                                      pathLength="100"
-                                      className="copytrade-tradeview-gauge-track"
-                                    />
-                                    <path
-                                      d="M12 60 A48 48 0 0 1 108 60"
-                                      pathLength="100"
-                                      className="copytrade-tradeview-gauge-progress"
-                                      style={{
-                                        strokeDasharray: `${clamp(
-                                          copyTradePerformance.tradeWinPercent,
-                                          0,
-                                          100
-                                        )} 100`
-                                      }}
-                                    />
-                                  </svg>
-                                </div>
-
-                                <div className="copytrade-tradeview-badge-row">
-                                  <span className="copytrade-tradeview-badge positive">
-                                    {copyTradePerformance.positiveTrades}
-                                  </span>
-                                  <span className="copytrade-tradeview-badge neutral">
-                                    {copyTradePerformance.flatTrades}
-                                  </span>
-                                  <span className="copytrade-tradeview-badge negative">
-                                    {copyTradePerformance.negativeTrades}
-                                  </span>
-                                </div>
-                              </article>
-
-                              <article className="copytrade-focus-card copytrade-tradeview-kpi">
-                                <span className="copytrade-focus-kicker">Avg win/loss trade</span>
-                                <div className="copytrade-tradeview-kpi-value">
-                                  <strong>
-                                    {Number.isFinite(copyTradeStats.avgWinLossRatio)
-                                      ? copyTradeStats.avgWinLossRatio.toFixed(2)
-                                      : "∞"}
-                                  </strong>
-                                  <small>Relative edge between winners and losers</small>
-                                </div>
-
-                                <div className="copytrade-tradeview-split-bar" aria-hidden="true">
-                                  <span
-                                    className="positive"
-                                    style={{ width: `${copyTradeStats.avgWinLossShare}%` }}
-                                  />
-                                  <span
-                                    className="negative"
-                                    style={{
-                                      width: `${Math.max(0, 100 - copyTradeStats.avgWinLossShare)}%`
-                                    }}
-                                  />
-                                </div>
-
-                                <div className="copytrade-tradeview-split-values">
-                                  <span className="positive">
-                                    {formatAccountMoney(
-                                      copyTradePerformance.avgWin,
-                                      copyTradeDashboard.currency
-                                    )}
-                                  </span>
-                                  <span className="negative">
-                                    -{formatAccountMoney(
-                                      copyTradePerformance.avgLossAbs,
-                                      copyTradeDashboard.currency
-                                    )}
-                                  </span>
-                                </div>
-                              </article>
-                            </section>
-
-                            <article
-                              className="copytrade-focus-card copytrade-tradeview-table-card"
-                              id="copytrade-journal-section"
-                            >
-                              <header className="copytrade-tradeview-table-head">
-                                <div>
-                                  <span className="copytrade-focus-kicker">Execution ledger</span>
-                                  <h4>Open positions and recent exits</h4>
-                                  <p>
-                                    {copyTradeOpenLedgerRows.length} open positions ·{" "}
-                                    {copyTradeDealsForMetrics.length} filtered closed trades
-                                  </p>
-                                </div>
-
-                                <div className="copytrade-tradeview-table-actions">
-                                  <span className="copytrade-focus-chip">
-                                    Open {copyTradeOpenLedgerRows.length}
-                                  </span>
-                                  <span className="copytrade-focus-chip">
-                                    Closed {copyTradeDealsForMetrics.length}
-                                  </span>
-                                </div>
-                              </header>
-
-                              <div className="copytrade-tradeview-table-wrap">
-                                <table className="copytrade-tradeview-table">
-                                  <thead>
-                                    <tr>
-                                      <th>Open date</th>
-                                      <th>Symbol</th>
-                                      <th>Close date</th>
-                                      <th>Status</th>
-                                      <th>Entry price</th>
-                                      <th>Exit price</th>
-                                      <th>Net P&amp;L</th>
-                                      <th>Net ROI</th>
-                                      <th>Scale</th>
-                                      <th>Gross P&amp;L</th>
-                                      <th>Account name</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {copyTradeTradeViewRows.map((row) => (
-                                      <tr
-                                        key={row.id}
-                                        className={
-                                          copyTradeSelectedTradeViewRow?.id === row.id
-                                            ? "selected"
-                                            : undefined
-                                        }
-                                        onClick={() => setCopyTradeSelectedLedgerRowId(row.id)}
-                                      >
-                                        <td>{formatDashboardDateLabel(row.openTimestamp)}</td>
-                                        <td>
-                                          <strong>{row.symbol}</strong>
-                                          <small>
-                                            {row.side}
-                                            {row.volume !== null ? ` · ${row.volume.toFixed(2)} lot` : ""}
-                                          </small>
-                                        </td>
-                                        <td>{formatDashboardDateLabel(row.closeTimestamp)}</td>
-                                        <td>
-                                          <span
-                                            className={`copytrade-tradeview-status is-${row.status.toLowerCase()}`}
-                                          >
-                                            {row.status}
-                                          </span>
-                                        </td>
-                                        <td>{formatDashboardPriceLabel(row.entryPrice)}</td>
-                                        <td>{formatDashboardPriceLabel(row.exitPrice)}</td>
-                                        <td className={row.netPnl >= 0 ? "positive" : "negative"}>
-                                          {formatSignedAccountMoney(
-                                            row.netPnl,
-                                            copyTradeDashboard.currency
-                                          )}
-                                        </td>
-                                        <td className={row.netRoi >= 0 ? "positive" : "negative"}>
-                                          {formatCopyTradePercent(row.netRoi)}
-                                        </td>
-                                        <td className="copytrade-tradeview-scale-cell">
-                                          <div className="copytrade-tradeview-scale-track">
-                                            <span
-                                              className={row.grossPnl >= 0 ? "positive" : "negative"}
-                                              style={{
-                                                width: `${Math.max(6, row.scalePct)}%`
-                                              }}
-                                            />
-                                          </div>
-                                        </td>
-                                        <td className={row.grossPnl >= 0 ? "positive" : "negative"}>
-                                          {formatSignedAccountMoney(
-                                            row.grossPnl,
-                                            copyTradeDashboard.currency
-                                          )}
-                                        </td>
-                                        <td>
-                                          <strong>{row.accountName}</strong>
-                                          <small>{row.comment || "MT5 mirrored execution"}</small>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-
-                                {copyTradeTradeViewRows.length === 0 ? (
-                                  <div className="copytrade-focus-empty">
-                                    No trades are available for the current date range.
-                                  </div>
-                                ) : null}
-                              </div>
-
-                              <footer className="copytrade-tradeview-table-footer" id="copytrade-footer-section">
-                                <span>
-                                  {copyTradeSelectedTradeViewRow
-                                    ? `${copyTradeSelectedTradeViewRow.symbol} ${copyTradeSelectedTradeViewRow.side} · ${formatDashboardHistoryDateTime(
-                                        copyTradeSelectedTradeViewRow.closeTimestamp ??
-                                          copyTradeSelectedTradeViewRow.openTimestamp
-                                      )} · ${formatSignedAccountMoney(
-                                        copyTradeSelectedTradeViewRow.netPnl,
-                                        copyTradeDashboard.currency
-                                      )}`
-                                    : "Select a row to inspect the latest mirrored execution."}
-                                </span>
-                                <span>
-                                  1 - {copyTradeTradeViewRows.length} of {copyTradeTradeViewRows.length} trades
-                                </span>
-                              </footer>
-                            </article>
-
-                            <footer className="copytrade-focus-footer">
-                              <span>{copyTradeDashboard.broker || "Cloud account"}</span>
-                              <span>UTC {copyTradeUtcClockLabel}</span>
-                              <span>Local {copyTradeLocalClockLabel}</span>
-                              <span>
-                                Margin{" "}
-                                {formatAccountMoney(
-                                  copyTradeDashboard.margin,
-                                  copyTradeDashboard.currency
-                                )}
-                              </span>
-                              <span>
-                                Free margin{" "}
-                                {formatAccountMoney(
-                                  copyTradeDashboard.freeMargin,
-                                  copyTradeDashboard.currency
-                                )}
-                              </span>
-                            </footer>
-                          </section>
-                        ) : (
-                          <>
                         <section className="copytrade-overview-summary-grid">
                           <article className="copytrade-overview-card copytrade-overview-hero-card">
                             <div className="copytrade-overview-card-head">
@@ -20842,6 +19722,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 <button
                                   type="button"
                                   onClick={() => {
+                                    setCopyTradeSidebarSection("dayView");
                                     setCopyTradeCalendarMonthCursorMs((current) =>
                                       Date.UTC(
                                         new Date(current).getUTCFullYear(),
@@ -20856,6 +19737,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 <button
                                   type="button"
                                   onClick={() => {
+                                    setCopyTradeSidebarSection("dayView");
                                     const now = new Date();
                                     setCopyTradeCalendarMonthCursorMs(
                                       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
@@ -20867,6 +19749,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 <button
                                   type="button"
                                   onClick={() => {
+                                    setCopyTradeSidebarSection("dayView");
                                     setCopyTradeCalendarMonthCursorMs((current) =>
                                       Date.UTC(
                                         new Date(current).getUTCFullYear(),
@@ -20939,7 +19822,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   } ${
                                     copyTradeSelectedCalendarDateKey === cell.dateKey ? "selected" : ""
                                   }`}
-                                  onClick={() => setCopyTradeSelectedCalendarDateKey(cell.dateKey)}
+                                  onClick={() => {
+                                    setCopyTradeSelectedCalendarDateKey(cell.dateKey);
+                                    setCopyTradeSidebarSection("dayView");
+                                  }}
                                 >
                                   <span className="copytrade-overview-calendar-day">{cell.day}</span>
                                   {cell.stat ? (
@@ -20976,9 +19862,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           </article>
                         </section>
 
-	                        <footer className="copytrade-overview-footer" id="copytrade-footer-section">
-	                          <span>{copyTradeDashboard.broker || "Cloud account"}</span>
-	                          <span>UTC {copyTradeUtcClockLabel}</span>
+                        <footer className="copytrade-overview-footer" id="copytrade-footer-section">
+                          <span>{copyTradeDashboard.broker || "Cloud account"}</span>
+                          <span>UTC {copyTradeUtcClockLabel}</span>
                           <span>Local {copyTradeLocalClockLabel}</span>
                           <span>
                             Free margin{" "}
@@ -20992,15 +19878,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           </span>
                           <span>
                             Leverage 1:
-	                            {typeof copyTradeDashboard.leverage === "number"
-	                              ? copyTradeDashboard.leverage.toFixed(0)
-	                              : "--"}
-	                          </span>
-	                        </footer>
-                          </>
-                        )}
-	                      </section>
-	                    ) : (
+                            {typeof copyTradeDashboard.leverage === "number"
+                              ? copyTradeDashboard.leverage.toFixed(0)
+                              : "--"}
+                          </span>
+                        </footer>
+                      </section>
+                    ) : (
                       <p className="copytrade-note">
                         {copyTradeDashboardError ||
                           (copyTradeDashboardLoading
