@@ -1,3 +1,508 @@
+const authHeaders = {
+  "access-token": "copytrade-local-access-token",
+  "token-type": "Bearer",
+  client: "copytrade-local-client",
+  expiry: "4102444800",
+  uid: "copytrade@local.test"
+};
+
+const defaultDashboardTemplate = {
+  top_widgets: ["net_pl", "win_percentage_by_trades", "profit_factor"],
+  bottom_widgets: [
+    "zella_score",
+    "daily_net_cumulative_graph",
+    "net_daily_pl_graph",
+    "open_position"
+  ]
+};
+
+const mockUser = {
+  first_name: "Copy",
+  last_name: "Trade",
+  username: "copytrade",
+  email: "copytrade@local.test",
+  role: "admin",
+  is_suspended: false,
+  public_uid: "copytrade-local-user",
+  stripe_subscription_status: "active",
+  stripe_subscription_original_status: "active",
+  stripe_subscription_paused: false,
+  stripe_subscription_paused_till: null,
+  limits_overused: false,
+  beta_level: "beta",
+  features: [],
+  display_currency: "USD",
+  created_at: "2026-03-07T00:00:00.000Z",
+  subscription_valid_until: "2099-12-31",
+  profile_picture: null,
+  plan: "pro",
+  limits: {
+    accounts: 999,
+    replay: true,
+    playbooks: 999,
+    mentee: 999
+  },
+  onboarding_answers: {},
+  is_admin_access: true,
+  trialing: false,
+  trial_start_at: null,
+  intercom_user_jwt: "",
+  black_friday_discount_redeemed: false,
+  tour_progress: {}
+};
+
+const injectedCss = String.raw`
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+[data-copytrade-hidden-drawer="true"] {
+  display: none !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  flex: 0 0 0 !important;
+  overflow: hidden !important;
+}
+`;
+
+const injectedScript = `
+(() => {
+  const AUTH_HEADERS = ${JSON.stringify(authHeaders)};
+  const DEFAULT_DASHBOARD_TEMPLATE = ${JSON.stringify(defaultDashboardTemplate)};
+  const DEFAULT_DASHBOARD_RESPONSE = {
+    data: [],
+    items: [],
+    results: [],
+    templates: [],
+    selected_template: DEFAULT_DASHBOARD_TEMPLATE,
+    top_widgets: DEFAULT_DASHBOARD_TEMPLATE.top_widgets,
+    bottom_widgets: DEFAULT_DASHBOARD_TEMPLATE.bottom_widgets,
+    count: 0,
+    page: 1,
+    per_page: 0,
+    total_pages: 1,
+    total_count: 0,
+    winners: 0,
+    losers: 0,
+    break_evens: 0,
+    winning_days: 0,
+    losing_days: 0,
+    breakeven_days: 0,
+    winning_trades_count: 0,
+    losing_trades_count: 0,
+    breakeven_trades_count: 0
+  };
+  const MOCK_USER = ${JSON.stringify(mockUser)};
+  const EMBED_PATH = "/backtesting/dashboard";
+  const API_HOST = "api.tradezella.com";
+  const API_PATH_PREFIX = "/api";
+  const LISTENER_EVENTS = [
+    "readystatechange",
+    "load",
+    "loadend",
+    "error",
+    "abort",
+    "timeout",
+    "progress"
+  ];
+  const NativeXHR = window.XMLHttpRequest;
+  const nativeFetch = window.fetch ? window.fetch.bind(window) : null;
+  const nativePushState = history.pushState.bind(history);
+  const nativeReplaceState = history.replaceState.bind(history);
+
+  const safeUrl = (input) => {
+    try {
+      return new URL(String(input), window.location.origin);
+    } catch {
+      return null;
+    }
+  };
+
+  const isAuthRoute = (input) => {
+    const parsed = safeUrl(input);
+    return Boolean(parsed && parsed.pathname.startsWith("/auth/"));
+  };
+
+  const isTradezellaApiRequest = (input) => {
+    const parsed = safeUrl(input);
+    return Boolean(
+      parsed &&
+        parsed.hostname === API_HOST &&
+        parsed.pathname.startsWith(API_PATH_PREFIX)
+    );
+  };
+
+  const persistAuthHeaders = () => {
+    Object.entries(AUTH_HEADERS).forEach(([key, value]) => {
+      localStorage.setItem(key, String(value));
+    });
+    localStorage.setItem("drawerPosition", "false");
+    localStorage.setItem("openSidebar", "false");
+  };
+
+  const cloneDefaultDashboardResponse = () =>
+    JSON.parse(JSON.stringify(DEFAULT_DASHBOARD_RESPONSE));
+
+  const buildMockPayload = (input, method) => {
+    const parsed = safeUrl(input);
+    const path = parsed ? parsed.pathname : "";
+
+    if (path.endsWith("/validate_token")) {
+      return {
+        data: MOCK_USER
+      };
+    }
+
+    if (
+      path.includes("/dashboard_template") ||
+      path.includes("/dashboard-layout") ||
+      path.includes("/dashboard_layout") ||
+      path.includes("/template")
+    ) {
+      return {
+        templates: [],
+        selected_template: DEFAULT_DASHBOARD_TEMPLATE,
+        top_widgets: DEFAULT_DASHBOARD_TEMPLATE.top_widgets,
+        bottom_widgets: DEFAULT_DASHBOARD_TEMPLATE.bottom_widgets
+      };
+    }
+
+    if (path.includes("/notification")) {
+      return {
+        count: 0,
+        data: []
+      };
+    }
+
+    if (
+      path.includes("/sessions") ||
+      path.includes("/accounts") ||
+      path.includes("/playbooks") ||
+      path.includes("/strategy") ||
+      path.includes("/tags") ||
+      path.includes("/brokers") ||
+      path.includes("/folders")
+    ) {
+      return [];
+    }
+
+    if (method !== "GET") {
+      return {
+        id: "copytrade-local-record",
+        ...cloneDefaultDashboardResponse()
+      };
+    }
+
+    return cloneDefaultDashboardResponse();
+  };
+
+  const createMockResponse = (input, method) => {
+    const payload = buildMockPayload(input, method);
+    const headers = {
+      "content-type": "application/json; charset=utf-8",
+      ...AUTH_HEADERS
+    };
+
+    return {
+      status: 200,
+      statusText: "OK",
+      headers,
+      responseText: JSON.stringify(payload)
+    };
+  };
+
+  const hideDrawer = () => {
+    const drawer = document.querySelector('[data-testid="drawer"]');
+    if (!drawer) {
+      return;
+    }
+
+    const drawerHost = drawer.parentElement;
+    if (drawerHost && drawerHost.getAttribute("data-copytrade-hidden-drawer") !== "true") {
+      drawerHost.setAttribute("data-copytrade-hidden-drawer", "true");
+    }
+
+    if (drawer instanceof HTMLElement) {
+      drawer.style.display = "none";
+    }
+  };
+
+  const enforceEmbeddedRoute = () => {
+    if (window.location.pathname.startsWith("/auth/")) {
+      nativeReplaceState(history.state, "", EMBED_PATH);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    }
+  };
+
+  persistAuthHeaders();
+  enforceEmbeddedRoute();
+
+  history.pushState = function pushState(state, unused, url) {
+    if (typeof url === "string" && isAuthRoute(url)) {
+      return nativePushState(state, unused, EMBED_PATH);
+    }
+    return nativePushState(state, unused, url);
+  };
+
+  history.replaceState = function replaceState(state, unused, url) {
+    if (typeof url === "string" && isAuthRoute(url)) {
+      return nativeReplaceState(state, unused, EMBED_PATH);
+    }
+    return nativeReplaceState(state, unused, url);
+  };
+
+  if (nativeFetch) {
+    window.fetch = (input, init) => {
+      const requestUrl =
+        typeof input === "string" || input instanceof URL ? String(input) : input.url;
+      const method = (init && init.method) || (typeof input !== "string" && !(input instanceof URL) ? input.method : "GET") || "GET";
+
+      if (isTradezellaApiRequest(requestUrl)) {
+        persistAuthHeaders();
+        const mockResponse = createMockResponse(requestUrl, method.toUpperCase());
+        return Promise.resolve(
+          new Response(mockResponse.responseText, {
+            status: mockResponse.status,
+            statusText: mockResponse.statusText,
+            headers: mockResponse.headers
+          })
+        );
+      }
+
+      return nativeFetch(input, init);
+    };
+  }
+
+  class EmbeddedCopytradeXHR {
+    constructor() {
+      this._xhr = new NativeXHR();
+      this._listeners = new Map();
+      this._requestHeaders = {};
+      this._method = "GET";
+      this._url = "";
+      this._mockResponse = null;
+      this._shortCircuit = false;
+      this._readyState = 0;
+      this.onreadystatechange = null;
+      this.onload = null;
+      this.onloadend = null;
+      this.onerror = null;
+      this.onabort = null;
+      this.ontimeout = null;
+      this.onprogress = null;
+      this.upload = this._xhr.upload;
+
+      LISTENER_EVENTS.forEach((type) => {
+        this._xhr.addEventListener(type, (event) => {
+          this._emit(type, event);
+        });
+      });
+    }
+
+    _emit(type, event) {
+      const handler = this["on" + type];
+      if (typeof handler === "function") {
+        handler.call(this, event);
+      }
+
+      const listeners = this._listeners.get(type);
+      if (!listeners) {
+        return;
+      }
+
+      listeners.forEach((listener) => {
+        listener.call(this, event);
+      });
+    }
+
+    _setMockResponse(mockResponse) {
+      this._mockResponse = {
+        ...mockResponse,
+        headerLookup: Object.fromEntries(
+          Object.entries(mockResponse.headers).map(([key, value]) => [
+            key.toLowerCase(),
+            String(value)
+          ])
+        )
+      };
+      this._readyState = 4;
+    }
+
+    addEventListener(type, listener) {
+      const listeners = this._listeners.get(type) || new Set();
+      listeners.add(listener);
+      this._listeners.set(type, listeners);
+    }
+
+    removeEventListener(type, listener) {
+      const listeners = this._listeners.get(type);
+      if (!listeners) {
+        return;
+      }
+
+      listeners.delete(listener);
+    }
+
+    open(method, url, async, user, password) {
+      persistAuthHeaders();
+      this._method = String(method || "GET").toUpperCase();
+      this._url = String(url);
+      this._mockResponse = null;
+      this._shortCircuit = isTradezellaApiRequest(this._url);
+
+      if (this._shortCircuit) {
+        this._readyState = 1;
+        this._emit("readystatechange", new Event("readystatechange"));
+        return;
+      }
+
+      this._xhr.open(method, url, async, user, password);
+    }
+
+    send(body) {
+      if (this._shortCircuit) {
+        this._setMockResponse(createMockResponse(this._url, this._method));
+        window.setTimeout(() => {
+          this._emit("readystatechange", new Event("readystatechange"));
+          this._emit("load", new Event("load"));
+          this._emit("loadend", new Event("loadend"));
+        }, 0);
+        return;
+      }
+
+      this._xhr.send(body);
+    }
+
+    abort() {
+      if (this._shortCircuit) {
+        this._emit("abort", new Event("abort"));
+        this._emit("loadend", new Event("loadend"));
+        return;
+      }
+
+      this._xhr.abort();
+    }
+
+    setRequestHeader(name, value) {
+      if (this._shortCircuit) {
+        this._requestHeaders[String(name).toLowerCase()] = String(value);
+        return;
+      }
+
+      this._xhr.setRequestHeader(name, value);
+    }
+
+    getAllResponseHeaders() {
+      if (this._mockResponse) {
+        return Object.entries(this._mockResponse.headers)
+          .map(([key, value]) => key + ": " + value)
+          .join("\\r\\n");
+      }
+
+      return this._xhr.getAllResponseHeaders();
+    }
+
+    getResponseHeader(name) {
+      if (this._mockResponse) {
+        return this._mockResponse.headerLookup[String(name).toLowerCase()] || null;
+      }
+
+      return this._xhr.getResponseHeader(name);
+    }
+
+    overrideMimeType(value) {
+      if (this._shortCircuit) {
+        this._overrideMimeType = value;
+        return;
+      }
+
+      this._xhr.overrideMimeType(value);
+    }
+
+    get readyState() {
+      return this._mockResponse ? this._readyState : this._xhr.readyState;
+    }
+
+    get status() {
+      return this._mockResponse ? this._mockResponse.status : this._xhr.status;
+    }
+
+    get statusText() {
+      return this._mockResponse ? this._mockResponse.statusText : this._xhr.statusText;
+    }
+
+    get responseText() {
+      return this._mockResponse ? this._mockResponse.responseText : this._xhr.responseText;
+    }
+
+    get response() {
+      return this._mockResponse ? this._mockResponse.responseText : this._xhr.response;
+    }
+
+    get responseURL() {
+      return this._mockResponse ? this._url : this._xhr.responseURL;
+    }
+
+    get responseXML() {
+      return this._mockResponse ? null : this._xhr.responseXML;
+    }
+
+    get responseType() {
+      return this._xhr.responseType;
+    }
+
+    set responseType(value) {
+      this._xhr.responseType = value;
+    }
+
+    get timeout() {
+      return this._xhr.timeout;
+    }
+
+    set timeout(value) {
+      this._xhr.timeout = value;
+    }
+
+    get withCredentials() {
+      return this._xhr.withCredentials;
+    }
+
+    set withCredentials(value) {
+      this._xhr.withCredentials = value;
+    }
+  }
+
+  EmbeddedCopytradeXHR.UNSENT = 0;
+  EmbeddedCopytradeXHR.OPENED = 1;
+  EmbeddedCopytradeXHR.HEADERS_RECEIVED = 2;
+  EmbeddedCopytradeXHR.LOADING = 3;
+  EmbeddedCopytradeXHR.DONE = 4;
+
+  window.XMLHttpRequest = EmbeddedCopytradeXHR;
+
+  hideDrawer();
+  new MutationObserver(() => {
+    persistAuthHeaders();
+    enforceEmbeddedRoute();
+    hideDrawer();
+  }).observe(document.documentElement, {
+    childList: true,
+    subtree: true
+  });
+  window.addEventListener("load", hideDrawer);
+  window.setInterval(hideDrawer, 500);
+})();
+`;
+
 export async function GET() {
   const html = `<!DOCTYPE html>
 <html lang="en" style="height:100%">
@@ -6,9 +511,11 @@ export async function GET() {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Copy Trade Dashboard</title>
     <link rel="stylesheet" href="/copytrade/dashboard.css" />
+    <style>${injectedCss}</style>
   </head>
-  <body style="margin:0;height:100%;overflow:hidden">
+  <body>
     <div id="root" style="height:100%"></div>
+    <script>${injectedScript}</script>
     <script src="/copytrade/dashboard.js" defer></script>
   </body>
 </html>`;
