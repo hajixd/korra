@@ -302,12 +302,17 @@ const injectedScript = `
     if (
       normalizedPath === "tag_categories" ||
       normalizedPath === "account/index" ||
+      normalizedPath === "account/current_timezone" ||
       normalizedPath === "loading_states" ||
       normalizedPath === "trades/all_symbols" ||
       normalizedPath === "insights" ||
       normalizedPath === "account/all_tags" ||
       normalizedPath === "import_progresses"
     ) {
+      if (normalizedPath === "account/current_timezone") {
+        return MOCK_USER.time_zone;
+      }
+
       return [];
     }
 
