@@ -37,6 +37,12 @@ import {
   type BacktestHistoryRow,
   type BacktestHistoryComputeRequest
 } from "./backtestHistoryShared";
+import {
+  COPYTRADE_BACKTEST_STATE_KEY,
+  DEFAULT_COPYTRADE_DASHBOARD_TEMPLATE,
+  type CopytradeDashboardSeed,
+  type CopytradeDashboardStatsPayload
+} from "./copytradeDashboardSeed";
 import AssistantPanel from "./AssistantPanel";
 import {
   executeAssistantChartActions,
@@ -1171,6 +1177,320 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
     entryExitChartData: {
       entry: toRows(entryExitStats.entry),
       exit: toRows(entryExitStats.exit)
+    }
+  };
+};
+
+const roundCopytradeMetric = (value: number, digits = 2): number => {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+};
+
+const computeCopytradeDirectionalStreaks = (values: number[]) => {
+  let currentWinning = 0;
+  let currentLosing = 0;
+  let maxWinning = 0;
+  let maxLosing = 0;
+  let activeWinning = 0;
+  let activeLosing = 0;
+
+  for (const value of values) {
+    if (value > 0) {
+      activeWinning += 1;
+      activeLosing = 0;
+      maxWinning = Math.max(maxWinning, activeWinning);
+    } else if (value < 0) {
+      activeLosing += 1;
+      activeWinning = 0;
+      maxLosing = Math.max(maxLosing, activeLosing);
+    } else {
+      activeWinning = 0;
+      activeLosing = 0;
+    }
+  }
+
+  currentWinning = activeWinning;
+  currentLosing = activeLosing;
+
+  return {
+    currentWinning,
+    currentLosing,
+    maxWinning,
+    maxLosing
+  };
+};
+
+const buildCopytradeDashboardSeed = (
+  trades: HistoryItem[],
+  confidenceResolver: (trade: HistoryItem) => number
+): CopytradeDashboardSeed => {
+  const sortedTrades = [...trades].sort((left, right) => {
+    const exitDiff = Number(left.exitTime) - Number(right.exitTime);
+    if (exitDiff !== 0) {
+      return exitDiff;
+    }
+
+    const entryDiff = Number(left.entryTime) - Number(right.entryTime);
+    if (entryDiff !== 0) {
+      return entryDiff;
+    }
+
+    return left.id.localeCompare(right.id);
+  });
+  const summary = summarizeBacktestTradesFallback(sortedTrades, confidenceResolver);
+  const tradeCount = sortedTrades.length;
+  const dailyPnlMap = new Map<string, number>();
+  const dailyVolumeMap = new Map<string, number>();
+  let totalVolume = 0;
+  let winningTradesCount = 0;
+  let losingTradesCount = 0;
+  let breakEvenTradesCount = 0;
+
+  for (const trade of sortedTrades) {
+    const dayKey = getTradeDayKey(trade.exitTime);
+    const tradeUnits = Math.abs(trade.units);
+    const nextPnl = (dailyPnlMap.get(dayKey) ?? 0) + trade.pnlUsd;
+    const nextVolume = (dailyVolumeMap.get(dayKey) ?? 0) + tradeUnits;
+
+    dailyPnlMap.set(dayKey, nextPnl);
+    dailyVolumeMap.set(dayKey, nextVolume);
+    totalVolume += tradeUnits;
+
+    if (trade.pnlUsd > 0) {
+      winningTradesCount += 1;
+    } else if (trade.pnlUsd < 0) {
+      losingTradesCount += 1;
+    } else {
+      breakEvenTradesCount += 1;
+    }
+  }
+
+  const dailyRows = Array.from(dailyPnlMap.entries())
+    .map(([date, profits]) => ({
+      date,
+      profits: roundCopytradeMetric(profits),
+      volume: roundCopytradeMetric(dailyVolumeMap.get(date) ?? 0)
+    }))
+    .sort((left, right) => left.date.localeCompare(right.date));
+
+  const winningDays = dailyRows.filter((row) => row.profits > 0).length;
+  const losingDays = dailyRows.filter((row) => row.profits < 0).length;
+  const breakevenDays = dailyRows.length - winningDays - losingDays;
+  const tradeStreaks = computeCopytradeDirectionalStreaks(
+    sortedTrades.map((trade) => trade.pnlUsd)
+  );
+  const dayStreaks = computeCopytradeDirectionalStreaks(dailyRows.map((row) => row.profits));
+  const averageDailyVolume =
+    dailyRows.length > 0 ? roundCopytradeMetric(totalVolume / dailyRows.length) : 0;
+
+  let runningCumulative = 0;
+  let runningPeak = 0;
+  let currentDrawdown = 0;
+  let averageDrawdownAccumulator = 0;
+  const cumulative = dailyRows.map((row) => {
+    runningCumulative += row.profits;
+    runningPeak = Math.max(runningPeak, runningCumulative);
+    currentDrawdown = Math.min(0, runningCumulative - runningPeak);
+    averageDrawdownAccumulator += Math.abs(currentDrawdown);
+
+    return {
+      date: row.date,
+      cumulative: roundCopytradeMetric(runningCumulative),
+      drawdown: roundCopytradeMetric(currentDrawdown),
+      profits: row.profits
+    };
+  });
+
+  const maxDrawdownAmount = Math.abs(Math.min(summary.maxDrawdown, 0));
+  const averageDrawdownAmount =
+    cumulative.length > 0 ? averageDrawdownAccumulator / cumulative.length : 0;
+  const currentDrawdownAmount = Math.abs(currentDrawdown);
+  const drawdownReference = Math.max(
+    runningPeak,
+    Math.abs(summary.grossWins),
+    Math.abs(summary.netPnl),
+    Math.abs(summary.maxLoss),
+    1
+  );
+  const maxDrawdownPercent = roundCopytradeMetric((maxDrawdownAmount / drawdownReference) * 100);
+  const averageDrawdownPercent = roundCopytradeMetric(
+    (averageDrawdownAmount / drawdownReference) * 100
+  );
+  const currentDrawdownPercent = roundCopytradeMetric(
+    (currentDrawdownAmount / drawdownReference) * 100
+  );
+  const avgWinToLossValue =
+    summary.avgLoss !== 0
+      ? roundCopytradeMetric(Math.abs(summary.avgWin / summary.avgLoss))
+      : summary.avgWin > 0
+        ? roundCopytradeMetric(summary.avgWin)
+        : 0;
+  const recoveryFactorValue =
+    maxDrawdownAmount > 0
+      ? roundCopytradeMetric(summary.netPnl / maxDrawdownAmount)
+      : summary.netPnl > 0
+        ? roundCopytradeMetric(summary.netPnl)
+        : 0;
+
+  const zellaScore = {
+    win_rate: roundCopytradeMetric(Math.max(0, Math.min(summary.winRate, 100))),
+    win_rate_value: roundCopytradeMetric(summary.winRate),
+    profit_factor: roundCopytradeMetric(Math.max(0, Math.min(summary.profitFactor * 50, 100))),
+    profit_factor_value: roundCopytradeMetric(summary.profitFactor),
+    avg_win_to_loss: roundCopytradeMetric(Math.max(0, Math.min(avgWinToLossValue * 50, 100))),
+    avg_win_to_loss_value: avgWinToLossValue,
+    recovery_factor: roundCopytradeMetric(
+      Math.max(0, Math.min(Math.max(recoveryFactorValue, 0) * 25, 100))
+    ),
+    recovery_factor_value: recoveryFactorValue,
+    max_drawdown: roundCopytradeMetric(Math.max(0, Math.min(100 - maxDrawdownPercent * 5, 100))),
+    max_drawdown_value: maxDrawdownPercent,
+    consistency: roundCopytradeMetric(Math.max(0, Math.min(summary.consistencyPerDay, 100))),
+    consistency_value: roundCopytradeMetric(summary.consistencyPerDay),
+    zella_score: 0
+  };
+
+  zellaScore.zella_score = roundCopytradeMetric(
+    (
+      zellaScore.win_rate +
+      zellaScore.profit_factor +
+      zellaScore.avg_win_to_loss +
+      zellaScore.recovery_factor +
+      zellaScore.max_drawdown +
+      zellaScore.consistency
+    ) / 6
+  );
+
+  const dashboardStats: CopytradeDashboardStatsPayload = {
+    data: [],
+    items: [],
+    results: [],
+    templates: [],
+    selected_template: DEFAULT_COPYTRADE_DASHBOARD_TEMPLATE,
+    top_widgets: [...DEFAULT_COPYTRADE_DASHBOARD_TEMPLATE.top_widgets],
+    bottom_widgets: [...DEFAULT_COPYTRADE_DASHBOARD_TEMPLATE.bottom_widgets],
+    count: tradeCount,
+    page: 1,
+    per_page: tradeCount,
+    total_pages: 1,
+    total_count: tradeCount,
+    winners: winningTradesCount,
+    losers: losingTradesCount,
+    break_evens: breakEvenTradesCount,
+    total_gain_loss: roundCopytradeMetric(summary.netPnl),
+    trade_count: tradeCount,
+    trade_expectancy: roundCopytradeMetric(summary.avgPnl),
+    profit_factor: roundCopytradeMetric(summary.profitFactor),
+    winning_trades_sum: roundCopytradeMetric(summary.grossWins),
+    losing_trades_sum: roundCopytradeMetric(Math.abs(summary.grossLosses)),
+    average_daily_volume: averageDailyVolume,
+    average_winning_trade: roundCopytradeMetric(summary.avgWin),
+    average_losing_trade: roundCopytradeMetric(summary.avgLoss),
+    total_commissions: 0,
+    max_wins: roundCopytradeMetric(summary.maxWin),
+    max_losses: roundCopytradeMetric(summary.maxLoss),
+    winning_days: winningDays,
+    losing_days: losingDays,
+    breakeven_days: breakevenDays,
+    winning_trades_count: winningTradesCount,
+    losing_trades_count: losingTradesCount,
+    breakeven_trades_count: breakEvenTradesCount,
+    day_streaks: {
+      current_winning: dayStreaks.currentWinning,
+      current_losing: dayStreaks.currentLosing,
+      winning: dayStreaks.maxWinning,
+      losing: dayStreaks.maxLosing
+    },
+    trade_streaks: {
+      current_winning_streak: tradeStreaks.currentWinning,
+      current_losing_streak: tradeStreaks.currentLosing,
+      max_wins: tradeStreaks.maxWinning,
+      max_losses: tradeStreaks.maxLosing
+    },
+    max_drawdown: {
+      drawdown: roundCopytradeMetric(-maxDrawdownAmount),
+      percent: maxDrawdownPercent
+    },
+    average_drawdown: {
+      drawdown: roundCopytradeMetric(-averageDrawdownAmount),
+      percent: averageDrawdownPercent
+    },
+    current_drawdown: {
+      drawdown: roundCopytradeMetric(-currentDrawdownAmount),
+      percent: currentDrawdownPercent
+    }
+  };
+
+  const recentTradesDescending = [...sortedTrades]
+    .sort((left, right) => Number(right.exitTime) - Number(left.exitTime))
+    .map((trade) => {
+      const riskDistance = Math.abs(trade.entryPrice - trade.stopPrice);
+      const riskAmount = riskDistance * Math.max(1, Math.abs(trade.units));
+
+      return {
+        id: trade.id,
+        open_date: new Date(Number(trade.entryTime) * 1000).toISOString(),
+        created_at: new Date(Number(trade.entryTime) * 1000).toISOString(),
+        realized: new Date(Number(trade.exitTime) * 1000).toISOString(),
+        status: "Closed",
+        symbol: trade.symbol,
+        quantity: roundCopytradeMetric(trade.units, 4),
+        net_profits: roundCopytradeMetric(trade.pnlUsd),
+        net_roi: roundCopytradeMetric(trade.pnlPct),
+        ticks_value: 0,
+        pips: 0,
+        points: 0,
+        realized_rr: roundCopytradeMetric(riskAmount > 0 ? trade.pnlUsd / riskAmount : 0)
+      };
+    });
+
+  return {
+    updatedAt: new Date().toISOString(),
+    dashboardStats,
+    stats: {
+      winners: winningTradesCount,
+      losers: losingTradesCount,
+      break_evens: breakEvenTradesCount,
+      volume: roundCopytradeMetric(totalVolume),
+      gross_pl: roundCopytradeMetric(summary.netPnl),
+      net_pl: roundCopytradeMetric(summary.netPnl),
+      profit_factor: roundCopytradeMetric(summary.profitFactor),
+      total_commissions: 0,
+      trade_count: tradeCount
+    },
+    zellaScore,
+    performance: dailyRows.map((row) => ({
+      date: row.date,
+      profits: row.profits
+    })),
+    cumulative: {
+      cumulative: cumulative.map((row) => ({
+        [row.date]: row.cumulative
+      })),
+      drawdown: cumulative.map((row) => ({
+        [row.date]: row.drawdown
+      }))
+    },
+    accountBalanceDatum: {
+      result: cumulative.map((row) => ({
+        [row.date]: row.cumulative
+      })),
+      balances: cumulative.map((row) => ({
+        [row.date]: row.profits
+      })),
+      labels: cumulative.map((row) => row.date)
+    },
+    recentTrades: {
+      trades: recentTradesDescending.slice(0, 10),
+      item_count: recentTradesDescending.length
+    },
+    openPositions: {
+      trades: [],
+      item_count: 0
     }
   };
 };
@@ -12639,6 +12959,38 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const mainStatsAiEfficacyPct = backtestAnalyticsData.mainStatsAiEfficacyPct;
   const entryExitStats = backtestAnalyticsData.entryExitStats;
   const entryExitChartData = backtestAnalyticsData.entryExitChartData;
+  const copytradeDashboardSeed = useMemo(() => {
+    if (!backtestHasRun || !backtestHistorySeedReady) {
+      return null;
+    }
+
+    return buildCopytradeDashboardSeed(backtestTrades, getEffectiveTradeConfidenceScore);
+  }, [
+    backtestHasRun,
+    backtestHistorySeedReady,
+    backtestTrades,
+    getEffectiveTradeConfidenceScore
+  ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      if (!copytradeDashboardSeed) {
+        localStorage.removeItem(COPYTRADE_BACKTEST_STATE_KEY);
+        return;
+      }
+
+      localStorage.setItem(
+        COPYTRADE_BACKTEST_STATE_KEY,
+        JSON.stringify(copytradeDashboardSeed)
+      );
+    } catch {
+      // Copy-trade hydration is additive only; ignore storage failures.
+    }
+  }, [copytradeDashboardSeed]);
 
   const aiLibraryInsights = useMemo(() => {
     if (!shouldComputeAiLibraryInsights) {

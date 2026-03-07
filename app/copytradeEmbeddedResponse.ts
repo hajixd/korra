@@ -1,19 +1,14 @@
+import {
+  COPYTRADE_BACKTEST_STATE_KEY,
+  DEFAULT_COPYTRADE_DASHBOARD_TEMPLATE
+} from "./copytradeDashboardSeed";
+
 const authHeaders = {
   "access-token": "copytrade-local-access-token",
   "token-type": "Bearer",
   client: "copytrade-local-client",
   expiry: "4102444800",
   uid: "copytrade@local.test"
-};
-
-const defaultDashboardTemplate = {
-  top_widgets: ["net_pl", "win_percentage_by_trades", "profit_factor"],
-  bottom_widgets: [
-    "zella_score",
-    "daily_net_cumulative_graph",
-    "net_daily_pl_graph",
-    "open_position"
-  ]
 };
 
 const mockUser = {
@@ -69,7 +64,8 @@ body {
 const injectedScript = `
 (() => {
   const AUTH_HEADERS = ${JSON.stringify(authHeaders)};
-  const DEFAULT_DASHBOARD_TEMPLATE = ${JSON.stringify(defaultDashboardTemplate)};
+  const COPYTRADE_BACKTEST_STORAGE_KEY = ${JSON.stringify(COPYTRADE_BACKTEST_STATE_KEY)};
+  const DEFAULT_DASHBOARD_TEMPLATE = ${JSON.stringify(DEFAULT_COPYTRADE_DASHBOARD_TEMPLATE)};
   const DEFAULT_DASHBOARD_RESPONSE = {
     data: [],
     items: [],
@@ -115,6 +111,18 @@ const injectedScript = `
       current_losing_streak: 0,
       max_wins: 0,
       max_losses: 0
+    },
+    max_drawdown: {
+      drawdown: 0,
+      percent: 0
+    },
+    average_drawdown: {
+      drawdown: 0,
+      percent: 0
+    },
+    current_drawdown: {
+      drawdown: 0,
+      percent: 0
     }
   };
   const MOCK_USER = ${JSON.stringify(mockUser)};
@@ -177,25 +185,52 @@ const injectedScript = `
   const cloneDefaultDashboardResponse = () =>
     JSON.parse(JSON.stringify(DEFAULT_DASHBOARD_RESPONSE));
 
-  const createDashboardStatsPayload = () => ({
+  const cloneJson = (value, fallback) => {
+    const target = value == null ? fallback : value;
+
+    try {
+      return JSON.parse(JSON.stringify(target));
+    } catch {
+      return JSON.parse(JSON.stringify(fallback));
+    }
+  };
+
+  const readBacktestSeed = () => {
+    try {
+      const raw = localStorage.getItem(COPYTRADE_BACKTEST_STORAGE_KEY);
+      if (!raw) {
+        return null;
+      }
+
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const createDashboardStatsPayload = (seed) => ({
     ...cloneDefaultDashboardResponse(),
+    ...cloneJson(seed && seed.dashboardStats, {}),
     data: [],
     items: [],
     results: []
   });
 
-  const createStatsPayload = () => ({
+  const createStatsPayload = (seed) => ({
     winners: 0,
     losers: 0,
     break_evens: 0,
     volume: 0,
     gross_pl: 0,
+    net_pl: 0,
     profit_factor: 0,
     total_commissions: 0,
-    trade_count: 0
+    trade_count: 0,
+    ...cloneJson(seed && seed.stats, {})
   });
 
-  const createZellaScorePayload = () => ({
+  const createZellaScorePayload = (seed) => ({
     win_rate: 0,
     win_rate_value: 0,
     profit_factor: 0,
@@ -208,7 +243,8 @@ const injectedScript = `
     max_drawdown_value: 0,
     consistency: 0,
     consistency_value: 0,
-    zella_score: 0
+    zella_score: 0,
+    ...cloneJson(seed && seed.zellaScore, {})
   });
 
   const createOnboardingPayload = () => ({
@@ -220,10 +256,33 @@ const injectedScript = `
     video_watched: true
   });
 
+  const createPerformancePayload = (seed) =>
+    cloneJson(seed && seed.performance, []);
+
+  const createCumulativePayload = (seed) => ({
+    cumulative: [],
+    drawdown: [],
+    ...cloneJson(seed && seed.cumulative, {})
+  });
+
+  const createAccountBalanceDatumPayload = (seed) => ({
+    result: [],
+    balances: [],
+    labels: [],
+    ...cloneJson(seed && seed.accountBalanceDatum, {})
+  });
+
+  const createTradeCollectionPayload = (seed, key) => ({
+    trades: [],
+    item_count: 0,
+    ...cloneJson(seed && seed[key], {})
+  });
+
   const buildMockPayload = (input, method) => {
     const parsed = safeUrl(input);
     const path = parsed ? parsed.pathname : "";
     const normalizedPath = path.startsWith("/api/") ? path.slice(5) : path;
+    const seed = readBacktestSeed();
 
     if (path.endsWith("/validate_token")) {
       return {
@@ -244,38 +303,38 @@ const injectedScript = `
     }
 
     if (normalizedPath === "trades/recent_trades") {
-      return {
-        trades: [],
-        item_count: 0
-      };
+      return createTradeCollectionPayload(seed, "recentTrades");
+    }
+
+    if (normalizedPath === "trades/present") {
+      return createTradeCollectionPayload(seed, "openPositions");
     }
 
     if (normalizedPath === "filters/account_balance_datum") {
-      return {
-        result: [
-          {
-            balance: 0
-          }
-        ]
-      };
+      return createAccountBalanceDatumPayload(seed);
+    }
+
+    if (normalizedPath === "filters/cumulative") {
+      return createCumulativePayload(seed);
     }
 
     if (
       normalizedPath === "filters/dashboard_stats" ||
       normalizedPath === "filters/winrate"
     ) {
-      return createDashboardStatsPayload();
+      return createDashboardStatsPayload(seed);
     }
 
-    if (
-      normalizedPath === "filters/stats" ||
-      normalizedPath === "filters/performance"
-    ) {
-      return createStatsPayload();
+    if (normalizedPath === "filters/stats") {
+      return createStatsPayload(seed);
+    }
+
+    if (normalizedPath === "filters/performance") {
+      return createPerformancePayload(seed);
     }
 
     if (normalizedPath === "zella_scores/current") {
-      return createZellaScorePayload();
+      return createZellaScorePayload(seed);
     }
 
     if (normalizedPath === "user/get_onboarding") {
