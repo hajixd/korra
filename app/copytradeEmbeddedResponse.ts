@@ -278,6 +278,15 @@ const injectedScript = `
     ...cloneJson(seed && seed[key], {})
   });
 
+  const createTradesPresentPayload = (seed) => ({
+    trades_present: Boolean(
+      seed &&
+      seed.dashboardStats &&
+      typeof seed.dashboardStats.trade_count === "number" &&
+      seed.dashboardStats.trade_count > 0
+    )
+  });
+
   const buildMockPayload = (input, method) => {
     const parsed = safeUrl(input);
     const path = parsed ? parsed.pathname : "";
@@ -307,7 +316,7 @@ const injectedScript = `
     }
 
     if (normalizedPath === "trades/present") {
-      return createTradeCollectionPayload(seed, "openPositions");
+      return createTradesPresentPayload(seed);
     }
 
     if (normalizedPath === "filters/account_balance_datum") {

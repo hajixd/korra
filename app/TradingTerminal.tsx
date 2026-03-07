@@ -12971,6 +12971,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     backtestTrades,
     getEffectiveTradeConfidenceScore
   ]);
+  const copytradeDashboardVersion = copytradeDashboardSeed?.updatedAt ?? "empty";
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -16550,7 +16551,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             }}
           >
             <iframe
-              src="/tracking"
+              key={copytradeDashboardVersion}
+              src={`/tracking?seed=${encodeURIComponent(copytradeDashboardVersion)}`}
               title="Copy Trade Dashboard"
               style={{
                 display: "block",
