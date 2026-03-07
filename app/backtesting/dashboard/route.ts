@@ -32,6 +32,7 @@ const mockUser = {
   beta_level: "beta",
   features: [],
   display_currency: "USD",
+  time_zone: "America/New_York",
   created_at: "2026-03-07T00:00:00.000Z",
   subscription_valid_until: "2099-12-31",
   profile_picture: null,
@@ -94,12 +95,36 @@ const injectedScript = `
     winners: 0,
     losers: 0,
     break_evens: 0,
+    total_gain_loss: 0,
+    trade_count: 0,
+    trade_expectancy: 0,
+    profit_factor: 0,
+    winning_trades_sum: 0,
+    losing_trades_sum: 0,
+    average_daily_volume: 0,
+    average_winning_trade: 0,
+    average_losing_trade: 0,
+    total_commissions: 0,
+    max_wins: 0,
+    max_losses: 0,
     winning_days: 0,
     losing_days: 0,
     breakeven_days: 0,
     winning_trades_count: 0,
     losing_trades_count: 0,
-    breakeven_trades_count: 0
+    breakeven_trades_count: 0,
+    day_streaks: {
+      current_winning: 0,
+      current_losing: 0,
+      winning: 0,
+      losing: 0
+    },
+    trade_streaks: {
+      current_winning_streak: 0,
+      current_losing_streak: 0,
+      max_wins: 0,
+      max_losses: 0
+    }
   };
   const MOCK_USER = ${JSON.stringify(mockUser)};
   const EMBED_PATH = "/backtesting/dashboard";
@@ -152,9 +177,53 @@ const injectedScript = `
   const cloneDefaultDashboardResponse = () =>
     JSON.parse(JSON.stringify(DEFAULT_DASHBOARD_RESPONSE));
 
+  const createDashboardStatsPayload = () => ({
+    ...cloneDefaultDashboardResponse(),
+    data: [],
+    items: [],
+    results: []
+  });
+
+  const createStatsPayload = () => ({
+    winners: 0,
+    losers: 0,
+    break_evens: 0,
+    volume: 0,
+    gross_pl: 0,
+    profit_factor: 0,
+    total_commissions: 0,
+    trade_count: 0
+  });
+
+  const createZellaScorePayload = () => ({
+    win_rate: 0,
+    win_rate_value: 0,
+    profit_factor: 0,
+    profit_factor_value: 0,
+    avg_win_to_loss: 0,
+    avg_win_to_loss_value: 0,
+    recovery_factor: 0,
+    recovery_factor_value: 0,
+    max_drawdown: 0,
+    max_drawdown_value: 0,
+    consistency: 0,
+    consistency_value: 0,
+    zella_score: 0
+  });
+
+  const createOnboardingPayload = () => ({
+    answers: {},
+    onboarded: true,
+    preferences_saved: true,
+    state: "onboarding",
+    step: 0,
+    video_watched: true
+  });
+
   const buildMockPayload = (input, method) => {
     const parsed = safeUrl(input);
     const path = parsed ? parsed.pathname : "";
+    const normalizedPath = path.startsWith("/api/") ? path.slice(5) : path;
 
     if (path.endsWith("/validate_token")) {
       return {
@@ -163,10 +232,68 @@ const injectedScript = `
     }
 
     if (
-      path.includes("/dashboard_template") ||
+      normalizedPath === "tag_categories" ||
+      normalizedPath === "account/index" ||
+      normalizedPath === "loading_states" ||
+      normalizedPath === "trades/all_symbols" ||
+      normalizedPath === "insights" ||
+      normalizedPath === "account/all_tags" ||
+      normalizedPath === "import_progresses"
+    ) {
+      return [];
+    }
+
+    if (normalizedPath === "trades/recent_trades") {
+      return {
+        trades: [],
+        item_count: 0
+      };
+    }
+
+    if (normalizedPath === "filters/account_balance_datum") {
+      return {
+        result: [
+          {
+            balance: 0
+          }
+        ]
+      };
+    }
+
+    if (
+      normalizedPath === "filters/dashboard_stats" ||
+      normalizedPath === "filters/winrate"
+    ) {
+      return createDashboardStatsPayload();
+    }
+
+    if (
+      normalizedPath === "filters/stats" ||
+      normalizedPath === "filters/performance"
+    ) {
+      return createStatsPayload();
+    }
+
+    if (normalizedPath === "zella_scores/current") {
+      return createZellaScorePayload();
+    }
+
+    if (normalizedPath === "user/get_onboarding") {
+      return createOnboardingPayload();
+    }
+
+    if (normalizedPath === "user/profile") {
+      return {
+        ...MOCK_USER,
+        updateProfile: false
+      };
+    }
+
+    if (
+      normalizedPath === "dashboard_templates" ||
       path.includes("/dashboard-layout") ||
       path.includes("/dashboard_layout") ||
-      path.includes("/template")
+      normalizedPath.includes("template")
     ) {
       return {
         templates: [],
