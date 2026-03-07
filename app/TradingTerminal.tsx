@@ -18726,8 +18726,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                           x2="0"
                                           y2="1"
                                         >
-                                          <stop offset="0%" stopColor="rgba(32, 157, 255, 0.35)" />
-                                          <stop offset="100%" stopColor="rgba(32, 157, 255, 0)" />
+                                          <stop offset="0%" stopColor="rgba(239, 243, 249, 0.2)" />
+                                          <stop offset="100%" stopColor="rgba(239, 243, 249, 0)" />
                                         </linearGradient>
                                       </defs>
                                       <polygon
