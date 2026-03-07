@@ -18832,12 +18832,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   copyTradeDashboard.currency
                                 )}
                               </strong>
-                              <p>
-                                Open P&amp;L{" "}
-                                <span className={copyTradeLivePnl >= 0 ? "up" : "down"}>
-                                  {formatSignedAccountMoney(copyTradeLivePnl, copyTradeDashboard.currency)}
-                                </span>
-                              </p>
                             </article>
 
                             <article className="copytrade-studio-card copytrade-studio-kpi-card">
@@ -18855,12 +18849,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   copyTradeDashboard.currency
                                 )}
                               </strong>
-                              <p>
-                                Balance change{" "}
-                                <span className={copyTradeBalanceDelta >= 0 ? "up" : "down"}>
-                                  {formatCopyTradePercent(copyTradeBalanceDeltaPct)}
-                                </span>
-                              </p>
                             </article>
 
                             <article className="copytrade-studio-card copytrade-studio-kpi-card">
@@ -18875,15 +18863,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                       ? copyTradePerformance.profitFactor.toFixed(2)
                                       : "∞"}
                                   </strong>
-                                  <p>
-                                    DD{" "}
-                                    <span className="down">
-                                      {formatSignedAccountMoney(
-                                        -copyTradePerformance.maxDrawdown,
-                                        copyTradeDashboard.currency
-                                      )}
-                                    </span>
-                                  </p>
                                 </div>
 
                                 <svg viewBox="0 0 42 42" className="copytrade-studio-ring" aria-hidden="true">
