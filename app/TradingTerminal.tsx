@@ -17902,13 +17902,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <>
                         <header className="copytrade-live-topbar">
                           <div className="copytrade-live-title-wrap">
-                            <h3>Live Dashboard</h3>
-                            <span className="copytrade-live-chip amber">MT5</span>
-                            <span className="copytrade-live-chip blue">
-                              {copyTradeDashboardAccount.symbol}
-                            </span>
-                            <span className="copytrade-live-chip green">
-                              {copyTradeDashboardAccount.timeframe}
+                            <h3>Account Dashboard</h3>
+                            <span className="copytrade-live-chip neutral">MT5</span>
+                            <span className="copytrade-live-chip neutral">{copyTradeDashboardAccount.server}</span>
+                            <span
+                              className={`copytrade-live-chip ${
+                                copyTradeDashboard.tradeAllowed === false ? "danger" : "success"
+                              }`}
+                            >
+                              {copyTradeDashboard.tradeAllowed === false ? "Trading Disabled" : "Trading Enabled"}
                             </span>
                           </div>
                           <div className="copytrade-live-topbar-right">
@@ -17926,15 +17928,41 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 {copyTradeDashboardLoading ? "Refreshing..." : "Refresh"}
                               </button>
                             ) : null}
-                            <button
-                              type="button"
-                              className="panel-action-btn copytrade-live-mode-btn"
-                              disabled
-                            >
-                              Light Mode
-                            </button>
                           </div>
                         </header>
+
+                        <section className="copytrade-live-summary-grid" aria-label="Account summary">
+                          <article className="copytrade-live-summary-item">
+                            <span>Balance</span>
+                            <strong>
+                              {formatAccountMoney(
+                                copyTradeDashboard.balance ?? copyTradeDashboard.equity,
+                                copyTradeDashboard.currency
+                              )}
+                            </strong>
+                          </article>
+                          <article className="copytrade-live-summary-item">
+                            <span>Equity</span>
+                            <strong>
+                              {formatAccountMoney(copyTradeDashboard.equity, copyTradeDashboard.currency)}
+                            </strong>
+                          </article>
+                          <article className="copytrade-live-summary-item">
+                            <span>Open PnL</span>
+                            <strong className={copyTradeLivePnl >= 0 ? "up" : "down"}>
+                              {formatSignedAccountMoney(copyTradeLivePnl, copyTradeDashboard.currency)}
+                            </strong>
+                          </article>
+                          <article className="copytrade-live-summary-item">
+                            <span>24h Closed PnL</span>
+                            <strong className={copyTradeDashboard.dayClosedPnl >= 0 ? "up" : "down"}>
+                              {formatSignedAccountMoney(
+                                copyTradeDashboard.dayClosedPnl,
+                                copyTradeDashboard.currency
+                              )}
+                            </strong>
+                          </article>
+                        </section>
 
                         <div className="copytrade-live-layout">
                           <section className="copytrade-live-chart-card">
@@ -17943,23 +17971,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 Balance Curve - {copyTradeDashboardAccount.login} @{" "}
                                 {copyTradeDashboardAccount.server}
                               </strong>
-                              <span
-                                className={`copytrade-live-trade ${
-                                  copyTradeDashboard.dayClosedPnl >= 0 ? "up" : "down"
-                                }`}
-                              >
-                                24h Closed PnL:{" "}
-                                {formatSignedAccountMoney(
-                                  copyTradeDashboard.dayClosedPnl,
-                                  copyTradeDashboard.currency
-                                )}
+                              <span className="copytrade-live-trade">
+                                {copyTradeDashboardAccount.symbol} - {copyTradeDashboardAccount.timeframe} timeframe
                               </span>
-                              <span className="copytrade-live-equity">
-                                <span className="copytrade-live-dot">BALANCE</span>
-                                {formatAccountMoney(
-                                  copyTradeDashboard.balance ?? copyTradeDashboard.equity,
-                                  copyTradeDashboard.currency
-                                )}
+                              <span className="copytrade-live-equity neutral">
+                                <span className="copytrade-live-dot">Current</span>
+                                {formatAccountMoney(copyTradeChartGeometry?.endBalance ?? null, copyTradeDashboard.currency)}
                               </span>
                             </div>
 
@@ -18001,6 +18018,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 ))}
                                 {copyTradeChartGeometry ? (
                                   <>
+                                    <defs>
+                                      <linearGradient
+                                        id="copytradeBalanceArea"
+                                        x1="0"
+                                        y1="0"
+                                        x2="0"
+                                        y2="1"
+                                      >
+                                        <stop offset="0%" stopColor="rgba(18, 120, 78, 0.24)" />
+                                        <stop offset="100%" stopColor="rgba(18, 120, 78, 0)" />
+                                      </linearGradient>
+                                    </defs>
+                                    <polygon
+                                      className="copytrade-live-area"
+                                      points={`${copyTradeChartGeometry.points} 1000,460 0,460`}
+                                      fill="url(#copytradeBalanceArea)"
+                                    />
                                     <polyline
                                       className="copytrade-live-path"
                                       points={copyTradeChartGeometry.points}
@@ -18028,15 +18062,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
                             <div className="copytrade-live-metrics">
                               <article className="copytrade-live-metric">
-                                <span>Open PnL</span>
-                                <strong className={copyTradeLivePnl >= 0 ? "up" : "down"}>
-                                  {formatSignedAccountMoney(
-                                    copyTradeLivePnl,
-                                    copyTradeDashboard.currency
-                                  )}
-                                </strong>
-                              </article>
-                              <article className="copytrade-live-metric">
                                 <span>Balance Change</span>
                                 <strong className={copyTradeBalanceDelta >= 0 ? "up" : "down"}>
                                   {formatSignedAccountMoney(
@@ -18045,6 +18070,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   )}{" "}
                                   ({copyTradeBalanceDeltaPct >= 0 ? "+" : ""}
                                   {copyTradeBalanceDeltaPct.toFixed(2)}%)
+                                </strong>
+                              </article>
+                              <article className="copytrade-live-metric">
+                                <span>Margin Level</span>
+                                <strong>
+                                  {copyTradeDashboard.marginLevel !== null &&
+                                  Number.isFinite(copyTradeDashboard.marginLevel)
+                                    ? `${copyTradeDashboard.marginLevel.toFixed(1)}%`
+                                    : "--"}
+                                </strong>
+                              </article>
+                              <article className="copytrade-live-metric">
+                                <span>Free Margin</span>
+                                <strong>
+                                  {formatAccountMoney(
+                                    copyTradeDashboard.freeMargin,
+                                    copyTradeDashboard.currency
+                                  )}
                                 </strong>
                               </article>
                               <article className="copytrade-live-metric">
@@ -18061,17 +18104,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             </p>
                             <div className="copytrade-live-account-meta">
                               <span>
-                                Equity:{" "}
-                                {formatAccountMoney(copyTradeDashboard.equity, copyTradeDashboard.currency)}
+                                Broker: {copyTradeDashboard.broker || "N/A"}
                               </span>
                               <span>
-                                Margin level:{" "}
-                                {copyTradeDashboard.marginLevel !== null &&
-                                Number.isFinite(copyTradeDashboard.marginLevel)
-                                  ? `${copyTradeDashboard.marginLevel.toFixed(1)}%`
+                                Leverage:{" "}
+                                {copyTradeDashboard.leverage !== null && Number.isFinite(copyTradeDashboard.leverage)
+                                  ? `1:${Math.round(copyTradeDashboard.leverage)}`
                                   : "--"}
                               </span>
-                              <span>{copyTradeDashboard.tradeAllowed === false ? "Trading Disabled" : "Trading Enabled"}</span>
+                              <span>Last sync: {formatDashboardDateTime(copyTradeDashboard.lastSyncedAt)}</span>
                             </div>
                           </section>
 

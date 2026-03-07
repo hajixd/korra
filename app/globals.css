@@ -8004,266 +8004,310 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 
 /* ---- COPY TRADE LIVE DASHBOARD ---- */
 .copytrade-dashboard-shell.copytrade-dashboard-live {
-  margin-top: 0.6rem;
-  gap: 0.95rem;
+  margin-top: 0.7rem;
+  gap: 0.85rem;
+  padding: 0.2rem;
 }
 
 .copytrade-live-topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.9rem;
+  gap: 1rem;
+  border-radius: 16px;
+  border: 1px solid #d7ddd3;
+  background: #f7f8f5;
+  padding: 0.85rem 0.95rem;
 }
 
 .copytrade-live-title-wrap {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.5rem;
   flex-wrap: wrap;
 }
 
 .copytrade-live-title-wrap h3 {
   margin: 0;
-  font-size: clamp(1.2rem, 1.6vw, 2rem);
+  font-size: clamp(1.05rem, 1.35vw, 1.5rem);
   letter-spacing: 0.02em;
-  color: #e8edf8;
+  color: #1f2a24;
 }
 
 .copytrade-live-chip {
   display: inline-flex;
   align-items: center;
-  border-radius: 10px;
-  border: 1px solid transparent;
-  padding: 0.18rem 0.58rem;
-  font-size: 0.83rem;
-  font-weight: 700;
+  border-radius: 999px;
+  border: 1px solid #ccd5c8;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.74rem;
+  font-weight: 650;
   letter-spacing: 0.01em;
+  line-height: 1.1;
 }
 
-.copytrade-live-chip.amber {
-  border-color: rgba(248, 192, 73, 0.45);
-  background: rgba(82, 61, 16, 0.42);
-  color: #ffe8b0;
+.copytrade-live-chip.neutral {
+  background: #edf1ea;
+  color: #3a463d;
 }
 
-.copytrade-live-chip.blue {
-  border-color: rgba(92, 141, 225, 0.5);
-  background: rgba(18, 38, 80, 0.45);
-  color: #d5e7ff;
+.copytrade-live-chip.success {
+  border-color: #9ec9b4;
+  background: #e6f3ed;
+  color: #1e6b47;
 }
 
-.copytrade-live-chip.green {
-  border-color: rgba(60, 201, 145, 0.45);
-  background: rgba(14, 59, 45, 0.42);
-  color: #c7ffe9;
+.copytrade-live-chip.danger {
+  border-color: #ddb0b0;
+  background: #f8ecec;
+  color: #9f3f3f;
 }
 
 .copytrade-live-topbar-right {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.75rem;
 }
 
 .copytrade-live-clock {
   display: grid;
-  gap: 0.07rem;
-  font-size: 0.78rem;
-  color: rgba(229, 234, 246, 0.88);
+  gap: 0.12rem;
+  font-size: 0.74rem;
+  color: #576559;
   text-align: right;
   white-space: nowrap;
 }
 
 .copytrade-live-clock span:last-child {
-  color: rgba(175, 189, 217, 0.86);
+  color: #7a867b;
 }
 
-.copytrade-live-refresh-btn,
-.copytrade-live-mode-btn {
-  border-radius: 15px;
-  border: 1px solid rgba(224, 233, 252, 0.55);
-  background: rgba(9, 14, 22, 0.9);
-  color: #f1f6ff;
-  font-size: 0.78rem;
+.copytrade-live-refresh-btn {
+  border-radius: 11px;
+  border: 1px solid #c8d0c4;
+  background: #ffffff;
+  color: #233028;
+  font-size: 0.74rem;
   font-weight: 700;
-  padding: 0.46rem 0.92rem;
+  padding: 0.48rem 0.88rem;
+  box-shadow: 0 1px 2px rgba(11, 20, 13, 0.08);
 }
 
-.copytrade-live-mode-btn:disabled {
-  opacity: 1;
-  cursor: default;
+.copytrade-live-refresh-btn:hover:not(:disabled) {
+  border-color: #aeb8aa;
+  background: #f2f4f0;
+}
+
+.copytrade-live-summary-grid {
+  display: grid;
+  gap: 0.7rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.copytrade-live-summary-item {
+  border-radius: 16px;
+  border: 1px solid #d8dfd4;
+  background: #fbfcfa;
+  padding: 0.72rem 0.78rem;
+  display: grid;
+  gap: 0.16rem;
+}
+
+.copytrade-live-summary-item span {
+  color: #647062;
+  font-size: 0.72rem;
+}
+
+.copytrade-live-summary-item strong {
+  color: #1f2a24;
+  font-size: 1rem;
+  font-weight: 760;
+}
+
+.copytrade-live-summary-item strong.up {
+  color: #197249;
+}
+
+.copytrade-live-summary-item strong.down {
+  color: #b74747;
 }
 
 .copytrade-live-layout {
   display: grid;
-  gap: 0.95rem;
-  grid-template-columns: minmax(0, 1.95fr) minmax(330px, 1fr);
+  gap: 0.9rem;
+  grid-template-columns: minmax(0, 1.9fr) minmax(320px, 1fr);
 }
 
 .copytrade-live-chart-card,
 .copytrade-live-history-card {
-  border-radius: 22px;
-  border: 1px solid rgba(72, 113, 180, 0.35);
-  background:
-    radial-gradient(110% 140% at 0% 0%, rgba(35, 74, 143, 0.16), transparent 56%),
-    linear-gradient(180deg, rgba(7, 12, 22, 0.95), rgba(5, 9, 17, 0.96));
-  box-shadow: 0 20px 46px rgba(3, 7, 16, 0.68);
+  border-radius: 18px;
+  border: 1px solid #d8dfd4;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(27, 40, 31, 0.08);
 }
 
 .copytrade-live-chart-card {
-  padding: 0.95rem;
+  padding: 0.9rem;
   display: grid;
-  gap: 0.84rem;
+  gap: 0.72rem;
 }
 
 .copytrade-live-chart-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.6rem;
 }
 
 .copytrade-live-chart-head strong {
-  font-size: 1rem;
-  color: #edf3ff;
-  letter-spacing: 0.02em;
+  font-size: 0.98rem;
+  color: #1f2a24;
+  letter-spacing: 0.015em;
 }
 
 .copytrade-live-trade {
-  font-size: 0.84rem;
-  font-weight: 800;
+  font-size: 0.77rem;
+  font-weight: 640;
+  color: #607062;
 }
 
 .copytrade-live-trade.up {
-  color: #30d7a1;
+  color: #1d7550;
 }
 
 .copytrade-live-trade.down {
-  color: #ff6767;
+  color: #b04a4a;
 }
 
 .copytrade-live-equity {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
-  font-size: clamp(1.35rem, 2vw, 2rem);
-  font-weight: 900;
-  color: #29d6a2;
+  gap: 0.4rem;
+  font-size: clamp(1rem, 1.2vw, 1.25rem);
+  font-weight: 760;
+  color: #1f2a24;
   line-height: 1;
+}
+
+.copytrade-live-equity.neutral {
+  color: #202e25;
 }
 
 .copytrade-live-dot {
   border-radius: 999px;
-  border: 1px solid rgba(74, 233, 169, 0.72);
-  background: rgba(26, 143, 99, 0.38);
-  box-shadow: 0 0 22px rgba(48, 215, 161, 0.4);
-  color: #d5ffe9;
-  font-size: 0.82rem;
-  letter-spacing: 0.02em;
-  padding: 0.26rem 0.58rem;
+  border: 1px solid #cdd7c9;
+  background: #eff3ec;
+  color: #48564a;
+  font-size: 0.7rem;
+  letter-spacing: 0.015em;
+  padding: 0.22rem 0.52rem;
 }
 
 .copytrade-live-chart-wrap {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr);
-  gap: 0.55rem;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: 0.5rem;
 }
 
 .copytrade-live-yaxis {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding-block: 0.25rem;
+  padding-block: 0.35rem;
 }
 
 .copytrade-live-yaxis span {
-  color: rgba(182, 201, 233, 0.82);
-  font-size: 0.76rem;
+  color: #6f7d70;
+  font-size: 0.7rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
 }
 
 .copytrade-live-chart-svg {
   width: 100%;
-  height: clamp(320px, 44vh, 520px);
-  border-radius: 12px;
-  border: 1px solid rgba(79, 110, 165, 0.48);
-  background: linear-gradient(180deg, rgba(4, 8, 16, 0.95), rgba(5, 9, 17, 0.98));
+  height: clamp(300px, 42vh, 460px);
+  border-radius: 11px;
+  border: 1px solid #d6ddd1;
+  background: #fbfcfa;
 }
 
 .copytrade-live-gridline {
-  stroke: rgba(91, 128, 189, 0.42);
+  stroke: #d8e0d5;
   stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.copytrade-live-area {
   vector-effect: non-scaling-stroke;
 }
 
 .copytrade-live-path {
   fill: none;
-  stroke: rgba(248, 250, 255, 0.96);
-  stroke-width: 5;
+  stroke: #1b7a53;
+  stroke-width: 3;
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
 }
 
 .copytrade-live-endpoint {
-  fill: rgba(242, 247, 255, 0.96);
-  stroke: rgba(180, 198, 229, 0.85);
+  fill: #1a7650;
+  stroke: #ffffff;
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
-  filter: drop-shadow(0 0 6px rgba(226, 236, 255, 0.95));
+  filter: drop-shadow(0 1px 2px rgba(7, 28, 18, 0.24));
 }
 
 .copytrade-live-xaxis {
   display: flex;
   justify-content: space-between;
-  gap: 0.7rem;
-  margin-top: -0.12rem;
+  gap: 0.8rem;
 }
 
 .copytrade-live-xaxis span {
-  color: rgba(191, 206, 234, 0.9);
-  font-size: 0.75rem;
+  color: #7a877b;
+  font-size: 0.69rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
 }
 
 .copytrade-live-metrics {
   display: grid;
   gap: 0.55rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .copytrade-live-metric {
   border-radius: 12px;
-  border: 1px solid rgba(80, 115, 172, 0.4);
-  background: rgba(10, 18, 33, 0.86);
-  padding: 0.58rem 0.66rem;
+  border: 1px solid #dae0d5;
+  background: #f9fbf8;
+  padding: 0.56rem 0.62rem;
   display: grid;
   gap: 0.16rem;
 }
 
 .copytrade-live-metric span {
-  color: rgba(175, 193, 223, 0.88);
+  color: #687668;
   font-size: 0.72rem;
   letter-spacing: 0.02em;
 }
 
 .copytrade-live-metric strong {
-  color: #eef4ff;
-  font-size: 0.95rem;
+  color: #1f2a24;
+  font-size: 0.92rem;
   line-height: 1.25;
 }
 
 .copytrade-live-metric strong.up {
-  color: #33d9a7;
+  color: #1b734d;
 }
 
 .copytrade-live-metric strong.down {
-  color: #ff6767;
+  color: #b64a4a;
 }
 
 .copytrade-live-window {
   margin: 0;
-  color: rgba(171, 189, 219, 0.9);
-  font-size: 0.74rem;
+  color: #6f7f70;
+  font-size: 0.72rem;
 }
 
 .copytrade-live-account-meta {
@@ -8271,15 +8315,15 @@ input[style*="background: rgba(255,255,255,0.06)"] {
   align-items: center;
   gap: 0.9rem;
   flex-wrap: wrap;
-  color: rgba(194, 210, 238, 0.9);
-  font-size: 0.75rem;
+  color: #607061;
+  font-size: 0.72rem;
 }
 
 .copytrade-live-history-card {
-  padding: 0.95rem;
+  padding: 0.9rem;
   max-height: min(760px, 72vh);
   display: grid;
-  gap: 0.72rem;
+  gap: 0.68rem;
   overflow: auto;
 }
 
@@ -8292,15 +8336,15 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 
 .copytrade-live-history-head h4 {
   margin: 0;
-  color: #f0f5ff;
-  font-size: 1.02rem;
-  letter-spacing: 0.04em;
+  color: #1f2a24;
+  font-size: 0.95rem;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
 }
 
 .copytrade-live-history-head span {
-  color: rgba(178, 194, 222, 0.86);
-  font-size: 0.74rem;
+  color: #738274;
+  font-size: 0.7rem;
 }
 
 .copytrade-live-history-list {
@@ -8312,11 +8356,12 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 }
 
 .copytrade-live-history-item {
-  border-radius: 15px;
-  border: 1px solid transparent;
-  padding: 0.7rem 0.76rem;
+  border-radius: 13px;
+  border: 1px solid #dbe2d8;
+  padding: 0.68rem 0.72rem;
   display: grid;
   gap: 0.35rem;
+  background: #fbfcfa;
 }
 
 .copytrade-live-history-item header {
@@ -8327,22 +8372,22 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 }
 
 .copytrade-live-history-item header strong {
-  color: #f4f7ff;
-  font-size: 0.98rem;
+  color: #1f2a24;
+  font-size: 0.92rem;
   letter-spacing: 0.01em;
 }
 
 .copytrade-live-history-item header span {
-  font-size: 0.93rem;
-  font-weight: 900;
+  font-size: 0.84rem;
+  font-weight: 760;
 }
 
 .copytrade-live-history-item header span.up {
-  color: #2ed9a4;
+  color: #1f754f;
 }
 
 .copytrade-live-history-item header span.down {
-  color: #ff535d;
+  color: #b24747;
 }
 
 .copytrade-live-history-grid {
@@ -8352,32 +8397,36 @@ input[style*="background: rgba(255,255,255,0.06)"] {
 }
 
 .copytrade-live-history-grid span {
-  color: rgba(219, 227, 244, 0.88);
-  font-size: 0.78rem;
+  color: #637263;
+  font-size: 0.74rem;
 }
 
 .copytrade-live-history-item small {
-  color: rgba(184, 197, 220, 0.9);
-  font-size: 0.78rem;
+  color: #758476;
+  font-size: 0.72rem;
 }
 
 .copytrade-live-history-item.active {
-  border-color: rgba(87, 149, 255, 0.88);
-  background: linear-gradient(180deg, rgba(22, 43, 79, 0.62), rgba(16, 33, 66, 0.62));
-  box-shadow: inset 0 0 0 1px rgba(99, 161, 255, 0.25);
+  border-color: #a9c9b7;
+  background: #eef7f2;
+  box-shadow: inset 0 0 0 1px #d9ebe1;
 }
 
 .copytrade-live-history-item.loss {
-  border-color: rgba(178, 53, 72, 0.82);
-  background: linear-gradient(180deg, rgba(57, 18, 27, 0.82), rgba(45, 13, 22, 0.84));
+  border-color: #dfbdbd;
+  background: #fbf1f1;
 }
 
 .copytrade-live-history-item.win {
-  border-color: rgba(44, 157, 118, 0.82);
-  background: linear-gradient(180deg, rgba(11, 52, 41, 0.78), rgba(10, 42, 34, 0.8));
+  border-color: #b8d6c8;
+  background: #eff8f3;
 }
 
 @media (max-width: 1280px) {
+  .copytrade-live-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .copytrade-live-layout {
     grid-template-columns: 1fr;
   }
@@ -8401,6 +8450,10 @@ input[style*="background: rgba(255,255,255,0.06)"] {
     text-align: left;
   }
 
+  .copytrade-live-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
   .copytrade-live-chart-head {
     grid-template-columns: 1fr;
     align-items: flex-start;
@@ -8420,10 +8473,16 @@ input[style*="background: rgba(255,255,255,0.06)"] {
   }
 
   .copytrade-live-metrics {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .copytrade-live-history-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .copytrade-live-metrics {
     grid-template-columns: 1fr;
   }
 }
