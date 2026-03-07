@@ -313,6 +313,11 @@ type CopyTradeHistoryCard = {
   tone: "active" | "win" | "loss";
 };
 
+type CopyTradeBalancePoint = {
+  timestamp: number;
+  balance: number;
+};
+
 const DEMO_MT5_ACCOUNT_ID = "demo-preview-account";
 const DEMO_MT5_ACCOUNT: Mt5Account = {
   id: DEMO_MT5_ACCOUNT_ID,
@@ -4119,6 +4124,42 @@ const formatSignedAccountMoney = (value: number | null, currency: string): strin
   return `${prefix}${formatted}`;
 };
 
+const formatDashboardAxisMoney = (value: number | null, currency: string): string => {
+  if (value === null || !Number.isFinite(value)) {
+    return "--";
+  }
+
+  const abs = Math.abs(value);
+  const decimals = abs >= 1000 ? 0 : 2;
+
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency || "USD",
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    }).format(value);
+  } catch {
+    return `${currency || "USD"} ${value.toLocaleString("en-US", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    })}`;
+  }
+};
+
+const formatDashboardAxisDateTime = (timestampMs: number | null): string => {
+  if (timestampMs === null || !Number.isFinite(timestampMs)) {
+    return "--";
+  }
+
+  return new Date(timestampMs).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+};
+
 const formatDashboardDateTime = (timestampMs: number | null): string => {
   if (timestampMs === null || !Number.isFinite(timestampMs)) {
     return "N/A";
@@ -7634,61 +7675,144 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return timeframeMins * 60_000;
   }, [copyTradeDashboardAccount?.timeframe]);
   const copyTradeActivePosition = copyTradeDashboard?.openPositions[0] ?? null;
-  const copyTradeLiveSide =
-    copyTradeActivePosition?.side === "SELL" || copyTradeActivePosition?.side === "BUY"
-      ? copyTradeActivePosition.side
-      : "BUY";
   const copyTradeLivePnl =
     copyTradeActivePosition?.profit ??
     copyTradeDashboard?.netOpenProfit ??
     0;
-  const copyTradeChartSeries = useMemo(() => {
+  const copyTradeBalanceSeries = useMemo(() => {
     if (!copyTradeDashboard) {
-      return [] as number[];
+      return {
+        points: [] as CopyTradeBalancePoint[],
+        closedDealsUsed: 0
+      };
     }
 
-    const anchor = copyTradeDashboard.equity ?? copyTradeDashboard.balance ?? 5000;
-    const amplitude = Math.max(24, Math.abs(copyTradeDashboard.netOpenProfit || 0) * 0.12 + 26);
-    const points = 160;
+    const currentBalanceRaw =
+      typeof copyTradeDashboard.balance === "number" && Number.isFinite(copyTradeDashboard.balance)
+        ? copyTradeDashboard.balance
+        : typeof copyTradeDashboard.equity === "number" &&
+            Number.isFinite(copyTradeDashboard.equity) &&
+            Number.isFinite(copyTradeDashboard.netOpenProfit)
+          ? copyTradeDashboard.equity - copyTradeDashboard.netOpenProfit
+          : copyTradeDashboard.equity ?? copyTradeDashboard.balance ?? 5000;
+    const currentBalance = Number.isFinite(currentBalanceRaw) ? currentBalanceRaw : 5000;
 
-    return Array.from({ length: points }, (_, index) => {
-      const waveA = Math.sin(index * 0.08) * amplitude;
-      const waveB = Math.cos(index * 0.19) * (amplitude * 0.46);
-      const waveC = Math.sin(index * 0.015 + 0.8) * (amplitude * 1.12);
-      const drift = (index - points * 0.5) * 0.56;
-      return anchor + waveA + waveB + waveC + drift;
+    const closedDeals = copyTradeDashboard.recentDeals
+      .filter((deal) => {
+        return (
+          deal.time !== null &&
+          Number.isFinite(deal.time) &&
+          Number.isFinite(Number(deal.profit)) &&
+          String(deal.entryType || "").toUpperCase().includes("OUT")
+        );
+      })
+      .map((deal) => ({
+        time: Number(deal.time),
+        profit: Number(deal.profit) || 0
+      }))
+      .sort((left, right) => left.time - right.time)
+      .slice(-40);
+
+    const totalClosedPnl = closedDeals.reduce((sum, deal) => sum + deal.profit, 0);
+    let runningBalance = currentBalance - totalClosedPnl;
+    const points: CopyTradeBalancePoint[] = [];
+    const fallbackStartTime = copyTradeClockMs - copyTradeBarMs * 12;
+    const firstTime = closedDeals[0]?.time ?? fallbackStartTime;
+
+    points.push({
+      timestamp: Math.max(0, firstTime - copyTradeBarMs),
+      balance: runningBalance
     });
-  }, [copyTradeDashboard]);
+
+    closedDeals.forEach((deal) => {
+      runningBalance += deal.profit;
+      const previousTs = points[points.length - 1]?.timestamp ?? 0;
+      points.push({
+        timestamp: Math.max(previousTs + 1, deal.time),
+        balance: runningBalance
+      });
+    });
+
+    const lastTs = points[points.length - 1]?.timestamp ?? copyTradeClockMs;
+    if (copyTradeClockMs > lastTs) {
+      points.push({
+        timestamp: copyTradeClockMs,
+        balance: currentBalance
+      });
+    } else {
+      points[points.length - 1] = {
+        timestamp: lastTs,
+        balance: currentBalance
+      };
+    }
+
+    if (points.length < 2) {
+      points.push({
+        timestamp: copyTradeClockMs,
+        balance: currentBalance
+      });
+    }
+
+    return {
+      points,
+      closedDealsUsed: closedDeals.length
+    };
+  }, [copyTradeBarMs, copyTradeClockMs, copyTradeDashboard]);
   const copyTradeChartGeometry = useMemo(() => {
-    if (copyTradeChartSeries.length < 2) {
+    if (copyTradeBalanceSeries.points.length < 2) {
       return null;
     }
 
     const width = 1000;
     const height = 460;
-    const min = Math.min(...copyTradeChartSeries);
-    const max = Math.max(...copyTradeChartSeries);
-    const span = Math.max(1, max - min);
-    const points = copyTradeChartSeries
-      .map((value, index) => {
-        const x = (index / (copyTradeChartSeries.length - 1)) * width;
-        const y = height - ((value - min) / span) * height;
+    const firstPoint = copyTradeBalanceSeries.points[0]!;
+    const lastPoint = copyTradeBalanceSeries.points[copyTradeBalanceSeries.points.length - 1]!;
+    const minTimestamp = firstPoint.timestamp;
+    const maxTimestamp = lastPoint.timestamp;
+    const timestampSpan = Math.max(1, maxTimestamp - minTimestamp);
+    const balances = copyTradeBalanceSeries.points.map((point) => point.balance);
+    const minBalance = Math.min(...balances);
+    const maxBalance = Math.max(...balances);
+    const balanceSpan = Math.max(1, maxBalance - minBalance);
+    const points = copyTradeBalanceSeries.points
+      .map((point) => {
+        const x = ((point.timestamp - minTimestamp) / timestampSpan) * width;
+        const y = height - ((point.balance - minBalance) / balanceSpan) * height;
         return `${x.toFixed(2)},${y.toFixed(2)}`;
       })
       .join(" ");
-    const lastIndex = copyTradeChartSeries.length - 1;
-    const lastX = width;
-    const lastY =
-      height - ((copyTradeChartSeries[lastIndex]! - min) / span) * height;
-    const ticks = [max, max - span / 3, max - (span * 2) / 3, min];
+    const lastX = ((lastPoint.timestamp - minTimestamp) / timestampSpan) * width;
+    const lastY = height - ((lastPoint.balance - minBalance) / balanceSpan) * height;
+    const yTicks = [maxBalance, maxBalance - balanceSpan / 3, maxBalance - (balanceSpan * 2) / 3, minBalance];
+    const xTicks = [minTimestamp, minTimestamp + timestampSpan * 0.5, maxTimestamp];
 
     return {
       points,
       lastX,
       lastY,
-      ticks
+      xTicks,
+      yTicks,
+      startTimestamp: minTimestamp,
+      endTimestamp: maxTimestamp,
+      startBalance: firstPoint.balance,
+      endBalance: lastPoint.balance
     };
-  }, [copyTradeChartSeries]);
+  }, [copyTradeBalanceSeries.points]);
+  const copyTradeBalanceDelta = useMemo(() => {
+    if (!copyTradeChartGeometry) {
+      return 0;
+    }
+
+    return copyTradeChartGeometry.endBalance - copyTradeChartGeometry.startBalance;
+  }, [copyTradeChartGeometry]);
+  const copyTradeBalanceDeltaPct = useMemo(() => {
+    if (!copyTradeChartGeometry) {
+      return 0;
+    }
+
+    const base = Math.max(1, Math.abs(copyTradeChartGeometry.startBalance));
+    return (copyTradeBalanceDelta / base) * 100;
+  }, [copyTradeBalanceDelta, copyTradeChartGeometry]);
   const copyTradeHistoryCards = useMemo<CopyTradeHistoryCard[]>(() => {
     if (!copyTradeDashboard) {
       return [];
@@ -17779,9 +17903,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         <header className="copytrade-live-topbar">
                           <div className="copytrade-live-title-wrap">
                             <h3>Live Dashboard</h3>
-                            <span className="copytrade-live-chip amber">Summer</span>
-                            <span className="copytrade-live-chip blue">Day</span>
-                            <span className="copytrade-live-chip green">Sunshine</span>
+                            <span className="copytrade-live-chip amber">MT5</span>
+                            <span className="copytrade-live-chip blue">
+                              {copyTradeDashboardAccount.symbol}
+                            </span>
+                            <span className="copytrade-live-chip green">
+                              {copyTradeDashboardAccount.timeframe}
+                            </span>
                           </div>
                           <div className="copytrade-live-topbar-right">
                             <div className="copytrade-live-clock">
@@ -17812,17 +17940,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           <section className="copytrade-live-chart-card">
                             <div className="copytrade-live-chart-head">
                               <strong>
-                                {copyTradeDashboardAccount.symbol} ({copyTradeDashboard.broker || "XAUUSD"}) -{" "}
-                                {copyTradeDashboardAccount.timeframe}
+                                Balance Curve - {copyTradeDashboardAccount.login} @{" "}
+                                {copyTradeDashboardAccount.server}
                               </strong>
-                              <span className={`copytrade-live-trade ${copyTradeLivePnl >= 0 ? "up" : "down"}`}>
-                                In Trade: {copyTradeLiveSide} • PnL{" "}
-                                {formatSignedAccountMoney(copyTradeLivePnl, copyTradeDashboard.currency)}
+                              <span
+                                className={`copytrade-live-trade ${
+                                  copyTradeDashboard.dayClosedPnl >= 0 ? "up" : "down"
+                                }`}
+                              >
+                                24h Closed PnL:{" "}
+                                {formatSignedAccountMoney(
+                                  copyTradeDashboard.dayClosedPnl,
+                                  copyTradeDashboard.currency
+                                )}
                               </span>
                               <span className="copytrade-live-equity">
-                                <span className="copytrade-live-dot">LIVE</span>
+                                <span className="copytrade-live-dot">BALANCE</span>
                                 {formatAccountMoney(
-                                  copyTradeDashboard.equity ?? copyTradeDashboard.balance,
+                                  copyTradeDashboard.balance ?? copyTradeDashboard.equity,
                                   copyTradeDashboard.currency
                                 )}
                               </span>
@@ -17831,9 +17966,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             <div className="copytrade-live-chart-wrap">
                               <div className="copytrade-live-yaxis">
                                 {copyTradeChartGeometry
-                                  ? copyTradeChartGeometry.ticks.map((value, index) => (
+                                  ? copyTradeChartGeometry.yTicks.map((value, index) => (
                                       <span key={`tick-${index}`}>
-                                        {Math.round(value).toLocaleString("en-US")}
+                                        {formatDashboardAxisMoney(value, copyTradeDashboard.currency)}
                                       </span>
                                     ))
                                   : null}
@@ -17842,7 +17977,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 className="copytrade-live-chart-svg"
                                 viewBox="0 0 1000 460"
                                 preserveAspectRatio="none"
-                                aria-label="copy trade equity chart"
+                                aria-label="copy trade balance chart"
                               >
                                 {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
                                   <line
@@ -17881,10 +18016,62 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               </svg>
                             </div>
 
-                            <div className="copytrade-live-strip-stack">
-                              <div className="copytrade-live-strip strip-1" />
-                              <div className="copytrade-live-strip strip-2" />
-                              <div className="copytrade-live-strip strip-3" />
+                            <div className="copytrade-live-xaxis">
+                              {copyTradeChartGeometry
+                                ? copyTradeChartGeometry.xTicks.map((value, index) => (
+                                    <span key={`x-tick-${index}`}>
+                                      {formatDashboardAxisDateTime(value)}
+                                    </span>
+                                  ))
+                                : null}
+                            </div>
+
+                            <div className="copytrade-live-metrics">
+                              <article className="copytrade-live-metric">
+                                <span>Open PnL</span>
+                                <strong className={copyTradeLivePnl >= 0 ? "up" : "down"}>
+                                  {formatSignedAccountMoney(
+                                    copyTradeLivePnl,
+                                    copyTradeDashboard.currency
+                                  )}
+                                </strong>
+                              </article>
+                              <article className="copytrade-live-metric">
+                                <span>Balance Change</span>
+                                <strong className={copyTradeBalanceDelta >= 0 ? "up" : "down"}>
+                                  {formatSignedAccountMoney(
+                                    copyTradeBalanceDelta,
+                                    copyTradeDashboard.currency
+                                  )}{" "}
+                                  ({copyTradeBalanceDeltaPct >= 0 ? "+" : ""}
+                                  {copyTradeBalanceDeltaPct.toFixed(2)}%)
+                                </strong>
+                              </article>
+                              <article className="copytrade-live-metric">
+                                <span>Closed Deals Used</span>
+                                <strong>{copyTradeBalanceSeries.closedDealsUsed}</strong>
+                              </article>
+                            </div>
+
+                            <p className="copytrade-live-window">
+                              Window:{" "}
+                              {copyTradeChartGeometry
+                                ? `${formatDashboardDateTime(copyTradeChartGeometry.startTimestamp)} -> ${formatDashboardDateTime(copyTradeChartGeometry.endTimestamp)}`
+                                : "N/A"}
+                            </p>
+                            <div className="copytrade-live-account-meta">
+                              <span>
+                                Equity:{" "}
+                                {formatAccountMoney(copyTradeDashboard.equity, copyTradeDashboard.currency)}
+                              </span>
+                              <span>
+                                Margin level:{" "}
+                                {copyTradeDashboard.marginLevel !== null &&
+                                Number.isFinite(copyTradeDashboard.marginLevel)
+                                  ? `${copyTradeDashboard.marginLevel.toFixed(1)}%`
+                                  : "--"}
+                              </span>
+                              <span>{copyTradeDashboard.tradeAllowed === false ? "Trading Disabled" : "Trading Enabled"}</span>
                             </div>
                           </section>
 

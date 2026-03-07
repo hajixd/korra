@@ -8212,51 +8212,67 @@ input[style*="background: rgba(255,255,255,0.06)"] {
   filter: drop-shadow(0 0 6px rgba(226, 236, 255, 0.95));
 }
 
-.copytrade-live-strip-stack {
+.copytrade-live-xaxis {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.7rem;
+  margin-top: -0.12rem;
+}
+
+.copytrade-live-xaxis span {
+  color: rgba(191, 206, 234, 0.9);
+  font-size: 0.75rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.copytrade-live-metrics {
   display: grid;
-  gap: 0.36rem;
+  gap: 0.55rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.copytrade-live-strip {
-  height: 28px;
-  border-radius: 2px;
-  border: 1px solid rgba(80, 115, 172, 0.42);
+.copytrade-live-metric {
+  border-radius: 12px;
+  border: 1px solid rgba(80, 115, 172, 0.4);
+  background: rgba(10, 18, 33, 0.86);
+  padding: 0.58rem 0.66rem;
+  display: grid;
+  gap: 0.16rem;
 }
 
-.copytrade-live-strip.strip-1 {
-  background:
-    repeating-linear-gradient(
-      90deg,
-      #f4c02a 0 9%,
-      #f4943f 9% 16%,
-      #5f98de 16% 30%,
-      #43cd97 30% 35%,
-      #f4c02a 35% 46%
-    );
+.copytrade-live-metric span {
+  color: rgba(175, 193, 223, 0.88);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
 }
 
-.copytrade-live-strip.strip-2 {
-  background:
-    repeating-linear-gradient(
-      90deg,
-      #64a7f3 0 5%,
-      #1e5cb6 5% 6.8%,
-      #64a7f3 6.8% 18%,
-      #0f3980 18% 20%,
-      #64a7f3 20% 33%
-    );
+.copytrade-live-metric strong {
+  color: #eef4ff;
+  font-size: 0.95rem;
+  line-height: 1.25;
 }
 
-.copytrade-live-strip.strip-3 {
-  background:
-    repeating-linear-gradient(
-      90deg,
-      #f5f08a 0 1.2%,
-      #30ca7f 1.2% 4.2%,
-      #f06c6c 4.2% 5.8%,
-      #2c9ce5 5.8% 7.4%,
-      #f8d98b 7.4% 9.1%
-    );
+.copytrade-live-metric strong.up {
+  color: #33d9a7;
+}
+
+.copytrade-live-metric strong.down {
+  color: #ff6767;
+}
+
+.copytrade-live-window {
+  margin: 0;
+  color: rgba(171, 189, 219, 0.9);
+  font-size: 0.74rem;
+}
+
+.copytrade-live-account-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  color: rgba(194, 210, 238, 0.9);
+  font-size: 0.75rem;
 }
 
 .copytrade-live-history-card {
@@ -8395,6 +8411,15 @@ input[style*="background: rgba(255,255,255,0.06)"] {
   }
 
   .copytrade-live-chart-wrap {
+    grid-template-columns: 1fr;
+  }
+
+  .copytrade-live-xaxis {
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .copytrade-live-metrics {
     grid-template-columns: 1fr;
   }
 
