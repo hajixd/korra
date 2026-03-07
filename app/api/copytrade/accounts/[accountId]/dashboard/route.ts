@@ -47,8 +47,8 @@ export async function GET(_request: Request, context: RouteContext) {
   try {
     const dashboard = await getMetaApiAccountDashboard({
       providerAccountId: account.providerAccountId,
-      dealsLookbackHours: 24,
-      dealsLimit: 80
+      dealsLookbackHours: 24 * 31,
+      dealsLimit: 500
     });
 
     return NextResponse.json(
