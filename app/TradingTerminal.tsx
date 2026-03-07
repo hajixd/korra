@@ -84,7 +84,7 @@ const SETTINGS_STORAGE_KEY = "korra-settings";
 const PRESETS_STORAGE_KEY = "korra-presets";
 type SavedPreset = { name: string; settings: Record<string, any>; savedAt: number };
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
-type SurfaceTab = "chart" | "backtest" | "copytrade";
+type SurfaceTab = "chart" | "settings" | "backtest" | "copytrade";
 type BacktestTab =
   | "mainSettings"
   | "mainStats"
@@ -298,6 +298,91 @@ type Mt5AccountsApiResponse = {
 type Mt5DashboardApiResponse = {
   dashboard: Mt5Dashboard | null;
   error?: string;
+};
+
+const DEMO_MT5_ACCOUNT_ID = "demo-preview-account";
+const DEMO_MT5_ACCOUNT: Mt5Account = {
+  id: DEMO_MT5_ACCOUNT_ID,
+  login: "8874102",
+  server: "Eightcap-Demo",
+  status: "Connected",
+  paused: false,
+  symbol: "XAUUSD",
+  timeframe: "15m",
+  lot: 0.1,
+  running: true,
+  lastError: null,
+  lastHeartbeatAt: Date.now(),
+  lastSignalId: "preview-signal-001",
+  lastSignalSide: "Long",
+  lastActionAt: Date.now() - 1000 * 60 * 4,
+  openPosition: {
+    positionTicket: 27390418,
+    signalId: "preview-signal-001",
+    side: "Long",
+    symbol: "XAUUSD",
+    openedAt: Date.now() - 1000 * 60 * 42,
+    entryPrice: 2939.8,
+    takeProfit: 2951.2,
+    stopLoss: 2931.4
+  }
+};
+
+const DEMO_MT5_DASHBOARD: Mt5Dashboard = {
+  providerAccountId: DEMO_MT5_ACCOUNT_ID,
+  login: DEMO_MT5_ACCOUNT.login,
+  server: DEMO_MT5_ACCOUNT.server,
+  broker: "Demo Preview Broker",
+  currency: "USD",
+  balance: 10000,
+  equity: 10284.75,
+  margin: 812.21,
+  freeMargin: 9472.54,
+  marginLevel: 1266.8,
+  leverage: 100,
+  tradeAllowed: true,
+  openPositions: [
+    {
+      id: 27390418,
+      side: "BUY",
+      symbol: "XAUUSD",
+      volume: 0.1,
+      openPrice: 2939.8,
+      currentPrice: 2942.65,
+      profit: 285.5,
+      time: Date.now() - 1000 * 60 * 42,
+      comment: "Korra preview",
+      stopLoss: 2931.4,
+      takeProfit: 2951.2
+    }
+  ],
+  recentDeals: [
+    {
+      id: "9912037",
+      side: "BUY",
+      entryType: "DEAL_ENTRY_OUT",
+      symbol: "XAUUSD",
+      time: Date.now() - 1000 * 60 * 95,
+      price: 2936.9,
+      volume: 0.1,
+      profit: 112.8,
+      comment: "Take-profit"
+    },
+    {
+      id: "9912031",
+      side: "SELL",
+      entryType: "DEAL_ENTRY_OUT",
+      symbol: "XAUUSD",
+      time: Date.now() - 1000 * 60 * 152,
+      price: 2944.3,
+      volume: 0.1,
+      profit: -46.2,
+      comment: "Stop-loss"
+    }
+  ],
+  netOpenProfit: 285.5,
+  dayClosedPnl: 66.6,
+  lastSyncedAt: Date.now()
 };
 
 const EMPTY_CANDLES: Candle[] = [];
@@ -3083,13 +3168,12 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
 
 const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
   { id: "chart", label: "Chart" },
+  { id: "settings", label: "Settings" },
   { id: "backtest", label: "Backtest" },
   { id: "copytrade", label: "Copy-Trade" }
 ];
 
 const backtestTabs: Array<{ id: BacktestTab; label: string }> = [
-  { id: "mainSettings", label: "Main Settings" },
-  { id: "timeSettings", label: "Time Settings" },
   { id: "mainStats", label: "Main Statistics" },
   { id: "history", label: "Trading History" },
   { id: "calendar", label: "Calendar" },
@@ -7152,7 +7236,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [selectedBacktestTimeframe, setSelectedBacktestTimeframe] = useState<Timeframe>("15m");
   const [minutePreciseEnabled, setMinutePreciseEnabled] = useState(false);
   const [selectedSurfaceTab, setSelectedSurfaceTab] = useState<SurfaceTab>("chart");
-  const [selectedBacktestTab, setSelectedBacktestTab] = useState<BacktestTab>("mainSettings");
+  const [selectedBacktestTab, setSelectedBacktestTab] = useState<BacktestTab>("mainStats");
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(WORKSPACE_PANEL_DEFAULT_WIDTH);
   const [isWorkspacePanelResizing, setIsWorkspacePanelResizing] = useState(false);
@@ -7435,6 +7519,25 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [mt5Accounts, selectedMt5AccountId]);
 
   useEffect(() => {
+    if (
+      selectedSurfaceTab === "backtest" &&
+      (selectedBacktestTab === "mainSettings" || selectedBacktestTab === "timeSettings")
+    ) {
+      setSelectedBacktestTab("mainStats");
+    }
+  }, [selectedBacktestTab, selectedSurfaceTab]);
+
+  useEffect(() => {
+    if (selectedSurfaceTab !== "settings") {
+      return;
+    }
+
+    if (selectedBacktestTab !== "mainSettings") {
+      setSelectedBacktestTab("mainSettings");
+    }
+  }, [selectedBacktestTab, selectedSurfaceTab]);
+
+  useEffect(() => {
     if (mt5Accounts.length === 0) {
       setMt5DashboardsByAccountId({});
       setMt5DashboardLoadingByAccountId({});
@@ -7485,6 +7588,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const selectedMt5DashboardError = selectedMt5Account
     ? mt5DashboardErrorByAccountId[selectedMt5Account.id] ?? null
     : null;
+  const copyTradePreviewMode = mt5Accounts.length === 0;
+  const copyTradeDashboardAccount = selectedMt5Account ?? (copyTradePreviewMode ? DEMO_MT5_ACCOUNT : null);
+  const copyTradeDashboard = selectedMt5Dashboard ?? (copyTradePreviewMode ? DEMO_MT5_DASHBOARD : null);
+  const copyTradeDashboardLoading = copyTradePreviewMode ? false : selectedMt5DashboardLoading;
+  const copyTradeDashboardError = copyTradePreviewMode ? null : selectedMt5DashboardError;
 
   useEffect(() => {
     if (!mt5ContextMenu) {
@@ -8551,7 +8659,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [selectedSurfaceTab]);
 
   useEffect(() => {
-    if (selectedSurfaceTab !== "backtest") {
+    if (selectedSurfaceTab !== "backtest" && selectedSurfaceTab !== "settings") {
       setIsBacktestSurfaceSettled(true);
       return;
     }
@@ -12674,7 +12782,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       if (
-        selectedSurfaceTabRef.current !== "backtest" ||
         holdActive ||
         holdCompleted ||
         statsRefreshOverlayModeRef.current !== "idle"
@@ -16147,8 +16254,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               type="button"
               className={`surface-tab ${selectedSurfaceTab === tab.id ? "active" : ""}`}
               onClick={() => {
-                if (tab.id === "backtest" && selectedSurfaceTab !== "backtest") {
+                if (
+                  (tab.id === "backtest" || tab.id === "settings") &&
+                  selectedSurfaceTab !== tab.id
+                ) {
                   setIsBacktestSurfaceSettled(false);
+                }
+
+                if (tab.id === "settings") {
+                  setSelectedBacktestTab("mainSettings");
+                } else if (
+                  tab.id === "backtest" &&
+                  (selectedBacktestTab === "mainSettings" || selectedBacktestTab === "timeSettings")
+                ) {
+                  setSelectedBacktestTab("mainStats");
                 }
 
                 setSelectedSurfaceTab(tab.id);
@@ -17287,7 +17406,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             <div className="copytrade-surface-shell">
               <div
                 className={`copytrade-body copytrade-body-surface ${
-                  mt5Accounts.length === 0 ? "copytrade-body-surface-empty" : ""
+                  mt5Accounts.length === 0 && !copyTradePreviewMode
+                    ? "copytrade-body-surface-empty"
+                    : ""
                 }`}
                 onClick={() => setMt5ContextMenu(null)}
               >
@@ -17452,18 +17573,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   </ul>
                 ) : (
                   <p className="copytrade-note">
-                    No accounts yet. Press Add Account to connect a TradeCopier cloud account.
+                    Preview mode loaded. Press Add Account to connect your live TradeCopier account.
                   </p>
                 )}
 
-                {mt5Accounts.length > 0 ? (
+                {copyTradeDashboardAccount ? (
                   <section className="copytrade-dashboard-shell" aria-label="Selected account dashboard">
                     <div className="copytrade-dashboard-head">
                       <div>
                         <h3>Account Dashboard</h3>
                         <p>
-                          {selectedMt5Account
-                            ? `${selectedMt5Account.login} · ${selectedMt5Account.server}`
+                          {copyTradeDashboardAccount
+                            ? `${copyTradeDashboardAccount.login} · ${copyTradeDashboardAccount.server}`
                             : "Select an account to view its live dashboard."}
                         </p>
                       </div>
@@ -17471,31 +17592,35 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         type="button"
                         className="panel-action-btn copytrade-dashboard-refresh-btn"
                         onClick={handleRefreshSelectedMt5Dashboard}
-                        disabled={!selectedMt5Account || selectedMt5DashboardLoading}
+                        disabled={!selectedMt5Account || copyTradeDashboardLoading || copyTradePreviewMode}
                       >
-                        {selectedMt5DashboardLoading ? "Refreshing..." : "Refresh"}
+                        {copyTradePreviewMode
+                          ? "Preview"
+                          : copyTradeDashboardLoading
+                            ? "Refreshing..."
+                            : "Refresh"}
                       </button>
                     </div>
 
-                    {selectedMt5Account ? (
-                      selectedMt5Dashboard ? (
+                    {copyTradeDashboardAccount ? (
+                      copyTradeDashboard ? (
                         <div className="copytrade-dashboard-grid">
                           <section className="copytrade-dashboard-main-card">
                             <div className="copytrade-dashboard-banner">
                               <div className="copytrade-dashboard-banner-copy">
                                 <span className="copytrade-dashboard-kicker">
-                                  {selectedMt5Dashboard.broker || "MetaTrader Account"}
+                                  {copyTradeDashboard.broker || "MetaTrader Account"}
                                 </span>
                                 <h4>
-                                  {selectedMt5Dashboard.login} @ {selectedMt5Dashboard.server}
+                                  {copyTradeDashboard.login} @ {copyTradeDashboard.server}
                                 </h4>
                               </div>
                               <div className="copytrade-dashboard-banner-balance">
                                 <span>Equity</span>
                                 <strong>
                                   {formatAccountMoney(
-                                    selectedMt5Dashboard.equity ?? selectedMt5Dashboard.balance,
-                                    selectedMt5Dashboard.currency
+                                    copyTradeDashboard.equity ?? copyTradeDashboard.balance,
+                                    copyTradeDashboard.currency
                                   )}
                                 </strong>
                               </div>
@@ -17506,8 +17631,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 <span>Balance</span>
                                 <strong>
                                   {formatAccountMoney(
-                                    selectedMt5Dashboard.balance,
-                                    selectedMt5Dashboard.currency
+                                    copyTradeDashboard.balance,
+                                    copyTradeDashboard.currency
                                   )}
                                 </strong>
                               </article>
@@ -17515,8 +17640,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 <span>Free Margin</span>
                                 <strong>
                                   {formatAccountMoney(
-                                    selectedMt5Dashboard.freeMargin,
-                                    selectedMt5Dashboard.currency
+                                    copyTradeDashboard.freeMargin,
+                                    copyTradeDashboard.currency
                                   )}
                                 </strong>
                               </article>
@@ -17524,8 +17649,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 <span>Used Margin</span>
                                 <strong>
                                   {formatAccountMoney(
-                                    selectedMt5Dashboard.margin,
-                                    selectedMt5Dashboard.currency
+                                    copyTradeDashboard.margin,
+                                    copyTradeDashboard.currency
                                   )}
                                 </strong>
                               </article>
@@ -17533,12 +17658,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 <span>Open PnL</span>
                                 <strong
                                   className={
-                                    (selectedMt5Dashboard.netOpenProfit || 0) >= 0 ? "up" : "down"
+                                    (copyTradeDashboard.netOpenProfit || 0) >= 0 ? "up" : "down"
                                   }
                                 >
                                   {formatSignedAccountMoney(
-                                    selectedMt5Dashboard.netOpenProfit,
-                                    selectedMt5Dashboard.currency
+                                    copyTradeDashboard.netOpenProfit,
+                                    copyTradeDashboard.currency
                                   )}
                                 </strong>
                               </article>
@@ -17546,37 +17671,37 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 <span>24h Closed PnL</span>
                                 <strong
                                   className={
-                                    (selectedMt5Dashboard.dayClosedPnl || 0) >= 0 ? "up" : "down"
+                                    (copyTradeDashboard.dayClosedPnl || 0) >= 0 ? "up" : "down"
                                   }
                                 >
                                   {formatSignedAccountMoney(
-                                    selectedMt5Dashboard.dayClosedPnl,
-                                    selectedMt5Dashboard.currency
+                                    copyTradeDashboard.dayClosedPnl,
+                                    copyTradeDashboard.currency
                                   )}
                                 </strong>
                               </article>
                               <article className="copytrade-dashboard-stat">
                                 <span>Margin Level</span>
                                 <strong>
-                                  {selectedMt5Dashboard.marginLevel !== null
-                                    ? `${selectedMt5Dashboard.marginLevel.toFixed(1)}%`
+                                  {copyTradeDashboard.marginLevel !== null
+                                    ? `${copyTradeDashboard.marginLevel.toFixed(1)}%`
                                     : "--"}
                                 </strong>
                               </article>
                               <article className="copytrade-dashboard-stat">
                                 <span>Leverage</span>
                                 <strong>
-                                  {selectedMt5Dashboard.leverage !== null
-                                    ? `1:${Math.trunc(selectedMt5Dashboard.leverage)}`
+                                  {copyTradeDashboard.leverage !== null
+                                    ? `1:${Math.trunc(copyTradeDashboard.leverage)}`
                                     : "--"}
                                 </strong>
                               </article>
                               <article className="copytrade-dashboard-stat">
                                 <span>Trading</span>
                                 <strong>
-                                  {selectedMt5Dashboard.tradeAllowed === null
+                                  {copyTradeDashboard.tradeAllowed === null
                                     ? "--"
-                                    : selectedMt5Dashboard.tradeAllowed
+                                    : copyTradeDashboard.tradeAllowed
                                       ? "Allowed"
                                       : "Restricted"}
                                 </strong>
@@ -17586,12 +17711,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             <div className="copytrade-open-positions-card">
                               <div className="copytrade-dashboard-subhead">
                                 <h5>Open Positions</h5>
-                                <span>{selectedMt5Dashboard.openPositions.length}</span>
+                                <span>{copyTradeDashboard.openPositions.length}</span>
                               </div>
 
-                              {selectedMt5Dashboard.openPositions.length > 0 ? (
+                              {copyTradeDashboard.openPositions.length > 0 ? (
                                 <ul className="copytrade-open-position-list">
-                                  {selectedMt5Dashboard.openPositions.map((position) => (
+                                  {copyTradeDashboard.openPositions.map((position) => (
                                     <li key={position.id}>
                                       <article className="copytrade-open-position-item">
                                         <header>
@@ -17606,7 +17731,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                             {position.side} ·{" "}
                                             {formatSignedAccountMoney(
                                               position.profit,
-                                              selectedMt5Dashboard.currency
+                                              copyTradeDashboard.currency
                                             )}
                                           </span>
                                         </header>
@@ -17634,13 +17759,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             <div className="copytrade-dashboard-subhead">
                               <h5>Recent History</h5>
                               <span>
-                                Updated {formatDashboardDateTime(selectedMt5Dashboard.lastSyncedAt)}
+                                Updated {formatDashboardDateTime(copyTradeDashboard.lastSyncedAt)}
                               </span>
                             </div>
 
-                            {selectedMt5Dashboard.recentDeals.length > 0 ? (
+                            {copyTradeDashboard.recentDeals.length > 0 ? (
                               <ul className="copytrade-deal-list">
-                                {selectedMt5Dashboard.recentDeals.map((deal) => (
+                                {copyTradeDashboard.recentDeals.map((deal) => (
                                   <li key={deal.id}>
                                     <article className="copytrade-deal-item">
                                       <header>
@@ -17648,7 +17773,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                         <span className={(deal.profit || 0) >= 0 ? "up" : "down"}>
                                           {formatSignedAccountMoney(
                                             deal.profit,
-                                            selectedMt5Dashboard.currency
+                                            copyTradeDashboard.currency
                                           )}
                                         </span>
                                       </header>
@@ -17670,8 +17795,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         </div>
                       ) : (
                         <p className="copytrade-note">
-                          {selectedMt5DashboardError ||
-                            (selectedMt5DashboardLoading
+                          {copyTradeDashboardError ||
+                            (copyTradeDashboardLoading
                               ? "Loading account dashboard..."
                               : "Dashboard data is not available yet for this account.")}
                         </p>
@@ -17722,24 +17847,28 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           </section>
         ) : null}
 
-        {selectedSurfaceTab === "backtest" ? (
-          <section className="backtest-surface" aria-label="backtest workspace">
+        {selectedSurfaceTab === "backtest" || selectedSurfaceTab === "settings" ? (
+          <section
+            className="backtest-surface"
+            aria-label={selectedSurfaceTab === "settings" ? "settings workspace" : "backtest workspace"}
+          >
             <div className="backtest-shell">
-              <div
-                className={`backtest-card compact backtest-date-range-card ${
-                  !isBacktestSurfaceSettled || statsRefreshOverlayMode === "loading"
-                    ? "is-loading"
-                    : ""
-                }`}
-              >
+              {selectedSurfaceTab === "settings" ? (
+                <div
+                  className={`backtest-card compact backtest-date-range-card ${
+                    !isBacktestSurfaceSettled || statsRefreshOverlayMode === "loading"
+                      ? "is-loading"
+                      : ""
+                  }`}
+                >
                 <div className="backtest-card-head backtest-stats-head">
                   <div>
-                    <h3>Backtest Date Range</h3>
+                    <h3>Settings</h3>
                   </div>
 
                   <div
                     className="backtest-stats-range backtest-stats-range-main"
-                    aria-label="global backtest date range"
+                    aria-label="global backtest settings"
                   >
                     <div className="backtest-date-input-row">
                       <input
@@ -17882,27 +18011,32 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <strong>{backtestLibraryCandidateTrades.length.toLocaleString("en-US")}</strong>
                   </span>
                 </div>
-              </div>
+                </div>
+              ) : null}
 
-              <nav className="backtest-tabs" aria-label="backtest modules">
-                {backtestTabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    className={`backtest-tab ${selectedBacktestTab === tab.id ? "active" : ""}`}
-                    onClick={() => setSelectedBacktestTab(tab.id)}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </nav>
+              {selectedSurfaceTab === "backtest" ? (
+                <nav className="backtest-tabs" aria-label="backtest modules">
+                  {backtestTabs.map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      className={`backtest-tab ${selectedBacktestTab === tab.id ? "active" : ""}`}
+                      onClick={() => setSelectedBacktestTab(tab.id)}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </nav>
+              ) : null}
 
               <section className={`backtest-panel ${!isBacktestSurfaceSettled ? "backtest-panel-loading" : ""}`}>
                 {!isBacktestSurfaceSettled ? (
                   <ChartLoadingSpinner label="Preparing Backtest..." />
                 ) : (
                   <>
-              {backtestDateFilteredTrades.length === 0 && backtestModelProfiles.length === 0 ? (
+              {selectedSurfaceTab === "backtest" &&
+              backtestDateFilteredTrades.length === 0 &&
+              backtestModelProfiles.length === 0 ? (
                 <div className="backtest-empty">
                   <h3>No models selected</h3>
                   <p>
@@ -17910,17 +18044,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     results.
                   </p>
                 </div>
-              ) : backtestDateFilteredTrades.length === 0 && backtestSourceTrades.length > 0 ? (
+              ) : selectedSurfaceTab === "backtest" &&
+                backtestDateFilteredTrades.length === 0 &&
+                backtestSourceTrades.length > 0 ? (
                 <div className="backtest-empty">
                   <h3>No trades in the selected date range</h3>
                   <p>
-                    Move the Backtest Date Range above, or clear it to load the full simulated
+                    Open the Settings tab to adjust the Backtest Date Range, or clear it to load the full simulated
                     trade history again.
                   </p>
                 </div>
               ) : null}
 
-              {shouldShowBacktestInlineLoader ? (
+              {selectedSurfaceTab === "backtest" && shouldShowBacktestInlineLoader ? (
                 <ChartLoadingSpinner label={backtestInlineLoaderLabel} />
               ) : null}
 
@@ -18010,7 +18146,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 </div>
               ) : null}
 
-              {selectedBacktestTab === "mainSettings" ? (
+              {selectedSurfaceTab === "settings" || selectedBacktestTab === "mainSettings" ? (
                 <div className="backtest-grid" style={{ gap: "0.75rem" }}>
                   <div className="main-settings-kpi-strip" aria-label="AI rolling statistics">
                     <div className="main-settings-kpi-strip-track">
@@ -19980,7 +20116,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   </div>
                 </div>
               ) : null}
-              {selectedBacktestTab === "timeSettings" ? (
+              {selectedSurfaceTab === "settings" || selectedBacktestTab === "timeSettings" ? (
                 <div className="backtest-grid">
                   <div className="backtest-grid two-up">
                     <div className="backtest-card">
