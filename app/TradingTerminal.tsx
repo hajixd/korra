@@ -18180,28 +18180,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         </div>
                       </div>
                       <div className="copytrade-body" onClick={() => setMt5ContextMenu(null)}>
-                        <p className="copytrade-note">
-                          TradeCopier.cloud profile manager. Use Add Account below to connect MT5
-                          credentials and run cloud copy-trading.
-                          {mt5WorkerStatus?.tickInFlight ? " Syncing..." : ""}
-                        </p>
-
                         {mt5Error ? <p className="copytrade-error-note">{mt5Error}</p> : null}
-
-                        <div className="copytrade-actions" role="group" aria-label="MT5 account actions">
-                          <button
-                            type="button"
-                            className="panel-action-btn copytrade-action-btn"
-                            onClick={handleShowMt5AddForm}
-                            disabled={mt5ActionBusy || mt5Accounts.length >= mt5MaxAccounts}
-                          >
-                            {mt5Syncing
-                              ? "Syncing..."
-                              : mt5Accounts.length >= mt5MaxAccounts
-                                ? "Limit Reached"
-                                : "Add Account"}
-                          </button>
-                        </div>
 
                         {mt5FormOpen ? (
                           <div className="copytrade-form-shell">
@@ -18557,21 +18536,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               >
                 {mt5Error ? <p className="copytrade-error-note">{mt5Error}</p> : null}
 
-                <div className="copytrade-actions" role="group" aria-label="MT5 account actions">
-                  <button
-                    type="button"
-                    className="panel-action-btn copytrade-action-btn"
-                    onClick={handleShowMt5AddForm}
-                    disabled={mt5ActionBusy || mt5Accounts.length >= mt5MaxAccounts}
-                  >
-                    {mt5Syncing
-                      ? "Syncing..."
-                      : mt5Accounts.length >= mt5MaxAccounts
-                        ? "Limit Reached"
-                        : "Add Account"}
-                  </button>
-                </div>
-
                 {mt5FormOpen ? (
                   <div className="copytrade-form-shell">
                     <p className="copytrade-note copytrade-target-note">
@@ -18714,11 +18678,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       </li>
                     ))}
                   </ul>
-                ) : (
-                  <p className="copytrade-note">
-                    Preview mode loaded. Press Add Account to connect your live TradeCopier account.
-                  </p>
-                )}
+                ) : null}
 
                 {copyTradeDashboardAccount ? (
                   <section
