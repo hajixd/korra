@@ -2940,24 +2940,34 @@ const injectedScript = `
       });
     }
 
-    document.querySelectorAll("label, span, div, p").forEach((node) => {
-      const text = normalizeNodeText(node.textContent);
-      if (!text) {
-        return;
-      }
+    if (!document.body || typeof NodeFilter === "undefined") {
+      return;
+    }
 
-      if (text === "Investor Password (read-only)") {
-        node.textContent = "Password";
-        return;
-      }
+    const textWalker = document.createTreeWalker(
+      document.body,
+      NodeFilter.SHOW_TEXT
+    );
 
-      if (text.includes("Input your Investor Password.")) {
-        node.textContent = text.replace(
-          "Input your Investor Password.",
+    let currentTextNode = textWalker.nextNode();
+    while (currentTextNode) {
+      const originalValue = String(currentTextNode.nodeValue || "");
+      const normalizedValue = normalizeNodeText(originalValue);
+
+      if (normalizedValue === "Investor Password (read-only)") {
+        currentTextNode.nodeValue = originalValue.replace(
+          /Investor Password \(read-only\)/g,
+          "Password"
+        );
+      } else if (originalValue.includes("Input your Investor Password.")) {
+        currentTextNode.nodeValue = originalValue.replace(
+          /Input your Investor Password\./g,
           "Input your MT5 account password."
         );
       }
-    });
+
+      currentTextNode = textWalker.nextNode();
+    }
   };
 
   const normalizeNodeText = (value) =>
