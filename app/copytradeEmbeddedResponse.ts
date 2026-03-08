@@ -170,6 +170,14 @@ body {
   border-bottom: 1px solid #141414;
 }
 
+.korra-copytrade-shell__row[data-korra-action="view-statistics"] {
+  cursor: pointer;
+}
+
+.korra-copytrade-shell__row[data-korra-action="view-statistics"]:hover {
+  background: #070707;
+}
+
 .korra-copytrade-shell__cell {
   min-width: 0;
 }
@@ -186,6 +194,14 @@ body {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: #666666;
+}
+
+.korra-copytrade-shell__headCell--numeric {
+  text-align: right;
+}
+
+.korra-copytrade-shell__headCell--action {
+  text-align: right;
 }
 
 .korra-copytrade-shell__name {
@@ -273,7 +289,20 @@ body {
 }
 
 .korra-copytrade-shell__rowAction {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
   justify-self: end;
+}
+
+.korra-copytrade-shell__button--danger {
+  border-color: #3a1d1d;
+  color: #f2b9b9;
+}
+
+.korra-copytrade-shell__button--danger:hover {
+  background: #170c0c;
+  border-color: #5a2a2a;
 }
 
 .korra-copytrade-shell__empty,
@@ -3752,6 +3781,150 @@ const injectedScript = `
       : state.success || state.error;
   };
 
+  const hideInlineMt5ConnectNode = (node) => {
+    if (!(node instanceof HTMLElement)) {
+      return;
+    }
+
+    node.style.display = "none";
+    node.style.pointerEvents = "none";
+    node.setAttribute("aria-hidden", "true");
+  };
+
+  const findInlineMt5FieldContainer = (control, labelFragments = []) => {
+    if (!(control instanceof HTMLElement)) {
+      return null;
+    }
+
+    let current = control;
+    const fragments = labelFragments.map((fragment) => String(fragment || "").toLowerCase());
+
+    for (let depth = 0; current && current !== document.body && depth < 8; depth += 1) {
+      const text = normalizeNodeText(current.textContent).toLowerCase();
+      const controlCount = current.querySelectorAll("input, textarea, select").length;
+      const buttonCount = current.querySelectorAll("button").length;
+      const matchesLabel = fragments.some((fragment) => fragment && text.includes(fragment));
+
+      if ((matchesLabel && controlCount <= 2) || (controlCount === 1 && buttonCount === 0)) {
+        return current;
+      }
+
+      current = current.parentElement;
+    }
+
+    return control.parentElement instanceof HTMLElement ? control.parentElement : null;
+  };
+
+  const simplifyInlineMt5ConnectLayout = () => {
+    if (!isMt5ConnectScreen()) {
+      return;
+    }
+
+    const hiddenTextFragments = [
+      "Supported Asset Types:",
+      "Linking MetaTrader 5",
+      "MetaTrader 5 account will be linked",
+      "MetaTrader 5 lets you import"
+    ];
+
+    Array.from(document.querySelectorAll("body *")).forEach((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return;
+      }
+
+      if (node.querySelector("input, textarea, select, button")) {
+        return;
+      }
+
+      const text = normalizeNodeText(node.textContent);
+      if (!text) {
+        return;
+      }
+
+      if (hiddenTextFragments.some((fragment) => text.includes(fragment))) {
+        hideInlineMt5ConnectNode(node);
+      }
+    });
+
+    const serverInput = queryInlineMt5FormControl([
+      "[data-testid='mt-server-autocomplete'] input",
+      "[data-testid='mt-server-autocomplete'] textarea",
+      "input[name='server-autocomplete']"
+    ]);
+    const loginInput = queryInlineMt5FormControl([
+      "#investor_login",
+      "input[name='investor_login']"
+    ]);
+    const passwordInput = queryInlineMt5FormControl([
+      "#investor_password",
+      "input[name='investor_password']"
+    ]);
+    const fromDateInput = queryInlineMt5FormControl([
+      "#from_date",
+      "input[name='from_date']"
+    ]);
+    const connectButton =
+      Array.from(document.querySelectorAll("button")).find((button) => {
+        const text = normalizeNodeText(button.textContent);
+        return text === "Connect" || text === "Connecting...";
+      }) || null;
+
+    const fieldContainers = [
+      findInlineMt5FieldContainer(serverInput, ["server"]),
+      findInlineMt5FieldContainer(loginInput, ["login"]),
+      findInlineMt5FieldContainer(passwordInput, ["password"])
+    ].filter((node) => node instanceof HTMLElement);
+
+    const connectContainer =
+      connectButton instanceof HTMLButtonElement
+        ? findCommonAncestor([connectButton]) || connectButton.parentElement
+        : null;
+    const fromDateContainer = findInlineMt5FieldContainer(fromDateInput, ["start date"]);
+
+    if (fromDateContainer instanceof HTMLElement) {
+      hideInlineMt5ConnectNode(fromDateContainer);
+    }
+
+    const layoutNodes = [
+      ...fieldContainers,
+      connectContainer instanceof HTMLElement ? connectContainer : null
+    ].filter((node) => node instanceof HTMLElement);
+    const layoutHost =
+      layoutNodes.length > 0
+        ? findCommonAncestor(layoutNodes) || layoutNodes[0].parentElement
+        : null;
+
+    if (layoutHost instanceof HTMLElement) {
+      layoutHost.style.width = "100%";
+      layoutHost.style.maxWidth = "420px";
+      layoutHost.style.margin = "56px auto 0";
+      layoutHost.style.display = "grid";
+      layoutHost.style.gap = "12px";
+      layoutHost.style.alignItems = "stretch";
+    }
+
+    fieldContainers.forEach((container) => {
+      if (!(container instanceof HTMLElement)) {
+        return;
+      }
+
+      container.style.width = "100%";
+      container.style.margin = "0";
+      container.style.maxWidth = "none";
+    });
+
+    if (connectContainer instanceof HTMLElement) {
+      connectContainer.style.width = "100%";
+      connectContainer.style.margin = "4px 0 0";
+    }
+
+    if (connectButton instanceof HTMLButtonElement) {
+      connectButton.style.width = "100%";
+      connectButton.style.justifyContent = "center";
+      connectButton.style.margin = "0";
+    }
+  };
+
   const redirectBaseAddTradeLinksToMt5 = () => {
     if (window.location.pathname !== "/settings/account") {
       return;
@@ -4004,6 +4177,45 @@ const injectedScript = `
     return promise;
   };
 
+  const deleteCustomCopyTradeAccount = async (accountId) => {
+    const normalizedAccountId = String(accountId || "").trim();
+    if (!normalizedAccountId) {
+      throw new Error("Missing copy-trade account id.");
+    }
+
+    const confirmed = window.confirm("Delete this MT5 account?");
+    if (!confirmed) {
+      return false;
+    }
+
+    const store = getCustomCopyTradeStore();
+    await requestLocalJson("/api/copytrade/accounts/" + encodeURIComponent(normalizedAccountId), {
+      method: "DELETE"
+    });
+    deleteCopyTradeAccountLabel(normalizedAccountId);
+
+    if (isObjectRecord(store.details)) {
+      delete store.details[normalizedAccountId];
+    }
+
+    if (isObjectRecord(store.list)) {
+      store.list.data = null;
+      store.list.error = "";
+      store.list.fetchedAt = 0;
+    }
+
+    await loadCustomCopyTradeList(true).catch((error) => {
+      if (isObjectRecord(store.list)) {
+        store.list.error = String(
+          (error && error.message) || error || "Failed to refresh accounts."
+        );
+      }
+      throw error;
+    });
+
+    return true;
+  };
+
   const escapeHtml = (value) =>
     String(value == null ? "" : value)
       .replace(/&/g, "&amp;")
@@ -4246,7 +4458,11 @@ const injectedScript = `
           Number.isFinite(openPositions) && openPositions >= 0 ? String(openPositions) : "--";
 
         return (
-          '<div class="korra-copytrade-shell__row">' +
+          '<div class="korra-copytrade-shell__row" data-korra-action="view-statistics" data-account-id="' +
+          escapeHtml(String(account.id)) +
+          '" data-provider-account-id="' +
+          escapeHtml(String(account.providerAccountId || "")) +
+          '">' +
           '<div class="korra-copytrade-shell__cell">' +
           '<div class="korra-copytrade-shell__cellLabel">Account</div>' +
           '<div class="korra-copytrade-shell__name">' +
@@ -4283,11 +4499,9 @@ const injectedScript = `
           buildStatusPillMarkup(trading.label, trading.tone) +
           "</div>" +
           '<div class="korra-copytrade-shell__rowAction">' +
-          '<button class="korra-copytrade-shell__button" data-korra-action="view-statistics" data-account-id="' +
+          '<button class="korra-copytrade-shell__button korra-copytrade-shell__button--danger" data-korra-action="delete-account" data-account-id="' +
           escapeHtml(String(account.id)) +
-          '" data-provider-account-id="' +
-          escapeHtml(String(account.providerAccountId || "")) +
-          '">Statistics</button>' +
+          '">Delete</button>' +
           "</div>" +
           "</div>"
         );
@@ -4299,12 +4513,12 @@ const injectedScript = `
       '<div class="korra-copytrade-shell__table">' +
       '<div class="korra-copytrade-shell__row--head">' +
       "<div>Account</div>" +
-      "<div>Balance</div>" +
-      "<div>Equity</div>" +
-      "<div>Positions</div>" +
+      '<div class="korra-copytrade-shell__headCell--numeric">Balance</div>' +
+      '<div class="korra-copytrade-shell__headCell--numeric">Equity</div>' +
+      '<div class="korra-copytrade-shell__headCell--numeric">Positions</div>' +
       "<div>Connection</div>" +
       "<div>Trading</div>" +
-      "<div></div>" +
+      '<div class="korra-copytrade-shell__headCell--action"></div>' +
       "</div>" +
       rows +
       "</div>"
@@ -4555,6 +4769,23 @@ const injectedScript = `
             target.dataset.accountId || "",
             target.dataset.providerAccountId || ""
           );
+          return;
+        }
+
+        if (action === "delete-account") {
+          void deleteCustomCopyTradeAccount(target.dataset.accountId || "")
+            .then(() => {
+              queueEmbeddedUiRefresh();
+            })
+            .catch((error) => {
+              const store = getCustomCopyTradeStore();
+              if (isObjectRecord(store.list)) {
+                store.list.error = String(
+                  (error && error.message) || error || "Failed to delete account."
+                );
+              }
+              queueEmbeddedUiRefresh();
+            });
         }
       });
     }
@@ -4689,6 +4920,7 @@ const injectedScript = `
     enforceEmbeddedRoute();
     applyLocalAccountUiGuards();
     normalizeMt5ImportMethodLayout();
+    simplifyInlineMt5ConnectLayout();
     ensureInlineMt5ConnectFeedback();
     redirectBaseAddTradeLinksToMt5();
     renderCustomCopyTradeShell();
