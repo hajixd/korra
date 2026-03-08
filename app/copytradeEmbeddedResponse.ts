@@ -394,6 +394,100 @@ const injectedScript = `
     user_public_uid: MOCK_USER.public_uid
   };
 
+  const DEFAULT_BROKER_OPTIONS = [
+    {
+      label: "cTrader",
+      value: "ctrader",
+      broker: "cTrader",
+      icon: "ctrader",
+      search_aliases: ["ctrader"]
+    },
+    {
+      label: "TopstepX",
+      value: "topstepx",
+      broker: "TopstepX",
+      icon: "topstepx",
+      search_aliases: ["topstepx", "topstep"]
+    },
+    {
+      label: "TradeLocker",
+      value: "trade_locker",
+      broker: "TradeLocker",
+      icon: "trade_locker",
+      search_aliases: ["tradelocker", "trade locker"]
+    },
+    {
+      label: "Interactive Brokers",
+      value: "interactive_brokers",
+      broker: "Interactive Brokers",
+      icon: "interactive_brokers",
+      search_aliases: ["interactive brokers", "ibkr", "ib"]
+    },
+    {
+      label: "MetaTrader 4",
+      value: "mt4",
+      broker: "MetaTrader 4",
+      icon: "mt4",
+      search_aliases: ["mt4", "metatrader 4", "meta trader 4"]
+    },
+    {
+      label: "MetaTrader 5",
+      value: "mt5",
+      broker: "MetaTrader 5",
+      icon: "mt5",
+      search_aliases: ["mt5", "metatrader 5", "meta trader 5"]
+    },
+    {
+      label: "thinkorswim",
+      value: "think_or_swim",
+      broker: "thinkorswim",
+      icon: "think_or_swim",
+      search_aliases: ["thinkorswim", "think or swim", "tos"]
+    },
+    {
+      label: "Tradovate",
+      value: "tradovate",
+      broker: "Tradovate",
+      icon: "tradovate",
+      search_aliases: ["tradovate"]
+    },
+    {
+      label: "TradingView",
+      value: "trading_view",
+      broker: "TradingView",
+      icon: "trading_view",
+      search_aliases: ["tradingview", "trading view"]
+    },
+    {
+      label: "NinjaTrader",
+      value: "ninja",
+      broker: "NinjaTrader",
+      icon: "ninja",
+      search_aliases: ["ninjatrader", "ninja trader"]
+    },
+    {
+      label: "DXtrade",
+      value: "dx_trade",
+      broker: "DXtrade",
+      icon: "dx_trade",
+      search_aliases: ["dxtrade", "dx trade"]
+    },
+    {
+      label: "OANDA",
+      value: "oanda",
+      broker: "OANDA",
+      icon: "oanda",
+      search_aliases: ["oanda"]
+    },
+    {
+      label: "Generic Template",
+      value: "generic",
+      broker: "Generic Template",
+      icon: "generic",
+      search_aliases: ["generic", "manual import"]
+    }
+  ];
+
   const LEGACY_DASHBOARD_BOTTOM_WIDGETS = [
     "zella_score",
     "daily_net_cumulative_graph",
@@ -1828,6 +1922,22 @@ const injectedScript = `
       };
     }
 
+    if (normalizedPath === "settings/brokers") {
+      return {
+        status: 200,
+        statusText: "OK",
+        payload: DEFAULT_BROKER_OPTIONS
+      };
+    }
+
+    if (normalizedPath === "broker_companies") {
+      return {
+        status: 200,
+        statusText: "OK",
+        payload: []
+      };
+    }
+
     if (
       normalizedPath === "tag_categories" ||
       normalizedPath === "loading_states" ||
@@ -1999,6 +2109,126 @@ const injectedScript = `
     }
   };
 
+  const normalizeNodeText = (value) =>
+    String(value || "")
+      .replace(/\\s+/g, " ")
+      .trim();
+
+  const findCommonAncestor = (nodes) => {
+    if (!nodes.length) {
+      return null;
+    }
+
+    const ancestors = [];
+    let current = nodes[0];
+    while (current) {
+      ancestors.push(current);
+      current = current.parentElement;
+    }
+
+    return ancestors.find((candidate) => nodes.every((node) => candidate.contains(node))) || null;
+  };
+
+  const hidePrimarySidebar = () => {
+    const drawer = document.querySelector("[data-testid='drawer']");
+    if (!drawer) {
+      return;
+    }
+
+    const sectionLinks = [
+      drawer.querySelector("a[href='/backtesting']"),
+      drawer.querySelector("a[href='/mentor/mentor-mode']"),
+      drawer.querySelector("a[href='/university']")
+    ].filter(Boolean);
+
+    if (sectionLinks.length !== 3) {
+      return;
+    }
+
+    let navigation = findCommonAncestor(sectionLinks);
+    while (navigation && navigation !== drawer && navigation.tagName !== "NAV") {
+      navigation = navigation.parentElement;
+    }
+
+    const mainSection =
+      navigation && navigation.parentElement instanceof HTMLElement
+        ? navigation.parentElement
+        : null;
+    if (!mainSection || mainSection.dataset.korraPrimaryRailHidden === "true") {
+      return;
+    }
+
+    mainSection.dataset.korraPrimaryRailHidden = "true";
+    mainSection.style.display = "none";
+    mainSection.style.width = "0";
+    mainSection.style.minWidth = "0";
+    mainSection.style.flex = "0 0 0";
+
+    const secondarySection =
+      mainSection.nextElementSibling instanceof HTMLElement ? mainSection.nextElementSibling : null;
+    if (secondarySection) {
+      secondarySection.style.borderLeft = "0";
+      secondarySection.style.marginLeft = "0";
+    }
+  };
+
+  const hideWrappedPanels = () => {
+    const headings = Array.from(document.querySelectorAll("body *")).filter((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return false;
+      }
+
+      return /^Your 2025 .+ Persona$/i.test(normalizeNodeText(node.textContent));
+    });
+
+    headings.forEach((heading) => {
+      let current = heading;
+      for (let depth = 0; current && current !== document.body && depth < 8; depth += 1) {
+        const text = normalizeNodeText(current.textContent);
+        const rect = current.getBoundingClientRect();
+        const isWrappedCard =
+          text.includes("Your 2025") &&
+          text.includes("Persona") &&
+          (text.includes("2026 Challenge: Become") ||
+            text.includes("Time Spent Backtesting") ||
+            text.includes("Time Spent Journaling") ||
+            text.includes("Time Spent Trading")) &&
+          rect.width >= 260 &&
+          rect.height >= 160;
+
+        if (isWrappedCard) {
+          current.style.display = "none";
+          current.setAttribute("data-korra-hidden-wrapped", "true");
+          break;
+        }
+
+        current = current.parentElement;
+      }
+    });
+  };
+
+  const refreshEmbeddedUi = () => {
+    persistAuthHeaders();
+    enforceEmbeddedRoute();
+    applyLocalAccountUiGuards();
+    hidePrimarySidebar();
+    hideWrappedPanels();
+  };
+
+  let refreshEmbeddedUiQueued = false;
+
+  const queueEmbeddedUiRefresh = () => {
+    if (refreshEmbeddedUiQueued) {
+      return;
+    }
+
+    refreshEmbeddedUiQueued = true;
+    window.requestAnimationFrame(() => {
+      refreshEmbeddedUiQueued = false;
+      refreshEmbeddedUi();
+    });
+  };
+
   const enforceEmbeddedRoute = () => {
     if (window.location.pathname.startsWith("/auth/")) {
       nativeReplaceState(history.state, "", lastEmbeddedPath);
@@ -2015,9 +2245,7 @@ const injectedScript = `
   };
 
   lastEmbeddedPath = normalizeEmbeddedPath(window.location.href) || lastEmbeddedPath;
-  persistAuthHeaders();
-  enforceEmbeddedRoute();
-  applyLocalAccountUiGuards();
+  refreshEmbeddedUi();
 
   if (
     window.CanvasRenderingContext2D &&
@@ -2307,9 +2535,7 @@ const injectedScript = `
   window.XMLHttpRequest = EmbeddedCopytradeXHR;
 
   new MutationObserver(() => {
-    persistAuthHeaders();
-    enforceEmbeddedRoute();
-    applyLocalAccountUiGuards();
+    queueEmbeddedUiRefresh();
   }).observe(document.documentElement, {
     childList: true,
     subtree: true
