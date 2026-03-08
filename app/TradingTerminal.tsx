@@ -16849,7 +16849,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           >
             <iframe
               key={copytradeDashboardVersion}
-              src={`/tracking?seed=${encodeURIComponent(copytradeDashboardVersion)}`}
+              src={`/settings/account?seed=${encodeURIComponent(copytradeDashboardVersion)}`}
               title="Copy Trade Dashboard"
               style={{
                 display: "block",
