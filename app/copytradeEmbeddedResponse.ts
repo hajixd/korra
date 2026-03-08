@@ -247,7 +247,9 @@ const injectedScript = `
 
       if (
         dashboardStats &&
-        arraysEqual(dashboardStats.bottom_widgets, LEGACY_DASHBOARD_BOTTOM_WIDGETS)
+        REPLACED_DASHBOARD_BOTTOM_WIDGETS.some((widgets) =>
+          arraysEqual(dashboardStats.bottom_widgets, widgets)
+        )
       ) {
         dashboardStats.bottom_widgets = [...DEFAULT_DASHBOARD_TEMPLATE.bottom_widgets];
         didNormalize = true;
@@ -255,7 +257,9 @@ const injectedScript = `
 
       if (
         selectedTemplate &&
-        arraysEqual(selectedTemplate.bottom_widgets, LEGACY_DASHBOARD_BOTTOM_WIDGETS)
+        REPLACED_DASHBOARD_BOTTOM_WIDGETS.some((widgets) =>
+          arraysEqual(selectedTemplate.bottom_widgets, widgets)
+        )
       ) {
         selectedTemplate.bottom_widgets = [...DEFAULT_DASHBOARD_TEMPLATE.bottom_widgets];
         didNormalize = true;
@@ -395,6 +399,18 @@ const injectedScript = `
     "daily_net_cumulative_graph",
     "net_daily_pl_graph",
     "performance_calendar"
+  ];
+
+  const PREVIOUS_COPYTRADE_DASHBOARD_BOTTOM_WIDGETS = [
+    "zella_score",
+    "daily_net_cumulative_graph",
+    "net_daily_pl_graph",
+    "calendar_widget"
+  ];
+
+  const REPLACED_DASHBOARD_BOTTOM_WIDGETS = [
+    LEGACY_DASHBOARD_BOTTOM_WIDGETS,
+    PREVIOUS_COPYTRADE_DASHBOARD_BOTTOM_WIDGETS
   ];
 
   const arraysEqual = (left, right) =>
@@ -820,12 +836,26 @@ const injectedScript = `
   });
 
   const createWeekTradesPayload = (seed, searchParams) => {
-    const filteredTrades = sortTrades(filterTrades(seed, searchParams), searchParams);
+    const completeFilter = getFilterValue(searchParams, "complete");
+    const filteredTrades = sortTrades(filterTrades(seed, searchParams), searchParams).filter(
+      (trade) => {
+        const normalizedStatus = String(trade && trade.status || "").toLowerCase();
+
+        if (String(completeFilter).toLowerCase() === "false") {
+          return normalizedStatus === "open";
+        }
+
+        return normalizedStatus !== "open";
+      }
+    );
     const page = paginateItems(filteredTrades, searchParams);
 
     return {
       trades: page.items,
-      page_count: page.pageCount
+      item_count: filteredTrades.length,
+      page_count: page.pageCount,
+      from: page.from,
+      to: page.to
     };
   };
 
@@ -1302,7 +1332,9 @@ const injectedScript = `
       .filter(Boolean)
       .sort((left, right) => right.localeCompare(left));
 
-    return days[0] || null;
+    return {
+      max_date: days[0] || null
+    };
   };
 
   const createMockResult = (input, method) => {
