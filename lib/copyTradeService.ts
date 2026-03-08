@@ -107,7 +107,18 @@ const configuredMaxAccounts = Math.trunc(
 export const COPYTRADE_MAX_ACCOUNTS =
   Number.isFinite(configuredMaxAccounts) && configuredMaxAccounts > 0 ? configuredMaxAccounts : 100;
 
-const DATA_DIR_PATH = path.join(process.cwd(), "data");
+const configuredDataDir = process.env.COPYTRADE_DATA_DIR?.trim();
+const isReadOnlyServerlessFs =
+  process.cwd().startsWith("/var/task") ||
+  Boolean(process.env.VERCEL) ||
+  Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME) ||
+  Boolean(process.env.LAMBDA_TASK_ROOT);
+const DATA_DIR_PATH =
+  configuredDataDir && configuredDataDir.length > 0
+    ? configuredDataDir
+    : isReadOnlyServerlessFs
+      ? path.join("/tmp", "korra-copytrade")
+      : path.join(process.cwd(), "data");
 const STATE_FILE_PATH = path.join(DATA_DIR_PATH, "copytrade-state.json");
 
 const timeframeSet = new Set<CopyTradeTimeframe>(["1m", "5m", "15m", "1H", "4H", "1D", "1W"]);
