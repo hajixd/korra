@@ -2414,6 +2414,7 @@ const injectedScript = `
         pending: false,
         accountId: "",
         error: "",
+        success: "",
         startedAt: 0
       };
     }
@@ -2426,6 +2427,7 @@ const injectedScript = `
     state.pending = false;
     state.accountId = "";
     state.error = "";
+    state.success = "";
     state.startedAt = 0;
   };
 
@@ -3098,17 +3100,96 @@ const injectedScript = `
     window.location.assign("/settings/account");
   };
 
+  const queryInlineMt5FormControl = (selectors) => {
+    const selectorList = Array.isArray(selectors) ? selectors : [];
+    for (let index = 0; index < selectorList.length; index += 1) {
+      const selector = selectorList[index];
+      const node = document.querySelector(selector);
+      if (
+        node instanceof HTMLInputElement ||
+        node instanceof HTMLTextAreaElement ||
+        node instanceof HTMLSelectElement
+      ) {
+        return node;
+      }
+    }
+
+    return null;
+  };
+
+  const readInlineMt5ConnectFormData = () => {
+    const serverInput = queryInlineMt5FormControl([
+      "[data-testid='mt-server-autocomplete'] input",
+      "[data-testid='mt-server-autocomplete'] textarea",
+      "input[name='server-autocomplete']"
+    ]);
+    const loginInput = queryInlineMt5FormControl([
+      "#investor_login",
+      "input[name='investor_login']"
+    ]);
+    const passwordInput = queryInlineMt5FormControl([
+      "#investor_password",
+      "input[name='investor_password']"
+    ]);
+    const fromDateInput = queryInlineMt5FormControl([
+      "#from_date",
+      "input[name='from_date']"
+    ]);
+    const accountSelect = queryInlineMt5FormControl([
+      "#broken-account-select",
+      "select[name='account_id']",
+      "input[name='account_id']"
+    ]);
+    const server = serverInput ? String(serverInput.value || "").trim() : "";
+    const login = loginInput ? String(loginInput.value || "").trim() : "";
+    const password = passwordInput ? String(passwordInput.value || "") : "";
+    const accountId = accountSelect ? String(accountSelect.value || "").trim() : "";
+    const fromDate = fromDateInput ? String(fromDateInput.value || "").trim() : "";
+
+    return {
+      server,
+      server_id: server,
+      login,
+      password,
+      account_id: accountId,
+      from_date: fromDate
+    };
+  };
+
+  const resolveInlineMt5ConnectFormData = () => {
+    const providedFormData =
+      typeof window.getConnectFormData === "function" ? window.getConnectFormData() : null;
+    const formData = isObjectRecord(providedFormData) ? providedFormData : {};
+    const pageFormData = readInlineMt5ConnectFormData();
+    const server = pageFormData.server || String(formData.server || formData.server_id || "").trim();
+    const login = pageFormData.login || String(formData.login || "").trim();
+    const password =
+      pageFormData.password || (typeof formData.password === "string" ? formData.password : "");
+    const accountId = pageFormData.account_id || String(formData.account_id || "").trim();
+    const fromDate = pageFormData.from_date || String(formData.from_date || "").trim();
+
+    return {
+      ...formData,
+      server,
+      server_id: String(formData.server_id || server || "").trim(),
+      login,
+      password,
+      account_id: accountId,
+      from_date: fromDate
+    };
+  };
+
   const runInlineMt5Connect = async (popupHandle) => {
     const state = getInlineMt5ConnectState();
     if (state.pending) {
       return;
     }
 
-    const formData =
-      typeof window.getConnectFormData === "function" ? window.getConnectFormData() : null;
+    const formData = resolveInlineMt5ConnectFormData();
     state.pending = true;
     state.accountId = "";
     state.error = "";
+    state.success = "";
     state.startedAt = Date.now();
     queueEmbeddedUiRefresh();
 
@@ -3125,15 +3206,24 @@ const injectedScript = `
       queueEmbeddedUiRefresh();
       await waitForInlineMt5BridgeConnection(account.id);
 
+      state.pending = false;
+      state.error = "";
+      state.success = "Connected. Returning to the dashboard...";
+      state.startedAt = 0;
+      queueEmbeddedUiRefresh();
+
       if (popupHandle && typeof popupHandle.close === "function") {
         popupHandle.close();
       }
 
-      navigateToCopyTradeDashboard();
+      window.setTimeout(() => {
+        navigateToCopyTradeDashboard();
+      }, 800);
     } catch (error) {
       state.pending = false;
       state.accountId = "";
       state.error = String((error && error.message) || error || "MT5 connection failed.");
+      state.success = "";
       state.startedAt = 0;
 
       if (popupHandle && typeof popupHandle.close === "function") {
@@ -3331,6 +3421,64 @@ const injectedScript = `
       }) || null;
 
     if (connectButton instanceof HTMLButtonElement) {
+      if (
+        getCopyTraderImportAliasState().mode === "copytrader" &&
+        connectButton.dataset.korraInlineMt5ClickBound !== "true"
+      ) {
+        connectButton.dataset.korraInlineMt5ClickBound = "true";
+        connectButton.addEventListener(
+          "click",
+          (event) => {
+            if (getCopyTraderImportAliasState().mode !== "copytrader") {
+              return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+            if (typeof event.stopImmediatePropagation === "function") {
+              event.stopImmediatePropagation();
+            }
+
+            if (getInlineMt5ConnectState().pending) {
+              return;
+            }
+
+            void runInlineMt5Connect();
+          },
+          true
+        );
+      }
+
+      const connectForm = connectButton.closest("form");
+      if (
+        connectForm instanceof HTMLFormElement &&
+        getCopyTraderImportAliasState().mode === "copytrader" &&
+        connectForm.dataset.korraInlineMt5SubmitBound !== "true"
+      ) {
+        connectForm.dataset.korraInlineMt5SubmitBound = "true";
+        connectForm.addEventListener(
+          "submit",
+          (event) => {
+            if (getCopyTraderImportAliasState().mode !== "copytrader") {
+              return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+            if (typeof event.stopImmediatePropagation === "function") {
+              event.stopImmediatePropagation();
+            }
+
+            if (getInlineMt5ConnectState().pending) {
+              return;
+            }
+
+            void runInlineMt5Connect();
+          },
+          true
+        );
+      }
+
       if (state.pending) {
         if (!connectButton.dataset.korraOriginalText) {
           connectButton.dataset.korraOriginalText = normalizeNodeText(connectButton.textContent) || "Connect";
@@ -3352,7 +3500,7 @@ const injectedScript = `
         : document.body;
     let feedback = document.getElementById("korra-inline-mt5-feedback");
 
-    if (!state.pending && !state.error) {
+    if (!state.pending && !state.error && !state.success) {
       if (feedback) {
         feedback.remove();
       }
@@ -3370,12 +3518,16 @@ const injectedScript = `
       feedbackHost.appendChild(feedback);
     }
 
-    feedback.style.background = state.error ? "#fff5f5" : "#eff6ff";
-    feedback.style.border = state.error ? "1px solid #f5c2c7" : "1px solid #bfdbfe";
-    feedback.style.color = state.error ? "#991b1b" : "#1e3a8a";
+    feedback.style.background = state.error ? "#fff5f5" : state.success ? "#f0fdf4" : "#eff6ff";
+    feedback.style.border = state.error
+      ? "1px solid #f5c2c7"
+      : state.success
+        ? "1px solid #bbf7d0"
+        : "1px solid #bfdbfe";
+    feedback.style.color = state.error ? "#991b1b" : state.success ? "#166534" : "#1e3a8a";
     feedback.textContent = state.pending
       ? "Connecting to your local MT5 terminal. Keep MT5 open with KorraCopyTraderEA attached to a chart."
-      : state.error;
+      : state.success || state.error;
   };
 
   const findCommonAncestor = (nodes) => {
