@@ -228,7 +228,44 @@ const injectedScript = `
       }
 
       const parsed = JSON.parse(raw);
-      return parsed && typeof parsed === "object" ? parsed : null;
+      if (!parsed || typeof parsed !== "object") {
+        return null;
+      }
+
+      const nextSeed = cloneJson(parsed, {});
+      const dashboardStats =
+        nextSeed.dashboardStats && typeof nextSeed.dashboardStats === "object"
+          ? nextSeed.dashboardStats
+          : null;
+      const selectedTemplate =
+        dashboardStats &&
+        dashboardStats.selected_template &&
+        typeof dashboardStats.selected_template === "object"
+          ? dashboardStats.selected_template
+          : null;
+      let didNormalize = false;
+
+      if (
+        dashboardStats &&
+        arraysEqual(dashboardStats.bottom_widgets, LEGACY_DASHBOARD_BOTTOM_WIDGETS)
+      ) {
+        dashboardStats.bottom_widgets = [...DEFAULT_DASHBOARD_TEMPLATE.bottom_widgets];
+        didNormalize = true;
+      }
+
+      if (
+        selectedTemplate &&
+        arraysEqual(selectedTemplate.bottom_widgets, LEGACY_DASHBOARD_BOTTOM_WIDGETS)
+      ) {
+        selectedTemplate.bottom_widgets = [...DEFAULT_DASHBOARD_TEMPLATE.bottom_widgets];
+        didNormalize = true;
+      }
+
+      if (didNormalize) {
+        localStorage.setItem(COPYTRADE_BACKTEST_STORAGE_KEY, JSON.stringify(nextSeed));
+      }
+
+      return nextSeed;
     } catch {
       return null;
     }
@@ -352,6 +389,19 @@ const injectedScript = `
     time_zone: MOCK_USER.time_zone,
     user_public_uid: MOCK_USER.public_uid
   };
+
+  const LEGACY_DASHBOARD_BOTTOM_WIDGETS = [
+    "zella_score",
+    "daily_net_cumulative_graph",
+    "net_daily_pl_graph",
+    "performance_calendar"
+  ];
+
+  const arraysEqual = (left, right) =>
+    Array.isArray(left) &&
+    Array.isArray(right) &&
+    left.length === right.length &&
+    left.every((value, index) => value === right[index]);
 
   const compareValues = (left, right) => {
     if (typeof left === "string" || typeof right === "string") {
@@ -1194,17 +1244,57 @@ const injectedScript = `
   };
 
   const createCalendarEventsPayload = (seed, searchParams) =>
-    filterDays(seed, searchParams).map((day) => ({
-      id: day.id,
-      day: day.day,
-      date: day.day,
-      realized: day.realized,
-      start: day.day,
-      end: day.day,
-      profits: Number(day && day.stats && day.stats.net_profits || 0),
-      trades_count: Number(day && day.stats && day.stats.trades_count || 0),
-      title: String(Number(day && day.stats && day.stats.net_profits || 0))
-    }));
+    filterDays(seed, searchParams).map((day) => {
+      const dayKey = normalizeDateValue(day.day || day.realized);
+      const stats = cloneJson(day && day.stats, {});
+      const trades = Array.isArray(day && day.trades) ? day.trades : [];
+      const totalTrades = Number(stats.trades_count || trades.length || 0);
+      const profit = Number(stats.net_profits || stats.profits || 0);
+      const winners = Number(stats.winners || 0);
+      const realizedR = trades.reduce(
+        (total, trade) => total + Number(trade && trade.realized_rr || 0),
+        0
+      );
+      const date = new Date(dayKey + "T00:00:00.000Z");
+      const dayOfMonth = date.getUTCDate();
+      const firstWeekday = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1)).getUTCDay();
+      const weekNumber = Math.ceil((dayOfMonth + firstWeekday) / 7);
+      const isBreakeven = totalTrades > 0 && profit === 0;
+      let backgroundColor = "#f1f3f4";
+
+      if (profit > 0) {
+        backgroundColor = "#BDE4C2";
+      } else if (profit < 0) {
+        backgroundColor = "#EAA5A7";
+      }
+
+      return {
+        id: String(day.id || dayKey),
+        title: "",
+        day: dayKey,
+        date: dayKey,
+        realized: day.realized || dayKey,
+        start: dayKey,
+        end: dayKey,
+        allDay: true,
+        backgroundColor,
+        borderColor: backgroundColor,
+        textColor: "transparent",
+        profits: profit,
+        profit,
+        pips: 0,
+        points: 0,
+        ticks: 0,
+        r_value: realizedR,
+        total_trades: totalTrades,
+        trades_count: totalTrades,
+        week_number: weekNumber,
+        win_rate: totalTrades > 0 ? Math.round((winners / totalTrades) * 100) : 0,
+        is_breakeven: isBreakeven,
+        has_notes: Boolean(day && day.daily_note),
+        daily_note: day && day.daily_note ? day.daily_note : null
+      };
+    });
 
   const createMaxCalendarEventDatePayload = (seed, searchParams) => {
     const days = filterDays(seed, searchParams)

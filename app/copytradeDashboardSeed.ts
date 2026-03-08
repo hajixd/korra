@@ -1,7 +1,7 @@
 export const COPYTRADE_BACKTEST_STATE_KEY = "korra-copytrade-dashboard-state";
 export const DEFAULT_COPYTRADE_DASHBOARD_TEMPLATE = {
   top_widgets: ["net_pl", "win_percentage_by_trades", "profit_factor"],
-  bottom_widgets: ["zella_score", "daily_net_cumulative_graph", "net_daily_pl_graph", "performance_calendar"]
+  bottom_widgets: ["zella_score", "daily_net_cumulative_graph", "net_daily_pl_graph", "calendar_widget"]
 } satisfies CopytradeDashboardTemplate;
 
 export type CopytradeDashboardTemplate = {
