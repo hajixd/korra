@@ -94,7 +94,7 @@ const SETTINGS_STORAGE_KEY = "korra-settings";
 const PRESETS_STORAGE_KEY = "korra-presets";
 const TERMINAL_VIEW_STATE_STORAGE_KEY = "korra-terminal-view-state";
 const DEFAULT_COPYTRADE_ROUTE = "/settings/account";
-const DIRECT_MT5_ADD_ACCOUNT_PATH = "/ftux-add-trade/mt5/sync";
+const DIRECT_MT5_ADD_ACCOUNT_PATH = "/settings/account?view=add";
 type SavedPreset = { name: string; settings: Record<string, any>; savedAt: number };
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type SurfaceTab = "chart" | "settings" | "backtest" | "copytrade";
@@ -173,13 +173,21 @@ const normalizeCopytradeRestoredPath = (value: unknown): string => {
     }
 
     if (parsed.pathname === "/ftux-add-trade" || parsed.pathname === "/ftux-add-trade/") {
-      parsed.pathname = DIRECT_MT5_ADD_ACCOUNT_PATH;
-      parsed.search = "";
+      parsed.pathname = DEFAULT_COPYTRADE_ROUTE;
+      parsed.search = "?view=add";
     }
 
     if (parsed.pathname === "/ftux-add-trade/mt5" || parsed.pathname === "/ftux-add-trade/mt5/") {
-      parsed.pathname = DIRECT_MT5_ADD_ACCOUNT_PATH;
-      parsed.search = "";
+      parsed.pathname = DEFAULT_COPYTRADE_ROUTE;
+      parsed.search = "?view=add";
+    }
+
+    if (
+      parsed.pathname === "/ftux-add-trade/mt5/sync" ||
+      parsed.pathname === "/ftux-add-trade/mt5/sync/"
+    ) {
+      parsed.pathname = DEFAULT_COPYTRADE_ROUTE;
+      parsed.search = "?view=add";
     }
 
     const isAllowedRoute =

@@ -332,6 +332,68 @@ body {
   color: #666666;
 }
 
+.korra-copytrade-shell__formWrap {
+  display: flex;
+  justify-content: center;
+  padding: 48px 0 24px;
+}
+
+.korra-copytrade-shell__formCard {
+  width: 100%;
+  max-width: 420px;
+}
+
+.korra-copytrade-shell__formTitle {
+  font-size: 15px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: #f5f5f5;
+}
+
+.korra-copytrade-shell__formSubtitle {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #7d7d7d;
+}
+
+.korra-copytrade-shell__form {
+  margin-top: 22px;
+  display: grid;
+  gap: 12px;
+}
+
+.korra-copytrade-shell__field {
+  display: grid;
+  gap: 6px;
+}
+
+.korra-copytrade-shell__fieldLabel {
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #666666;
+}
+
+.korra-copytrade-shell__input {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid #1d1d1d;
+  border-radius: 10px;
+  background: #090909;
+  color: #f3f3f3;
+  padding: 0 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+.korra-copytrade-shell__input:focus {
+  outline: none;
+  border-color: #3a3a3a;
+}
+
 .korra-copytrade-shell__statsGrid {
   display: grid;
   grid-template-columns: repeat(6, minmax(100px, 1fr));
@@ -520,8 +582,10 @@ const injectedScript = `
   let lastEmbeddedPath =
     localStorage.getItem(${JSON.stringify(COPYTRADE_LAST_ROUTE_STORAGE_KEY)}) ||
     (window.location.pathname + window.location.search + window.location.hash);
-  const DIRECT_MT5_ADD_ACCOUNT_PATH = "/ftux-add-trade/mt5/sync";
+  const DIRECT_MT5_ADD_ACCOUNT_PATH = "/settings/account?view=add";
   const KORRA_COPYTRADE_SHELL_ID = "korra-copytrade-shell";
+  const KORRA_COPYTRADE_LIST_VIEW = "list";
+  const KORRA_COPYTRADE_ADD_VIEW = "add";
   const KORRA_COPYTRADE_STATS_VIEW = "statistics";
   const KORRA_COPYTRADE_LIST_CACHE_MS = 15_000;
   const KORRA_COPYTRADE_DETAIL_CACHE_MS = 15_000;
@@ -570,13 +634,21 @@ const injectedScript = `
     }
 
     if (parsed.pathname === "/ftux-add-trade" || parsed.pathname === "/ftux-add-trade/") {
-      parsed.pathname = DIRECT_MT5_ADD_ACCOUNT_PATH;
-      parsed.search = "";
+      parsed.pathname = "/settings/account";
+      parsed.search = "?view=add";
     }
 
     if (parsed.pathname === "/ftux-add-trade/mt5" || parsed.pathname === "/ftux-add-trade/mt5/") {
-      parsed.pathname = DIRECT_MT5_ADD_ACCOUNT_PATH;
-      parsed.search = "";
+      parsed.pathname = "/settings/account";
+      parsed.search = "?view=add";
+    }
+
+    if (
+      parsed.pathname === "/ftux-add-trade/mt5/sync" ||
+      parsed.pathname === "/ftux-add-trade/mt5/sync/"
+    ) {
+      parsed.pathname = "/settings/account";
+      parsed.search = "?view=add";
     }
 
     return parsed.pathname + parsed.search + parsed.hash;
@@ -3453,7 +3525,7 @@ const injectedScript = `
 
   const navigateToCopyTradeDashboard = () => {
     clearInlineMt5ConnectState();
-    window.location.assign("/settings/account");
+    window.location.assign("/settings/account?view=list");
   };
 
   const queryInlineMt5FormControl = (selectors) => {
@@ -3984,6 +4056,14 @@ const injectedScript = `
     const accountId = params ? String(params.get("accountId") || "").trim() : "";
     const providerAccountId = params ? String(params.get("providerAccountId") || "").trim() : "";
 
+    if (view === KORRA_COPYTRADE_ADD_VIEW) {
+      return {
+        view: KORRA_COPYTRADE_ADD_VIEW,
+        accountId: "",
+        providerAccountId: ""
+      };
+    }
+
     if (view === KORRA_COPYTRADE_STATS_VIEW && (accountId || providerAccountId)) {
       return {
         view: KORRA_COPYTRADE_STATS_VIEW,
@@ -3993,7 +4073,7 @@ const injectedScript = `
     }
 
     return {
-      view: "list",
+      view: KORRA_COPYTRADE_LIST_VIEW,
       accountId: "",
       providerAccountId: ""
     };
@@ -4006,7 +4086,7 @@ const injectedScript = `
   };
 
   const navigateToCustomCopyTradeHome = () => {
-    navigateEmbeddedPath("/settings/account");
+    navigateEmbeddedPath("/settings/account?view=list");
   };
 
   const navigateToCustomCopyTradeStatistics = (accountId, providerAccountId) => {
@@ -4042,7 +4122,15 @@ const injectedScript = `
           fetchedAt: 0,
           promise: null
         },
-        details: {}
+        details: {},
+        addForm: {
+          server: "",
+          login: "",
+          password: "",
+          pending: false,
+          error: "",
+          success: ""
+        }
       };
     }
 
@@ -4059,8 +4147,23 @@ const injectedScript = `
     if (!isObjectRecord(store.details)) {
       store.details = {};
     }
+    if (!isObjectRecord(store.addForm)) {
+      store.addForm = {
+        server: "",
+        login: "",
+        password: "",
+        pending: false,
+        error: "",
+        success: ""
+      };
+    }
 
     return store;
+  };
+
+  const getCustomCopyTradeAddFormState = () => {
+    const store = getCustomCopyTradeStore();
+    return store.addForm;
   };
 
   const getCustomCopyTradeDetailEntry = (accountId) => {
@@ -4175,6 +4278,88 @@ const injectedScript = `
 
     entry.promise = promise;
     return promise;
+  };
+
+  const resetCustomCopyTradeAddFormState = () => {
+    const state = getCustomCopyTradeAddFormState();
+    state.server = "";
+    state.login = "";
+    state.password = "";
+    state.pending = false;
+    state.error = "";
+    state.success = "";
+  };
+
+  const updateCustomCopyTradeAddFormField = (field, value) => {
+    const state = getCustomCopyTradeAddFormState();
+    const nextField = String(field || "").trim();
+    if (
+      nextField !== "server" &&
+      nextField !== "login" &&
+      nextField !== "password"
+    ) {
+      return;
+    }
+
+    state[nextField] = String(value || "");
+    state.error = "";
+    state.success = "";
+    queueEmbeddedUiRefresh();
+  };
+
+  const submitCustomCopyTradeAddForm = async () => {
+    const state = getCustomCopyTradeAddFormState();
+    if (state.pending) {
+      return;
+    }
+
+    const server = String(state.server || "").trim();
+    const login = String(state.login || "").trim();
+    const password = String(state.password || "");
+
+    if (!server || !login || !password) {
+      state.error = "Server, login, and password are required.";
+      state.success = "";
+      queueEmbeddedUiRefresh();
+      return;
+    }
+
+    state.pending = true;
+    state.error = "";
+    state.success = "";
+    queueEmbeddedUiRefresh();
+
+    try {
+      await upsertMt5CopyTradeAccount(
+        {
+          server,
+          server_id: server,
+          login,
+          password
+        },
+        {
+          provider: "metaapi"
+        }
+      );
+
+      state.pending = false;
+      state.success = "MT5 account connected successfully.";
+      state.password = "";
+      const store = getCustomCopyTradeStore();
+      if (isObjectRecord(store.list)) {
+        store.list.data = null;
+        store.list.error = "";
+        store.list.fetchedAt = 0;
+      }
+      await loadCustomCopyTradeList(true);
+      resetCustomCopyTradeAddFormState();
+      navigateToCustomCopyTradeHome();
+    } catch (error) {
+      state.pending = false;
+      state.error = String((error && error.message) || error || "MT5 connection failed.");
+      state.success = "";
+      queueEmbeddedUiRefresh();
+    }
   };
 
   const deleteCustomCopyTradeAccount = async (accountId) => {
@@ -4405,6 +4590,66 @@ const injectedScript = `
     );
   };
 
+  const buildAddAccountHeaderMarkup = () =>
+    '<div class="korra-copytrade-shell__toolbar">' +
+    '<div>' +
+    '<div class="korra-copytrade-shell__eyebrow">Copy Trade / Add Account</div>' +
+    '<div class="korra-copytrade-shell__title">Add MT5 Account</div>' +
+    '<div class="korra-copytrade-shell__subtitle">Connect a MetaTrader 5 account to your copy-trade workspace.</div>' +
+    "</div>" +
+    '<button class="korra-copytrade-shell__button" data-korra-action="back-home">All Accounts</button>' +
+    "</div>";
+
+  const buildCustomCopyTradeAddAccountMarkup = () => {
+    const state = getCustomCopyTradeAddFormState();
+    const feedbackMarkup =
+      state.error
+        ? '<div class="korra-copytrade-shell__message korra-copytrade-shell__message--error" style="padding:0;">' +
+          escapeHtml(state.error) +
+          "</div>"
+        : state.success
+          ? '<div class="korra-copytrade-shell__message" style="padding:0; color:#9ad8ad;">' +
+            escapeHtml(state.success) +
+            "</div>"
+          : "";
+
+    return (
+      buildAddAccountHeaderMarkup() +
+      '<div class="korra-copytrade-shell__formWrap">' +
+      '<div class="korra-copytrade-shell__formCard">' +
+      '<div class="korra-copytrade-shell__formTitle">Broker Sync</div>' +
+      '<div class="korra-copytrade-shell__formSubtitle">Server, login, and password only.</div>' +
+      '<form class="korra-copytrade-shell__form" data-korra-form="add-account">' +
+      '<label class="korra-copytrade-shell__field">' +
+      '<span class="korra-copytrade-shell__fieldLabel">Server</span>' +
+      '<input class="korra-copytrade-shell__input" data-korra-field="server" name="server" autocomplete="off" value="' +
+      escapeHtml(String(state.server || "")) +
+      '" />' +
+      "</label>" +
+      '<label class="korra-copytrade-shell__field">' +
+      '<span class="korra-copytrade-shell__fieldLabel">Login</span>' +
+      '<input class="korra-copytrade-shell__input" data-korra-field="login" name="login" autocomplete="off" value="' +
+      escapeHtml(String(state.login || "")) +
+      '" />' +
+      "</label>" +
+      '<label class="korra-copytrade-shell__field">' +
+      '<span class="korra-copytrade-shell__fieldLabel">Password</span>' +
+      '<input class="korra-copytrade-shell__input" data-korra-field="password" name="password" type="password" autocomplete="current-password" value="' +
+      escapeHtml(String(state.password || "")) +
+      '" />' +
+      "</label>" +
+      feedbackMarkup +
+      '<button class="korra-copytrade-shell__button korra-copytrade-shell__button--primary" type="submit" data-korra-action="submit-add-account"' +
+      (state.pending ? ' disabled="disabled"' : "") +
+      ">" +
+      escapeHtml(state.pending ? "Connecting..." : "Connect") +
+      "</button>" +
+      "</form>" +
+      "</div>" +
+      "</div>"
+    );
+  };
+
   const buildCustomCopyTradeListMarkup = () => {
     const store = getCustomCopyTradeStore();
     const payload =
@@ -4512,13 +4757,13 @@ const injectedScript = `
       buildListHeaderMarkup() +
       '<div class="korra-copytrade-shell__table">' +
       '<div class="korra-copytrade-shell__row--head">' +
-      "<div>Account</div>" +
-      '<div class="korra-copytrade-shell__headCell--numeric">Balance</div>' +
-      '<div class="korra-copytrade-shell__headCell--numeric">Equity</div>' +
-      '<div class="korra-copytrade-shell__headCell--numeric">Positions</div>' +
-      "<div>Connection</div>" +
-      "<div>Trading</div>" +
-      '<div class="korra-copytrade-shell__headCell--action"></div>' +
+      '<div class="korra-copytrade-shell__cell">Account</div>' +
+      '<div class="korra-copytrade-shell__cell korra-copytrade-shell__headCell--numeric">Balance</div>' +
+      '<div class="korra-copytrade-shell__cell korra-copytrade-shell__headCell--numeric">Equity</div>' +
+      '<div class="korra-copytrade-shell__cell korra-copytrade-shell__headCell--numeric">Positions</div>' +
+      '<div class="korra-copytrade-shell__cell">Connection</div>' +
+      '<div class="korra-copytrade-shell__cell">Trading</div>' +
+      '<div class="korra-copytrade-shell__cell korra-copytrade-shell__headCell--action">Delete</div>' +
       "</div>" +
       rows +
       "</div>"
@@ -4786,7 +5031,51 @@ const injectedScript = `
               }
               queueEmbeddedUiRefresh();
             });
+          return;
         }
+
+        if (action === "submit-add-account") {
+          void submitCustomCopyTradeAddForm();
+        }
+      });
+
+      shell.addEventListener("input", (event) => {
+        const target = event.target;
+        if (
+          !(
+            target instanceof HTMLInputElement ||
+            target instanceof HTMLTextAreaElement ||
+            target instanceof HTMLSelectElement
+          )
+        ) {
+          return;
+        }
+
+        const field = String(target.dataset.korraField || "").trim();
+        if (!field) {
+          return;
+        }
+
+        updateCustomCopyTradeAddFormField(field, target.value);
+      });
+
+      shell.addEventListener("submit", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLFormElement)) {
+          return;
+        }
+
+        if (target.dataset.korraForm !== "add-account") {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === "function") {
+          event.stopImmediatePropagation();
+        }
+
+        void submitCustomCopyTradeAddForm();
       });
     }
 
@@ -4811,7 +5100,9 @@ const injectedScript = `
             routeState.accountId,
             routeState.providerAccountId
           )
-        : buildCustomCopyTradeListMarkup();
+        : routeState.view === KORRA_COPYTRADE_ADD_VIEW
+          ? buildCustomCopyTradeAddAccountMarkup()
+          : buildCustomCopyTradeListMarkup();
 
     if (shell.__korraMarkup !== markup) {
       shell.innerHTML = markup;
