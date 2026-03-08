@@ -183,6 +183,9 @@ body {
 }
 
 .korra-copytrade-shell__cell--numeric {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   text-align: right;
 }
 
@@ -197,10 +200,14 @@ body {
 }
 
 .korra-copytrade-shell__headCell--numeric {
+  display: flex;
+  justify-content: flex-end;
   text-align: right;
 }
 
 .korra-copytrade-shell__headCell--action {
+  display: flex;
+  justify-content: flex-end;
   text-align: right;
 }
 
@@ -422,6 +429,7 @@ body {
   }
 
   .korra-copytrade-shell__cell--numeric {
+    align-items: flex-start;
     text-align: left;
   }
 
@@ -3893,14 +3901,49 @@ const injectedScript = `
       layoutNodes.length > 0
         ? findCommonAncestor(layoutNodes) || layoutNodes[0].parentElement
         : null;
+    const layoutShell =
+      layoutHost instanceof HTMLElement
+        ? layoutHost.closest("form") || layoutHost
+        : null;
+    const keepNodes = [
+      ...fieldContainers,
+      connectContainer instanceof HTMLElement ? connectContainer : null,
+      connectButton instanceof HTMLButtonElement ? connectButton : null
+    ].filter((node) => node instanceof HTMLElement);
 
-    if (layoutHost instanceof HTMLElement) {
-      layoutHost.style.width = "100%";
-      layoutHost.style.maxWidth = "420px";
-      layoutHost.style.margin = "56px auto 0";
-      layoutHost.style.display = "grid";
-      layoutHost.style.gap = "12px";
-      layoutHost.style.alignItems = "stretch";
+    if (layoutShell instanceof HTMLElement) {
+      layoutShell.style.width = "100%";
+      layoutShell.style.maxWidth = "420px";
+      layoutShell.style.margin = "56px auto 0";
+      layoutShell.style.display = "grid";
+      layoutShell.style.gap = "12px";
+      layoutShell.style.alignItems = "stretch";
+
+      Array.from(layoutShell.children).forEach((child) => {
+        if (!(child instanceof HTMLElement)) {
+          return;
+        }
+
+        const shouldKeep = keepNodes.some((node) => child === node || child.contains(node));
+        if (!shouldKeep) {
+          hideInlineMt5ConnectNode(child);
+        }
+      });
+
+      Array.from(layoutShell.querySelectorAll("input, textarea, select, button")).forEach((node) => {
+        if (!(node instanceof HTMLElement)) {
+          return;
+        }
+
+        const shouldKeep = keepNodes.some((keepNode) => keepNode === node || keepNode.contains(node));
+        if (!shouldKeep) {
+          const container =
+            node instanceof HTMLButtonElement
+              ? node.parentElement
+              : findInlineMt5FieldContainer(node);
+          hideInlineMt5ConnectNode(container || node);
+        }
+      });
     }
 
     fieldContainers.forEach((container) => {
@@ -4512,13 +4555,13 @@ const injectedScript = `
       buildListHeaderMarkup() +
       '<div class="korra-copytrade-shell__table">' +
       '<div class="korra-copytrade-shell__row--head">' +
-      "<div>Account</div>" +
-      '<div class="korra-copytrade-shell__headCell--numeric">Balance</div>' +
-      '<div class="korra-copytrade-shell__headCell--numeric">Equity</div>' +
-      '<div class="korra-copytrade-shell__headCell--numeric">Positions</div>' +
-      "<div>Connection</div>" +
-      "<div>Trading</div>" +
-      '<div class="korra-copytrade-shell__headCell--action"></div>' +
+      '<div class="korra-copytrade-shell__cell">Account</div>' +
+      '<div class="korra-copytrade-shell__cell korra-copytrade-shell__headCell--numeric">Balance</div>' +
+      '<div class="korra-copytrade-shell__cell korra-copytrade-shell__headCell--numeric">Equity</div>' +
+      '<div class="korra-copytrade-shell__cell korra-copytrade-shell__headCell--numeric">Positions</div>' +
+      '<div class="korra-copytrade-shell__cell">Connection</div>' +
+      '<div class="korra-copytrade-shell__cell">Trading</div>' +
+      '<div class="korra-copytrade-shell__cell korra-copytrade-shell__headCell--action">Delete</div>' +
       "</div>" +
       rows +
       "</div>"
