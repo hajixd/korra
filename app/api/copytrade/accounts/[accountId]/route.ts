@@ -42,6 +42,18 @@ const parseTimeframe = (value: unknown): CopyTradeTimeframe | undefined => {
   return timeframeSet.has(candidate) ? candidate : undefined;
 };
 
+const parseProvider = (value: unknown): "metaapi" | "local_bridge" | undefined => {
+  if (value === "local_bridge") {
+    return "local_bridge";
+  }
+
+  if (value === "metaapi") {
+    return "metaapi";
+  }
+
+  return undefined;
+};
+
 export async function GET(_request: Request, context: RouteContext) {
   const { accountId } = await context.params;
   const account = await getCopyTradeAccountById(accountId);
@@ -87,6 +99,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       ...(payload.login !== undefined ? { login: String(payload.login) } : {}),
       ...(payload.server !== undefined ? { server: String(payload.server) } : {}),
       ...(passwordProvided ? { password: String(payload.password) } : {}),
+      ...(payload.provider !== undefined ? { provider: parseProvider(payload.provider) } : {}),
       ...(payload.symbol !== undefined ? { symbol: String(payload.symbol) } : {}),
       ...(payload.timeframe !== undefined ? { timeframe: parseTimeframe(payload.timeframe) } : {}),
       ...(payload.lot !== undefined ? { lot: parseNumeric(payload.lot) } : {}),
@@ -112,10 +125,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       ...(payload.trailingDistPct !== undefined
         ? { trailingDistPct: parseNumeric(payload.trailingDistPct) }
         : {}),
-      ...(payload.paused !== undefined ? { paused: payload.paused === true } : {}),
-      ...(payload.login !== undefined || payload.server !== undefined || passwordProvided
-        ? { status: "Connected" as const, lastError: null }
-        : {})
+      ...(payload.paused !== undefined ? { paused: payload.paused === true } : {})
     });
     const worker = getWorkerStatus();
 

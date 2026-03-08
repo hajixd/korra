@@ -10,6 +10,7 @@ import {
 
 export type CopyTradeAccountStatus = "Connected" | "Disconnected" | "Error";
 export type CopyTradeSignalSide = "Long" | "Short";
+export type CopyTradeAccountProvider = "metaapi" | "local_bridge";
 
 export type CopyTradeRuntimePosition = {
   positionTicket: number;
@@ -27,7 +28,7 @@ type CopyTradeAccountRecord = {
   login: string;
   server: string;
   encryptedPassword: string;
-  provider?: "metaapi";
+  provider?: CopyTradeAccountProvider;
   providerAccountId?: string | null;
   providerState?: string | null;
   providerConnectionStatus?: string | null;
@@ -73,6 +74,7 @@ export type CopyTradeAccountCreateInput = {
   login: string;
   password: string;
   server: string;
+  provider?: CopyTradeAccountProvider;
   symbol?: string;
   timeframe?: CopyTradeTimeframe;
   lot?: number;
@@ -116,6 +118,7 @@ const copyTradingSecret =
   "copy-trading-dev-secret";
 
 const encryptionKey = createHash("sha256").update(copyTradingSecret).digest();
+const LOCAL_BRIDGE_STALE_MS = 30_000;
 
 let stateCache: CopyTradeState | null = null;
 let stateQueue: Promise<unknown> = Promise.resolve();
@@ -295,6 +298,10 @@ const normalizeMaxConcurrentTrades = (value: unknown): number => {
   return Math.min(50, Math.max(1, numeric));
 };
 
+const normalizeProvider = (value: unknown): CopyTradeAccountProvider => {
+  return value === "local_bridge" ? "local_bridge" : "metaapi";
+};
+
 const mapProviderStatusToCopyStatus = (
   providerState: string | null | undefined,
   providerConnectionStatus: string | null | undefined
@@ -326,18 +333,69 @@ const mapProviderStatusToCopyStatus = (
   return "Disconnected";
 };
 
+const syncLocalBridgeRuntime = (
+  account: CopyTradeAccountRecord
+): { changed: boolean; errorMessage: string | null } => {
+  let changed = false;
+  const now = Date.now();
+  const lastHeartbeatAt = Number(account.lastHeartbeatAt ?? Number.NaN);
+  const heartbeatFresh =
+    Number.isFinite(lastHeartbeatAt) &&
+    lastHeartbeatAt > 0 &&
+    now - lastHeartbeatAt <= LOCAL_BRIDGE_STALE_MS;
+  const nextConnectionStatus = heartbeatFresh ? "CONNECTED" : "DISCONNECTED";
+  const nextProviderState = heartbeatFresh ? "LOCAL_CONNECTED" : "LOCAL_WAITING";
+  const nextStatus: CopyTradeAccountStatus = account.lastError
+    ? "Error"
+    : heartbeatFresh
+      ? "Connected"
+      : "Disconnected";
+
+  if (account.providerConnectionStatus !== nextConnectionStatus) {
+    account.providerConnectionStatus = nextConnectionStatus;
+    changed = true;
+  }
+
+  if (account.providerState !== nextProviderState) {
+    account.providerState = nextProviderState;
+    changed = true;
+  }
+
+  if (account.status !== nextStatus) {
+    account.status = nextStatus;
+    changed = true;
+  }
+
+  return { changed, errorMessage: null };
+};
+
 const syncAccountProviderRuntime = async (
   account: CopyTradeAccountRecord
 ): Promise<{ changed: boolean; errorMessage: string | null }> => {
-  if (account.provider !== "metaapi" || !account.providerAccountId) {
-    return { changed: false, errorMessage: null };
+  let changed = false;
+  const provider = normalizeProvider(account.provider);
+
+  if (account.provider !== provider) {
+    account.provider = provider;
+    changed = true;
+  }
+
+  if (provider === "local_bridge") {
+    const sync = syncLocalBridgeRuntime(account);
+    return {
+      changed: changed || sync.changed,
+      errorMessage: sync.errorMessage
+    };
+  }
+
+  if (!account.providerAccountId) {
+    return { changed, errorMessage: null };
   }
 
   const snapshot = await getMetaApiAccountSnapshotById(account.providerAccountId);
   const now = Date.now();
 
   if (!snapshot) {
-    let changed = false;
     if (account.status !== "Error") {
       account.status = "Error";
       changed = true;
@@ -360,8 +418,6 @@ const syncAccountProviderRuntime = async (
     }
     return { changed, errorMessage: "MetaApi account not found." };
   }
-
-  let changed = false;
   const nextStatus = mapProviderStatusToCopyStatus(snapshot.state, snapshot.connectionStatus);
 
   if (account.providerAccountId !== snapshot.id) {
@@ -416,6 +472,7 @@ const toPublicAccount = (account: CopyTradeAccountRecord): CopyTradeAccountPubli
   const { encryptedPassword: _encryptedPassword, ...rest } = account;
   return {
     ...rest,
+    provider: normalizeProvider(rest.provider),
     running: account.status === "Connected" && !account.paused
   };
 };
@@ -472,6 +529,7 @@ export const listCopyTradeWorkerAccounts = async (): Promise<CopyTradeAccountWor
 
       return {
         ...rest,
+        provider: normalizeProvider(rest.provider),
         password
       };
     });
@@ -494,31 +552,45 @@ export const createCopyTradeAccount = async (
     const login = normalizeLogin(input.login);
     const server = normalizeServer(input.server);
     const password = normalizePassword(input.password);
+    const provider = normalizeProvider(input.provider);
 
     if (!login || !server || !password) {
       throw new Error("MT5 login, password, and server are required.");
     }
+    let providerAccountId: string | null = null;
+    let providerState: string | null = null;
+    let providerConnectionStatus: string | null = null;
+    let providerStatus: CopyTradeAccountStatus = "Disconnected";
 
-    const providerSnapshot = await ensureMetaApiAccount({
-      login,
-      password,
-      server,
-      name: `Korra ${login}@${server}`
-    });
-    const providerStatus = mapProviderStatusToCopyStatus(
-      providerSnapshot.state,
-      providerSnapshot.connectionStatus
-    );
+    if (provider === "metaapi") {
+      const providerSnapshot = await ensureMetaApiAccount({
+        login,
+        password,
+        server,
+        name: `Korra ${login}@${server}`
+      });
+      providerAccountId = providerSnapshot.id;
+      providerState = providerSnapshot.state;
+      providerConnectionStatus = providerSnapshot.connectionStatus;
+      providerStatus = mapProviderStatusToCopyStatus(
+        providerSnapshot.state,
+        providerSnapshot.connectionStatus
+      );
+    } else {
+      providerState = "LOCAL_WAITING";
+      providerConnectionStatus = "DISCONNECTED";
+      providerStatus = "Disconnected";
+    }
 
     const account: CopyTradeAccountRecord = {
       id: buildRuntimeId(),
       login,
       server,
       encryptedPassword: encryptPassword(password),
-      provider: "metaapi",
-      providerAccountId: providerSnapshot.id,
-      providerState: providerSnapshot.state,
-      providerConnectionStatus: providerSnapshot.connectionStatus,
+      provider,
+      providerAccountId,
+      providerState,
+      providerConnectionStatus,
       status: providerStatus,
       paused: false,
       symbol: normalizeSymbol(input.symbol),
@@ -536,9 +608,9 @@ export const createCopyTradeAccount = async (
       trailingDistPct: normalizePct(input.trailingDistPct, 30),
       lastError:
         providerStatus === "Error"
-          ? `MetaApi account state ${providerSnapshot.state} (${providerSnapshot.connectionStatus})`
+          ? `MetaApi account state ${providerState} (${providerConnectionStatus})`
           : null,
-      lastHeartbeatAt: Date.now(),
+      lastHeartbeatAt: provider === "local_bridge" ? null : Date.now(),
       lastSignalId: null,
       lastSignalSide: null,
       lastActionAt: null,
@@ -569,7 +641,12 @@ export const updateCopyTradeAccount = async (
     const now = Date.now();
     const previousLogin = account.login;
     const previousServer = account.server;
+    const previousProvider = normalizeProvider(account.provider);
     const previousProviderAccountId = account.providerAccountId || null;
+
+    if (account.provider !== previousProvider) {
+      account.provider = previousProvider;
+    }
 
     if (input.login !== undefined) {
       const nextLogin = normalizeLogin(input.login);
@@ -659,48 +736,105 @@ export const updateCopyTradeAccount = async (
       account.lastError = input.lastError;
     }
 
+    const nextProvider =
+      input.provider !== undefined ? normalizeProvider(input.provider) : previousProvider;
+    const providerChanged = nextProvider !== previousProvider;
+
+    if (account.provider !== nextProvider) {
+      account.provider = nextProvider;
+    }
+
     const loginChanged = previousLogin !== account.login;
     const serverChanged = previousServer !== account.server;
     const credentialsUpdated = input.password !== undefined;
-    const shouldSyncProvider =
-      loginChanged ||
-      serverChanged ||
-      credentialsUpdated ||
-      !account.providerAccountId ||
-      account.provider !== "metaapi";
 
-    if (shouldSyncProvider) {
-      if ((loginChanged || serverChanged || !account.providerAccountId) && !credentialsUpdated) {
-        throw new Error("Password is required when changing MT5 login/server.");
+    let passwordForProvision = "";
+    try {
+      passwordForProvision = credentialsUpdated
+        ? normalizePassword(input.password)
+        : decryptPassword(account.encryptedPassword);
+    } catch {
+      passwordForProvision = credentialsUpdated ? normalizePassword(input.password) : "";
+    }
+
+    if (nextProvider === "metaapi") {
+      const shouldSyncProvider =
+        providerChanged ||
+        loginChanged ||
+        serverChanged ||
+        credentialsUpdated ||
+        !account.providerAccountId;
+
+      if (shouldSyncProvider) {
+        const requiresPassword =
+          providerChanged || loginChanged || serverChanged || !account.providerAccountId;
+
+        if (requiresPassword && !passwordForProvision) {
+          throw new Error("Password is required when changing MT5 login/server.");
+        }
+
+        const providerSnapshot = await ensureMetaApiAccount({
+          existingAccountId: previousProvider === "metaapi" ? previousProviderAccountId || undefined : undefined,
+          login: account.login,
+          server: account.server,
+          password:
+            providerChanged ||
+            loginChanged ||
+            serverChanged ||
+            credentialsUpdated ||
+            !account.providerAccountId
+              ? passwordForProvision
+              : undefined,
+          name: `Korra ${account.login}@${account.server}`
+        });
+
+        account.provider = "metaapi";
+        account.providerAccountId = providerSnapshot.id;
+        account.providerState = providerSnapshot.state;
+        account.providerConnectionStatus = providerSnapshot.connectionStatus;
+        account.status = mapProviderStatusToCopyStatus(
+          providerSnapshot.state,
+          providerSnapshot.connectionStatus
+        );
+        account.lastHeartbeatAt = Date.now();
+        if (account.status === "Connected") {
+          account.lastError = null;
+        } else if (account.status === "Error") {
+          account.lastError = `MetaApi account state ${providerSnapshot.state} (${providerSnapshot.connectionStatus})`;
+        }
       }
+    } else {
+      const shouldResetLocalRuntime = providerChanged || loginChanged || serverChanged;
 
-      const providerSnapshot = await ensureMetaApiAccount({
-        existingAccountId: previousProviderAccountId || undefined,
-        login: account.login,
-        server: account.server,
-        password: credentialsUpdated ? normalizePassword(input.password) : undefined,
-        name: `Korra ${account.login}@${account.server}`
-      });
+      account.provider = "local_bridge";
+      account.providerAccountId = null;
 
-      account.provider = "metaapi";
-      account.providerAccountId = providerSnapshot.id;
-      account.providerState = providerSnapshot.state;
-      account.providerConnectionStatus = providerSnapshot.connectionStatus;
-      account.status = mapProviderStatusToCopyStatus(
-        providerSnapshot.state,
-        providerSnapshot.connectionStatus
-      );
-      account.lastHeartbeatAt = Date.now();
-      if (account.status === "Connected") {
+      if (shouldResetLocalRuntime) {
+        account.providerState = "LOCAL_WAITING";
+        account.providerConnectionStatus = "DISCONNECTED";
+        account.status = "Disconnected";
+        account.lastHeartbeatAt = null;
+        account.lastSignalId = null;
+        account.lastSignalSide = null;
+        account.lastActionAt = null;
+        account.openPosition = null;
         account.lastError = null;
-      } else if (account.status === "Error") {
-        account.lastError = `MetaApi account state ${providerSnapshot.state} (${providerSnapshot.connectionStatus})`;
+      } else {
+        if (credentialsUpdated && account.lastError !== null) {
+          account.lastError = null;
+        }
+        syncLocalBridgeRuntime(account);
       }
     }
 
     account.updatedAt = now;
 
     await saveStateToDisk(state);
+
+    if (previousProvider === "metaapi" && nextProvider === "local_bridge" && previousProviderAccountId) {
+      await deleteMetaApiAccountById(previousProviderAccountId).catch(() => undefined);
+    }
+
     return toPublicAccount(account);
   });
 };
@@ -725,7 +859,7 @@ export const deleteCopyTradeAccount = async (accountId: string): Promise<boolean
     state.accounts = nextAccounts;
     await saveStateToDisk(state);
 
-    if (accountToRemove?.provider === "metaapi" && accountToRemove.providerAccountId) {
+    if (normalizeProvider(accountToRemove?.provider) === "metaapi" && accountToRemove?.providerAccountId) {
       await deleteMetaApiAccountById(accountToRemove.providerAccountId).catch(() => undefined);
     }
 
@@ -797,6 +931,50 @@ export const getCopyTradeAccountById = async (
   return enqueue(async () => {
     const state = await loadState();
     const account = state.accounts.find((candidate) => candidate.id === accountId);
-    return account ? toPublicAccount(account) : null;
+
+    if (!account) {
+      return null;
+    }
+
+    const sync = await syncAccountProviderRuntime(account);
+    if (sync.changed) {
+      await saveStateToDisk(state);
+    }
+
+    return toPublicAccount(account);
+  });
+};
+
+export const getCopyTradeAccountByLoginServer = async (
+  login: string,
+  server: string,
+  provider?: CopyTradeAccountProvider
+): Promise<CopyTradeAccountPublic | null> => {
+  return enqueue(async () => {
+    const state = await loadState();
+    const normalizedLogin = normalizeLogin(login);
+    const normalizedServer = normalizeServer(server).toLowerCase();
+    const normalizedProvider = provider ? normalizeProvider(provider) : null;
+
+    const account =
+      state.accounts.find((candidate) => {
+        const candidateProvider = normalizeProvider(candidate.provider);
+        return (
+          candidate.login === normalizedLogin &&
+          candidate.server.trim().toLowerCase() === normalizedServer &&
+          (!normalizedProvider || candidateProvider === normalizedProvider)
+        );
+      }) || null;
+
+    if (!account) {
+      return null;
+    }
+
+    const sync = await syncAccountProviderRuntime(account);
+    if (sync.changed) {
+      await saveStateToDisk(state);
+    }
+
+    return toPublicAccount(account);
   });
 };

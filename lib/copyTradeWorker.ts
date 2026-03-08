@@ -393,12 +393,13 @@ const runWorkerTick = async (): Promise<void> => {
       listCopyTradeWorkerAccounts(),
       getAiZipModelNames()
     ]);
+    const liveMetaApiAccounts = accounts.filter((account) => account.provider === "metaapi");
 
-    if (accounts.length === 0) {
+    if (liveMetaApiAccounts.length === 0) {
       return;
     }
 
-    for (const account of accounts) {
+    for (const account of liveMetaApiAccounts) {
       await processCopyTradeAccount(account, aiZipModelNames);
     }
   } finally {

@@ -27,6 +27,22 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Copy-trade account not found." }, { status: 404 });
   }
 
+  if (account.provider === "local_bridge") {
+    return NextResponse.json(
+      {
+        account,
+        dashboard: null,
+        worker,
+        maxAccounts: COPYTRADE_MAX_ACCOUNTS
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store"
+        }
+      }
+    );
+  }
+
   if (!account.providerAccountId) {
     return NextResponse.json(
       {

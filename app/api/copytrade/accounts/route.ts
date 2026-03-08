@@ -30,6 +30,18 @@ const parseTimeframe = (value: unknown): CopyTradeTimeframe | undefined => {
   return timeframeSet.has(candidate) ? candidate : undefined;
 };
 
+const parseProvider = (value: unknown): "metaapi" | "local_bridge" | undefined => {
+  if (value === "local_bridge") {
+    return "local_bridge";
+  }
+
+  if (value === "metaapi") {
+    return "metaapi";
+  }
+
+  return undefined;
+};
+
 export async function GET() {
   const accounts = await listCopyTradeAccounts();
   const worker = getWorkerStatus();
@@ -77,6 +89,7 @@ export async function POST(request: Request) {
       login,
       password,
       server,
+      provider: parseProvider(payload.provider),
       symbol: typeof payload.symbol === "string" ? payload.symbol : undefined,
       timeframe: parseTimeframe(payload.timeframe),
       lot: typeof payload.lot === "number" ? payload.lot : undefined,

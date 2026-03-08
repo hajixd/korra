@@ -142,6 +142,7 @@ const injectedScript = `
   const nativeFetch = window.fetch ? window.fetch.bind(window) : null;
   const nativePushState = history.pushState.bind(history);
   const nativeReplaceState = history.replaceState.bind(history);
+  const nativeOpen = typeof window.open === "function" ? window.open.bind(window) : null;
   let lastEmbeddedPath = window.location.pathname + window.location.search + window.location.hash;
 
   const safeUrl = (input) => {
@@ -2334,11 +2335,17 @@ const injectedScript = `
     const login = String(formData.login || "").trim();
     const password = typeof formData.password === "string" ? formData.password : "";
     const server = String(formData.server || formData.server_id || "").trim();
+    const provider =
+      window.__korraCopyTraderImportAliasState &&
+      window.__korraCopyTraderImportAliasState.mode === "copytrader"
+        ? "local_bridge"
+        : "metaapi";
 
     return {
       login,
       password,
       server,
+      provider,
       ...collectCopyTradeBridgeSettings()
     };
   };
@@ -2400,6 +2407,32 @@ const injectedScript = `
       // Ignore storage failures for short-lived bridge state.
     }
   };
+
+  const getInlineMt5ConnectState = () => {
+    if (!window.__korraInlineMt5ConnectState) {
+      window.__korraInlineMt5ConnectState = {
+        pending: false,
+        accountId: "",
+        error: "",
+        startedAt: 0
+      };
+    }
+
+    return window.__korraInlineMt5ConnectState;
+  };
+
+  const clearInlineMt5ConnectState = () => {
+    const state = getInlineMt5ConnectState();
+    state.pending = false;
+    state.accountId = "";
+    state.error = "";
+    state.startedAt = 0;
+  };
+
+  const delay = (ms) =>
+    new Promise((resolve) => {
+      window.setTimeout(resolve, ms);
+    });
 
   const buildCopyTradeDisplayName = (account) => {
     const savedLabel = getCopyTradeAccountLabel(account && account.id);
@@ -2597,8 +2630,11 @@ const injectedScript = `
     ];
   };
 
-  const upsertMt5CopyTradeAccount = async (formData) => {
-    const nextPayload = buildCopyTradeAccountPayload(formData);
+  const upsertMt5CopyTradeAccount = async (formData, options = {}) => {
+    const nextPayload = {
+      ...buildCopyTradeAccountPayload(formData),
+      ...(options && typeof options.provider === "string" ? { provider: options.provider } : {})
+    };
 
     if (!nextPayload.login || !nextPayload.password || !nextPayload.server) {
       throw new Error("TradeCopier requires MT5 login, password, and server.");
@@ -2764,6 +2800,11 @@ const injectedScript = `
         writeCopyTradeCredentialDraft(credentialId, {
           id: credentialId,
           broker: COPYTRADE_BRIDGE_BROKER,
+          provider:
+            window.__korraCopyTraderImportAliasState &&
+            window.__korraCopyTraderImportAliasState.mode === "copytrader"
+              ? "local_bridge"
+              : "metaapi",
           formData: bodyPayload
         });
 
@@ -2828,7 +2869,9 @@ const injectedScript = `
           ...(isObjectRecord(bodyPayload) ? bodyPayload : {})
         };
 
-        await upsertMt5CopyTradeAccount(nextFormData);
+        await upsertMt5CopyTradeAccount(nextFormData, {
+          provider: draft && typeof draft.provider === "string" ? draft.provider : undefined
+        });
         clearCopyTradeCredentialDraft(credentialId);
 
         return {
@@ -2994,11 +3037,146 @@ const injectedScript = `
     if (!window.__korraCopyTraderImportAliasState) {
       window.__korraCopyTraderImportAliasState = {
         forwarding: false,
+        mode: "",
         selected: false
       };
     }
 
     return window.__korraCopyTraderImportAliasState;
+  };
+
+  const shouldInterceptInlineMt5Connect = (url, features) => {
+    const state = getCopyTraderImportAliasState();
+    if (state.mode !== "copytrader") {
+      return false;
+    }
+
+    const normalizedUrl = String(url || "").trim();
+    if (
+      normalizedUrl &&
+      !normalizedUrl.includes("/connect-to-broker/callback/") &&
+      normalizedUrl !== "about:blank"
+    ) {
+      return false;
+    }
+
+    const normalizedFeatures = String(features || "");
+    return normalizedFeatures.includes("width=1000") && normalizedFeatures.includes("height=800");
+  };
+
+  const waitForInlineMt5BridgeConnection = async (accountId) => {
+    const timeoutAt = Date.now() + 90_000;
+
+    while (Date.now() < timeoutAt) {
+      const payload = await requestLocalJson(
+        "/api/copytrade/accounts/" + encodeURIComponent(String(accountId))
+      );
+      const account = payload && payload.account ? payload.account : null;
+
+      if (account && account.status === "Connected") {
+        return account;
+      }
+
+      if (account && account.status === "Error" && account.lastError) {
+        throw new Error(String(account.lastError));
+      }
+
+      await delay(1500);
+    }
+
+    throw new Error(
+      "Timed out waiting for your local MT5 terminal. Attach /mt5/KorraCopyTraderEA.mq5 in MT5 and keep this page open."
+    );
+  };
+
+  const navigateToCopyTradeDashboard = () => {
+    clearInlineMt5ConnectState();
+    const aliasState = getCopyTraderImportAliasState();
+    aliasState.mode = "";
+    aliasState.selected = false;
+    aliasState.forwarding = false;
+    window.location.assign("/settings/account");
+  };
+
+  const runInlineMt5Connect = async (popupHandle) => {
+    const state = getInlineMt5ConnectState();
+    if (state.pending) {
+      return;
+    }
+
+    const formData =
+      typeof window.getConnectFormData === "function" ? window.getConnectFormData() : null;
+    state.pending = true;
+    state.accountId = "";
+    state.error = "";
+    state.startedAt = Date.now();
+    queueEmbeddedUiRefresh();
+
+    try {
+      const account = await upsertMt5CopyTradeAccount(formData, {
+        provider: "local_bridge"
+      });
+
+      if (!account || !account.id) {
+        throw new Error("Failed to create the local MT5 copy-trader account.");
+      }
+
+      state.accountId = String(account.id);
+      queueEmbeddedUiRefresh();
+      await waitForInlineMt5BridgeConnection(account.id);
+
+      if (popupHandle && typeof popupHandle.close === "function") {
+        popupHandle.close();
+      }
+
+      navigateToCopyTradeDashboard();
+    } catch (error) {
+      state.pending = false;
+      state.accountId = "";
+      state.error = String((error && error.message) || error || "MT5 connection failed.");
+      state.startedAt = 0;
+
+      if (popupHandle && typeof popupHandle.close === "function") {
+        popupHandle.close();
+      }
+
+      queueEmbeddedUiRefresh();
+    }
+  };
+
+  const createInlineMt5PopupHandle = () => {
+    let closed = false;
+    const popupHandle = {
+      focus() {
+        return undefined;
+      },
+      close() {
+        closed = true;
+      }
+    };
+
+    Object.defineProperty(popupHandle, "closed", {
+      enumerable: true,
+      get() {
+        return closed;
+      }
+    });
+
+    Object.defineProperty(popupHandle, "location", {
+      enumerable: true,
+      get() {
+        return "";
+      },
+      set(nextLocation) {
+        if (closed) {
+          return;
+        }
+
+        void runInlineMt5Connect(popupHandle, nextLocation);
+      }
+    });
+
+    return popupHandle;
   };
 
   const findButtonByTextFragment = (fragment) =>
@@ -3041,6 +3219,7 @@ const injectedScript = `
       }
 
       state.selected = false;
+      state.mode = "";
       queueEmbeddedUiRefresh();
     });
   };
@@ -3112,6 +3291,7 @@ const injectedScript = `
         event.stopPropagation();
 
         const state = getCopyTraderImportAliasState();
+        state.mode = "copytrader";
         state.selected = true;
         state.forwarding = true;
 
@@ -3127,6 +3307,75 @@ const injectedScript = `
     }
 
     syncCopyTraderImportAliasSelection(autoSyncButton, aliasButton);
+  };
+
+  const ensureInlineMt5ConnectFeedback = () => {
+    const state = getInlineMt5ConnectState();
+    const bodyText = normalizeNodeText(document.body && document.body.textContent);
+    const isMt5ConnectScreen =
+      bodyText.includes("Connect MetaTrader 5") &&
+      bodyText.includes("Input your MT5 account password");
+
+    if (!isMt5ConnectScreen) {
+      const staleFeedback = document.getElementById("korra-inline-mt5-feedback");
+      if (staleFeedback) {
+        staleFeedback.remove();
+      }
+      return;
+    }
+
+    const connectButton =
+      Array.from(document.querySelectorAll("button")).find((button) => {
+        const text = normalizeNodeText(button.textContent);
+        return text === "Connect" || text === "Connecting...";
+      }) || null;
+
+    if (connectButton instanceof HTMLButtonElement) {
+      if (state.pending) {
+        if (!connectButton.dataset.korraOriginalText) {
+          connectButton.dataset.korraOriginalText = normalizeNodeText(connectButton.textContent) || "Connect";
+        }
+
+        connectButton.textContent = "Connecting...";
+        connectButton.disabled = true;
+        connectButton.dataset.korraInlineConnecting = "true";
+      } else if (connectButton.dataset.korraInlineConnecting === "true") {
+        connectButton.disabled = false;
+        connectButton.textContent = connectButton.dataset.korraOriginalText || "Connect";
+        delete connectButton.dataset.korraInlineConnecting;
+      }
+    }
+
+    const feedbackHost =
+      connectButton && connectButton.parentElement instanceof HTMLElement
+        ? connectButton.parentElement
+        : document.body;
+    let feedback = document.getElementById("korra-inline-mt5-feedback");
+
+    if (!state.pending && !state.error) {
+      if (feedback) {
+        feedback.remove();
+      }
+      return;
+    }
+
+    if (!(feedback instanceof HTMLElement)) {
+      feedback = document.createElement("div");
+      feedback.id = "korra-inline-mt5-feedback";
+      feedback.style.marginTop = "12px";
+      feedback.style.padding = "12px 14px";
+      feedback.style.borderRadius = "10px";
+      feedback.style.fontSize = "13px";
+      feedback.style.lineHeight = "1.5";
+      feedbackHost.appendChild(feedback);
+    }
+
+    feedback.style.background = state.error ? "#fff5f5" : "#eff6ff";
+    feedback.style.border = state.error ? "1px solid #f5c2c7" : "1px solid #bfdbfe";
+    feedback.style.color = state.error ? "#991b1b" : "#1e3a8a";
+    feedback.textContent = state.pending
+      ? "Connecting to your local MT5 terminal. Keep MT5 open with KorraCopyTraderEA attached to a chart."
+      : state.error;
   };
 
   const findCommonAncestor = (nodes) => {
@@ -3227,6 +3476,7 @@ const injectedScript = `
     enforceEmbeddedRoute();
     applyLocalAccountUiGuards();
     ensureCopyTraderImportMethodAlias();
+    ensureInlineMt5ConnectFeedback();
     hidePrimarySidebar();
     hideWrappedPanels();
   };
@@ -3319,6 +3569,16 @@ const injectedScript = `
     }
     return nativeReplaceState(state, unused, normalizeEmbeddedPath(url) || url);
   };
+
+  if (nativeOpen) {
+    window.open = function open(url, name, features) {
+      if (shouldInterceptInlineMt5Connect(url, features)) {
+        return createInlineMt5PopupHandle();
+      }
+
+      return nativeOpen(url, name, features);
+    };
+  }
 
   if (nativeFetch) {
     window.fetch = (input, init) => {
