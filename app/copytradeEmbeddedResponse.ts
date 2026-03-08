@@ -143,9 +143,16 @@ body {
 .korra-copytrade-shell__row,
 .korra-copytrade-shell__row--head {
   display: grid;
-  grid-template-columns: minmax(0, 2.4fr) minmax(110px, 0.9fr) minmax(220px, 1.4fr) auto;
+  grid-template-columns:
+    minmax(0, 2.4fr)
+    minmax(110px, 0.9fr)
+    minmax(110px, 0.9fr)
+    minmax(84px, 0.72fr)
+    minmax(118px, 0.92fr)
+    minmax(118px, 0.92fr)
+    auto;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
 }
 
 .korra-copytrade-shell__row--head {
@@ -160,6 +167,24 @@ body {
 .korra-copytrade-shell__row {
   padding: 14px 0;
   border-bottom: 1px solid #141414;
+}
+
+.korra-copytrade-shell__cell {
+  min-width: 0;
+}
+
+.korra-copytrade-shell__cell--numeric {
+  text-align: right;
+}
+
+.korra-copytrade-shell__cellLabel {
+  display: none;
+  margin-bottom: 4px;
+  font-size: 9px;
+  line-height: 1.4;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #666666;
 }
 
 .korra-copytrade-shell__name {
@@ -177,6 +202,13 @@ body {
 }
 
 .korra-copytrade-shell__money {
+  font-size: 13px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  color: #f0f0f0;
+}
+
+.korra-copytrade-shell__count {
   font-size: 13px;
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
@@ -357,6 +389,14 @@ body {
 
   .korra-copytrade-shell__rowAction {
     justify-self: start;
+  }
+
+  .korra-copytrade-shell__cell--numeric {
+    text-align: left;
+  }
+
+  .korra-copytrade-shell__cellLabel {
+    display: block;
   }
 
   .korra-copytrade-shell__statsGrid {
@@ -4164,19 +4204,16 @@ const injectedScript = `
           ? formatCurrencyValue(summary.balance, summary.currency)
           : "--";
         const equityText = summary
-          ? "Equity " + formatCurrencyValue(summary.equity, summary.currency)
-          : summaryEntry && typeof summaryEntry.error === "string" && summaryEntry.error.trim()
-            ? summaryEntry.error.trim()
-            : "Awaiting sync";
+          ? formatCurrencyValue(summary.equity, summary.currency)
+          : "--";
         const openPositions = Number(summary && summary.openPositionsCount);
         const positionsText =
-          Number.isFinite(openPositions) && openPositions > 0
-            ? openPositions + (openPositions === 1 ? " open position" : " open positions")
-            : "No open positions";
+          Number.isFinite(openPositions) && openPositions >= 0 ? String(openPositions) : "--";
 
         return (
           '<div class="korra-copytrade-shell__row">' +
-          "<div>" +
+          '<div class="korra-copytrade-shell__cell">' +
+          '<div class="korra-copytrade-shell__cellLabel">Account</div>' +
           '<div class="korra-copytrade-shell__name">' +
           escapeHtml(buildCopyTradeDisplayName(account)) +
           "</div>" +
@@ -4184,22 +4221,31 @@ const injectedScript = `
           escapeHtml(String((account && account.server) || "").trim()) +
           "</div>" +
           "</div>" +
-          "<div>" +
+          '<div class="korra-copytrade-shell__cell korra-copytrade-shell__cell--numeric">' +
+          '<div class="korra-copytrade-shell__cellLabel">Balance</div>' +
           '<div class="korra-copytrade-shell__money">' +
           escapeHtml(balanceText) +
           "</div>" +
-          '<div class="korra-copytrade-shell__moneySubtle">' +
+          "</div>" +
+          '<div class="korra-copytrade-shell__cell korra-copytrade-shell__cell--numeric">' +
+          '<div class="korra-copytrade-shell__cellLabel">Equity</div>' +
+          '<div class="korra-copytrade-shell__money">' +
           escapeHtml(equityText) +
           "</div>" +
           "</div>" +
-          "<div>" +
-          '<div class="korra-copytrade-shell__statusLine">' +
-          buildStatusPillMarkup(connection.label, connection.tone) +
-          buildStatusPillMarkup(trading.label, trading.tone) +
-          "</div>" +
-          '<div class="korra-copytrade-shell__meta">' +
+          '<div class="korra-copytrade-shell__cell korra-copytrade-shell__cell--numeric">' +
+          '<div class="korra-copytrade-shell__cellLabel">Positions</div>' +
+          '<div class="korra-copytrade-shell__count">' +
           escapeHtml(positionsText) +
           "</div>" +
+          "</div>" +
+          '<div class="korra-copytrade-shell__cell">' +
+          '<div class="korra-copytrade-shell__cellLabel">Connection</div>' +
+          buildStatusPillMarkup(connection.label, connection.tone) +
+          "</div>" +
+          '<div class="korra-copytrade-shell__cell">' +
+          '<div class="korra-copytrade-shell__cellLabel">Trading</div>' +
+          buildStatusPillMarkup(trading.label, trading.tone) +
           "</div>" +
           '<div class="korra-copytrade-shell__rowAction">' +
           '<button class="korra-copytrade-shell__button" data-korra-action="view-statistics" data-account-id="' +
@@ -4217,7 +4263,10 @@ const injectedScript = `
       '<div class="korra-copytrade-shell__row--head">' +
       "<div>Account</div>" +
       "<div>Balance</div>" +
-      "<div>Status</div>" +
+      "<div>Equity</div>" +
+      "<div>Positions</div>" +
+      "<div>Connection</div>" +
+      "<div>Trading</div>" +
       "<div></div>" +
       "</div>" +
       rows +
