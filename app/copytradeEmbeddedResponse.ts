@@ -2952,18 +2952,31 @@ const injectedScript = `
     let currentTextNode = textWalker.nextNode();
     while (currentTextNode) {
       const originalValue = String(currentTextNode.nodeValue || "");
-      const normalizedValue = normalizeNodeText(originalValue);
+      let nextValue = originalValue;
 
-      if (normalizedValue === "Investor Password (read-only)") {
-        currentTextNode.nodeValue = originalValue.replace(
+      if (nextValue.includes("Investor Password (read-only)")) {
+        nextValue = nextValue.replace(
           /Investor Password \(read-only\)/g,
           "Password"
         );
-      } else if (originalValue.includes("Input your Investor Password.")) {
-        currentTextNode.nodeValue = originalValue.replace(
+      }
+
+      if (nextValue.includes("Input your Investor Password.")) {
+        nextValue = nextValue.replace(
           /Input your Investor Password\./g,
           "Input your MT5 account password."
         );
+      }
+
+      if (nextValue.includes("This is your MetaTrader 5 read only password.")) {
+        nextValue = nextValue.replace(
+          /This is your MetaTrader 5 read only password\./g,
+          "This is your MT5 account password."
+        );
+      }
+
+      if (nextValue !== originalValue) {
+        currentTextNode.nodeValue = nextValue;
       }
 
       currentTextNode = textWalker.nextNode();
@@ -2974,6 +2987,147 @@ const injectedScript = `
     String(value || "")
       .replace(/\\s+/g, " ")
       .trim();
+
+  const COPYTRADER_IMPORT_ALIAS_ID = "korra-copytrader-import-alias";
+
+  const getCopyTraderImportAliasState = () => {
+    if (!window.__korraCopyTraderImportAliasState) {
+      window.__korraCopyTraderImportAliasState = {
+        forwarding: false,
+        selected: false
+      };
+    }
+
+    return window.__korraCopyTraderImportAliasState;
+  };
+
+  const findButtonByTextFragment = (fragment) =>
+    Array.from(document.querySelectorAll("button")).find((button) =>
+      normalizeNodeText(button.textContent).includes(fragment)
+    ) || null;
+
+  const syncCopyTraderImportAliasSelection = (autoSyncButton, aliasButton) => {
+    const state = getCopyTraderImportAliasState();
+    const autoSyncSelected =
+      autoSyncButton.classList.contains("c301") ||
+      autoSyncButton.classList.contains("c313");
+
+    if (state.selected && !autoSyncSelected) {
+      state.selected = false;
+    }
+
+    const aliasSelected = state.selected && autoSyncSelected;
+    aliasButton.classList.toggle("c301", aliasSelected);
+    aliasButton.classList.toggle("c313", aliasSelected);
+    aliasButton.setAttribute("aria-pressed", aliasSelected ? "true" : "false");
+
+    if (aliasSelected) {
+      autoSyncButton.classList.remove("c301");
+      autoSyncButton.classList.remove("c313");
+      autoSyncButton.setAttribute("aria-pressed", "false");
+    }
+  };
+
+  const bindCopyTraderImportAliasReset = (button, shouldIgnoreForwardedAutoSyncClick) => {
+    if (!(button instanceof HTMLButtonElement) || button.dataset.korraCopyTraderResetBound === "true") {
+      return;
+    }
+
+    button.dataset.korraCopyTraderResetBound = "true";
+    button.addEventListener("click", () => {
+      const state = getCopyTraderImportAliasState();
+      if (shouldIgnoreForwardedAutoSyncClick && state.forwarding) {
+        return;
+      }
+
+      state.selected = false;
+      queueEmbeddedUiRefresh();
+    });
+  };
+
+  const ensureCopyTraderImportMethodAlias = () => {
+    const bodyText = normalizeNodeText(document.body && document.body.textContent);
+    if (!bodyText.includes("Select Import Method") || !bodyText.includes("MetaTrader 5")) {
+      return;
+    }
+
+    const autoSyncButton = findButtonByTextFragment("Auto-sync");
+    const fileUploadButton = findButtonByTextFragment("File upload");
+    const addManuallyButton = findButtonByTextFragment("Add manually");
+
+    if (
+      !(autoSyncButton instanceof HTMLButtonElement) ||
+      !(fileUploadButton instanceof HTMLButtonElement) ||
+      !(addManuallyButton instanceof HTMLButtonElement)
+    ) {
+      return;
+    }
+
+    const cardsContainer =
+      autoSyncButton.parentElement instanceof HTMLElement ? autoSyncButton.parentElement : null;
+    if (!cardsContainer) {
+      return;
+    }
+
+    cardsContainer.style.flexWrap = "wrap";
+    cardsContainer.style.justifyContent = "center";
+    cardsContainer.style.gap = "16px";
+
+    [autoSyncButton, fileUploadButton, addManuallyButton].forEach((button) => {
+      button.style.flex = "0 1 148px";
+    });
+
+    bindCopyTraderImportAliasReset(autoSyncButton, true);
+    bindCopyTraderImportAliasReset(fileUploadButton, false);
+    bindCopyTraderImportAliasReset(addManuallyButton, false);
+
+    let aliasButton = cardsContainer.querySelector("#" + COPYTRADER_IMPORT_ALIAS_ID);
+    if (!(aliasButton instanceof HTMLButtonElement)) {
+      aliasButton = autoSyncButton.cloneNode(true);
+      aliasButton.id = COPYTRADER_IMPORT_ALIAS_ID;
+      aliasButton.dataset.korraCopyTraderAlias = "true";
+      aliasButton.style.flex = "0 1 148px";
+
+      const recommendationBadge = aliasButton.querySelector(".c303");
+      if (recommendationBadge instanceof HTMLElement) {
+        recommendationBadge.remove();
+      }
+
+      const aliasTitle = Array.from(aliasButton.querySelectorAll("*")).find(
+        (node) => normalizeNodeText(node.textContent) === "Auto-sync"
+      );
+      if (aliasTitle instanceof HTMLElement) {
+        aliasTitle.textContent = "Copy-Trader";
+      }
+
+      const aliasDescription = Array.from(aliasButton.querySelectorAll("*")).find(
+        (node) => normalizeNodeText(node.textContent) === "Connect your broker"
+      );
+      if (aliasDescription instanceof HTMLElement) {
+        aliasDescription.textContent = "Use your copy-trader settings";
+      }
+
+      aliasButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const state = getCopyTraderImportAliasState();
+        state.selected = true;
+        state.forwarding = true;
+
+        autoSyncButton.click();
+
+        window.setTimeout(() => {
+          state.forwarding = false;
+          queueEmbeddedUiRefresh();
+        }, 0);
+      });
+
+      cardsContainer.insertBefore(aliasButton, autoSyncButton.nextElementSibling);
+    }
+
+    syncCopyTraderImportAliasSelection(autoSyncButton, aliasButton);
+  };
 
   const findCommonAncestor = (nodes) => {
     if (!nodes.length) {
@@ -3072,6 +3226,7 @@ const injectedScript = `
     persistAuthHeaders();
     enforceEmbeddedRoute();
     applyLocalAccountUiGuards();
+    ensureCopyTraderImportMethodAlias();
     hidePrimarySidebar();
     hideWrappedPanels();
   };
