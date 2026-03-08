@@ -1,5 +1,6 @@
 import {
   COPYTRADE_BACKTEST_STATE_KEY,
+  COPYTRADE_LAST_ROUTE_STORAGE_KEY,
   DEFAULT_COPYTRADE_DASHBOARD_TEMPLATE
 } from "./copytradeDashboardSeed";
 
@@ -487,7 +488,9 @@ const injectedScript = `
   const nativePushState = history.pushState.bind(history);
   const nativeReplaceState = history.replaceState.bind(history);
   const nativeOpen = typeof window.open === "function" ? window.open.bind(window) : null;
-  let lastEmbeddedPath = window.location.pathname + window.location.search + window.location.hash;
+  let lastEmbeddedPath =
+    localStorage.getItem(${JSON.stringify(COPYTRADE_LAST_ROUTE_STORAGE_KEY)}) ||
+    (window.location.pathname + window.location.search + window.location.hash);
   const DIRECT_MT5_ADD_ACCOUNT_PATH = "/ftux-add-trade/mt5/sync";
   const KORRA_COPYTRADE_SHELL_ID = "korra-copytrade-shell";
   const KORRA_COPYTRADE_STATS_VIEW = "statistics";
@@ -556,7 +559,21 @@ const injectedScript = `
       return;
     }
 
-    lastEmbeddedPath = normalized;
+    let storedPath = normalized;
+    if (normalized.startsWith("/settings/account")) {
+      const parsed = safeUrl(normalized);
+      if (parsed) {
+        parsed.searchParams.delete("seed");
+        storedPath = parsed.pathname + parsed.search + parsed.hash;
+      }
+    }
+
+    lastEmbeddedPath = storedPath;
+    try {
+      localStorage.setItem(${JSON.stringify(COPYTRADE_LAST_ROUTE_STORAGE_KEY)}, storedPath);
+    } catch {
+      // Ignore storage failures.
+    }
   };
 
   const persistAuthHeaders = () => {
@@ -3792,17 +3809,20 @@ const injectedScript = `
     const params = parsed ? parsed.searchParams : null;
     const view = params ? String(params.get("view") || "").trim().toLowerCase() : "";
     const accountId = params ? String(params.get("accountId") || "").trim() : "";
+    const providerAccountId = params ? String(params.get("providerAccountId") || "").trim() : "";
 
-    if (view === KORRA_COPYTRADE_STATS_VIEW && accountId) {
+    if (view === KORRA_COPYTRADE_STATS_VIEW && (accountId || providerAccountId)) {
       return {
         view: KORRA_COPYTRADE_STATS_VIEW,
-        accountId
+        accountId,
+        providerAccountId
       };
     }
 
     return {
       view: "list",
-      accountId: ""
+      accountId: "",
+      providerAccountId: ""
     };
   };
 
@@ -3816,18 +3836,23 @@ const injectedScript = `
     navigateEmbeddedPath("/settings/account");
   };
 
-  const navigateToCustomCopyTradeStatistics = (accountId) => {
+  const navigateToCustomCopyTradeStatistics = (accountId, providerAccountId) => {
     const normalizedAccountId = String(accountId || "").trim();
-    if (!normalizedAccountId) {
+    const normalizedProviderAccountId = String(providerAccountId || "").trim();
+    if (!normalizedAccountId && !normalizedProviderAccountId) {
       return;
     }
 
-    navigateEmbeddedPath(
-      "/settings/account?view=" +
-        encodeURIComponent(KORRA_COPYTRADE_STATS_VIEW) +
-        "&accountId=" +
-        encodeURIComponent(normalizedAccountId)
-    );
+    const nextPath =
+      "/settings/account?view=" + encodeURIComponent(KORRA_COPYTRADE_STATS_VIEW);
+    const accountQuery = normalizedAccountId
+      ? "&accountId=" + encodeURIComponent(normalizedAccountId)
+      : "";
+    const providerAccountQuery = normalizedProviderAccountId
+      ? "&providerAccountId=" + encodeURIComponent(normalizedProviderAccountId)
+      : "";
+
+    navigateEmbeddedPath(nextPath + accountQuery + providerAccountQuery);
   };
 
   const navigateToAddAccountFlow = () => {
@@ -4064,6 +4089,16 @@ const injectedScript = `
     );
   };
 
+  const findAccountFromPayloadByProviderAccountId = (payload, providerAccountId) => {
+    const accounts = payload && Array.isArray(payload.accounts) ? payload.accounts : [];
+    return (
+      accounts.find(
+        (account) =>
+          String(account && account.providerAccountId) === String(providerAccountId || "")
+      ) || null
+    );
+  };
+
   const resolveConnectionState = (account) => {
     const status = String((account && account.status) || "").trim();
     if (status === "Connected") {
@@ -4250,6 +4285,8 @@ const injectedScript = `
           '<div class="korra-copytrade-shell__rowAction">' +
           '<button class="korra-copytrade-shell__button" data-korra-action="view-statistics" data-account-id="' +
           escapeHtml(String(account.id)) +
+          '" data-provider-account-id="' +
+          escapeHtml(String(account.providerAccountId || "")) +
           '">Statistics</button>' +
           "</div>" +
           "</div>"
@@ -4313,11 +4350,16 @@ const injectedScript = `
       .join("");
   };
 
-  const buildCustomCopyTradeStatisticsMarkup = (accountId) => {
+  const buildCustomCopyTradeStatisticsMarkup = (accountId, providerAccountId) => {
     const store = getCustomCopyTradeStore();
     const listPayload = isObjectRecord(store.list.data) ? store.list.data : null;
-    const accountFromList = findAccountFromPayload(listPayload, accountId);
-    const detailEntry = getCustomCopyTradeDetailEntry(accountId);
+    const accountFromList =
+      findAccountFromPayload(listPayload, accountId) ||
+      findAccountFromPayloadByProviderAccountId(listPayload, providerAccountId);
+    const resolvedAccountId = String(
+      (accountFromList && accountFromList.id) || accountId || ""
+    ).trim();
+    const detailEntry = getCustomCopyTradeDetailEntry(resolvedAccountId);
     const detailPayload = isObjectRecord(detailEntry.data) ? detailEntry.data : null;
     const detailError =
       detailEntry.error ||
@@ -4332,15 +4374,15 @@ const injectedScript = `
       void loadCustomCopyTradeList();
     }
 
-    if (!detailPayload && !detailEntry.loading && !detailEntry.error) {
-      void loadCustomCopyTradeDashboard(accountId);
+    if (resolvedAccountId && !detailPayload && !detailEntry.loading && !detailEntry.error) {
+      void loadCustomCopyTradeDashboard(resolvedAccountId);
     }
 
-    if (!account && detailEntry.loading) {
+    if (!account && (detailEntry.loading || store.list.loading)) {
       return (
         buildStatisticsHeaderMarkup(
           {
-            id: accountId,
+            id: resolvedAccountId || accountId,
             login: "",
             server: "",
             status: "Disconnected",
@@ -4509,7 +4551,10 @@ const injectedScript = `
         }
 
         if (action === "view-statistics") {
-          navigateToCustomCopyTradeStatistics(target.dataset.accountId || "");
+          navigateToCustomCopyTradeStatistics(
+            target.dataset.accountId || "",
+            target.dataset.providerAccountId || ""
+          );
         }
       });
     }
@@ -4531,7 +4576,10 @@ const injectedScript = `
     const routeState = readCustomCopyTradeViewState();
     const markup =
       routeState.view === KORRA_COPYTRADE_STATS_VIEW
-        ? buildCustomCopyTradeStatisticsMarkup(routeState.accountId)
+        ? buildCustomCopyTradeStatisticsMarkup(
+            routeState.accountId,
+            routeState.providerAccountId
+          )
         : buildCustomCopyTradeListMarkup();
 
     if (shell.__korraMarkup !== markup) {
@@ -4677,7 +4725,7 @@ const injectedScript = `
     }
   };
 
-  lastEmbeddedPath = normalizeEmbeddedPath(window.location.href) || lastEmbeddedPath;
+  rememberEmbeddedPath(window.location.href);
   refreshEmbeddedUi();
 
   if (

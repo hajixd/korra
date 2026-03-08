@@ -1,4 +1,5 @@
 export const COPYTRADE_BACKTEST_STATE_KEY = "korra-copytrade-dashboard-state";
+export const COPYTRADE_LAST_ROUTE_STORAGE_KEY = "korra-copytrade-last-route";
 export const DEFAULT_COPYTRADE_DASHBOARD_TEMPLATE = {
   top_widgets: ["net_pl", "win_percentage_by_trades", "profit_factor"],
   bottom_widgets: ["zella_score", "daily_net_cumulative_graph", "net_daily_pl_graph", "open_position"]

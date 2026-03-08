@@ -196,6 +196,7 @@ type MetaApiClosePositionInput = {
 
 let metaApiClientCache: MetaApi | null = null;
 let metaApiTokenCache = "";
+const METAAPI_ACCOUNT_LIST_CACHE_TTL_MS = 60_000;
 const METAAPI_SUMMARY_CACHE_TTL_MS = 60_000;
 const METAAPI_DASHBOARD_CACHE_TTL_MS = 60_000;
 
@@ -205,6 +206,7 @@ type TimedCacheEntry<T> = {
   promise?: Promise<T>;
 };
 
+const metaApiAccountListCache = new Map<string, TimedCacheEntry<MetaApiAccountSnapshot[]>>();
 const metaApiSummaryCache = new Map<string, TimedCacheEntry<MetaApiAccountSummarySnapshot>>();
 const metaApiDashboardCache = new Map<string, TimedCacheEntry<MetaApiAccountDashboardSnapshot>>();
 
@@ -541,6 +543,18 @@ export const getMetaApiAccountSnapshotById = async (
 ): Promise<MetaApiAccountSnapshot | null> => {
   const account = await getMetaApiAccountById(accountId);
   return account ? toAccountSnapshot(account) : null;
+};
+
+export const listMetaApiAccountSnapshots = async (): Promise<MetaApiAccountSnapshot[]> => {
+  return withTimedCache(
+    metaApiAccountListCache,
+    "all",
+    METAAPI_ACCOUNT_LIST_CACHE_TTL_MS,
+    async () => {
+      const accounts = await listMetaApiAccounts();
+      return accounts.map(toAccountSnapshot);
+    }
+  );
 };
 
 export const deleteMetaApiAccountById = async (accountId: string): Promise<void> => {

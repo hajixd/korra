@@ -250,20 +250,28 @@ const processCopyTradeAccount = async (
 ): Promise<void> => {
   const heartbeat = Date.now();
 
-  if (!account.password) {
+  if (account.paused) {
+    const pausedStatus =
+      account.status === "Error"
+        ? "Error"
+        : account.provider === "metaapi" &&
+            String(account.providerConnectionStatus || "").toUpperCase() !== "CONNECTED"
+          ? "Disconnected"
+          : "Connected";
+
     await patchCopyTradeAccountRuntime(account.id, {
-      status: "Error",
-      lastError: "Stored MT5 password could not be decrypted.",
-      lastHeartbeatAt: heartbeat
+      status: pausedStatus,
+      lastHeartbeatAt: heartbeat,
+      lastError: pausedStatus === "Error" ? account.lastError : null
     });
     return;
   }
 
-  if (account.paused) {
+  if (!account.password && !account.providerAccountId) {
     await patchCopyTradeAccountRuntime(account.id, {
-      status: "Connected",
-      lastHeartbeatAt: heartbeat,
-      lastError: null
+      status: "Error",
+      lastError: "Stored MT5 password could not be decrypted.",
+      lastHeartbeatAt: heartbeat
     });
     return;
   }

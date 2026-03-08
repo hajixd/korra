@@ -39,6 +39,7 @@ import {
 } from "./backtestHistoryShared";
 import {
   COPYTRADE_BACKTEST_STATE_KEY,
+  COPYTRADE_LAST_ROUTE_STORAGE_KEY,
   DEFAULT_COPYTRADE_DASHBOARD_TEMPLATE,
   type CopytradeDashboardSeed,
   type CopytradeDashboardStatsPayload
@@ -91,6 +92,9 @@ const LIGHTWEIGHT_CHART_LINE_DOTTED: LineStyle = 1;
 const LIGHTWEIGHT_CHART_LINE_SPARSE_DOTTED: LineStyle = 4;
 const SETTINGS_STORAGE_KEY = "korra-settings";
 const PRESETS_STORAGE_KEY = "korra-presets";
+const TERMINAL_VIEW_STATE_STORAGE_KEY = "korra-terminal-view-state";
+const DEFAULT_COPYTRADE_ROUTE = "/settings/account";
+const DIRECT_MT5_ADD_ACCOUNT_PATH = "/ftux-add-trade/mt5/sync";
 type SavedPreset = { name: string; settings: Record<string, any>; savedAt: number };
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 type SurfaceTab = "chart" | "settings" | "backtest" | "copytrade";
@@ -122,6 +126,80 @@ type BacktestHeroStatCard = {
   meta: string;
   valueStyle?: CSSProperties;
 };
+
+const SURFACE_TAB_IDS: SurfaceTab[] = ["chart", "settings", "backtest", "copytrade"];
+const BACKTEST_TAB_IDS: BacktestTab[] = [
+  "mainSettings",
+  "mainStats",
+  "timeSettings",
+  "performanceStats",
+  "history",
+  "calendar",
+  "cluster",
+  "entryExit",
+  "dimensions",
+  "propFirm"
+];
+
+const isSurfaceTab = (value: unknown): value is SurfaceTab => {
+  return typeof value === "string" && SURFACE_TAB_IDS.includes(value as SurfaceTab);
+};
+
+const isBacktestTab = (value: unknown): value is BacktestTab => {
+  return typeof value === "string" && BACKTEST_TAB_IDS.includes(value as BacktestTab);
+};
+
+const normalizeCopytradeRestoredPath = (value: unknown): string => {
+  if (typeof value !== "string" || !value.trim()) {
+    return DEFAULT_COPYTRADE_ROUTE;
+  }
+
+  try {
+    const parsed = new URL(value, "https://korra.local");
+
+    if (parsed.pathname === "/settings" || parsed.pathname === "/settings/") {
+      parsed.pathname = DEFAULT_COPYTRADE_ROUTE;
+      parsed.search = "";
+    }
+
+    if (parsed.pathname === "/settings/account-management") {
+      parsed.pathname = DEFAULT_COPYTRADE_ROUTE;
+      parsed.search = "";
+    }
+
+    if (parsed.pathname === "/tracking" || parsed.pathname === "/tracking/") {
+      parsed.pathname = DEFAULT_COPYTRADE_ROUTE;
+      parsed.search = "";
+    }
+
+    if (parsed.pathname === "/ftux-add-trade" || parsed.pathname === "/ftux-add-trade/") {
+      parsed.pathname = DIRECT_MT5_ADD_ACCOUNT_PATH;
+      parsed.search = "";
+    }
+
+    if (parsed.pathname === "/ftux-add-trade/mt5" || parsed.pathname === "/ftux-add-trade/mt5/") {
+      parsed.pathname = DIRECT_MT5_ADD_ACCOUNT_PATH;
+      parsed.search = "";
+    }
+
+    const isAllowedRoute =
+      parsed.pathname.startsWith("/settings/account") ||
+      parsed.pathname === DIRECT_MT5_ADD_ACCOUNT_PATH;
+
+    if (!isAllowedRoute) {
+      return DEFAULT_COPYTRADE_ROUTE;
+    }
+
+    if (parsed.pathname.startsWith("/settings/account")) {
+      parsed.searchParams.delete("seed");
+    }
+
+    return parsed.pathname + parsed.search + parsed.hash;
+  } catch {
+    return DEFAULT_COPYTRADE_ROUTE;
+  }
+};
+
 type RechartsTooltipRenderProps = {
   active?: boolean;
   payload?: any[];
@@ -7510,6 +7588,52 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   );
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const raw = localStorage.getItem(TERMINAL_VIEW_STATE_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as {
+        surfaceTab?: unknown;
+        backtestTab?: unknown;
+      };
+
+      if (isSurfaceTab(parsed.surfaceTab)) {
+        setSelectedSurfaceTab(parsed.surfaceTab);
+      }
+
+      if (isBacktestTab(parsed.backtestTab)) {
+        setSelectedBacktestTab(parsed.backtestTab);
+      }
+    } catch {
+      // Ignore corrupted persisted view state.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      localStorage.setItem(
+        TERMINAL_VIEW_STATE_STORAGE_KEY,
+        JSON.stringify({
+          surfaceTab: selectedSurfaceTab,
+          backtestTab: selectedBacktestTab
+        })
+      );
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [selectedBacktestTab, selectedSurfaceTab]);
+
+  useEffect(() => {
     setAiModelStates((current) => syncAiModelStates(current, availableAiModelNames));
   }, [availableAiModelNames]);
 
@@ -13269,6 +13393,27 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     getEffectiveTradeConfidenceScore
   ]);
   const copytradeDashboardVersion = copytradeDashboardSeed?.updatedAt ?? "empty";
+  const copytradeIframeSrc = useMemo(() => {
+    const origin = typeof window === "undefined" ? "https://korra.local" : window.location.origin;
+    const baseRoute =
+      typeof window === "undefined"
+        ? DEFAULT_COPYTRADE_ROUTE
+        : normalizeCopytradeRestoredPath(
+            window.localStorage.getItem(COPYTRADE_LAST_ROUTE_STORAGE_KEY)
+          );
+
+    if (!baseRoute.startsWith("/settings/account")) {
+      return baseRoute;
+    }
+
+    try {
+      const parsed = new URL(baseRoute, origin);
+      parsed.searchParams.set("seed", String(copytradeDashboardVersion));
+      return parsed.pathname + parsed.search + parsed.hash;
+    } catch {
+      return `/settings/account?seed=${encodeURIComponent(String(copytradeDashboardVersion))}`;
+    }
+  }, [copytradeDashboardVersion]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -16849,7 +16994,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           >
             <iframe
               key={copytradeDashboardVersion}
-              src={`/settings/account?seed=${encodeURIComponent(copytradeDashboardVersion)}`}
+              src={copytradeIframeSrc}
               title="Copy Trade Dashboard"
               style={{
                 display: "block",

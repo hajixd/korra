@@ -5,7 +5,8 @@ import type { CopyTradeTimeframe } from "./copyTradeSignalEngine";
 import {
   deleteMetaApiAccountById,
   ensureMetaApiAccount,
-  getMetaApiAccountSnapshotById
+  getMetaApiAccountSnapshotById,
+  listMetaApiAccountSnapshots
 } from "./metaApiCloud";
 
 export type CopyTradeAccountStatus = "Connected" | "Disconnected" | "Error";
@@ -497,6 +498,120 @@ const buildRuntimeId = (): string => {
   return `cta-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 };
 
+const buildMetaApiRuntimeId = (providerAccountId: string): string => {
+  return `cta-metaapi-${String(providerAccountId || "").trim()}`;
+};
+
+const reconcileMetaApiAccounts = async (state: CopyTradeState): Promise<boolean> => {
+  let snapshots: Awaited<ReturnType<typeof listMetaApiAccountSnapshots>> = [];
+
+  try {
+    snapshots = await listMetaApiAccountSnapshots();
+  } catch {
+    return false;
+  }
+
+  let changed = false;
+  const now = Date.now();
+
+  for (const snapshot of snapshots) {
+    const providerAccountId = String(snapshot.id || "").trim();
+    if (!providerAccountId) {
+      continue;
+    }
+
+    const normalizedLogin = normalizeLogin(snapshot.login);
+    const normalizedServer = normalizeServer(snapshot.server);
+    const nextStatus = mapProviderStatusToCopyStatus(snapshot.state, snapshot.connectionStatus);
+    const existingAccount =
+      state.accounts.find((account) => account.providerAccountId === providerAccountId) ||
+      state.accounts.find(
+        (account) =>
+          normalizeProvider(account.provider) === "metaapi" &&
+          account.login === normalizedLogin &&
+          account.server === normalizedServer
+      ) ||
+      null;
+
+    if (!existingAccount) {
+      state.accounts.unshift({
+        id: buildMetaApiRuntimeId(providerAccountId),
+        login: normalizedLogin,
+        server: normalizedServer,
+        encryptedPassword: encryptPassword(""),
+        provider: "metaapi",
+        providerAccountId,
+        providerState: snapshot.state,
+        providerConnectionStatus: snapshot.connectionStatus,
+        status: nextStatus,
+        paused: true,
+        symbol: "XAUUSD",
+        timeframe: "15m",
+        lot: 0.01,
+        aggressive: true,
+        chunkBars: 24,
+        dollarsPerMove: 25,
+        tpDollars: 1000,
+        slDollars: 1000,
+        maxConcurrentTrades: 1,
+        stopMode: 0,
+        breakEvenTriggerPct: 50,
+        trailingStartPct: 50,
+        trailingDistPct: 30,
+        lastError: null,
+        lastHeartbeatAt: now,
+        lastSignalId: null,
+        lastSignalSide: null,
+        lastActionAt: null,
+        openPosition: null,
+        createdAt: snapshot.createdAt ?? now,
+        updatedAt: now
+      });
+      changed = true;
+      continue;
+    }
+
+    if (existingAccount.provider !== "metaapi") {
+      existingAccount.provider = "metaapi";
+      changed = true;
+    }
+    if (existingAccount.providerAccountId !== providerAccountId) {
+      existingAccount.providerAccountId = providerAccountId;
+      changed = true;
+    }
+    if (existingAccount.login !== normalizedLogin) {
+      existingAccount.login = normalizedLogin;
+      changed = true;
+    }
+    if (existingAccount.server !== normalizedServer) {
+      existingAccount.server = normalizedServer;
+      changed = true;
+    }
+    if (existingAccount.providerState !== snapshot.state) {
+      existingAccount.providerState = snapshot.state;
+      changed = true;
+    }
+    if (existingAccount.providerConnectionStatus !== snapshot.connectionStatus) {
+      existingAccount.providerConnectionStatus = snapshot.connectionStatus;
+      changed = true;
+    }
+    if (existingAccount.status !== nextStatus) {
+      existingAccount.status = nextStatus;
+      changed = true;
+    }
+    if (existingAccount.lastHeartbeatAt == null) {
+      existingAccount.lastHeartbeatAt = now;
+      changed = true;
+    }
+    if (!existingAccount.encryptedPassword) {
+      existingAccount.encryptedPassword = encryptPassword("");
+      changed = true;
+    }
+  }
+
+  return changed;
+};
+
 const toPublicAccount = (account: CopyTradeAccountRecord): CopyTradeAccountPublic => {
   const { encryptedPassword: _encryptedPassword, ...rest } = account;
   return {
@@ -509,8 +624,8 @@ const toPublicAccount = (account: CopyTradeAccountRecord): CopyTradeAccountPubli
 export const listCopyTradeAccounts = async (): Promise<CopyTradeAccountPublic[]> => {
   return enqueue(async () => {
     const state = await loadState();
+    let changed = await reconcileMetaApiAccounts(state);
 
-    let changed = false;
     for (const account of state.accounts) {
       try {
         const sync = await syncAccountProviderRuntime(account);
@@ -546,6 +661,11 @@ export const listCopyTradeAccounts = async (): Promise<CopyTradeAccountPublic[]>
 export const listCopyTradeWorkerAccounts = async (): Promise<CopyTradeAccountWorkerRecord[]> => {
   return enqueue(async () => {
     const state = await loadState();
+    const changed = await reconcileMetaApiAccounts(state);
+
+    if (changed) {
+      await saveStateToDisk(state);
+    }
 
     return state.accounts.map((account) => {
       const { encryptedPassword, ...rest } = account;
@@ -612,7 +732,10 @@ export const createCopyTradeAccount = async (
     }
 
     const account: CopyTradeAccountRecord = {
-      id: buildRuntimeId(),
+      id:
+        provider === "metaapi" && providerAccountId
+          ? buildMetaApiRuntimeId(providerAccountId)
+          : buildRuntimeId(),
       login,
       server,
       encryptedPassword: encryptPassword(password),
@@ -959,14 +1082,21 @@ export const getCopyTradeAccountById = async (
 ): Promise<CopyTradeAccountPublic | null> => {
   return enqueue(async () => {
     const state = await loadState();
+    let changed = await reconcileMetaApiAccounts(state);
     const account = state.accounts.find((candidate) => candidate.id === accountId);
 
     if (!account) {
+      if (changed) {
+        await saveStateToDisk(state);
+      }
       return null;
     }
 
     const sync = await syncAccountProviderRuntime(account);
     if (sync.changed) {
+      changed = true;
+    }
+    if (changed) {
       await saveStateToDisk(state);
     }
 
@@ -981,6 +1111,7 @@ export const getCopyTradeAccountByLoginServer = async (
 ): Promise<CopyTradeAccountPublic | null> => {
   return enqueue(async () => {
     const state = await loadState();
+    let changed = await reconcileMetaApiAccounts(state);
     const normalizedLogin = normalizeLogin(login);
     const normalizedServer = normalizeServer(server).toLowerCase();
     const normalizedProvider = provider ? normalizeProvider(provider) : null;
@@ -996,11 +1127,17 @@ export const getCopyTradeAccountByLoginServer = async (
       }) || null;
 
     if (!account) {
+      if (changed) {
+        await saveStateToDisk(state);
+      }
       return null;
     }
 
     const sync = await syncAccountProviderRuntime(account);
     if (sync.changed) {
+      changed = true;
+    }
+    if (changed) {
       await saveStateToDisk(state);
     }
 
