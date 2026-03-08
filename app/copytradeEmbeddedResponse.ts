@@ -3060,31 +3060,6 @@ const injectedScript = `
     return normalizedFeatures.includes("width=1000") && normalizedFeatures.includes("height=800");
   };
 
-  const waitForInlineMt5BridgeConnection = async (accountId) => {
-    const timeoutAt = Date.now() + 90_000;
-
-    while (Date.now() < timeoutAt) {
-      const payload = await requestLocalJson(
-        "/api/copytrade/accounts/" + encodeURIComponent(String(accountId))
-      );
-      const account = payload && payload.account ? payload.account : null;
-
-      if (account && account.status === "Connected") {
-        return account;
-      }
-
-      if (account && account.status === "Error" && account.lastError) {
-        throw new Error(String(account.lastError));
-      }
-
-      await delay(1500);
-    }
-
-    throw new Error(
-      "Timed out waiting for your local MT5 terminal. Attach /mt5/KorraCopyTraderEA.mq5 in MT5 and keep this page open."
-    );
-  };
-
   const navigateToCopyTradeDashboard = () => {
     clearInlineMt5ConnectState();
     window.location.assign("/settings/account");
@@ -3194,11 +3169,10 @@ const injectedScript = `
 
       state.accountId = String(account.id);
       queueEmbeddedUiRefresh();
-      await waitForInlineMt5BridgeConnection(account.id);
 
       state.pending = false;
       state.error = "";
-      state.success = "Connected. Returning to the dashboard...";
+      state.success = "MT5 account added. Trading stays inactive until you finish the MT5 bridge setup.";
       state.startedAt = 0;
       queueEmbeddedUiRefresh();
 
@@ -3208,7 +3182,7 @@ const injectedScript = `
 
       window.setTimeout(() => {
         navigateToCopyTradeDashboard();
-      }, 800);
+      }, 900);
     } catch (error) {
       state.pending = false;
       state.accountId = "";
@@ -3408,7 +3382,7 @@ const injectedScript = `
         : "1px solid #bfdbfe";
     feedback.style.color = state.error ? "#991b1b" : state.success ? "#166534" : "#1e3a8a";
     feedback.textContent = state.pending
-      ? "Connecting to your local MT5 terminal. Keep MT5 open with KorraCopyTraderEA attached to a chart."
+      ? "Saving your MT5 account. This only adds the account for now and does not start live trading."
       : state.success || state.error;
   };
 
