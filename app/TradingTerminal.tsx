@@ -1224,6 +1224,155 @@ const computeCopytradeDirectionalStreaks = (values: number[]) => {
   };
 };
 
+const COPYTRADE_LOCAL_ACCOUNT_ID = "local";
+const COPYTRADE_LOCAL_ACCOUNT_NAME = "Local";
+const COPYTRADE_LOCAL_TIMEZONE = "America/New_York";
+
+const buildCopytradeTradeDetail = (
+  trade: HistoryItem,
+  confidenceResolver: (trade: HistoryItem) => number
+) => {
+  const quantity = roundCopytradeMetric(Math.abs(trade.units), 4);
+  const entryIso = new Date(Number(trade.entryTime) * 1000).toISOString();
+  const exitIso = new Date(Number(trade.exitTime) * 1000).toISOString();
+  const riskDistance = Math.abs(trade.entryPrice - trade.stopPrice);
+  const riskAmount = riskDistance * Math.max(1, Math.abs(trade.units));
+  const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
+  const adjustedCost = roundCopytradeMetric(Math.abs(trade.entryPrice * trade.units));
+  const adjustedProceeds = roundCopytradeMetric(Math.abs(trade.outcomePrice * trade.units));
+  const holdTimeSeconds = Math.max(0, Number(trade.exitTime) - Number(trade.entryTime));
+  const zellaScore = roundCopytradeMetric(confidenceResolver(trade));
+
+  return {
+    id: trade.id,
+    public_uid: trade.id,
+    trade_public_uid: trade.id,
+    account_id: COPYTRADE_LOCAL_ACCOUNT_ID,
+    account_name: COPYTRADE_LOCAL_ACCOUNT_NAME,
+    open_date: entryIso,
+    created_at: entryIso,
+    realized: exitIso,
+    status: "Closed",
+    symbol: trade.symbol,
+    instrument: trade.symbol,
+    side: trade.side,
+    quantity,
+    net_profits: roundCopytradeMetric(trade.pnlUsd),
+    net_roi: roundCopytradeMetric(trade.pnlPct),
+    ticks_value: 0,
+    pips: 0,
+    points: 0,
+    realized_rr: roundCopytradeMetric(riskAmount > 0 ? trade.pnlUsd / riskAmount : 0),
+    avg_buy_price: roundCopytradeMetric(trade.entryPrice, 5),
+    avg_sell_price: roundCopytradeMetric(trade.outcomePrice, 5),
+    adjusted_cost: adjustedCost,
+    adjusted_proceeds: adjustedProceeds,
+    calculated_fees: 0,
+    commission: 0,
+    entry_price: roundCopytradeMetric(trade.entryPrice, 5),
+    entry_price_in_currency: roundCopytradeMetric(trade.entryPrice, 5),
+    exit_price: roundCopytradeMetric(trade.outcomePrice, 5),
+    exit_price_in_currency: roundCopytradeMetric(trade.outcomePrice, 5),
+    fee: 0,
+    fees: 0,
+    hold_time: holdTimeSeconds,
+    in_trade_price_range: 0,
+    initial_target: roundCopytradeMetric(trade.targetPrice, 5),
+    highest_price: roundCopytradeMetric(
+      Math.max(trade.entryPrice, trade.targetPrice, trade.stopPrice, trade.outcomePrice),
+      5
+    ),
+    lowest_price: roundCopytradeMetric(
+      Math.min(trade.entryPrice, trade.targetPrice, trade.stopPrice, trade.outcomePrice),
+      5
+    ),
+    maximum_profits: roundCopytradeMetric(Math.max(trade.pnlUsd, 0)),
+    minimum_profits: roundCopytradeMetric(Math.min(trade.pnlUsd, 0)),
+    price_mae: 0,
+    price_mfe: 0,
+    profit_target: roundCopytradeMetric(trade.targetPrice, 5),
+    profits: roundCopytradeMetric(trade.pnlUsd),
+    rating: 0,
+    reward_ratio: roundCopytradeMetric(
+      riskDistance > 0 ? rewardDistance / riskDistance : 0
+    ),
+    stop_loss: roundCopytradeMetric(trade.stopPrice, 5),
+    strike: 0,
+    trade_risk: roundCopytradeMetric(riskAmount),
+    zella_score: zellaScore,
+    reviewed: false,
+    aggregated_source: "local",
+    market_instrument_for_api: trade.symbol,
+    spread_type: "regular",
+    chart_layout_id: `local-chart-${trade.id}`,
+    trading_hours: {
+      timezone: COPYTRADE_LOCAL_TIMEZONE,
+      regular: "0930-1600",
+      extended: "0400-2000"
+    },
+    tags: [],
+    playbooks: [],
+    category_tags: {},
+    tags_categories_list: {},
+    transactions: [
+      {
+        id: `${trade.id}-entry`,
+        execution_id: `${trade.id}-entry`,
+        action: "entry",
+        side: trade.side,
+        symbol: trade.symbol,
+        quantity,
+        adjusted: adjustedCost,
+        price: roundCopytradeMetric(trade.entryPrice, 5),
+        commission: 0,
+        fee: 0,
+        profits: 0,
+        current_position: quantity,
+        strike: 0,
+        realized: entryIso,
+        created_at: entryIso
+      },
+      {
+        id: `${trade.id}-exit`,
+        execution_id: `${trade.id}-exit`,
+        action: "exit",
+        side: trade.side,
+        symbol: trade.symbol,
+        quantity,
+        adjusted: adjustedProceeds,
+        price: roundCopytradeMetric(trade.outcomePrice, 5),
+        commission: 0,
+        fee: 0,
+        profits: roundCopytradeMetric(trade.pnlUsd),
+        current_position: 0,
+        strike: 0,
+        realized: exitIso,
+        created_at: exitIso
+      }
+    ],
+    performance: [
+      {
+        trade_public_uid: trade.id,
+        realized: entryIso,
+        time_zone: COPYTRADE_LOCAL_TIMEZONE,
+        symbol: trade.symbol,
+        net_profits: 0,
+        roi: 0
+      },
+      {
+        trade_public_uid: trade.id,
+        realized: exitIso,
+        time_zone: COPYTRADE_LOCAL_TIMEZONE,
+        symbol: trade.symbol,
+        net_profits: roundCopytradeMetric(trade.pnlUsd),
+        roi: roundCopytradeMetric(trade.pnlPct)
+      }
+    ],
+    notebook_folder_id: null,
+    has_note: false
+  };
+};
+
 const buildCopytradeDashboardSeed = (
   trades: HistoryItem[],
   confidenceResolver: (trade: HistoryItem) => number
@@ -1425,28 +1574,103 @@ const buildCopytradeDashboardSeed = (
     }
   };
 
-  const recentTradesDescending = [...sortedTrades]
-    .sort((left, right) => Number(right.exitTime) - Number(left.exitTime))
-    .map((trade) => {
-      const riskDistance = Math.abs(trade.entryPrice - trade.stopPrice);
-      const riskAmount = riskDistance * Math.max(1, Math.abs(trade.units));
+  const allTradesDescending = [...sortedTrades]
+    .sort((left, right) => {
+      const exitDiff = Number(right.exitTime) - Number(left.exitTime);
+      if (exitDiff !== 0) {
+        return exitDiff;
+      }
+
+      const entryDiff = Number(right.entryTime) - Number(left.entryTime);
+      if (entryDiff !== 0) {
+        return entryDiff;
+      }
+
+      return right.id.localeCompare(left.id);
+    })
+    .map((trade) => buildCopytradeTradeDetail(trade, confidenceResolver));
+
+  const tradeDetails = Object.fromEntries(
+    allTradesDescending.map((trade) => [trade.id, trade])
+  ) as CopytradeDashboardSeed["tradeDetails"];
+  const tradesByDay = new Map<string, typeof allTradesDescending>();
+  for (const trade of allTradesDescending) {
+    const dayKey = trade.realized.slice(0, 10);
+    const dayTrades = tradesByDay.get(dayKey) ?? [];
+    dayTrades.push(trade);
+    tradesByDay.set(dayKey, dayTrades);
+  }
+
+  const days = Array.from(tradesByDay.entries())
+    .map(([dayKey, dayTrades]) => {
+      const orderedDayTrades = [...dayTrades].sort((left, right) =>
+        left.realized.localeCompare(right.realized)
+      );
+      let dayGrossWins = 0;
+      let dayGrossLosses = 0;
+      let dayVolume = 0;
+      let dayWinners = 0;
+      let dayLosers = 0;
+      let dayBreakEvens = 0;
+
+      for (const trade of orderedDayTrades) {
+        dayVolume += Math.abs(trade.quantity);
+        if (trade.net_profits > 0) {
+          dayGrossWins += trade.net_profits;
+          dayWinners += 1;
+        } else if (trade.net_profits < 0) {
+          dayGrossLosses += trade.net_profits;
+          dayLosers += 1;
+        } else {
+          dayBreakEvens += 1;
+        }
+      }
+
+      const dayLossMagnitude = Math.abs(dayGrossLosses);
+      const dayProfitFactor =
+        dayLossMagnitude > 0
+          ? roundCopytradeMetric(dayGrossWins / dayLossMagnitude)
+          : dayGrossWins > 0
+            ? roundCopytradeMetric(dayGrossWins)
+            : 0;
 
       return {
-        id: trade.id,
-        open_date: new Date(Number(trade.entryTime) * 1000).toISOString(),
-        created_at: new Date(Number(trade.entryTime) * 1000).toISOString(),
-        realized: new Date(Number(trade.exitTime) * 1000).toISOString(),
-        status: "Closed",
-        symbol: trade.symbol,
-        quantity: roundCopytradeMetric(trade.units, 4),
-        net_profits: roundCopytradeMetric(trade.pnlUsd),
-        net_roi: roundCopytradeMetric(trade.pnlPct),
-        ticks_value: 0,
-        pips: 0,
-        points: 0,
-        realized_rr: roundCopytradeMetric(riskAmount > 0 ? trade.pnlUsd / riskAmount : 0)
+        id: dayKey,
+        day: dayKey,
+        realized: dayKey,
+        show_day: true,
+        closed: true,
+        trades_loaded: true,
+        time_zone: COPYTRADE_LOCAL_TIMEZONE,
+        daily_note: null,
+        stats: {
+          trades_count: orderedDayTrades.length,
+          winners: dayWinners,
+          losers: dayLosers,
+          break_evens: dayBreakEvens,
+          volume: roundCopytradeMetric(dayVolume),
+          profits: roundCopytradeMetric(dayGrossWins + dayGrossLosses),
+          net_profits: roundCopytradeMetric(dayGrossWins + dayGrossLosses),
+          fees: 0,
+          roi_positive: roundCopytradeMetric(dayGrossWins),
+          roi_negative: roundCopytradeMetric(dayLossMagnitude),
+          profit_factor: dayProfitFactor
+        },
+        performance: orderedDayTrades.map((trade) => ({
+          trade_public_uid: trade.trade_public_uid,
+          realized: trade.realized,
+          time_zone: COPYTRADE_LOCAL_TIMEZONE,
+          symbol: trade.symbol,
+          net_profits: trade.net_profits,
+          roi: trade.net_roi
+        })),
+        trades: orderedDayTrades
       };
-    });
+    })
+    .sort((left, right) => right.realized.localeCompare(left.realized));
+
+  const lastImportTime =
+    allTradesDescending[0]?.realized ?? new Date().toISOString();
 
   return {
     updatedAt: new Date().toISOString(),
@@ -1485,13 +1709,86 @@ const buildCopytradeDashboardSeed = (
       labels: cumulative.map((row) => row.date)
     },
     recentTrades: {
-      trades: recentTradesDescending.slice(0, 10),
-      item_count: recentTradesDescending.length
+      trades: allTradesDescending.slice(0, 10),
+      item_count: allTradesDescending.length
     },
     openPositions: {
       trades: [],
       item_count: 0
-    }
+    },
+    allTrades: {
+      trades: allTradesDescending,
+      item_count: allTradesDescending.length,
+      page_count: allTradesDescending.length > 0 ? 1 : 0,
+      from: allTradesDescending.length > 0 ? 1 : 0,
+      to: allTradesDescending.length
+    },
+    tradeStats: {
+      gain: roundCopytradeMetric(summary.grossWins),
+      loss: roundCopytradeMetric(Math.abs(summary.grossLosses)),
+      total_net_profits: roundCopytradeMetric(summary.netPnl),
+      total_volume: roundCopytradeMetric(totalVolume),
+      profit_factor: roundCopytradeMetric(summary.profitFactor),
+      average_winning_trade: roundCopytradeMetric(summary.avgWin),
+      average_losing_trade: roundCopytradeMetric(summary.avgLoss),
+      total_trades: tradeCount
+    },
+    days: {
+      days,
+      page_count: days.length > 0 ? 1 : 0
+    },
+    tradeDetails,
+    accounts: [
+      {
+        id: COPYTRADE_LOCAL_ACCOUNT_ID,
+        name: COPYTRADE_LOCAL_ACCOUNT_NAME,
+        account_type: "manual",
+        archived: false,
+        active: true,
+        backtesting: false,
+        trades_editable: true,
+        read_only: true,
+        count: tradeCount,
+        running_balance: roundCopytradeMetric(summary.netPnl),
+        import_type: "manual",
+        broker: null,
+        external_account_id: null,
+        external_account_failed: false,
+        clear_in_progress: false,
+        sync_disconnected: false,
+        disabled: false,
+        failed: false,
+        can_resync: false,
+        next_manual_resync_time: null,
+        next_sync_time: null,
+        last_sync_time: lastImportTime,
+        has_trades: tradeCount > 0,
+        has_performance_report: false,
+        profit_calculation_method: "fifo",
+        shared: false,
+        primary: true,
+        color: "#2563eb",
+        trades_count: tradeCount,
+        account_size: roundCopytradeMetric(summary.netPnl),
+        last_import: tradeCount > 0 ? lastImportTime : null,
+        last_imported_at: tradeCount > 0 ? lastImportTime : null,
+        imports: [],
+        broker_name: COPYTRADE_LOCAL_ACCOUNT_NAME,
+        display_broker_name: COPYTRADE_LOCAL_ACCOUNT_NAME,
+        created_at: lastImportTime,
+        updated_at: lastImportTime,
+        time_zone: COPYTRADE_LOCAL_TIMEZONE,
+        display_currency: "USD",
+        user_public_uid: "copytrade-local-user"
+      }
+    ],
+    lastImport: tradeCount > 0
+      ? {
+          is_sync: false,
+          updated_at: lastImportTime,
+          last_sync_time: lastImportTime
+        }
+      : null
   };
 };
 

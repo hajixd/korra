@@ -1,12 +1,7 @@
 export const COPYTRADE_BACKTEST_STATE_KEY = "korra-copytrade-dashboard-state";
 export const DEFAULT_COPYTRADE_DASHBOARD_TEMPLATE = {
   top_widgets: ["net_pl", "win_percentage_by_trades", "profit_factor"],
-  bottom_widgets: [
-    "zella_score",
-    "daily_net_cumulative_graph",
-    "net_daily_pl_graph",
-    "open_position"
-  ]
+  bottom_widgets: ["zella_score", "daily_net_cumulative_graph", "net_daily_pl_graph", "performance_calendar"]
 } satisfies CopytradeDashboardTemplate;
 
 export type CopytradeDashboardTemplate = {
@@ -139,6 +134,174 @@ export type CopytradeTradeRow = {
 export type CopytradeTradeCollectionPayload = {
   trades: CopytradeTradeRow[];
   item_count: number;
+  page_count?: number;
+  from?: number;
+  to?: number;
+};
+
+export type CopytradeTradePerformancePoint = {
+  trade_public_uid: string;
+  realized: string;
+  time_zone: string;
+  symbol: string;
+  net_profits: number;
+  roi: number;
+  total_pl?: number;
+};
+
+export type CopytradeTradeExecution = {
+  id: string;
+  execution_id: string;
+  action: string;
+  side: string;
+  symbol: string;
+  quantity: number;
+  adjusted: number;
+  price: number;
+  commission: number;
+  fee: number;
+  profits: number;
+  current_position: number;
+  strike: number;
+  realized: string;
+  created_at: string;
+};
+
+export type CopytradeTradeDetail = CopytradeTradeRow & {
+  public_uid: string;
+  trade_public_uid: string;
+  account_id: string;
+  account_name: string;
+  side: string;
+  avg_buy_price: number;
+  avg_sell_price: number;
+  adjusted_cost: number;
+  adjusted_proceeds: number;
+  calculated_fees: number;
+  commission: number;
+  entry_price: number;
+  entry_price_in_currency: number;
+  exit_price: number;
+  exit_price_in_currency: number;
+  fee: number;
+  fees: number;
+  hold_time: number;
+  in_trade_price_range: number;
+  initial_target: number;
+  highest_price: number;
+  lowest_price: number;
+  maximum_profits: number | null;
+  minimum_profits: number | null;
+  price_mae: number;
+  price_mfe: number;
+  profit_target: number;
+  profits: number;
+  rating: number;
+  reward_ratio: number;
+  stop_loss: number;
+  strike: number;
+  trade_risk: number;
+  zella_score: number;
+  reviewed: boolean;
+  tags: string[];
+  playbooks: unknown[];
+  category_tags: Record<string, string[]>;
+  tags_categories_list: Record<string, unknown>;
+  transactions: CopytradeTradeExecution[];
+  performance: CopytradeTradePerformancePoint[];
+  notebook_folder_id: string | null;
+  has_note: boolean;
+};
+
+export type CopytradeAllTradesPayload = {
+  trades: CopytradeTradeDetail[];
+  item_count: number;
+  page_count: number;
+  from: number;
+  to: number;
+};
+
+export type CopytradeDayStatsPayload = {
+  trades_count: number;
+  winners: number;
+  losers: number;
+  break_evens: number;
+  volume: number;
+  profits: number;
+  net_profits: number;
+  fees: number;
+  roi_positive: number;
+  roi_negative: number;
+  profit_factor: number;
+};
+
+export type CopytradeDayPayload = {
+  id: string;
+  day: string;
+  realized: string;
+  show_day: boolean;
+  closed: boolean;
+  trades_loaded: boolean;
+  time_zone: string;
+  daily_note: null;
+  stats: CopytradeDayStatsPayload;
+  performance: CopytradeTradePerformancePoint[];
+  trades: CopytradeTradeDetail[];
+};
+
+export type CopytradeDaysPayload = {
+  days: CopytradeDayPayload[];
+  page_count: number;
+};
+
+export type CopytradeTradeStatsPayload = {
+  gain: number;
+  loss: number;
+  total_net_profits: number;
+  total_volume: number;
+  profit_factor: number;
+  average_winning_trade: number;
+  average_losing_trade: number;
+  total_trades: number;
+};
+
+export type CopytradeAccountPayload = {
+  id: string;
+  name: string;
+  account_type: string;
+  archived: boolean;
+  active: boolean;
+  backtesting: boolean;
+  trades_editable: boolean;
+  read_only: boolean;
+  count: number;
+  running_balance: number;
+  import_type: string;
+  broker: string | null;
+  external_account_id: string | null;
+  external_account_failed: boolean;
+  clear_in_progress: boolean;
+  sync_disconnected: boolean;
+  disabled: boolean;
+  failed: boolean;
+  can_resync: boolean;
+  next_manual_resync_time: string | null;
+  next_sync_time: string | null;
+  last_sync_time: string | null;
+  has_trades: boolean;
+  has_performance_report: boolean;
+  profit_calculation_method: string;
+  shared: boolean;
+  primary: boolean;
+  color: string;
+  [key: string]: unknown;
+};
+
+export type CopytradeLastImportPayload = {
+  is_sync: boolean;
+  updated_at: string;
+  last_sync_time: string;
+  [key: string]: unknown;
 };
 
 export type CopytradeDashboardSeed = {
@@ -151,4 +314,10 @@ export type CopytradeDashboardSeed = {
   accountBalanceDatum: CopytradeAccountBalanceDatumPayload;
   recentTrades: CopytradeTradeCollectionPayload;
   openPositions: CopytradeTradeCollectionPayload;
+  allTrades: CopytradeAllTradesPayload;
+  tradeStats: CopytradeTradeStatsPayload;
+  days: CopytradeDaysPayload;
+  tradeDetails: Record<string, CopytradeTradeDetail>;
+  accounts: CopytradeAccountPayload[];
+  lastImport: CopytradeLastImportPayload | null;
 };
