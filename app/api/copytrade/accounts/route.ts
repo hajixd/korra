@@ -6,6 +6,7 @@ import {
 } from "../../../../lib/copyTradeService";
 import type { CopyTradeTimeframe } from "../../../../lib/copyTradeSignalEngine";
 import { ensureCopyTradeWorker, getCopyTradeWorkerStatus } from "../../../../lib/copyTradeWorker";
+import { getMetaApiAccountSummary } from "../../../../lib/metaApiCloud";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,13 +43,52 @@ const parseProvider = (value: unknown): "metaapi" | "local_bridge" | undefined =
   return undefined;
 };
 
-export async function GET() {
+export async function GET(request: Request) {
   const accounts = await listCopyTradeAccounts();
   const worker = getWorkerStatus();
+  const requestUrl = new URL(request.url);
+  const includeSummary = requestUrl.searchParams.get("includeSummary") === "1";
+
+  let summaries: Array<{
+    accountId: string;
+    summary: Awaited<ReturnType<typeof getMetaApiAccountSummary>> | null;
+    error?: string;
+  }> | undefined;
+
+  if (includeSummary) {
+    summaries = await Promise.all(
+      accounts.map(async (account) => {
+        if (account.provider !== "metaapi" || !account.providerAccountId) {
+          return {
+            accountId: account.id,
+            summary: null
+          };
+        }
+
+        try {
+          const summary = await getMetaApiAccountSummary({
+            providerAccountId: account.providerAccountId
+          });
+
+          return {
+            accountId: account.id,
+            summary
+          };
+        } catch (error) {
+          return {
+            accountId: account.id,
+            summary: null,
+            error: (error as Error).message || "Failed to load account summary."
+          };
+        }
+      })
+    );
+  }
 
   return NextResponse.json(
     {
       accounts,
+      ...(summaries ? { summaries } : {}),
       worker,
       maxAccounts: COPYTRADE_MAX_ACCOUNTS
     },

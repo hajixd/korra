@@ -146,6 +146,20 @@ export type MetaApiAccountDashboardSnapshot = {
   lastSyncedAt: number;
 };
 
+export type MetaApiAccountSummarySnapshot = {
+  providerAccountId: string;
+  login: string;
+  server: string;
+  broker: string | null;
+  currency: string;
+  balance: number | null;
+  equity: number | null;
+  tradeAllowed: boolean | null;
+  openPositionsCount: number;
+  netOpenProfit: number;
+  lastSyncedAt: number;
+};
+
 type EnsureMetaApiAccountInput = {
   existingAccountId?: string;
   login: string;
@@ -182,6 +196,17 @@ type MetaApiClosePositionInput = {
 
 let metaApiClientCache: MetaApi | null = null;
 let metaApiTokenCache = "";
+const METAAPI_SUMMARY_CACHE_TTL_MS = 60_000;
+const METAAPI_DASHBOARD_CACHE_TTL_MS = 60_000;
+
+type TimedCacheEntry<T> = {
+  expiresAt: number;
+  value?: T;
+  promise?: Promise<T>;
+};
+
+const metaApiSummaryCache = new Map<string, TimedCacheEntry<MetaApiAccountSummarySnapshot>>();
+const metaApiDashboardCache = new Map<string, TimedCacheEntry<MetaApiAccountDashboardSnapshot>>();
 
 const resolveMetaApiToken = (): string => {
   return (
@@ -215,6 +240,64 @@ const getMetaApiClient = (): MetaApi => {
 
 const normalizeLogin = (value: string): string => value.trim();
 const normalizeServer = (value: string): string => value.trim().toLowerCase();
+
+const buildMetaApiCacheKey = (input: {
+  providerAccountId?: string;
+  credentials?: {
+    login: string;
+    server: string;
+  };
+}): string => {
+  if (input.providerAccountId) {
+    return `provider:${String(input.providerAccountId).trim()}`;
+  }
+
+  if (input.credentials) {
+    return `credentials:${normalizeLogin(input.credentials.login)}@${normalizeServer(
+      input.credentials.server
+    )}`;
+  }
+
+  return "unknown";
+};
+
+const withTimedCache = async <T>(
+  cache: Map<string, TimedCacheEntry<T>>,
+  key: string,
+  ttlMs: number,
+  loader: () => Promise<T>
+): Promise<T> => {
+  const now = Date.now();
+  const existing = cache.get(key);
+
+  if (existing?.value !== undefined && existing.expiresAt > now) {
+    return existing.value;
+  }
+
+  if (existing?.promise) {
+    return existing.promise;
+  }
+
+  const promise = loader()
+    .then((value) => {
+      cache.set(key, {
+        expiresAt: Date.now() + ttlMs,
+        value
+      });
+      return value;
+    })
+    .catch((error) => {
+      cache.delete(key);
+      throw error;
+    });
+
+  cache.set(key, {
+    expiresAt: now + ttlMs,
+    promise
+  });
+
+  return promise;
+};
 
 const normalizeSymbol = (value: string): string => {
   const normalized = value
@@ -545,6 +628,64 @@ export const closeMetaApiPosition = async (input: MetaApiClosePositionInput): Pr
   });
 };
 
+export const getMetaApiAccountSummary = async (input: {
+  providerAccountId?: string;
+  credentials?: {
+    login: string;
+    password: string;
+    server: string;
+  };
+}): Promise<MetaApiAccountSummarySnapshot> => {
+  const cacheKey = `${buildMetaApiCacheKey(input)}:summary`;
+
+  return withTimedCache(metaApiSummaryCache, cacheKey, METAAPI_SUMMARY_CACHE_TTL_MS, async () => {
+    const account = await resolveTradeAccount({
+      providerAccountId: input.providerAccountId,
+      credentials: input.credentials
+    });
+
+    await ensureAccountDeployed(account);
+
+    return withRpcConnection(account, async (rpc) => {
+      const [accountInformation, positionsResponse] = await Promise.all([
+        rpc
+          .getAccountInformation({ refreshTerminalState: true })
+          .catch((): Awaited<ReturnType<MetaApiRpcConnectionLike["getAccountInformation"]>> => ({})),
+        rpc.getPositions({ refreshTerminalState: true }).catch(() => [])
+      ]);
+
+      const positions = Array.isArray(positionsResponse) ? positionsResponse : [];
+      const netOpenProfit = positions.reduce((sum, position) => {
+        const profit = Number(position?.profit);
+        return sum + (Number.isFinite(profit) ? profit : 0);
+      }, 0);
+
+      return {
+        providerAccountId: String(account.id),
+        login: String(account.login || ""),
+        server: String(account.server || ""),
+        broker:
+          typeof accountInformation?.broker === "string" && accountInformation.broker.trim()
+            ? accountInformation.broker
+            : null,
+        currency:
+          typeof accountInformation?.currency === "string" && accountInformation.currency.trim()
+            ? accountInformation.currency
+            : "USD",
+        balance: toFiniteOrNull(accountInformation?.balance),
+        equity: toFiniteOrNull(accountInformation?.equity),
+        tradeAllowed:
+          typeof accountInformation?.tradeAllowed === "boolean"
+            ? accountInformation.tradeAllowed
+            : null,
+        openPositionsCount: positions.length,
+        netOpenProfit,
+        lastSyncedAt: Date.now()
+      } satisfies MetaApiAccountSummarySnapshot;
+    });
+  });
+};
+
 export const getMetaApiAccountDashboard = async (input: {
   providerAccountId?: string;
   credentials?: {
@@ -555,17 +696,24 @@ export const getMetaApiAccountDashboard = async (input: {
   dealsLookbackHours?: number;
   dealsLimit?: number;
 }): Promise<MetaApiAccountDashboardSnapshot> => {
-  const account = await resolveTradeAccount({
-    providerAccountId: input.providerAccountId,
-    credentials: input.credentials
-  });
+  const lookbackHours = Math.max(1, Math.min(24 * 31, Math.trunc(input.dealsLookbackHours ?? 24)));
+  const dealsLimit = Math.max(1, Math.min(500, Math.trunc(input.dealsLimit ?? 60)));
+  const cacheKey = `${buildMetaApiCacheKey(input)}:dashboard:${lookbackHours}:${dealsLimit}`;
 
-  await ensureAccountDeployed(account);
+  return withTimedCache(
+    metaApiDashboardCache,
+    cacheKey,
+    METAAPI_DASHBOARD_CACHE_TTL_MS,
+    async () => {
+      const account = await resolveTradeAccount({
+        providerAccountId: input.providerAccountId,
+        credentials: input.credentials
+      });
 
-  return withRpcConnection(account, async (rpc) => {
+      await ensureAccountDeployed(account);
+
+      return withRpcConnection(account, async (rpc) => {
     const now = Date.now();
-    const lookbackHours = Math.max(1, Math.min(24 * 31, Math.trunc(input.dealsLookbackHours ?? 24)));
-    const dealsLimit = Math.max(1, Math.min(500, Math.trunc(input.dealsLimit ?? 60)));
     const startTime = new Date(now - lookbackHours * 60 * 60 * 1000);
     const endTime = new Date(now);
 
@@ -668,5 +816,7 @@ export const getMetaApiAccountDashboard = async (input: {
       dayClosedPnl,
       lastSyncedAt: Date.now()
     } satisfies MetaApiAccountDashboardSnapshot;
-  });
+      });
+    }
+  );
 };

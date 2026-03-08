@@ -130,6 +130,7 @@ const copyTradingSecret =
 
 const encryptionKey = createHash("sha256").update(copyTradingSecret).digest();
 const LOCAL_BRIDGE_STALE_MS = 30_000;
+const METAAPI_STATUS_SYNC_TTL_MS = 60_000;
 
 let stateCache: CopyTradeState | null = null;
 let stateQueue: Promise<unknown> = Promise.resolve();
@@ -380,11 +381,25 @@ const syncLocalBridgeRuntime = (
   return { changed, errorMessage: null };
 };
 
+const hasFreshMetaApiRuntime = (
+  account: CopyTradeAccountRecord,
+  now = Date.now()
+): boolean => {
+  const lastHeartbeatAt = Number(account.lastHeartbeatAt ?? Number.NaN);
+  return (
+    Number.isFinite(lastHeartbeatAt) &&
+    lastHeartbeatAt > 0 &&
+    now - lastHeartbeatAt <= METAAPI_STATUS_SYNC_TTL_MS
+  );
+};
+
 const syncAccountProviderRuntime = async (
-  account: CopyTradeAccountRecord
+  account: CopyTradeAccountRecord,
+  options: { force?: boolean } = {}
 ): Promise<{ changed: boolean; errorMessage: string | null }> => {
   let changed = false;
   const provider = normalizeProvider(account.provider);
+  const now = Date.now();
 
   if (account.provider !== provider) {
     account.provider = provider;
@@ -403,8 +418,11 @@ const syncAccountProviderRuntime = async (
     return { changed, errorMessage: null };
   }
 
+  if (!options.force && hasFreshMetaApiRuntime(account, now)) {
+    return { changed, errorMessage: null };
+  }
+
   const snapshot = await getMetaApiAccountSnapshotById(account.providerAccountId);
-  const now = Date.now();
 
   if (!snapshot) {
     if (account.status !== "Error") {

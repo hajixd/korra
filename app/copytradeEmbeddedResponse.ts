@@ -59,6 +59,310 @@ body {
   overflow: hidden;
   background: #ffffff;
 }
+
+#korra-copytrade-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  background: #040404;
+  color: #f3f3f3;
+  font-family: "SF Pro Text", "Segoe UI", sans-serif;
+  padding: 18px 24px 28px;
+  overflow: auto;
+}
+
+#korra-copytrade-shell[hidden] {
+  display: none !important;
+}
+
+.korra-copytrade-shell__toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+.korra-copytrade-shell__eyebrow {
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #7e7e7e;
+  margin-bottom: 6px;
+}
+
+.korra-copytrade-shell__title {
+  font-size: 14px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: #f6f6f6;
+}
+
+.korra-copytrade-shell__subtitle {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8a8a8a;
+}
+
+.korra-copytrade-shell__button {
+  appearance: none;
+  border: 1px solid #282828;
+  background: transparent;
+  color: #f5f5f5;
+  border-radius: 8px;
+  padding: 7px 11px;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.korra-copytrade-shell__button:hover {
+  background: #111111;
+  border-color: #373737;
+}
+
+.korra-copytrade-shell__button--primary {
+  background: #f3f3f3;
+  color: #050505;
+  border-color: #f3f3f3;
+}
+
+.korra-copytrade-shell__button--primary:hover {
+  background: #ffffff;
+}
+
+.korra-copytrade-shell__table {
+  width: 100%;
+  border-top: 1px solid #171717;
+}
+
+.korra-copytrade-shell__row,
+.korra-copytrade-shell__row--head {
+  display: grid;
+  grid-template-columns: minmax(0, 2.4fr) minmax(110px, 0.9fr) minmax(220px, 1.4fr) auto;
+  align-items: center;
+  gap: 16px;
+}
+
+.korra-copytrade-shell__row--head {
+  padding: 9px 0;
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #666666;
+}
+
+.korra-copytrade-shell__row {
+  padding: 14px 0;
+  border-bottom: 1px solid #141414;
+}
+
+.korra-copytrade-shell__name {
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: #f7f7f7;
+}
+
+.korra-copytrade-shell__meta {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #7d7d7d;
+}
+
+.korra-copytrade-shell__money {
+  font-size: 13px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  color: #f0f0f0;
+}
+
+.korra-copytrade-shell__moneySubtle {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #7d7d7d;
+}
+
+.korra-copytrade-shell__statusLine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.korra-copytrade-shell__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid #202020;
+  background: #0b0b0b;
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #cfcfcf;
+}
+
+.korra-copytrade-shell__pill::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #6e6e6e;
+}
+
+.korra-copytrade-shell__pill--green::before {
+  background: #23c26b;
+}
+
+.korra-copytrade-shell__pill--blue::before {
+  background: #4da3ff;
+}
+
+.korra-copytrade-shell__pill--amber::before {
+  background: #ffb44d;
+}
+
+.korra-copytrade-shell__pill--red::before {
+  background: #ff5f5f;
+}
+
+.korra-copytrade-shell__pill--gray::before {
+  background: #707070;
+}
+
+.korra-copytrade-shell__rowAction {
+  justify-self: end;
+}
+
+.korra-copytrade-shell__empty,
+.korra-copytrade-shell__message {
+  padding: 42px 0 24px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #8c8c8c;
+}
+
+.korra-copytrade-shell__message--error {
+  color: #ff8f8f;
+}
+
+.korra-copytrade-shell__section {
+  margin-top: 26px;
+  padding-top: 14px;
+  border-top: 1px solid #171717;
+}
+
+.korra-copytrade-shell__sectionTitle {
+  margin-bottom: 14px;
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #666666;
+}
+
+.korra-copytrade-shell__statsGrid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(100px, 1fr));
+  gap: 12px 16px;
+}
+
+.korra-copytrade-shell__stat {
+  min-width: 0;
+}
+
+.korra-copytrade-shell__statLabel {
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #666666;
+}
+
+.korra-copytrade-shell__statValue {
+  margin-top: 5px;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: #f5f5f5;
+  font-variant-numeric: tabular-nums;
+}
+
+.korra-copytrade-shell__detailTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.korra-copytrade-shell__detailTable thead th {
+  padding: 0 0 10px;
+  text-align: left;
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #666666;
+  font-weight: 500;
+}
+
+.korra-copytrade-shell__detailTable tbody td {
+  padding: 11px 0;
+  border-top: 1px solid #141414;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #d6d6d6;
+  font-variant-numeric: tabular-nums;
+  vertical-align: top;
+}
+
+.korra-copytrade-shell__detailTable tbody tr:first-child td {
+  border-top: 1px solid #171717;
+}
+
+.korra-copytrade-shell__detailTable td:last-child,
+.korra-copytrade-shell__detailTable th:last-child {
+  text-align: right;
+}
+
+.korra-copytrade-shell__profit--positive {
+  color: #4ade80;
+}
+
+.korra-copytrade-shell__profit--negative {
+  color: #ff8f8f;
+}
+
+@media (max-width: 900px) {
+  #korra-copytrade-shell {
+    padding: 16px 16px 24px;
+  }
+
+  .korra-copytrade-shell__row,
+  .korra-copytrade-shell__row--head {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .korra-copytrade-shell__row--head {
+    display: none;
+  }
+
+  .korra-copytrade-shell__rowAction {
+    justify-self: start;
+  }
+
+  .korra-copytrade-shell__statsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 `;
 
 const injectedScript = `
@@ -144,6 +448,11 @@ const injectedScript = `
   const nativeReplaceState = history.replaceState.bind(history);
   const nativeOpen = typeof window.open === "function" ? window.open.bind(window) : null;
   let lastEmbeddedPath = window.location.pathname + window.location.search + window.location.hash;
+  const DIRECT_MT5_ADD_ACCOUNT_PATH = "/ftux-add-trade/mt5/sync";
+  const KORRA_COPYTRADE_SHELL_ID = "korra-copytrade-shell";
+  const KORRA_COPYTRADE_STATS_VIEW = "statistics";
+  const KORRA_COPYTRADE_LIST_CACHE_MS = 15_000;
+  const KORRA_COPYTRADE_DETAIL_CACHE_MS = 15_000;
 
   const safeUrl = (input) => {
     try {
@@ -185,6 +494,16 @@ const injectedScript = `
 
     if (parsed.pathname === "/settings/account-management") {
       parsed.pathname = "/settings/account";
+      parsed.search = "";
+    }
+
+    if (parsed.pathname === "/ftux-add-trade" || parsed.pathname === "/ftux-add-trade/") {
+      parsed.pathname = DIRECT_MT5_ADD_ACCOUNT_PATH;
+      parsed.search = "";
+    }
+
+    if (parsed.pathname === "/ftux-add-trade/mt5" || parsed.pathname === "/ftux-add-trade/mt5/") {
+      parsed.pathname = DIRECT_MT5_ADD_ACCOUNT_PATH;
       parsed.search = "";
     }
 
@@ -2340,7 +2659,7 @@ const injectedScript = `
       login,
       password,
       server,
-      provider: "local_bridge",
+      provider: "metaapi",
       ...collectCopyTradeBridgeSettings()
     };
   };
@@ -2797,7 +3116,7 @@ const injectedScript = `
         writeCopyTradeCredentialDraft(credentialId, {
           id: credentialId,
           broker: COPYTRADE_BRIDGE_BROKER,
-          provider: "local_bridge",
+          provider: "metaapi",
           formData: bodyPayload
         });
 
@@ -3043,21 +3362,7 @@ const injectedScript = `
   };
 
   const shouldInterceptInlineMt5Connect = (url, features) => {
-    if (!isMt5ConnectScreen()) {
-      return false;
-    }
-
-    const normalizedUrl = String(url || "").trim();
-    if (
-      normalizedUrl &&
-      !normalizedUrl.includes("/connect-to-broker/callback/") &&
-      normalizedUrl !== "about:blank"
-    ) {
-      return false;
-    }
-
-    const normalizedFeatures = String(features || "");
-    return normalizedFeatures.includes("width=1000") && normalizedFeatures.includes("height=800");
+    return false;
   };
 
   const navigateToCopyTradeDashboard = () => {
@@ -3160,11 +3465,11 @@ const injectedScript = `
 
     try {
       const account = await upsertMt5CopyTradeAccount(formData, {
-        provider: "local_bridge"
+        provider: "metaapi"
       });
 
       if (!account || !account.id) {
-        throw new Error("Failed to create the local MT5 copy-trader account.");
+        throw new Error("Failed to connect the MT5 copy-trade account.");
       }
 
       state.accountId = String(account.id);
@@ -3172,7 +3477,7 @@ const injectedScript = `
 
       state.pending = false;
       state.error = "";
-      state.success = "MT5 account added. Trading stays inactive until you finish the MT5 bridge setup.";
+      state.success = "MT5 account connected successfully.";
       state.startedAt = 0;
       queueEmbeddedUiRefresh();
 
@@ -3276,7 +3581,6 @@ const injectedScript = `
   };
 
   const ensureInlineMt5ConnectFeedback = () => {
-    const state = getInlineMt5ConnectState();
     if (!isMt5ConnectScreen()) {
       const staleFeedback = document.getElementById("korra-inline-mt5-feedback");
       if (staleFeedback) {
@@ -3285,6 +3589,7 @@ const injectedScript = `
       return;
     }
 
+    const state = getInlineMt5ConnectState();
     const connectButton =
       Array.from(document.querySelectorAll("button")).find((button) => {
         const text = normalizeNodeText(button.textContent);
@@ -3314,7 +3619,10 @@ const injectedScript = `
       }
 
       const connectForm = connectButton.closest("form");
-      if (connectForm instanceof HTMLFormElement && connectForm.dataset.korraInlineMt5SubmitBound !== "true") {
+      if (
+        connectForm instanceof HTMLFormElement &&
+        connectForm.dataset.korraInlineMt5SubmitBound !== "true"
+      ) {
         connectForm.dataset.korraInlineMt5SubmitBound = "true";
         connectForm.addEventListener(
           "submit",
@@ -3337,7 +3645,8 @@ const injectedScript = `
 
       if (state.pending) {
         if (!connectButton.dataset.korraOriginalText) {
-          connectButton.dataset.korraOriginalText = normalizeNodeText(connectButton.textContent) || "Connect";
+          connectButton.dataset.korraOriginalText =
+            normalizeNodeText(connectButton.textContent) || "Connect";
         }
 
         connectButton.textContent = "Connecting...";
@@ -3382,8 +3691,807 @@ const injectedScript = `
         : "1px solid #bfdbfe";
     feedback.style.color = state.error ? "#991b1b" : state.success ? "#166534" : "#1e3a8a";
     feedback.textContent = state.pending
-      ? "Saving your MT5 account. This only adds the account for now and does not start live trading."
+      ? "Connecting your MT5 account..."
       : state.success || state.error;
+  };
+
+  const redirectBaseAddTradeLinksToMt5 = () => {
+    if (window.location.pathname !== "/settings/account") {
+      return;
+    }
+
+    document.querySelectorAll("a[href='/ftux-add-trade'], a[href='/ftux-add-trade/']").forEach((node) => {
+      if (node instanceof HTMLAnchorElement) {
+        node.href = DIRECT_MT5_ADD_ACCOUNT_PATH;
+      }
+    });
+
+    document.querySelectorAll("a[href='/add-trade'], a[href='/add-trade/']").forEach((node) => {
+      if (node instanceof HTMLAnchorElement) {
+        node.href = DIRECT_MT5_ADD_ACCOUNT_PATH;
+      }
+    });
+
+    Array.from(document.querySelectorAll("button, a")).forEach((node) => {
+      const text = normalizeNodeText(node.textContent);
+      if (
+        text !== "Add Accounts" &&
+        text !== "Add Account" &&
+        text !== "Add trades" &&
+        text !== "Add trade"
+      ) {
+        return;
+      }
+
+      if (node.dataset.korraDirectMt5Bound === "true") {
+        return;
+      }
+
+      node.dataset.korraDirectMt5Bound = "true";
+      node.addEventListener(
+        "click",
+        (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (typeof event.stopImmediatePropagation === "function") {
+            event.stopImmediatePropagation();
+          }
+
+          history.pushState(history.state, "", DIRECT_MT5_ADD_ACCOUNT_PATH);
+          window.dispatchEvent(new PopStateEvent("popstate"));
+        },
+        true
+      );
+    });
+  };
+
+  const isCustomCopyTradeShellRoute = () => window.location.pathname === "/settings/account";
+
+  const readCustomCopyTradeViewState = () => {
+    const parsed = safeUrl(window.location.href);
+    const params = parsed ? parsed.searchParams : null;
+    const view = params ? String(params.get("view") || "").trim().toLowerCase() : "";
+    const accountId = params ? String(params.get("accountId") || "").trim() : "";
+
+    if (view === KORRA_COPYTRADE_STATS_VIEW && accountId) {
+      return {
+        view: KORRA_COPYTRADE_STATS_VIEW,
+        accountId
+      };
+    }
+
+    return {
+      view: "list",
+      accountId: ""
+    };
+  };
+
+  const navigateEmbeddedPath = (path) => {
+    const nextPath = normalizeEmbeddedPath(path) || path;
+    history.pushState(history.state, "", nextPath);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+
+  const navigateToCustomCopyTradeHome = () => {
+    navigateEmbeddedPath("/settings/account");
+  };
+
+  const navigateToCustomCopyTradeStatistics = (accountId) => {
+    const normalizedAccountId = String(accountId || "").trim();
+    if (!normalizedAccountId) {
+      return;
+    }
+
+    navigateEmbeddedPath(
+      "/settings/account?view=" +
+        encodeURIComponent(KORRA_COPYTRADE_STATS_VIEW) +
+        "&accountId=" +
+        encodeURIComponent(normalizedAccountId)
+    );
+  };
+
+  const navigateToAddAccountFlow = () => {
+    navigateEmbeddedPath(DIRECT_MT5_ADD_ACCOUNT_PATH);
+  };
+
+  const getCustomCopyTradeStore = () => {
+    if (!isObjectRecord(window.__korraCustomCopyTradeStore)) {
+      window.__korraCustomCopyTradeStore = {
+        list: {
+          loading: false,
+          data: null,
+          error: "",
+          fetchedAt: 0,
+          promise: null
+        },
+        details: {}
+      };
+    }
+
+    const store = window.__korraCustomCopyTradeStore;
+    if (!isObjectRecord(store.list)) {
+      store.list = {
+        loading: false,
+        data: null,
+        error: "",
+        fetchedAt: 0,
+        promise: null
+      };
+    }
+    if (!isObjectRecord(store.details)) {
+      store.details = {};
+    }
+
+    return store;
+  };
+
+  const getCustomCopyTradeDetailEntry = (accountId) => {
+    const store = getCustomCopyTradeStore();
+    const normalizedAccountId = String(accountId || "").trim();
+
+    if (!normalizedAccountId) {
+      return {
+        loading: false,
+        data: null,
+        error: "",
+        fetchedAt: 0,
+        promise: null
+      };
+    }
+
+    if (!isObjectRecord(store.details[normalizedAccountId])) {
+      store.details[normalizedAccountId] = {
+        loading: false,
+        data: null,
+        error: "",
+        fetchedAt: 0,
+        promise: null
+      };
+    }
+
+    return store.details[normalizedAccountId];
+  };
+
+  const loadCustomCopyTradeList = (force = false) => {
+    const store = getCustomCopyTradeStore();
+    const listState = store.list;
+    const now = Date.now();
+
+    if (
+      !force &&
+      listState.data &&
+      now - Number(listState.fetchedAt || 0) <= KORRA_COPYTRADE_LIST_CACHE_MS
+    ) {
+      return Promise.resolve(listState.data);
+    }
+
+    if (listState.promise) {
+      return listState.promise;
+    }
+
+    listState.loading = true;
+    listState.error = "";
+    queueEmbeddedUiRefresh();
+
+    const promise = requestLocalJson("/api/copytrade/accounts?includeSummary=1")
+      .then((payload) => {
+        listState.data = payload;
+        listState.fetchedAt = Date.now();
+        listState.error = "";
+        return payload;
+      })
+      .catch((error) => {
+        listState.error = String((error && error.message) || error || "Failed to load accounts.");
+        throw error;
+      })
+      .finally(() => {
+        listState.loading = false;
+        listState.promise = null;
+        queueEmbeddedUiRefresh();
+      });
+
+    listState.promise = promise;
+    return promise;
+  };
+
+  const loadCustomCopyTradeDashboard = (accountId, force = false) => {
+    const entry = getCustomCopyTradeDetailEntry(accountId);
+    const now = Date.now();
+
+    if (
+      !force &&
+      entry.data &&
+      now - Number(entry.fetchedAt || 0) <= KORRA_COPYTRADE_DETAIL_CACHE_MS
+    ) {
+      return Promise.resolve(entry.data);
+    }
+
+    if (entry.promise) {
+      return entry.promise;
+    }
+
+    entry.loading = true;
+    entry.error = "";
+    queueEmbeddedUiRefresh();
+
+    const promise = requestLocalJson(
+      "/api/copytrade/accounts/" + encodeURIComponent(String(accountId || "")) + "/dashboard"
+    )
+      .then((payload) => {
+        entry.data = payload;
+        entry.fetchedAt = Date.now();
+        entry.error = "";
+        return payload;
+      })
+      .catch((error) => {
+        entry.error = String(
+          (error && error.message) || error || "Failed to load account statistics."
+        );
+        throw error;
+      })
+      .finally(() => {
+        entry.loading = false;
+        entry.promise = null;
+        queueEmbeddedUiRefresh();
+      });
+
+    entry.promise = promise;
+    return promise;
+  };
+
+  const escapeHtml = (value) =>
+    String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+
+  const formatCurrencyValue = (value, currency = "USD") => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return "--";
+    }
+
+    const currencyCode = String(currency || "USD").trim().toUpperCase() || "USD";
+    try {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: currencyCode,
+        maximumFractionDigits: 2
+      }).format(numeric);
+    } catch {
+      const absolute = Math.abs(numeric).toFixed(2);
+      return (numeric < 0 ? "-$" : "$") + absolute;
+    }
+  };
+
+  const formatPlainNumber = (value, fractionDigits = 2) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return "--";
+    }
+
+    return numeric.toLocaleString("en-US", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: fractionDigits
+    });
+  };
+
+  const formatDateTimeLabel = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      return "Not synced";
+    }
+
+    try {
+      return new Date(numeric).toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit"
+      });
+    } catch {
+      return "Not synced";
+    }
+  };
+
+  const buildCustomSummaryMap = (payload) => {
+    const items =
+      payload && Array.isArray(payload.summaries) ? payload.summaries : [];
+    const summaryMap = {};
+
+    items.forEach((item) => {
+      if (!isObjectRecord(item)) {
+        return;
+      }
+
+      const accountId = String(item.accountId || "").trim();
+      if (!accountId) {
+        return;
+      }
+
+      summaryMap[accountId] = item;
+    });
+
+    return summaryMap;
+  };
+
+  const findAccountFromPayload = (payload, accountId) => {
+    const accounts = payload && Array.isArray(payload.accounts) ? payload.accounts : [];
+    return (
+      accounts.find((account) => String(account && account.id) === String(accountId || "")) || null
+    );
+  };
+
+  const resolveConnectionState = (account) => {
+    const status = String((account && account.status) || "").trim();
+    if (status === "Connected") {
+      return { label: "Connected", tone: "green" };
+    }
+    if (status === "Error") {
+      return { label: "Error", tone: "red" };
+    }
+    return { label: "Disconnected", tone: "gray" };
+  };
+
+  const resolveTradingState = (account, summaryOrDashboard) => {
+    if (account && account.paused) {
+      return { label: "Paused", tone: "gray" };
+    }
+
+    if (account && account.status !== "Connected") {
+      return { label: "Waiting", tone: "amber" };
+    }
+
+    if (
+      summaryOrDashboard &&
+      typeof summaryOrDashboard.tradeAllowed === "boolean" &&
+      summaryOrDashboard.tradeAllowed === false
+    ) {
+      return { label: "Disabled", tone: "red" };
+    }
+
+    const openPositions = Number(
+      summaryOrDashboard && summaryOrDashboard.openPositionsCount !== undefined
+        ? summaryOrDashboard.openPositionsCount
+        : summaryOrDashboard &&
+            Array.isArray(summaryOrDashboard.openPositions)
+          ? summaryOrDashboard.openPositions.length
+          : 0
+    );
+
+    if (openPositions > 0) {
+      return { label: "Trading", tone: "blue" };
+    }
+
+    return { label: "Ready", tone: "green" };
+  };
+
+  const buildStatusPillMarkup = (label, tone) =>
+    '<span class="korra-copytrade-shell__pill korra-copytrade-shell__pill--' +
+    escapeHtml(tone) +
+    '">' +
+    escapeHtml(label) +
+    "</span>";
+
+  const buildListHeaderMarkup = () =>
+    '<div class="korra-copytrade-shell__toolbar">' +
+    '<div>' +
+    '<div class="korra-copytrade-shell__eyebrow">Copy Trade</div>' +
+    '<div class="korra-copytrade-shell__title">Accounts</div>' +
+    '<div class="korra-copytrade-shell__subtitle">Live MT5 accounts, balances, and trading status.</div>' +
+    "</div>" +
+    '<button class="korra-copytrade-shell__button korra-copytrade-shell__button--primary" data-korra-action="add-account">Add Account</button>' +
+    "</div>";
+
+  const buildStatisticsHeaderMarkup = (account, dashboard) => {
+    const connection = resolveConnectionState(account);
+    const trading = resolveTradingState(account, dashboard);
+    const syncedAt =
+      dashboard && dashboard.lastSyncedAt
+        ? formatDateTimeLabel(dashboard.lastSyncedAt)
+        : formatDateTimeLabel(account && account.lastHeartbeatAt);
+
+    return (
+      '<div class="korra-copytrade-shell__toolbar">' +
+      '<div>' +
+      '<div class="korra-copytrade-shell__eyebrow">Copy Trade / Statistics</div>' +
+      '<div class="korra-copytrade-shell__title">' +
+      escapeHtml(buildCopyTradeDisplayName(account)) +
+      "</div>" +
+      '<div class="korra-copytrade-shell__subtitle">' +
+      escapeHtml(String((account && account.server) || "").trim()) +
+      " / " +
+      escapeHtml(syncedAt) +
+      "</div>" +
+      '<div class="korra-copytrade-shell__statusLine" style="margin-top:10px;">' +
+      buildStatusPillMarkup(connection.label, connection.tone) +
+      buildStatusPillMarkup(trading.label, trading.tone) +
+      "</div>" +
+      "</div>" +
+      '<div style="display:flex; gap:8px; align-items:center;">' +
+      '<button class="korra-copytrade-shell__button" data-korra-action="back-home">All Accounts</button>' +
+      '<button class="korra-copytrade-shell__button korra-copytrade-shell__button--primary" data-korra-action="add-account">Add Account</button>' +
+      "</div>" +
+      "</div>"
+    );
+  };
+
+  const buildCustomCopyTradeListMarkup = () => {
+    const store = getCustomCopyTradeStore();
+    const payload =
+      isObjectRecord(store.list.data) ? store.list.data : null;
+
+    if ((!payload || !Array.isArray(payload.accounts)) && !store.list.loading && !store.list.error) {
+      void loadCustomCopyTradeList();
+    }
+
+    const accounts = payload && Array.isArray(payload.accounts) ? payload.accounts : [];
+    const summaryMap = buildCustomSummaryMap(payload);
+
+    if (!accounts.length && store.list.loading) {
+      return (
+        buildListHeaderMarkup() +
+        '<div class="korra-copytrade-shell__message">Loading accounts...</div>'
+      );
+    }
+
+    if (!accounts.length && store.list.error) {
+      return (
+        buildListHeaderMarkup() +
+        '<div class="korra-copytrade-shell__message korra-copytrade-shell__message--error">' +
+        escapeHtml(store.list.error) +
+        "</div>"
+      );
+    }
+
+    if (!accounts.length) {
+      return (
+        buildListHeaderMarkup() +
+        '<div class="korra-copytrade-shell__empty">No accounts added yet.</div>'
+      );
+    }
+
+    const rows = accounts
+      .map((account) => {
+        const summaryEntry = summaryMap[String(account.id)] || null;
+        const summary =
+          summaryEntry && isObjectRecord(summaryEntry.summary) ? summaryEntry.summary : null;
+        const connection = resolveConnectionState(account);
+        const trading = resolveTradingState(account, summary);
+        const balanceText = summary
+          ? formatCurrencyValue(summary.balance, summary.currency)
+          : "--";
+        const equityText = summary
+          ? "Equity " + formatCurrencyValue(summary.equity, summary.currency)
+          : summaryEntry && typeof summaryEntry.error === "string" && summaryEntry.error.trim()
+            ? summaryEntry.error.trim()
+            : "Awaiting sync";
+        const openPositions = Number(summary && summary.openPositionsCount);
+        const positionsText =
+          Number.isFinite(openPositions) && openPositions > 0
+            ? openPositions + (openPositions === 1 ? " open position" : " open positions")
+            : "No open positions";
+
+        return (
+          '<div class="korra-copytrade-shell__row">' +
+          "<div>" +
+          '<div class="korra-copytrade-shell__name">' +
+          escapeHtml(buildCopyTradeDisplayName(account)) +
+          "</div>" +
+          '<div class="korra-copytrade-shell__meta">' +
+          escapeHtml(String((account && account.server) || "").trim()) +
+          "</div>" +
+          "</div>" +
+          "<div>" +
+          '<div class="korra-copytrade-shell__money">' +
+          escapeHtml(balanceText) +
+          "</div>" +
+          '<div class="korra-copytrade-shell__moneySubtle">' +
+          escapeHtml(equityText) +
+          "</div>" +
+          "</div>" +
+          "<div>" +
+          '<div class="korra-copytrade-shell__statusLine">' +
+          buildStatusPillMarkup(connection.label, connection.tone) +
+          buildStatusPillMarkup(trading.label, trading.tone) +
+          "</div>" +
+          '<div class="korra-copytrade-shell__meta">' +
+          escapeHtml(positionsText) +
+          "</div>" +
+          "</div>" +
+          '<div class="korra-copytrade-shell__rowAction">' +
+          '<button class="korra-copytrade-shell__button" data-korra-action="view-statistics" data-account-id="' +
+          escapeHtml(String(account.id)) +
+          '">Statistics</button>' +
+          "</div>" +
+          "</div>"
+        );
+      })
+      .join("");
+
+    return (
+      buildListHeaderMarkup() +
+      '<div class="korra-copytrade-shell__table">' +
+      '<div class="korra-copytrade-shell__row--head">' +
+      "<div>Account</div>" +
+      "<div>Balance</div>" +
+      "<div>Status</div>" +
+      "<div></div>" +
+      "</div>" +
+      rows +
+      "</div>"
+    );
+  };
+
+  const buildStatisticsMetricMarkup = (label, value) =>
+    '<div class="korra-copytrade-shell__stat">' +
+    '<div class="korra-copytrade-shell__statLabel">' +
+    escapeHtml(label) +
+    "</div>" +
+    '<div class="korra-copytrade-shell__statValue">' +
+    escapeHtml(value) +
+    "</div>" +
+    "</div>";
+
+  const buildStatisticsTableRows = (items, columns) => {
+    if (!items.length) {
+      return (
+        '<tr><td colspan="' +
+        String(columns.length) +
+        '">No data available.</td></tr>'
+      );
+    }
+
+    return items
+      .map((item) => {
+        const cells = columns
+          .map((column) => {
+            const resolvedClassName =
+              typeof column.className === "function"
+                ? column.className(item)
+                : column.className;
+            const className = resolvedClassName
+              ? ' class="' + escapeHtml(resolvedClassName) + '"'
+              : "";
+            return "<td" + className + ">" + column.render(item) + "</td>";
+          })
+          .join("");
+
+        return "<tr>" + cells + "</tr>";
+      })
+      .join("");
+  };
+
+  const buildCustomCopyTradeStatisticsMarkup = (accountId) => {
+    const store = getCustomCopyTradeStore();
+    const listPayload = isObjectRecord(store.list.data) ? store.list.data : null;
+    const accountFromList = findAccountFromPayload(listPayload, accountId);
+    const detailEntry = getCustomCopyTradeDetailEntry(accountId);
+    const detailPayload = isObjectRecord(detailEntry.data) ? detailEntry.data : null;
+    const detailError =
+      detailEntry.error ||
+      (detailPayload && typeof detailPayload.error === "string" ? detailPayload.error : "");
+    const account =
+      (detailPayload && isObjectRecord(detailPayload.account) ? detailPayload.account : null) ||
+      accountFromList;
+    const dashboard =
+      detailPayload && isObjectRecord(detailPayload.dashboard) ? detailPayload.dashboard : null;
+
+    if (!listPayload && !store.list.loading && !store.list.error) {
+      void loadCustomCopyTradeList();
+    }
+
+    if (!detailPayload && !detailEntry.loading && !detailEntry.error) {
+      void loadCustomCopyTradeDashboard(accountId);
+    }
+
+    if (!account && detailEntry.loading) {
+      return (
+        buildStatisticsHeaderMarkup(
+          {
+            id: accountId,
+            login: "",
+            server: "",
+            status: "Disconnected",
+            paused: false
+          },
+          null
+        ) +
+        '<div class="korra-copytrade-shell__message">Loading statistics...</div>'
+      );
+    }
+
+    if (!account) {
+      return (
+        '<div class="korra-copytrade-shell__toolbar">' +
+        '<div>' +
+        '<div class="korra-copytrade-shell__eyebrow">Copy Trade / Statistics</div>' +
+        '<div class="korra-copytrade-shell__title">Account not found</div>' +
+        "</div>" +
+        '<button class="korra-copytrade-shell__button" data-korra-action="back-home">All Accounts</button>' +
+        "</div>" +
+        '<div class="korra-copytrade-shell__message korra-copytrade-shell__message--error">' +
+        escapeHtml(detailError || "The requested account could not be found.") +
+        "</div>"
+      );
+    }
+
+    const header = buildStatisticsHeaderMarkup(account, dashboard);
+    const currency =
+      dashboard && typeof dashboard.currency === "string" && dashboard.currency.trim()
+        ? dashboard.currency
+        : "USD";
+    const balanceText = formatCurrencyValue(dashboard && dashboard.balance, currency);
+    const equityText = formatCurrencyValue(dashboard && dashboard.equity, currency);
+    const freeMarginText = formatCurrencyValue(dashboard && dashboard.freeMargin, currency);
+    const openProfitText = formatCurrencyValue(dashboard && dashboard.netOpenProfit, currency);
+    const closedPnlText = formatCurrencyValue(dashboard && dashboard.dayClosedPnl, currency);
+    const openPositionsCount = Array.isArray(dashboard && dashboard.openPositions)
+      ? dashboard.openPositions.length
+      : 0;
+    const metricsMarkup = dashboard
+      ? '<div class="korra-copytrade-shell__section">' +
+        '<div class="korra-copytrade-shell__sectionTitle">Overview</div>' +
+        '<div class="korra-copytrade-shell__statsGrid">' +
+        buildStatisticsMetricMarkup("Balance", balanceText) +
+        buildStatisticsMetricMarkup("Equity", equityText) +
+        buildStatisticsMetricMarkup("Free Margin", freeMarginText) +
+        buildStatisticsMetricMarkup("Open P/L", openProfitText) +
+        buildStatisticsMetricMarkup("Day Closed P/L", closedPnlText) +
+        buildStatisticsMetricMarkup("Open Positions", String(openPositionsCount)) +
+        "</div>" +
+        "</div>"
+      : "";
+    const errorMarkup =
+      detailError && !dashboard
+        ? '<div class="korra-copytrade-shell__message korra-copytrade-shell__message--error">' +
+          escapeHtml(detailError) +
+          "</div>"
+        : "";
+    const positions = Array.isArray(dashboard && dashboard.openPositions)
+      ? dashboard.openPositions
+      : [];
+    const deals = Array.isArray(dashboard && dashboard.recentDeals) ? dashboard.recentDeals : [];
+    const positionsMarkup =
+      '<div class="korra-copytrade-shell__section">' +
+      '<div class="korra-copytrade-shell__sectionTitle">Open Positions</div>' +
+      '<table class="korra-copytrade-shell__detailTable">' +
+      "<thead><tr><th>Symbol</th><th>Side</th><th>Volume</th><th>Open</th><th>Current</th><th>P/L</th></tr></thead>" +
+      "<tbody>" +
+      buildStatisticsTableRows(positions, [
+        {
+          render: (item) => escapeHtml(String(item.symbol || "N/A"))
+        },
+        {
+          render: (item) => escapeHtml(String(item.side || "N/A"))
+        },
+        {
+          render: (item) => escapeHtml(formatPlainNumber(item.volume, 2))
+        },
+        {
+          render: (item) => escapeHtml(formatPlainNumber(item.openPrice, 5))
+        },
+        {
+          render: (item) => escapeHtml(formatPlainNumber(item.currentPrice, 5))
+        },
+        {
+          className: (item) =>
+            Number(item && item.profit) > 0
+              ? "korra-copytrade-shell__profit--positive"
+              : Number(item && item.profit) < 0
+                ? "korra-copytrade-shell__profit--negative"
+                : "",
+          render: (item) => escapeHtml(formatCurrencyValue(item.profit, currency))
+        }
+      ]) +
+      "</tbody></table></div>";
+    const dealsMarkup =
+      '<div class="korra-copytrade-shell__section">' +
+      '<div class="korra-copytrade-shell__sectionTitle">Recent Deals</div>' +
+      '<table class="korra-copytrade-shell__detailTable">' +
+      "<thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Volume</th><th>P/L</th></tr></thead>" +
+      "<tbody>" +
+      buildStatisticsTableRows(deals, [
+        {
+          render: (item) => escapeHtml(formatDateTimeLabel(item.time))
+        },
+        {
+          render: (item) => escapeHtml(String(item.symbol || "N/A"))
+        },
+        {
+          render: (item) => escapeHtml(String(item.side || "N/A"))
+        },
+        {
+          render: (item) => escapeHtml(formatPlainNumber(item.volume, 2))
+        },
+        {
+          className: (item) =>
+            Number(item && item.profit) > 0
+              ? "korra-copytrade-shell__profit--positive"
+              : Number(item && item.profit) < 0
+                ? "korra-copytrade-shell__profit--negative"
+                : "",
+          render: (item) => escapeHtml(formatCurrencyValue(item.profit, currency))
+        }
+      ]) +
+      "</tbody></table></div>";
+
+    return header + errorMarkup + metricsMarkup + positionsMarkup + dealsMarkup;
+  };
+
+  const ensureCustomCopyTradeShell = () => {
+    let shell = document.getElementById(KORRA_COPYTRADE_SHELL_ID);
+    if (!(shell instanceof HTMLElement)) {
+      shell = document.createElement("div");
+      shell.id = KORRA_COPYTRADE_SHELL_ID;
+      shell.hidden = true;
+      document.body.appendChild(shell);
+    }
+
+    if (shell.dataset.korraBound !== "true") {
+      shell.dataset.korraBound = "true";
+      shell.addEventListener("click", (event) => {
+        const target =
+          event.target instanceof Element
+            ? event.target.closest("[data-korra-action]")
+            : null;
+        if (!(target instanceof HTMLElement)) {
+          return;
+        }
+
+        const action = String(target.dataset.korraAction || "").trim();
+        if (!action) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (action === "add-account") {
+          navigateToAddAccountFlow();
+          return;
+        }
+
+        if (action === "back-home") {
+          navigateToCustomCopyTradeHome();
+          return;
+        }
+
+        if (action === "view-statistics") {
+          navigateToCustomCopyTradeStatistics(target.dataset.accountId || "");
+        }
+      });
+    }
+
+    return shell;
+  };
+
+  const renderCustomCopyTradeShell = () => {
+    const existingShell = document.getElementById(KORRA_COPYTRADE_SHELL_ID);
+    if (!isCustomCopyTradeShellRoute()) {
+      if (existingShell) {
+        existingShell.remove();
+      }
+      document.body.style.background = "#ffffff";
+      return;
+    }
+
+    const shell = ensureCustomCopyTradeShell();
+    const routeState = readCustomCopyTradeViewState();
+    const markup =
+      routeState.view === KORRA_COPYTRADE_STATS_VIEW
+        ? buildCustomCopyTradeStatisticsMarkup(routeState.accountId)
+        : buildCustomCopyTradeListMarkup();
+
+    if (shell.__korraMarkup !== markup) {
+      shell.innerHTML = markup;
+      shell.__korraMarkup = markup;
+    }
+
+    shell.hidden = false;
+    document.body.style.background = "#040404";
   };
 
   const findCommonAncestor = (nodes) => {
@@ -3485,6 +4593,8 @@ const injectedScript = `
     applyLocalAccountUiGuards();
     normalizeMt5ImportMethodLayout();
     ensureInlineMt5ConnectFeedback();
+    redirectBaseAddTradeLinksToMt5();
+    renderCustomCopyTradeShell();
     hidePrimarySidebar();
     hideWrappedPanels();
   };
