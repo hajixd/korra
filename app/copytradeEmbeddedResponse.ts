@@ -2335,17 +2335,12 @@ const injectedScript = `
     const login = String(formData.login || "").trim();
     const password = typeof formData.password === "string" ? formData.password : "";
     const server = String(formData.server || formData.server_id || "").trim();
-    const provider =
-      window.__korraCopyTraderImportAliasState &&
-      window.__korraCopyTraderImportAliasState.mode === "copytrader"
-        ? "local_bridge"
-        : "metaapi";
 
     return {
       login,
       password,
       server,
-      provider,
+      provider: "local_bridge",
       ...collectCopyTradeBridgeSettings()
     };
   };
@@ -2802,11 +2797,7 @@ const injectedScript = `
         writeCopyTradeCredentialDraft(credentialId, {
           id: credentialId,
           broker: COPYTRADE_BRIDGE_BROKER,
-          provider:
-            window.__korraCopyTraderImportAliasState &&
-            window.__korraCopyTraderImportAliasState.mode === "copytrader"
-              ? "local_bridge"
-              : "metaapi",
+          provider: "local_bridge",
           formData: bodyPayload
         });
 
@@ -3035,21 +3026,24 @@ const injectedScript = `
 
   const COPYTRADER_IMPORT_ALIAS_ID = "korra-copytrader-import-alias";
 
-  const getCopyTraderImportAliasState = () => {
-    if (!window.__korraCopyTraderImportAliasState) {
-      window.__korraCopyTraderImportAliasState = {
-        forwarding: false,
-        mode: "",
-        selected: false
-      };
-    }
+  const getEmbeddedBodyText = () => normalizeNodeText(document.body && document.body.textContent);
 
-    return window.__korraCopyTraderImportAliasState;
+  const isMt5ImportMethodScreen = () => {
+    const bodyText = getEmbeddedBodyText();
+    return bodyText.includes("Select Import Method") && bodyText.includes("MetaTrader 5");
+  };
+
+  const isMt5ConnectScreen = () => {
+    const bodyText = getEmbeddedBodyText();
+    return (
+      bodyText.includes("Connect MetaTrader 5") &&
+      (bodyText.includes("Input your MT5 account password") ||
+        bodyText.includes("Input your Investor Password"))
+    );
   };
 
   const shouldInterceptInlineMt5Connect = (url, features) => {
-    const state = getCopyTraderImportAliasState();
-    if (state.mode !== "copytrader") {
+    if (!isMt5ConnectScreen()) {
       return false;
     }
 
@@ -3093,10 +3087,6 @@ const injectedScript = `
 
   const navigateToCopyTradeDashboard = () => {
     clearInlineMt5ConnectState();
-    const aliasState = getCopyTraderImportAliasState();
-    aliasState.mode = "";
-    aliasState.selected = false;
-    aliasState.forwarding = false;
     window.location.assign("/settings/account");
   };
 
@@ -3274,49 +3264,8 @@ const injectedScript = `
       normalizeNodeText(button.textContent).includes(fragment)
     ) || null;
 
-  const syncCopyTraderImportAliasSelection = (autoSyncButton, aliasButton) => {
-    const state = getCopyTraderImportAliasState();
-    const autoSyncSelected =
-      autoSyncButton.classList.contains("c301") ||
-      autoSyncButton.classList.contains("c313");
-
-    if (state.selected && !autoSyncSelected) {
-      state.selected = false;
-    }
-
-    const aliasSelected = state.selected && autoSyncSelected;
-    aliasButton.classList.toggle("c301", aliasSelected);
-    aliasButton.classList.toggle("c313", aliasSelected);
-    aliasButton.setAttribute("aria-pressed", aliasSelected ? "true" : "false");
-
-    if (aliasSelected) {
-      autoSyncButton.classList.remove("c301");
-      autoSyncButton.classList.remove("c313");
-      autoSyncButton.setAttribute("aria-pressed", "false");
-    }
-  };
-
-  const bindCopyTraderImportAliasReset = (button, shouldIgnoreForwardedAutoSyncClick) => {
-    if (!(button instanceof HTMLButtonElement) || button.dataset.korraCopyTraderResetBound === "true") {
-      return;
-    }
-
-    button.dataset.korraCopyTraderResetBound = "true";
-    button.addEventListener("click", () => {
-      const state = getCopyTraderImportAliasState();
-      if (shouldIgnoreForwardedAutoSyncClick && state.forwarding) {
-        return;
-      }
-
-      state.selected = false;
-      state.mode = "";
-      queueEmbeddedUiRefresh();
-    });
-  };
-
-  const ensureCopyTraderImportMethodAlias = () => {
-    const bodyText = normalizeNodeText(document.body && document.body.textContent);
-    if (!bodyText.includes("Select Import Method") || !bodyText.includes("MetaTrader 5")) {
+  const normalizeMt5ImportMethodLayout = () => {
+    if (!isMt5ImportMethodScreen()) {
       return;
     }
 
@@ -3346,67 +3295,15 @@ const injectedScript = `
       button.style.flex = "0 1 148px";
     });
 
-    bindCopyTraderImportAliasReset(autoSyncButton, true);
-    bindCopyTraderImportAliasReset(fileUploadButton, false);
-    bindCopyTraderImportAliasReset(addManuallyButton, false);
-
-    let aliasButton = cardsContainer.querySelector("#" + COPYTRADER_IMPORT_ALIAS_ID);
-    if (!(aliasButton instanceof HTMLButtonElement)) {
-      aliasButton = autoSyncButton.cloneNode(true);
-      aliasButton.id = COPYTRADER_IMPORT_ALIAS_ID;
-      aliasButton.dataset.korraCopyTraderAlias = "true";
-      aliasButton.style.flex = "0 1 148px";
-
-      const recommendationBadge = aliasButton.querySelector(".c303");
-      if (recommendationBadge instanceof HTMLElement) {
-        recommendationBadge.remove();
-      }
-
-      const aliasTitle = Array.from(aliasButton.querySelectorAll("*")).find(
-        (node) => normalizeNodeText(node.textContent) === "Auto-sync"
-      );
-      if (aliasTitle instanceof HTMLElement) {
-        aliasTitle.textContent = "Copy-Trader";
-      }
-
-      const aliasDescription = Array.from(aliasButton.querySelectorAll("*")).find(
-        (node) => normalizeNodeText(node.textContent) === "Connect your broker"
-      );
-      if (aliasDescription instanceof HTMLElement) {
-        aliasDescription.textContent = "Use your copy-trader settings";
-      }
-
-      aliasButton.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-
-        const state = getCopyTraderImportAliasState();
-        state.mode = "copytrader";
-        state.selected = true;
-        state.forwarding = true;
-
-        autoSyncButton.click();
-
-        window.setTimeout(() => {
-          state.forwarding = false;
-          queueEmbeddedUiRefresh();
-        }, 0);
-      });
-
-      cardsContainer.insertBefore(aliasButton, autoSyncButton.nextElementSibling);
+    const aliasButton = cardsContainer.querySelector("#" + COPYTRADER_IMPORT_ALIAS_ID);
+    if (aliasButton instanceof HTMLElement) {
+      aliasButton.remove();
     }
-
-    syncCopyTraderImportAliasSelection(autoSyncButton, aliasButton);
   };
 
   const ensureInlineMt5ConnectFeedback = () => {
     const state = getInlineMt5ConnectState();
-    const bodyText = normalizeNodeText(document.body && document.body.textContent);
-    const isMt5ConnectScreen =
-      bodyText.includes("Connect MetaTrader 5") &&
-      bodyText.includes("Input your MT5 account password");
-
-    if (!isMt5ConnectScreen) {
+    if (!isMt5ConnectScreen()) {
       const staleFeedback = document.getElementById("korra-inline-mt5-feedback");
       if (staleFeedback) {
         staleFeedback.remove();
@@ -3421,18 +3318,11 @@ const injectedScript = `
       }) || null;
 
     if (connectButton instanceof HTMLButtonElement) {
-      if (
-        getCopyTraderImportAliasState().mode === "copytrader" &&
-        connectButton.dataset.korraInlineMt5ClickBound !== "true"
-      ) {
+      if (connectButton.dataset.korraInlineMt5ClickBound !== "true") {
         connectButton.dataset.korraInlineMt5ClickBound = "true";
         connectButton.addEventListener(
           "click",
           (event) => {
-            if (getCopyTraderImportAliasState().mode !== "copytrader") {
-              return;
-            }
-
             event.preventDefault();
             event.stopPropagation();
             if (typeof event.stopImmediatePropagation === "function") {
@@ -3450,19 +3340,11 @@ const injectedScript = `
       }
 
       const connectForm = connectButton.closest("form");
-      if (
-        connectForm instanceof HTMLFormElement &&
-        getCopyTraderImportAliasState().mode === "copytrader" &&
-        connectForm.dataset.korraInlineMt5SubmitBound !== "true"
-      ) {
+      if (connectForm instanceof HTMLFormElement && connectForm.dataset.korraInlineMt5SubmitBound !== "true") {
         connectForm.dataset.korraInlineMt5SubmitBound = "true";
         connectForm.addEventListener(
           "submit",
           (event) => {
-            if (getCopyTraderImportAliasState().mode !== "copytrader") {
-              return;
-            }
-
             event.preventDefault();
             event.stopPropagation();
             if (typeof event.stopImmediatePropagation === "function") {
@@ -3627,7 +3509,7 @@ const injectedScript = `
     persistAuthHeaders();
     enforceEmbeddedRoute();
     applyLocalAccountUiGuards();
-    ensureCopyTraderImportMethodAlias();
+    normalizeMt5ImportMethodLayout();
     ensureInlineMt5ConnectFeedback();
     hidePrimarySidebar();
     hideWrappedPanels();
