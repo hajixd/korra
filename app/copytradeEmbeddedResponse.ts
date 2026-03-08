@@ -2081,12 +2081,844 @@ const injectedScript = `
     };
   };
 
+  const KORRA_SETTINGS_STORAGE_KEY = "korra-settings";
+  const KORRA_COPYTRADE_LABELS_STORAGE_KEY = "korra-copytrade-account-labels";
+  const KORRA_COPYTRADE_CREDENTIAL_PREFIX = "korra-copytrade-credential:";
+  const COPYTRADE_BRIDGE_ACCOUNT_COLOR = "#2563eb";
+  const COPYTRADE_BRIDGE_BROKER = "mt5";
+  const COPYTRADE_BRIDGE_BROKER_NAME = "MetaTrader 5";
+  const COPYTRADE_BRIDGE_DEFAULTS = {
+    symbol: "XAUUSD",
+    timeframe: "15m",
+    lot: 0.01,
+    aggressive: true,
+    chunkBars: 24,
+    dollarsPerMove: 25,
+    tpDollars: 1000,
+    slDollars: 1000,
+    maxConcurrentTrades: 1,
+    stopMode: 0,
+    breakEvenTriggerPct: 50,
+    trailingStartPct: 50,
+    trailingDistPct: 30
+  };
+
+  const isObjectRecord = (value) =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+
+  const parseJsonSafe = (value, fallback = null) => {
+    if (typeof value !== "string") {
+      return fallback;
+    }
+
+    try {
+      return JSON.parse(value);
+    } catch {
+      return fallback;
+    }
+  };
+
+  const parseRequestBody = (body) => {
+    if (body == null) {
+      return null;
+    }
+
+    if (typeof body === "string") {
+      const trimmed = body.trim();
+      if (!trimmed) {
+        return null;
+      }
+
+      const parsed = parseJsonSafe(trimmed, null);
+      return parsed === null ? trimmed : parsed;
+    }
+
+    if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
+      return Object.fromEntries(body.entries());
+    }
+
+    if (typeof FormData !== "undefined" && body instanceof FormData) {
+      const entries = {};
+      body.forEach((value, key) => {
+        if (key in entries) {
+          const previous = entries[key];
+          entries[key] = Array.isArray(previous) ? [...previous, value] : [previous, value];
+          return;
+        }
+        entries[key] = value;
+      });
+      return entries;
+    }
+
+    if (isObjectRecord(body)) {
+      return body;
+    }
+
+    return null;
+  };
+
+  const toIsoStringOrNull = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      return null;
+    }
+
+    try {
+      return new Date(numeric).toISOString();
+    } catch {
+      return null;
+    }
+  };
+
+  const normalizeCopyTradeTimeframe = (value) => {
+    const allowed = new Set(["1m", "5m", "15m", "1H", "4H", "1D", "1W"]);
+    const candidate = typeof value === "string" ? value.trim() : "";
+    return allowed.has(candidate) ? candidate : COPYTRADE_BRIDGE_DEFAULTS.timeframe;
+  };
+
+  const toFiniteNumber = (value, fallback) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : fallback;
+  };
+
+  const clampNumber = (value, min, max, fallback) => {
+    const numeric = toFiniteNumber(value, fallback);
+    return Math.min(max, Math.max(min, numeric));
+  };
+
+  const readCopyTradeAccountLabels = () => {
+    try {
+      const raw = localStorage.getItem(KORRA_COPYTRADE_LABELS_STORAGE_KEY);
+      const parsed = parseJsonSafe(raw, {});
+      return isObjectRecord(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  };
+
+  const writeCopyTradeAccountLabels = (nextLabels) => {
+    try {
+      localStorage.setItem(KORRA_COPYTRADE_LABELS_STORAGE_KEY, JSON.stringify(nextLabels));
+    } catch {
+      // Ignore storage failures for optional display labels.
+    }
+  };
+
+  const setCopyTradeAccountLabel = (accountId, label) => {
+    const normalizedAccountId = String(accountId || "").trim();
+    if (!normalizedAccountId) {
+      return;
+    }
+
+    const nextLabels = { ...readCopyTradeAccountLabels() };
+    const normalizedLabel = String(label || "").trim();
+
+    if (normalizedLabel) {
+      nextLabels[normalizedAccountId] = normalizedLabel;
+    } else {
+      delete nextLabels[normalizedAccountId];
+    }
+
+    writeCopyTradeAccountLabels(nextLabels);
+  };
+
+  const deleteCopyTradeAccountLabel = (accountId) => {
+    const normalizedAccountId = String(accountId || "").trim();
+    if (!normalizedAccountId) {
+      return;
+    }
+
+    const nextLabels = { ...readCopyTradeAccountLabels() };
+    delete nextLabels[normalizedAccountId];
+    writeCopyTradeAccountLabels(nextLabels);
+  };
+
+  const getCopyTradeAccountLabel = (accountId) => {
+    const normalizedAccountId = String(accountId || "").trim();
+    if (!normalizedAccountId) {
+      return "";
+    }
+
+    const labels = readCopyTradeAccountLabels();
+    const raw = labels[normalizedAccountId];
+    return typeof raw === "string" ? raw.trim() : "";
+  };
+
+  const readKorraSettings = () => {
+    try {
+      const raw = localStorage.getItem(KORRA_SETTINGS_STORAGE_KEY);
+      const parsed = parseJsonSafe(raw, {});
+      return isObjectRecord(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  };
+
+  const collectCopyTradeBridgeSettings = () => {
+    const settings = readKorraSettings();
+    return {
+      symbol:
+        typeof settings.selectedSymbol === "string" && settings.selectedSymbol.trim()
+          ? settings.selectedSymbol.trim()
+          : COPYTRADE_BRIDGE_DEFAULTS.symbol,
+      timeframe: normalizeCopyTradeTimeframe(
+        typeof settings.selectedBacktestTimeframe === "string" &&
+          settings.selectedBacktestTimeframe.trim()
+          ? settings.selectedBacktestTimeframe
+          : settings.selectedTimeframe
+      ),
+      lot: clampNumber(settings.lot, 0.01, 100, COPYTRADE_BRIDGE_DEFAULTS.lot),
+      aggressive:
+        typeof settings.aggressive === "boolean"
+          ? settings.aggressive
+          : COPYTRADE_BRIDGE_DEFAULTS.aggressive,
+      chunkBars: clampNumber(
+        settings.chunkBars,
+        8,
+        180,
+        COPYTRADE_BRIDGE_DEFAULTS.chunkBars
+      ),
+      dollarsPerMove: clampNumber(
+        settings.dollarsPerMove,
+        1,
+        5000,
+        COPYTRADE_BRIDGE_DEFAULTS.dollarsPerMove
+      ),
+      tpDollars: clampNumber(
+        settings.tpDollars,
+        1,
+        100000,
+        COPYTRADE_BRIDGE_DEFAULTS.tpDollars
+      ),
+      slDollars: clampNumber(
+        settings.slDollars,
+        1,
+        100000,
+        COPYTRADE_BRIDGE_DEFAULTS.slDollars
+      ),
+      maxConcurrentTrades: clampNumber(
+        settings.maxConcurrentTrades,
+        1,
+        50,
+        COPYTRADE_BRIDGE_DEFAULTS.maxConcurrentTrades
+      ),
+      stopMode: clampNumber(
+        Math.trunc(toFiniteNumber(settings.stopMode, COPYTRADE_BRIDGE_DEFAULTS.stopMode)),
+        0,
+        2,
+        COPYTRADE_BRIDGE_DEFAULTS.stopMode
+      ),
+      breakEvenTriggerPct: clampNumber(
+        settings.breakEvenTriggerPct,
+        0,
+        100,
+        COPYTRADE_BRIDGE_DEFAULTS.breakEvenTriggerPct
+      ),
+      trailingStartPct: clampNumber(
+        settings.trailingStartPct,
+        0,
+        100,
+        COPYTRADE_BRIDGE_DEFAULTS.trailingStartPct
+      ),
+      trailingDistPct: clampNumber(
+        settings.trailingDistPct,
+        0,
+        100,
+        COPYTRADE_BRIDGE_DEFAULTS.trailingDistPct
+      )
+    };
+  };
+
+  const buildCopyTradeAccountPayload = (rawFormData) => {
+    const formData = isObjectRecord(rawFormData) ? rawFormData : {};
+    const login = String(formData.login || "").trim();
+    const password = typeof formData.password === "string" ? formData.password : "";
+    const server = String(formData.server || formData.server_id || "").trim();
+
+    return {
+      login,
+      password,
+      server,
+      ...collectCopyTradeBridgeSettings()
+    };
+  };
+
+  const requestLocalJson = async (path, init = {}) => {
+    if (!nativeFetch) {
+      throw new Error("Native fetch is unavailable in this browser.");
+    }
+
+    const response = await nativeFetch(path, {
+      cache: "no-store",
+      credentials: "same-origin",
+      ...init,
+      headers: {
+        Accept: "application/json",
+        ...(init && init.headers ? init.headers : {})
+      }
+    });
+
+    const responseText = await response.text();
+    const payload = responseText ? parseJsonSafe(responseText, responseText) : null;
+
+    if (!response.ok) {
+      const message =
+        payload && isObjectRecord(payload) && typeof payload.error === "string" && payload.error.trim()
+          ? payload.error.trim()
+          : responseText || "Request failed.";
+      throw new Error(message);
+    }
+
+    return payload;
+  };
+
+  const readCopyTradeCredentialDraft = (credentialId) => {
+    try {
+      const raw = sessionStorage.getItem(KORRA_COPYTRADE_CREDENTIAL_PREFIX + credentialId);
+      const parsed = parseJsonSafe(raw, null);
+      return isObjectRecord(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const writeCopyTradeCredentialDraft = (credentialId, payload) => {
+    try {
+      sessionStorage.setItem(
+        KORRA_COPYTRADE_CREDENTIAL_PREFIX + credentialId,
+        JSON.stringify(payload)
+      );
+    } catch {
+      // Ignore storage failures for short-lived bridge state.
+    }
+  };
+
+  const clearCopyTradeCredentialDraft = (credentialId) => {
+    try {
+      sessionStorage.removeItem(KORRA_COPYTRADE_CREDENTIAL_PREFIX + credentialId);
+    } catch {
+      // Ignore storage failures for short-lived bridge state.
+    }
+  };
+
+  const buildCopyTradeDisplayName = (account) => {
+    const savedLabel = getCopyTradeAccountLabel(account && account.id);
+    if (savedLabel) {
+      return savedLabel;
+    }
+
+    const login = String((account && account.login) || "").trim();
+    const server = String((account && account.server) || "").trim();
+    if (login && server) {
+      return "MT5 " + login + " @ " + server;
+    }
+
+    if (login) {
+      return "MT5 " + login;
+    }
+
+    return COPYTRADE_BRIDGE_BROKER_NAME;
+  };
+
+  const mapCopyTradeAccountToTradezellaAccount = (account, worker) => {
+    const displayName = buildCopyTradeDisplayName(account);
+    const heartbeatMs = Number(account && account.lastHeartbeatAt);
+    const workerLoopMs = Number(worker && worker.loopMs);
+    const nextHeartbeatIso =
+      Number.isFinite(heartbeatMs) &&
+      heartbeatMs > 0 &&
+      Number.isFinite(workerLoopMs) &&
+      workerLoopMs > 0 &&
+      !account.paused
+        ? new Date(heartbeatMs + workerLoopMs).toISOString()
+        : null;
+    const lastSyncIso =
+      toIsoStringOrNull(heartbeatMs) ||
+      toIsoStringOrNull(account && account.lastActionAt) ||
+      toIsoStringOrNull(account && account.updatedAt) ||
+      toIsoStringOrNull(account && account.createdAt);
+    const status = String((account && account.status) || "");
+    const failed = status === "Error";
+    const syncDisconnected = !account.paused && status !== "Connected";
+    const hasOpenPosition = Boolean(account && account.openPosition);
+
+    return {
+      id: String(account.id),
+      account_public_uid: String(account.id),
+      account_name: displayName,
+      name: displayName,
+      account_type: "live",
+      archived: false,
+      active: !account.paused,
+      backtesting: false,
+      trades_editable: true,
+      read_only: false,
+      count: hasOpenPosition ? 1 : 0,
+      running_balance: 0,
+      import_type: "auto_sync",
+      broker: COPYTRADE_BRIDGE_BROKER,
+      external_account_id: String(account.id),
+      external_account_failed: failed,
+      clear_in_progress: false,
+      sync_disconnected: syncDisconnected,
+      disabled: false,
+      failed,
+      can_resync: false,
+      next_manual_resync_time: null,
+      next_sync_time: nextHeartbeatIso,
+      last_sync_time: lastSyncIso,
+      last_sync_for_broker: lastSyncIso,
+      has_trades: hasOpenPosition,
+      has_performance_report: false,
+      profit_calculation_method: "fifo",
+      shared: false,
+      primary: true,
+      color: COPYTRADE_BRIDGE_ACCOUNT_COLOR,
+      trades_count: hasOpenPosition ? 1 : 0,
+      account_size: 0,
+      last_import: null,
+      last_imported_at: lastSyncIso,
+      imports: [],
+      broker_name: COPYTRADE_BRIDGE_BROKER_NAME,
+      display_broker_name: COPYTRADE_BRIDGE_BROKER_NAME,
+      created_at: toIsoStringOrNull(account && account.createdAt) || MOCK_USER.created_at,
+      updated_at: toIsoStringOrNull(account && account.updatedAt) || MOCK_USER.created_at,
+      display_currency: MOCK_USER.display_currency,
+      time_zone: MOCK_USER.time_zone,
+      user_public_uid: MOCK_USER.public_uid
+    };
+  };
+
+  const buildCombinedTradezellaAccounts = async () => {
+    const seed = readBacktestSeed();
+    const seedAccounts = getSeedAccounts(seed);
+
+    try {
+      const copyTradePayload = await requestLocalJson("/api/copytrade/accounts");
+      const liveAccounts = Array.isArray(copyTradePayload && copyTradePayload.accounts)
+        ? copyTradePayload.accounts
+        : [];
+      const mappedAccounts = liveAccounts.map((account) =>
+        mapCopyTradeAccountToTradezellaAccount(account, copyTradePayload && copyTradePayload.worker)
+      );
+      const seenIds = new Set(mappedAccounts.map((account) => String(account.id)));
+
+      return [
+        ...mappedAccounts,
+        ...seedAccounts.filter((account) => !seenIds.has(String(account.id)))
+      ];
+    } catch {
+      return seedAccounts;
+    }
+  };
+
+  const findCopyTradeAccountById = (accounts, accountId) =>
+    accounts.find((account) => String(account && account.id) === String(accountId || "")) || null;
+
+  const findCopyTradeAccountByCredentials = (accounts, login, server) => {
+    const normalizedLogin = String(login || "").trim();
+    const normalizedServer = String(server || "").trim().toLowerCase();
+
+    return (
+      accounts.find(
+        (account) =>
+          String(account && account.login).trim() === normalizedLogin &&
+          String(account && account.server).trim().toLowerCase() === normalizedServer
+      ) || null
+    );
+  };
+
+  const buildMt5ServerSearchResult = (bodyPayload) => {
+    const body = isObjectRecord(bodyPayload) ? bodyPayload : {};
+    const candidates = [
+      body.id,
+      body.search,
+      body.server,
+      body.server_id,
+      body.marketing_name
+    ]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+    const unique = Array.from(new Set(candidates));
+
+    return {
+      servers: unique.map((value) => ({
+        id: value,
+        name: value
+      }))
+    };
+  };
+
+  const buildMt5CredentialPopupUrl = (broker) =>
+    window.location.origin +
+    "/connect-to-broker/callback/" +
+    encodeURIComponent(broker) +
+    "?bridge=korra";
+
+  const buildMt5BrokerAccountCandidates = async (draft) => {
+    const draftPayload = isObjectRecord(draft) ? draft : {};
+    const formData = isObjectRecord(draftPayload.formData) ? draftPayload.formData : {};
+    const login = String(formData.login || "").trim();
+    const server = String(formData.server || formData.server_id || "").trim();
+    const requestedAccountId = String(formData.account_id || "").trim();
+
+    if (!login || !server) {
+      return [];
+    }
+
+    let accounts = [];
+    try {
+      const payload = await requestLocalJson("/api/copytrade/accounts");
+      accounts = Array.isArray(payload && payload.accounts) ? payload.accounts : [];
+    } catch {
+      accounts = [];
+    }
+
+    const matchingAccount =
+      findCopyTradeAccountById(accounts, requestedAccountId) ||
+      findCopyTradeAccountByCredentials(accounts, login, server);
+    const existed = Boolean(requestedAccountId) || Boolean(matchingAccount);
+    const externalId =
+      requestedAccountId ||
+      (matchingAccount ? String(matchingAccount.id) : COPYTRADE_BRIDGE_BROKER + ":" + login + "@" + server);
+    const displayName = matchingAccount
+      ? buildCopyTradeDisplayName(matchingAccount)
+      : "MT5 " + login;
+
+    return [
+      {
+        id: externalId,
+        external_id: externalId,
+        name: displayName,
+        full_name: login + " @ " + server,
+        existed,
+        broker: COPYTRADE_BRIDGE_BROKER
+      }
+    ];
+  };
+
+  const upsertMt5CopyTradeAccount = async (formData) => {
+    const nextPayload = buildCopyTradeAccountPayload(formData);
+
+    if (!nextPayload.login || !nextPayload.password || !nextPayload.server) {
+      throw new Error("TradeCopier requires MT5 login, password, and server.");
+    }
+
+    const copyTradePayload = await requestLocalJson("/api/copytrade/accounts");
+    const accounts = Array.isArray(copyTradePayload && copyTradePayload.accounts)
+      ? copyTradePayload.accounts
+      : [];
+    const requestedAccountId = String((formData && formData.account_id) || "").trim();
+    const accountToUpdate =
+      findCopyTradeAccountById(accounts, requestedAccountId) ||
+      findCopyTradeAccountByCredentials(accounts, nextPayload.login, nextPayload.server);
+
+    if (accountToUpdate) {
+      const updated = await requestLocalJson(
+        "/api/copytrade/accounts/" + encodeURIComponent(String(accountToUpdate.id)),
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(nextPayload)
+        }
+      );
+      return updated && updated.account ? updated.account : accountToUpdate;
+    }
+
+    const created = await requestLocalJson("/api/copytrade/accounts", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(nextPayload)
+    });
+
+    return created && created.account ? created.account : null;
+  };
+
+  const buildMockResponse = (result) => ({
+    status: result.status,
+    statusText: result.statusText,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      ...AUTH_HEADERS
+    },
+    responseText: JSON.stringify(result.payload)
+  });
+
+  const resolveTradezellaBridgeResult = async (input, method, body) => {
+    const parsed = safeUrl(input);
+    const path = parsed ? parsed.pathname : "";
+    const normalizedPath = path.startsWith("/api/") ? path.slice(5) : path;
+    const normalizedSegments = normalizedPath.split("/").filter(Boolean);
+    const bodyPayload = parseRequestBody(body);
+
+    const toErrorResult = (error, fallbackStatus = 400) => ({
+      status: fallbackStatus,
+      statusText: fallbackStatus >= 500 ? "Internal Server Error" : "Bad Request",
+      payload: {
+        error: String((error && error.message) || error || "Something went wrong.")
+      }
+    });
+
+    try {
+      if (normalizedPath === "account/index" || normalizedPath === "trading_accounts") {
+        return {
+          status: 200,
+          statusText: "OK",
+          payload: await buildCombinedTradezellaAccounts()
+        };
+      }
+
+      if (normalizedPath === "account/update" && method === "POST" && isObjectRecord(bodyPayload)) {
+        if (bodyPayload.id !== undefined && bodyPayload.name !== undefined) {
+          setCopyTradeAccountLabel(bodyPayload.id, bodyPayload.name);
+        }
+
+        return {
+          status: 200,
+          statusText: "OK",
+          payload: {
+            success: true
+          }
+        };
+      }
+
+      if (normalizedPath === "account/delete" && method === "POST" && isObjectRecord(bodyPayload)) {
+        const accountId = String(bodyPayload.id || "").trim();
+        if (!accountId) {
+          throw new Error("Missing copy-trade account id.");
+        }
+
+        await requestLocalJson("/api/copytrade/accounts/" + encodeURIComponent(accountId), {
+          method: "DELETE"
+        });
+        deleteCopyTradeAccountLabel(accountId);
+
+        return {
+          status: 200,
+          statusText: "OK",
+          payload: {
+            success: true
+          }
+        };
+      }
+
+      if (normalizedPath === "account/clear" && method === "POST") {
+        return {
+          status: 200,
+          statusText: "OK",
+          payload: {
+            block: true,
+            message: "Trade clearing is disabled for live copy-trade accounts."
+          }
+        };
+      }
+
+      if (normalizedPath === "account/transfer" && method === "POST") {
+        return {
+          status: 200,
+          statusText: "OK",
+          payload: {
+            error: "Trade transfer is not supported for live copy-trade accounts."
+          }
+        };
+      }
+
+      if (normalizedPath === "api_syncs/metatrader/search_servers" && method === "POST") {
+        return {
+          status: 200,
+          statusText: "OK",
+          payload: buildMt5ServerSearchResult(bodyPayload)
+        };
+      }
+
+      if (
+        normalizedSegments[0] === "api_credentials" &&
+        normalizedSegments.length === 2 &&
+        method === "GET"
+      ) {
+        const broker = String(normalizedSegments[1] || "").trim().toLowerCase();
+        if (broker === COPYTRADE_BRIDGE_BROKER) {
+          return {
+            status: 200,
+            statusText: "OK",
+            payload: {
+              url: buildMt5CredentialPopupUrl(broker)
+            }
+          };
+        }
+      }
+
+      if (
+        normalizedPath === "api_credentials" &&
+        method === "POST" &&
+        isObjectRecord(bodyPayload) &&
+        String(bodyPayload.broker || "").trim().toLowerCase() === COPYTRADE_BRIDGE_BROKER
+      ) {
+        const credentialId =
+          "korra-mt5-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+
+        writeCopyTradeCredentialDraft(credentialId, {
+          id: credentialId,
+          broker: COPYTRADE_BRIDGE_BROKER,
+          formData: bodyPayload
+        });
+
+        return {
+          status: 200,
+          statusText: "OK",
+          payload: {
+            api_credential_id: credentialId
+          }
+        };
+      }
+
+      if (
+        normalizedSegments[0] === "api_credentials" &&
+        normalizedSegments.length === 3 &&
+        normalizedSegments[2] === "show_draft_status" &&
+        method === "GET"
+      ) {
+        const credentialId = String(normalizedSegments[1] || "");
+        const draft = readCopyTradeCredentialDraft(credentialId);
+
+        return {
+          status: 200,
+          statusText: "OK",
+          payload: {
+            draft: false,
+            api_credential_id: credentialId,
+            broker: draft && draft.broker ? draft.broker : COPYTRADE_BRIDGE_BROKER
+          }
+        };
+      }
+
+      if (
+        normalizedSegments[0] === "api_credentials" &&
+        normalizedSegments.length === 4 &&
+        normalizedSegments[2] === "external_accounts" &&
+        normalizedSegments[3] === "broker_accounts" &&
+        method === "GET"
+      ) {
+        const credentialId = String(normalizedSegments[1] || "");
+        const draft = readCopyTradeCredentialDraft(credentialId);
+
+        return {
+          status: 200,
+          statusText: "OK",
+          payload: await buildMt5BrokerAccountCandidates(draft)
+        };
+      }
+
+      if (
+        normalizedSegments[0] === "api_credentials" &&
+        normalizedSegments.length === 3 &&
+        normalizedSegments[2] === "external_accounts" &&
+        method === "POST"
+      ) {
+        const credentialId = String(normalizedSegments[1] || "");
+        const draft = readCopyTradeCredentialDraft(credentialId);
+        const draftFormData =
+          draft && isObjectRecord(draft.formData) ? draft.formData : {};
+        const nextFormData = {
+          ...draftFormData,
+          ...(isObjectRecord(bodyPayload) ? bodyPayload : {})
+        };
+
+        await upsertMt5CopyTradeAccount(nextFormData);
+        clearCopyTradeCredentialDraft(credentialId);
+
+        return {
+          status: 200,
+          statusText: "OK",
+          payload: {
+            success: true,
+            message: "MT5 account linked successfully."
+          }
+        };
+      }
+
+      if (
+        normalizedSegments[0] === "external_accounts" &&
+        normalizedSegments.length === 2 &&
+        method === "DELETE"
+      ) {
+        const accountId = String(normalizedSegments[1] || "").trim();
+        if (!accountId) {
+          throw new Error("Missing copy-trade account id.");
+        }
+
+        await requestLocalJson("/api/copytrade/accounts/" + encodeURIComponent(accountId), {
+          method: "DELETE"
+        });
+        deleteCopyTradeAccountLabel(accountId);
+
+        return {
+          status: 200,
+          statusText: "OK",
+          payload: {
+            success: true
+          }
+        };
+      }
+
+      if (
+        normalizedSegments[0] === "external_accounts" &&
+        normalizedSegments.length === 2 &&
+        method === "PUT"
+      ) {
+        return {
+          status: 200,
+          statusText: "OK",
+          payload: {
+            success: true
+          }
+        };
+      }
+    } catch (error) {
+      return toErrorResult(error);
+    }
+
+    return null;
+  };
+
+  const createAsyncMockResponse = async (input, method, body) => {
+    if (isMarketDataProxyRequest(input)) {
+      return createMockResponse(input, method);
+    }
+
+    const bridgeResult = await resolveTradezellaBridgeResult(input, method, body);
+    if (bridgeResult) {
+      return buildMockResponse(bridgeResult);
+    }
+
+    return createMockResponse(input, method);
+  };
+
   const applyLocalAccountUiGuards = () => {
+    const hiddenActionLabels = new Set([
+      "Archive account",
+      "Clear trades",
+      "Transfer data"
+    ]);
+
     document
       .querySelectorAll("button, a, li, [role='menuitem']")
       .forEach((node) => {
         const text = String(node.textContent || "").replace(/\\s+/g, " ").trim();
         if (text === "Delete account") {
+          node.setAttribute("aria-disabled", "true");
+          node.setAttribute("disabled", "true");
+          if (node.style) {
+            node.style.display = "none";
+            node.style.pointerEvents = "none";
+          }
+        }
+
+        if (hiddenActionLabels.has(text)) {
           node.setAttribute("aria-disabled", "true");
           node.setAttribute("disabled", "true");
           if (node.style) {
@@ -2107,6 +2939,25 @@ const injectedScript = `
         }
       });
     }
+
+    document.querySelectorAll("label, span, div, p").forEach((node) => {
+      const text = normalizeNodeText(node.textContent);
+      if (!text) {
+        return;
+      }
+
+      if (text === "Investor Password (read-only)") {
+        node.textContent = "Password";
+        return;
+      }
+
+      if (text.includes("Input your Investor Password.")) {
+        node.textContent = text.replace(
+          "Input your Investor Password.",
+          "Input your MT5 account password."
+        );
+      }
+    });
   };
 
   const normalizeNodeText = (value) =>
@@ -2312,13 +3163,25 @@ const injectedScript = `
 
       if (isTradezellaApiRequest(requestUrl) || isMarketDataProxyRequest(requestUrl)) {
         persistAuthHeaders();
-        const mockResponse = createMockResponse(requestUrl, method.toUpperCase());
-        return Promise.resolve(
-          new Response(mockResponse.responseText, {
-            status: mockResponse.status,
-            statusText: mockResponse.statusText,
-            headers: mockResponse.headers
-          })
+        const bodyPromise =
+          init && Object.prototype.hasOwnProperty.call(init, "body")
+            ? Promise.resolve(init.body)
+            : typeof Request !== "undefined" && input instanceof Request
+              ? input
+                  .clone()
+                  .text()
+                  .catch(() => null)
+              : Promise.resolve(null);
+
+        return bodyPromise.then((requestBody) =>
+          createAsyncMockResponse(requestUrl, method.toUpperCase(), requestBody).then(
+            (mockResponse) =>
+              new Response(mockResponse.responseText, {
+                status: mockResponse.status,
+                statusText: mockResponse.statusText,
+                headers: mockResponse.headers
+              })
+          )
         );
       }
 
@@ -2415,12 +3278,14 @@ const injectedScript = `
 
     send(body) {
       if (this._shortCircuit) {
-        this._setMockResponse(createMockResponse(this._url, this._method));
-        window.setTimeout(() => {
-          this._emit("readystatechange", new Event("readystatechange"));
-          this._emit("load", new Event("load"));
-          this._emit("loadend", new Event("loadend"));
-        }, 0);
+        createAsyncMockResponse(this._url, this._method, body).then((mockResponse) => {
+          this._setMockResponse(mockResponse);
+          window.setTimeout(() => {
+            this._emit("readystatechange", new Event("readystatechange"));
+            this._emit("load", new Event("load"));
+            this._emit("loadend", new Event("loadend"));
+          }, 0);
+        });
         return;
       }
 
