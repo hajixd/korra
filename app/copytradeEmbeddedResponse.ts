@@ -4983,10 +4983,14 @@ const injectedScript = `
     if (shell.dataset.korraBound !== "true") {
       shell.dataset.korraBound = "true";
       shell.addEventListener("click", (event) => {
-        const target =
-          event.target instanceof Element
-            ? event.target.closest("[data-korra-action]")
-            : null;
+        const eventTarget = event.target;
+        const targetElement =
+          eventTarget instanceof Element
+            ? eventTarget
+            : eventTarget && eventTarget.parentElement instanceof Element
+              ? eventTarget.parentElement
+              : null;
+        const target = targetElement ? targetElement.closest("[data-korra-action]") : null;
         if (!(target instanceof HTMLElement)) {
           return;
         }
@@ -5250,6 +5254,7 @@ const injectedScript = `
 
   rememberEmbeddedPath(window.location.href);
   refreshEmbeddedUi();
+  window.addEventListener("popstate", queueEmbeddedUiRefresh);
 
   if (
     window.CanvasRenderingContext2D &&
