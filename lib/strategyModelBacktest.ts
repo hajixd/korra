@@ -229,7 +229,7 @@ const computeSmartMoneySeasons = (candles: CandleLike[], soft = 20, sharp = 40):
   let previous: string | null = null;
 
   for (let index = 0; index < candles.length; index += 1) {
-    let current = previous;
+    let current: string | null = previous;
     const bullSoft = index > soft ? bullishBreakOfStructure(candles, index, soft) : false;
     const bearSoft = index > soft ? bearishBreakOfStructure(candles, index, soft) : false;
     const bullSharp = index > sharp ? bullishBreakOfStructure(candles, index, sharp) : false;
@@ -265,7 +265,7 @@ const computeMomentumTimeOfDay = (candles: CandleLike[]): Array<string | null> =
   let previous: string | null = null;
 
   for (let index = 0; index < candles.length; index += 1) {
-    let current = previous;
+    let current: string | null = previous;
     const closeValue = closeMinusMa[index];
     const squeezeValue = squeezeMinusMa[index];
 

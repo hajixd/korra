@@ -2138,6 +2138,7 @@ type BacktestSettingsSnapshot = {
   breakEvenTriggerPct: number;
   trailingStartPct: number;
   trailingDistPct: number;
+  maxBarsInTrade: number;
   maxConcurrentTrades: number;
   aiModelStates: Record<string, AiModelState>;
   aiFeatureLevels: Record<string, AiFeatureLevel>;
@@ -2534,16 +2535,18 @@ const parseStrategyBacktestSpec = (value: unknown): StrategyBacktestSpec | null 
       return null;
     }
 
-    const longExit = value.exit.long == null ? undefined : parseStrategyBacktestDirectionalChecks(value.exit.long);
-    const shortExit = value.exit.short == null ? undefined : parseStrategyBacktestDirectionalChecks(value.exit.short);
+    const parsedLongExit =
+      value.exit.long == null ? undefined : parseStrategyBacktestDirectionalChecks(value.exit.long);
+    const parsedShortExit =
+      value.exit.short == null ? undefined : parseStrategyBacktestDirectionalChecks(value.exit.short);
 
-    if ((value.exit.long != null && !longExit) || (value.exit.short != null && !shortExit)) {
+    if ((value.exit.long != null && !parsedLongExit) || (value.exit.short != null && !parsedShortExit)) {
       return null;
     }
 
     exit = {
-      long: longExit,
-      short: shortExit
+      long: parsedLongExit ?? undefined,
+      short: parsedShortExit ?? undefined
     };
   }
 
@@ -7137,6 +7140,7 @@ const doesBacktestHistoryGenerationInputChange = (
   if (previous.breakEvenTriggerPct !== next.breakEvenTriggerPct) return true;
   if (previous.trailingStartPct !== next.trailingStartPct) return true;
   if (previous.trailingDistPct !== next.trailingDistPct) return true;
+  if (previous.maxBarsInTrade !== next.maxBarsInTrade) return true;
   if (previous.maxConcurrentTrades !== next.maxConcurrentTrades) return true;
   return false;
 };
@@ -7493,6 +7497,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     breakEvenTriggerPct,
     trailingStartPct,
     trailingDistPct,
+    maxBarsInTrade,
     maxConcurrentTrades,
     aiModelStates: { ...aiModelStates },
     aiFeatureLevels: { ...aiFeatureLevels },
