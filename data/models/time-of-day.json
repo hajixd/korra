@@ -1,37 +1,64 @@
 {
   "id": "time-of-day",
   "name": "Time of Day",
-  "kind": "Model",
-  "modelKind": "timeOfDay",
   "aliases": [
     "session flow",
     "session timing",
     "intraday clock edge"
   ],
   "description": "Session-aware model that trades repeatable opening-drive, sweep, or reversion behavior inside defined intraday windows.",
-  "primaryStrategyId": "session-flow",
-  "risk": {
-    "minPct": 0.0012,
-    "maxPct": 0.0038
+  "entry": {
+    "context": [
+      "Define exact clock windows before the session begins.",
+      "Map Asia high and low, London open, New York open, and prior session extremes.",
+      "Decide whether the window is for breakout or reversion before price arrives."
+    ],
+    "setup": [
+      "Price reaches the level or range expected for that session window.",
+      "A liquidity sweep or opening drive forms at the planned time.",
+      "Session behavior matches the repeatable pattern you trade."
+    ],
+    "trigger": [
+      "Break of opening range for expansion setups.",
+      "Reclaim of a swept level for reversal setups.",
+      "Enter only inside the active session window, never after it is gone."
+    ],
+    "confirmation": [
+      "Volume and range pick up during the planned window.",
+      "Price respects the session level after trigger.",
+      "No conflicting macro release is seconds away."
+    ],
+    "invalidation": [
+      "The session window closes without expansion.",
+      "Price accepts on the wrong side of the key session level.",
+      "Opening range direction flips and holds against the idea."
+    ],
+    "noTrade": [
+      "You missed the planned time window.",
+      "The setup depends on news randomness instead of repeatable session behavior.",
+      "Spread and slippage are too high around the session open."
+    ]
   },
-  "reward": {
-    "rrMin": 1.25,
-    "rrMax": 2.35
-  },
-  "bias": {
-    "longBias": 0.5,
-    "winRate": 0.57
-  },
-  "preferredSessions": ["Asia", "London", "New York"],
-  "preferredTimeframes": ["1m", "5m", "15m"],
-  "entryFocus": [
-    "Time-window specific setup",
-    "Opening range or sweep behavior",
-    "Session liquidity confirms the move"
-  ],
-  "exitFocus": [
-    "Take profit before the edge decays",
-    "Flatten when the time window closes",
-    "Exit if price cannot hold the session level"
-  ]
+  "exit": {
+    "stopLoss": [
+      "Hide stop beyond the session level or sweep extreme.",
+      "Use tighter stops for open-drive setups and wider structure stops for sweep reclaims.",
+      "If the session volatility makes the invalidation too wide, skip the trade."
+    ],
+    "takeProfit": [
+      "Target the opposite side of the opening range, ADR objective, or prior session high or low.",
+      "Take partials quickly on time-sensitive setups.",
+      "Keep runners only while session momentum remains intact."
+    ],
+    "timeExit": [
+      "Exit by the end of the planned session window.",
+      "Flatten before lunch or rollover if the setup was open-drive based.",
+      "Close before liquidity dies if price stalls."
+    ],
+    "earlyExit": [
+      "The session level fails immediately after entry.",
+      "Price cannot hold above or below the opening range.",
+      "The time window expires with no continuation."
+    ]
+  }
 }

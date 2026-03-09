@@ -1955,7 +1955,6 @@ type ModelProfile = {
   kind: "Person" | "Model";
   accountNumber?: string;
   modelKind: ReplayModelKind;
-  strategyId?: string;
   riskMin: number;
   riskMax: number;
   rrMin: number;
@@ -3334,7 +3333,6 @@ const buildModelProfiles = (aiZipModelNames: string[]): ModelProfile[] => {
             name: catalogProfile.name,
             kind: "Model",
             modelKind: catalogProfile.modelKind,
-            strategyId: catalogProfile.strategyId,
             riskMin: catalogProfile.riskMin,
             riskMax: catalogProfile.riskMax,
             rrMin: catalogProfile.rrMin,

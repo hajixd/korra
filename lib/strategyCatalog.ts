@@ -4,12 +4,6 @@ import seasonsModel from "../data/models/seasons.json";
 import timeOfDayModel from "../data/models/time-of-day.json";
 import fibonacciModel from "../data/models/fibonacci.json";
 import supportResistanceModel from "../data/models/support-resistance.json";
-import momentumBreakoutStrategy from "../data/strategies/momentum-breakout.json";
-import meanReversionFadeStrategy from "../data/strategies/mean-reversion-fade.json";
-import seasonalCycleBiasStrategy from "../data/strategies/seasonal-cycle-bias.json";
-import sessionFlowStrategy from "../data/strategies/session-flow.json";
-import fibonacciPullbackStrategy from "../data/strategies/fibonacci-pullback.json";
-import supportResistanceReactionStrategy from "../data/strategies/support-resistance-reaction.json";
 
 export type StrategyModelKind =
   | "momentum"
@@ -19,33 +13,7 @@ export type StrategyModelKind =
   | "fibonacci"
   | "supportResistance";
 
-export type StrategyModelCatalogEntry = {
-  id: string;
-  name: string;
-  kind: "Model";
-  modelKind: StrategyModelKind;
-  aliases: string[];
-  description: string;
-  primaryStrategyId: string;
-  risk: {
-    minPct: number;
-    maxPct: number;
-  };
-  reward: {
-    rrMin: number;
-    rrMax: number;
-  };
-  bias: {
-    longBias: number;
-    winRate: number;
-  };
-  preferredSessions: string[];
-  preferredTimeframes: string[];
-  entryFocus: string[];
-  exitFocus: string[];
-};
-
-type StrategyPhaseSpec = {
+export type StrategyEntrySpec = {
   context: string[];
   setup: string[];
   trigger: string[];
@@ -54,42 +22,26 @@ type StrategyPhaseSpec = {
   noTrade: string[];
 };
 
-type StrategyExitSpec = {
+export type StrategyExitSpec = {
   stopLoss: string[];
   takeProfit: string[];
-  management: string[];
   timeExit: string[];
   earlyExit: string[];
 };
 
-type StrategyRiskSpec = {
-  riskPerTrade: string;
-  rrTarget: string;
-  maxConcurrentTrades: number;
-  sizing: string[];
-  exposureLimits: string[];
-};
-
-export type StrategyTemplate = {
+export type StrategyModelCatalogEntry = {
   id: string;
-  modelId: string;
   name: string;
-  summary: string;
-  marketConditions: string[];
-  sessionFocus: string[];
-  timeframeBias: string[];
-  entry: StrategyPhaseSpec;
+  aliases: string[];
+  description: string;
+  entry: StrategyEntrySpec;
   exit: StrategyExitSpec;
-  risk: StrategyRiskSpec;
-  journaling: string[];
-  assistantPrompts: string[];
 };
 
 export type StrategyRuntimeModelProfile = {
   id: string;
   name: string;
   modelKind: StrategyModelKind;
-  strategyId: string;
   riskMin: number;
   riskMax: number;
   rrMin: number;
@@ -107,17 +59,103 @@ const MODEL_SOURCES = [
   supportResistanceModel
 ] as const;
 
-const STRATEGY_SOURCES = [
-  momentumBreakoutStrategy,
-  meanReversionFadeStrategy,
-  seasonalCycleBiasStrategy,
-  sessionFlowStrategy,
-  fibonacciPullbackStrategy,
-  supportResistanceReactionStrategy
-] as const;
+const MODEL_KIND_BY_ID: Record<string, StrategyModelKind> = {
+  momentum: "momentum",
+  "mean-reversion": "meanReversion",
+  seasons: "seasons",
+  "time-of-day": "timeOfDay",
+  fibonacci: "fibonacci",
+  "support-resistance": "supportResistance"
+};
+
+const MODEL_RUNTIME_DEFAULTS: Record<
+  StrategyModelKind,
+  Omit<StrategyRuntimeModelProfile, "id" | "name" | "modelKind">
+> = {
+  momentum: {
+    riskMin: 0.0014,
+    riskMax: 0.0044,
+    rrMin: 1.45,
+    rrMax: 3.1,
+    longBias: 0.56,
+    winRate: 0.58
+  },
+  meanReversion: {
+    riskMin: 0.0011,
+    riskMax: 0.0036,
+    rrMin: 1.2,
+    rrMax: 2.4,
+    longBias: 0.5,
+    winRate: 0.6
+  },
+  seasons: {
+    riskMin: 0.0013,
+    riskMax: 0.004,
+    rrMin: 1.35,
+    rrMax: 2.5,
+    longBias: 0.52,
+    winRate: 0.54
+  },
+  timeOfDay: {
+    riskMin: 0.0012,
+    riskMax: 0.0038,
+    rrMin: 1.25,
+    rrMax: 2.35,
+    longBias: 0.5,
+    winRate: 0.57
+  },
+  fibonacci: {
+    riskMin: 0.0012,
+    riskMax: 0.0039,
+    rrMin: 1.4,
+    rrMax: 2.8,
+    longBias: 0.53,
+    winRate: 0.56
+  },
+  supportResistance: {
+    riskMin: 0.0013,
+    riskMax: 0.0042,
+    rrMin: 1.35,
+    rrMax: 2.7,
+    longBias: 0.52,
+    winRate: 0.59
+  }
+};
+
+const MODEL_CLARIFYING_QUESTIONS: Record<StrategyModelKind, string[]> = {
+  momentum: [
+    "Which timeframe defines the breakout or retest trigger?",
+    "What exact close or candle behavior confirms continuation for you?",
+    "What price behavior makes you exit before the breakout fails?"
+  ],
+  meanReversion: [
+    "How do you define overextended: structure, VWAP distance, or another stretch measure?",
+    "What reclaim or rejection confirms the fade entry?",
+    "What tells you the extreme is failing instead of continuing?"
+  ],
+  seasons: [
+    "Which seasonal pattern are you relying on: session, weekday, or monthly behavior?",
+    "What current price structure must confirm that cycle before entry?",
+    "When does the seasonal window end so the trade must be closed?"
+  ],
+  timeOfDay: [
+    "What exact session window triggers the setup?",
+    "Is the entry a breakout of the opening range or a reclaim after a sweep?",
+    "What is the hard time-based exit if nothing develops?"
+  ],
+  fibonacci: [
+    "Which swing anchors define the Fibonacci leg?",
+    "What level or confluence do you need before entry is valid?",
+    "What price action tells you the pullback has failed and the trade is over?"
+  ],
+  supportResistance: [
+    "Which level type matters here: daily, weekly, session, or intraday structure?",
+    "Are you trading the rejection, the reclaim, or the breakout hold?",
+    "What acceptance through the zone forces an immediate exit?"
+  ]
+};
 
 export const STRATEGY_MODEL_CATALOG = MODEL_SOURCES as readonly StrategyModelCatalogEntry[];
-export const STRATEGY_TEMPLATES = STRATEGY_SOURCES as readonly StrategyTemplate[];
 export const DEFAULT_STRATEGY_MODEL_NAMES = STRATEGY_MODEL_CATALOG.map((entry) => entry.name);
 
 const normalizeLookupKey = (value: string): string => {
@@ -129,7 +167,6 @@ const normalizeLookupKey = (value: string): string => {
     .trim();
 };
 
-const strategyTemplateById = new Map(STRATEGY_TEMPLATES.map((entry) => [entry.id, entry]));
 const modelCatalogLookup = new Map<string, StrategyModelCatalogEntry>();
 
 for (const entry of STRATEGY_MODEL_CATALOG) {
@@ -139,14 +176,6 @@ for (const entry of STRATEGY_MODEL_CATALOG) {
     modelCatalogLookup.set(normalizeLookupKey(alias), entry);
   }
 }
-
-export const resolveStrategyTemplate = (strategyId: string): StrategyTemplate | null => {
-  if (!strategyId) {
-    return null;
-  }
-
-  return strategyTemplateById.get(strategyId) ?? null;
-};
 
 export const resolveStrategyModelCatalogEntry = (
   value: string
@@ -160,14 +189,8 @@ export const resolveStrategyModelCatalogEntry = (
   return modelCatalogLookup.get(key) ?? null;
 };
 
-export const resolveStrategyTemplateForModel = (value: string): StrategyTemplate | null => {
-  const model = resolveStrategyModelCatalogEntry(value);
-
-  if (!model) {
-    return null;
-  }
-
-  return resolveStrategyTemplate(model.primaryStrategyId);
+const resolveStrategyModelKind = (modelId: string): StrategyModelKind | null => {
+  return MODEL_KIND_BY_ID[modelId] ?? null;
 };
 
 export const resolveStrategyRuntimeModelProfile = (
@@ -179,18 +202,42 @@ export const resolveStrategyRuntimeModelProfile = (
     return null;
   }
 
+  const modelKind = resolveStrategyModelKind(model.id);
+
+  if (!modelKind) {
+    return null;
+  }
+
   return {
     id: model.id,
     name: model.name,
-    modelKind: model.modelKind,
-    strategyId: model.primaryStrategyId,
-    riskMin: model.risk.minPct,
-    riskMax: model.risk.maxPct,
-    rrMin: model.reward.rrMin,
-    rrMax: model.reward.rrMax,
-    longBias: model.bias.longBias,
-    winRate: model.bias.winRate
+    modelKind,
+    ...MODEL_RUNTIME_DEFAULTS[modelKind]
   };
+};
+
+export const buildStrategyClarifyingQuestions = (value: string): string[] => {
+  const model = resolveStrategyModelCatalogEntry(value);
+
+  if (!model) {
+    return [
+      "Which timeframe defines the entry trigger?",
+      "What exact price behavior confirms the setup?",
+      "What price event forces the exit before target?"
+    ];
+  }
+
+  const modelKind = resolveStrategyModelKind(model.id);
+
+  if (!modelKind) {
+    return [
+      "Which timeframe defines the entry trigger?",
+      "What exact price behavior confirms the setup?",
+      "What price event forces the exit before target?"
+    ];
+  }
+
+  return MODEL_CLARIFYING_QUESTIONS[modelKind];
 };
 
 const previewList = (values: readonly string[], limit = 2): string => {
@@ -199,21 +246,17 @@ const previewList = (values: readonly string[], limit = 2): string => {
 
 export const buildStrategyCatalogPromptContext = (): string => {
   return STRATEGY_MODEL_CATALOG.map((model) => {
-    const strategy = resolveStrategyTemplate(model.primaryStrategyId);
-    const lines = [
+    return [
       `Model ${model.name} [${model.id}]`,
       `Description: ${model.description}`,
-      `Risk: ${(model.risk.minPct * 100).toFixed(2)}% to ${(model.risk.maxPct * 100).toFixed(2)}%; RR ${model.reward.rrMin.toFixed(2)} to ${model.reward.rrMax.toFixed(2)}`,
-      `Entry focus: ${previewList(model.entryFocus, 3)}`,
-      `Exit focus: ${previewList(model.exitFocus, 3)}`
-    ];
-
-    if (strategy) {
-      lines.push(
-        `Strategy ${strategy.name}: market ${previewList(strategy.marketConditions)} | trigger ${previewList(strategy.entry.trigger)} | management ${previewList(strategy.exit.management)}`
-      );
-    }
-
-    return lines.join("\n");
+      `Entry context: ${previewList(model.entry.context, 2)}`,
+      `Entry trigger: ${previewList(model.entry.trigger, 2)}`,
+      `Entry confirmation: ${previewList(model.entry.confirmation, 2)}`,
+      `Entry invalidation: ${previewList(model.entry.invalidation, 2)}`,
+      `Exit stop: ${previewList(model.exit.stopLoss, 2)}`,
+      `Exit take profit: ${previewList(model.exit.takeProfit, 2)}`,
+      `Exit time: ${previewList(model.exit.timeExit, 2)}`,
+      `Exit early: ${previewList(model.exit.earlyExit, 2)}`
+    ].join("\n");
   }).join("\n\n");
 };

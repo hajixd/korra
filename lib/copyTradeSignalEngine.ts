@@ -39,7 +39,6 @@ type ModelProfile = {
   id: string;
   name: string;
   modelKind: ReplayModelKind;
-  strategyId?: string;
   riskMin: number;
   riskMax: number;
   rrMin: number;
@@ -128,7 +127,6 @@ const buildModelProfiles = (aiZipModelNames: string[]): ModelProfile[] => {
             id: catalogProfile.id,
             name: catalogProfile.name,
             modelKind: catalogProfile.modelKind,
-            strategyId: catalogProfile.strategyId,
             riskMin: catalogProfile.riskMin,
             riskMax: catalogProfile.riskMax,
             rrMin: catalogProfile.rrMin,

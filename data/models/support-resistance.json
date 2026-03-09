@@ -1,37 +1,64 @@
 {
   "id": "support-resistance",
   "name": "Support / Resistance",
-  "kind": "Model",
-  "modelKind": "supportResistance",
   "aliases": [
     "support resistance",
     "s/r",
     "level reaction"
   ],
   "description": "Level-reaction model that trades clean break, reclaim, or rejection behavior around well-defined support and resistance zones.",
-  "primaryStrategyId": "support-resistance-reaction",
-  "risk": {
-    "minPct": 0.0013,
-    "maxPct": 0.0042
+  "entry": {
+    "context": [
+      "Mark daily and weekly highs, lows, prior session levels, and untouched reaction zones.",
+      "Prefer levels with liquidity or repeated reactions, not random midrange points.",
+      "Know whether you want a breakout continuation or rejection before price touches the level."
+    ],
+    "setup": [
+      "Price approaches a defined support or resistance with clean swings.",
+      "A sweep or rejection occurs at the level.",
+      "Structure around the level compresses enough to define invalidation."
+    ],
+    "trigger": [
+      "Enter on reclaim of support or failure below resistance for rejection trades.",
+      "Enter on close and hold beyond the level for breakout trades.",
+      "Execute only when the level reaction is obvious and invalidation is defined."
+    ],
+    "confirmation": [
+      "Multiple touches or volume make the level meaningful.",
+      "Wick rejection or closing behavior confirms the response at the level.",
+      "The next path of price is open enough for the trade to develop."
+    ],
+    "invalidation": [
+      "Price accepts through the level and holds.",
+      "The level breaks with range expansion against the thesis.",
+      "Reaction stays noisy and whipsaws both sides of the zone."
+    ],
+    "noTrade": [
+      "The level is already overused and reactions are decaying.",
+      "Another stronger level sits too close behind entry.",
+      "The approach is messy with no clean boundary."
+    ]
   },
-  "reward": {
-    "rrMin": 1.35,
-    "rrMax": 2.7
-  },
-  "bias": {
-    "longBias": 0.52,
-    "winRate": 0.59
-  },
-  "preferredSessions": ["London", "New York"],
-  "preferredTimeframes": ["5m", "15m", "4H"],
-  "entryFocus": [
-    "Reaction at a well-defined level",
-    "Sweep, reclaim, or breakout hold",
-    "Clear risk boundary around the zone"
-  ],
-  "exitFocus": [
-    "Target next level or liquidity pool",
-    "Scale once price leaves the zone",
-    "Exit fast if price accepts back through the level"
-  ]
+  "exit": {
+    "stopLoss": [
+      "Place stop beyond the far side of the zone or sweep extreme.",
+      "Use the full zone width to judge whether the trade is valid.",
+      "If the zone is too wide, skip the setup."
+    ],
+    "takeProfit": [
+      "Target the next clear level or liquidity pool.",
+      "Pay partials quickly on countertrend reactions.",
+      "Hold the rest only if breakout acceptance or clean rejection continuation develops."
+    ],
+    "timeExit": [
+      "Close if price cannot leave the zone quickly.",
+      "Flatten before session close if the trade depends on active liquidity.",
+      "Do not carry a level reaction after the level has already been consumed."
+    ],
+    "earlyExit": [
+      "The zone is retaken with conviction.",
+      "A breakout retest fails immediately.",
+      "Repeated tests erode the reaction edge after entry."
+    ]
+  }
 }

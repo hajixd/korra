@@ -19,9 +19,9 @@ import {
 } from "../../../../lib/assistant-tools";
 import {
   STRATEGY_MODEL_CATALOG,
+  buildStrategyClarifyingQuestions,
   buildStrategyCatalogPromptContext,
-  resolveStrategyModelCatalogEntry,
-  resolveStrategyTemplate
+  resolveStrategyModelCatalogEntry
 } from "../../../../lib/strategyCatalog";
 
 type ChatTurn = {
@@ -218,16 +218,11 @@ type StrategyDraft = {
   name: string;
   matchedModelId: string;
   matchedModelName: string;
-  matchedStrategyId: string;
-  matchedStrategyName: string;
   summary: string;
-  marketConditions: string[];
   entryChecklist: string[];
   confirmationSignals: string[];
   invalidationSignals: string[];
   exitChecklist: string[];
-  managementRules: string[];
-  riskRules: string[];
   missingDetails: string[];
   draftJson: Record<string, unknown>;
 };
@@ -457,10 +452,11 @@ const INDICATOR_CODING_PROMPT = [
 
 const STRATEGY_DRAFT_PROMPT = [
   "Return only JSON with this shape:",
-  '{"name":string,"matchedModelId":string,"matchedStrategyId":string,"summary":string,"marketConditions":[string],"entryChecklist":[string],"confirmationSignals":[string],"invalidationSignals":[string],"exitChecklist":[string],"managementRules":[string],"riskRules":[string],"missingDetails":[string],"draftJson":{"name":string,"modelId":string,"strategyId":string,"thesis":string,"marketConditions":[string],"entry":{"context":[string],"setup":[string],"trigger":[string],"confirmation":[string],"invalidation":[string],"noTrade":[string]},"exit":{"stopLoss":[string],"takeProfit":[string],"management":[string],"timeExit":[string],"earlyExit":[string]},"risk":{"riskPerTrade":string,"rrTarget":string,"maxConcurrentTrades":number,"sizing":[string],"exposureLimits":[string]},"notes":[string]}}',
+  '{"name":string,"matchedModelId":string,"summary":string,"entryChecklist":[string],"confirmationSignals":[string],"invalidationSignals":[string],"exitChecklist":[string],"missingDetails":[string],"draftJson":{"name":string,"modelId":string,"thesis":string,"entry":{"context":[string],"setup":[string],"trigger":[string],"confirmation":[string],"invalidation":[string],"noTrade":[string]},"exit":{"stopLoss":[string],"takeProfit":[string],"timeExit":[string],"earlyExit":[string]},"notes":[string]}}',
   "Turn the user's strategy description into a concrete trading playbook draft.",
-  "Choose the closest model and strategy from the provided catalog, then tailor it to the user's wording.",
-  "Cover entry and exit completely: context, setup, trigger, confirmation, invalidation, no-trade filters, stop, targets, management, and time-based exits.",
+  "Choose the closest model from the provided catalog, then tailor it to the user's wording.",
+  "Cover entry and exit completely: context, setup, trigger, confirmation, invalidation, no-trade filters, stop, targets, time-based exits, and early exits.",
+  "Do not add risk management sections or extra strategy layers.",
   "If details are missing, make conservative assumptions and list the missing details explicitly.",
   "Keep the language direct and execution-focused.",
   "Do not include markdown or commentary outside the JSON."
@@ -3958,11 +3954,9 @@ const normalizeStrategyDraft = (input: unknown): StrategyDraft | null => {
 
   const raw = input as Record<string, unknown>;
   const matchedModelId = toText(raw.matchedModelId, "");
-  const matchedStrategyId = toText(raw.matchedStrategyId, "");
   const matchedModel = resolveStrategyModelCatalogEntry(matchedModelId);
-  const matchedStrategy = matchedStrategyId ? resolveStrategyTemplate(matchedStrategyId) : null;
 
-  if (!matchedModel || !matchedStrategy) {
+  if (!matchedModel) {
     return null;
   }
 
@@ -3972,19 +3966,14 @@ const normalizeStrategyDraft = (input: unknown): StrategyDraft | null => {
       : {};
 
   return {
-    name: sanitizeAssistantText(toText(raw.name, matchedStrategy.name)),
+    name: sanitizeAssistantText(toText(raw.name, matchedModel.name)),
     matchedModelId: matchedModel.id,
     matchedModelName: matchedModel.name,
-    matchedStrategyId: matchedStrategy.id,
-    matchedStrategyName: matchedStrategy.name,
-    summary: sanitizeAssistantText(toText(raw.summary, matchedStrategy.summary)),
-    marketConditions: normalizeTextList(raw.marketConditions, 6),
+    summary: sanitizeAssistantText(toText(raw.summary, matchedModel.description)),
     entryChecklist: normalizeTextList(raw.entryChecklist, 8),
     confirmationSignals: normalizeTextList(raw.confirmationSignals, 6),
     invalidationSignals: normalizeTextList(raw.invalidationSignals, 6),
     exitChecklist: normalizeTextList(raw.exitChecklist, 8),
-    managementRules: normalizeTextList(raw.managementRules, 6),
-    riskRules: normalizeTextList(raw.riskRules, 6),
     missingDetails: normalizeTextList(raw.missingDetails, 6),
     draftJson
   };
@@ -4021,95 +4010,80 @@ const isStrategyDraftRequest = (prompt: string): boolean => {
 const resolveHeuristicStrategyMatch = (prompt: string) => {
   const directModel = resolveStrategyModelCatalogEntry(prompt);
   if (directModel) {
-    return {
-      model: directModel,
-      strategy: resolveStrategyTemplate(directModel.primaryStrategyId)
-    };
+    return { model: directModel };
   }
 
   const text = prompt.toLowerCase();
 
   if (/(mean reversion|reversion|fade|overextended|stretch|vwap)/.test(text)) {
     const model = resolveStrategyModelCatalogEntry("mean reversion");
-    return model ? { model, strategy: resolveStrategyTemplate(model.primaryStrategyId) } : null;
+    return model ? { model } : null;
   }
 
   if (/(season|seasonality|cycle|calendar|month|weekday|week open)/.test(text)) {
     const model = resolveStrategyModelCatalogEntry("seasons");
-    return model ? { model, strategy: resolveStrategyTemplate(model.primaryStrategyId) } : null;
+    return model ? { model } : null;
   }
 
   if (/(time of day|session|london|new york|asia|open drive|opening range)/.test(text)) {
     const model = resolveStrategyModelCatalogEntry("time of day");
-    return model ? { model, strategy: resolveStrategyTemplate(model.primaryStrategyId) } : null;
+    return model ? { model } : null;
   }
 
   if (/(fib|fibonacci|retracement|pullback)/.test(text)) {
     const model = resolveStrategyModelCatalogEntry("fibonacci");
-    return model ? { model, strategy: resolveStrategyTemplate(model.primaryStrategyId) } : null;
+    return model ? { model } : null;
   }
 
   if (/(support|resistance|s\/r|level|zone|reclaim|rejection)/.test(text)) {
     const model = resolveStrategyModelCatalogEntry("support resistance");
-    return model ? { model, strategy: resolveStrategyTemplate(model.primaryStrategyId) } : null;
+    return model ? { model } : null;
   }
 
   if (/(momentum|breakout|continuation|trend)/.test(text)) {
     const model = resolveStrategyModelCatalogEntry("momentum");
-    return model ? { model, strategy: resolveStrategyTemplate(model.primaryStrategyId) } : null;
+    return model ? { model } : null;
   }
 
   const fallbackModel = STRATEGY_MODEL_CATALOG[0] ?? null;
-  return fallbackModel
-    ? {
-        model: fallbackModel,
-        strategy: resolveStrategyTemplate(fallbackModel.primaryStrategyId)
-      }
-    : null;
+  return fallbackModel ? { model: fallbackModel } : null;
 };
 
 const buildFallbackStrategyDraft = (prompt: string): StrategyDraft | null => {
   const matched = resolveHeuristicStrategyMatch(prompt);
-  if (!matched?.model || !matched.strategy) {
+  if (!matched?.model) {
     return null;
   }
 
-  const { model, strategy } = matched;
-  const notes = normalizeTextList(
-    [prompt, ...strategy.journaling.map((item) => `Journal: ${item}`)],
-    6
-  );
+  const { model } = matched;
+  const notes = normalizeTextList([prompt, model.description], 6);
 
   return {
-    name: `${strategy.name} Draft`,
+    name: `${model.name} Draft`,
     matchedModelId: model.id,
     matchedModelName: model.name,
-    matchedStrategyId: strategy.id,
-    matchedStrategyName: strategy.name,
-    summary: strategy.summary,
-    marketConditions: strategy.marketConditions.slice(0, 4),
-    entryChecklist: [...strategy.entry.context, ...strategy.entry.setup, ...strategy.entry.trigger].slice(0, 8),
-    confirmationSignals: strategy.entry.confirmation.slice(0, 6),
-    invalidationSignals: strategy.entry.invalidation.slice(0, 6),
-    exitChecklist: [...strategy.exit.stopLoss, ...strategy.exit.takeProfit, ...strategy.exit.timeExit].slice(0, 8),
-    managementRules: [...strategy.exit.management, ...strategy.exit.earlyExit].slice(0, 6),
-    riskRules: [
-      `Risk per trade: ${strategy.risk.riskPerTrade}`,
-      `Reward target: ${strategy.risk.rrTarget}`,
-      `Max concurrent trades: ${strategy.risk.maxConcurrentTrades}`,
-      ...strategy.risk.sizing.slice(0, 2),
-      ...strategy.risk.exposureLimits.slice(0, 1)
-    ].slice(0, 6),
-    missingDetails: strategy.assistantPrompts.slice(0, 3),
+    summary: model.description,
+    entryChecklist: [
+      ...model.entry.context,
+      ...model.entry.setup,
+      ...model.entry.trigger,
+      ...model.entry.noTrade
+    ].slice(0, 8),
+    confirmationSignals: model.entry.confirmation.slice(0, 6),
+    invalidationSignals: model.entry.invalidation.slice(0, 6),
+    exitChecklist: [
+      ...model.exit.stopLoss,
+      ...model.exit.takeProfit,
+      ...model.exit.timeExit,
+      ...model.exit.earlyExit
+    ].slice(0, 8),
+    missingDetails: buildStrategyClarifyingQuestions(model.id).slice(0, 3),
     draftJson: {
-      name: `${strategy.name} Draft`,
+      name: `${model.name} Draft`,
       modelId: model.id,
-      strategyId: strategy.id,
-      thesis: strategy.summary,
-      marketConditions: strategy.marketConditions,
-      entry: strategy.entry,
-      exit: strategy.exit,
-      risk: strategy.risk,
+      thesis: model.description,
+      entry: model.entry,
+      exit: model.exit,
       notes
     }
   };
@@ -4145,18 +4119,15 @@ const executeStrategyDraftStage = async (params: {
               timeframe: params.context.timeframe
             },
             suggestedModelId: matched?.model?.id ?? null,
-            suggestedStrategyId: matched?.strategy?.id ?? null,
             template:
-              matched?.strategy
+              matched?.model
                 ? {
-                    id: matched.strategy.id,
-                    name: matched.strategy.name,
-                    summary: matched.strategy.summary,
-                    marketConditions: matched.strategy.marketConditions,
-                    entry: matched.strategy.entry,
-                    exit: matched.strategy.exit,
-                    risk: matched.strategy.risk,
-                    assistantPrompts: matched.strategy.assistantPrompts
+                    id: matched.model.id,
+                    name: matched.model.name,
+                    description: matched.model.description,
+                    entry: matched.model.entry,
+                    exit: matched.model.exit,
+                    clarifyingQuestions: buildStrategyClarifyingQuestions(matched.model.id)
                   }
                 : null
           })}`
@@ -5777,8 +5748,8 @@ export async function POST(request: Request) {
         const emptyAnimations = normalizeChartAnimationsFromCoding({});
         const shortAnswer = sanitizeDeliveryText(
           strategyDraft.missingDetails.length > 0
-            ? `I mapped that into a ${strategyDraft.matchedStrategyName} draft using the ${strategyDraft.matchedModelName} model. Entry, exit, and risk are structured below. I still need: ${strategyDraft.missingDetails.slice(0, 2).join("; ")}.`
-            : `I mapped that into a ${strategyDraft.matchedStrategyName} draft using the ${strategyDraft.matchedModelName} model. Entry, exit, and risk are structured below.`
+            ? `I mapped that into a ${strategyDraft.matchedModelName} draft. Entry and exit are structured below. I still need: ${strategyDraft.missingDetails.slice(0, 2).join("; ")}.`
+            : `I mapped that into a ${strategyDraft.matchedModelName} draft. Entry and exit are structured below.`
         );
         const bullets =
           strategyDraft.missingDetails.length > 0
@@ -5819,8 +5790,7 @@ export async function POST(request: Request) {
             requestChecklistPlan,
             executionPlan,
             strategyDraft: {
-              modelId: strategyDraft.matchedModelId,
-              strategyId: strategyDraft.matchedStrategyId
+              modelId: strategyDraft.matchedModelId
             },
             usedClickhouse: false,
             clickhouseMeta: null,

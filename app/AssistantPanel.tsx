@@ -113,16 +113,11 @@ type AssistantStrategyDraft = {
   name: string;
   matchedModelId: string;
   matchedModelName: string;
-  matchedStrategyId: string;
-  matchedStrategyName: string;
   summary: string;
-  marketConditions: string[];
   entryChecklist: string[];
   confirmationSignals: string[];
   invalidationSignals: string[];
   exitChecklist: string[];
-  managementRules: string[];
-  riskRules: string[];
   missingDetails: string[];
   draftJson: Record<string, unknown>;
 };
@@ -967,9 +962,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
                 <div className="ai-strategy-head">
                   <div className="ai-strategy-head-copy">
                     <strong>{message.strategyDraft.name}</strong>
-                    <span>
-                      {message.strategyDraft.matchedModelName} · {message.strategyDraft.matchedStrategyName}
-                    </span>
+                    <span>{message.strategyDraft.matchedModelName}</span>
                   </div>
                   <span className="ai-strategy-pill">{message.strategyDraft.matchedModelId}</span>
                 </div>
@@ -977,13 +970,10 @@ export default function AssistantPanel(props: AssistantPanelProps) {
                 <p className="ai-strategy-summary">{boldText(message.strategyDraft.summary)}</p>
 
                 <div className="ai-strategy-grid">
-                  {renderStrategySection("Market Conditions", message.strategyDraft.marketConditions)}
                   {renderStrategySection("Entry", message.strategyDraft.entryChecklist)}
                   {renderStrategySection("Confirmation", message.strategyDraft.confirmationSignals)}
                   {renderStrategySection("Invalidation", message.strategyDraft.invalidationSignals)}
                   {renderStrategySection("Exit", message.strategyDraft.exitChecklist)}
-                  {renderStrategySection("Management", message.strategyDraft.managementRules)}
-                  {renderStrategySection("Risk", message.strategyDraft.riskRules)}
                   {renderStrategySection("Missing Details", message.strategyDraft.missingDetails)}
                 </div>
               </section>

@@ -1,37 +1,64 @@
 {
   "id": "fibonacci",
   "name": "Fibonacci",
-  "kind": "Model",
-  "modelKind": "fibonacci",
   "aliases": [
     "fib pullback",
     "retracement continuation",
     "fib confluence"
   ],
   "description": "Retracement model that waits for pullbacks into Fibonacci levels that overlap with structure and continuation confirmation.",
-  "primaryStrategyId": "fibonacci-pullback",
-  "risk": {
-    "minPct": 0.0012,
-    "maxPct": 0.0039
+  "entry": {
+    "context": [
+      "Anchor Fibonacci from a clear impulse swing, not random noise.",
+      "Use fib only when it aligns with structure or liquidity.",
+      "Trade with trend unless you explicitly plan a countertrend retracement setup."
+    ],
+    "setup": [
+      "Price retraces into the 0.382, 0.5, or 0.618 zone.",
+      "Retracement slows with smaller bodies or rejection wicks.",
+      "The level overlaps with prior structure, VWAP, or a session high or low."
+    ],
+    "trigger": [
+      "Enter on a rejection candle close from the fib zone.",
+      "Use a lower-high or higher-low break for cleaner confirmation.",
+      "Avoid blind limit entries unless the zone has strong confluence."
+    ],
+    "confirmation": [
+      "Trend structure remains intact on the higher timeframe.",
+      "The fib zone overlaps with another level people will react to.",
+      "Retracement depth remains inside planned invalidation."
+    ],
+    "invalidation": [
+      "Price closes cleanly beyond the fib zone and structure pivot.",
+      "Pullback becomes a full reversal with an opposite impulsive break.",
+      "Confluence disappears because the swing anchor is invalid."
+    ],
+    "noTrade": [
+      "Anchors are ambiguous or constantly changing.",
+      "You are forcing fib on a choppy range with no impulse.",
+      "Nearby structure caps the move before the trade can breathe."
+    ]
   },
-  "reward": {
-    "rrMin": 1.4,
-    "rrMax": 2.8
-  },
-  "bias": {
-    "longBias": 0.53,
-    "winRate": 0.56
-  },
-  "preferredSessions": ["London", "New York"],
-  "preferredTimeframes": ["5m", "15m", "1H"],
-  "entryFocus": [
-    "Orderly pullback into 0.382 to 0.618",
-    "Fib level overlaps with structure",
-    "Continuation trigger confirms rejection"
-  ],
-  "exitFocus": [
-    "Scale at prior swing",
-    "Hold runner to extension only if trend resumes cleanly",
-    "Exit if the pullback turns into full reversal"
-  ]
+  "exit": {
+    "stopLoss": [
+      "Place stop beyond the fib zone and swing pivot.",
+      "Hide stop beyond the structure low or high that makes the trend invalid.",
+      "Do not use the exact fib number as the stop."
+    ],
+    "takeProfit": [
+      "First target is the prior swing high or low.",
+      "Second target is an extension level or measured move.",
+      "Take profit faster if the retracement was deep and trend quality is weaker."
+    ],
+    "timeExit": [
+      "Flatten if rejection never expands after a few candles.",
+      "Exit before session handoff if the setup was intraday only.",
+      "Do not keep a fib pullback once the timing window closes."
+    ],
+    "earlyExit": [
+      "Price accepts through the zone after entry.",
+      "The rejection candle is fully negated.",
+      "Trend resumes too slowly and stalls at midrange."
+    ]
+  }
 }

@@ -1,37 +1,64 @@
 {
   "id": "momentum",
   "name": "Momentum",
-  "kind": "Model",
-  "modelKind": "momentum",
   "aliases": [
     "trend continuation",
     "breakout momentum",
     "impulse continuation"
   ],
   "description": "Trend-following model focused on range expansion and continuation after compression or pullback absorption.",
-  "primaryStrategyId": "momentum-breakout",
-  "risk": {
-    "minPct": 0.0014,
-    "maxPct": 0.0044
+  "entry": {
+    "context": [
+      "Trade in the direction of the higher-timeframe impulse or fresh session expansion.",
+      "Mark the breakout base, recent swing, and liquidity target before entry.",
+      "Wait for price to hold outside the broken range instead of chasing the first spike."
+    ],
+    "setup": [
+      "Compression or pullback forms near the breakout level.",
+      "Retest shows shallow rejection and no deep close back inside range.",
+      "Order flow stays one-sided with consecutive closes in trend direction."
+    ],
+    "trigger": [
+      "Enter on break of the retest high for longs or retest low for shorts.",
+      "Allow first continuation-candle entry only if body closes beyond trigger level.",
+      "Skip entries if the trigger candle is already stretched more than one recent average range."
+    ],
+    "confirmation": [
+      "Range expansion is above recent average.",
+      "Volume or speed increases through the trigger level.",
+      "Structure stays above reclaimed support for longs or below reclaimed resistance for shorts."
+    ],
+    "invalidation": [
+      "Two-sided chop returns inside the prior range.",
+      "Retest closes back through the breakout base.",
+      "Session impulse fades and divergence becomes obvious."
+    ],
+    "noTrade": [
+      "Major news hits within minutes of entry.",
+      "Breakout runs directly into higher-timeframe opposing structure.",
+      "Spread widens or the candle is mostly wick with no close-through."
+    ]
   },
-  "reward": {
-    "rrMin": 1.45,
-    "rrMax": 3.1
-  },
-  "bias": {
-    "longBias": 0.56,
-    "winRate": 0.58
-  },
-  "preferredSessions": ["London", "New York"],
-  "preferredTimeframes": ["5m", "15m", "1H"],
-  "entryFocus": [
-    "Expansion out of balance",
-    "Pullback holds above breakout level",
-    "Range and body expansion confirm follow-through"
-  ],
-  "exitFocus": [
-    "Partial at first extension",
-    "Trail behind fresh structure",
-    "Exit early if breakout fails back into range"
-  ]
+  "exit": {
+    "stopLoss": [
+      "Hide stop beyond retest low or high or behind the breakout base.",
+      "If structure is loose, use the far side of the compression box.",
+      "Cancel the setup if the stop needed is too wide for the plan."
+    ],
+    "takeProfit": [
+      "Pay at the first extension or nearby liquidity.",
+      "Hold the remainder toward session high, low, or measured move only if continuation stays clean.",
+      "Do not widen target after entry."
+    ],
+    "timeExit": [
+      "Flatten if continuation never appears within 3 to 6 execution candles.",
+      "Reduce before low-liquidity session handoff.",
+      "Do not carry a scalp-style breakout into dead hours."
+    ],
+    "earlyExit": [
+      "A full candle closes back inside range.",
+      "A counter impulse prints with larger body than the entry candle.",
+      "The breakout level fails on the next retest."
+    ]
+  }
 }
