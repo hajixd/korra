@@ -61,6 +61,7 @@ type MetaApiRpcConnectionLike = {
       id?: string;
       type?: string;
       entryType?: string;
+      positionId?: string;
       symbol?: string;
       time?: Date | string | number;
       price?: number;
@@ -141,6 +142,7 @@ export type MetaApiDashboardPosition = {
 
 export type MetaApiDashboardDeal = {
   id: string;
+  positionId: string | null;
   side: string;
   entryType: string;
   symbol: string;
@@ -1014,6 +1016,10 @@ export const getMetaApiAccountDashboard = async (input: {
         const profit = Number(deal?.profit);
         return {
           id: String(deal?.id || ""),
+          positionId:
+            typeof deal?.positionId === "string" && deal.positionId.trim()
+              ? deal.positionId
+              : null,
           side,
           entryType: String(deal?.entryType || "N/A"),
           symbol: String(deal?.symbol || "N/A"),

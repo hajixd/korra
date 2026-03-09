@@ -408,9 +408,8 @@ body {
 
 .korra-copytrade-shell__toolbarSelectWrap {
   position: relative;
-  min-width: 152px;
-  flex: 0 0 152px;
-  margin-right: 18px;
+  min-width: 132px;
+  flex: 0 0 132px;
 }
 
 .korra-copytrade-shell__toolbarSelectWrap::after {
@@ -449,6 +448,11 @@ body {
 .korra-copytrade-shell__toolbarSelect:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+.korra-copytrade-shell__toolbarBack {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .korra-copytrade-shell__presetSelect,
@@ -857,6 +861,30 @@ body {
   line-height: 1;
 }
 
+.korra-copytrade-shell__detailSidePill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  min-width: 82px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid #343434;
+  background: #111111;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.korra-copytrade-shell__detailSidePill--buy {
+  color: #67e8b2;
+}
+
+.korra-copytrade-shell__detailSidePill--sell {
+  color: #ff9fb0;
+}
+
 .korra-copytrade-shell__detailScroll {
   flex: 1;
   overflow: auto;
@@ -930,7 +958,10 @@ body {
   .korra-copytrade-shell__toolbarSelectWrap {
     min-width: 0;
     width: 100%;
-    margin-right: 0;
+  }
+
+  .korra-copytrade-shell__toolbarBack {
+    margin-left: 0;
   }
 
   .korra-copytrade-shell__presetSelect,
@@ -5688,6 +5719,27 @@ const injectedScript = `
     }
   };
 
+  const formatTradeDurationLabel = (startValue, endValue) => {
+    const start = Number(startValue);
+    const end = Number(endValue);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      return "--";
+    }
+
+    const totalMinutes = Math.max(1, Math.round((end - start) / 60000));
+    if (totalMinutes < 60) {
+      return totalMinutes + "m";
+    }
+
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (minutes === 0) {
+      return hours + "h";
+    }
+
+    return hours + "h " + minutes + "m";
+  };
+
   const buildCustomSummaryMap = (payload) => {
     const items =
       payload && Array.isArray(payload.summaries) ? payload.summaries : [];
@@ -5877,7 +5929,7 @@ const injectedScript = `
       "</select>" +
       "</label>" +
       reconnectButton +
-      '<button class="korra-copytrade-shell__button" data-korra-action="back-home">All Accounts</button>' +
+      '<button class="korra-copytrade-shell__button korra-copytrade-shell__toolbarBack" data-korra-action="back-home">All Accounts</button>' +
       "</div>" +
       "</div>"
     );
@@ -6645,6 +6697,75 @@ const injectedScript = `
       .join("");
   };
 
+  const buildClosedTradeHistoryItems = (deals) => {
+    const sourceDeals = Array.isArray(deals) ? deals : [];
+    const groupedDeals = new Map();
+
+    sourceDeals
+      .filter((deal) => isObjectRecord(deal))
+      .slice()
+      .sort((left, right) => Number(left.time || 0) - Number(right.time || 0))
+      .forEach((deal) => {
+        const positionId = String(deal.positionId || "").trim();
+        const fallbackKey =
+          String(deal.symbol || "N/A") +
+          ":" +
+          String(deal.side || "N/A") +
+          ":" +
+          String(Math.trunc(Number(deal.time || 0) / 60000));
+        const key = positionId || fallbackKey;
+        const bucket = groupedDeals.get(key) || [];
+        bucket.push(deal);
+        groupedDeals.set(key, bucket);
+      });
+
+    return Array.from(groupedDeals.entries())
+      .map(([key, bucket]) => {
+        const sortedBucket = bucket
+          .slice()
+          .sort((left, right) => Number(left.time || 0) - Number(right.time || 0));
+        const entryDeals = sortedBucket.filter((deal) =>
+          String(deal.entryType || "").toUpperCase().includes("IN")
+        );
+        const exitDeals = sortedBucket.filter((deal) =>
+          String(deal.entryType || "").toUpperCase().includes("OUT")
+        );
+
+        if (!exitDeals.length) {
+          return null;
+        }
+
+        const openDeal = entryDeals[0] || sortedBucket[0] || null;
+        const closeDeal = exitDeals[exitDeals.length - 1] || sortedBucket[sortedBucket.length - 1] || null;
+        if (!openDeal || !closeDeal) {
+          return null;
+        }
+
+        const openTime = Number(openDeal.time || 0);
+        const closeTime = Number(closeDeal.time || 0);
+        const realizedProfit = exitDeals.reduce((sum, deal) => {
+          const profit = Number(deal && deal.profit);
+          return sum + (Number.isFinite(profit) ? profit : 0);
+        }, 0);
+
+        return {
+          id: key,
+          side: String(openDeal.side || closeDeal.side || "N/A"),
+          symbol: String(openDeal.symbol || closeDeal.symbol || "N/A"),
+          volume: Number(closeDeal.volume ?? openDeal.volume ?? Number.NaN),
+          openTime: Number.isFinite(openTime) && openTime > 0 ? openTime : null,
+          closeTime: Number.isFinite(closeTime) && closeTime > 0 ? closeTime : null,
+          duration:
+            Number.isFinite(openTime) && Number.isFinite(closeTime) && closeTime > openTime
+              ? closeTime - openTime
+              : null,
+          profit: realizedProfit
+        };
+      })
+      .filter((item) => item && item.closeTime)
+      .sort((left, right) => Number(right.closeTime || 0) - Number(left.closeTime || 0));
+  };
+
   const buildCustomCopyTradeStatisticsMarkup = (accountId, providerAccountId) => {
     const store = getCustomCopyTradeStore();
     const listPayload = isObjectRecord(store.list.data) ? store.list.data : null;
@@ -6816,8 +6937,9 @@ const injectedScript = `
       ? dashboard.openPositions
       : [];
     const recentDeals = Array.isArray(dashboard && dashboard.recentDeals)
-      ? dashboard.recentDeals.slice(0, 12)
+      ? dashboard.recentDeals
       : [];
+    const closedHistory = buildClosedTradeHistoryItems(recentDeals).slice(0, 24);
     const positionsMarkup =
       '<div class="korra-copytrade-shell__detailCard">' +
       '<div class="korra-copytrade-shell__sectionTitle">Open Positions</div>' +
@@ -6854,21 +6976,25 @@ const injectedScript = `
     const historyMarkup =
       '<div class="korra-copytrade-shell__detailCard korra-copytrade-shell__detailCard--history">' +
       '<div class="korra-copytrade-shell__detailCardHeader">' +
-      '<div class="korra-copytrade-shell__sectionTitle">History</div>' +
+      '<div class="korra-copytrade-shell__sectionTitle">' +
+      escapeHtml(buildCopyTradeDisplayName(account) + " · Trade History") +
+      "</div>" +
       '<span class="korra-copytrade-shell__detailBadge">' +
-      escapeHtml(formatPlainNumber(recentDeals.length, 0) + " closed") +
+      escapeHtml(formatPlainNumber(closedHistory.length, 0) + " closed") +
       "</span>" +
       "</div>" +
       '<div class="korra-copytrade-shell__detailScroll">' +
       '<table class="korra-copytrade-shell__detailTable">' +
-      "<thead><tr><th>Side</th><th>Symbol</th><th>Volume</th><th>Time</th><th>Type</th><th>P/L</th></tr></thead>" +
+      "<thead><tr><th>Side</th><th>Symbol</th><th>Volume</th><th>Open</th><th>Close</th><th>Duration</th><th>P&L</th></tr></thead>" +
       "<tbody>" +
-      buildStatisticsTableRows(recentDeals, [
+      buildStatisticsTableRows(closedHistory, [
         {
           render: (item) => {
-            const side = String(item.side || "N/A");
+            const side = String(item.side || "N/A").toUpperCase();
             return (
-              '<span class="korra-copytrade-shell__detailBadge">' +
+              '<span class="korra-copytrade-shell__detailSidePill korra-copytrade-shell__detailSidePill--' +
+              escapeHtml(side === "BUY" ? "buy" : "sell") +
+              '">' +
               escapeHtml(side) +
               "</span>"
             );
@@ -6881,13 +7007,13 @@ const injectedScript = `
           render: (item) => escapeHtml(formatPlainNumber(item.volume, 2))
         },
         {
-          render: (item) => escapeHtml(formatDateTimeLabel(item.time))
+          render: (item) => escapeHtml(formatDateTimeLabel(item.openTime))
         },
         {
-          render: (item) =>
-            escapeHtml(
-              String(item.entryType || "N/A").replace(/^DEAL_ENTRY_/, "")
-            )
+          render: (item) => escapeHtml(formatDateTimeLabel(item.closeTime))
+        },
+        {
+          render: (item) => escapeHtml(formatTradeDurationLabel(item.openTime, item.closeTime))
         },
         {
           className: (item) =>
