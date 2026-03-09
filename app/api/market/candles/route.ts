@@ -17,6 +17,7 @@ const ALLOWED_PAIRS = new Set([
   "BTC_USD"
 ]);
 const MAX_UPSTREAM_LIMIT = 10000;
+const UPSTREAM_TIMEOUT_MS = 3000;
 
 const buildHistoryFallbackRequest = (
   request: Request,
@@ -127,12 +128,17 @@ export async function GET(request: Request) {
   upstreamUrl.searchParams.set("limit", String(limit));
 
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
     const response = await fetch(upstreamUrl.toString(), {
       headers: {
         "X-API-Key": apiKey,
         Accept: "application/json"
       },
-      cache: "no-store"
+      cache: "no-store",
+      signal: controller.signal
+    }).finally(() => {
+      clearTimeout(timeoutId);
     });
 
     const text = await response.text();
@@ -164,7 +170,9 @@ export async function GET(request: Request) {
       pair,
       timeframe,
       limit,
-      (error as Error).message || "unknown-error"
+      error instanceof Error && error.name === "AbortError"
+        ? "upstream-timeout"
+        : (error as Error).message || "unknown-error"
     );
   }
 }

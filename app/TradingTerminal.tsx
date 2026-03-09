@@ -53,6 +53,14 @@ import {
 import { normalizeChartActions } from "../lib/assistant-tools";
 
 const loadRecharts = () => import("recharts");
+let lightweightChartsPromise: Promise<typeof import("lightweight-charts")> | null = null;
+const loadLightweightCharts = () => {
+  if (!lightweightChartsPromise) {
+    lightweightChartsPromise = import("lightweight-charts");
+  }
+
+  return lightweightChartsPromise;
+};
 const ResponsiveContainer = dynamic<any>(() => loadRecharts().then((mod) => mod.ResponsiveContainer), {
   ssr: false
 });
@@ -4117,14 +4125,14 @@ const fetchHybridHistoryCandles = async (
       return recentOneMinuteCandles.slice(-targetBars);
     }
 
+    if (historyCandles.length >= MIN_SEED_CANDLES) {
+      return historyCandles.slice(-targetBars);
+    }
+
     const recentTimeframeCandles = await fetchMarketCandles(
       timeframe,
       Math.min(targetBars, MARKET_MAX_HISTORY_CANDLES)
     ).catch(() => []);
-
-    if (historyCandles.length >= MIN_SEED_CANDLES) {
-      return mergeHistoricalAndRecentCandles(historyCandles, recentTimeframeCandles, targetBars);
-    }
 
     if (recentTimeframeCandles.length >= MIN_SEED_CANDLES) {
       return recentTimeframeCandles.slice(-targetBars);
@@ -7653,6 +7661,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [selectedBacktestTab, selectedSurfaceTab]);
 
   useEffect(() => {
+    void loadLightweightCharts();
+  }, []);
+
+  useEffect(() => {
     if (selectedSurfaceTab !== "settings") {
       return;
     }
@@ -8703,7 +8715,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const connect = async () => {
       let hasInitialSeed = false;
       let historyResolved = false;
-      let liveSyncResolved = false;
+      let liveSyncResolved = true;
       let streamResolved = false;
 
       const resolveChartInitialLoad = () => {
@@ -8763,9 +8775,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         }
       };
 
-      await syncLiveCandlesFromMarket();
-      liveSyncResolved = true;
       resolveChartInitialLoad();
+      void syncLiveCandlesFromMarket();
 
       if (cancelled) {
         return;
@@ -11801,26 +11812,31 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [notificationsOpen, notificationItems]);
 
   useEffect(() => {
+    if (!terminalViewStateReady) {
+      return;
+    }
+
     let disposed = false;
     let teardown: (() => void) | undefined;
 
     const initializeChart = async () => {
-      const container = chartContainerRef.current;
+      try {
+        const container = chartContainerRef.current;
 
-      if (!container || chartRef.current) {
-        return;
-      }
+        if (!container || chartRef.current) {
+          return;
+        }
 
-      const { createChart } = await import("lightweight-charts");
+        const { createChart } = await loadLightweightCharts();
 
-      if (disposed || chartRef.current) {
-        return;
-      }
+        if (disposed || chartRef.current) {
+          return;
+        }
 
-      const initialWidth = Math.max(1, Math.floor(container.clientWidth));
-      const initialHeight = Math.max(1, Math.floor(container.clientHeight));
+        const initialWidth = Math.max(1, Math.floor(container.clientWidth));
+        const initialHeight = Math.max(1, Math.floor(container.clientHeight));
 
-      const chart = createChart(container, {
+        const chart = createChart(container, {
         width: initialWidth,
         height: initialHeight,
         layout: {
@@ -11898,9 +11914,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           pinch: true
         }
       });
-      chartSizeRef.current = { width: initialWidth, height: initialHeight };
+        chartSizeRef.current = { width: initialWidth, height: initialHeight };
 
-      const candleSeries = chart.addCandlestickSeries({
+        const candleSeries = chart.addCandlestickSeries({
         upColor: "#1bae8a",
         downColor: "#f0455a",
         wickUpColor: "#1bae8a",
@@ -11925,7 +11941,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         }
       });
 
-      const tradeEntryLine = chart.addLineSeries({
+        const tradeEntryLine = chart.addLineSeries({
         color: "rgba(232, 238, 250, 0.72)",
         lineWidth: 1,
         lineStyle: LIGHTWEIGHT_CHART_LINE_SOLID,
@@ -11933,7 +11949,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         lastValueVisible: false,
         crosshairMarkerVisible: false
       });
-      const tradeTargetLine = chart.addLineSeries({
+        const tradeTargetLine = chart.addLineSeries({
         color: "rgba(53, 201, 113, 0.95)",
         lineWidth: 1,
         lineStyle: LIGHTWEIGHT_CHART_LINE_SOLID,
@@ -11941,7 +11957,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         lastValueVisible: false,
         crosshairMarkerVisible: false
       });
-      const tradeStopLine = chart.addLineSeries({
+        const tradeStopLine = chart.addLineSeries({
         color: "rgba(255, 76, 104, 0.95)",
         lineWidth: 1,
         lineStyle: LIGHTWEIGHT_CHART_LINE_SOLID,
@@ -11949,7 +11965,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         lastValueVisible: false,
         crosshairMarkerVisible: false
       });
-      const tradePathLine = chart.addLineSeries({
+        const tradePathLine = chart.addLineSeries({
         color: "rgba(220, 230, 248, 0.82)",
         lineWidth: 2,
         lineStyle: LIGHTWEIGHT_CHART_LINE_DOTTED,
@@ -11957,7 +11973,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         lastValueVisible: false,
         crosshairMarkerVisible: false
       });
-      const tradeProfitZone = chart.addBaselineSeries({
+        const tradeProfitZone = chart.addBaselineSeries({
         baseValue: { type: "price", price: 0 },
         topLineColor: "rgba(0,0,0,0)",
         topFillColor1: "rgba(53, 201, 113, 0.22)",
@@ -11969,7 +11985,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         lastValueVisible: false,
         crosshairMarkerVisible: false
       });
-      const tradeLossZone = chart.addBaselineSeries({
+        const tradeLossZone = chart.addBaselineSeries({
         baseValue: { type: "price", price: 0 },
         topLineColor: "rgba(0,0,0,0)",
         topFillColor1: "rgba(0,0,0,0)",
@@ -11982,7 +11998,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         crosshairMarkerVisible: false
       });
 
-      const onCrosshairMove = (param: MouseEventParams<Time>) => {
+        const onCrosshairMove = (param: MouseEventParams<Time>) => {
         if (!param.point || !param.time) {
           setHoveredTime(null);
           chartHoverCandleRef.current = null;
@@ -12025,7 +12041,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           index: chartBarIndexByGaplessTimeRef.current.get(crosshairTime) ?? null
         };
       };
-      const onVisibleLogicalRangeChange = (range: { from: number; to: number } | null) => {
+        const onVisibleLogicalRangeChange = (range: { from: number; to: number } | null) => {
         if (
           !range ||
           chartIsApplyingVisibleRangeRef.current
@@ -12060,9 +12076,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         }
       };
 
-      chart.subscribeCrosshairMove(onCrosshairMove);
-      chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange);
-      const onContextMenu = (event: MouseEvent) => {
+        chart.subscribeCrosshairMove(onCrosshairMove);
+        chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange);
+        const onContextMenu = (event: MouseEvent) => {
         const candle = chartHoverCandleRef.current;
 
         if (!candle) {
@@ -12076,10 +12092,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           candle
         });
       };
-      container.addEventListener("contextmenu", onContextMenu);
-      let resizeRaf = 0;
+        container.addEventListener("contextmenu", onContextMenu);
+        let resizeRaf = 0;
 
-      const applyChartSize = (rawWidth: number, rawHeight: number, force = false) => {
+        const applyChartSize = (rawWidth: number, rawHeight: number, force = false) => {
         if (!Number.isFinite(rawWidth) || !Number.isFinite(rawHeight)) {
           return;
         }
@@ -12099,7 +12115,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         chart.applyOptions({ width, height });
       };
 
-      const queueResizeFromContainer = () => {
+        const queueResizeFromContainer = () => {
         if (selectedSurfaceTabRef.current !== "chart") {
           return;
         }
@@ -12121,7 +12137,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         });
       };
 
-      const resizeObserver = new ResizeObserver((entries) => {
+        const resizeObserver = new ResizeObserver((entries) => {
         const entry = entries[0];
 
         if (!entry) {
@@ -12149,28 +12165,27 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         });
       });
 
-      resizeObserver.observe(container);
-      window.addEventListener("resize", queueResizeFromContainer);
-      document.addEventListener("fullscreenchange", queueResizeFromContainer);
+        resizeObserver.observe(container);
+        window.addEventListener("resize", queueResizeFromContainer);
+        document.addEventListener("fullscreenchange", queueResizeFromContainer);
 
-      const settleResize = () => {
+        const settleResize = () => {
         queueResizeFromContainer();
       };
-      const resizeFrameA = window.requestAnimationFrame(settleResize);
-      const resizeFrameB = window.requestAnimationFrame(() => {
+        const resizeFrameA = window.requestAnimationFrame(settleResize);
+        const resizeFrameB = window.requestAnimationFrame(() => {
         window.requestAnimationFrame(settleResize);
       });
 
-      chartRef.current = chart;
-      candleSeriesRef.current = candleSeries;
-      tradeProfitZoneRef.current = tradeProfitZone;
-      tradeLossZoneRef.current = tradeLossZone;
-      tradeEntryLineRef.current = tradeEntryLine;
-      tradeTargetLineRef.current = tradeTargetLine;
-      tradeStopLineRef.current = tradeStopLine;
-      tradePathLineRef.current = tradePathLine;
-
-      teardown = () => {
+        chartRef.current = chart;
+        candleSeriesRef.current = candleSeries;
+        tradeProfitZoneRef.current = tradeProfitZone;
+        tradeLossZoneRef.current = tradeLossZone;
+        tradeEntryLineRef.current = tradeEntryLine;
+        tradeTargetLineRef.current = tradeTargetLine;
+        tradeStopLineRef.current = tradeStopLine;
+        tradePathLineRef.current = tradePathLine;
+        teardown = () => {
         window.cancelAnimationFrame(resizeFrameA);
         window.cancelAnimationFrame(resizeFrameB);
         if (resizeRaf) {
@@ -12219,11 +12234,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         baseChartMarkersRef.current = [];
         lastAssistantDrawActionsRef.current = [];
         dynamicAssistantActionsRef.current = [];
-      };
+        };
 
-      if (disposed) {
-        teardown();
-        teardown = undefined;
+        if (disposed) {
+          teardown();
+          teardown = undefined;
+        }
+      } catch (error) {
+        console.error("Failed to initialize chart", error);
       }
     };
 
@@ -12233,7 +12251,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       disposed = true;
       teardown?.();
     };
-  }, []);
+  }, [terminalViewStateReady]);
 
   useEffect(() => {
     const chart = chartRef.current;
