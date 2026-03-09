@@ -797,7 +797,7 @@ export const getMetaApiAccountDashboard = async (input: {
       })
       .filter((deal) => deal.id.length > 0)
       .sort((left, right) => (right.time ?? 0) - (left.time ?? 0))
-      .slice(0, 20);
+      .slice(0, dealsLimit);
 
     const netOpenProfit = openPositions.reduce((sum, position) => sum + (Number(position.profit) || 0), 0);
     const dayClosedPnl = recentDeals.reduce((sum, deal) => {

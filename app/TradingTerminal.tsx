@@ -16996,8 +16996,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             style={{
               height: "100%",
               minHeight: 0,
-              padding: "0.9rem",
-              background: "#090d13"
+              padding: 0,
+              background: "#040404",
+              overflow: "hidden"
             }}
           >
             <iframe
@@ -17008,10 +17009,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 display: "block",
                 width: "100%",
                 height: "100%",
-                minHeight: "calc(100vh - 205px)",
+                minHeight: "100%",
                 border: 0,
-                borderRadius: "16px",
-                background: "#ffffff"
+                borderRadius: 0,
+                background: "#040404"
               }}
             />
           </section>

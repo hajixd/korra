@@ -53,12 +53,14 @@ html,
 body,
 #root {
   height: 100%;
+  background: #040404;
 }
 
 body {
   margin: 0;
   overflow: hidden;
-  background: #ffffff;
+  background: #040404;
+  color-scheme: dark;
 }
 
 #korra-copytrade-shell {
@@ -139,25 +141,22 @@ body {
 .korra-copytrade-shell__table {
   width: 100%;
   border-top: 1px solid #171717;
+  display: grid;
+  gap: 8px;
 }
 
 .korra-copytrade-shell__row,
 .korra-copytrade-shell__row--head {
   display: grid;
   grid-template-columns:
-    minmax(0, 2.4fr)
-    minmax(110px, 0.9fr)
-    minmax(110px, 0.9fr)
-    minmax(84px, 0.72fr)
-    minmax(118px, 0.92fr)
-    minmax(118px, 0.92fr)
-    auto;
+    minmax(210px, 1.35fr)
+    repeat(6, minmax(108px, 1fr));
   align-items: center;
-  gap: 14px;
+  gap: 18px;
 }
 
 .korra-copytrade-shell__row--head {
-  padding: 9px 0;
+  padding: 4px 12px 10px;
   font-size: 10px;
   line-height: 1.4;
   letter-spacing: 0.14em;
@@ -166,8 +165,14 @@ body {
 }
 
 .korra-copytrade-shell__row {
-  padding: 14px 0;
-  border-bottom: 1px solid #141414;
+  padding: 16px 12px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: #050505;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .korra-copytrade-shell__row[data-korra-action="view-statistics"] {
@@ -175,15 +180,24 @@ body {
 }
 
 .korra-copytrade-shell__row[data-korra-action="view-statistics"]:hover {
-  background: #070707;
+  background: #080808;
+  border-color: #242424;
+  box-shadow: inset 0 0 0 1px #202020;
 }
 
 .korra-copytrade-shell__cell {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  text-align: center;
 }
 
 .korra-copytrade-shell__cell--numeric {
-  text-align: right;
+  align-items: center;
+  text-align: center;
 }
 
 .korra-copytrade-shell__cellLabel {
@@ -197,11 +211,13 @@ body {
 }
 
 .korra-copytrade-shell__headCell--numeric {
-  text-align: right;
+  align-items: center;
+  text-align: center;
 }
 
 .korra-copytrade-shell__headCell--action {
-  text-align: right;
+  align-items: center;
+  text-align: center;
 }
 
 .korra-copytrade-shell__name {
@@ -290,19 +306,20 @@ body {
 
 .korra-copytrade-shell__rowAction {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   align-items: center;
-  justify-self: end;
+  justify-self: stretch;
 }
 
 .korra-copytrade-shell__button--danger {
-  border-color: #3a1d1d;
-  color: #f2b9b9;
+  border-color: #7f3030;
+  background: rgba(127, 48, 48, 0.2);
+  color: #ffd4d4;
 }
 
 .korra-copytrade-shell__button--danger:hover {
-  background: #170c0c;
-  border-color: #5a2a2a;
+  background: rgba(151, 54, 54, 0.32);
+  border-color: #a64040;
 }
 
 .korra-copytrade-shell__empty,
@@ -396,12 +413,17 @@ body {
 
 .korra-copytrade-shell__statsGrid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(100px, 1fr));
-  gap: 12px 16px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
 }
 
 .korra-copytrade-shell__stat {
   min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid #191919;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #0a0a0a 0%, #060606 100%);
 }
 
 .korra-copytrade-shell__statLabel {
@@ -421,9 +443,147 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.korra-copytrade-shell__statValue--green {
+  color: #62f2b5;
+}
+
+.korra-copytrade-shell__statValue--red {
+  color: #ff9eaa;
+}
+
+.korra-copytrade-shell__heroGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.korra-copytrade-shell__heroCard {
+  min-width: 0;
+  padding: 18px 20px;
+  border: 1px solid #191919;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #0b0b0b 0%, #060606 100%);
+}
+
+.korra-copytrade-shell__heroLabel {
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #666666;
+}
+
+.korra-copytrade-shell__heroValue {
+  margin-top: 8px;
+  font-size: 24px;
+  line-height: 1.1;
+  font-weight: 700;
+  color: #f8f8f8;
+  font-variant-numeric: tabular-nums;
+}
+
+.korra-copytrade-shell__heroMeta {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8a8a8a;
+}
+
+.korra-copytrade-shell__chartCard {
+  margin-top: 18px;
+  padding: 18px 20px 16px;
+  border: 1px solid #171717;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #080808 0%, #040404 100%);
+}
+
+.korra-copytrade-shell__chartHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.korra-copytrade-shell__chartTitle {
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: #f2f2f2;
+}
+
+.korra-copytrade-shell__chartSubtitle {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #7f7f7f;
+}
+
+.korra-copytrade-shell__chartLegend {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.korra-copytrade-shell__chartLegendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9a9a9a;
+}
+
+.korra-copytrade-shell__chartLegendDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.korra-copytrade-shell__chartSvg {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 14px;
+}
+
+.korra-copytrade-shell__chartRange {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #838383;
+  font-variant-numeric: tabular-nums;
+}
+
+.korra-copytrade-shell__detailGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.korra-copytrade-shell__detailCard {
+  min-width: 0;
+  padding: 18px 20px 20px;
+  border: 1px solid #171717;
+  border-radius: 18px;
+  background: #050505;
+}
+
+.korra-copytrade-shell__detailCard .korra-copytrade-shell__sectionTitle {
+  margin-bottom: 0;
+}
+
 .korra-copytrade-shell__detailTable {
   width: 100%;
   border-collapse: collapse;
+  margin-top: 14px;
 }
 
 .korra-copytrade-shell__detailTable thead th {
@@ -480,19 +640,33 @@ body {
   }
 
   .korra-copytrade-shell__rowAction {
-    justify-self: start;
+    justify-self: stretch;
+    justify-content: center;
   }
 
   .korra-copytrade-shell__cell--numeric {
-    text-align: left;
+    text-align: center;
   }
 
   .korra-copytrade-shell__cellLabel {
     display: block;
   }
 
+  .korra-copytrade-shell__heroGrid,
+  .korra-copytrade-shell__detailGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .korra-copytrade-shell__statsGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .korra-copytrade-shell__chartHeader {
+    flex-direction: column;
+  }
+
+  .korra-copytrade-shell__chartLegend {
+    justify-content: flex-start;
   }
 }
 `;
@@ -4770,15 +4944,457 @@ const injectedScript = `
     );
   };
 
-  const buildStatisticsMetricMarkup = (label, value) =>
+  const formatPercentValue = (value, fractionDigits = 1) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return "--";
+    }
+
+    return (
+      numeric.toLocaleString("en-US", {
+        minimumFractionDigits: fractionDigits,
+        maximumFractionDigits: fractionDigits
+      }) + "%"
+    );
+  };
+
+  const formatFactorValue = (value, fractionDigits = 2) => {
+    const numeric = Number(value);
+    if (numeric === Number.POSITIVE_INFINITY) {
+      return "∞";
+    }
+
+    if (!Number.isFinite(numeric)) {
+      return "--";
+    }
+
+    return numeric.toLocaleString("en-US", {
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits
+    });
+  };
+
+  const formatChartTimeLabel = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      return "--";
+    }
+
+    try {
+      return new Date(numeric).toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit"
+      });
+    } catch {
+      return "--";
+    }
+  };
+
+  const resolveNumericToneClass = (value, positiveThreshold = 0) => {
+    if (value == null || value === "") {
+      return "";
+    }
+
+    if (value === Number.POSITIVE_INFINITY) {
+      return "korra-copytrade-shell__statValue--green";
+    }
+
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return "";
+    }
+
+    if (numeric > positiveThreshold) {
+      return "korra-copytrade-shell__statValue--green";
+    }
+
+    if (numeric < positiveThreshold) {
+      return "korra-copytrade-shell__statValue--red";
+    }
+
+    return "";
+  };
+
+  const buildStatisticsMetricMarkup = (label, value, valueClassName = "") =>
     '<div class="korra-copytrade-shell__stat">' +
     '<div class="korra-copytrade-shell__statLabel">' +
     escapeHtml(label) +
     "</div>" +
-    '<div class="korra-copytrade-shell__statValue">' +
+    '<div class="korra-copytrade-shell__statValue' +
+    (valueClassName ? " " + escapeHtml(valueClassName) : "") +
+    '">' +
     escapeHtml(value) +
     "</div>" +
     "</div>";
+
+  const buildStatisticsHeroCardMarkup = (label, value, meta = "", valueClassName = "") =>
+    '<div class="korra-copytrade-shell__heroCard">' +
+    '<div class="korra-copytrade-shell__heroLabel">' +
+    escapeHtml(label) +
+    "</div>" +
+    '<div class="korra-copytrade-shell__heroValue' +
+    (valueClassName ? " " + escapeHtml(valueClassName) : "") +
+    '">' +
+    escapeHtml(value) +
+    "</div>" +
+    '<div class="korra-copytrade-shell__heroMeta">' +
+    escapeHtml(meta) +
+    "</div>" +
+    "</div>";
+
+  const buildDerivedPerformanceModel = (dashboard) => {
+    const deals = Array.isArray(dashboard && dashboard.recentDeals) ? dashboard.recentDeals : [];
+    const closedDeals = deals
+      .filter((deal) => String(deal && deal.entryType || "").toUpperCase().includes("OUT"))
+      .slice()
+      .sort((left, right) => (left && left.time || 0) - (right && right.time || 0));
+    const totalTrades = closedDeals.length;
+    const wins = closedDeals.filter((deal) => Number(deal && deal.profit) > 0).length;
+    const losses = closedDeals.filter((deal) => Number(deal && deal.profit) < 0).length;
+    const grossProfit = closedDeals.reduce((sum, deal) => {
+      const profit = Number(deal && deal.profit);
+      return sum + (Number.isFinite(profit) && profit > 0 ? profit : 0);
+    }, 0);
+    const grossLossAbs = closedDeals.reduce((sum, deal) => {
+      const profit = Number(deal && deal.profit);
+      return sum + (Number.isFinite(profit) && profit < 0 ? Math.abs(profit) : 0);
+    }, 0);
+    const realizedPnl = closedDeals.reduce((sum, deal) => {
+      const profit = Number(deal && deal.profit);
+      return sum + (Number.isFinite(profit) ? profit : 0);
+    }, 0);
+    const rawBalance = Number(dashboard && dashboard.balance);
+    const rawEquity = Number(dashboard && dashboard.equity);
+    const currentBalance = Number.isFinite(rawBalance) ? rawBalance : null;
+    const currentEquity =
+      Number.isFinite(rawEquity) ? rawEquity : Number.isFinite(rawBalance) ? rawBalance : null;
+    const startingBalanceCandidate =
+      currentBalance != null ? currentBalance - realizedPnl : realizedPnl !== 0 ? -realizedPnl : 0;
+    const startingBalance = Number.isFinite(startingBalanceCandidate) ? startingBalanceCandidate : 0;
+    const baselineTime =
+      totalTrades > 0 && Number.isFinite(Number(closedDeals[0] && closedDeals[0].time))
+        ? Number(closedDeals[0] && closedDeals[0].time)
+        : Number(dashboard && dashboard.lastSyncedAt) || Date.now();
+    const balanceSeries = [{ time: baselineTime, value: startingBalance }];
+    let runningBalance = startingBalance;
+    let peakBalance = startingBalance;
+    let maxDrawdownPct = 0;
+
+    closedDeals.forEach((deal, index) => {
+      const profit = Number(deal && deal.profit);
+      runningBalance += Number.isFinite(profit) ? profit : 0;
+      const rawTime = Number(deal && deal.time);
+      const pointTime =
+        Number.isFinite(rawTime) && rawTime > 0 ? rawTime : baselineTime + (index + 1) * 60000;
+      balanceSeries.push({
+        time: pointTime,
+        value: runningBalance
+      });
+      if (runningBalance > peakBalance) {
+        peakBalance = runningBalance;
+      }
+      if (peakBalance > 0) {
+        const drawdown = ((peakBalance - runningBalance) / peakBalance) * 100;
+        if (drawdown > maxDrawdownPct) {
+          maxDrawdownPct = drawdown;
+        }
+      }
+    });
+
+    const syncedAt = Number(dashboard && dashboard.lastSyncedAt) || Date.now();
+    const finalBalance = currentBalance != null ? currentBalance : runningBalance;
+    const lastBalancePoint = balanceSeries[balanceSeries.length - 1];
+    if (
+      !lastBalancePoint ||
+      Math.abs(Number(lastBalancePoint.value) - finalBalance) > 0.0001 ||
+      Math.abs(Number(lastBalancePoint.time) - syncedAt) > 60000
+    ) {
+      balanceSeries.push({
+        time: syncedAt,
+        value: finalBalance
+      });
+    }
+
+    const finalEquity = currentEquity != null ? currentEquity : finalBalance;
+    const equitySeries = balanceSeries.map((point, index) =>
+      index === balanceSeries.length - 1
+        ? {
+            time: syncedAt,
+            value: finalEquity
+          }
+        : point
+    );
+    const bestTrade = closedDeals.reduce((best, deal) => {
+      const profit = Number(deal && deal.profit);
+      if (!Number.isFinite(profit)) {
+        return best;
+      }
+      return best == null || profit > best ? profit : best;
+    }, null);
+    const worstTrade = closedDeals.reduce((worst, deal) => {
+      const profit = Number(deal && deal.profit);
+      if (!Number.isFinite(profit)) {
+        return worst;
+      }
+      return worst == null || profit < worst ? profit : worst;
+    }, null);
+
+    return {
+      closedDeals,
+      totalTrades,
+      wins,
+      losses,
+      winRate: totalTrades > 0 ? (wins / totalTrades) * 100 : null,
+      profitFactor:
+        grossLossAbs > 0 ? grossProfit / grossLossAbs : grossProfit > 0 ? Number.POSITIVE_INFINITY : null,
+      avgWin: wins > 0 ? grossProfit / wins : null,
+      avgLoss: losses > 0 ? -(grossLossAbs / losses) : null,
+      bestTrade,
+      worstTrade,
+      maxDrawdownPct,
+      balanceSeries: balanceSeries.slice(-48),
+      equitySeries: equitySeries.slice(-48),
+      currentBalance: finalBalance,
+      currentEquity: finalEquity,
+      realizedPnl
+    };
+  };
+
+  const buildChartPath = (series, width, height, padding, minTime, maxTime, minValue, maxValue) => {
+    if (!Array.isArray(series) || !series.length) {
+      return "";
+    }
+
+    const safeSeries =
+      series.length > 1
+        ? series
+        : [
+            series[0],
+            {
+              time: Number(series[0].time) + 60000,
+              value: Number(series[0].value)
+            }
+          ];
+    const plotWidth = width - padding.left - padding.right;
+    const plotHeight = height - padding.top - padding.bottom;
+    const xRange = Math.max(1, maxTime - minTime);
+    const yRange = Math.max(1, maxValue - minValue);
+
+    return safeSeries
+      .map((point, index) => {
+        const x =
+          padding.left + ((Number(point.time) - minTime) / xRange) * plotWidth;
+        const y =
+          padding.top + (1 - (Number(point.value) - minValue) / yRange) * plotHeight;
+        return (index === 0 ? "M" : "L") + x.toFixed(2) + " " + y.toFixed(2);
+      })
+      .join(" ");
+  };
+
+  const buildAreaPath = (series, width, height, padding, minTime, maxTime, minValue, maxValue) => {
+    if (!Array.isArray(series) || !series.length) {
+      return "";
+    }
+
+    const safeSeries =
+      series.length > 1
+        ? series
+        : [
+            series[0],
+            {
+              time: Number(series[0].time) + 60000,
+              value: Number(series[0].value)
+            }
+          ];
+    const plotWidth = width - padding.left - padding.right;
+    const plotHeight = height - padding.top - padding.bottom;
+    const xRange = Math.max(1, maxTime - minTime);
+    const yRange = Math.max(1, maxValue - minValue);
+    const baselineY = padding.top + plotHeight;
+    const firstX =
+      padding.left + ((Number(safeSeries[0].time) - minTime) / xRange) * plotWidth;
+    const linePath = safeSeries
+      .map((point, index) => {
+        const x =
+          padding.left + ((Number(point.time) - minTime) / xRange) * plotWidth;
+        const y =
+          padding.top + (1 - (Number(point.value) - minValue) / yRange) * plotHeight;
+        return (index === 0 ? "M" : "L") + x.toFixed(2) + " " + y.toFixed(2);
+      })
+      .join(" ");
+    const last = safeSeries[safeSeries.length - 1];
+    const lastX =
+      padding.left + ((Number(last.time) - minTime) / xRange) * plotWidth;
+
+    return (
+      linePath +
+      " L" +
+      lastX.toFixed(2) +
+      " " +
+      baselineY.toFixed(2) +
+      " L" +
+      firstX.toFixed(2) +
+      " " +
+      baselineY.toFixed(2) +
+      " Z"
+    );
+  };
+
+  const buildEquityChartMarkup = (model, currency) => {
+    const balanceSeries = Array.isArray(model && model.balanceSeries) ? model.balanceSeries : [];
+    const equitySeries = Array.isArray(model && model.equitySeries) ? model.equitySeries : [];
+    const allPoints = balanceSeries.concat(equitySeries).filter((point) => {
+      return Number.isFinite(Number(point && point.time)) && Number.isFinite(Number(point && point.value));
+    });
+
+    if (!allPoints.length) {
+      return (
+        '<div class="korra-copytrade-shell__chartCard">' +
+        '<div class="korra-copytrade-shell__chartHeader">' +
+        '<div><div class="korra-copytrade-shell__chartTitle">Equity Curve</div>' +
+        '<div class="korra-copytrade-shell__chartSubtitle">No synchronized history yet.</div></div>' +
+        "</div>" +
+        "</div>"
+      );
+    }
+
+    const width = 860;
+    const height = 280;
+    const padding = { top: 18, right: 18, bottom: 34, left: 18 };
+    const times = allPoints.map((point) => Number(point.time));
+    const values = allPoints.map((point) => Number(point.value));
+    let minTime = Math.min.apply(null, times);
+    let maxTime = Math.max.apply(null, times);
+    if (!(maxTime > minTime)) {
+      maxTime = minTime + 60000;
+    }
+
+    let minValue = Math.min.apply(null, values);
+    let maxValue = Math.max.apply(null, values);
+    if (!(maxValue > minValue)) {
+      const paddingValue = Math.max(25, Math.abs(maxValue || minValue || 0) * 0.02);
+      minValue -= paddingValue;
+      maxValue += paddingValue;
+    } else {
+      const valuePadding = (maxValue - minValue) * 0.12;
+      minValue -= valuePadding;
+      maxValue += valuePadding;
+    }
+
+    const plotHeight = height - padding.top - padding.bottom;
+    const yAxisMarks = [0, 0.5, 1].map((ratio) => {
+      const y = padding.top + ratio * plotHeight;
+      const value = maxValue - ratio * (maxValue - minValue);
+      return (
+        '<line x1="' +
+        String(padding.left) +
+        '" y1="' +
+        y.toFixed(2) +
+        '" x2="' +
+        String(width - padding.right) +
+        '" y2="' +
+        y.toFixed(2) +
+        '" stroke="#171717" stroke-width="1" stroke-dasharray="4 6"></line>' +
+        '<text x="' +
+        String(padding.left + 8) +
+        '" y="' +
+        (y - 8).toFixed(2) +
+        '" fill="#707070" font-size="11">' +
+        escapeHtml(formatCurrencyValue(value, currency)) +
+        "</text>"
+      );
+    }).join("");
+    const xAxisMarks = [minTime, minTime + (maxTime - minTime) / 2, maxTime]
+      .map((time, index) => {
+        const anchor = index === 0 ? "start" : index === 2 ? "end" : "middle";
+        const x =
+          padding.left + ((time - minTime) / Math.max(1, maxTime - minTime)) * (width - padding.left - padding.right);
+        return (
+          '<text x="' +
+          x.toFixed(2) +
+          '" y="' +
+          String(height - 8) +
+          '" fill="#707070" font-size="11" text-anchor="' +
+          anchor +
+          '">' +
+          escapeHtml(formatChartTimeLabel(time)) +
+          "</text>"
+        );
+      })
+      .join("");
+    const balancePath = buildChartPath(
+      balanceSeries,
+      width,
+      height,
+      padding,
+      minTime,
+      maxTime,
+      minValue,
+      maxValue
+    );
+    const equityPath = buildChartPath(
+      equitySeries,
+      width,
+      height,
+      padding,
+      minTime,
+      maxTime,
+      minValue,
+      maxValue
+    );
+    const areaPath = buildAreaPath(
+      balanceSeries,
+      width,
+      height,
+      padding,
+      minTime,
+      maxTime,
+      minValue,
+      maxValue
+    );
+
+    return (
+      '<div class="korra-copytrade-shell__chartCard">' +
+      '<div class="korra-copytrade-shell__chartHeader">' +
+      '<div>' +
+      '<div class="korra-copytrade-shell__chartTitle">Equity Curve</div>' +
+      '<div class="korra-copytrade-shell__chartSubtitle">Recent performance, balance flow, and current equity.</div>' +
+      "</div>" +
+      '<div class="korra-copytrade-shell__chartLegend">' +
+      '<span class="korra-copytrade-shell__chartLegendItem"><span class="korra-copytrade-shell__chartLegendDot" style="background:#56d0ff;"></span>Balance ' +
+      escapeHtml(formatCurrencyValue(model && model.currentBalance, currency)) +
+      "</span>" +
+      '<span class="korra-copytrade-shell__chartLegendItem"><span class="korra-copytrade-shell__chartLegendDot" style="background:#4af0b3;"></span>Equity ' +
+      escapeHtml(formatCurrencyValue(model && model.currentEquity, currency)) +
+      "</span>" +
+      "</div>" +
+      "</div>" +
+      '<svg class="korra-copytrade-shell__chartSvg" viewBox="0 0 860 280" role="img" aria-label="Account equity curve">' +
+      yAxisMarks +
+      '<path d="' +
+      areaPath +
+      '" fill="rgba(86, 208, 255, 0.10)"></path>' +
+      '<path d="' +
+      balancePath +
+      '" fill="none" stroke="#56d0ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>' +
+      '<path d="' +
+      equityPath +
+      '" fill="none" stroke="#4af0b3" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>' +
+      xAxisMarks +
+      "</svg>" +
+      '<div class="korra-copytrade-shell__chartRange">' +
+      "<span>" +
+      escapeHtml(formatChartTimeLabel(minTime)) +
+      "</span>" +
+      "<span>" +
+      escapeHtml(formatChartTimeLabel(maxTime)) +
+      "</span>" +
+      "</div>" +
+      "</div>"
+    );
+  };
 
   const buildStatisticsTableRows = (items, columns) => {
     if (!items.length) {
@@ -4873,6 +5489,7 @@ const injectedScript = `
       dashboard && typeof dashboard.currency === "string" && dashboard.currency.trim()
         ? dashboard.currency
         : "USD";
+    const performanceModel = dashboard ? buildDerivedPerformanceModel(dashboard) : null;
     const balanceText = formatCurrencyValue(dashboard && dashboard.balance, currency);
     const equityText = formatCurrencyValue(dashboard && dashboard.equity, currency);
     const freeMarginText = formatCurrencyValue(dashboard && dashboard.freeMargin, currency);
@@ -4883,15 +5500,82 @@ const injectedScript = `
       : 0;
     const metricsMarkup = dashboard
       ? '<div class="korra-copytrade-shell__section">' +
-        '<div class="korra-copytrade-shell__sectionTitle">Overview</div>' +
-        '<div class="korra-copytrade-shell__statsGrid">' +
-        buildStatisticsMetricMarkup("Balance", balanceText) +
-        buildStatisticsMetricMarkup("Equity", equityText) +
-        buildStatisticsMetricMarkup("Free Margin", freeMarginText) +
-        buildStatisticsMetricMarkup("Open P/L", openProfitText) +
-        buildStatisticsMetricMarkup("Day Closed P/L", closedPnlText) +
-        buildStatisticsMetricMarkup("Open Positions", String(openPositionsCount)) +
+        '<div class="korra-copytrade-shell__heroGrid">' +
+        buildStatisticsHeroCardMarkup(
+          "Balance",
+          balanceText,
+          "Closed P/L " + closedPnlText
+        ) +
+        buildStatisticsHeroCardMarkup(
+          "Equity",
+          equityText,
+          "Free margin " + freeMarginText,
+          resolveNumericToneClass(
+            Number(dashboard && dashboard.equity) - Number(dashboard && dashboard.balance)
+          )
+        ) +
         "</div>" +
+        '<div class="korra-copytrade-shell__statsGrid">' +
+        buildStatisticsMetricMarkup(
+          "Win Rate",
+          formatPercentValue(performanceModel && performanceModel.winRate),
+          resolveNumericToneClass(performanceModel && performanceModel.winRate, 49.99)
+        ) +
+        buildStatisticsMetricMarkup(
+          "Profit Factor",
+          formatFactorValue(performanceModel && performanceModel.profitFactor),
+          resolveNumericToneClass(performanceModel && performanceModel.profitFactor, 1)
+        ) +
+        buildStatisticsMetricMarkup(
+          "Trades",
+          formatPlainNumber(performanceModel && performanceModel.totalTrades, 0)
+        ) +
+        buildStatisticsMetricMarkup(
+          "Open Positions",
+          formatPlainNumber(openPositionsCount, 0)
+        ) +
+        buildStatisticsMetricMarkup(
+          "Avg Win",
+          formatCurrencyValue(performanceModel && performanceModel.avgWin, currency),
+          resolveNumericToneClass(performanceModel && performanceModel.avgWin)
+        ) +
+        buildStatisticsMetricMarkup(
+          "Avg Loss",
+          formatCurrencyValue(performanceModel && performanceModel.avgLoss, currency),
+          resolveNumericToneClass(performanceModel && performanceModel.avgLoss)
+        ) +
+        buildStatisticsMetricMarkup(
+          "Max Drawdown",
+          formatPercentValue(performanceModel && performanceModel.maxDrawdownPct),
+          resolveNumericToneClass(
+            performanceModel && performanceModel.maxDrawdownPct != null
+              ? -performanceModel.maxDrawdownPct
+              : null
+          )
+        ) +
+        buildStatisticsMetricMarkup(
+          "Open P/L",
+          openProfitText,
+          resolveNumericToneClass(dashboard && dashboard.netOpenProfit)
+        ) +
+        buildStatisticsMetricMarkup(
+          "Closed P/L",
+          closedPnlText,
+          resolveNumericToneClass(dashboard && dashboard.dayClosedPnl)
+        ) +
+        buildStatisticsMetricMarkup(
+          "Best Trade",
+          formatCurrencyValue(performanceModel && performanceModel.bestTrade, currency),
+          resolveNumericToneClass(performanceModel && performanceModel.bestTrade)
+        ) +
+        buildStatisticsMetricMarkup(
+          "Worst Trade",
+          formatCurrencyValue(performanceModel && performanceModel.worstTrade, currency),
+          resolveNumericToneClass(performanceModel && performanceModel.worstTrade)
+        ) +
+        buildStatisticsMetricMarkup("Free Margin", freeMarginText) +
+        "</div>" +
+        buildEquityChartMarkup(performanceModel, currency) +
         "</div>"
       : "";
     const errorMarkup =
@@ -4904,8 +5588,9 @@ const injectedScript = `
       ? dashboard.openPositions
       : [];
     const deals = Array.isArray(dashboard && dashboard.recentDeals) ? dashboard.recentDeals : [];
+    const dealRows = deals.slice(0, 20);
     const positionsMarkup =
-      '<div class="korra-copytrade-shell__section">' +
+      '<div class="korra-copytrade-shell__detailCard">' +
       '<div class="korra-copytrade-shell__sectionTitle">Open Positions</div>' +
       '<table class="korra-copytrade-shell__detailTable">' +
       "<thead><tr><th>Symbol</th><th>Side</th><th>Volume</th><th>Open</th><th>Current</th><th>P/L</th></tr></thead>" +
@@ -4938,12 +5623,12 @@ const injectedScript = `
       ]) +
       "</tbody></table></div>";
     const dealsMarkup =
-      '<div class="korra-copytrade-shell__section">' +
+      '<div class="korra-copytrade-shell__detailCard">' +
       '<div class="korra-copytrade-shell__sectionTitle">Recent Deals</div>' +
       '<table class="korra-copytrade-shell__detailTable">' +
       "<thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Volume</th><th>P/L</th></tr></thead>" +
       "<tbody>" +
-      buildStatisticsTableRows(deals, [
+      buildStatisticsTableRows(dealRows, [
         {
           render: (item) => escapeHtml(formatDateTimeLabel(item.time))
         },
@@ -4968,7 +5653,17 @@ const injectedScript = `
       ]) +
       "</tbody></table></div>";
 
-    return header + errorMarkup + metricsMarkup + positionsMarkup + dealsMarkup;
+    return (
+      header +
+      errorMarkup +
+      metricsMarkup +
+      '<div class="korra-copytrade-shell__section">' +
+      '<div class="korra-copytrade-shell__detailGrid">' +
+      positionsMarkup +
+      dealsMarkup +
+      "</div>" +
+      "</div>"
+    );
   };
 
   const ensureCustomCopyTradeShell = () => {
@@ -5093,6 +5788,7 @@ const injectedScript = `
         existingShell.remove();
       }
       document.body.style.background = "#ffffff";
+      document.documentElement.style.background = "#ffffff";
       return;
     }
 
@@ -5115,6 +5811,7 @@ const injectedScript = `
 
     shell.hidden = false;
     document.body.style.background = "#040404";
+    document.documentElement.style.background = "#040404";
   };
 
   const findCommonAncestor = (nodes) => {
@@ -5578,7 +6275,7 @@ const injectedScript = `
 
 export function createCopytradeDashboardResponse() {
   const html = `<!DOCTYPE html>
-<html lang="en" style="height:100%">
+<html lang="en" style="height:100%;background:#040404;color-scheme:dark;">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -5586,8 +6283,8 @@ export function createCopytradeDashboardResponse() {
     <link rel="stylesheet" href="/copytrade/dashboard.css" />
     <style>${injectedCss}</style>
   </head>
-  <body>
-    <div id="root" style="height:100%"></div>
+  <body style="background:#040404;color-scheme:dark;">
+    <div id="root" style="height:100%;background:#040404;"></div>
     <script>${injectedScript}</script>
     <script src="/copytrade/dashboard.js" defer></script>
   </body>
