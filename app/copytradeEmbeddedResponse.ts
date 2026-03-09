@@ -3023,6 +3023,16 @@ const injectedScript = `
     return allowed.has(candidate) ? candidate : COPYTRADE_BRIDGE_DEFAULTS.timeframe;
   };
 
+  const normalizeSymbol = (value) => {
+    const fallback = COPYTRADE_BRIDGE_DEFAULTS.symbol;
+    if (typeof value !== "string") {
+      return fallback;
+    }
+
+    const normalized = value.toUpperCase().replace(/[^A-Z0-9]/g, "").trim();
+    return normalized || fallback;
+  };
+
   const toFiniteNumber = (value, fallback) => {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : fallback;
