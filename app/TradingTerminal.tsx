@@ -4166,13 +4166,7 @@ const AGGRESSOR_MIN_TRAINING_PERIOD_MS = 3 * 60 * 60_000;
 const VOLUME_NOWCAST_CALIBRATION_FULL_SAMPLES = 10;
 const VOLUME_NOWCAST_CALIBRATION_PENDING_LIMIT = 32;
 const VP_THRESHOLD_RATIO = 0.8;
-const MARKET_API_KEY =
-  process.env.NEXT_PUBLIC_PRICE_STREAM_API_KEY ||
-  process.env.NEXT_PUBLIC_MARKET_API_KEY ||
-  "trd_PCv-kkjDo-4t4QMDNxz3JRCGIyBCKHNq";
-const PRICE_STREAM_URL =
-  process.env.NEXT_PUBLIC_PRICE_STREAM_URL ||
-  "https://oanda-worker-production.up.railway.app/stream/prices";
+const PRICE_STREAM_URL = "/api/market/stream";
 
 const formatPrice = (value: number): string => {
   if (value < 1) {
@@ -8795,7 +8789,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       try {
         stream = new EventSource(
           `${PRICE_STREAM_URL}?${new URLSearchParams({
-            api_key: MARKET_API_KEY,
             pairs: XAUUSD_PAIR
           }).toString()}`
         );

@@ -83,7 +83,9 @@ body {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 22px;
+  margin-bottom: 24px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #141414;
 }
 
 .korra-copytrade-shell__eyebrow {
@@ -111,11 +113,11 @@ body {
 
 .korra-copytrade-shell__button {
   appearance: none;
-  border: 1px solid #282828;
-  background: transparent;
+  border: 1px solid #242424;
+  background: #080808;
   color: #f5f5f5;
-  border-radius: 8px;
-  padding: 7px 11px;
+  border-radius: 999px;
+  padding: 8px 13px;
   font-size: 11px;
   line-height: 1;
   font-weight: 600;
@@ -124,8 +126,8 @@ body {
 }
 
 .korra-copytrade-shell__button:hover {
-  background: #111111;
-  border-color: #373737;
+  background: #101010;
+  border-color: #343434;
 }
 
 .korra-copytrade-shell__button--primary {
@@ -422,9 +424,10 @@ body {
 .korra-copytrade-shell__controlCard {
   margin-top: 20px;
   padding: 16px 18px;
-  border: 1px solid #171717;
-  border-radius: 18px;
-  background: linear-gradient(180deg, #090909 0%, #050505 100%);
+  border: 1px solid #202020;
+  border-radius: 24px;
+  background: rgba(5, 5, 5, 0.9);
+  box-shadow: 0 0 28px rgba(0, 0, 0, 0.34);
 }
 
 .korra-copytrade-shell__controlHeader {
@@ -475,7 +478,7 @@ body {
 .korra-copytrade-shell__controlsGrid {
   margin-top: 14px;
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 260px);
   gap: 10px;
 }
 
@@ -655,9 +658,10 @@ body {
 .korra-copytrade-shell__heroCard {
   min-width: 0;
   padding: 18px 20px;
-  border: 1px solid #191919;
-  border-radius: 18px;
-  background: linear-gradient(180deg, #0b0b0b 0%, #060606 100%);
+  border: 1px solid #202020;
+  border-radius: 24px;
+  background: rgba(6, 6, 6, 0.9);
+  box-shadow: 0 0 28px rgba(0, 0, 0, 0.32);
 }
 
 .korra-copytrade-shell__heroLabel {
@@ -754,9 +758,10 @@ body {
 .korra-copytrade-shell__detailCard {
   min-width: 0;
   padding: 18px 20px 20px;
-  border: 1px solid #171717;
-  border-radius: 18px;
-  background: #050505;
+  border: 1px solid #202020;
+  border-radius: 24px;
+  background: rgba(5, 5, 5, 0.9);
+  box-shadow: 0 0 28px rgba(0, 0, 0, 0.3);
 }
 
 .korra-copytrade-shell__detailCard .korra-copytrade-shell__sectionTitle {
@@ -5495,9 +5500,6 @@ const injectedScript = `
       dashboard && dashboard.lastSyncedAt
         ? formatDateTimeLabel(dashboard.lastSyncedAt)
         : formatDateTimeLabel(account && account.lastHeartbeatAt);
-    const accountId = String(account && account.id || "").trim();
-    const selectedPresetName = formState ? String(formState.selectedPresetName || "").trim() : "";
-    const presetNameInput = formState ? String(formState.presetNameInput || "").trim() : "";
 
     return (
       '<div class="korra-copytrade-shell__toolbar">' +
@@ -5518,22 +5520,6 @@ const injectedScript = `
       "</div>" +
       '<div class="korra-copytrade-shell__toolbarActions">' +
       '<button class="korra-copytrade-shell__button" data-korra-action="back-home">All Accounts</button>' +
-      '<select class="korra-copytrade-shell__presetSelect" data-korra-account-id="' +
-      escapeHtml(accountId) +
-      '" data-korra-account-field="selectedPresetName">' +
-      buildCopyTradePresetOptionsMarkup(selectedPresetName) +
-      "</select>" +
-      '<input class="korra-copytrade-shell__compactInput" placeholder="Preset name" data-korra-account-id="' +
-      escapeHtml(accountId) +
-      '" data-korra-account-field="presetNameInput" value="' +
-      escapeHtml(presetNameInput) +
-      '" />' +
-      '<button class="korra-copytrade-shell__button" data-korra-action="load-preset" data-account-id="' +
-      escapeHtml(accountId) +
-      '">Load</button>' +
-      '<button class="korra-copytrade-shell__button korra-copytrade-shell__button--primary" data-korra-action="save-preset" data-account-id="' +
-      escapeHtml(accountId) +
-      '">Save</button>' +
       "</div>" +
       "</div>"
     );
@@ -5568,7 +5554,7 @@ const injectedScript = `
       escapeHtml(
         selectedPresetName
           ? "Assigned settings preset for this account."
-          : "Load or save presets from the top-right toolbar."
+          : "No preset assigned to this account yet."
       ) +
       "</div>" +
       "</div>" +
