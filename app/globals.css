@@ -43,6 +43,10 @@ button {
   overflow: hidden;
 }
 
+.terminal.terminal-gideon {
+  grid-template-rows: 42px minmax(0, 1fr);
+}
+
 .surface-strip {
   position: relative;
   min-height: 42px;
@@ -629,6 +633,10 @@ button {
   min-height: 0;
   position: relative;
   overflow: hidden;
+}
+
+.terminal.terminal-gideon .surface-stage {
+  background: #060b12;
 }
 
 .surface-view {
@@ -4975,6 +4983,19 @@ button {
     linear-gradient(180deg, rgba(11, 16, 23, 1), rgba(10, 14, 21, 1));
 }
 
+.gideon-surface {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  overflow: hidden;
+  background: #060b12;
+}
+
+.gideon-surface > .ai-tab-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .watchlist-head.ai-head {
   border-bottom-color: rgba(255, 255, 255, 0.08);
   display: flex;
@@ -4996,8 +5017,9 @@ button {
 .ai-quick-prompts {
   padding: 0.48rem 0.64rem 0.56rem;
   display: flex;
+  flex-wrap: wrap;
   gap: 0.38rem;
-  overflow-x: auto;
+  overflow-x: visible;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
@@ -5028,6 +5050,20 @@ button {
   flex-direction: column;
   gap: 0.58rem;
   padding: 0.68rem 0.7rem 0.46rem;
+}
+
+.ai-thread.idle {
+  justify-content: center;
+  padding-block: 1rem 1.25rem;
+}
+
+.ai-thread.idle .ai-msg.assistant {
+  max-width: min(820px, 100%);
+  margin-inline: auto;
+}
+
+.ai-thread.idle .ai-msg-content {
+  font-size: 0.82rem;
 }
 
 .ai-msg {

@@ -16084,9 +16084,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const statsRefreshContextLabel =
     `${appliedBacktestSettings.symbol} · ${appliedBacktestSettings.timeframe} · ` +
     `${appliedBacktestSettings.aiMode === "off" ? "AI Off" : "AI On"}`;
+  const isGideonSurface = selectedSurfaceTab === "ai";
 
   return (
-    <main className="terminal">
+    <main className={`terminal${isGideonSurface ? " terminal-gideon" : ""}`}>
       <div className="surface-strip">
         <span className="site-tag surface-brand">Korra&apos;s Space</span>
         <nav className="surface-tabs" aria-label="primary views">
@@ -16119,175 +16120,177 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             </button>
           ))}
         </nav>
-        <div className="top-utility surface-actions">
-          <input
-            ref={settingsFileInputRef}
-            type="file"
-            accept=".json"
-            style={{ display: "none" }}
-            onChange={handleLoadFromFile}
-          />
-          <div ref={presetMenuRef} style={{ display: "contents" }}>
-            <div className="preset-wrap">
-              <button
-                type="button"
-                className="settings-io-btn"
-                aria-label="Save preset"
-                onClick={() => setPresetMenuOpen((v) => (v === "save" ? null : "save"))}
-              >
-                <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                  <path d="M12 3v12m0 0l-4-4m4 4l4-4" />
-                  <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
-                </svg>
-                <span className="settings-io-label">Save</span>
-              </button>
-              {presetMenuOpen === "save" ? (
-                <div className="preset-popover">
-                  <div className="preset-popover-header">Save Preset</div>
-                  <div className="preset-save-row">
-                    <input
-                      className="preset-name-input"
-                      placeholder="Preset name…"
-                      value={presetNameInput}
-                      onChange={(e) => setPresetNameInput(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") handleSavePreset(); }}
-                      autoFocus
-                    />
-                    <button type="button" className="preset-confirm-btn" onClick={handleSavePreset}>Save</button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-            <div className="preset-wrap">
-              <button
-                type="button"
-                className="settings-io-btn"
-                aria-label="Load preset"
-                onClick={() => setPresetMenuOpen((v) => (v === "load" ? null : "load"))}
-              >
-                <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                  <path d="M12 15V3m0 0l-4 4m4-4l4 4" />
-                  <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
-                </svg>
-                <span className="settings-io-label">Load</span>
-              </button>
-              {presetMenuOpen === "load" ? (
-                <div className="preset-popover">
-                  <div className="preset-popover-header">Load Preset</div>
-                  {savedPresets.length === 0 ? (
-                    <div className="preset-empty">No saved presets</div>
-                  ) : (
-                    <div className="preset-list">
-                      {savedPresets.map((p) => (
-                        <div key={p.name} className="preset-item">
-                          <button type="button" className="preset-item-btn" onClick={() => handleLoadPreset(p)}>
-                            <span className="preset-item-name">{p.name}</span>
-                            <span className="preset-item-date">{new Date(p.savedAt).toLocaleDateString()}</span>
-                          </button>
-                          <button type="button" className="preset-delete-btn" onClick={(e) => handleDeletePreset(p.name, e)} aria-label={`Delete ${p.name}`}>×</button>
-                        </div>
-                      ))}
+        {isGideonSurface ? null : (
+          <div className="top-utility surface-actions">
+            <input
+              ref={settingsFileInputRef}
+              type="file"
+              accept=".json"
+              style={{ display: "none" }}
+              onChange={handleLoadFromFile}
+            />
+            <div ref={presetMenuRef} style={{ display: "contents" }}>
+              <div className="preset-wrap">
+                <button
+                  type="button"
+                  className="settings-io-btn"
+                  aria-label="Save preset"
+                  onClick={() => setPresetMenuOpen((v) => (v === "save" ? null : "save"))}
+                >
+                  <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M12 3v12m0 0l-4-4m4 4l4-4" />
+                    <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+                  </svg>
+                  <span className="settings-io-label">Save</span>
+                </button>
+                {presetMenuOpen === "save" ? (
+                  <div className="preset-popover">
+                    <div className="preset-popover-header">Save Preset</div>
+                    <div className="preset-save-row">
+                      <input
+                        className="preset-name-input"
+                        placeholder="Preset name…"
+                        value={presetNameInput}
+                        onChange={(e) => setPresetNameInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") handleSavePreset(); }}
+                        autoFocus
+                      />
+                      <button type="button" className="preset-confirm-btn" onClick={handleSavePreset}>Save</button>
                     </div>
-                  )}
-                </div>
-              ) : null}
+                  </div>
+                ) : null}
+              </div>
+              <div className="preset-wrap">
+                <button
+                  type="button"
+                  className="settings-io-btn"
+                  aria-label="Load preset"
+                  onClick={() => setPresetMenuOpen((v) => (v === "load" ? null : "load"))}
+                >
+                  <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M12 15V3m0 0l-4 4m4-4l4 4" />
+                    <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+                  </svg>
+                  <span className="settings-io-label">Load</span>
+                </button>
+                {presetMenuOpen === "load" ? (
+                  <div className="preset-popover">
+                    <div className="preset-popover-header">Load Preset</div>
+                    {savedPresets.length === 0 ? (
+                      <div className="preset-empty">No saved presets</div>
+                    ) : (
+                      <div className="preset-list">
+                        {savedPresets.map((p) => (
+                          <div key={p.name} className="preset-item">
+                            <button type="button" className="preset-item-btn" onClick={() => handleLoadPreset(p)}>
+                              <span className="preset-item-name">{p.name}</span>
+                              <span className="preset-item-date">{new Date(p.savedAt).toLocaleDateString()}</span>
+                            </button>
+                            <button type="button" className="preset-delete-btn" onClick={(e) => handleDeletePreset(p.name, e)} aria-label={`Delete ${p.name}`}>×</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
             </div>
-          </div>
-          <button
-            type="button"
-            className="settings-io-btn settings-io-reset"
-            aria-label="Reset settings"
-            onClick={handleResetSettings}
-          >
-            <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M3 12a9 9 0 1 1 2.636 6.364" />
-              <path d="M3 21v-6h6" />
-            </svg>
-            <span className="settings-io-label">Reset</span>
-          </button>
-          <div className="settings-io-divider" />
-          <button
-            type="button"
-            className="settings-io-btn settings-io-file"
-            aria-label="Save to file"
-            onClick={handleSaveToFile}
-          >
-            <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <line x1="12" y1="18" x2="12" y2="12" />
-              <polyline points="9 15 12 18 15 15" />
-            </svg>
-            <span className="settings-io-label">File ↓</span>
-          </button>
-          <button
-            type="button"
-            className="settings-io-btn settings-io-file"
-            aria-label="Load from file"
-            onClick={() => settingsFileInputRef.current?.click()}
-          >
-            <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <line x1="12" y1="12" x2="12" y2="18" />
-              <polyline points="9 15 12 12 15 15" />
-            </svg>
-            <span className="settings-io-label">File ↑</span>
-          </button>
-          <div className="notif-wrap" ref={notificationRef}>
             <button
               type="button"
-              className="notif-btn"
-              aria-label="notifications"
-              onClick={() => setNotificationsOpen((open) => !open)}
+              className="settings-io-btn settings-io-reset"
+              aria-label="Reset settings"
+              onClick={handleResetSettings}
             >
-              <svg className="notif-icon" viewBox="0 0 24 24" aria-hidden>
-                <path
-                  d="M7 10.5a5 5 0 0 1 10 0v4.3l1.5 2.2H5.5L7 14.8v-4.3z"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <path
-                  d="M10 19a2 2 0 0 0 4 0"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                />
+              <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M3 12a9 9 0 1 1 2.636 6.364" />
+                <path d="M3 21v-6h6" />
               </svg>
-              {unreadNotificationCount > 0 ? (
-                <span className="notif-badge">{Math.min(9, unreadNotificationCount)}</span>
-              ) : null}
+              <span className="settings-io-label">Reset</span>
             </button>
+            <div className="settings-io-divider" />
+            <button
+              type="button"
+              className="settings-io-btn settings-io-file"
+              aria-label="Save to file"
+              onClick={handleSaveToFile}
+            >
+              <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="12" y1="18" x2="12" y2="12" />
+                <polyline points="9 15 12 18 15 15" />
+              </svg>
+              <span className="settings-io-label">File ↓</span>
+            </button>
+            <button
+              type="button"
+              className="settings-io-btn settings-io-file"
+              aria-label="Load from file"
+              onClick={() => settingsFileInputRef.current?.click()}
+            >
+              <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="12" y1="12" x2="12" y2="18" />
+                <polyline points="9 15 12 12 15 15" />
+              </svg>
+              <span className="settings-io-label">File ↑</span>
+            </button>
+            <div className="notif-wrap" ref={notificationRef}>
+              <button
+                type="button"
+                className="notif-btn"
+                aria-label="notifications"
+                onClick={() => setNotificationsOpen((open) => !open)}
+              >
+                <svg className="notif-icon" viewBox="0 0 24 24" aria-hidden>
+                  <path
+                    d="M7 10.5a5 5 0 0 1 10 0v4.3l1.5 2.2H5.5L7 14.8v-4.3z"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M10 19a2 2 0 0 0 4 0"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                  />
+                </svg>
+                {unreadNotificationCount > 0 ? (
+                  <span className="notif-badge">{Math.min(9, unreadNotificationCount)}</span>
+                ) : null}
+              </button>
 
-            {notificationsOpen ? (
-              <div className="notif-popover">
-                <div className="notif-head">
-                  <strong>Live Activity</strong>
-                  <span>{notificationItems.length} events</span>
+              {notificationsOpen ? (
+                <div className="notif-popover">
+                  <div className="notif-head">
+                    <strong>Live Activity</strong>
+                    <span>{notificationItems.length} events</span>
+                  </div>
+                  <ul className="notif-list">
+                    {notificationItems.map((item) => (
+                      <li key={item.id} className="notif-item">
+                        <span className={`notif-dot ${item.tone}`} aria-hidden />
+                        <div className="notif-copy">
+                          <span className="notif-title">{item.title}</span>
+                          <span className="notif-details">{item.details}</span>
+                        </div>
+                        <span className="notif-time">{item.time}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <ul className="notif-list">
-                  {notificationItems.map((item) => (
-                    <li key={item.id} className="notif-item">
-                      <span className={`notif-dot ${item.tone}`} aria-hidden />
-                      <div className="notif-copy">
-                        <span className="notif-title">{item.title}</span>
-                        <span className="notif-details">{item.details}</span>
-                      </div>
-                      <span className="notif-time">{item.time}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      {selectedSurfaceTab !== "ai" ? (
+      {!isGideonSurface ? (
         <header className="topbar">
           <div className="brand-area">
             <div className="asset-meta">
@@ -17000,17 +17003,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           </section>
         </div>
 
-        {selectedSurfaceTab === "ai" ? (
-          <section
-            aria-label="gideon workspace"
-            style={{
-              height: "100%",
-              minHeight: 0,
-              padding: 0,
-              background: "#040404",
-              overflow: "hidden"
-            }}
-          >
+        {isGideonSurface ? (
+          <section className="gideon-surface" aria-label="gideon workspace">
             <AssistantPanel
               symbol={selectedSymbol}
               timeframe={selectedTimeframe}
@@ -20686,7 +20680,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         )}
       </section>
 
-      {statsRefreshOverlayVisible ? (
+      {!isGideonSurface && statsRefreshOverlayVisible ? (
         statsRefreshOverlayMode === "loading" ? (
           <div className="stats-refresh-loading-overlay" aria-live="polite" aria-atomic="true">
             <div className="stats-refresh-loading-shell">
@@ -20731,7 +20725,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         )
       ) : null}
 
-      <footer className="statusbar backtest-statusbar">
+      {!isGideonSurface ? (
+        <footer className="statusbar backtest-statusbar">
         {backtestHasRun ? (
           <div
             className="backtest-summary-strip backtest-summary-strip-compact"
@@ -20771,7 +20766,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             <span>Tips: tune Date Range, timeframe, and Minute Precise first. Chart reset shortcut: Alt+R.</span>
           </div>
         )}
-      </footer>
+        </footer>
+      ) : null}
 
       {activeBacktestTradeDetails ? (
         <AIZipTradeDetailsModal

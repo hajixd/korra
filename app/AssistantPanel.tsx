@@ -186,6 +186,12 @@ const SOCIAL_STAGE_RE =
 const ASSISTANT_THREAD_STORAGE_KEY = "korra:gideon:thread:v1";
 const MAX_PERSISTED_MESSAGES = 80;
 const MAX_PERSISTED_TURNS = 160;
+const QUICK_PROMPTS = [
+  "Summarize the current market structure on this chart.",
+  "Review my latest trade history and point out recurring mistakes.",
+  "Tell me what the backtest says about my edge.",
+  "Generate chart annotations for the strongest setup right now."
+] as const;
 
 const buildWelcomeMessage = (): AssistantMessage => ({
   id: "welcome",
@@ -406,6 +412,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
 
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const isIdleThread = turns.length === 0 && messages.length === 1 && !isPending;
 
   useEffect(() => {
     const persisted = loadPersistedThread();
@@ -476,6 +483,11 @@ export default function AssistantPanel(props: AssistantPanelProps) {
       ...current,
       [messageId]: !current[messageId]
     }));
+  }, []);
+
+  const applyQuickPrompt = useCallback((prompt: string) => {
+    setInput(prompt);
+    window.requestAnimationFrame(() => inputRef.current?.focus());
   }, []);
 
   const buildPayloadContext = useCallback(
@@ -882,6 +894,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
       <div className="watchlist-head ai-head">
         <div>
           <h2>Gideon</h2>
+          <p>Chat over live candles, trade history, backtests, and chart annotations.</p>
         </div>
         <button
           type="button"
@@ -893,7 +906,26 @@ export default function AssistantPanel(props: AssistantPanelProps) {
         </button>
       </div>
 
-      <div className="ai-thread" ref={messageListRef} aria-live="polite">
+      {isIdleThread ? (
+        <div className="ai-quick-prompts" aria-label="gideon quick prompts">
+          {QUICK_PROMPTS.map((prompt) => (
+            <button
+              key={prompt}
+              type="button"
+              className="ai-quick-btn"
+              onClick={() => applyQuickPrompt(prompt)}
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <div
+        className={`ai-thread${isIdleThread ? " idle" : ""}`}
+        ref={messageListRef}
+        aria-live="polite"
+      >
         {messages.map((message) => {
           const hasTools = Boolean(message.toolsUsed && message.toolsUsed.length > 0);
           const hasBullets = Boolean(message.bullets && message.bullets.length > 0);
