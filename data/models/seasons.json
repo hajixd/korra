@@ -6,59 +6,59 @@
     "calendar flow",
     "cycle bias"
   ],
-  "description": "Cycle-based model that uses recurring monthly, weekly, or session tendencies as directional bias and timing context.",
+  "description": "if seasonal_bias_matches_current_structure && timing_window_is_open then execute_cycle_trade()",
   "entry": {
     "context": [
-      "Start with a seasonal hypothesis, then verify current structure supports it.",
-      "Use the cycle as bias, not as a blind entry trigger.",
-      "Mark the nearby levels where the cycle could accelerate or fail."
+      "seasonal_bias := get_cycle_bias(month || week || session)",
+      "use cycle_bias as filter; never_as_blind_trigger := true",
+      "levels := { acceleration_level, failure_level, seasonal_target }"
     ],
     "setup": [
-      "Historical tendency favors the same direction in the current period.",
-      "Price builds a continuation pattern in line with that tendency.",
-      "No major opposing event has invalidated the usual flow."
+      "setup_valid := historical_tendency aligns_with current_period",
+      "pattern_valid := continuation_structure forms_in_bias_direction",
+      "event_filter := no_major_opposing_catalyst"
     ],
     "trigger": [
-      "Enter on break of local continuation structure in the direction of the cycle.",
-      "Use pullback confirmation if the cycle is early and volatility is mixed.",
-      "Skip direct entry if the move already traveled most of its usual distance."
+      "entry when local_continuation_structure breaks_with_cycle_bias",
+      "if cycle_window_early && volatility_mixed then require pullback_confirmation",
+      "skip if current_move >= expected_seasonal_distance"
     ],
     "confirmation": [
-      "Current session behavior matches the expected seasonal window.",
-      "Related market context is not sharply opposing the thesis.",
-      "Trend structure stays orderly with higher lows or lower highs."
+      "confirm current_session_behavior matches expected_cycle_window",
+      "confirm correlated_markets do_not_strongly_oppose_thesis",
+      "confirm trend_structure remains_orderly"
     ],
     "invalidation": [
-      "Current period behaves opposite the usual cycle with clean acceptance.",
-      "Catalyst-driven repricing overrides the historical pattern.",
-      "Range compression kills follow-through before entry matures."
+      "invalidate if current_period accepts_opposite_to_cycle_bias",
+      "invalidate if catalyst_repricing overrides_history",
+      "invalidate if range_compression kills_follow_through"
     ],
     "noTrade": [
-      "Sample size for the seasonal idea is weak or anecdotal.",
-      "The move is already extended into major higher-timeframe structure.",
-      "Upcoming data can fully reset the cycle narrative."
+      "skip if seasonal_sample_size < reliability_threshold",
+      "skip if move_already_extended_into(htf_structure)",
+      "skip if upcoming_macro_data can_reset_cycle_narrative"
     ]
   },
   "exit": {
     "stopLoss": [
-      "Place the stop outside the local structure that invalidates the cycle bias.",
-      "Use the opposite side of the pullback or continuation base.",
-      "Do not widen the stop just because the cycle should work."
+      "stop := outside(local_structure_that_invalidates_cycle_bias)",
+      "alt_stop := opposite_side(pullback || continuation_base)",
+      "never_widen_stop_because_cycle_should_work := true"
     ],
     "takeProfit": [
-      "Target the usual seasonal range extension first.",
-      "Hold the remainder only while structure confirms the cycle is unfolding.",
-      "Take profit ahead of known reversal windows if the pattern usually fades there."
+      "tp1 := usual_seasonal_range_extension",
+      "runner_allowed only_while structure_confirms_cycle_unfolding",
+      "take_profit_ahead_of known_reversal_window if pattern_typically_fades"
     ],
     "timeExit": [
-      "Exit when the seasonal window closes.",
-      "Flatten before the next major macro event if it changes the regime.",
-      "Do not hold beyond the period that gives the edge."
+      "exit when seasonal_window_closes",
+      "flatten before next_major_macro_event if regime_can_change",
+      "no_hold beyond edge_period := true"
     ],
     "earlyExit": [
-      "Current cycle diverges sharply from expected flow.",
-      "Structure breaks against the thesis before target progression begins.",
-      "Correlated market context flips hard against the idea."
+      "exit_early if realized_cycle diverges_from expected_flow",
+      "exit_early if structure_breaks_against_thesis before_target_progress",
+      "exit_early if correlated_context flips_hard_against_trade"
     ]
   }
 }

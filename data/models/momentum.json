@@ -6,59 +6,59 @@
     "breakout momentum",
     "impulse continuation"
   ],
-  "description": "Trend-following model focused on range expansion and continuation after compression or pullback absorption.",
+  "description": "if htf_bias == trend && breakout_retest_valid && expansion_confirms then execute_continuation()",
   "entry": {
     "context": [
-      "Trade in the direction of the higher-timeframe impulse or fresh session expansion.",
-      "Mark the breakout base, recent swing, and liquidity target before entry.",
-      "Wait for price to hold outside the broken range instead of chasing the first spike."
+      "bias := htf_impulse_direction || session_open_drive_direction",
+      "levels := { breakout_base, retest_extreme, liquidity_target }",
+      "require hold_outside(broken_range) before trigger_check"
     ],
     "setup": [
-      "Compression or pullback forms near the breakout level.",
-      "Retest shows shallow rejection and no deep close back inside range.",
-      "Order flow stays one-sided with consecutive closes in trend direction."
+      "setup_valid := compression_near(breakout_level) || shallow_pullback_after_impulse",
+      "retest_valid := close_back_inside_range == false && rejection_depth <= allowed_retest",
+      "flow_valid := consecutive_closes_in_bias >= 2"
     ],
     "trigger": [
-      "Enter on break of the retest high for longs or retest low for shorts.",
-      "Allow first continuation-candle entry only if body closes beyond trigger level.",
-      "Skip entries if the trigger candle is already stretched more than one recent average range."
+      "long_entry when price > retest_high; short_entry when price < retest_low",
+      "continuation_candle_entry only_if candle_body_close beyond trigger_level",
+      "skip if trigger_candle_range > 1.0 * avg_recent_range"
     ],
     "confirmation": [
-      "Range expansion is above recent average.",
-      "Volume or speed increases through the trigger level.",
-      "Structure stays above reclaimed support for longs or below reclaimed resistance for shorts."
+      "confirm expansion_range > avg_recent_expansion",
+      "confirm volume_up || tape_speed_up at trigger_level",
+      "confirm structure_holds(reclaimed_level)"
     ],
     "invalidation": [
-      "Two-sided chop returns inside the prior range.",
-      "Retest closes back through the breakout base.",
-      "Session impulse fades and divergence becomes obvious."
+      "invalidate if price_rotates_back_inside(prior_range)",
+      "invalidate if retest_close crosses breakout_base",
+      "invalidate if session_impulse_fades && divergence_detected"
     ],
     "noTrade": [
-      "Major news hits within minutes of entry.",
-      "Breakout runs directly into higher-timeframe opposing structure.",
-      "Spread widens or the candle is mostly wick with no close-through."
+      "skip if high_impact_news inside entry_window",
+      "skip if higher_timeframe_opposition <= target_distance",
+      "skip if spread_wide || trigger_close_through == false"
     ]
   },
   "exit": {
     "stopLoss": [
-      "Hide stop beyond retest low or high or behind the breakout base.",
-      "If structure is loose, use the far side of the compression box.",
-      "Cancel the setup if the stop needed is too wide for the plan."
+      "stop := beyond(retest_extreme || breakout_base)",
+      "if structure_loose then stop := far_side(compression_box)",
+      "abort_trade if stop_distance > planned_max_risk"
     ],
     "takeProfit": [
-      "Pay at the first extension or nearby liquidity.",
-      "Hold the remainder toward session high, low, or measured move only if continuation stays clean.",
-      "Do not widen target after entry."
+      "tp1 := first_extension || nearest_liquidity",
+      "tp2 := session_extreme || measured_move when continuation_clean",
+      "do_not_expand_target_after_fill := true"
     ],
     "timeExit": [
-      "Flatten if continuation never appears within 3 to 6 execution candles.",
-      "Reduce before low-liquidity session handoff.",
-      "Do not carry a scalp-style breakout into dead hours."
+      "exit if follow_through_missing for 3..6 execution_candles",
+      "reduce_size before low_liquidity_handoff",
+      "no_carry_on_scalp_breakout_into_dead_hours := true"
     ],
     "earlyExit": [
-      "A full candle closes back inside range.",
-      "A counter impulse prints with larger body than the entry candle.",
-      "The breakout level fails on the next retest."
+      "exit_early if full_candle_closes_back_inside(range)",
+      "exit_early if counter_impulse_body > entry_candle_body",
+      "exit_early if breakout_level_fails_on_next_retest"
     ]
   }
 }

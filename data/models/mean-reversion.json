@@ -6,59 +6,59 @@
     "reversion fade",
     "stretch reversal"
   ],
-  "description": "Counter-move model that fades statistically stretched price once rejection and re-acceptance back toward value appear.",
+  "description": "if price_is_stretched && rejection_prints && value_reclaim_confirms then fade_back_to_mean()",
   "entry": {
     "context": [
-      "Mark the session mean, VWAP, and prior swing extremes before entry.",
-      "Only fade when price is extended into known liquidity or deviation zones.",
-      "Prefer the first clean rejection after a sweep, not repeated attempts."
+      "mean_refs := { session_mean, vwap, prior_swing_extremes }",
+      "only_fade when price_at(liquidity_zone || deviation_band)",
+      "prefer first_clean_rejection_after_sweep == true"
     ],
     "setup": [
-      "Price tags an outer band, prior high or low, or deviation threshold.",
-      "A rejection wick or failed auction appears at the extreme.",
-      "Momentum slows and closes stop progressing in trend direction."
+      "setup_valid := tag(outer_band || prior_extreme || deviation_threshold)",
+      "rejection_valid := wick_rejection || failed_auction_at_extreme",
+      "exhaustion_valid := closes_stop_extending_in_trend"
     ],
     "trigger": [
-      "Enter on reclaim back inside the prior range after the sweep.",
-      "Use a lower-high or higher-low break as the execution trigger.",
-      "Scale only if the rejection structure tightens the invalidation."
+      "entry when price_reclaims(prior_range) after sweep",
+      "alt_trigger := break(rejection_structure_high_low)",
+      "scale_only if rejection_structure tightens_invalidation"
     ],
     "confirmation": [
-      "Stretch or displacement is visibly extended.",
-      "The extreme is rejected with wick imbalance or failed breakout behavior.",
-      "The target path back to mean is open and not blocked immediately by chop."
+      "confirm displacement_from_mean >= required_stretch",
+      "confirm failed_breakout_behavior at extreme",
+      "confirm path_to_mean is not immediately_blocked"
     ],
     "invalidation": [
-      "Price accepts outside the deviation zone with consecutive closes.",
-      "Trend accelerates after the rejection instead of stalling.",
-      "A new session expansion resets the regime."
+      "invalidate if price_accepts_outside(deviation_zone)",
+      "invalidate if trend_accelerates_after_rejection",
+      "invalidate if new_session_expansion resets_regime"
     ],
     "noTrade": [
-      "High-impact news just reset the market regime.",
-      "The mean is too close to justify the trade.",
-      "You are fading strong multi-timeframe momentum without exhaustion."
+      "skip if high_impact_news just_changed_regime",
+      "skip if distance_to_mean < minimum_reward",
+      "skip if fading_multi_timeframe_impulse without exhaustion"
     ]
   },
   "exit": {
     "stopLoss": [
-      "Place stop beyond the sweep high or low or beyond the deviation band.",
-      "Keep stop outside obvious noise, not inside the rejection wick midpoint.",
-      "Skip the trade if the invalidation point is too loose."
+      "stop := beyond(sweep_extreme || deviation_band)",
+      "keep stop_outside(noise_zone); never_inside(rejection_wick_midpoint)",
+      "abort_trade if invalidation_distance > planned_max_risk"
     ],
     "takeProfit": [
-      "First target is the local mean, VWAP, or middle of the range.",
-      "Second target can be the opposite side of balance only if reversal strengthens.",
-      "Lock partials quickly because fades lose edge once mean is reclaimed."
+      "tp1 := local_mean || vwap || range_mid",
+      "tp2 := opposite_side_of_balance when reversal_strengthens",
+      "lock_partials_fast once mean_is_reclaimed"
     ],
     "timeExit": [
-      "Close if reversion does not start within 2 to 5 candles after entry.",
-      "Flatten before the active session reopens if the fade was session-specific.",
-      "Do not hold once range conditions disappear."
+      "exit if reversion_missing for 2..5 candles after fill",
+      "flatten before session_reopen if setup_is_session_specific",
+      "no_hold once range_regime_disappears := true"
     ],
     "earlyExit": [
-      "Price reclaims the extreme and holds beyond it.",
-      "Mean is touched but price cannot continue through balance.",
-      "A fresh impulse candle invalidates the rejection narrative."
+      "exit_early if price_reclaims_extreme_and_holds",
+      "exit_early if mean_tagged && continuation_through_balance == false",
+      "exit_early if fresh_impulse_candle invalidates_rejection"
     ]
   }
 }

@@ -2470,10 +2470,12 @@ const buildStrategyEntryConditionGroups = (
   model: StrategyModelCatalogEntry
 ): StrategyConditionGroup[] => {
   return buildStrategyConditionGroups([
+    { id: "context", label: "Context", items: model.entry.context },
     { id: "setup", label: "Setup", items: model.entry.setup },
     { id: "trigger", label: "Trigger", items: model.entry.trigger },
-    { id: "confirm", label: "Confirm", items: model.entry.confirmation },
-    { id: "avoid", label: "Avoid", items: model.entry.noTrade }
+    { id: "confirm", label: "Confirmation", items: model.entry.confirmation },
+    { id: "invalidate", label: "Invalidation", items: model.entry.invalidation },
+    { id: "avoid", label: "No Trade", items: model.entry.noTrade }
   ]);
 };
 
@@ -17609,30 +17611,46 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         <section className="models-library-section">
                           <header>
                             <span>Entry</span>
-                            <small>{model.entryConditionGroups.length} condition groups</small>
+                            <small>
+                              {model.entryConditionGroups.reduce(
+                                (count, group) => count + group.items.length,
+                                0
+                              )}{" "}
+                              conditions
+                            </small>
                           </header>
                           <ul>
-                            {model.entryConditionGroups.map((group) => (
-                              <li key={`${model.id}-entry-${group.id}`}>
-                                <span className="models-library-rule-label">{group.label}</span>
-                                <p className="models-library-rule-copy">{group.items.join("; ")}</p>
-                              </li>
-                            ))}
+                            {model.entryConditionGroups.flatMap((group) =>
+                              group.items.map((item, index) => (
+                                <li key={`${model.id}-entry-${group.id}-${index}`}>
+                                  <span className="models-library-rule-label">{group.label}:</span>
+                                  <span className="models-library-rule-copy">{item}</span>
+                                </li>
+                              ))
+                            )}
                           </ul>
                         </section>
 
                         <section className="models-library-section">
                           <header>
                             <span>Exit</span>
-                            <small>{model.exitConditionGroups.length} condition groups</small>
+                            <small>
+                              {model.exitConditionGroups.reduce(
+                                (count, group) => count + group.items.length,
+                                0
+                              )}{" "}
+                              conditions
+                            </small>
                           </header>
                           <ul>
-                            {model.exitConditionGroups.map((group) => (
-                              <li key={`${model.id}-exit-${group.id}`}>
-                                <span className="models-library-rule-label">{group.label}</span>
-                                <p className="models-library-rule-copy">{group.items.join("; ")}</p>
-                              </li>
-                            ))}
+                            {model.exitConditionGroups.flatMap((group) =>
+                              group.items.map((item, index) => (
+                                <li key={`${model.id}-exit-${group.id}-${index}`}>
+                                  <span className="models-library-rule-label">{group.label}:</span>
+                                  <span className="models-library-rule-copy">{item}</span>
+                                </li>
+                              ))
+                            )}
                           </ul>
                         </section>
                       </div>

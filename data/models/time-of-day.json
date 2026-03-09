@@ -6,59 +6,59 @@
     "session timing",
     "intraday clock edge"
   ],
-  "description": "Session-aware model that trades repeatable opening-drive, sweep, or reversion behavior inside defined intraday windows.",
+  "description": "if active_session_window && planned_session_pattern_fires then execute_intraday_clock_edge()",
   "entry": {
     "context": [
-      "Define exact clock windows before the session begins.",
-      "Map Asia high and low, London open, New York open, and prior session extremes.",
-      "Decide whether the window is for breakout or reversion before price arrives."
+      "session_windows := predefine_clock_windows()",
+      "levels := { asia_high, asia_low, london_open, new_york_open, prior_session_extremes }",
+      "mode := breakout || reversion before price_reaches_window"
     ],
     "setup": [
-      "Price reaches the level or range expected for that session window.",
-      "A liquidity sweep or opening drive forms at the planned time.",
-      "Session behavior matches the repeatable pattern you trade."
+      "setup_valid := price_reaches(planned_level_or_range) during active_window",
+      "pattern_valid := liquidity_sweep || opening_drive occurs_on_time",
+      "behavior_valid := live_session_behavior matches playbook_pattern"
     ],
     "trigger": [
-      "Break of opening range for expansion setups.",
-      "Reclaim of a swept level for reversal setups.",
-      "Enter only inside the active session window, never after it is gone."
+      "breakout_entry when price_breaks(opening_range)",
+      "reversal_entry when price_reclaims(swept_level)",
+      "entries_allowed only_if now inside active_session_window"
     ],
     "confirmation": [
-      "Volume and range pick up during the planned window.",
-      "Price respects the session level after trigger.",
-      "No conflicting macro release is seconds away."
+      "confirm volume_up && range_expands during planned_window",
+      "confirm price_respects(session_level) after trigger",
+      "confirm no_macro_release inside immediate_execution_buffer"
     ],
     "invalidation": [
-      "The session window closes without expansion.",
-      "Price accepts on the wrong side of the key session level.",
-      "Opening range direction flips and holds against the idea."
+      "invalidate if session_window_closes_without_expansion",
+      "invalidate if price_accepts_wrong_side_of(key_session_level)",
+      "invalidate if opening_range_direction flips_and_holds_against_trade"
     ],
     "noTrade": [
-      "You missed the planned time window.",
-      "The setup depends on news randomness instead of repeatable session behavior.",
-      "Spread and slippage are too high around the session open."
+      "skip if planned_time_window already_passed",
+      "skip if setup_depends_on news_randomness instead_of repeatable_session_behavior",
+      "skip if spread_plus_slippage > session_open_threshold"
     ]
   },
   "exit": {
     "stopLoss": [
-      "Hide stop beyond the session level or sweep extreme.",
-      "Use tighter stops for open-drive setups and wider structure stops for sweep reclaims.",
-      "If the session volatility makes the invalidation too wide, skip the trade."
+      "stop := beyond(session_level || sweep_extreme)",
+      "open_drive_stop := tight; sweep_reclaim_stop := structure_based",
+      "abort_trade if session_volatility makes stop_distance too_wide"
     ],
     "takeProfit": [
-      "Target the opposite side of the opening range, ADR objective, or prior session high or low.",
-      "Take partials quickly on time-sensitive setups.",
-      "Keep runners only while session momentum remains intact."
+      "tp1 := opposite_side(opening_range) || adr_objective || prior_session_extreme",
+      "take_partials_fast on time_sensitive_setups",
+      "runner_allowed only_while session_momentum_intact"
     ],
     "timeExit": [
-      "Exit by the end of the planned session window.",
-      "Flatten before lunch or rollover if the setup was open-drive based.",
-      "Close before liquidity dies if price stalls."
+      "exit by end_of(planned_session_window)",
+      "flatten before lunch_or_rollover if setup == open_drive",
+      "close before liquidity_dies if price_stalls"
     ],
     "earlyExit": [
-      "The session level fails immediately after entry.",
-      "Price cannot hold above or below the opening range.",
-      "The time window expires with no continuation."
+      "exit_early if session_level_fails_immediately_after_entry",
+      "exit_early if price_cannot_hold_outside(opening_range)",
+      "exit_early if time_window_expires_without_continuation"
     ]
   }
 }

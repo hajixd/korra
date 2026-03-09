@@ -6,59 +6,59 @@
     "retracement continuation",
     "fib confluence"
   ],
-  "description": "Retracement model that waits for pullbacks into Fibonacci levels that overlap with structure and continuation confirmation.",
+  "description": "if impulse_leg_is_clean && retrace_hits_fib_confluence && rejection_confirms then resume_trend()",
   "entry": {
     "context": [
-      "Anchor Fibonacci from a clear impulse swing, not random noise.",
-      "Use fib only when it aligns with structure or liquidity.",
-      "Trade with trend unless you explicitly plan a countertrend retracement setup."
+      "fib_anchor := clear_impulse_swing; never_random_noise",
+      "require fib_confluence_with(structure || liquidity || vwap)",
+      "default_mode := trend_continuation unless countertrend_plan_is_explicit"
     ],
     "setup": [
-      "Price retraces into the 0.382, 0.5, or 0.618 zone.",
-      "Retracement slows with smaller bodies or rejection wicks.",
-      "The level overlaps with prior structure, VWAP, or a session high or low."
+      "setup_valid := retrace_into({ 0.382, 0.5, 0.618 })",
+      "retrace_behavior := smaller_bodies || rejection_wicks",
+      "zone_valid := overlap(prior_structure || vwap || session_extreme)"
     ],
     "trigger": [
-      "Enter on a rejection candle close from the fib zone.",
-      "Use a lower-high or higher-low break for cleaner confirmation.",
-      "Avoid blind limit entries unless the zone has strong confluence."
+      "entry when rejection_candle_closes_from(fib_zone)",
+      "alt_trigger := break(lower_high || higher_low)",
+      "no_blind_limit unless fib_zone_confluence >= strong"
     ],
     "confirmation": [
-      "Trend structure remains intact on the higher timeframe.",
-      "The fib zone overlaps with another level people will react to.",
-      "Retracement depth remains inside planned invalidation."
+      "confirm htf_trend_structure remains_intact",
+      "confirm fib_zone overlaps_reactive_level",
+      "confirm retrace_depth <= planned_invalidation_depth"
     ],
     "invalidation": [
-      "Price closes cleanly beyond the fib zone and structure pivot.",
-      "Pullback becomes a full reversal with an opposite impulsive break.",
-      "Confluence disappears because the swing anchor is invalid."
+      "invalidate if price_closes_beyond(fib_zone && structure_pivot)",
+      "invalidate if pullback_transitions_into full_reversal",
+      "invalidate if fib_anchor_becomes_invalid"
     ],
     "noTrade": [
-      "Anchors are ambiguous or constantly changing.",
-      "You are forcing fib on a choppy range with no impulse.",
-      "Nearby structure caps the move before the trade can breathe."
+      "skip if anchors_are_ambiguous || keep_repainting",
+      "skip if market_state == choppy_range && impulse_leg_missing",
+      "skip if nearby_structure caps_reward_before_trade_can_breathe"
     ]
   },
   "exit": {
     "stopLoss": [
-      "Place stop beyond the fib zone and swing pivot.",
-      "Hide stop beyond the structure low or high that makes the trend invalid.",
-      "Do not use the exact fib number as the stop."
+      "stop := beyond(fib_zone && swing_pivot)",
+      "alt_stop := beyond(structure_low_high_that_invalidates_trend)",
+      "never_place_stop_on_exact_fib_number := true"
     ],
     "takeProfit": [
-      "First target is the prior swing high or low.",
-      "Second target is an extension level or measured move.",
-      "Take profit faster if the retracement was deep and trend quality is weaker."
+      "tp1 := prior_swing_extreme",
+      "tp2 := fib_extension || measured_move",
+      "take_profit_faster if retrace_depth_is_deep && trend_quality_is_weaker"
     ],
     "timeExit": [
-      "Flatten if rejection never expands after a few candles.",
-      "Exit before session handoff if the setup was intraday only.",
-      "Do not keep a fib pullback once the timing window closes."
+      "exit if rejection_never_expands after few_candles",
+      "flatten before session_handoff if setup_is_intraday_only",
+      "no_hold fib_pullback after timing_window_closes := true"
     ],
     "earlyExit": [
-      "Price accepts through the zone after entry.",
-      "The rejection candle is fully negated.",
-      "Trend resumes too slowly and stalls at midrange."
+      "exit_early if price_accepts_through(fib_zone)",
+      "exit_early if rejection_candle_is_fully_negated",
+      "exit_early if trend_resumes_too_slowly && stalls_at_midrange"
     ]
   }
 }

@@ -6,59 +6,59 @@
     "s/r",
     "level reaction"
   ],
-  "description": "Level-reaction model that trades clean break, reclaim, or rejection behavior around well-defined support and resistance zones.",
+  "description": "if price_is_at_key_zone && reaction_type in { reject, reclaim, breakout_hold } then trade_level_response()",
   "entry": {
     "context": [
-      "Mark daily and weekly highs, lows, prior session levels, and untouched reaction zones.",
-      "Prefer levels with liquidity or repeated reactions, not random midrange points.",
-      "Know whether you want a breakout continuation or rejection before price touches the level."
+      "levels := { daily_high_low, weekly_high_low, prior_session_levels, untouched_zones }",
+      "prefer level_with(liquidity || repeated_reaction); reject random_midrange",
+      "mode := breakout_continuation || rejection before first_touch"
     ],
     "setup": [
-      "Price approaches a defined support or resistance with clean swings.",
-      "A sweep or rejection occurs at the level.",
-      "Structure around the level compresses enough to define invalidation."
+      "setup_valid := clean_approach_into(defined_support_resistance)",
+      "reaction_valid := sweep || rejection occurs_at(level)",
+      "compression_valid := local_structure defines_invalidation"
     ],
     "trigger": [
-      "Enter on reclaim of support or failure below resistance for rejection trades.",
-      "Enter on close and hold beyond the level for breakout trades.",
-      "Execute only when the level reaction is obvious and invalidation is defined."
+      "rejection_entry when support_reclaims || resistance_failure_prints",
+      "breakout_entry when close_and_hold_beyond(level) == true",
+      "execute only_if reaction_is_obvious && invalidation_is_defined"
     ],
     "confirmation": [
-      "Multiple touches or volume make the level meaningful.",
-      "Wick rejection or closing behavior confirms the response at the level.",
-      "The next path of price is open enough for the trade to develop."
+      "confirm level_significance via multi_touch || volume_response",
+      "confirm wick_rejection || close_behavior at level",
+      "confirm next_path_of_price has_room_to_develop"
     ],
     "invalidation": [
-      "Price accepts through the level and holds.",
-      "The level breaks with range expansion against the thesis.",
-      "Reaction stays noisy and whipsaws both sides of the zone."
+      "invalidate if price_accepts_through(level) && holds",
+      "invalidate if range_expansion breaks_level_against_thesis",
+      "invalidate if reaction_whipsaws_both_sides_of(zone)"
     ],
     "noTrade": [
-      "The level is already overused and reactions are decaying.",
-      "Another stronger level sits too close behind entry.",
-      "The approach is messy with no clean boundary."
+      "skip if level_is_overused && reaction_quality_is_decaying",
+      "skip if stronger_level sits_too_close_behind_entry",
+      "skip if approach_is_messy && clean_boundary_missing"
     ]
   },
   "exit": {
     "stopLoss": [
-      "Place stop beyond the far side of the zone or sweep extreme.",
-      "Use the full zone width to judge whether the trade is valid.",
-      "If the zone is too wide, skip the setup."
+      "stop := beyond(far_side_of_zone || sweep_extreme)",
+      "zone_width := full_width(zone) for validity_check",
+      "abort_trade if zone_width > max_allowed_stop"
     ],
     "takeProfit": [
-      "Target the next clear level or liquidity pool.",
-      "Pay partials quickly on countertrend reactions.",
-      "Hold the rest only if breakout acceptance or clean rejection continuation develops."
+      "tp1 := next_clear_level || next_liquidity_pool",
+      "take_partials_fast on countertrend_reactions",
+      "runner_allowed only_if breakout_acceptance || clean_rejection_continuation"
     ],
     "timeExit": [
-      "Close if price cannot leave the zone quickly.",
-      "Flatten before session close if the trade depends on active liquidity.",
-      "Do not carry a level reaction after the level has already been consumed."
+      "exit if price_cannot_leave(zone) quickly",
+      "flatten before session_close if trade_depends_on active_liquidity",
+      "no_carry level_reaction after zone_is_consumed := true"
     ],
     "earlyExit": [
-      "The zone is retaken with conviction.",
-      "A breakout retest fails immediately.",
-      "Repeated tests erode the reaction edge after entry."
+      "exit_early if zone_is_retaken_with_conviction",
+      "exit_early if breakout_retest_fails_immediately",
+      "exit_early if repeated_tests erode_reaction_edge"
     ]
   }
 }
