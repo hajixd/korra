@@ -720,12 +720,44 @@ body {
   box-shadow: 0 0 28px rgba(0, 0, 0, 0.32);
 }
 
+.korra-copytrade-shell__heroCardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
 .korra-copytrade-shell__heroLabel {
   font-size: 10px;
   line-height: 1.4;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: #666666;
+}
+
+.korra-copytrade-shell__heroAside {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  text-align: right;
+}
+
+.korra-copytrade-shell__heroAsideLabel {
+  font-size: 10px;
+  line-height: 1.3;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #666666;
+}
+
+.korra-copytrade-shell__heroAsideValue {
+  font-size: 12px;
+  line-height: 1.3;
+  font-weight: 600;
+  color: #d8d8d8;
+  font-variant-numeric: tabular-nums;
 }
 
 .korra-copytrade-shell__heroValue {
@@ -754,7 +786,7 @@ body {
 
 .korra-copytrade-shell__chartCard {
   margin-top: 18px;
-  padding: 14px 16px 12px;
+  padding: 12px 14px 10px;
   border: 1px solid #202020;
   border-radius: 24px;
   background: rgba(0, 0, 0, 0.8);
@@ -809,7 +841,66 @@ body {
   display: block;
   width: 100%;
   height: auto;
-  margin-top: 10px;
+  margin-top: 8px;
+}
+
+.korra-copytrade-shell__chartStage {
+  position: relative;
+}
+
+.korra-copytrade-shell__chartTooltip {
+  position: absolute;
+  top: 10px;
+  left: 0;
+  z-index: 2;
+  min-width: 138px;
+  padding: 10px 12px;
+  border: 1px solid #1f2937;
+  border-radius: 14px;
+  background: #020617;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.38);
+  color: #e5e7eb;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 0);
+  transition: opacity 120ms ease;
+}
+
+.korra-copytrade-shell__chartTooltip[data-visible="true"] {
+  opacity: 1;
+}
+
+.korra-copytrade-shell__chartTooltipLabel {
+  font-size: 10px;
+  line-height: 1.4;
+  color: #9ca3af;
+}
+
+.korra-copytrade-shell__chartTooltipRow {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.korra-copytrade-shell__chartTooltipSwatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.korra-copytrade-shell__chartTooltipValue {
+  margin-left: auto;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.korra-copytrade-shell__chartGuideLine,
+.korra-copytrade-shell__chartGuideDot {
+  pointer-events: none;
 }
 
 .korra-copytrade-shell__detailGrid {
@@ -938,6 +1029,14 @@ body {
 
 .korra-copytrade-shell__detailTable tbody tr:first-child td {
   border-top: 1px solid #171717;
+}
+
+.korra-copytrade-shell__detailRow--positive td {
+  background: rgba(74, 222, 128, 0.035);
+}
+
+.korra-copytrade-shell__detailRow--negative td {
+  background: rgba(255, 143, 143, 0.04);
 }
 
 .korra-copytrade-shell__detailTable td:last-child,
@@ -5721,6 +5820,16 @@ const injectedScript = `
     }
   };
 
+  const formatSignedCurrencyValue = (value, currency = "USD") => {
+    const formatted = formatCurrencyValue(value, currency);
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0 || formatted === "--") {
+      return formatted;
+    }
+
+    return "+" + formatted;
+  };
+
   const formatPlainNumber = (value, fractionDigits = 2) => {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) {
@@ -6364,18 +6473,36 @@ const injectedScript = `
     "</div>" +
     "</div>";
 
-  const buildStatisticsHeroCardMarkup = (label, value, meta = "", valueClassName = "") =>
+  const buildStatisticsHeroCardMarkup = (
+    label,
+    value,
+    asideLabel = "",
+    asideValue = "",
+    valueClassName = "",
+    asideValueClassName = ""
+  ) =>
     '<div class="korra-copytrade-shell__heroCard">' +
+    '<div class="korra-copytrade-shell__heroCardHeader">' +
     '<div class="korra-copytrade-shell__heroLabel">' +
     escapeHtml(label) +
+    "</div>" +
+    (asideLabel || asideValue
+      ? '<div class="korra-copytrade-shell__heroAside">' +
+        '<div class="korra-copytrade-shell__heroAsideLabel">' +
+        escapeHtml(asideLabel) +
+        "</div>" +
+        '<div class="korra-copytrade-shell__heroAsideValue' +
+        (asideValueClassName ? " " + escapeHtml(asideValueClassName) : "") +
+        '">' +
+        escapeHtml(asideValue) +
+        "</div>" +
+        "</div>"
+      : "") +
     "</div>" +
     '<div class="korra-copytrade-shell__heroValue' +
     (valueClassName ? " " + escapeHtml(valueClassName) : "") +
     '">' +
     escapeHtml(value) +
-    "</div>" +
-    '<div class="korra-copytrade-shell__heroMeta">' +
-    escapeHtml(meta) +
     "</div>" +
     "</div>";
 
@@ -6489,6 +6616,7 @@ const injectedScript = `
       bestTrade,
       worstTrade,
       maxDrawdownPct,
+      startingBalance,
       balanceSeries: balanceSeries.slice(-48),
       equitySeries: equitySeries.slice(-48),
       currentBalance: finalBalance,
@@ -6596,8 +6724,8 @@ const injectedScript = `
     }
 
     const width = 860;
-    const height = 236;
-    const padding = { top: 12, right: 18, bottom: 28, left: 74 };
+    const height = 196;
+    const padding = { top: 10, right: 16, bottom: 26, left: 68 };
     const times = allPoints.map((point) => Number(point.time));
     const values = allPoints.map((point) => Number(point.value));
     let minTime = Math.min.apply(null, times);
@@ -6620,6 +6748,8 @@ const injectedScript = `
 
     const plotHeight = height - padding.top - padding.bottom;
     const plotWidth = width - padding.left - padding.right;
+    const xRange = Math.max(1, maxTime - minTime);
+    const yRange = Math.max(1, maxValue - minValue);
     const yAxisMarks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
       const y = padding.top + ratio * plotHeight;
       const value = maxValue - ratio * (maxValue - minValue);
@@ -6646,8 +6776,7 @@ const injectedScript = `
       .map((ratio) => minTime + (maxTime - minTime) * ratio)
       .map((time, index) => {
         const anchor = index === 0 ? "start" : index === 3 ? "end" : "middle";
-        const x =
-          padding.left + ((time - minTime) / Math.max(1, maxTime - minTime)) * plotWidth;
+        const x = padding.left + ((time - minTime) / xRange) * plotWidth;
         return (
           '<text x="' +
           x.toFixed(2) +
@@ -6702,6 +6831,58 @@ const injectedScript = `
       minValue,
       maxValue
     );
+    const interactivePointMap = new Map();
+    balanceSeries.forEach((point) => {
+      const time = Number(point && point.time);
+      if (!Number.isFinite(time)) {
+        return;
+      }
+      const key = String(time);
+      const entry = interactivePointMap.get(key) || { time };
+      entry.balance = Number(point && point.value);
+      interactivePointMap.set(key, entry);
+    });
+    equitySeries.forEach((point) => {
+      const time = Number(point && point.time);
+      if (!Number.isFinite(time)) {
+        return;
+      }
+      const key = String(time);
+      const entry = interactivePointMap.get(key) || { time };
+      entry.equity = Number(point && point.value);
+      interactivePointMap.set(key, entry);
+    });
+    const interactivePoints = Array.from(interactivePointMap.values())
+      .sort((left, right) => Number(left.time || 0) - Number(right.time || 0))
+      .map((point) => {
+        const x = padding.left + ((Number(point.time) - minTime) / xRange) * plotWidth;
+        const balanceValue = Number(point.balance);
+        const equityValue = Number(point.equity);
+        return {
+          time: Number(point.time),
+          balance: Number.isFinite(balanceValue) ? balanceValue : null,
+          equity: Number.isFinite(equityValue) ? equityValue : null,
+          x,
+          balanceY:
+            Number.isFinite(balanceValue)
+              ? padding.top + (1 - (balanceValue - minValue) / yRange) * plotHeight
+              : null,
+          equityY:
+            Number.isFinite(equityValue)
+              ? padding.top + (1 - (equityValue - minValue) / yRange) * plotHeight
+              : null
+        };
+      });
+    const chartConfig = escapeHtml(
+      JSON.stringify({
+        currency,
+        plotLeft: padding.left,
+        plotRight: width - padding.right,
+        plotTop: padding.top,
+        plotBottom: height - padding.bottom,
+        points: interactivePoints
+      })
+    );
     return (
       '<div class="korra-copytrade-shell__chartCard">' +
       '<div class="korra-copytrade-shell__chartHeader">' +
@@ -6715,22 +6896,59 @@ const injectedScript = `
       "</span>" +
       "</div>" +
       "</div>" +
-      '<svg class="korra-copytrade-shell__chartSvg" viewBox="0 0 860 236" role="img" aria-label="Account equity curve">' +
+      '<div class="korra-copytrade-shell__chartStage" data-korra-chart-root="true" data-korra-chart-config="' +
+      chartConfig +
+      '">' +
+      '<svg class="korra-copytrade-shell__chartSvg" viewBox="0 0 860 196" role="img" aria-label="Account equity curve" data-korra-chart-svg="true">' +
       yAxisMarks +
       verticalMarks +
+      '<line class="korra-copytrade-shell__chartGuideLine" data-korra-chart-guide="true" x1="' +
+      String(padding.left) +
+      '" y1="' +
+      String(padding.top) +
+      '" x2="' +
+      String(padding.left) +
+      '" y2="' +
+      String(height - padding.bottom) +
+      '" stroke="#a1a1aa" stroke-width="1" stroke-dasharray="3 3" opacity="0"></line>' +
       '<path d="' +
       balancePath +
-      '" fill="none" stroke="#38bdf8" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>' +
+      '" fill="none" stroke="#38bdf8" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"></path>' +
       '<path d="' +
       equityPath +
-      '" fill="none" stroke="#fb7185" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>' +
+      '" fill="none" stroke="#fb7185" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"></path>' +
+      '<circle class="korra-copytrade-shell__chartGuideDot" data-korra-chart-balance-dot="true" cx="' +
+      String(padding.left) +
+      '" cy="' +
+      String(padding.top) +
+      '" r="4" fill="#38bdf8" stroke="#020617" stroke-width="2" opacity="0"></circle>' +
+      '<circle class="korra-copytrade-shell__chartGuideDot" data-korra-chart-equity-dot="true" cx="' +
+      String(padding.left) +
+      '" cy="' +
+      String(padding.top) +
+      '" r="4" fill="#fb7185" stroke="#020617" stroke-width="2" opacity="0"></circle>' +
       xAxisMarks +
+      '<rect data-korra-chart-hitbox="true" x="' +
+      String(padding.left) +
+      '" y="' +
+      String(padding.top) +
+      '" width="' +
+      plotWidth.toFixed(2) +
+      '" height="' +
+      plotHeight.toFixed(2) +
+      '" fill="transparent" style="cursor:crosshair;"></rect>' +
       "</svg>" +
+      '<div class="korra-copytrade-shell__chartTooltip" data-korra-chart-tooltip="true" aria-hidden="true">' +
+      '<div class="korra-copytrade-shell__chartTooltipLabel" data-korra-chart-tooltip-label="true"></div>' +
+      '<div class="korra-copytrade-shell__chartTooltipRow"><span class="korra-copytrade-shell__chartTooltipSwatch" style="background:#38bdf8;"></span><span>Balance</span><span class="korra-copytrade-shell__chartTooltipValue" data-korra-chart-tooltip-balance="true"></span></div>' +
+      '<div class="korra-copytrade-shell__chartTooltipRow"><span class="korra-copytrade-shell__chartTooltipSwatch" style="background:#fb7185;"></span><span>Equity</span><span class="korra-copytrade-shell__chartTooltipValue" data-korra-chart-tooltip-equity="true"></span></div>' +
+      "</div>" +
+      "</div>" +
       "</div>"
     );
   };
 
-  const buildStatisticsTableRows = (items, columns) => {
+  const buildStatisticsTableRows = (items, columns, getRowClassName = null) => {
     if (!items.length) {
       return (
         '<tr><td colspan="' +
@@ -6753,8 +6971,15 @@ const injectedScript = `
             return "<td" + className + ">" + column.render(item) + "</td>";
           })
           .join("");
-
-        return "<tr>" + cells + "</tr>";
+        const rowClassName =
+          typeof getRowClassName === "function" ? String(getRowClassName(item) || "").trim() : "";
+        return (
+          "<tr" +
+          (rowClassName ? ' class="' + escapeHtml(rowClassName) + '"' : "") +
+          ">" +
+          cells +
+          "</tr>"
+        );
       })
       .join("");
   };
@@ -6904,12 +7129,29 @@ const injectedScript = `
     const freeMarginText = formatCurrencyValue(dashboard && dashboard.freeMargin, currency);
     const openProfitText = formatCurrencyValue(dashboard && dashboard.netOpenProfit, currency);
     const closedPnlText = formatCurrencyValue(dashboard && dashboard.dayClosedPnl, currency);
-    const balanceToneClass = resolveHeroToneClass(
+    const closedPnlValue =
       dashboard && dashboard.dayClosedPnl != null
-        ? dashboard.dayClosedPnl
-        : performanceModel && performanceModel.realizedPnl
-    );
-    const equityToneClass = resolveHeroToneClass(dashboard && dashboard.netOpenProfit);
+        ? Number(dashboard.dayClosedPnl)
+        : performanceModel && performanceModel.realizedPnl != null
+          ? Number(performanceModel.realizedPnl)
+          : null;
+    const balanceDeltaValue =
+      performanceModel &&
+      Number.isFinite(Number(performanceModel.currentBalance)) &&
+      Number.isFinite(Number(performanceModel.startingBalance))
+        ? Number(performanceModel.currentBalance) - Number(performanceModel.startingBalance)
+        : closedPnlValue;
+    const equityDeltaValue =
+      dashboard && dashboard.netOpenProfit != null
+        ? Number(dashboard.netOpenProfit)
+        : performanceModel &&
+            Number.isFinite(Number(performanceModel.currentEquity)) &&
+            Number.isFinite(Number(performanceModel.currentBalance))
+          ? Number(performanceModel.currentEquity) - Number(performanceModel.currentBalance)
+          : null;
+    const balanceToneClass = resolveHeroToneClass(balanceDeltaValue);
+    const equityToneClass = resolveHeroToneClass(equityDeltaValue);
+    const closedPnlToneClass = resolveHeroToneClass(closedPnlValue);
     const openPositionsCount = Array.isArray(dashboard && dashboard.openPositions)
       ? dashboard.openPositions.length
       : 0;
@@ -6921,13 +7163,16 @@ const injectedScript = `
         buildStatisticsHeroCardMarkup(
           "Balance",
           balanceText,
-          "Closed P/L " + closedPnlText,
-          balanceToneClass
+          "Closed P/L",
+          formatSignedCurrencyValue(closedPnlValue, currency),
+          balanceToneClass,
+          closedPnlToneClass
         ) +
         buildStatisticsHeroCardMarkup(
           "Equity",
           equityText,
-          "Free margin " + freeMarginText,
+          "Free Margin",
+          freeMarginText,
           equityToneClass
         ) +
         "</div>" +
@@ -7092,7 +7337,13 @@ const injectedScript = `
                 : "",
           render: (item) => escapeHtml(formatCurrencyValue(item.profit, currency))
         }
-      ]) +
+      ], (item) =>
+        Number(item && item.profit) > 0
+          ? "korra-copytrade-shell__detailRow--positive"
+          : Number(item && item.profit) < 0
+            ? "korra-copytrade-shell__detailRow--negative"
+            : ""
+      ) +
       "</tbody></table></div></div>";
 
     return (
@@ -7292,6 +7543,184 @@ const injectedScript = `
     return shell;
   };
 
+  const hideCustomCopyTradeChartInteraction = (chartRoot) => {
+    if (!(chartRoot instanceof HTMLElement)) {
+      return;
+    }
+
+    const tooltip = chartRoot.querySelector("[data-korra-chart-tooltip='true']");
+    if (tooltip instanceof HTMLElement) {
+      tooltip.dataset.visible = "false";
+      tooltip.setAttribute("aria-hidden", "true");
+    }
+
+    const guide = chartRoot.querySelector("[data-korra-chart-guide='true']");
+    if (guide instanceof SVGLineElement) {
+      guide.setAttribute("opacity", "0");
+    }
+
+    const balanceDot = chartRoot.querySelector("[data-korra-chart-balance-dot='true']");
+    if (balanceDot instanceof SVGCircleElement) {
+      balanceDot.setAttribute("opacity", "0");
+    }
+
+    const equityDot = chartRoot.querySelector("[data-korra-chart-equity-dot='true']");
+    if (equityDot instanceof SVGCircleElement) {
+      equityDot.setAttribute("opacity", "0");
+    }
+  };
+
+  const updateCustomCopyTradeChartInteraction = (chartRoot, clientX) => {
+    if (!(chartRoot instanceof HTMLElement)) {
+      return;
+    }
+
+    if (!chartRoot.__korraChartConfig) {
+      try {
+        chartRoot.__korraChartConfig = JSON.parse(
+          String(chartRoot.dataset.korraChartConfig || "{}")
+        );
+      } catch {
+        chartRoot.__korraChartConfig = null;
+      }
+    }
+
+    const config = chartRoot.__korraChartConfig;
+    const points = Array.isArray(config && config.points) ? config.points : [];
+    if (!points.length) {
+      hideCustomCopyTradeChartInteraction(chartRoot);
+      return;
+    }
+
+    const hitbox = chartRoot.querySelector("[data-korra-chart-hitbox='true']");
+    if (!(hitbox instanceof SVGRectElement)) {
+      return;
+    }
+
+    const hitboxRect = hitbox.getBoundingClientRect();
+    if (!(hitboxRect.width > 0)) {
+      return;
+    }
+
+    const plotLeft = Number(config.plotLeft || 0);
+    const plotRight = Number(config.plotRight || 0);
+    const plotTop = Number(config.plotTop || 0);
+    const plotBottom = Number(config.plotBottom || 0);
+    const ratio = Math.max(0, Math.min(1, (clientX - hitboxRect.left) / hitboxRect.width));
+    const targetX = plotLeft + ratio * Math.max(1, plotRight - plotLeft);
+    let activePoint = points[0];
+    let bestDistance = Math.abs(Number(points[0].x || 0) - targetX);
+
+    for (let index = 1; index < points.length; index += 1) {
+      const candidate = points[index];
+      const distance = Math.abs(Number(candidate && candidate.x || 0) - targetX);
+      if (distance < bestDistance) {
+        activePoint = candidate;
+        bestDistance = distance;
+      }
+    }
+
+    if (!activePoint) {
+      hideCustomCopyTradeChartInteraction(chartRoot);
+      return;
+    }
+
+    const guide = chartRoot.querySelector("[data-korra-chart-guide='true']");
+    if (guide instanceof SVGLineElement) {
+      guide.setAttribute("x1", String(activePoint.x));
+      guide.setAttribute("x2", String(activePoint.x));
+      guide.setAttribute("y1", String(plotTop));
+      guide.setAttribute("y2", String(plotBottom));
+      guide.setAttribute("opacity", "0.9");
+    }
+
+    const balanceDot = chartRoot.querySelector("[data-korra-chart-balance-dot='true']");
+    if (balanceDot instanceof SVGCircleElement) {
+      if (Number.isFinite(Number(activePoint.balanceY))) {
+        balanceDot.setAttribute("cx", String(activePoint.x));
+        balanceDot.setAttribute("cy", String(activePoint.balanceY));
+        balanceDot.setAttribute("opacity", "1");
+      } else {
+        balanceDot.setAttribute("opacity", "0");
+      }
+    }
+
+    const equityDot = chartRoot.querySelector("[data-korra-chart-equity-dot='true']");
+    if (equityDot instanceof SVGCircleElement) {
+      if (Number.isFinite(Number(activePoint.equityY))) {
+        equityDot.setAttribute("cx", String(activePoint.x));
+        equityDot.setAttribute("cy", String(activePoint.equityY));
+        equityDot.setAttribute("opacity", "1");
+      } else {
+        equityDot.setAttribute("opacity", "0");
+      }
+    }
+
+    const tooltip = chartRoot.querySelector("[data-korra-chart-tooltip='true']");
+    if (!(tooltip instanceof HTMLElement)) {
+      return;
+    }
+
+    const label = tooltip.querySelector("[data-korra-chart-tooltip-label='true']");
+    if (label instanceof HTMLElement) {
+      label.textContent = formatChartTimeLabel(activePoint.time);
+    }
+
+    const balanceValue = tooltip.querySelector("[data-korra-chart-tooltip-balance='true']");
+    if (balanceValue instanceof HTMLElement) {
+      balanceValue.textContent = formatCurrencyValue(activePoint.balance, config.currency || "USD");
+    }
+
+    const equityValue = tooltip.querySelector("[data-korra-chart-tooltip-equity='true']");
+    if (equityValue instanceof HTMLElement) {
+      equityValue.textContent = formatCurrencyValue(activePoint.equity, config.currency || "USD");
+    }
+
+    tooltip.dataset.visible = "true";
+    tooltip.setAttribute("aria-hidden", "false");
+    const chartRect = chartRoot.getBoundingClientRect();
+    const relativeX =
+      hitboxRect.left -
+      chartRect.left +
+      ((Number(activePoint.x || 0) - plotLeft) / Math.max(1, plotRight - plotLeft)) *
+      hitboxRect.width;
+    const tooltipWidth = tooltip.offsetWidth || 150;
+    const minLeft = tooltipWidth / 2 + 8;
+    const maxLeft = Math.max(minLeft, chartRoot.clientWidth - tooltipWidth / 2 - 8);
+    const tooltipLeft = Math.min(maxLeft, Math.max(minLeft, relativeX));
+    tooltip.style.left = tooltipLeft.toFixed(2) + "px";
+  };
+
+  const initializeCustomCopyTradeCharts = (container) => {
+    if (!(container instanceof HTMLElement)) {
+      return;
+    }
+
+    const chartRoots = container.querySelectorAll("[data-korra-chart-root='true']");
+    chartRoots.forEach((node) => {
+      if (!(node instanceof HTMLElement) || node.dataset.korraChartBound === "true") {
+        return;
+      }
+
+      node.dataset.korraChartBound = "true";
+      const handlePointerMove = (event) => {
+        if (!(event instanceof PointerEvent)) {
+          return;
+        }
+        updateCustomCopyTradeChartInteraction(node, event.clientX);
+      };
+
+      node.addEventListener("pointerenter", handlePointerMove);
+      node.addEventListener("pointermove", handlePointerMove);
+      node.addEventListener("pointerleave", () => {
+        hideCustomCopyTradeChartInteraction(node);
+      });
+      node.addEventListener("pointercancel", () => {
+        hideCustomCopyTradeChartInteraction(node);
+      });
+    });
+  };
+
   const renderCustomCopyTradeShell = () => {
     const existingShell = document.getElementById(KORRA_COPYTRADE_SHELL_ID);
     if (!isCustomCopyTradeShellRoute()) {
@@ -7324,6 +7753,7 @@ const injectedScript = `
       shell.__korraMarkup = markup;
     }
 
+    initializeCustomCopyTradeCharts(shell);
     shell.hidden = false;
     document.body.style.background = "#040404";
     document.documentElement.style.background = "#040404";
