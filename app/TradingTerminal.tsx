@@ -17774,6 +17774,239 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 </nav>
               ) : null}
 
+              <AiSettingsModal
+                title={activeModelRunEntry?.name ?? "Model Run"}
+                subtitle={`${selectedSymbol} · JSON replay run`}
+                size="xwide"
+                bodyClassName="model-run-modal-body"
+                open={Boolean(activeModelRunEntry)}
+                onClose={closeModelRunModal}
+              >
+                {activeModelRunEntry ? (
+                  <div className="model-run-shell">
+                    <div className="model-run-toolbar">
+                      <div className="model-run-toolbar-main">
+                        <div ref={modelRunPresetDdRef} className="backtest-date-preset-wrap">
+                          <button
+                            type="button"
+                            className="backtest-date-preset-trigger"
+                            onClick={() => setModelRunPresetDdOpen((open) => !open)}
+                            aria-haspopup="listbox"
+                            aria-expanded={modelRunPresetDdOpen}
+                            aria-label="Select model run range"
+                          >
+                            {
+                              MODEL_RUN_DATE_PRESET_OPTIONS.find((option) => option.id === modelRunPreset)
+                                ?.label ?? "Past Month"
+                            }
+                            <span className="backtest-date-preset-chevron" aria-hidden="true">
+                              {modelRunPresetDdOpen ? "▴" : "▾"}
+                            </span>
+                          </button>
+                          {modelRunPresetDdOpen ? (
+                            <div
+                              className="backtest-date-preset-dd"
+                              role="listbox"
+                              aria-label="Model run range options"
+                            >
+                              {MODEL_RUN_DATE_PRESET_OPTIONS.map((option) => (
+                                <button
+                                  key={option.id}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={modelRunPreset === option.id}
+                                  className={`backtest-date-preset-option${
+                                    modelRunPreset === option.id ? " active" : ""
+                                  }`}
+                                  onClick={() => {
+                                    setModelRunPreset(option.id);
+                                    setModelRunPresetDdOpen(false);
+                                  }}
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div ref={modelRunTimeframeDdRef} className="stats-timeframe-wrap">
+                          <button
+                            type="button"
+                            className="stats-timeframe-trigger"
+                            onClick={() => setModelRunTimeframeDdOpen((open) => !open)}
+                            aria-haspopup="listbox"
+                            aria-expanded={modelRunTimeframeDdOpen}
+                            aria-label="Select model run timeframe"
+                          >
+                            {TIMEFRAME_DISPLAY_LABELS[modelRunTimeframe]}
+                            <span className="stats-timeframe-chevron" aria-hidden="true">
+                              {modelRunTimeframeDdOpen ? "▴" : "▾"}
+                            </span>
+                          </button>
+                          {modelRunTimeframeDdOpen ? (
+                            <div
+                              className="stats-timeframe-dd"
+                              role="listbox"
+                              aria-label="Model run timeframe options"
+                            >
+                              {timeframes.map((timeframe) => (
+                                <button
+                                  key={timeframe}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={modelRunTimeframe === timeframe}
+                                  className={`stats-timeframe-option${
+                                    modelRunTimeframe === timeframe ? " active" : ""
+                                  }`}
+                                  onClick={() => {
+                                    setModelRunTimeframe(timeframe);
+                                    setModelRunTimeframeDdOpen(false);
+                                  }}
+                                >
+                                  {TIMEFRAME_DISPLAY_LABELS[timeframe]}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="model-run-toolbar-main model-run-toolbar-main-end">
+                        <label className="model-run-number-control">
+                          <span>TP</span>
+                          <input
+                            type="number"
+                            min={0}
+                            step={50}
+                            value={modelRunTpDollars}
+                            onChange={(event) => {
+                              setModelRunTpDollars(
+                                Math.max(0, Number(event.target.value) || 0)
+                              );
+                            }}
+                            className="model-run-number-input"
+                            aria-label="Model run take profit"
+                          />
+                        </label>
+                        <label className="model-run-number-control">
+                          <span>SL</span>
+                          <input
+                            type="number"
+                            min={0}
+                            step={50}
+                            value={modelRunSlDollars}
+                            onChange={(event) => {
+                              setModelRunSlDollars(
+                                Math.max(0, Number(event.target.value) || 0)
+                              );
+                            }}
+                            className="model-run-number-input"
+                            aria-label="Model run stop loss"
+                          />
+                        </label>
+                        <label className="model-run-number-control">
+                          <span>Units</span>
+                          <input
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={modelRunUnits}
+                            onChange={(event) => {
+                              setModelRunUnits(Math.max(1, Number(event.target.value) || 1));
+                            }}
+                            className="model-run-number-input"
+                            aria-label="Model run units"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="panel-action-btn model-run-submit-btn"
+                          onClick={handleRunModelBacktest}
+                          disabled={modelRunRunning}
+                        >
+                          {modelRunRunning ? "Running..." : "Run"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {modelRunError ? <div className="model-run-error">{modelRunError}</div> : null}
+
+                    <div className="model-run-layout">
+                      <section className="model-run-chart-panel">
+                        <header className="model-run-panel-head">
+                          <div className="model-run-panel-copy">
+                            <strong>Equity Curve</strong>
+                            <span>
+                              {modelRunResult
+                                ? `${modelRunResult.request.startDate} to ${modelRunResult.request.endDate} · ${modelRunResult.trades.length.toLocaleString("en-US")} trades`
+                                : `${TIMEFRAME_DISPLAY_LABELS[modelRunTimeframe]} · ${selectedSymbol}`}
+                            </span>
+                          </div>
+                        </header>
+                        <ModelRunEquityChart
+                          data={modelRunResult?.chartData ?? []}
+                          emptyLabel={
+                            modelRunResult
+                              ? "No trades matched this model setup."
+                              : "Run the model to load an equity curve."
+                          }
+                        />
+                      </section>
+
+                      <section className="model-run-stats-panel">
+                        <header className="model-run-panel-head">
+                          <div className="model-run-panel-copy">
+                            <strong>Stats</strong>
+                            <span>Calculated from the same JSON replay model used by backtesting.</span>
+                          </div>
+                        </header>
+                        <div className="model-run-stats-grid">
+                          <article className="model-run-stat-card">
+                            <span>Win Rate</span>
+                            <strong className={modelRunResult && modelRunResult.summary.winRate >= 50 ? "up" : ""}>
+                              {modelRunResult ? `${modelRunResult.summary.winRate.toFixed(1)}%` : "—"}
+                            </strong>
+                          </article>
+                          <article className="model-run-stat-card">
+                            <span>Profit Factor</span>
+                            <strong>
+                              {modelRunResult ? modelRunResult.summary.profitFactor.toFixed(2) : "—"}
+                            </strong>
+                          </article>
+                          <article className="model-run-stat-card">
+                            <span>Average Win</span>
+                            <strong className={modelRunResult ? "up" : ""}>
+                              {modelRunResult ? formatSignedUsd(modelRunResult.summary.avgWin) : "—"}
+                            </strong>
+                          </article>
+                          <article className="model-run-stat-card">
+                            <span>Average Loss</span>
+                            <strong className={modelRunResult ? "down" : ""}>
+                              {modelRunResult ? formatSignedUsd(modelRunResult.summary.avgLoss) : "—"}
+                            </strong>
+                          </article>
+                          <article className="model-run-stat-card">
+                            <span>Trades</span>
+                            <strong>
+                              {modelRunResult
+                                ? modelRunResult.summary.tradeCount.toLocaleString("en-US")
+                                : "—"}
+                            </strong>
+                          </article>
+                          <article className="model-run-stat-card">
+                            <span>Net PnL</span>
+                            <strong className={modelRunResult && modelRunResult.summary.netPnl >= 0 ? "up" : modelRunResult ? "down" : ""}>
+                              {modelRunResult ? formatSignedUsd(modelRunResult.summary.netPnl) : "—"}
+                            </strong>
+                          </article>
+                        </div>
+                      </section>
+                    </div>
+                  </div>
+                ) : null}
+              </AiSettingsModal>
+
               <section className={`backtest-panel ${!isBacktestSurfaceSettled ? "backtest-panel-loading" : ""}`}>
                 {!isBacktestSurfaceSettled ? (
                   <ChartLoadingSpinner label={backtestSurfaceLoadingLabel} />
@@ -18610,239 +18843,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
                 </div>
               ) : null}
-
-              <AiSettingsModal
-                title={activeModelRunEntry?.name ?? "Model Run"}
-                subtitle={`${selectedSymbol} · JSON replay run`}
-                size="xwide"
-                bodyClassName="model-run-modal-body"
-                open={Boolean(activeModelRunEntry)}
-                onClose={closeModelRunModal}
-              >
-                {activeModelRunEntry ? (
-                  <div className="model-run-shell">
-                    <div className="model-run-toolbar">
-                      <div className="model-run-toolbar-main">
-                        <div ref={modelRunPresetDdRef} className="backtest-date-preset-wrap">
-                          <button
-                            type="button"
-                            className="backtest-date-preset-trigger"
-                            onClick={() => setModelRunPresetDdOpen((open) => !open)}
-                            aria-haspopup="listbox"
-                            aria-expanded={modelRunPresetDdOpen}
-                            aria-label="Select model run range"
-                          >
-                            {
-                              MODEL_RUN_DATE_PRESET_OPTIONS.find((option) => option.id === modelRunPreset)
-                                ?.label ?? "Past Month"
-                            }
-                            <span className="backtest-date-preset-chevron" aria-hidden="true">
-                              {modelRunPresetDdOpen ? "▴" : "▾"}
-                            </span>
-                          </button>
-                          {modelRunPresetDdOpen ? (
-                            <div
-                              className="backtest-date-preset-dd"
-                              role="listbox"
-                              aria-label="Model run range options"
-                            >
-                              {MODEL_RUN_DATE_PRESET_OPTIONS.map((option) => (
-                                <button
-                                  key={option.id}
-                                  type="button"
-                                  role="option"
-                                  aria-selected={modelRunPreset === option.id}
-                                  className={`backtest-date-preset-option${
-                                    modelRunPreset === option.id ? " active" : ""
-                                  }`}
-                                  onClick={() => {
-                                    setModelRunPreset(option.id);
-                                    setModelRunPresetDdOpen(false);
-                                  }}
-                                >
-                                  {option.label}
-                                </button>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-
-                        <div ref={modelRunTimeframeDdRef} className="stats-timeframe-wrap">
-                          <button
-                            type="button"
-                            className="stats-timeframe-trigger"
-                            onClick={() => setModelRunTimeframeDdOpen((open) => !open)}
-                            aria-haspopup="listbox"
-                            aria-expanded={modelRunTimeframeDdOpen}
-                            aria-label="Select model run timeframe"
-                          >
-                            {TIMEFRAME_DISPLAY_LABELS[modelRunTimeframe]}
-                            <span className="stats-timeframe-chevron" aria-hidden="true">
-                              {modelRunTimeframeDdOpen ? "▴" : "▾"}
-                            </span>
-                          </button>
-                          {modelRunTimeframeDdOpen ? (
-                            <div
-                              className="stats-timeframe-dd"
-                              role="listbox"
-                              aria-label="Model run timeframe options"
-                            >
-                              {timeframes.map((timeframe) => (
-                                <button
-                                  key={timeframe}
-                                  type="button"
-                                  role="option"
-                                  aria-selected={modelRunTimeframe === timeframe}
-                                  className={`stats-timeframe-option${
-                                    modelRunTimeframe === timeframe ? " active" : ""
-                                  }`}
-                                  onClick={() => {
-                                    setModelRunTimeframe(timeframe);
-                                    setModelRunTimeframeDdOpen(false);
-                                  }}
-                                >
-                                  {TIMEFRAME_DISPLAY_LABELS[timeframe]}
-                                </button>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-
-                      <div className="model-run-toolbar-main model-run-toolbar-main-end">
-                        <label className="model-run-number-control">
-                          <span>TP</span>
-                          <input
-                            type="number"
-                            min={0}
-                            step={50}
-                            value={modelRunTpDollars}
-                            onChange={(event) => {
-                              setModelRunTpDollars(
-                                Math.max(0, Number(event.target.value) || 0)
-                              );
-                            }}
-                            className="model-run-number-input"
-                            aria-label="Model run take profit"
-                          />
-                        </label>
-                        <label className="model-run-number-control">
-                          <span>SL</span>
-                          <input
-                            type="number"
-                            min={0}
-                            step={50}
-                            value={modelRunSlDollars}
-                            onChange={(event) => {
-                              setModelRunSlDollars(
-                                Math.max(0, Number(event.target.value) || 0)
-                              );
-                            }}
-                            className="model-run-number-input"
-                            aria-label="Model run stop loss"
-                          />
-                        </label>
-                        <label className="model-run-number-control">
-                          <span>Units</span>
-                          <input
-                            type="number"
-                            min={1}
-                            step={1}
-                            value={modelRunUnits}
-                            onChange={(event) => {
-                              setModelRunUnits(Math.max(1, Number(event.target.value) || 1));
-                            }}
-                            className="model-run-number-input"
-                            aria-label="Model run units"
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          className="panel-action-btn model-run-submit-btn"
-                          onClick={handleRunModelBacktest}
-                          disabled={modelRunRunning}
-                        >
-                          {modelRunRunning ? "Running..." : "Run"}
-                        </button>
-                      </div>
-                    </div>
-
-                    {modelRunError ? <div className="model-run-error">{modelRunError}</div> : null}
-
-                    <div className="model-run-layout">
-                      <section className="model-run-chart-panel">
-                        <header className="model-run-panel-head">
-                          <div className="model-run-panel-copy">
-                            <strong>Equity Curve</strong>
-                            <span>
-                              {modelRunResult
-                                ? `${modelRunResult.request.startDate} to ${modelRunResult.request.endDate} · ${modelRunResult.trades.length.toLocaleString("en-US")} trades`
-                                : `${TIMEFRAME_DISPLAY_LABELS[modelRunTimeframe]} · ${selectedSymbol}`}
-                            </span>
-                          </div>
-                        </header>
-                        <ModelRunEquityChart
-                          data={modelRunResult?.chartData ?? []}
-                          emptyLabel={
-                            modelRunResult
-                              ? "No trades matched this model setup."
-                              : "Run the model to load an equity curve."
-                          }
-                        />
-                      </section>
-
-                      <section className="model-run-stats-panel">
-                        <header className="model-run-panel-head">
-                          <div className="model-run-panel-copy">
-                            <strong>Stats</strong>
-                            <span>Calculated from the same JSON replay model used by backtesting.</span>
-                          </div>
-                        </header>
-                        <div className="model-run-stats-grid">
-                          <article className="model-run-stat-card">
-                            <span>Win Rate</span>
-                            <strong className={modelRunResult && modelRunResult.summary.winRate >= 50 ? "up" : ""}>
-                              {modelRunResult ? `${modelRunResult.summary.winRate.toFixed(1)}%` : "—"}
-                            </strong>
-                          </article>
-                          <article className="model-run-stat-card">
-                            <span>Profit Factor</span>
-                            <strong>
-                              {modelRunResult ? modelRunResult.summary.profitFactor.toFixed(2) : "—"}
-                            </strong>
-                          </article>
-                          <article className="model-run-stat-card">
-                            <span>Average Win</span>
-                            <strong className={modelRunResult ? "up" : ""}>
-                              {modelRunResult ? formatSignedUsd(modelRunResult.summary.avgWin) : "—"}
-                            </strong>
-                          </article>
-                          <article className="model-run-stat-card">
-                            <span>Average Loss</span>
-                            <strong className={modelRunResult ? "down" : ""}>
-                              {modelRunResult ? formatSignedUsd(modelRunResult.summary.avgLoss) : "—"}
-                            </strong>
-                          </article>
-                          <article className="model-run-stat-card">
-                            <span>Trades</span>
-                            <strong>
-                              {modelRunResult
-                                ? modelRunResult.summary.tradeCount.toLocaleString("en-US")
-                                : "—"}
-                            </strong>
-                          </article>
-                          <article className="model-run-stat-card">
-                            <span>Net PnL</span>
-                            <strong className={modelRunResult && modelRunResult.summary.netPnl >= 0 ? "up" : modelRunResult ? "down" : ""}>
-                              {modelRunResult ? formatSignedUsd(modelRunResult.summary.netPnl) : "—"}
-                            </strong>
-                          </article>
-                        </div>
-                      </section>
-                    </div>
-                  </div>
-                ) : null}
-              </AiSettingsModal>
 
               <AiSettingsModal
                 title="Method Specific Settings"
