@@ -9,56 +9,56 @@
   "description": "Level-reaction model that trades clean break, reclaim, or rejection behavior around well-defined support and resistance zones.",
   "entry": {
     "context": [
-      "Mark daily and weekly highs, lows, prior session levels, and untouched reaction zones.",
-      "Prefer levels with liquidity or repeated reactions, not random midrange points.",
-      "Know whether you want a breakout continuation or rejection before price touches the level."
+      "Daily or weekly highs and lows, prior session levels, and untouched reaction zones mapped.",
+      "Level carrying liquidity or repeated reaction history.",
+      "Reaction type defined in advance as breakout, reclaim, or rejection."
     ],
     "setup": [
-      "Price approaches a defined support or resistance with clean swings.",
-      "A sweep or rejection occurs at the level.",
-      "Structure around the level compresses enough to define invalidation."
+      "Price approaching a defined support or resistance with clean swings.",
+      "Sweep or rejection printing at the level.",
+      "Compression around the zone defining invalidation cleanly."
     ],
     "trigger": [
-      "Enter on reclaim of support or failure below resistance for rejection trades.",
-      "Enter on close and hold beyond the level for breakout trades.",
-      "Execute only when the level reaction is obvious and invalidation is defined."
+      "Support reclaim or failed move beyond resistance for rejection trades.",
+      "Close and hold beyond the level for breakout trades.",
+      "Level reaction visibly clear with a defined failure point."
     ],
     "confirmation": [
-      "Multiple touches or volume make the level meaningful.",
-      "Wick rejection or closing behavior confirms the response at the level.",
-      "The next path of price is open enough for the trade to develop."
+      "Multiple touches, liquidity, or volume making the level meaningful.",
+      "Wick rejection or closing behavior confirming the level response.",
+      "Next price path open enough for development."
     ],
     "invalidation": [
-      "Price accepts through the level and holds.",
-      "The level breaks with range expansion against the thesis.",
-      "Reaction stays noisy and whipsaws both sides of the zone."
+      "Acceptance through the level with hold.",
+      "Range expansion through the zone against the thesis.",
+      "Two-sided whipsaw on both sides of the zone."
     ],
     "noTrade": [
-      "The level is already overused and reactions are decaying.",
-      "Another stronger level sits too close behind entry.",
-      "The approach is messy with no clean boundary."
+      "Level already overused and reactions decaying.",
+      "Stronger nearby level crowding the path.",
+      "Messy approach with no clean boundary."
     ]
   },
   "exit": {
     "stopLoss": [
-      "Place stop beyond the far side of the zone or sweep extreme.",
-      "Use the full zone width to judge whether the trade is valid.",
-      "If the zone is too wide, skip the setup."
+      "Protective stop beyond the far side of the zone or sweep extreme.",
+      "Full zone width used when defining invalidation.",
+      "Zone width remaining inside planned tolerance."
     ],
     "takeProfit": [
-      "Target the next clear level or liquidity pool.",
-      "Pay partials quickly on countertrend reactions.",
-      "Hold the rest only if breakout acceptance or clean rejection continuation develops."
+      "Primary target at the next clear level or liquidity pool.",
+      "Countertrend reaction partials secured quickly.",
+      "Runner valid only while breakout acceptance or clean rejection continuation persists."
     ],
     "timeExit": [
-      "Close if price cannot leave the zone quickly.",
-      "Flatten before session close if the trade depends on active liquidity.",
-      "Do not carry a level reaction after the level has already been consumed."
+      "Price leaving the zone quickly after entry.",
+      "Liquidity-dependent reaction closed before session end.",
+      "Trade closed once the level has been fully consumed."
     ],
     "earlyExit": [
-      "The zone is retaken with conviction.",
-      "A breakout retest fails immediately.",
-      "Repeated tests erode the reaction edge after entry."
+      "Zone retaken with conviction.",
+      "Breakout retest failing immediately.",
+      "Repeated post-entry tests eroding the reaction edge."
     ]
   }
 }

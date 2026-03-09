@@ -9,56 +9,56 @@
   "description": "Cycle-based model that uses recurring monthly, weekly, or session tendencies as directional bias and timing context.",
   "entry": {
     "context": [
-      "Start with a seasonal hypothesis, then verify current structure supports it.",
-      "Use the cycle as bias, not as a blind entry trigger.",
-      "Mark the nearby levels where the cycle could accelerate or fail."
+      "Recurring monthly, weekly, or session tendency identified.",
+      "Current structure aligned with the seasonal bias.",
+      "Nearby acceleration and failure levels mapped in advance."
     ],
     "setup": [
-      "Historical tendency favors the same direction in the current period.",
-      "Price builds a continuation pattern in line with that tendency.",
-      "No major opposing event has invalidated the usual flow."
+      "Historical tendency favoring the current directional bias.",
+      "Continuation or rotation pattern forming in line with that tendency.",
+      "No overriding event has displaced the usual flow."
     ],
     "trigger": [
-      "Enter on break of local continuation structure in the direction of the cycle.",
-      "Use pullback confirmation if the cycle is early and volatility is mixed.",
-      "Skip direct entry if the move already traveled most of its usual distance."
+      "Local continuation structure breaking in the cycle direction.",
+      "Pullback confirmation printed when the window is early or volatility is mixed.",
+      "Remaining expected seasonal range still sufficient after entry."
     ],
     "confirmation": [
-      "Current session behavior matches the expected seasonal window.",
-      "Related market context is not sharply opposing the thesis.",
-      "Trend structure stays orderly with higher lows or lower highs."
+      "Current session behavior matching the expected seasonal window.",
+      "Related market context staying aligned or neutral.",
+      "Trend structure remaining orderly with higher lows or lower highs."
     ],
     "invalidation": [
-      "Current period behaves opposite the usual cycle with clean acceptance.",
-      "Catalyst-driven repricing overrides the historical pattern.",
-      "Range compression kills follow-through before entry matures."
+      "Current period accepting cleanly against the usual cycle.",
+      "Catalyst-driven repricing overriding the historical pattern.",
+      "Pre-entry compression removing expected follow-through."
     ],
     "noTrade": [
-      "Sample size for the seasonal idea is weak or anecdotal.",
-      "The move is already extended into major higher-timeframe structure.",
-      "Upcoming data can fully reset the cycle narrative."
+      "Seasonal sample size weak or anecdotal.",
+      "Move already extended into major higher-timeframe structure.",
+      "Upcoming data event capable of resetting the cycle narrative."
     ]
   },
   "exit": {
     "stopLoss": [
-      "Place the stop outside the local structure that invalidates the cycle bias.",
-      "Use the opposite side of the pullback or continuation base.",
-      "Do not widen the stop just because the cycle should work."
+      "Protective stop outside the local structure that breaks the cycle thesis.",
+      "Opposite side of the continuation base or confirming pullback.",
+      "Invalidation distance remaining inside planned tolerance."
     ],
     "takeProfit": [
-      "Target the usual seasonal range extension first.",
-      "Hold the remainder only while structure confirms the cycle is unfolding.",
-      "Take profit ahead of known reversal windows if the pattern usually fades there."
+      "Primary target at the typical seasonal range extension.",
+      "Runner valid only while price structure continues to confirm the cycle.",
+      "Profit secured ahead of known reversal windows when the pattern usually fades."
     ],
     "timeExit": [
-      "Exit when the seasonal window closes.",
-      "Flatten before the next major macro event if it changes the regime.",
-      "Do not hold beyond the period that gives the edge."
+      "Position closed when the seasonal window ends.",
+      "Exposure reduced before the next macro event that can reset regime.",
+      "Hold period contained within the edge-bearing cycle window."
     ],
     "earlyExit": [
-      "Current cycle diverges sharply from expected flow.",
-      "Structure breaks against the thesis before target progression begins.",
-      "Correlated market context flips hard against the idea."
+      "Current cycle diverging sharply from expected flow.",
+      "Structure breaking against the thesis before target progression.",
+      "Correlated market context flipping hard against the idea."
     ]
   }
 }

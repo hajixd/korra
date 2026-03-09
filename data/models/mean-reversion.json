@@ -9,56 +9,56 @@
   "description": "Counter-move model that fades statistically stretched price once rejection and re-acceptance back toward value appear.",
   "entry": {
     "context": [
-      "Mark the session mean, VWAP, and prior swing extremes before entry.",
-      "Only fade when price is extended into known liquidity or deviation zones.",
-      "Prefer the first clean rejection after a sweep, not repeated attempts."
+      "Session mean, VWAP, and prior swing extremes identified.",
+      "Price extended into a known liquidity pocket or deviation zone.",
+      "First clean rejection after the sweep, not a repeated fade attempt."
     ],
     "setup": [
-      "Price tags an outer band, prior high or low, or deviation threshold.",
-      "A rejection wick or failed auction appears at the extreme.",
-      "Momentum slows and closes stop progressing in trend direction."
+      "Outer band, prior high or low, or deviation threshold tagged.",
+      "Rejection wick or failed auction printed at the extreme.",
+      "Momentum slowed and closes stopped progressing in trend direction."
     ],
     "trigger": [
-      "Enter on reclaim back inside the prior range after the sweep.",
-      "Use a lower-high or higher-low break as the execution trigger.",
-      "Scale only if the rejection structure tightens the invalidation."
+      "Reclaim back inside the prior range after the sweep.",
+      "Higher-low or lower-high break confirming the turn.",
+      "Add-on only if the rejection structure tightens invalidation."
     ],
     "confirmation": [
-      "Stretch or displacement is visibly extended.",
-      "The extreme is rejected with wick imbalance or failed breakout behavior.",
-      "The target path back to mean is open and not blocked immediately by chop."
+      "Stretch or displacement visibly extended relative to recent auction.",
+      "Extreme rejected with wick imbalance or failed breakout behavior.",
+      "Path back to mean open without an immediate chop barrier."
     ],
     "invalidation": [
-      "Price accepts outside the deviation zone with consecutive closes.",
-      "Trend accelerates after the rejection instead of stalling.",
-      "A new session expansion resets the regime."
+      "Acceptance outside the deviation zone with consecutive closes.",
+      "Trend re-accelerating after the rejection.",
+      "New session expansion resetting the regime."
     ],
     "noTrade": [
-      "High-impact news just reset the market regime.",
-      "The mean is too close to justify the trade.",
-      "You are fading strong multi-timeframe momentum without exhaustion."
+      "High-impact news resetting the market regime.",
+      "Mean too close to offer a clean reversion path.",
+      "Strong multi-timeframe momentum still active without exhaustion."
     ]
   },
   "exit": {
     "stopLoss": [
-      "Place stop beyond the sweep high or low or beyond the deviation band.",
-      "Keep stop outside obvious noise, not inside the rejection wick midpoint.",
-      "Skip the trade if the invalidation point is too loose."
+      "Protective stop beyond sweep high or low, or beyond the deviation band.",
+      "Stop location outside expected noise and beyond the rejection midpoint.",
+      "Invalidation distance remaining inside planned tolerance."
     ],
     "takeProfit": [
-      "First target is the local mean, VWAP, or middle of the range.",
-      "Second target can be the opposite side of balance only if reversal strengthens.",
-      "Lock partials quickly because fades lose edge once mean is reclaimed."
+      "First target at local mean, VWAP, or midrange.",
+      "Second target at the opposite side of balance if reversal strength expands.",
+      "Partials secured once price reclaims the mean."
     ],
     "timeExit": [
-      "Close if reversion does not start within 2 to 5 candles after entry.",
-      "Flatten before the active session reopens if the fade was session-specific.",
-      "Do not hold once range conditions disappear."
+      "Reversion starting within 2 to 5 candles after entry.",
+      "Session-specific fade closed before the next active reopen.",
+      "Position closed when range conditions disappear."
     ],
     "earlyExit": [
-      "Price reclaims the extreme and holds beyond it.",
-      "Mean is touched but price cannot continue through balance.",
-      "A fresh impulse candle invalidates the rejection narrative."
+      "Extreme reclaimed and held after entry.",
+      "Mean touched without continuation through balance.",
+      "Fresh impulse candle negating the rejection structure."
     ]
   }
 }
