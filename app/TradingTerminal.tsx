@@ -117,7 +117,7 @@ type BacktestTab =
   | "entryExit"
   | "dimensions"
   | "propFirm";
-type PanelTab = "active" | "assets" | "history" | "actions" | "ai";
+type PanelTab = "active" | "assets" | "history" | "actions";
 type MainStatisticsCard = {
   label: string;
   value: ReactNode;
@@ -153,7 +153,7 @@ const isSurfaceTab = (value: unknown): value is SurfaceTab => {
   return typeof value === "string" && SURFACE_TAB_IDS.includes(value as SurfaceTab);
 };
 
-const isChartSurfaceTab = (value: SurfaceTab): boolean => value === "chart" || value === "ai";
+const isChartSurfaceTab = (value: SurfaceTab): boolean => value === "chart";
 
 const isBacktestTab = (value: unknown): value is BacktestTab => {
   return typeof value === "string" && BACKTEST_TAB_IDS.includes(value as BacktestTab);
@@ -7675,23 +7675,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       setSelectedBacktestTab("mainSettings");
     }
   }, [selectedBacktestTab, selectedSurfaceTab]);
-
-  useEffect(() => {
-    if (selectedSurfaceTab !== "ai") {
-      return;
-    }
-
-    setActivePanelTab("ai");
-    setPanelExpanded(true);
-  }, [selectedSurfaceTab]);
-
-  useEffect(() => {
-    if (selectedSurfaceTab === "ai" || activePanelTab !== "ai") {
-      return;
-    }
-
-    setActivePanelTab("active");
-  }, [activePanelTab, selectedSurfaceTab]);
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -16129,11 +16112,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   setSelectedBacktestTab("mainStats");
                 }
 
-                if (tab.id === "ai") {
-                  setActivePanelTab("ai");
-                  setPanelExpanded(true);
-                }
-
                 setSelectedSurfaceTab(tab.id);
               }}
             >
@@ -16309,53 +16287,55 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         </div>
       </div>
 
-      <header className="topbar">
-        <div className="brand-area">
-          <div className="asset-meta">
-            <h1>{selectedAsset.symbol}</h1>
-            <p>{selectedAsset.name}</p>
-          </div>
-          <div className="live-quote">
-            {latestCandle ? (
-              <>
-                <span className={quoteChange >= 0 ? "up" : "down"}>${formatPrice(latestCandle.close)}</span>
-                <div className="tf-changes">
-                  {timeframeChanges.map(({ timeframe, change }) => (
-                    <span
-                      key={timeframe}
-                      className={`tf-change ${change === null ? "neutral" : change >= 0 ? "up" : "down"}${timeframe === selectedTimeframe ? " tf-active" : ""}`}
-                    >
-                      <span className="tf-label">{timeframe}</span>
-                      <span className={change === null ? "" : change >= 0 ? "up" : "down"}>
-                        {change !== null
-                          ? `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`
-                          : "\u2014"}
+      {selectedSurfaceTab !== "ai" ? (
+        <header className="topbar">
+          <div className="brand-area">
+            <div className="asset-meta">
+              <h1>{selectedAsset.symbol}</h1>
+              <p>{selectedAsset.name}</p>
+            </div>
+            <div className="live-quote">
+              {latestCandle ? (
+                <>
+                  <span className={quoteChange >= 0 ? "up" : "down"}>${formatPrice(latestCandle.close)}</span>
+                  <div className="tf-changes">
+                    {timeframeChanges.map(({ timeframe, change }) => (
+                      <span
+                        key={timeframe}
+                        className={`tf-change ${change === null ? "neutral" : change >= 0 ? "up" : "down"}${timeframe === selectedTimeframe ? " tf-active" : ""}`}
+                      >
+                        <span className="tf-label">{timeframe}</span>
+                        <span className={change === null ? "" : change >= 0 ? "up" : "down"}>
+                          {change !== null
+                            ? `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`
+                            : "\u2014"}
+                        </span>
                       </span>
-                    </span>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <span>No market data</span>
-            )}
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <span>No market data</span>
+              )}
+            </div>
           </div>
-        </div>
 
-        <div className="top-controls">
-          <nav className="timeframe-row" aria-label="timeframes">
-            {timeframes.map((timeframe) => (
-              <button
-                key={timeframe}
-                type="button"
-                className={`timeframe ${timeframe === selectedTimeframe ? "active" : ""}`}
-                onClick={() => setSelectedTimeframe(timeframe)}
-              >
-                {timeframe}
-              </button>
-            ))}
-          </nav>
-        </div>
-      </header>
+          <div className="top-controls">
+            <nav className="timeframe-row" aria-label="timeframes">
+              {timeframes.map((timeframe) => (
+                <button
+                  key={timeframe}
+                  type="button"
+                  className={`timeframe ${timeframe === selectedTimeframe ? "active" : ""}`}
+                  onClick={() => setSelectedTimeframe(timeframe)}
+                >
+                  {timeframe}
+                </button>
+              ))}
+            </nav>
+          </div>
+        </header>
+      ) : null}
 
       <section className="surface-stage">
         {!terminalViewStateReady ? (
@@ -17014,34 +16994,44 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     </div>
                   ) : null}
 
-                  {activePanelTab === "ai" ? (
-                    <div className="tab-view ai-tab">
-                      <AssistantPanel
-                        symbol={selectedSymbol}
-                        timeframe={selectedTimeframe}
-                        selectedCandles={selectedCandles}
-                        activeTrade={
-                          activeTrade
-                            ? {
-                                ...activeTrade,
-                                openedAt: Number(activeTrade.openedAt)
-                              }
-                            : null
-                        }
-                        historyRows={chartPanelHistoryRows}
-                        actionRows={actionRows}
-                        backtestHasRun={backtestHasRun}
-                        backtestTimeframe={appliedBacktestSettings.timeframe}
-                        backtestTrades={backtestTrades}
-                        onRunChartActions={runAssistantChartActions}
-                      />
-                    </div>
-                  ) : null}
                 </div>
               ) : null}
             </aside>
           </section>
         </div>
+
+        {selectedSurfaceTab === "ai" ? (
+          <section
+            aria-label="gideon workspace"
+            style={{
+              height: "100%",
+              minHeight: 0,
+              padding: 0,
+              background: "#040404",
+              overflow: "hidden"
+            }}
+          >
+            <AssistantPanel
+              symbol={selectedSymbol}
+              timeframe={selectedTimeframe}
+              selectedCandles={selectedCandles}
+              activeTrade={
+                activeTrade
+                  ? {
+                      ...activeTrade,
+                      openedAt: Number(activeTrade.openedAt)
+                    }
+                  : null
+              }
+              historyRows={chartPanelHistoryRows}
+              actionRows={actionRows}
+              backtestHasRun={backtestHasRun}
+              backtestTimeframe={appliedBacktestSettings.timeframe}
+              backtestTrades={backtestTrades}
+              onRunChartActions={runAssistantChartActions}
+            />
+          </section>
+        ) : null}
 
         {selectedSurfaceTab === "copytrade" ? (
           <section
