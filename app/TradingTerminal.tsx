@@ -3352,15 +3352,14 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
   { id: "assets", label: "Assets" },
   { id: "active", label: "Active" },
   { id: "history", label: "History" },
-  { id: "actions", label: "Action" },
-  { id: "ai", label: "AI" }
+  { id: "actions", label: "Action" }
 ];
 
 const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
   { id: "chart", label: "Chart" },
   { id: "settings", label: "Settings" },
   { id: "backtest", label: "Backtest" },
-  { id: "ai", label: "AI" },
+  { id: "ai", label: "Gideon" },
   { id: "copytrade", label: "Copy-Trade" }
 ];
 
@@ -7685,6 +7684,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setActivePanelTab("ai");
     setPanelExpanded(true);
   }, [selectedSurfaceTab]);
+
+  useEffect(() => {
+    if (selectedSurfaceTab === "ai" || activePanelTab !== "ai") {
+      return;
+    }
+
+    setActivePanelTab("active");
+  }, [activePanelTab, selectedSurfaceTab]);
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -16686,6 +16693,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       if (panelExpanded && activePanelTab === tab.id) {
                         setPanelExpanded(false);
                         return;
+                      }
+
+                      if (selectedSurfaceTab === "ai") {
+                        setSelectedSurfaceTab("chart");
                       }
 
                       setActivePanelTab(tab.id);
