@@ -1629,21 +1629,22 @@ button {
 
 .model-run-modal-body {
   padding: 0;
+  height: auto;
 }
 
 .model-run-modal-card {
   width: min(1080px, 96vw);
-  height: min(620px, 86vh);
-  max-height: min(620px, 86vh);
+  height: auto;
+  max-height: min(560px, 82vh);
 }
 
 .model-run-shell {
   min-height: 0;
-  height: 100%;
+  height: auto;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 0.78rem;
-  padding: 0.85rem;
+  grid-template-rows: auto auto auto;
+  gap: 0.72rem;
+  padding: 0.8rem;
 }
 
 .model-run-toolbar {
@@ -1766,8 +1767,8 @@ button {
 
 .model-run-chart-wrap,
 .model-run-empty {
-  min-height: 260px;
-  height: 100%;
+  min-height: 220px;
+  height: 220px;
 }
 
 .model-run-empty {
