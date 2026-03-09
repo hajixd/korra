@@ -95,6 +95,7 @@ export type CopyTradeAccountUpdateInput = Partial<CopyTradeAccountCreateInput> &
   paused?: boolean;
   status?: CopyTradeAccountStatus;
   lastError?: string | null;
+  forceProvision?: boolean;
 };
 
 const DEFAULT_STATE: CopyTradeState = {
@@ -915,7 +916,8 @@ export const updateCopyTradeAccount = async (
         loginChanged ||
         serverChanged ||
         credentialsUpdated ||
-        !account.providerAccountId;
+        !account.providerAccountId ||
+        input.forceProvision === true;
 
       if (shouldSyncProvider) {
         const requiresPassword =

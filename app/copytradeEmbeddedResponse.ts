@@ -138,6 +138,48 @@ body {
   background: #ffffff;
 }
 
+.korra-copytrade-shell__loadingOverlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 18;
+  pointer-events: auto;
+  background: rgba(4, 8, 12, 0.34);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+.korra-copytrade-shell__loadingCore {
+  display: grid;
+  justify-items: center;
+  gap: 0.62rem;
+  padding: 0.72rem 0.95rem;
+  border-radius: 14px;
+  background: rgba(9, 15, 21, 0.84);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.58);
+}
+
+.korra-copytrade-shell__loadingSpinner {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.16);
+  border-top-color: #00ff9d;
+  border-right-color: #55d9ff;
+  animation: korra-copytrade-shell-spin 0.88s linear infinite;
+}
+
+.korra-copytrade-shell__loadingText {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  font-size: 0.64rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(226, 255, 240, 0.85);
+  font-weight: 900;
+}
+
 .korra-copytrade-shell__table {
   width: 100%;
   border-top: 1px solid #171717;
@@ -347,6 +389,145 @@ body {
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: #666666;
+}
+
+.korra-copytrade-shell__toolbarActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.korra-copytrade-shell__presetSelect,
+.korra-copytrade-shell__compactInput {
+  min-height: 32px;
+  border: 1px solid #1e1e1e;
+  border-radius: 10px;
+  background: #090909;
+  color: #f0f0f0;
+  padding: 0 10px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.korra-copytrade-shell__presetSelect {
+  min-width: 150px;
+}
+
+.korra-copytrade-shell__compactInput {
+  min-width: 138px;
+}
+
+.korra-copytrade-shell__controlCard {
+  margin-top: 20px;
+  padding: 16px 18px;
+  border: 1px solid #171717;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #090909 0%, #050505 100%);
+}
+
+.korra-copytrade-shell__controlHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.korra-copytrade-shell__controlTitle {
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: #f3f3f3;
+}
+
+.korra-copytrade-shell__controlSubtitle {
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #7d7d7d;
+}
+
+.korra-copytrade-shell__controlActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.korra-copytrade-shell__button--success {
+  border-color: #1f4b36;
+  background: rgba(35, 194, 107, 0.16);
+  color: #c9ffe2;
+}
+
+.korra-copytrade-shell__button--success:hover {
+  background: rgba(35, 194, 107, 0.24);
+  border-color: #2a6a4a;
+}
+
+.korra-copytrade-shell__button--ghost {
+  border-color: #202020;
+  background: #0a0a0a;
+}
+
+.korra-copytrade-shell__controlsGrid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.korra-copytrade-shell__controlField {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.korra-copytrade-shell__controlFieldLabel {
+  font-size: 9px;
+  line-height: 1.4;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #666666;
+}
+
+.korra-copytrade-shell__controlInput,
+.korra-copytrade-shell__controlSelect {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid #1d1d1d;
+  border-radius: 10px;
+  background: #070707;
+  color: #f1f1f1;
+  padding: 0 10px;
+  font-size: 11px;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+.korra-copytrade-shell__controlInput:focus,
+.korra-copytrade-shell__controlSelect:focus,
+.korra-copytrade-shell__presetSelect:focus,
+.korra-copytrade-shell__compactInput:focus {
+  outline: none;
+  border-color: #313131;
+}
+
+.korra-copytrade-shell__feedback {
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8c8c8c;
+}
+
+.korra-copytrade-shell__feedback--error {
+  color: #ff9eaa;
+}
+
+.korra-copytrade-shell__feedback--success {
+  color: #9eeec9;
 }
 
 .korra-copytrade-shell__formWrap {
@@ -617,6 +798,23 @@ body {
     padding: 16px 16px 24px;
   }
 
+  .korra-copytrade-shell__toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .korra-copytrade-shell__toolbarActions,
+  .korra-copytrade-shell__controlHeader,
+  .korra-copytrade-shell__controlActions {
+    justify-content: flex-start;
+  }
+
+  .korra-copytrade-shell__presetSelect,
+  .korra-copytrade-shell__compactInput {
+    min-width: 0;
+    width: 100%;
+  }
+
   .korra-copytrade-shell__row,
   .korra-copytrade-shell__row--head {
     grid-template-columns: minmax(0, 1fr);
@@ -645,6 +843,7 @@ body {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .korra-copytrade-shell__controlsGrid,
   .korra-copytrade-shell__statsGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -655,6 +854,12 @@ body {
 
   .korra-copytrade-shell__chartLegend {
     justify-content: flex-start;
+  }
+}
+
+@keyframes korra-copytrade-shell-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 `;
@@ -2723,6 +2928,8 @@ const injectedScript = `
 
   const KORRA_SETTINGS_STORAGE_KEY = "korra-settings";
   const KORRA_COPYTRADE_LABELS_STORAGE_KEY = "korra-copytrade-account-labels";
+  const KORRA_COPYTRADE_PRESETS_STORAGE_KEY = "korra-copytrade-setting-presets";
+  const KORRA_COPYTRADE_ACCOUNT_PRESET_STORAGE_KEY = "korra-copytrade-account-preset-map";
   const KORRA_COPYTRADE_CREDENTIAL_PREFIX = "korra-copytrade-credential:";
   const COPYTRADE_BRIDGE_ACCOUNT_COLOR = "#2563eb";
   const COPYTRADE_BRIDGE_BROKER = "mt5";
@@ -2882,6 +3089,129 @@ const injectedScript = `
     const labels = readCopyTradeAccountLabels();
     const raw = labels[normalizedAccountId];
     return typeof raw === "string" ? raw.trim() : "";
+  };
+
+  const normalizeCopyTradePresetPayload = (value) => {
+    const source = isObjectRecord(value) ? value : {};
+    return {
+      symbol: normalizeSymbol(source.symbol),
+      timeframe: normalizeCopyTradeTimeframe(source.timeframe),
+      lot: String(clampNumber(source.lot, 0.01, 100, COPYTRADE_BRIDGE_DEFAULTS.lot)),
+      tpDollars: String(
+        clampNumber(source.tpDollars, 1, 1000000, COPYTRADE_BRIDGE_DEFAULTS.tpDollars)
+      ),
+      slDollars: String(
+        clampNumber(source.slDollars, 1, 1000000, COPYTRADE_BRIDGE_DEFAULTS.slDollars)
+      ),
+      maxConcurrentTrades: String(
+        Math.max(
+          1,
+          Math.min(
+            10,
+            Math.trunc(
+              clampNumber(
+                source.maxConcurrentTrades,
+                1,
+                10,
+                COPYTRADE_BRIDGE_DEFAULTS.maxConcurrentTrades
+              )
+            )
+          )
+        )
+      )
+    };
+  };
+
+  const buildCopyTradeAccountSettingsDraft = (account) => {
+    const source = isObjectRecord(account) ? account : {};
+    return normalizeCopyTradePresetPayload({
+      symbol: source.symbol,
+      timeframe: source.timeframe,
+      lot: source.lot,
+      tpDollars: source.tpDollars,
+      slDollars: source.slDollars,
+      maxConcurrentTrades: source.maxConcurrentTrades
+    });
+  };
+
+  const readCopyTradeSettingPresets = () => {
+    try {
+      const raw = localStorage.getItem(KORRA_COPYTRADE_PRESETS_STORAGE_KEY);
+      const parsed = parseJsonSafe(raw, {});
+      if (!isObjectRecord(parsed)) {
+        return {};
+      }
+
+      const nextPresets = {};
+      Object.keys(parsed).forEach((key) => {
+        const normalizedKey = String(key || "").trim();
+        if (!normalizedKey) {
+          return;
+        }
+
+        nextPresets[normalizedKey] = normalizeCopyTradePresetPayload(parsed[normalizedKey]);
+      });
+      return nextPresets;
+    } catch {
+      return {};
+    }
+  };
+
+  const writeCopyTradeSettingPresets = (nextPresets) => {
+    try {
+      localStorage.setItem(KORRA_COPYTRADE_PRESETS_STORAGE_KEY, JSON.stringify(nextPresets));
+    } catch {
+      // Ignore optional preset persistence failures.
+    }
+  };
+
+  const readCopyTradeAccountPresetAssignments = () => {
+    try {
+      const raw = localStorage.getItem(KORRA_COPYTRADE_ACCOUNT_PRESET_STORAGE_KEY);
+      const parsed = parseJsonSafe(raw, {});
+      return isObjectRecord(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  };
+
+  const writeCopyTradeAccountPresetAssignments = (nextAssignments) => {
+    try {
+      localStorage.setItem(
+        KORRA_COPYTRADE_ACCOUNT_PRESET_STORAGE_KEY,
+        JSON.stringify(nextAssignments)
+      );
+    } catch {
+      // Ignore optional preset assignment persistence failures.
+    }
+  };
+
+  const getCopyTradeAccountPresetAssignment = (accountId) => {
+    const normalizedAccountId = String(accountId || "").trim();
+    if (!normalizedAccountId) {
+      return "";
+    }
+
+    const assignments = readCopyTradeAccountPresetAssignments();
+    return String(assignments[normalizedAccountId] || "").trim();
+  };
+
+  const setCopyTradeAccountPresetAssignment = (accountId, presetName) => {
+    const normalizedAccountId = String(accountId || "").trim();
+    if (!normalizedAccountId) {
+      return;
+    }
+
+    const assignments = { ...readCopyTradeAccountPresetAssignments() };
+    const normalizedPresetName = String(presetName || "").trim();
+
+    if (normalizedPresetName) {
+      assignments[normalizedAccountId] = normalizedPresetName;
+    } else {
+      delete assignments[normalizedAccountId];
+    }
+
+    writeCopyTradeAccountPresetAssignments(assignments);
   };
 
   const readKorraSettings = () => {
@@ -4285,6 +4615,7 @@ const injectedScript = `
           promise: null
         },
         details: {},
+        accountForms: {},
         addForm: {
           server: "",
           login: "",
@@ -4309,6 +4640,9 @@ const injectedScript = `
     if (!isObjectRecord(store.details)) {
       store.details = {};
     }
+    if (!isObjectRecord(store.accountForms)) {
+      store.accountForms = {};
+    }
     if (!isObjectRecord(store.addForm)) {
       store.addForm = {
         server: "",
@@ -4326,6 +4660,64 @@ const injectedScript = `
   const getCustomCopyTradeAddFormState = () => {
     const store = getCustomCopyTradeStore();
     return store.addForm;
+  };
+
+  const getCustomCopyTradeAccountFormState = (accountId, account) => {
+    const store = getCustomCopyTradeStore();
+    const normalizedAccountId = String(accountId || "").trim();
+
+    if (!normalizedAccountId) {
+      return null;
+    }
+
+    if (!isObjectRecord(store.accountForms)) {
+      store.accountForms = {};
+    }
+
+    const sourceUpdatedAt = Number(account && account.updatedAt) || 0;
+    const defaultDraft = buildCopyTradeAccountSettingsDraft(account);
+    const assignedPresetName = getCopyTradeAccountPresetAssignment(normalizedAccountId);
+    const existing = isObjectRecord(store.accountForms[normalizedAccountId])
+      ? store.accountForms[normalizedAccountId]
+      : null;
+
+    if (!existing) {
+      store.accountForms[normalizedAccountId] = {
+        ...defaultDraft,
+        selectedPresetName: assignedPresetName,
+        presetNameInput: assignedPresetName,
+        pending: false,
+        pausePending: false,
+        reconnectPending: false,
+        error: "",
+        success: "",
+        dirty: false,
+        sourceUpdatedAt
+      };
+    } else if (
+      sourceUpdatedAt &&
+      Number(existing.sourceUpdatedAt || 0) !== sourceUpdatedAt &&
+      !existing.dirty &&
+      !existing.pending &&
+      !existing.pausePending &&
+      !existing.reconnectPending
+    ) {
+      Object.assign(existing, defaultDraft, {
+        selectedPresetName: existing.selectedPresetName || assignedPresetName,
+        presetNameInput:
+          String(existing.presetNameInput || "").trim() ||
+          existing.selectedPresetName ||
+          assignedPresetName,
+        sourceUpdatedAt
+      });
+    } else if (!String(existing.selectedPresetName || "").trim() && assignedPresetName) {
+      existing.selectedPresetName = assignedPresetName;
+      if (!String(existing.presetNameInput || "").trim()) {
+        existing.presetNameInput = assignedPresetName;
+      }
+    }
+
+    return store.accountForms[normalizedAccountId];
   };
 
   const getCustomCopyTradeDetailEntry = (accountId) => {
@@ -4442,6 +4834,295 @@ const injectedScript = `
     return promise;
   };
 
+  const syncCustomCopyTradeAccountIntoStore = (account) => {
+    if (!isObjectRecord(account)) {
+      return;
+    }
+
+    const normalizedAccountId = String(account.id || "").trim();
+    if (!normalizedAccountId) {
+      return;
+    }
+
+    const store = getCustomCopyTradeStore();
+    if (
+      isObjectRecord(store.list.data) &&
+      Array.isArray(store.list.data.accounts)
+    ) {
+      store.list.data.accounts = store.list.data.accounts.map((candidate) =>
+        String(candidate && candidate.id) === normalizedAccountId ? account : candidate
+      );
+    }
+
+    const detailEntry = getCustomCopyTradeDetailEntry(normalizedAccountId);
+    if (isObjectRecord(detailEntry.data)) {
+      detailEntry.data.account = account;
+    }
+  };
+
+  const buildCustomCopyTradeLoadingOverlayMarkup = (label) =>
+    '<div class="korra-copytrade-shell__loadingOverlay">' +
+    '<div class="korra-copytrade-shell__loadingCore">' +
+    '<span class="korra-copytrade-shell__loadingSpinner" aria-hidden="true"></span>' +
+    '<span class="korra-copytrade-shell__loadingText">' +
+    escapeHtml(label || "Loading...") +
+    "</span>" +
+    "</div>" +
+    "</div>";
+
+  const updateCustomCopyTradeAccountFormField = (accountId, field, value) => {
+    const formState = getCustomCopyTradeAccountFormState(accountId, null);
+    if (!formState) {
+      return;
+    }
+
+    const normalizedField = String(field || "").trim();
+    if (
+      normalizedField !== "selectedPresetName" &&
+      normalizedField !== "presetNameInput" &&
+      normalizedField !== "symbol" &&
+      normalizedField !== "timeframe" &&
+      normalizedField !== "lot" &&
+      normalizedField !== "tpDollars" &&
+      normalizedField !== "slDollars" &&
+      normalizedField !== "maxConcurrentTrades"
+    ) {
+      return;
+    }
+
+    formState[normalizedField] = String(value == null ? "" : value);
+    formState.error = "";
+    formState.success = "";
+    if (normalizedField !== "selectedPresetName" && normalizedField !== "presetNameInput") {
+      formState.dirty = true;
+    }
+    queueEmbeddedUiRefresh();
+  };
+
+  const buildCopyTradeAccountPatchFromFormState = (formState) => {
+    return {
+      symbol: normalizeSymbol(formState.symbol),
+      timeframe: normalizeCopyTradeTimeframe(formState.timeframe),
+      lot: clampNumber(formState.lot, 0.01, 100, COPYTRADE_BRIDGE_DEFAULTS.lot),
+      tpDollars: clampNumber(
+        formState.tpDollars,
+        1,
+        1000000,
+        COPYTRADE_BRIDGE_DEFAULTS.tpDollars
+      ),
+      slDollars: clampNumber(
+        formState.slDollars,
+        1,
+        1000000,
+        COPYTRADE_BRIDGE_DEFAULTS.slDollars
+      ),
+      maxConcurrentTrades: Math.max(
+        1,
+        Math.min(
+          10,
+          Math.trunc(
+            clampNumber(
+              formState.maxConcurrentTrades,
+              1,
+              10,
+              COPYTRADE_BRIDGE_DEFAULTS.maxConcurrentTrades
+            )
+          )
+        )
+      )
+    };
+  };
+
+  const applyCopyTradePresetToFormState = (accountId, presetName) => {
+    const formState = getCustomCopyTradeAccountFormState(accountId, null);
+    if (!formState) {
+      return false;
+    }
+
+    const normalizedPresetName = String(presetName || "").trim();
+    const presets = readCopyTradeSettingPresets();
+    const preset = presets[normalizedPresetName];
+    if (!preset) {
+      formState.error = "Choose a saved settings preset first.";
+      formState.success = "";
+      queueEmbeddedUiRefresh();
+      return false;
+    }
+
+    Object.assign(formState, preset, {
+      selectedPresetName: normalizedPresetName,
+      presetNameInput: normalizedPresetName,
+      dirty: true,
+      error: "",
+      success: "Loaded " + normalizedPresetName + "."
+    });
+    setCopyTradeAccountPresetAssignment(accountId, normalizedPresetName);
+    queueEmbeddedUiRefresh();
+    return true;
+  };
+
+  const saveCopyTradePresetFromFormState = (accountId) => {
+    const formState = getCustomCopyTradeAccountFormState(accountId, null);
+    if (!formState) {
+      return false;
+    }
+
+    const presetName = String(formState.presetNameInput || "").trim();
+    if (!presetName) {
+      formState.error = "Enter a preset name first.";
+      formState.success = "";
+      queueEmbeddedUiRefresh();
+      return false;
+    }
+
+    const presets = {
+      ...readCopyTradeSettingPresets(),
+      [presetName]: normalizeCopyTradePresetPayload(buildCopyTradeAccountPatchFromFormState(formState))
+    };
+    writeCopyTradeSettingPresets(presets);
+    setCopyTradeAccountPresetAssignment(accountId, presetName);
+    formState.selectedPresetName = presetName;
+    formState.presetNameInput = presetName;
+    formState.error = "";
+    formState.success = "Saved " + presetName + ".";
+    queueEmbeddedUiRefresh();
+    return true;
+  };
+
+  const saveCustomCopyTradeAccountSettings = async (accountId) => {
+    const formState = getCustomCopyTradeAccountFormState(accountId, null);
+    if (!formState || formState.pending) {
+      return;
+    }
+
+    formState.pending = true;
+    formState.error = "";
+    formState.success = "";
+    queueEmbeddedUiRefresh();
+
+    try {
+      const payload = buildCopyTradeAccountPatchFromFormState(formState);
+      const response = await requestLocalJson(
+        "/api/copytrade/accounts/" + encodeURIComponent(String(accountId || "")),
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        }
+      );
+      const account = response && response.account ? response.account : null;
+      if (!account) {
+        throw new Error("Failed to save account settings.");
+      }
+
+      syncCustomCopyTradeAccountIntoStore(account);
+      formState.pending = false;
+      formState.dirty = false;
+      formState.sourceUpdatedAt = Number(account.updatedAt) || Date.now();
+      formState.error = "";
+      formState.success = "Settings saved.";
+      if (String(formState.selectedPresetName || "").trim()) {
+        setCopyTradeAccountPresetAssignment(accountId, formState.selectedPresetName);
+      }
+      void loadCustomCopyTradeList(true);
+      queueEmbeddedUiRefresh();
+    } catch (error) {
+      formState.pending = false;
+      formState.error = String((error && error.message) || error || "Failed to save settings.");
+      formState.success = "";
+      queueEmbeddedUiRefresh();
+    }
+  };
+
+  const toggleCustomCopyTradeAccountPaused = async (accountId, paused) => {
+    const formState = getCustomCopyTradeAccountFormState(accountId, null);
+    if (!formState || formState.pausePending) {
+      return;
+    }
+
+    formState.pausePending = true;
+    formState.error = "";
+    formState.success = "";
+    queueEmbeddedUiRefresh();
+
+    try {
+      const response = await requestLocalJson(
+        "/api/copytrade/accounts/" + encodeURIComponent(String(accountId || "")) + "/pause",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ paused })
+        }
+      );
+      const account = response && response.account ? response.account : null;
+      if (!account) {
+        throw new Error("Failed to update account state.");
+      }
+
+      syncCustomCopyTradeAccountIntoStore(account);
+      formState.pausePending = false;
+      formState.success = paused ? "Account paused." : "Account resumed.";
+      formState.error = "";
+      void loadCustomCopyTradeList(true);
+      void loadCustomCopyTradeDashboard(accountId, true);
+      queueEmbeddedUiRefresh();
+    } catch (error) {
+      formState.pausePending = false;
+      formState.error = String((error && error.message) || error || "Failed to update account.");
+      formState.success = "";
+      queueEmbeddedUiRefresh();
+    }
+  };
+
+  const reconnectCustomCopyTradeAccount = async (accountId) => {
+    const formState = getCustomCopyTradeAccountFormState(accountId, null);
+    if (!formState || formState.reconnectPending) {
+      return;
+    }
+
+    formState.reconnectPending = true;
+    formState.error = "";
+    formState.success = "";
+    queueEmbeddedUiRefresh();
+
+    try {
+      const response = await requestLocalJson(
+        "/api/copytrade/accounts/" + encodeURIComponent(String(accountId || "")),
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            provider: "metaapi",
+            forceProvision: true
+          })
+        }
+      );
+      const account = response && response.account ? response.account : null;
+      if (!account) {
+        throw new Error("Failed to reconnect account.");
+      }
+
+      syncCustomCopyTradeAccountIntoStore(account);
+      formState.reconnectPending = false;
+      formState.success = "Reconnect requested.";
+      formState.error = "";
+      void loadCustomCopyTradeList(true);
+      void loadCustomCopyTradeDashboard(accountId, true);
+      queueEmbeddedUiRefresh();
+    } catch (error) {
+      formState.reconnectPending = false;
+      formState.error = String((error && error.message) || error || "Reconnect failed.");
+      formState.success = "";
+      queueEmbeddedUiRefresh();
+    }
+  };
+
   const resetCustomCopyTradeAddFormState = () => {
     const state = getCustomCopyTradeAddFormState();
     state.server = "";
@@ -4540,9 +5221,13 @@ const injectedScript = `
       method: "DELETE"
     });
     deleteCopyTradeAccountLabel(normalizedAccountId);
+    setCopyTradeAccountPresetAssignment(normalizedAccountId, "");
 
     if (isObjectRecord(store.details)) {
       delete store.details[normalizedAccountId];
+    }
+    if (isObjectRecord(store.accountForms)) {
+      delete store.accountForms[normalizedAccountId];
     }
 
     if (isObjectRecord(store.list)) {
@@ -4719,13 +5404,40 @@ const injectedScript = `
     '<button class="korra-copytrade-shell__button korra-copytrade-shell__button--primary" data-korra-action="add-account">Add Account</button>' +
     "</div>";
 
-  const buildStatisticsHeaderMarkup = (account, dashboard) => {
+  const buildCopyTradePresetOptionsMarkup = (selectedPresetName) => {
+    const normalizedSelected = String(selectedPresetName || "").trim();
+    const presets = readCopyTradeSettingPresets();
+    const names = Object.keys(presets).sort((left, right) => left.localeCompare(right));
+    const options = [
+      '<option value="">Saved settings</option>'
+    ].concat(
+      names.map((name) => {
+        const selected = name === normalizedSelected ? ' selected="selected"' : "";
+        return (
+          '<option value="' +
+          escapeHtml(name) +
+          '"' +
+          selected +
+          ">" +
+          escapeHtml(name) +
+          "</option>"
+        );
+      })
+    );
+
+    return options.join("");
+  };
+
+  const buildStatisticsHeaderMarkup = (account, dashboard, formState) => {
     const connection = resolveConnectionState(account);
     const trading = resolveTradingState(account, dashboard);
     const syncedAt =
       dashboard && dashboard.lastSyncedAt
         ? formatDateTimeLabel(dashboard.lastSyncedAt)
         : formatDateTimeLabel(account && account.lastHeartbeatAt);
+    const accountId = String(account && account.id || "").trim();
+    const selectedPresetName = formState ? String(formState.selectedPresetName || "").trim() : "";
+    const presetNameInput = formState ? String(formState.presetNameInput || "").trim() : "";
 
     return (
       '<div class="korra-copytrade-shell__toolbar">' +
@@ -4744,10 +5456,149 @@ const injectedScript = `
       buildStatusPillMarkup(trading.label, trading.tone) +
       "</div>" +
       "</div>" +
-      '<div style="display:flex; gap:8px; align-items:center;">' +
+      '<div class="korra-copytrade-shell__toolbarActions">' +
       '<button class="korra-copytrade-shell__button" data-korra-action="back-home">All Accounts</button>' +
-      '<button class="korra-copytrade-shell__button korra-copytrade-shell__button--primary" data-korra-action="add-account">Add Account</button>' +
+      '<select class="korra-copytrade-shell__presetSelect" data-korra-account-id="' +
+      escapeHtml(accountId) +
+      '" data-korra-account-field="selectedPresetName">' +
+      buildCopyTradePresetOptionsMarkup(selectedPresetName) +
+      "</select>" +
+      '<input class="korra-copytrade-shell__compactInput" placeholder="Preset name" data-korra-account-id="' +
+      escapeHtml(accountId) +
+      '" data-korra-account-field="presetNameInput" value="' +
+      escapeHtml(presetNameInput) +
+      '" />' +
+      '<button class="korra-copytrade-shell__button" data-korra-action="load-preset" data-account-id="' +
+      escapeHtml(accountId) +
+      '">Load</button>' +
+      '<button class="korra-copytrade-shell__button korra-copytrade-shell__button--primary" data-korra-action="save-preset" data-account-id="' +
+      escapeHtml(accountId) +
+      '">Save</button>' +
       "</div>" +
+      "</div>"
+    );
+  };
+
+  const buildStatisticsControlsMarkup = (account, formState) => {
+    const accountId = String(account && account.id || "").trim();
+    const selectedPresetName = String(formState && formState.selectedPresetName || "").trim();
+    const feedbackMarkup = formState && formState.error
+      ? '<div class="korra-copytrade-shell__feedback korra-copytrade-shell__feedback--error">' +
+        escapeHtml(formState.error) +
+        "</div>"
+      : formState && formState.success
+        ? '<div class="korra-copytrade-shell__feedback korra-copytrade-shell__feedback--success">' +
+          escapeHtml(formState.success) +
+          "</div>"
+        : "";
+    const reconnectButton =
+      account && account.status !== "Connected"
+        ? '<button class="korra-copytrade-shell__button korra-copytrade-shell__button--ghost" data-korra-action="reconnect-account" data-account-id="' +
+          escapeHtml(accountId) +
+          '">' +
+          escapeHtml(formState && formState.reconnectPending ? "Connecting..." : "Reconnect") +
+          "</button>"
+        : "";
+    const timeframeOptions = ["1m", "5m", "15m", "1H", "4H", "1D", "1W"]
+      .map((value) => {
+        const selected =
+          String(formState && formState.timeframe || "") === value
+            ? ' selected="selected"'
+            : "";
+        return '<option value="' + value + '"' + selected + ">" + value + "</option>";
+      })
+      .join("");
+
+    return (
+      '<div class="korra-copytrade-shell__controlCard">' +
+      '<div class="korra-copytrade-shell__controlHeader">' +
+      '<div>' +
+      '<div class="korra-copytrade-shell__controlTitle">Account Controls</div>' +
+      '<div class="korra-copytrade-shell__controlSubtitle">' +
+      escapeHtml(
+        selectedPresetName
+          ? "Active settings preset: " + selectedPresetName
+          : "Use a saved preset or adjust the live account settings."
+      ) +
+      "</div>" +
+      "</div>" +
+      '<div class="korra-copytrade-shell__controlActions">' +
+      '<button class="korra-copytrade-shell__button ' +
+      (account && account.paused
+        ? "korra-copytrade-shell__button--success"
+        : "korra-copytrade-shell__button--ghost") +
+      '" data-korra-action="toggle-account-pause" data-account-id="' +
+      escapeHtml(accountId) +
+      '" data-paused="' +
+      escapeHtml(String(!(account && account.paused))) +
+      '">' +
+      escapeHtml(
+        formState && formState.pausePending
+          ? "Updating..."
+          : account && account.paused
+            ? "Resume"
+            : "Pause"
+      ) +
+      "</button>" +
+      reconnectButton +
+      '<button class="korra-copytrade-shell__button korra-copytrade-shell__button--primary" data-korra-action="save-account-settings" data-account-id="' +
+      escapeHtml(accountId) +
+      '">' +
+      escapeHtml(formState && formState.pending ? "Saving..." : "Save Changes") +
+      "</button>" +
+      "</div>" +
+      "</div>" +
+      '<div class="korra-copytrade-shell__controlsGrid">' +
+      '<label class="korra-copytrade-shell__controlField">' +
+      '<span class="korra-copytrade-shell__controlFieldLabel">Symbol</span>' +
+      '<input class="korra-copytrade-shell__controlInput" data-korra-account-id="' +
+      escapeHtml(accountId) +
+      '" data-korra-account-field="symbol" value="' +
+      escapeHtml(String(formState && formState.symbol || "")) +
+      '" />' +
+      "</label>" +
+      '<label class="korra-copytrade-shell__controlField">' +
+      '<span class="korra-copytrade-shell__controlFieldLabel">Timeframe</span>' +
+      '<select class="korra-copytrade-shell__controlSelect" data-korra-account-id="' +
+      escapeHtml(accountId) +
+      '" data-korra-account-field="timeframe">' +
+      timeframeOptions +
+      "</select>" +
+      "</label>" +
+      '<label class="korra-copytrade-shell__controlField">' +
+      '<span class="korra-copytrade-shell__controlFieldLabel">Lot</span>' +
+      '<input class="korra-copytrade-shell__controlInput" type="number" step="0.01" min="0.01" data-korra-account-id="' +
+      escapeHtml(accountId) +
+      '" data-korra-account-field="lot" value="' +
+      escapeHtml(String(formState && formState.lot || "")) +
+      '" />' +
+      "</label>" +
+      '<label class="korra-copytrade-shell__controlField">' +
+      '<span class="korra-copytrade-shell__controlFieldLabel">TP $</span>' +
+      '<input class="korra-copytrade-shell__controlInput" type="number" step="1" min="1" data-korra-account-id="' +
+      escapeHtml(accountId) +
+      '" data-korra-account-field="tpDollars" value="' +
+      escapeHtml(String(formState && formState.tpDollars || "")) +
+      '" />' +
+      "</label>" +
+      '<label class="korra-copytrade-shell__controlField">' +
+      '<span class="korra-copytrade-shell__controlFieldLabel">SL $</span>' +
+      '<input class="korra-copytrade-shell__controlInput" type="number" step="1" min="1" data-korra-account-id="' +
+      escapeHtml(accountId) +
+      '" data-korra-account-field="slDollars" value="' +
+      escapeHtml(String(formState && formState.slDollars || "")) +
+      '" />' +
+      "</label>" +
+      '<label class="korra-copytrade-shell__controlField">' +
+      '<span class="korra-copytrade-shell__controlFieldLabel">Max Trades</span>' +
+      '<input class="korra-copytrade-shell__controlInput" type="number" step="1" min="1" max="10" data-korra-account-id="' +
+      escapeHtml(accountId) +
+      '" data-korra-account-field="maxConcurrentTrades" value="' +
+      escapeHtml(String(formState && formState.maxConcurrentTrades || "")) +
+      '" />' +
+      "</label>" +
+      "</div>" +
+      feedbackMarkup +
       "</div>"
     );
   };
@@ -4808,7 +5659,8 @@ const injectedScript = `
       "</button>" +
       "</form>" +
       "</div>" +
-      "</div>"
+      "</div>" +
+      (state.pending ? buildCustomCopyTradeLoadingOverlayMarkup("Connecting MT5...") : "")
     );
   };
 
@@ -4827,7 +5679,8 @@ const injectedScript = `
     if (!accounts.length && store.list.loading) {
       return (
         buildListHeaderMarkup() +
-        '<div class="korra-copytrade-shell__message">Loading accounts...</div>'
+        '<div class="korra-copytrade-shell__message">Loading accounts...</div>' +
+        buildCustomCopyTradeLoadingOverlayMarkup("Loading accounts...")
       );
     }
 
@@ -4928,7 +5781,8 @@ const injectedScript = `
       '<div class="korra-copytrade-shell__cell korra-copytrade-shell__headCell--action">Delete</div>' +
       "</div>" +
       rows +
-      "</div>"
+      "</div>" +
+      (store.list.loading ? buildCustomCopyTradeLoadingOverlayMarkup("Refreshing accounts...") : "")
     );
   };
 
@@ -5443,6 +6297,9 @@ const injectedScript = `
       accountFromList;
     const dashboard =
       detailPayload && isObjectRecord(detailPayload.dashboard) ? detailPayload.dashboard : null;
+    const formState = account
+      ? getCustomCopyTradeAccountFormState(resolvedAccountId, account)
+      : null;
 
     if (!listPayload && !store.list.loading && !store.list.error) {
       void loadCustomCopyTradeList();
@@ -5462,9 +6319,11 @@ const injectedScript = `
             status: "Disconnected",
             paused: false
           },
+          null,
           null
         ) +
-        '<div class="korra-copytrade-shell__message">Loading statistics...</div>'
+        '<div class="korra-copytrade-shell__message">Loading statistics...</div>' +
+        buildCustomCopyTradeLoadingOverlayMarkup("Loading account...")
       );
     }
 
@@ -5483,7 +6342,8 @@ const injectedScript = `
       );
     }
 
-    const header = buildStatisticsHeaderMarkup(account, dashboard);
+    const header = buildStatisticsHeaderMarkup(account, dashboard, formState);
+    const controlsMarkup = buildStatisticsControlsMarkup(account, formState);
     const currency =
       dashboard && typeof dashboard.currency === "string" && dashboard.currency.trim()
         ? dashboard.currency
@@ -5573,8 +6433,6 @@ const injectedScript = `
           resolveNumericToneClass(performanceModel && performanceModel.worstTrade)
         ) +
         buildStatisticsMetricMarkup("Free Margin", freeMarginText) +
-        "</div>" +
-        buildEquityChartMarkup(performanceModel, currency) +
         "</div>"
       : "";
     const errorMarkup =
@@ -5623,12 +6481,22 @@ const injectedScript = `
     return (
       header +
       errorMarkup +
+      controlsMarkup +
       metricsMarkup +
       '<div class="korra-copytrade-shell__section">' +
       '<div class="korra-copytrade-shell__detailGrid">' +
       positionsMarkup +
       "</div>" +
-      "</div>"
+      "</div>" +
+      (detailEntry.loading
+        ? buildCustomCopyTradeLoadingOverlayMarkup("Loading account...")
+        : formState && formState.pending
+          ? buildCustomCopyTradeLoadingOverlayMarkup("Saving settings...")
+          : formState && formState.pausePending
+            ? buildCustomCopyTradeLoadingOverlayMarkup("Updating account...")
+            : formState && formState.reconnectPending
+              ? buildCustomCopyTradeLoadingOverlayMarkup("Reconnecting account...")
+              : "")
     );
   };
 
@@ -5699,8 +6567,42 @@ const injectedScript = `
           return;
         }
 
+        if (action === "save-account-settings") {
+          void saveCustomCopyTradeAccountSettings(target.dataset.accountId || "");
+          return;
+        }
+
+        if (action === "toggle-account-pause") {
+          void toggleCustomCopyTradeAccountPaused(
+            target.dataset.accountId || "",
+            String(target.dataset.paused || "").trim() === "true"
+          );
+          return;
+        }
+
+        if (action === "reconnect-account") {
+          void reconnectCustomCopyTradeAccount(target.dataset.accountId || "");
+          return;
+        }
+
+        if (action === "save-preset") {
+          saveCopyTradePresetFromFormState(target.dataset.accountId || "");
+          return;
+        }
+
+        if (action === "load-preset") {
+          const accountId = String(target.dataset.accountId || "").trim();
+          const formState = getCustomCopyTradeAccountFormState(accountId, null);
+          applyCopyTradePresetToFormState(
+            accountId,
+            formState ? formState.selectedPresetName : ""
+          );
+          return;
+        }
+
         if (action === "submit-add-account") {
           void submitCustomCopyTradeAddForm();
+          return;
         }
       });
 
@@ -5713,6 +6615,13 @@ const injectedScript = `
             target instanceof HTMLSelectElement
           )
         ) {
+          return;
+        }
+
+        const accountField = String(target.dataset.korraAccountField || "").trim();
+        const accountId = String(target.dataset.korraAccountId || "").trim();
+        if (accountField && accountId) {
+          updateCustomCopyTradeAccountFormField(accountId, accountField, target.value);
           return;
         }
 

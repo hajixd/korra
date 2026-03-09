@@ -125,7 +125,10 @@ export async function PATCH(request: Request, context: RouteContext) {
       ...(payload.trailingDistPct !== undefined
         ? { trailingDistPct: parseNumeric(payload.trailingDistPct) }
         : {}),
-      ...(payload.paused !== undefined ? { paused: payload.paused === true } : {})
+      ...(payload.paused !== undefined ? { paused: payload.paused === true } : {}),
+      ...(payload.forceProvision !== undefined
+        ? { forceProvision: payload.forceProvision === true }
+        : {})
     });
     const worker = getWorkerStatus();
 
