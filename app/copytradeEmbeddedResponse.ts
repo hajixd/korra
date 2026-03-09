@@ -408,7 +408,9 @@ body {
 
 .korra-copytrade-shell__toolbarSelectWrap {
   position: relative;
-  min-width: 176px;
+  min-width: 152px;
+  flex: 0 0 152px;
+  margin-right: 18px;
 }
 
 .korra-copytrade-shell__toolbarSelectWrap::after {
@@ -816,27 +818,76 @@ body {
   margin-bottom: 0;
 }
 
+.korra-copytrade-shell__detailCard--history {
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+  padding: 0;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.korra-copytrade-shell__detailCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid rgba(38, 38, 38, 0.7);
+}
+
+.korra-copytrade-shell__detailCardHeader .korra-copytrade-shell__sectionTitle {
+  margin-bottom: 0;
+  color: #efefef;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.korra-copytrade-shell__detailBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #8f8f8f;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.korra-copytrade-shell__detailScroll {
+  flex: 1;
+  overflow: auto;
+  padding: 0 16px 12px;
+}
+
 .korra-copytrade-shell__detailTable {
   width: 100%;
   border-collapse: collapse;
-  margin-top: 14px;
+  margin-top: 0;
 }
 
 .korra-copytrade-shell__detailTable thead th {
-  padding: 0 0 10px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 10px 0 10px;
   text-align: left;
-  font-size: 10px;
+  background: rgba(0, 0, 0, 0.96);
+  font-size: 9px;
   line-height: 1.4;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: #666666;
   font-weight: 500;
 }
 
 .korra-copytrade-shell__detailTable tbody td {
-  padding: 11px 0;
-  border-top: 1px solid #141414;
-  font-size: 11px;
+  padding: 10px 0;
+  border-top: 1px solid #101010;
+  font-size: 10px;
   line-height: 1.5;
   color: #d6d6d6;
   font-variant-numeric: tabular-nums;
@@ -879,6 +930,7 @@ body {
   .korra-copytrade-shell__toolbarSelectWrap {
     min-width: 0;
     width: 100%;
+    margin-right: 0;
   }
 
   .korra-copytrade-shell__presetSelect,
@@ -6800,30 +6852,42 @@ const injectedScript = `
       ]) +
       "</tbody></table></div>";
     const historyMarkup =
-      '<div class="korra-copytrade-shell__detailCard">' +
+      '<div class="korra-copytrade-shell__detailCard korra-copytrade-shell__detailCard--history">' +
+      '<div class="korra-copytrade-shell__detailCardHeader">' +
       '<div class="korra-copytrade-shell__sectionTitle">History</div>' +
+      '<span class="korra-copytrade-shell__detailBadge">' +
+      escapeHtml(formatPlainNumber(recentDeals.length, 0) + " closed") +
+      "</span>" +
+      "</div>" +
+      '<div class="korra-copytrade-shell__detailScroll">' +
       '<table class="korra-copytrade-shell__detailTable">' +
-      "<thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Volume</th><th>Price</th><th>P/L</th></tr></thead>" +
+      "<thead><tr><th>Side</th><th>Symbol</th><th>Volume</th><th>Time</th><th>Type</th><th>P/L</th></tr></thead>" +
       "<tbody>" +
       buildStatisticsTableRows(recentDeals, [
         {
-          render: (item) => escapeHtml(formatDateTimeLabel(item.time))
+          render: (item) => {
+            const side = String(item.side || "N/A");
+            return (
+              '<span class="korra-copytrade-shell__detailBadge">' +
+              escapeHtml(side) +
+              "</span>"
+            );
+          }
         },
         {
           render: (item) => escapeHtml(String(item.symbol || "N/A"))
         },
         {
-          render: (item) => {
-            const side = String(item.side || "N/A");
-            const entry = String(item.entryType || "N/A").replace(/^DEAL_ENTRY_/, "");
-            return escapeHtml(side + " / " + entry);
-          }
-        },
-        {
           render: (item) => escapeHtml(formatPlainNumber(item.volume, 2))
         },
         {
-          render: (item) => escapeHtml(formatPlainNumber(item.price, 5))
+          render: (item) => escapeHtml(formatDateTimeLabel(item.time))
+        },
+        {
+          render: (item) =>
+            escapeHtml(
+              String(item.entryType || "N/A").replace(/^DEAL_ENTRY_/, "")
+            )
         },
         {
           className: (item) =>
@@ -6835,7 +6899,7 @@ const injectedScript = `
           render: (item) => escapeHtml(formatCurrencyValue(item.profit, currency))
         }
       ]) +
-      "</tbody></table></div>";
+      "</tbody></table></div></div>";
 
     return (
       header +
