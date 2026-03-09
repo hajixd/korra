@@ -490,10 +490,10 @@ body {
 }
 
 .korra-copytrade-shell__chartCard {
-  margin-top: 18px;
-  padding: 18px 20px 16px;
+  margin-top: 16px;
+  padding: 14px 16px 12px;
   border: 1px solid #171717;
-  border-radius: 20px;
+  border-radius: 18px;
   background: linear-gradient(180deg, #080808 0%, #040404 100%);
 }
 
@@ -505,7 +505,7 @@ body {
 }
 
 .korra-copytrade-shell__chartTitle {
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.4;
   font-weight: 600;
   color: #f2f2f2;
@@ -513,7 +513,7 @@ body {
 
 .korra-copytrade-shell__chartSubtitle {
   margin-top: 4px;
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1.5;
   color: #7f7f7f;
 }
@@ -530,7 +530,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 10px;
+  font-size: 9px;
   line-height: 1.4;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -547,24 +547,12 @@ body {
   display: block;
   width: 100%;
   height: auto;
-  margin-top: 14px;
-}
-
-.korra-copytrade-shell__chartRange {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
   margin-top: 10px;
-  font-size: 11px;
-  line-height: 1.5;
-  color: #838383;
-  font-variant-numeric: tabular-nums;
 }
 
 .korra-copytrade-shell__detailGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
 
@@ -5253,7 +5241,7 @@ const injectedScript = `
       return (
         '<div class="korra-copytrade-shell__chartCard">' +
         '<div class="korra-copytrade-shell__chartHeader">' +
-        '<div><div class="korra-copytrade-shell__chartTitle">Equity Curve</div>' +
+        '<div><div class="korra-copytrade-shell__chartTitle">Balance</div>' +
         '<div class="korra-copytrade-shell__chartSubtitle">No synchronized history yet.</div></div>' +
         "</div>" +
         "</div>"
@@ -5261,8 +5249,8 @@ const injectedScript = `
     }
 
     const width = 860;
-    const height = 280;
-    const padding = { top: 18, right: 18, bottom: 34, left: 18 };
+    const height = 168;
+    const padding = { top: 16, right: 14, bottom: 22, left: 14 };
     const times = allPoints.map((point) => Number(point.time));
     const values = allPoints.map((point) => Number(point.value));
     let minTime = Math.min.apply(null, times);
@@ -5284,6 +5272,7 @@ const injectedScript = `
     }
 
     const plotHeight = height - padding.top - padding.bottom;
+    const plotWidth = width - padding.left - padding.right;
     const yAxisMarks = [0, 0.5, 1].map((ratio) => {
       const y = padding.top + ratio * plotHeight;
       const value = maxValue - ratio * (maxValue - minValue);
@@ -5298,29 +5287,46 @@ const injectedScript = `
         y.toFixed(2) +
         '" stroke="#171717" stroke-width="1" stroke-dasharray="4 6"></line>' +
         '<text x="' +
-        String(padding.left + 8) +
+        String(padding.left + 6) +
         '" y="' +
-        (y - 8).toFixed(2) +
-        '" fill="#707070" font-size="11">' +
+        (y - 6).toFixed(2) +
+        '" fill="#707070" font-size="9">' +
         escapeHtml(formatCurrencyValue(value, currency)) +
         "</text>"
       );
     }).join("");
-    const xAxisMarks = [minTime, minTime + (maxTime - minTime) / 2, maxTime]
+    const xAxisMarks = [0, 1 / 3, 2 / 3, 1]
+      .map((ratio) => minTime + (maxTime - minTime) * ratio)
       .map((time, index) => {
-        const anchor = index === 0 ? "start" : index === 2 ? "end" : "middle";
+        const anchor = index === 0 ? "start" : index === 3 ? "end" : "middle";
         const x =
-          padding.left + ((time - minTime) / Math.max(1, maxTime - minTime)) * (width - padding.left - padding.right);
+          padding.left + ((time - minTime) / Math.max(1, maxTime - minTime)) * plotWidth;
         return (
           '<text x="' +
           x.toFixed(2) +
           '" y="' +
-          String(height - 8) +
-          '" fill="#707070" font-size="11" text-anchor="' +
+          String(height - 6) +
+          '" fill="#707070" font-size="9" text-anchor="' +
           anchor +
           '">' +
           escapeHtml(formatChartTimeLabel(time)) +
           "</text>"
+        );
+      })
+      .join("");
+    const verticalMarks = [0, 0.25, 0.5, 0.75, 1]
+      .map((ratio) => {
+        const x = padding.left + ratio * plotWidth;
+        return (
+          '<line x1="' +
+          x.toFixed(2) +
+          '" y1="' +
+          String(padding.top) +
+          '" x2="' +
+          x.toFixed(2) +
+          '" y2="' +
+          String(height - padding.bottom) +
+          '" stroke="#131313" stroke-width="1" stroke-dasharray="4 6"></line>'
         );
       })
       .join("");
@@ -5359,8 +5365,8 @@ const injectedScript = `
       '<div class="korra-copytrade-shell__chartCard">' +
       '<div class="korra-copytrade-shell__chartHeader">' +
       '<div>' +
-      '<div class="korra-copytrade-shell__chartTitle">Equity Curve</div>' +
-      '<div class="korra-copytrade-shell__chartSubtitle">Recent performance, balance flow, and current equity.</div>' +
+      '<div class="korra-copytrade-shell__chartTitle">Balance</div>' +
+      '<div class="korra-copytrade-shell__chartSubtitle">Recent balance flow with current equity overlay.</div>' +
       "</div>" +
       '<div class="korra-copytrade-shell__chartLegend">' +
       '<span class="korra-copytrade-shell__chartLegendItem"><span class="korra-copytrade-shell__chartLegendDot" style="background:#56d0ff;"></span>Balance ' +
@@ -5371,27 +5377,20 @@ const injectedScript = `
       "</span>" +
       "</div>" +
       "</div>" +
-      '<svg class="korra-copytrade-shell__chartSvg" viewBox="0 0 860 280" role="img" aria-label="Account equity curve">' +
+      '<svg class="korra-copytrade-shell__chartSvg" viewBox="0 0 860 168" role="img" aria-label="Account equity curve">' +
       yAxisMarks +
+      verticalMarks +
       '<path d="' +
       areaPath +
       '" fill="rgba(86, 208, 255, 0.10)"></path>' +
       '<path d="' +
       balancePath +
-      '" fill="none" stroke="#56d0ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>' +
+      '" fill="none" stroke="#56d0ff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>' +
       '<path d="' +
       equityPath +
-      '" fill="none" stroke="#4af0b3" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>' +
+      '" fill="none" stroke="#4af0b3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>' +
       xAxisMarks +
       "</svg>" +
-      '<div class="korra-copytrade-shell__chartRange">' +
-      "<span>" +
-      escapeHtml(formatChartTimeLabel(minTime)) +
-      "</span>" +
-      "<span>" +
-      escapeHtml(formatChartTimeLabel(maxTime)) +
-      "</span>" +
-      "</div>" +
       "</div>"
     );
   };
@@ -5587,8 +5586,6 @@ const injectedScript = `
     const positions = Array.isArray(dashboard && dashboard.openPositions)
       ? dashboard.openPositions
       : [];
-    const deals = Array.isArray(dashboard && dashboard.recentDeals) ? dashboard.recentDeals : [];
-    const dealRows = deals.slice(0, 20);
     const positionsMarkup =
       '<div class="korra-copytrade-shell__detailCard">' +
       '<div class="korra-copytrade-shell__sectionTitle">Open Positions</div>' +
@@ -5622,36 +5619,6 @@ const injectedScript = `
         }
       ]) +
       "</tbody></table></div>";
-    const dealsMarkup =
-      '<div class="korra-copytrade-shell__detailCard">' +
-      '<div class="korra-copytrade-shell__sectionTitle">Recent Deals</div>' +
-      '<table class="korra-copytrade-shell__detailTable">' +
-      "<thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Volume</th><th>P/L</th></tr></thead>" +
-      "<tbody>" +
-      buildStatisticsTableRows(dealRows, [
-        {
-          render: (item) => escapeHtml(formatDateTimeLabel(item.time))
-        },
-        {
-          render: (item) => escapeHtml(String(item.symbol || "N/A"))
-        },
-        {
-          render: (item) => escapeHtml(String(item.side || "N/A"))
-        },
-        {
-          render: (item) => escapeHtml(formatPlainNumber(item.volume, 2))
-        },
-        {
-          className: (item) =>
-            Number(item && item.profit) > 0
-              ? "korra-copytrade-shell__profit--positive"
-              : Number(item && item.profit) < 0
-                ? "korra-copytrade-shell__profit--negative"
-                : "",
-          render: (item) => escapeHtml(formatCurrencyValue(item.profit, currency))
-        }
-      ]) +
-      "</tbody></table></div>";
 
     return (
       header +
@@ -5660,7 +5627,6 @@ const injectedScript = `
       '<div class="korra-copytrade-shell__section">' +
       '<div class="korra-copytrade-shell__detailGrid">' +
       positionsMarkup +
-      dealsMarkup +
       "</div>" +
       "</div>"
     );
