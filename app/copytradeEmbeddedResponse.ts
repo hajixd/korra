@@ -88,6 +88,11 @@ body {
   border-bottom: 1px solid #141414;
 }
 
+.korra-copytrade-shell__toolbarMain {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .korra-copytrade-shell__eyebrow {
   font-size: 10px;
   line-height: 1.4;
@@ -422,9 +427,9 @@ body {
 
 .korra-copytrade-shell__toolbarSelectWrap {
   position: relative;
-  width: 144px;
-  max-width: 144px;
-  flex: 0 0 144px;
+  width: 112px;
+  max-width: 112px;
+  flex: 0 0 112px;
 }
 
 .korra-copytrade-shell__toolbarSelectWrap::after {
@@ -478,6 +483,23 @@ body {
 
 .korra-copytrade-shell__toolbarActions--stats .korra-copytrade-shell__toolbarActionGroup {
   flex: 0 0 auto;
+}
+
+.korra-copytrade-shell__toolbarStatusRow {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.korra-copytrade-shell__toolbarInlineActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
 }
 
 .korra-copytrade-shell__presetSelect,
@@ -1095,6 +1117,15 @@ body {
   .korra-copytrade-shell__toolbarBack {
     margin-top: 2px;
   }
+
+  .korra-copytrade-shell__toolbarStatusRow {
+    align-items: flex-start;
+  }
+
+  .korra-copytrade-shell__toolbarInlineActions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
 }
 
 @media (max-width: 900px) {
@@ -1111,6 +1142,7 @@ body {
   .korra-copytrade-shell__toolbarActionGroup,
   .korra-copytrade-shell__toolbarActions--stats,
   .korra-copytrade-shell__toolbarActions--stats .korra-copytrade-shell__toolbarActionGroup,
+  .korra-copytrade-shell__toolbarInlineActions,
   .korra-copytrade-shell__controlHeader,
   .korra-copytrade-shell__controlActions {
     justify-content: flex-start;
@@ -1125,6 +1157,14 @@ body {
   .korra-copytrade-shell__toolbarBack {
     margin-left: 0;
     margin-top: 0;
+  }
+
+  .korra-copytrade-shell__toolbarStatusRow {
+    align-items: flex-start;
+  }
+
+  .korra-copytrade-shell__toolbarInlineActions {
+    width: 100%;
   }
 
   .korra-copytrade-shell__presetSelect,
@@ -1188,6 +1228,10 @@ body {
     width: 100%;
     max-width: none;
     flex-basis: 100%;
+  }
+
+  .korra-copytrade-shell__toolbarInlineActions {
+    flex-wrap: wrap;
   }
 
   .korra-copytrade-shell__toolbarBack {
@@ -5662,7 +5706,7 @@ const injectedScript = `
 
       syncCustomCopyTradeAccountIntoStore(account);
       formState.pausePending = false;
-      formState.success = paused ? "Account paused." : "Account resumed.";
+      formState.success = "";
       formState.error = "";
       void loadCustomCopyTradeList(true);
       void loadCustomCopyTradeDashboard(accountId, true);
@@ -6079,7 +6123,7 @@ const injectedScript = `
 
     return (
       '<div class="korra-copytrade-shell__toolbar">' +
-      '<div>' +
+      '<div class="korra-copytrade-shell__toolbarMain">' +
       '<div class="korra-copytrade-shell__eyebrow">Copy Trade / Statistics</div>' +
       '<div class="korra-copytrade-shell__title">' +
       escapeHtml(buildCopyTradeDisplayName(account)) +
@@ -6089,13 +6133,12 @@ const injectedScript = `
       " / " +
       escapeHtml(syncedAt) +
       "</div>" +
-      '<div class="korra-copytrade-shell__statusLine" style="margin-top:10px;">' +
+      '<div class="korra-copytrade-shell__toolbarStatusRow">' +
+      '<div class="korra-copytrade-shell__statusLine">' +
       buildStatusPillMarkup(connection.label, connection.tone) +
       buildStatusPillMarkup(trading.label, trading.tone) +
       "</div>" +
-      "</div>" +
-      '<div class="korra-copytrade-shell__toolbarActions korra-copytrade-shell__toolbarActions--stats">' +
-      '<div class="korra-copytrade-shell__toolbarActionGroup">' +
+      '<div class="korra-copytrade-shell__toolbarInlineActions">' +
       '<button class="korra-copytrade-shell__button ' +
       (account && account.paused
         ? "korra-copytrade-shell__button--success"
@@ -6124,8 +6167,9 @@ const injectedScript = `
       "</label>" +
       reconnectButton +
       "</div>" +
-      '<button class="korra-copytrade-shell__button korra-copytrade-shell__toolbarBack" data-korra-action="back-home">All Accounts</button>' +
       "</div>" +
+      "</div>" +
+      '<button class="korra-copytrade-shell__button korra-copytrade-shell__toolbarBack" data-korra-action="back-home">All Accounts</button>' +
       "</div>"
     );
   };
