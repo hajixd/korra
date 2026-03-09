@@ -105,7 +105,7 @@ const DEFAULT_COPYTRADE_ROUTE = "/settings/account";
 const DIRECT_MT5_ADD_ACCOUNT_PATH = "/settings/account?view=add";
 type SavedPreset = { name: string; settings: Record<string, any>; savedAt: number };
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
-type SurfaceTab = "chart" | "settings" | "backtest" | "copytrade";
+type SurfaceTab = "chart" | "settings" | "backtest" | "ai" | "copytrade";
 type BacktestTab =
   | "mainSettings"
   | "mainStats"
@@ -135,7 +135,7 @@ type BacktestHeroStatCard = {
   valueStyle?: CSSProperties;
 };
 
-const SURFACE_TAB_IDS: SurfaceTab[] = ["chart", "settings", "backtest", "copytrade"];
+const SURFACE_TAB_IDS: SurfaceTab[] = ["chart", "settings", "backtest", "ai", "copytrade"];
 const BACKTEST_TAB_IDS: BacktestTab[] = [
   "mainSettings",
   "mainStats",
@@ -152,6 +152,8 @@ const BACKTEST_TAB_IDS: BacktestTab[] = [
 const isSurfaceTab = (value: unknown): value is SurfaceTab => {
   return typeof value === "string" && SURFACE_TAB_IDS.includes(value as SurfaceTab);
 };
+
+const isChartSurfaceTab = (value: SurfaceTab): boolean => value === "chart" || value === "ai";
 
 const isBacktestTab = (value: unknown): value is BacktestTab => {
   return typeof value === "string" && BACKTEST_TAB_IDS.includes(value as BacktestTab);
@@ -3358,6 +3360,7 @@ const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
   { id: "chart", label: "Chart" },
   { id: "settings", label: "Settings" },
   { id: "backtest", label: "Backtest" },
+  { id: "ai", label: "AI" },
   { id: "copytrade", label: "Copy-Trade" }
 ];
 
@@ -7674,6 +7677,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
   }, [selectedBacktestTab, selectedSurfaceTab]);
 
+  useEffect(() => {
+    if (selectedSurfaceTab !== "ai") {
+      return;
+    }
+
+    setActivePanelTab("ai");
+    setPanelExpanded(true);
+  }, [selectedSurfaceTab]);
+
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const gaplessToRealRef = useRef<Map<number, number>>(new Map());
@@ -8426,6 +8438,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     !appliedBacktestSettings.antiCheatEnabled &&
     appliedBacktestModelProfiles.length === 0;
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
+  const isChartSurface = isChartSurfaceTab(selectedSurfaceTab);
 
   const cycleValidationMode = () => {
     setValidationMode((current) => {
@@ -9479,9 +9492,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     overlayCatchupSeedKeyRef.current = seedKey;
   }, [selectedCandles, selectedKey, selectedTimeframe, volumeBaselineProfile]);
 
-  const isChartDataLoading =
-    selectedSurfaceTab === "chart" &&
-    chartHistoryLoadingKey === selectedKey;
+  const isChartDataLoading = isChartSurface && chartHistoryLoadingKey === selectedKey;
 
   const selectedBacktestCandles = useMemo(() => {
     return (
@@ -9697,7 +9708,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   // Keep deep backtest history off the live chart path by default.
   // We only hydrate deep candles when a chart overlay/details flow explicitly needs it.
   const isChartOverlayHydrationActive =
-    selectedSurfaceTab === "chart" &&
+    isChartSurface &&
     (showAllTradesOnChart || showActiveTradeOnChart || selectedHistoryId !== null);
   const isBacktestClusterHydrationActive =
     selectedSurfaceTab === "backtest" &&
@@ -9721,7 +9732,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     const deepHistory = deepChartCandles ?? EMPTY_CANDLES;
 
-    if (selectedSurfaceTab !== "chart" || selectedCandles.length === 0) {
+    if (!isChartSurface || selectedCandles.length === 0) {
       return deepHistory;
     }
 
@@ -10019,13 +10030,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   );
 
   useEffect(() => {
-    if (selectedSurfaceTab !== "chart") {
+    if (!isChartSurface) {
       clearAllAiChartAnnotations();
     }
   }, [clearAllAiChartAnnotations, selectedSurfaceTab]);
 
   useEffect(() => {
-    if (selectedSurfaceTab !== "chart") {
+    if (!isChartSurface) {
       return;
     }
     renderDynamicAssistantActions(selectedChartCandles);
@@ -10036,7 +10047,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   ]);
 
   useEffect(() => {
-    if (selectedSurfaceTab !== "chart") {
+    if (!isChartSurface) {
       return;
     }
 
@@ -10378,12 +10389,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return chronologicalHistoryRows;
   }, [chronologicalHistoryRows]);
   const usesChartPanelLiveSimulationForHistory =
-    selectedSurfaceTab === "chart" && chartPanelLiveSimulationEnabled;
+    isChartSurface && chartPanelLiveSimulationEnabled;
   const usesChartPanelLiveSimulationForActive =
-    selectedSurfaceTab === "chart" && activePanelLiveSimulationEnabled;
+    isChartSurface && activePanelLiveSimulationEnabled;
   const canBuildChartPanelReplayRows = historyRows.length <= 800;
   const shouldBuildChartPanelReplayRows =
-    selectedSurfaceTab === "chart" &&
+    isChartSurface &&
     canBuildChartPanelReplayRows &&
     (chartPanelLiveSimulationEnabled || activePanelLiveSimulationEnabled);
   const chartPanelFilterSettings = useMemo<BacktestFilterSettings>(
@@ -11784,7 +11795,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [chartContextMenu]);
 
   useEffect(() => {
-    if (selectedSurfaceTab === "chart") {
+    if (isChartSurface) {
       return;
     }
 
@@ -12116,7 +12127,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       };
 
         const queueResizeFromContainer = () => {
-        if (selectedSurfaceTabRef.current !== "chart") {
+        if (!isChartSurfaceTab(selectedSurfaceTabRef.current)) {
           return;
         }
 
@@ -12144,7 +12155,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           return;
         }
 
-        if (selectedSurfaceTabRef.current !== "chart") {
+        if (!isChartSurfaceTab(selectedSurfaceTabRef.current)) {
           return;
         }
 
@@ -12457,7 +12468,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [selectedTimeframe]);
 
   useEffect(() => {
-    if (selectedSurfaceTab !== "chart") {
+    if (!isChartSurface) {
       return;
     }
 
@@ -12618,7 +12629,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   ]);
 
   useEffect(() => {
-    if (selectedSurfaceTab !== "chart") {
+    if (!isChartSurface) {
       return;
     }
 
@@ -12734,7 +12745,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return;
     }
 
-    if (selectedSurfaceTab !== "chart") {
+    if (!isChartSurface) {
       return;
     }
 
@@ -12790,7 +12801,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return;
     }
 
-    if (selectedSurfaceTab !== "chart") {
+    if (!isChartSurface) {
       for (const seriesGroup of multiTradeSeriesRef.current) {
         chart.removeSeries(seriesGroup.profitZone);
         chart.removeSeries(seriesGroup.lossZone);
@@ -16111,6 +16122,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   setSelectedBacktestTab("mainStats");
                 }
 
+                if (tab.id === "ai") {
+                  setActivePanelTab("ai");
+                  setPanelExpanded(true);
+                }
+
                 setSelectedSurfaceTab(tab.id);
               }}
             >
@@ -16346,7 +16362,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           />
         ) : (
           <>
-        <div className={`surface-view ${selectedSurfaceTab === "chart" ? "" : "hidden"}`}>
+        <div className={`surface-view ${isChartSurface ? "" : "hidden"}`}>
           <section
             ref={workspaceRef}
             className={`workspace ${panelExpanded ? "" : "panel-collapsed"}`}
