@@ -9,56 +9,56 @@
   "description": "Retracement model that waits for pullbacks into Fibonacci levels that overlap with structure and continuation confirmation.",
   "entry": {
     "context": [
-      "Fibonacci anchored to a clear impulse swing.",
-      "Retracement zone aligned with structure or liquidity.",
-      "Directional bias matching the broader trend unless explicitly countertrend."
+      "Anchor Fibonacci from a clear impulse swing, not random noise.",
+      "Use fib only when it aligns with structure or liquidity.",
+      "Trade with trend unless you explicitly plan a countertrend retracement setup."
     ],
     "setup": [
-      "Pullback reaching the 0.382, 0.5, or 0.618 retracement zone.",
-      "Retracement tempo slowing through smaller bodies or rejection wicks.",
-      "Fib zone overlapping prior structure, VWAP, or a session extreme."
+      "Price retraces into the 0.382, 0.5, or 0.618 zone.",
+      "Retracement slows with smaller bodies or rejection wicks.",
+      "The level overlaps with prior structure, VWAP, or a session high or low."
     ],
     "trigger": [
-      "Rejection candle closing out of the fib zone.",
-      "Higher-low or lower-high break confirming the turn.",
-      "Blind limit entry reserved for high-confluence zones only."
+      "Enter on a rejection candle close from the fib zone.",
+      "Use a lower-high or higher-low break for cleaner confirmation.",
+      "Avoid blind limit entries unless the zone has strong confluence."
     ],
     "confirmation": [
-      "Higher-timeframe trend structure remaining intact.",
-      "Fib zone overlapping another level likely to attract response.",
-      "Retracement depth remaining inside the planned invalidation."
+      "Trend structure remains intact on the higher timeframe.",
+      "The fib zone overlaps with another level people will react to.",
+      "Retracement depth remains inside planned invalidation."
     ],
     "invalidation": [
-      "Clean close beyond the fib zone and structure pivot.",
-      "Pullback transitioning into a full reversal with opposite impulse.",
-      "Swing anchor losing validity."
+      "Price closes cleanly beyond the fib zone and structure pivot.",
+      "Pullback becomes a full reversal with an opposite impulsive break.",
+      "Confluence disappears because the swing anchor is invalid."
     ],
     "noTrade": [
-      "Anchors ambiguous or still changing.",
-      "Choppy range lacking a clear impulse leg.",
-      "Nearby structure limiting follow-through before the trade can develop."
+      "Anchors are ambiguous or constantly changing.",
+      "You are forcing fib on a choppy range with no impulse.",
+      "Nearby structure caps the move before the trade can breathe."
     ]
   },
   "exit": {
     "stopLoss": [
-      "Protective stop beyond the fib zone and swing pivot.",
-      "Stop hidden beyond the structure low or high that invalidates trend.",
-      "Exact fib number not used as the stop location."
+      "Place stop beyond the fib zone and swing pivot.",
+      "Hide stop beyond the structure low or high that makes the trend invalid.",
+      "Do not use the exact fib number as the stop."
     ],
     "takeProfit": [
-      "First target at the prior swing high or low.",
-      "Second target at extension or measured-move projection.",
-      "Faster profit-taking when retracement depth is large and trend quality is weaker."
+      "First target is the prior swing high or low.",
+      "Second target is an extension level or measured move.",
+      "Take profit faster if the retracement was deep and trend quality is weaker."
     ],
     "timeExit": [
-      "Post-rejection expansion appearing within the next few candles.",
-      "Intraday-only setup closed before session handoff.",
-      "Hold period ending when the timing window closes."
+      "Flatten if rejection never expands after a few candles.",
+      "Exit before session handoff if the setup was intraday only.",
+      "Do not keep a fib pullback once the timing window closes."
     ],
     "earlyExit": [
-      "Price accepting through the retracement zone after entry.",
-      "Rejection candle fully negated.",
-      "Trend resumption stalling at midrange."
+      "Price accepts through the zone after entry.",
+      "The rejection candle is fully negated.",
+      "Trend resumes too slowly and stalls at midrange."
     ]
   }
 }

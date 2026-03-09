@@ -1470,6 +1470,29 @@ button {
   gap: 0.68rem;
 }
 
+.models-surface-overview-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.models-surface-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0.28rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(88, 166, 255, 0.28);
+  background: linear-gradient(135deg, rgba(26, 58, 97, 0.78), rgba(14, 25, 44, 0.92));
+  color: rgba(216, 233, 255, 0.96);
+  font-size: 0.64rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
 .models-library-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -1483,6 +1506,11 @@ button {
   background:
     radial-gradient(120% 120% at 0% 0%, rgba(33, 71, 117, 0.18), transparent 58%),
     linear-gradient(180deg, rgba(9, 14, 21, 0.96), rgba(6, 10, 15, 0.98));
+}
+
+.models-library-card.is-active {
+  border-color: rgba(16, 185, 129, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.08);
 }
 
 .models-library-card-head {
@@ -1519,6 +1547,57 @@ button {
   line-height: 1.55;
 }
 
+.models-library-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.16rem 0.46rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 0.56rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.models-library-state-0 {
+  border-color: rgba(148, 163, 184, 0.24);
+  color: rgba(201, 210, 223, 0.76);
+  background: rgba(61, 74, 92, 0.24);
+}
+
+.models-library-state-1 {
+  border-color: rgba(88, 166, 255, 0.28);
+  color: rgba(205, 229, 255, 0.95);
+  background: rgba(27, 70, 122, 0.34);
+}
+
+.models-library-state-2 {
+  border-color: rgba(16, 185, 129, 0.3);
+  color: rgba(201, 255, 234, 0.96);
+  background: rgba(12, 78, 56, 0.42);
+}
+
+.models-library-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.38rem;
+}
+
+.models-library-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.18rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(222, 232, 247, 0.76);
+  font-size: 0.55rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
 .models-library-sections {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1549,155 +1628,37 @@ button {
   font-size: 0.58rem;
 }
 
-.models-library-criteria-grid {
-  display: grid;
-  gap: 0.46rem;
-}
-
-.models-library-criteria-block {
-  display: grid;
-  gap: 0.24rem;
-  padding: 0.58rem 0.62rem;
-  border-radius: 16px;
-  border: 1px solid rgba(136, 170, 214, 0.12);
-  background:
-    linear-gradient(180deg, rgba(17, 25, 37, 0.88), rgba(11, 16, 24, 0.94)),
-    rgba(255, 255, 255, 0.02);
-}
-
-.models-library-criteria-label {
-  color: rgba(196, 216, 244, 0.72);
-  font-size: 0.56rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-}
-
-.models-library-criteria-block p {
+.models-library-section ul {
+  list-style: none;
   margin: 0;
-  color: rgba(231, 238, 248, 0.84);
-  font-size: 0.63rem;
-  line-height: 1.55;
-}
-
-.models-library-example {
+  padding: 0;
   display: grid;
-  gap: 0.66rem;
-  padding: 0.72rem;
-  border-radius: 18px;
-  border: 1px solid rgba(116, 160, 212, 0.16);
-  background:
-    radial-gradient(120% 120% at 0% 0%, rgba(39, 82, 132, 0.18), transparent 58%),
-    linear-gradient(180deg, rgba(10, 16, 24, 0.94), rgba(7, 10, 16, 0.98));
+  gap: 0.42rem;
 }
 
-.models-library-example-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.66rem;
-  flex-wrap: wrap;
+.models-library-section li {
+  position: relative;
+  padding-left: 0.82rem;
+  color: rgba(223, 233, 246, 0.82);
+  font-size: 0.65rem;
+  line-height: 1.48;
 }
 
-.models-library-example-copy {
-  display: grid;
-  gap: 0.22rem;
-}
-
-.models-library-example-kicker {
-  color: rgba(185, 205, 232, 0.68);
-  font-size: 0.55rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-}
-
-.models-library-example-title-row {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  flex-wrap: wrap;
-}
-
-.models-library-example-title-row strong {
-  color: rgba(247, 250, 255, 0.96);
-  font-size: 0.82rem;
-  letter-spacing: 0.02em;
-}
-
-.models-library-example-side {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 24px;
-  padding: 0.12rem 0.42rem;
+.models-library-section li::before {
+  content: "";
+  position: absolute;
+  left: 0.05rem;
+  top: 0.45rem;
+  width: 0.34rem;
+  height: 0.34rem;
   border-radius: 999px;
-  border: 1px solid transparent;
-  font-size: 0.55rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-}
-
-.models-library-example-side.buy {
-  border-color: rgba(16, 185, 129, 0.24);
-  background: rgba(13, 91, 63, 0.34);
-  color: rgba(202, 255, 233, 0.96);
-}
-
-.models-library-example-side.sell {
-  border-color: rgba(248, 113, 113, 0.24);
-  background: rgba(112, 30, 30, 0.3);
-  color: rgba(255, 222, 222, 0.96);
-}
-
-.models-library-example-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.38rem;
-  flex-wrap: wrap;
-}
-
-.models-library-example-meta span,
-.models-library-example-meta strong {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 0.14rem 0.44rem;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
-  font-size: 0.55rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-}
-
-.models-library-example-meta span {
-  color: rgba(215, 228, 246, 0.78);
-}
-
-.models-library-example-chart {
-  min-height: 260px;
-}
-
-.models-library-example-caption,
-.models-library-example-empty {
-  color: rgba(190, 206, 230, 0.7);
-  font-size: 0.6rem;
-  line-height: 1.5;
+  background: linear-gradient(135deg, rgba(88, 166, 255, 0.96), rgba(16, 185, 129, 0.9));
+  box-shadow: 0 0 0 4px rgba(88, 166, 255, 0.08);
 }
 
 @media (max-width: 960px) {
   .models-library-sections {
     grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-@media (max-width: 640px) {
-  .models-library-example-head {
-    flex-direction: column;
-    align-items: stretch;
   }
 }
 

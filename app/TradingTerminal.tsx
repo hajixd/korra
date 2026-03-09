@@ -53,7 +53,6 @@ import {
 import { normalizeChartActions } from "../lib/assistant-tools";
 import {
   STRATEGY_MODEL_CATALOG,
-  resolveStrategyModelCatalogEntry,
   resolveStrategyRuntimeModelProfile
 } from "../lib/strategyCatalog";
 
@@ -8361,7 +8360,29 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const availableAiLibraries = useMemo(() => {
     return aiLibraryDefs.filter((library) => !selectedAiLibraries.includes(library.id));
   }, [aiLibraryDefs, selectedAiLibraries]);
-  const modelsSurfaceEntries = STRATEGY_MODEL_CATALOG;
+  const modelsSurfaceEntries = useMemo(() => {
+    return STRATEGY_MODEL_CATALOG.map((catalogModel) => {
+      const matchingModelName =
+        availableAiModelNames.find((name) => {
+          const normalizedName = name.trim().toLowerCase();
+          return (
+            normalizedName === catalogModel.name.toLowerCase() ||
+            normalizedName === catalogModel.id.replace(/-/g, " ") ||
+            catalogModel.aliases.some((alias) => alias.toLowerCase() === normalizedName)
+          );
+        }) ?? catalogModel.name;
+      const state = aiModelStates[matchingModelName] ?? 0;
+
+      return {
+        ...catalogModel,
+        matchingModelName,
+        state
+      };
+    });
+  }, [aiModelStates, availableAiModelNames]);
+  const activeModelsSurfaceCount = useMemo(() => {
+    return modelsSurfaceEntries.filter((entry) => entry.state > 0).length;
+  }, [modelsSurfaceEntries]);
 
   useEffect(() => {
     if (confidenceGateDisabled && confidenceThreshold !== 0) {
@@ -13338,100 +13359,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     backtestTimeFilteredTrades,
     getEffectiveTradeConfidenceScore
   ]);
-  const modelsSurfaceExamples = useMemo<
-    Record<
-      string,
-      {
-        trade: HistoryItem;
-        candles: Candle[];
-        durationMinutes: number;
-        executionFrameLabel: string;
-      } | null
-    >
-  >(() => {
-    const latestTradeByModelId = new Map<string, HistoryItem>();
-    const tradePools = [
-      backtestLibraryCandidateTrades,
-      backtestSourceTrades,
-      backtestTrades,
-      backtestDateFilteredTrades
-    ];
-
-    for (const pool of tradePools) {
-      for (const trade of pool) {
-        const matchedModel = resolveStrategyModelCatalogEntry(trade.entrySource);
-
-        if (!matchedModel) {
-          continue;
-        }
-
-        const current = latestTradeByModelId.get(matchedModel.id);
-
-        if (!current || Number(trade.exitTime) > Number(current.exitTime)) {
-          latestTradeByModelId.set(matchedModel.id, trade);
-        }
-      }
-    }
-
-    return STRATEGY_MODEL_CATALOG.reduce<
-      Record<
-        string,
-        {
-          trade: HistoryItem;
-          candles: Candle[];
-          durationMinutes: number;
-          executionFrameLabel: string;
-        } | null
-      >
-    >((accumulator, model) => {
-      const trade = latestTradeByModelId.get(model.id) ?? null;
-
-      if (!trade) {
-        accumulator[model.id] = null;
-        return accumulator;
-      }
-
-      const oneMinuteKey = symbolTimeframeKey(trade.symbol, "1m");
-      const timeframeKey = symbolTimeframeKey(trade.symbol, appliedBacktestSettings.timeframe);
-      const oneMinuteCandles =
-        backtestOneMinuteSeriesMap[oneMinuteKey] ??
-        backtestSeriesMap[oneMinuteKey] ??
-        seriesMap[oneMinuteKey] ??
-        EMPTY_CANDLES;
-      const timeframeCandles =
-        backtestSeriesMap[timeframeKey] ??
-        seriesMap[timeframeKey] ??
-        EMPTY_CANDLES;
-      const candles = resolveTradeMiniChartCandles(
-        trade,
-        appliedBacktestSettings.minutePreciseEnabled ? oneMinuteCandles : timeframeCandles,
-        appliedBacktestSettings.minutePreciseEnabled ? timeframeCandles : oneMinuteCandles
-      );
-
-      accumulator[model.id] = {
-        trade,
-        candles,
-        durationMinutes: getHistoryTradeDurationMinutes(trade),
-        executionFrameLabel: appliedBacktestSettings.minutePreciseEnabled
-          ? appliedBacktestSettings.timeframe === "1m"
-            ? "1m"
-            : "1m exec"
-          : appliedBacktestSettings.timeframe
-      };
-
-      return accumulator;
-    }, {});
-  }, [
-    appliedBacktestSettings.minutePreciseEnabled,
-    appliedBacktestSettings.timeframe,
-    backtestDateFilteredTrades,
-    backtestLibraryCandidateTrades,
-    backtestOneMinuteSeriesMap,
-    backtestSeriesMap,
-    backtestSourceTrades,
-    backtestTrades,
-    seriesMap
-  ]);
   const deferredBacktestTab = useDeferredValue(selectedBacktestTab);
   const deferredBacktestAnalyticsTrades = useDeferredValue(backtestTrades);
   const isBacktestAnalyticsVisible = selectedSurfaceTab === "backtest";
@@ -17385,22 +17312,27 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <div className="backtest-card-head backtest-stats-head">
                     <div>
                       <h3>Models</h3>
-                      <p>Entry and exit criteria with one full-trade chart example for each model.</p>
+                      <p>Structured entry and exit references for every model available in Korra.</p>
                     </div>
-                    <button
-                      type="button"
-                      className="panel-action-btn"
-                      onClick={() => setModelsModalOpen(true)}
-                    >
-                      Model Settings
-                    </button>
+                    <div className="models-surface-overview-actions">
+                      <span className="models-surface-meta-pill">
+                        {activeModelsSurfaceCount} active / {modelsSurfaceEntries.length} total
+                      </span>
+                      <button
+                        type="button"
+                        className="panel-action-btn"
+                        onClick={() => setModelsModalOpen(true)}
+                      >
+                        Edit States
+                      </button>
+                    </div>
                   </div>
                   <div className="backtest-toolbar-note backtest-toolbar-note-stack">
                     <span className="backtest-toolbar-note-range">
-                      This tab is the clean reference library for every model currently in Korra.
+                      Left click in Settings opens model toggles. This tab is your clean reference library.
                     </span>
                     <span className="backtest-toolbar-note-meta">
-                      Settings still controls model toggles. This view stays focused on criteria and examples.
+                      Entry and exit logic only, aligned to the site&apos;s current model catalog.
                     </span>
                   </div>
                 </div>
@@ -17428,120 +17360,73 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <>
               {selectedSurfaceTab === "models" ? (
                 <div className="models-library-grid">
-                  {modelsSurfaceEntries.map((model) => {
-                    const example = modelsSurfaceExamples[model.id];
-                    const entryCriteriaGroups = [
-                      { label: "Context", items: model.entry.context },
-                      { label: "Setup", items: model.entry.setup },
-                      { label: "Trigger", items: model.entry.trigger },
-                      { label: "Confirmation", items: model.entry.confirmation },
-                      { label: "Invalidation", items: model.entry.invalidation },
-                      { label: "No Trade", items: model.entry.noTrade }
-                    ];
-                    const exitCriteriaGroups = [
-                      { label: "Stop Loss", items: model.exit.stopLoss },
-                      { label: "Take Profit", items: model.exit.takeProfit },
-                      { label: "Time Exit", items: model.exit.timeExit },
-                      { label: "Early Exit", items: model.exit.earlyExit }
-                    ];
-
-                    return (
-                      <article key={model.id} className="backtest-card models-library-card">
-                        <div className="models-library-card-head">
-                          <div className="models-library-card-copy">
-                            <div className="models-library-title-row">
-                              <h3>{model.name}</h3>
-                            </div>
-                            <p>{model.description}</p>
+                  {modelsSurfaceEntries.map((model) => (
+                    <article
+                      key={model.id}
+                      className={`backtest-card models-library-card ${model.state > 0 ? "is-active" : ""}`}
+                    >
+                      <div className="models-library-card-head">
+                        <div className="models-library-card-copy">
+                          <div className="models-library-title-row">
+                            <h3>{model.name}</h3>
+                            <span className={`models-library-state models-library-state-${model.state}`}>
+                              {getAiModelStateLabel(model.state)}
+                            </span>
                           </div>
+                          <p>{model.description}</p>
                         </div>
+                      </div>
 
-                        <div className="models-library-sections">
-                          <section className="models-library-section">
-                            <header>
-                              <span>Entry Criteria</span>
-                              <small>Context, setup, trigger, confirmation, invalidation, no-trade</small>
-                            </header>
-                            <div className="models-library-criteria-grid">
-                              {entryCriteriaGroups.map((group) => (
-                                <div key={`${model.id}-${group.label}`} className="models-library-criteria-block">
-                                  <span className="models-library-criteria-label">{group.label}</span>
-                                  <p>{group.items.join(" · ")}</p>
-                                </div>
+                      <div className="models-library-chip-row" aria-label={`${model.name} aliases`}>
+                        {model.aliases.map((alias) => (
+                          <span key={`${model.id}-${alias}`} className="models-library-chip">
+                            {alias}
+                          </span>
+                        ))}
+                      </div>
+
+                      <div className="models-library-sections">
+                        <section className="models-library-section">
+                          <header>
+                            <span>Entry</span>
+                            <small>Setup, trigger, confirmation</small>
+                          </header>
+                          <ul>
+                            {[
+                              ...model.entry.context,
+                              ...model.entry.setup,
+                              ...model.entry.trigger,
+                              ...model.entry.confirmation,
+                              ...model.entry.noTrade
+                            ]
+                              .slice(0, 6)
+                              .map((item, index) => (
+                                <li key={`${model.id}-entry-${index}`}>{item}</li>
                               ))}
-                            </div>
-                          </section>
-
-                          <section className="models-library-section">
-                            <header>
-                              <span>Exit Criteria</span>
-                              <small>Stop placement, targets, timing, early failure</small>
-                            </header>
-                            <div className="models-library-criteria-grid">
-                              {exitCriteriaGroups.map((group) => (
-                                <div key={`${model.id}-${group.label}`} className="models-library-criteria-block">
-                                  <span className="models-library-criteria-label">{group.label}</span>
-                                  <p>{group.items.join(" · ")}</p>
-                                </div>
-                              ))}
-                            </div>
-                          </section>
-                        </div>
-
-                        <section className="models-library-example">
-                          <div className="models-library-example-head">
-                            <div className="models-library-example-copy">
-                              <span className="models-library-example-kicker">Example Trade</span>
-                              {example ? (
-                                <div className="models-library-example-title-row">
-                                  <strong>{example.trade.symbol}</strong>
-                                  <span
-                                    className={`models-library-example-side ${
-                                      example.trade.side === "Long" ? "buy" : "sell"
-                                    }`}
-                                  >
-                                    {example.trade.side === "Long" ? "BUY" : "SELL"}
-                                  </span>
-                                </div>
-                              ) : (
-                                <strong>No backtest example loaded</strong>
-                              )}
-                            </div>
-
-                            {example ? (
-                              <div className="models-library-example-meta">
-                                <span>{example.executionFrameLabel}</span>
-                                <span>{formatMinutesCompact(example.durationMinutes)}</span>
-                                <strong className={example.trade.pnlUsd >= 0 ? "up" : "down"}>
-                                  {formatSignedUsd(example.trade.pnlUsd)}
-                                </strong>
-                              </div>
-                            ) : null}
-                          </div>
-
-                          {example ? (
-                            <>
-                              <div className="models-library-example-chart">
-                                <BacktestTradeMiniChart
-                                  trade={example.trade}
-                                  candles={example.candles}
-                                  isOpen={selectedSurfaceTab === "models"}
-                                />
-                              </div>
-                              <div className="models-library-example-caption">
-                                Entry {example.trade.entryAt} at {formatPrice(example.trade.entryPrice)} · Exit{" "}
-                                {example.trade.exitAt} at {formatPrice(example.trade.outcomePrice)}
-                              </div>
-                            </>
-                          ) : (
-                            <div className="models-library-example-empty">
-                              No complete backtest trade is available for this model yet.
-                            </div>
-                          )}
+                          </ul>
                         </section>
-                      </article>
-                    );
-                  })}
+
+                        <section className="models-library-section">
+                          <header>
+                            <span>Exit</span>
+                            <small>Stop, target, time, early exit</small>
+                          </header>
+                          <ul>
+                            {[
+                              ...model.exit.stopLoss,
+                              ...model.exit.takeProfit,
+                              ...model.exit.timeExit,
+                              ...model.exit.earlyExit
+                            ]
+                              .slice(0, 6)
+                              .map((item, index) => (
+                                <li key={`${model.id}-exit-${index}`}>{item}</li>
+                              ))}
+                          </ul>
+                        </section>
+                      </div>
+                    </article>
+                  ))}
                 </div>
               ) : (
                 <>

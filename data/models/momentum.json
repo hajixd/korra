@@ -9,56 +9,56 @@
   "description": "Trend-following model focused on range expansion and continuation after compression or pullback absorption.",
   "entry": {
     "context": [
-      "Higher-timeframe impulse or fresh session expansion aligned with trade direction.",
-      "Breakout base, recent swing, and nearest liquidity target identified.",
-      "Price holding outside the broken range after the initial expansion."
+      "Trade in the direction of the higher-timeframe impulse or fresh session expansion.",
+      "Mark the breakout base, recent swing, and liquidity target before entry.",
+      "Wait for price to hold outside the broken range instead of chasing the first spike."
     ],
     "setup": [
-      "Compression or pullback formed around the breakout level.",
-      "Retest rejected without a deep close back inside the prior range.",
-      "Consecutive closes maintained in trend direction."
+      "Compression or pullback forms near the breakout level.",
+      "Retest shows shallow rejection and no deep close back inside range.",
+      "Order flow stays one-sided with consecutive closes in trend direction."
     ],
     "trigger": [
-      "Break of the retest high for longs or retest low for shorts.",
-      "Continuation candle body closed beyond the trigger level when using first-push entry.",
-      "Trigger candle size contained within one recent average range."
+      "Enter on break of the retest high for longs or retest low for shorts.",
+      "Allow first continuation-candle entry only if body closes beyond trigger level.",
+      "Skip entries if the trigger candle is already stretched more than one recent average range."
     ],
     "confirmation": [
-      "Range expansion above recent average.",
-      "Volume or tape speed increasing through the trigger level.",
-      "Reclaimed structure holding as support for longs or resistance for shorts."
+      "Range expansion is above recent average.",
+      "Volume or speed increases through the trigger level.",
+      "Structure stays above reclaimed support for longs or below reclaimed resistance for shorts."
     ],
     "invalidation": [
-      "Two-sided trade returning inside the prior range.",
-      "Retest closing back through the breakout base.",
-      "Session impulse fading with clear divergence."
+      "Two-sided chop returns inside the prior range.",
+      "Retest closes back through the breakout base.",
+      "Session impulse fades and divergence becomes obvious."
     ],
     "noTrade": [
-      "High-impact news scheduled within the immediate execution window.",
-      "Breakout path blocked by nearby higher-timeframe opposing structure.",
-      "Spread expansion or wick-dominant trigger candle without close-through."
+      "Major news hits within minutes of entry.",
+      "Breakout runs directly into higher-timeframe opposing structure.",
+      "Spread widens or the candle is mostly wick with no close-through."
     ]
   },
   "exit": {
     "stopLoss": [
-      "Protective stop beyond retest low or high, or beyond the breakout base.",
-      "Far side of the compression box when structure is loose.",
-      "Invalidation distance remaining inside planned tolerance."
+      "Hide stop beyond retest low or high or behind the breakout base.",
+      "If structure is loose, use the far side of the compression box.",
+      "Cancel the setup if the stop needed is too wide for the plan."
     ],
     "takeProfit": [
-      "First scale at nearby extension or liquidity objective.",
-      "Runner valid toward session high, low, or measured move while continuation remains clean.",
-      "Target structure fixed before execution with no post-entry widening."
+      "Pay at the first extension or nearby liquidity.",
+      "Hold the remainder toward session high, low, or measured move only if continuation stays clean.",
+      "Do not widen target after entry."
     ],
     "timeExit": [
-      "Continuation appearing within 3 to 6 execution candles.",
-      "Exposure reduced before low-liquidity session handoff.",
-      "Scalp breakout closed before dead hours."
+      "Flatten if continuation never appears within 3 to 6 execution candles.",
+      "Reduce before low-liquidity session handoff.",
+      "Do not carry a scalp-style breakout into dead hours."
     ],
     "earlyExit": [
-      "Full candle close back inside the prior range.",
-      "Counter-impulse candle printing a larger body than the entry candle.",
-      "Breakout level failing on the next retest."
+      "A full candle closes back inside range.",
+      "A counter impulse prints with larger body than the entry candle.",
+      "The breakout level fails on the next retest."
     ]
   }
 }

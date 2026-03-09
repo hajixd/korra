@@ -9,56 +9,56 @@
   "description": "Session-aware model that trades repeatable opening-drive, sweep, or reversion behavior inside defined intraday windows.",
   "entry": {
     "context": [
-      "Exact session clock window defined before the session opens.",
-      "Asia high and low, London open, New York open, and prior session extremes mapped.",
-      "Window classified in advance as breakout or reversion."
+      "Define exact clock windows before the session begins.",
+      "Map Asia high and low, London open, New York open, and prior session extremes.",
+      "Decide whether the window is for breakout or reversion before price arrives."
     ],
     "setup": [
-      "Price reaching the planned level or range inside the target window.",
-      "Liquidity sweep or opening drive forming on time.",
-      "Session behavior matching the repeatable intraday pattern."
+      "Price reaches the level or range expected for that session window.",
+      "A liquidity sweep or opening drive forms at the planned time.",
+      "Session behavior matches the repeatable pattern you trade."
     ],
     "trigger": [
-      "Opening range break for expansion setups.",
-      "Reclaim of the swept level for reversal setups.",
-      "Execution occurring inside the active session window."
+      "Break of opening range for expansion setups.",
+      "Reclaim of a swept level for reversal setups.",
+      "Enter only inside the active session window, never after it is gone."
     ],
     "confirmation": [
-      "Volume and range expanding during the planned window.",
-      "Price holding on the correct side of the session level after trigger.",
-      "No conflicting macro release due in the immediate execution window."
+      "Volume and range pick up during the planned window.",
+      "Price respects the session level after trigger.",
+      "No conflicting macro release is seconds away."
     ],
     "invalidation": [
-      "Session window closing without expansion.",
-      "Acceptance on the wrong side of the key session level.",
-      "Opening range direction flipping and holding against the trade."
+      "The session window closes without expansion.",
+      "Price accepts on the wrong side of the key session level.",
+      "Opening range direction flips and holds against the idea."
     ],
     "noTrade": [
-      "Planned execution window already missed.",
-      "Setup driven by one-off news randomness instead of repeatable session behavior.",
-      "Spread and slippage elevated around the session open."
+      "You missed the planned time window.",
+      "The setup depends on news randomness instead of repeatable session behavior.",
+      "Spread and slippage are too high around the session open."
     ]
   },
   "exit": {
     "stopLoss": [
-      "Protective stop beyond the session level or sweep extreme.",
-      "Tighter stop structure for open-drive setups and wider structure stop for sweep reclaims.",
-      "Invalidation distance remaining inside planned session volatility."
+      "Hide stop beyond the session level or sweep extreme.",
+      "Use tighter stops for open-drive setups and wider structure stops for sweep reclaims.",
+      "If the session volatility makes the invalidation too wide, skip the trade."
     ],
     "takeProfit": [
-      "Primary target at the opposite side of the opening range, ADR objective, or prior session extreme.",
-      "Time-sensitive setup partials secured early.",
-      "Runner valid only while session momentum remains intact."
+      "Target the opposite side of the opening range, ADR objective, or prior session high or low.",
+      "Take partials quickly on time-sensitive setups.",
+      "Keep runners only while session momentum remains intact."
     ],
     "timeExit": [
-      "Position closed by the end of the planned session window.",
-      "Open-drive setup flattened before lunch or rollover.",
-      "Trade closed before liquidity dies if price stalls."
+      "Exit by the end of the planned session window.",
+      "Flatten before lunch or rollover if the setup was open-drive based.",
+      "Close before liquidity dies if price stalls."
     ],
     "earlyExit": [
-      "Session level failing immediately after entry.",
-      "Price unable to hold above or below the opening range.",
-      "Time window expiring without continuation."
+      "The session level fails immediately after entry.",
+      "Price cannot hold above or below the opening range.",
+      "The time window expires with no continuation."
     ]
   }
 }
