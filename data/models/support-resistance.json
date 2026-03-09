@@ -6,59 +6,71 @@
     "s/r",
     "level reaction"
   ],
-  "description": "if price_is_at_key_zone && reaction_type in { reject, reclaim, breakout_hold } then trade_level_response()",
+  "description": "Level reaction model that trades when price is sitting at support or resistance, the reversal candle is there, and the local range is large enough.",
   "entry": {
-    "context": [
-      "levels := { daily_high_low, weekly_high_low, prior_session_levels, untouched_zones }",
-      "prefer level_with(liquidity || repeated_reaction); reject random_midrange",
-      "mode := breakout_continuation || rejection before first_touch"
-    ],
-    "setup": [
-      "setup_valid := clean_approach_into(defined_support_resistance)",
-      "reaction_valid := sweep || rejection occurs_at(level)",
-      "compression_valid := local_structure defines_invalidation"
-    ],
+    "context": [],
+    "setup": [],
     "trigger": [
-      "rejection_entry when support_reclaims || resistance_failure_prints",
-      "breakout_entry when close_and_hold_beyond(level) == true",
-      "execute only_if reaction_is_obvious && invalidation_is_defined"
+      "Long when price is near support, a bullish reversal prints, and the local range is large enough.",
+      "Short when price is near resistance, a bearish reversal prints, and the local range is large enough."
     ],
-    "confirmation": [
-      "confirm level_significance via multi_touch || volume_response",
-      "confirm wick_rejection || close_behavior at level",
-      "confirm next_path_of_price has_room_to_develop"
-    ],
-    "invalidation": [
-      "invalidate if price_accepts_through(level) && holds",
-      "invalidate if range_expansion breaks_level_against_thesis",
-      "invalidate if reaction_whipsaws_both_sides_of(zone)"
-    ],
-    "noTrade": [
-      "skip if level_is_overused && reaction_quality_is_decaying",
-      "skip if stronger_level sits_too_close_behind_entry",
-      "skip if approach_is_messy && clean_boundary_missing"
-    ]
+    "confirmation": [],
+    "invalidation": [],
+    "noTrade": []
   },
   "exit": {
-    "stopLoss": [
-      "stop := beyond(far_side_of_zone || sweep_extreme)",
-      "zone_width := full_width(zone) for validity_check",
-      "abort_trade if zone_width > max_allowed_stop"
-    ],
-    "takeProfit": [
-      "tp1 := next_clear_level || next_liquidity_pool",
-      "take_partials_fast on countertrend_reactions",
-      "runner_allowed only_if breakout_acceptance || clean_rejection_continuation"
-    ],
-    "timeExit": [
-      "exit if price_cannot_leave(zone) quickly",
-      "flatten before session_close if trade_depends_on active_liquidity",
-      "no_carry level_reaction after zone_is_consumed := true"
-    ],
-    "earlyExit": [
-      "exit_early if zone_is_retaken_with_conviction",
-      "exit_early if breakout_retest_fails_immediately",
-      "exit_early if repeated_tests erode_reaction_edge"
-    ]
+    "stopLoss": [],
+    "takeProfit": [],
+    "timeExit": [],
+    "earlyExit": []
+  },
+  "backtest": {
+    "source": "AI.zip /src/App.tsx entryChecklist() fallback",
+    "entry": {
+      "long": {
+        "checks": [
+          {
+            "label": "Price is sitting near support",
+            "when": {
+              "feature": "nearSupport"
+            }
+          },
+          {
+            "label": "A bullish reversal has printed",
+            "when": {
+              "feature": "bullishReversal"
+            }
+          },
+          {
+            "label": "The local range is large enough",
+            "when": {
+              "feature": "sufficientRange"
+            }
+          }
+        ]
+      },
+      "short": {
+        "checks": [
+          {
+            "label": "Price is sitting near resistance",
+            "when": {
+              "feature": "nearResistance"
+            }
+          },
+          {
+            "label": "A bearish reversal has printed",
+            "when": {
+              "feature": "bearishReversal"
+            }
+          },
+          {
+            "label": "The local range is large enough",
+            "when": {
+              "feature": "sufficientRange"
+            }
+          }
+        ]
+      }
+    }
   }
 }

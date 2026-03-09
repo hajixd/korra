@@ -6,59 +6,132 @@
     "calendar flow",
     "cycle bias"
   ],
-  "description": "if seasonal_bias_matches_current_structure && timing_window_is_open then execute_cycle_trade()",
+  "description": "Cycle model that trades only when the season bucket has just changed and the base trend still agrees.",
   "entry": {
-    "context": [
-      "seasonal_bias := get_cycle_bias(month || week || session)",
-      "use cycle_bias as filter; never_as_blind_trigger := true",
-      "levels := { acceleration_level, failure_level, seasonal_target }"
-    ],
-    "setup": [
-      "setup_valid := historical_tendency aligns_with current_period",
-      "pattern_valid := continuation_structure forms_in_bias_direction",
-      "event_filter := no_major_opposing_catalyst"
-    ],
+    "context": [],
+    "setup": [],
     "trigger": [
-      "entry when local_continuation_structure breaks_with_cycle_bias",
-      "if cycle_window_early && volatility_mixed then require pullback_confirmation",
-      "skip if current_move >= expected_seasonal_distance"
+      "Long when the season bucket has just turned to summer, the base trend is up, and the market is not already overbought.",
+      "Short when the season bucket has just turned to winter, the base trend is down, and the market is not already oversold."
     ],
-    "confirmation": [
-      "confirm current_session_behavior matches expected_cycle_window",
-      "confirm correlated_markets do_not_strongly_oppose_thesis",
-      "confirm trend_structure remains_orderly"
-    ],
-    "invalidation": [
-      "invalidate if current_period accepts_opposite_to_cycle_bias",
-      "invalidate if catalyst_repricing overrides_history",
-      "invalidate if range_compression kills_follow_through"
-    ],
-    "noTrade": [
-      "skip if seasonal_sample_size < reliability_threshold",
-      "skip if move_already_extended_into(htf_structure)",
-      "skip if upcoming_macro_data can_reset_cycle_narrative"
-    ]
+    "confirmation": [],
+    "invalidation": [],
+    "noTrade": []
   },
   "exit": {
-    "stopLoss": [
-      "stop := outside(local_structure_that_invalidates_cycle_bias)",
-      "alt_stop := opposite_side(pullback || continuation_base)",
-      "never_widen_stop_because_cycle_should_work := true"
-    ],
-    "takeProfit": [
-      "tp1 := usual_seasonal_range_extension",
-      "runner_allowed only_while structure_confirms_cycle_unfolding",
-      "take_profit_ahead_of known_reversal_window if pattern_typically_fades"
-    ],
-    "timeExit": [
-      "exit when seasonal_window_closes",
-      "flatten before next_major_macro_event if regime_can_change",
-      "no_hold beyond edge_period := true"
-    ],
+    "stopLoss": [],
+    "takeProfit": [],
+    "timeExit": [],
     "earlyExit": [
-      "exit_early if realized_cycle diverges_from expected_flow",
-      "exit_early if structure_breaks_against_thesis before_target_progress",
-      "exit_early if correlated_context flips_hard_against_trade"
+      "Long exit when the season bucket is no longer summer.",
+      "Short exit when the season bucket is no longer winter."
     ]
+  },
+  "backtest": {
+    "source": "AI.zip /src/App.tsx modelEntryGate() and chooseExit()",
+    "entry": {
+      "long": {
+        "checks": [
+          {
+            "label": "The season bucket has just turned to summer",
+            "when": {
+              "all": [
+                {
+                  "eq": [
+                    "seasonBucket",
+                    "summer"
+                  ]
+                },
+                {
+                  "neq": [
+                    "prevSeasonBucket",
+                    "summer"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "label": "Trend is already up",
+            "when": {
+              "feature": "upTrendBase"
+            }
+          },
+          {
+            "label": "The market is not already overbought",
+            "when": {
+              "not": {
+                "feature": "normUp"
+              }
+            }
+          }
+        ]
+      },
+      "short": {
+        "checks": [
+          {
+            "label": "The season bucket has just turned to winter",
+            "when": {
+              "all": [
+                {
+                  "eq": [
+                    "seasonBucket",
+                    "winter"
+                  ]
+                },
+                {
+                  "neq": [
+                    "prevSeasonBucket",
+                    "winter"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "label": "Trend is already down",
+            "when": {
+              "feature": "downTrendBase"
+            }
+          },
+          {
+            "label": "The market is not already oversold",
+            "when": {
+              "not": {
+                "feature": "normDown"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "exit": {
+      "long": {
+        "checks": [
+          {
+            "label": "The season bucket is no longer summer",
+            "when": {
+              "neq": [
+                "seasonBucket",
+                "summer"
+              ]
+            }
+          }
+        ]
+      },
+      "short": {
+        "checks": [
+          {
+            "label": "The season bucket is no longer winter",
+            "when": {
+              "neq": [
+                "seasonBucket",
+                "winter"
+              ]
+            }
+          }
+        ]
+      }
+    }
   }
 }

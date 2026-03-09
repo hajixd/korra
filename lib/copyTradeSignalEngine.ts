@@ -3,10 +3,13 @@ import {
   finalizeBacktestHistoryRows,
   type BacktestHistoryCandle,
   type BacktestHistoryRow,
-  type BacktestHistoryTradeBlueprint,
-  type BacktestHistoryTradeSide
+  type BacktestHistoryTradeBlueprint
 } from "../app/backtestHistoryShared";
 import { resolveStrategyRuntimeModelProfile } from "./strategyCatalog";
+import {
+  buildStrategyReplayTradeBlueprints,
+  type StrategyReplayModelProfile
+} from "./strategyModelBacktest";
 
 export type CopyTradeTimeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 
@@ -19,32 +22,7 @@ export type CopyTradeCandle = {
   volume?: number;
 };
 
-type ReplayModelKind =
-  | "momentum"
-  | "meanReversion"
-  | "seasons"
-  | "timeOfDay"
-  | "fibonacci"
-  | "supportResistance";
-
-type ReplayEntrySignal = {
-  side: BacktestHistoryTradeSide;
-  strength: number;
-  holdBars: number;
-  rrWeight: number;
-  riskWeight: number;
-};
-
-type ModelProfile = {
-  id: string;
-  name: string;
-  modelKind: ReplayModelKind;
-  riskMin: number;
-  riskMax: number;
-  rrMin: number;
-  rrMax: number;
-  longBias: number;
-};
+type ModelProfile = StrategyReplayModelProfile;
 
 export type CopyTradeSignalSettings = {
   symbol: string;
@@ -92,7 +70,6 @@ const createSyntheticModelProfile = (name: string): ModelProfile => {
   return {
     id: createModelId(name),
     name,
-    modelKind: resolveReplayModelKind(name),
     riskMin,
     riskMax: riskMin + 0.0018 + sample(16) * 0.0022,
     rrMin,
@@ -125,7 +102,6 @@ const buildModelProfiles = (aiZipModelNames: string[]): ModelProfile[] => {
         ? {
             id: catalogProfile.id,
             name: catalogProfile.name,
-            modelKind: catalogProfile.modelKind,
             riskMin: catalogProfile.riskMin,
             riskMax: catalogProfile.riskMax,
             rrMin: catalogProfile.rrMin,
@@ -137,388 +113,6 @@ const buildModelProfiles = (aiZipModelNames: string[]): ModelProfile[] => {
   }
 
   return profiles;
-};
-
-const getUtcDayOfYear = (date: Date): number => {
-  const year = date.getUTCFullYear();
-  const startMs = Date.UTC(year, 0, 0);
-  const dayMs = Date.UTC(year, date.getUTCMonth(), date.getUTCDate());
-  return Math.max(1, Math.floor((dayMs - startMs) / 86_400_000));
-};
-
-const resolveReplayModelKind = (name: string): ReplayModelKind => {
-  const normalized = name.trim().toLowerCase();
-
-  if (normalized.includes("mean") || normalized.includes("reversion")) {
-    return "meanReversion";
-  }
-
-  if (normalized.includes("season")) {
-    return "seasons";
-  }
-
-  if (normalized.includes("time of day") || normalized.includes("time")) {
-    return "timeOfDay";
-  }
-
-  if (normalized.includes("fibonacci") || normalized.includes("fib")) {
-    return "fibonacci";
-  }
-
-  if (
-    normalized.includes("support") ||
-    normalized.includes("resistance") ||
-    normalized.includes("s/r")
-  ) {
-    return "supportResistance";
-  }
-
-  return "momentum";
-};
-
-const getReplayModelCooldownBars = (kind: ReplayModelKind): number => {
-  switch (kind) {
-    case "momentum":
-      return 2;
-    case "meanReversion":
-      return 3;
-    case "seasons":
-      return 8;
-    case "timeOfDay":
-      return 5;
-    case "fibonacci":
-      return 4;
-    case "supportResistance":
-      return 4;
-    default:
-      return 3;
-  }
-};
-
-const evaluateReplaySignal = ({
-  modelKind,
-  candles,
-  entryIndex,
-  windowBars
-}: {
-  modelKind: ReplayModelKind;
-  candles: CopyTradeCandle[];
-  entryIndex: number;
-  windowBars: number;
-}): ReplayEntrySignal | null => {
-  const lookbackBars = Math.max(8, Math.min(180, Math.round(windowBars) || 24));
-
-  if (entryIndex < lookbackBars + 1 || entryIndex >= candles.length) {
-    return null;
-  }
-
-  const startIndex = entryIndex - lookbackBars;
-  const previous = candles[entryIndex - 1];
-
-  if (!previous) {
-    return null;
-  }
-
-  let minLow = Number.POSITIVE_INFINITY;
-  let maxHigh = Number.NEGATIVE_INFINITY;
-  let sumClose = 0;
-  let sumCloseSq = 0;
-  let sumRange = 0;
-
-  for (let index = startIndex; index < entryIndex; index += 1) {
-    const candle = candles[index];
-    if (!candle) {
-      return null;
-    }
-
-    minLow = Math.min(minLow, candle.low);
-    maxHigh = Math.max(maxHigh, candle.high);
-    sumClose += candle.close;
-    sumCloseSq += candle.close * candle.close;
-    sumRange += Math.max(0.000001, candle.high - candle.low);
-  }
-
-  const firstClose = candles[startIndex]?.close ?? previous.close;
-  if (!Number.isFinite(firstClose) || Math.abs(firstClose) <= 0.000001) {
-    return null;
-  }
-
-  const rangeAbs = Math.max(0.000001, maxHigh - minLow);
-  const trendRet = (previous.close - firstClose) / Math.max(0.000001, Math.abs(firstClose));
-  const recentStart = Math.max(startIndex, entryIndex - Math.min(5, lookbackBars));
-  const recentClose = candles[recentStart]?.close ?? firstClose;
-  const shortRet = (previous.close - recentClose) / Math.max(0.000001, Math.abs(recentClose));
-  const meanClose = sumClose / lookbackBars;
-  const variance = Math.max(0, sumCloseSq / lookbackBars - meanClose * meanClose);
-  const stdClose = Math.sqrt(variance);
-  const zScore = (previous.close - meanClose) / Math.max(0.000001, stdClose);
-  const closePos = clamp((previous.close - minLow) / rangeAbs, 0, 1);
-
-  const body = Math.abs(previous.close - previous.open);
-  const upperWick = Math.max(0, previous.high - Math.max(previous.open, previous.close));
-  const lowerWick = Math.max(0, Math.min(previous.open, previous.close) - previous.low);
-  const wickBalance = (lowerWick - upperWick) / Math.max(0.000001, body + upperWick + lowerWick);
-  const avgRange = sumRange / lookbackBars;
-
-  const fibLevels = [0.236, 0.382, 0.5, 0.618, 0.786];
-  let nearestFibLevel = 0.5;
-  let nearestFibDistance = Number.POSITIVE_INFINITY;
-  for (const level of fibLevels) {
-    const fibPrice = minLow + rangeAbs * level;
-    const distance = Math.abs(previous.close - fibPrice) / rangeAbs;
-    if (distance < nearestFibDistance) {
-      nearestFibDistance = distance;
-      nearestFibLevel = level;
-    }
-  }
-
-  const touchBand = Math.max(rangeAbs * 0.08, avgRange * 0.7);
-  let supportTouches = 0;
-  let resistanceTouches = 0;
-  for (let index = startIndex; index < entryIndex; index += 1) {
-    const candle = candles[index];
-    if (!candle) continue;
-    if (candle.low <= minLow + touchBand) supportTouches += 1;
-    if (candle.high >= maxHigh - touchBand) resistanceTouches += 1;
-  }
-
-  const date = new Date(previous.time);
-  const hour = date.getUTCHours();
-  const dayOfYear = getUtcDayOfYear(date);
-  const seasonalWave = Math.sin((dayOfYear / 365) * Math.PI * 2);
-  const intradayWave = Math.sin((hour / 24) * Math.PI * 2);
-
-  if (modelKind === "momentum") {
-    const score = Math.abs(trendRet) * 175 + Math.abs(shortRet) * 245;
-    const threshold = 0.16;
-    if (score < threshold) return null;
-    const side: BacktestHistoryTradeSide = (trendRet || shortRet) >= 0 ? "Long" : "Short";
-    const strength = clamp((score - threshold) / Math.max(0.1, 1 - threshold), 0, 1);
-    return {
-      side,
-      strength,
-      holdBars: Math.round(6 + strength * 22),
-      rrWeight: 0.45 + strength * 0.45,
-      riskWeight: 0.4 + strength * 0.35
-    };
-  }
-
-  if (modelKind === "meanReversion") {
-    const zThreshold = 1.15;
-    if (Math.abs(zScore) < zThreshold) return null;
-    const side: BacktestHistoryTradeSide | null =
-      zScore >= zThreshold && closePos > 0.52
-        ? "Short"
-        : zScore <= -zThreshold && closePos < 0.48
-          ? "Long"
-          : null;
-    if (!side) return null;
-    const strength = clamp(
-      (Math.abs(zScore) - zThreshold) / 1.8 + Math.abs(closePos - 0.5) * 0.6,
-      0,
-      1
-    );
-    return {
-      side,
-      strength,
-      holdBars: Math.round(4 + strength * 14),
-      rrWeight: 0.35 + strength * 0.35,
-      riskWeight: 0.55 + strength * 0.3
-    };
-  }
-
-  if (modelKind === "seasons") {
-    const score = seasonalWave * 0.65 + intradayWave * 0.35;
-    const threshold = 0.26;
-    if (Math.abs(score) < threshold) return null;
-    const strength = clamp((Math.abs(score) - threshold) / (1 - threshold), 0, 1);
-    return {
-      side: score >= 0 ? "Long" : "Short",
-      strength,
-      holdBars: Math.round(10 + strength * 18),
-      rrWeight: 0.4 + strength * 0.4,
-      riskWeight: 0.5
-    };
-  }
-
-  if (modelKind === "timeOfDay") {
-    const londonNyHours = hour >= 7 && hour <= 16;
-    const asiaHours = hour <= 4 || hour >= 20;
-
-    if (londonNyHours) {
-      const score = trendRet * 210 + shortRet * 150;
-      const threshold = 0.16;
-      if (Math.abs(score) < threshold) return null;
-      const strength = clamp((Math.abs(score) - threshold) / Math.max(0.1, 1 - threshold), 0, 1);
-      return {
-        side: score >= 0 ? "Long" : "Short",
-        strength,
-        holdBars: Math.round(6 + strength * 16),
-        rrWeight: 0.45 + strength * 0.35,
-        riskWeight: 0.45 + strength * 0.25
-      };
-    }
-
-    if (asiaHours) {
-      const zThreshold = 1.05;
-      if (Math.abs(zScore) < zThreshold) return null;
-      const strength = clamp((Math.abs(zScore) - zThreshold) / 2, 0, 1);
-      return {
-        side: zScore >= 0 ? "Short" : "Long",
-        strength,
-        holdBars: Math.round(4 + strength * 12),
-        rrWeight: 0.35 + strength * 0.25,
-        riskWeight: 0.55 + strength * 0.25
-      };
-    }
-
-    return null;
-  }
-
-  if (modelKind === "fibonacci") {
-    const nearBand = 0.08;
-    if (nearestFibDistance > nearBand) return null;
-    const side: BacktestHistoryTradeSide = nearestFibLevel <= 0.5 ? "Long" : "Short";
-    const strength = clamp((nearBand - nearestFibDistance) / nearBand + Math.abs(shortRet) * 180, 0, 1);
-    return {
-      side,
-      strength,
-      holdBars: Math.round(6 + strength * 18),
-      rrWeight: 0.5 + strength * 0.4,
-      riskWeight: 0.4 + strength * 0.3
-    };
-  }
-
-  const supportPressure =
-    Math.max(0, (0.24 - closePos) * 4) + Math.max(0, wickBalance) + (supportTouches / lookbackBars) * 0.7;
-  const resistancePressure =
-    Math.max(0, (closePos - 0.76) * 4) + Math.max(0, -wickBalance) + (resistanceTouches / lookbackBars) * 0.7;
-  const threshold = 0.6;
-
-  if (supportPressure < threshold && resistancePressure < threshold) {
-    return null;
-  }
-
-  const longSide = supportPressure >= resistancePressure;
-  const strength = clamp(Math.max(supportPressure, resistancePressure) - threshold, 0, 1);
-  return {
-    side: longSide ? "Long" : "Short",
-    strength,
-    holdBars: Math.round(5 + strength * 14),
-    rrWeight: 0.4 + strength * 0.3,
-    riskWeight: 0.5 + strength * 0.25
-  };
-};
-
-const buildReplayTradeBlueprints = ({
-  candles,
-  models,
-  symbol,
-  unitsPerMove,
-  windowBars
-}: {
-  candles: CopyTradeCandle[];
-  models: ModelProfile[];
-  symbol: string;
-  unitsPerMove: number;
-  windowBars: number;
-}): BacktestHistoryTradeBlueprint[] => {
-  if (models.length === 0 || candles.length < 3) {
-    return [];
-  }
-
-  const lookbackBars = Math.max(8, Math.min(180, Math.round(windowBars) || 24));
-  const maxEntryIndex = candles.length - 2;
-  const safeUnits = Math.max(1, Number.isFinite(unitsPerMove) ? unitsPerMove : 1);
-  const lastEntryByModel = new Map<string, number>();
-  const blueprints: BacktestHistoryTradeBlueprint[] = [];
-
-  for (let candleIndex = lookbackBars; candleIndex <= maxEntryIndex; candleIndex += 1) {
-    const entryMs = Number(candles[candleIndex]?.time);
-    if (!Number.isFinite(entryMs)) {
-      continue;
-    }
-
-    const candidates: Array<{ model: ModelProfile; signal: ReplayEntrySignal }> = [];
-
-    for (const model of models) {
-      const modelKind = model.modelKind;
-      const cooldownBars = Math.max(1, Math.round(getReplayModelCooldownBars(modelKind)));
-      const previousEntryIndex = lastEntryByModel.get(model.id) ?? Number.NEGATIVE_INFINITY;
-      if (candleIndex - previousEntryIndex < cooldownBars) {
-        continue;
-      }
-
-      const signal = evaluateReplaySignal({
-        modelKind,
-        candles,
-        entryIndex: candleIndex,
-        windowBars
-      });
-      if (!signal) {
-        continue;
-      }
-
-      const longBiasWeight = signal.side === "Long" ? model.longBias : 1 - model.longBias;
-      const weightedStrength = clamp(signal.strength * (0.75 + longBiasWeight * 0.6), 0, 1);
-      const minStrength = 0.26;
-      if (weightedStrength < minStrength) {
-        continue;
-      }
-
-      candidates.push({
-        model,
-        signal: {
-          ...signal,
-          strength: weightedStrength
-        }
-      });
-    }
-
-    if (candidates.length === 0) {
-      continue;
-    }
-
-    candidates.sort(
-      (left, right) =>
-        right.signal.strength - left.signal.strength || left.model.id.localeCompare(right.model.id)
-    );
-
-    const chosen = candidates[0]!;
-    const remainingBars = Math.max(1, candles.length - 1 - candleIndex);
-    const holdBars = clamp(Math.round(chosen.signal.holdBars), 1, Math.min(160, remainingBars));
-    const exitIndex = Math.min(candles.length - 1, candleIndex + holdBars);
-    const exitMs = Number(candles[exitIndex]?.time);
-
-    if (!Number.isFinite(exitMs) || exitMs <= entryMs) {
-      continue;
-    }
-
-    const rrWeight = clamp(chosen.signal.rrWeight, 0, 1);
-    const riskWeight = clamp(chosen.signal.riskWeight, 0, 1);
-    const rr = chosen.model.rrMin + (chosen.model.rrMax - chosen.model.rrMin) * rrWeight;
-    const riskPct = chosen.model.riskMin + (chosen.model.riskMax - chosen.model.riskMin) * riskWeight;
-
-    blueprints.push({
-      id: `${chosen.model.id}-replay-${String(candleIndex).padStart(6, "0")}`,
-      modelId: chosen.model.id,
-      symbol,
-      side: chosen.signal.side,
-      result: "Win",
-      entryMs,
-      exitMs,
-      riskPct,
-      rr,
-      units: safeUnits
-    });
-
-    lastEntryByModel.set(chosen.model.id, candleIndex);
-  }
-
-  return blueprints.sort(
-    (left, right) =>
-      right.exitMs - left.exitMs || right.entryMs - left.entryMs || left.id.localeCompare(right.id)
-  );
 };
 
 const insertSortedExit = (activeExitMs: number[], exitMs: number) => {
@@ -599,12 +193,18 @@ export const computeActiveReplaySignal = (args: {
     return null;
   }
 
-  const blueprints = buildReplayTradeBlueprints({
+  const blueprints = buildStrategyReplayTradeBlueprints({
     candles,
     models: modelProfiles,
     symbol: settings.symbol,
     unitsPerMove: settings.dollarsPerMove,
-    windowBars: settings.chunkBars
+    chunkBars: settings.chunkBars,
+    tpDollars: settings.tpDollars,
+    slDollars: settings.slDollars,
+    stopMode: settings.stopMode,
+    breakEvenTriggerPct: settings.breakEvenTriggerPct,
+    trailingStartPct: settings.trailingStartPct,
+    trailingDistPct: settings.trailingDistPct
   });
 
   const constrainedBlueprints = enforceMaxConcurrentTradeBlueprints(

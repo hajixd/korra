@@ -6,59 +6,116 @@
     "session timing",
     "intraday clock edge"
   ],
-  "description": "if active_session_window && planned_session_pattern_fires then execute_intraday_clock_edge()",
+  "description": "Session bucket model that trades when the day or night bucket has just flipped and the base trend agrees.",
   "entry": {
-    "context": [
-      "session_windows := predefine_clock_windows()",
-      "levels := { asia_high, asia_low, london_open, new_york_open, prior_session_extremes }",
-      "mode := breakout || reversion before price_reaches_window"
-    ],
-    "setup": [
-      "setup_valid := price_reaches(planned_level_or_range) during active_window",
-      "pattern_valid := liquidity_sweep || opening_drive occurs_on_time",
-      "behavior_valid := live_session_behavior matches playbook_pattern"
-    ],
+    "context": [],
+    "setup": [],
     "trigger": [
-      "breakout_entry when price_breaks(opening_range)",
-      "reversal_entry when price_reclaims(swept_level)",
-      "entries_allowed only_if now inside active_session_window"
+      "Long when the time bucket has just flipped to day and the base trend is up.",
+      "Short when the time bucket has just flipped to night and the base trend is down."
     ],
-    "confirmation": [
-      "confirm volume_up && range_expands during planned_window",
-      "confirm price_respects(session_level) after trigger",
-      "confirm no_macro_release inside immediate_execution_buffer"
-    ],
-    "invalidation": [
-      "invalidate if session_window_closes_without_expansion",
-      "invalidate if price_accepts_wrong_side_of(key_session_level)",
-      "invalidate if opening_range_direction flips_and_holds_against_trade"
-    ],
-    "noTrade": [
-      "skip if planned_time_window already_passed",
-      "skip if setup_depends_on news_randomness instead_of repeatable_session_behavior",
-      "skip if spread_plus_slippage > session_open_threshold"
-    ]
+    "confirmation": [],
+    "invalidation": [],
+    "noTrade": []
   },
   "exit": {
-    "stopLoss": [
-      "stop := beyond(session_level || sweep_extreme)",
-      "open_drive_stop := tight; sweep_reclaim_stop := structure_based",
-      "abort_trade if session_volatility makes stop_distance too_wide"
-    ],
-    "takeProfit": [
-      "tp1 := opposite_side(opening_range) || adr_objective || prior_session_extreme",
-      "take_partials_fast on time_sensitive_setups",
-      "runner_allowed only_while session_momentum_intact"
-    ],
-    "timeExit": [
-      "exit by end_of(planned_session_window)",
-      "flatten before lunch_or_rollover if setup == open_drive",
-      "close before liquidity_dies if price_stalls"
-    ],
+    "stopLoss": [],
+    "takeProfit": [],
+    "timeExit": [],
     "earlyExit": [
-      "exit_early if session_level_fails_immediately_after_entry",
-      "exit_early if price_cannot_hold_outside(opening_range)",
-      "exit_early if time_window_expires_without_continuation"
+      "Long exit when the time bucket is no longer day.",
+      "Short exit when the time bucket is no longer night."
     ]
+  },
+  "backtest": {
+    "source": "AI.zip /src/App.tsx modelEntryGate() and chooseExit()",
+    "entry": {
+      "long": {
+        "checks": [
+          {
+            "label": "The time bucket has just flipped to day",
+            "when": {
+              "all": [
+                {
+                  "eq": [
+                    "timeBucket",
+                    "day"
+                  ]
+                },
+                {
+                  "neq": [
+                    "prevTimeBucket",
+                    "day"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "label": "Trend is already up",
+            "when": {
+              "feature": "upTrendBase"
+            }
+          }
+        ]
+      },
+      "short": {
+        "checks": [
+          {
+            "label": "The time bucket has just flipped to night",
+            "when": {
+              "all": [
+                {
+                  "eq": [
+                    "timeBucket",
+                    "night"
+                  ]
+                },
+                {
+                  "neq": [
+                    "prevTimeBucket",
+                    "night"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "label": "Trend is already down",
+            "when": {
+              "feature": "downTrendBase"
+            }
+          }
+        ]
+      }
+    },
+    "exit": {
+      "long": {
+        "checks": [
+          {
+            "label": "The time bucket is no longer day",
+            "when": {
+              "neq": [
+                "timeBucket",
+                "day"
+              ]
+            }
+          }
+        ]
+      },
+      "short": {
+        "checks": [
+          {
+            "label": "The time bucket is no longer night",
+            "when": {
+              "neq": [
+                "timeBucket",
+                "night"
+              ]
+            }
+          }
+        ]
+      }
+    }
   }
 }

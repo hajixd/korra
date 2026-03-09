@@ -55,8 +55,16 @@ import {
   STRATEGY_MODEL_CATALOG,
   resolveStrategyRuntimeModelProfile,
   type StrategyModelCatalogEntry,
-  type StrategyModelKind
+  type StrategyBacktestCheck,
+  type StrategyBacktestCondition,
+  type StrategyBacktestDirectionalChecks,
+  type StrategyBacktestLiteral,
+  type StrategyBacktestSpec
 } from "../lib/strategyCatalog";
+import {
+  buildStrategyBacktestSurfaceSummary,
+  buildStrategyReplayTradeBlueprints
+} from "../lib/strategyModelBacktest";
 
 const loadRecharts = () => import("recharts");
 let lightweightChartsPromise: Promise<typeof import("lightweight-charts")> | null = null;
@@ -2408,23 +2416,163 @@ const sanitizeStrategyTextList = (value: unknown): string[] => {
     .filter((item) => item.length > 0);
 };
 
-const parseStrategyModelCatalogEntry = (value: unknown): StrategyModelCatalogEntry | null => {
-  if (!value || typeof value !== "object") {
+const isPlainRecord = (value: unknown): value is Record<string, unknown> => {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+};
+
+const isStrategyBacktestLiteral = (value: unknown): value is StrategyBacktestLiteral => {
+  return (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  );
+};
+
+const parseStrategyBacktestCondition = (value: unknown): StrategyBacktestCondition | null => {
+  if (!isPlainRecord(value)) {
     return null;
   }
 
-  const record = value as Record<string, unknown>;
-  const entryRecord =
-    record.entry && typeof record.entry === "object"
-      ? (record.entry as Record<string, unknown>)
+  if (typeof value.feature === "string" && value.feature.trim().length > 0) {
+    return {
+      feature: value.feature.trim()
+    };
+  }
+
+  if ("not" in value) {
+    const parsed = parseStrategyBacktestCondition(value.not);
+    return parsed ? { not: parsed } : null;
+  }
+
+  if ("all" in value && Array.isArray(value.all)) {
+    const parsed = value.all.map((item) => parseStrategyBacktestCondition(item));
+    return parsed.every((item) => item !== null)
+      ? { all: parsed as StrategyBacktestCondition[] }
       : null;
-  const exitRecord =
-    record.exit && typeof record.exit === "object" ? (record.exit as Record<string, unknown>) : null;
+  }
+
+  if ("any" in value && Array.isArray(value.any)) {
+    const parsed = value.any.map((item) => parseStrategyBacktestCondition(item));
+    return parsed.every((item) => item !== null)
+      ? { any: parsed as StrategyBacktestCondition[] }
+      : null;
+  }
+
+  if ("eq" in value && Array.isArray(value.eq) && value.eq.length === 2) {
+    const [feature, literal] = value.eq;
+    if (typeof feature === "string" && feature.trim().length > 0 && isStrategyBacktestLiteral(literal)) {
+      return {
+        eq: [feature.trim(), literal]
+      };
+    }
+  }
+
+  if ("neq" in value && Array.isArray(value.neq) && value.neq.length === 2) {
+    const [feature, literal] = value.neq;
+    if (typeof feature === "string" && feature.trim().length > 0 && isStrategyBacktestLiteral(literal)) {
+      return {
+        neq: [feature.trim(), literal]
+      };
+    }
+  }
+
+  return null;
+};
+
+const parseStrategyBacktestChecks = (value: unknown): StrategyBacktestCheck[] | null => {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const checks: StrategyBacktestCheck[] = [];
+
+  for (const item of value) {
+    if (!isPlainRecord(item)) {
+      return null;
+    }
+
+    const label = typeof item.label === "string" ? item.label.trim() : "";
+    const when = parseStrategyBacktestCondition(item.when);
+
+    if (!label || !when) {
+      return null;
+    }
+
+    checks.push({ label, when });
+  }
+
+  return checks;
+};
+
+const parseStrategyBacktestDirectionalChecks = (
+  value: unknown
+): StrategyBacktestDirectionalChecks | null => {
+  if (!isPlainRecord(value)) {
+    return null;
+  }
+
+  const checks = parseStrategyBacktestChecks(value.checks);
+  return checks ? { checks } : null;
+};
+
+const parseStrategyBacktestSpec = (value: unknown): StrategyBacktestSpec | null => {
+  if (!isPlainRecord(value) || !isPlainRecord(value.entry)) {
+    return null;
+  }
+
+  const long = parseStrategyBacktestDirectionalChecks(value.entry.long);
+  const short = parseStrategyBacktestDirectionalChecks(value.entry.short);
+
+  if (!long || !short) {
+    return null;
+  }
+
+  let exit: StrategyBacktestSpec["exit"];
+  if (value.exit != null) {
+    if (!isPlainRecord(value.exit)) {
+      return null;
+    }
+
+    const longExit = value.exit.long == null ? undefined : parseStrategyBacktestDirectionalChecks(value.exit.long);
+    const shortExit = value.exit.short == null ? undefined : parseStrategyBacktestDirectionalChecks(value.exit.short);
+
+    if ((value.exit.long != null && !longExit) || (value.exit.short != null && !shortExit)) {
+      return null;
+    }
+
+    exit = {
+      long: longExit,
+      short: shortExit
+    };
+  }
+
+  const source = typeof value.source === "string" ? value.source.trim() : undefined;
+
+  return {
+    source,
+    entry: {
+      long,
+      short
+    },
+    exit
+  };
+};
+
+const parseStrategyModelCatalogEntry = (value: unknown): StrategyModelCatalogEntry | null => {
+  if (!isPlainRecord(value)) {
+    return null;
+  }
+
+  const record = value;
+  const entryRecord = isPlainRecord(record.entry) ? record.entry : {};
+  const exitRecord = isPlainRecord(record.exit) ? record.exit : {};
   const id = typeof record.id === "string" ? record.id.trim() : "";
   const name = typeof record.name === "string" ? record.name.trim() : "";
   const description = typeof record.description === "string" ? record.description.trim() : "";
+  const backtest = record.backtest == null ? undefined : parseStrategyBacktestSpec(record.backtest);
 
-  if (!id || !name || !description || !entryRecord || !exitRecord) {
+  if (!id || !name || (record.backtest != null && !backtest)) {
     return null;
   }
 
@@ -2442,11 +2590,9 @@ const parseStrategyModelCatalogEntry = (value: unknown): StrategyModelCatalogEnt
     timeExit: sanitizeStrategyTextList(exitRecord.timeExit),
     earlyExit: sanitizeStrategyTextList(exitRecord.earlyExit)
   };
+  const hasEntryText = Object.values(entry).some((items) => items.length > 0);
 
-  if (
-    !Object.values(entry).some((items) => items.length > 0) ||
-    !Object.values(exit).some((items) => items.length > 0)
-  ) {
+  if (!hasEntryText && !backtest) {
     return null;
   }
 
@@ -2456,73 +2602,8 @@ const parseStrategyModelCatalogEntry = (value: unknown): StrategyModelCatalogEnt
     aliases: sanitizeStrategyTextList(record.aliases),
     description,
     entry,
-    exit
-  };
-};
-
-const buildBacktestModelSurfaceSummary = (
-  modelKind: StrategyModelKind
-): StrategyBacktestSurfaceSummary => {
-  if (modelKind === "momentum") {
-    return {
-      entryTrigger: [
-        "Long: the full lookback trend and the last 5 bars both push up strongly enough to clear the continuation threshold (0.16).",
-        "Short: the same continuation score points down strongly enough to clear that threshold."
-      ],
-      exitTrigger: []
-    };
-  }
-
-  if (modelKind === "meanReversion") {
-    return {
-      entryTrigger: [
-        "Long: price is at least 1.15 standard deviations below the recent mean and is closing in the lower half of the range.",
-        "Short: price is at least 1.15 standard deviations above the recent mean and is closing in the upper half of the range."
-      ],
-      exitTrigger: []
-    };
-  }
-
-  if (modelKind === "seasons") {
-    return {
-      entryTrigger: [
-        "Long: the combined day-of-year and hour-of-day seasonal score is at least +0.26.",
-        "Short: the same seasonal score is at most -0.26."
-      ],
-      exitTrigger: []
-    };
-  }
-
-  if (modelKind === "timeOfDay") {
-    return {
-      entryTrigger: [
-        "London / New York long: from 07:00 to 16:00 UTC, the session momentum score clears the upside threshold (0.16).",
-        "London / New York short: from 07:00 to 16:00 UTC, the session momentum score clears the downside threshold (0.16).",
-        "Asia long: from 20:00 to 04:59 UTC, price is at least 1.05 standard deviations below the recent mean.",
-        "Asia short: from 20:00 to 04:59 UTC, price is at least 1.05 standard deviations above the recent mean.",
-        "No trade: outside those UTC session windows, the model stays flat."
-      ],
-      exitTrigger: []
-    };
-  }
-
-  if (modelKind === "fibonacci") {
-    return {
-      entryTrigger: [
-        "Long: price is within 8% of the recent range from a Fibonacci level at or below the 50% retracement.",
-        "Short: price is within 8% of the recent range from a Fibonacci level above the 50% retracement."
-      ],
-      exitTrigger: []
-    };
-  }
-
-  return {
-    entryTrigger: [
-      "Long: support pressure near the bottom of the range reaches 0.60 and stays stronger than resistance pressure.",
-      "Short: resistance pressure near the top of the range reaches 0.60 and stays stronger than support pressure.",
-      "Pressure is built from range position, wick balance, and repeated touches of the recent extreme."
-    ],
-    exitTrigger: []
+    exit,
+    ...(backtest ? { backtest } : {})
   };
 };
 
@@ -3497,6 +3578,22 @@ const buildModelProfiles = (aiZipModelNames: string[]): ModelProfile[] => {
   }
 
   return profiles;
+};
+
+const toStrategyReplayModels = (
+  models: readonly ModelProfile[],
+  aiModelStates: Record<string, AiModelState>
+) => {
+  return models.map((model) => ({
+    id: model.id,
+    name: model.name,
+    riskMin: model.riskMin,
+    riskMax: model.riskMax,
+    rrMin: model.rrMin,
+    rrMax: model.rrMax,
+    longBias: model.longBias,
+    state: aiModelStates[model.name] ?? aiModelStates[model.id] ?? 0
+  }));
 };
 
 const futuresAssets: FutureAsset[] = [
@@ -6785,21 +6882,6 @@ type ReplayModelKind =
   | "fibonacci"
   | "supportResistance";
 
-type ReplayEntrySignal = {
-  side: TradeSide;
-  strength: number;
-  holdBars: number;
-  rrWeight: number;
-  riskWeight: number;
-};
-
-const getUtcDayOfYear = (date: Date): number => {
-  const year = date.getUTCFullYear();
-  const startMs = Date.UTC(year, 0, 0);
-  const dayMs = Date.UTC(year, date.getUTCMonth(), date.getUTCDate());
-  return Math.max(1, Math.floor((dayMs - startMs) / 86_400_000));
-};
-
 const resolveReplayModelKind = (name: string): ReplayModelKind => {
   const normalized = name.trim().toLowerCase();
 
@@ -6828,364 +6910,6 @@ const resolveReplayModelKind = (name: string): ReplayModelKind => {
   }
 
   return "momentum";
-};
-
-const getReplayModelCooldownBars = (kind: ReplayModelKind): number => {
-  switch (kind) {
-    case "momentum":
-      return 2;
-    case "meanReversion":
-      return 3;
-    case "seasons":
-      return 8;
-    case "timeOfDay":
-      return 5;
-    case "fibonacci":
-      return 4;
-    case "supportResistance":
-      return 4;
-    default:
-      return 3;
-  }
-};
-
-const evaluateReplaySignal = ({
-  modelKind,
-  candles,
-  entryIndex,
-  windowBars
-}: {
-  modelKind: ReplayModelKind;
-  candles: Candle[];
-  entryIndex: number;
-  windowBars: number;
-}): ReplayEntrySignal | null => {
-  const lookbackBars = Math.max(8, Math.min(180, Math.round(windowBars) || 24));
-
-  if (entryIndex < lookbackBars + 1 || entryIndex >= candles.length) {
-    return null;
-  }
-
-  const startIndex = entryIndex - lookbackBars;
-  const previous = candles[entryIndex - 1];
-
-  if (!previous) {
-    return null;
-  }
-
-  let minLow = Number.POSITIVE_INFINITY;
-  let maxHigh = Number.NEGATIVE_INFINITY;
-  let sumClose = 0;
-  let sumCloseSq = 0;
-  let sumRange = 0;
-
-  for (let index = startIndex; index < entryIndex; index += 1) {
-    const candle = candles[index];
-    if (!candle) {
-      return null;
-    }
-
-    minLow = Math.min(minLow, candle.low);
-    maxHigh = Math.max(maxHigh, candle.high);
-    sumClose += candle.close;
-    sumCloseSq += candle.close * candle.close;
-    sumRange += Math.max(0.000001, candle.high - candle.low);
-  }
-
-  const firstClose = candles[startIndex]?.close ?? previous.close;
-  if (!Number.isFinite(firstClose) || Math.abs(firstClose) <= 0.000001) {
-    return null;
-  }
-
-  const rangeAbs = Math.max(0.000001, maxHigh - minLow);
-  const trendRet = (previous.close - firstClose) / Math.max(0.000001, Math.abs(firstClose));
-  const recentStart = Math.max(startIndex, entryIndex - Math.min(5, lookbackBars));
-  const recentClose = candles[recentStart]?.close ?? firstClose;
-  const shortRet = (previous.close - recentClose) / Math.max(0.000001, Math.abs(recentClose));
-  const meanClose = sumClose / lookbackBars;
-  const variance = Math.max(0, sumCloseSq / lookbackBars - meanClose * meanClose);
-  const stdClose = Math.sqrt(variance);
-  const zScore = (previous.close - meanClose) / Math.max(0.000001, stdClose);
-  const closePos = clamp((previous.close - minLow) / rangeAbs, 0, 1);
-
-  const body = Math.abs(previous.close - previous.open);
-  const upperWick = Math.max(0, previous.high - Math.max(previous.open, previous.close));
-  const lowerWick = Math.max(0, Math.min(previous.open, previous.close) - previous.low);
-  const wickBalance = (lowerWick - upperWick) / Math.max(0.000001, body + upperWick + lowerWick);
-  const avgRange = sumRange / lookbackBars;
-
-  const fibLevels = [0.236, 0.382, 0.5, 0.618, 0.786];
-  let nearestFibLevel = 0.5;
-  let nearestFibDistance = Number.POSITIVE_INFINITY;
-  for (const level of fibLevels) {
-    const fibPrice = minLow + rangeAbs * level;
-    const distance = Math.abs(previous.close - fibPrice) / rangeAbs;
-    if (distance < nearestFibDistance) {
-      nearestFibDistance = distance;
-      nearestFibLevel = level;
-    }
-  }
-
-  const touchBand = Math.max(rangeAbs * 0.08, avgRange * 0.7);
-  let supportTouches = 0;
-  let resistanceTouches = 0;
-  for (let index = startIndex; index < entryIndex; index += 1) {
-    const candle = candles[index];
-    if (!candle) continue;
-    if (candle.low <= minLow + touchBand) supportTouches += 1;
-    if (candle.high >= maxHigh - touchBand) resistanceTouches += 1;
-  }
-
-  const date = new Date(previous.time);
-  const hour = date.getUTCHours();
-  const dayOfYear = getUtcDayOfYear(date);
-  const seasonalWave = Math.sin((dayOfYear / 365) * Math.PI * 2);
-  const intradayWave = Math.sin((hour / 24) * Math.PI * 2);
-
-  if (modelKind === "momentum") {
-    const score = Math.abs(trendRet) * 175 + Math.abs(shortRet) * 245;
-    const threshold = 0.16;
-    if (score < threshold) return null;
-    const side: TradeSide = (trendRet || shortRet) >= 0 ? "Long" : "Short";
-    const strength = clamp(
-      (score - threshold) / Math.max(0.1, 1 - threshold),
-      0,
-      1
-    );
-    return {
-      side,
-      strength,
-      holdBars: Math.round(6 + strength * 22),
-      rrWeight: 0.45 + strength * 0.45,
-      riskWeight: 0.4 + strength * 0.35
-    };
-  }
-
-  if (modelKind === "meanReversion") {
-    const zThreshold = 1.15;
-    if (Math.abs(zScore) < zThreshold) return null;
-    const side: TradeSide | null =
-      zScore >= zThreshold && closePos > 0.52
-        ? "Short"
-        : zScore <= -zThreshold && closePos < 0.48
-          ? "Long"
-          : null;
-    if (!side) return null;
-    const strength = clamp(
-      (Math.abs(zScore) - zThreshold) / 1.8 + Math.abs(closePos - 0.5) * 0.6,
-      0,
-      1
-    );
-    return {
-      side,
-      strength,
-      holdBars: Math.round(4 + strength * 14),
-      rrWeight: 0.35 + strength * 0.35,
-      riskWeight: 0.55 + strength * 0.3
-    };
-  }
-
-  if (modelKind === "seasons") {
-    const score = seasonalWave * 0.65 + intradayWave * 0.35;
-    const threshold = 0.26;
-    if (Math.abs(score) < threshold) return null;
-    const strength = clamp((Math.abs(score) - threshold) / (1 - threshold), 0, 1);
-    return {
-      side: score >= 0 ? "Long" : "Short",
-      strength,
-      holdBars: Math.round(10 + strength * 18),
-      rrWeight: 0.4 + strength * 0.4,
-      riskWeight: 0.5
-    };
-  }
-
-  if (modelKind === "timeOfDay") {
-    const londonNyHours = hour >= 7 && hour <= 16;
-    const asiaHours = hour <= 4 || hour >= 20;
-    if (londonNyHours) {
-      const score = trendRet * 210 + shortRet * 150;
-      const threshold = 0.16;
-      if (Math.abs(score) < threshold) return null;
-      const strength = clamp((Math.abs(score) - threshold) / Math.max(0.1, 1 - threshold), 0, 1);
-      return {
-        side: score >= 0 ? "Long" : "Short",
-        strength,
-        holdBars: Math.round(6 + strength * 16),
-        rrWeight: 0.45 + strength * 0.35,
-        riskWeight: 0.45 + strength * 0.25
-      };
-    }
-
-    if (asiaHours) {
-      const zThreshold = 1.05;
-      if (Math.abs(zScore) < zThreshold) return null;
-      const strength = clamp((Math.abs(zScore) - zThreshold) / 2, 0, 1);
-      return {
-        side: zScore >= 0 ? "Short" : "Long",
-        strength,
-        holdBars: Math.round(4 + strength * 12),
-        rrWeight: 0.35 + strength * 0.25,
-        riskWeight: 0.55 + strength * 0.25
-      };
-    }
-
-    return null;
-  }
-
-  if (modelKind === "fibonacci") {
-    const nearBand = 0.08;
-    if (nearestFibDistance > nearBand) return null;
-    const side: TradeSide = nearestFibLevel <= 0.5 ? "Long" : "Short";
-    const strength = clamp(
-      (nearBand - nearestFibDistance) / nearBand + Math.abs(shortRet) * 180,
-      0,
-      1
-    );
-    return {
-      side,
-      strength,
-      holdBars: Math.round(6 + strength * 18),
-      rrWeight: 0.5 + strength * 0.4,
-      riskWeight: 0.4 + strength * 0.3
-    };
-  }
-
-  const supportPressure =
-    Math.max(0, (0.24 - closePos) * 4) +
-    Math.max(0, wickBalance) +
-    (supportTouches / lookbackBars) * 0.7;
-  const resistancePressure =
-    Math.max(0, (closePos - 0.76) * 4) +
-    Math.max(0, -wickBalance) +
-    (resistanceTouches / lookbackBars) * 0.7;
-  const threshold = 0.6;
-
-  if (supportPressure < threshold && resistancePressure < threshold) {
-    return null;
-  }
-
-  const longSide = supportPressure >= resistancePressure;
-  const strength = clamp(Math.max(supportPressure, resistancePressure) - threshold, 0, 1);
-  return {
-    side: longSide ? "Long" : "Short",
-    strength,
-    holdBars: Math.round(5 + strength * 14),
-    rrWeight: 0.4 + strength * 0.3,
-    riskWeight: 0.5 + strength * 0.25
-  };
-};
-
-const buildReplayTradeBlueprints = ({
-  candles,
-  models,
-  symbol,
-  unitsPerMove,
-  windowBars
-}: {
-  candles: Candle[];
-  models: ModelProfile[];
-  symbol: string;
-  unitsPerMove: number;
-  windowBars: number;
-}): TradeBlueprint[] => {
-  if (models.length === 0 || candles.length < 3) {
-    return [];
-  }
-
-  const lookbackBars = Math.max(8, Math.min(180, Math.round(windowBars) || 24));
-  const maxEntryIndex = candles.length - 2;
-  const safeUnits = Math.max(1, Number.isFinite(unitsPerMove) ? unitsPerMove : 1);
-  const lastEntryByModel = new Map<string, number>();
-  const blueprints: TradeBlueprint[] = [];
-
-  for (let candleIndex = lookbackBars; candleIndex <= maxEntryIndex; candleIndex += 1) {
-    const entryMs = Number(candles[candleIndex]?.time);
-    if (!Number.isFinite(entryMs)) {
-      continue;
-    }
-
-    const candidates: Array<{ model: ModelProfile; signal: ReplayEntrySignal }> = [];
-
-    for (const model of models) {
-      const modelKind = model.modelKind;
-      const cooldownBars = Math.max(1, Math.round(getReplayModelCooldownBars(modelKind)));
-      const previousEntryIndex = lastEntryByModel.get(model.id) ?? Number.NEGATIVE_INFINITY;
-      if (candleIndex - previousEntryIndex < cooldownBars) {
-        continue;
-      }
-
-      const signal = evaluateReplaySignal({
-        modelKind,
-        candles,
-        entryIndex: candleIndex,
-        windowBars
-      });
-      if (!signal) {
-        continue;
-      }
-
-      const longBiasWeight = signal.side === "Long" ? model.longBias : 1 - model.longBias;
-      const weightedStrength = clamp(signal.strength * (0.75 + longBiasWeight * 0.6), 0, 1);
-      const minStrength = 0.26;
-      if (weightedStrength < minStrength) {
-        continue;
-      }
-
-      candidates.push({
-        model,
-        signal: {
-          ...signal,
-          strength: weightedStrength
-        }
-      });
-    }
-
-    if (candidates.length === 0) {
-      continue;
-    }
-
-    candidates.sort(
-      (left, right) =>
-        right.signal.strength - left.signal.strength || left.model.id.localeCompare(right.model.id)
-    );
-
-    const chosen = candidates[0]!;
-    const remainingBars = Math.max(1, candles.length - 1 - candleIndex);
-    const holdBars = clamp(Math.round(chosen.signal.holdBars), 1, Math.min(160, remainingBars));
-    const exitIndex = Math.min(candles.length - 1, candleIndex + holdBars);
-    const exitMs = Number(candles[exitIndex]?.time);
-
-    if (!Number.isFinite(exitMs) || exitMs <= entryMs) {
-      continue;
-    }
-
-    const rrWeight = clamp(chosen.signal.rrWeight, 0, 1);
-    const riskWeight = clamp(chosen.signal.riskWeight, 0, 1);
-    const rr = chosen.model.rrMin + (chosen.model.rrMax - chosen.model.rrMin) * rrWeight;
-    const riskPct =
-      chosen.model.riskMin + (chosen.model.riskMax - chosen.model.riskMin) * riskWeight;
-
-    blueprints.push({
-      id: `${chosen.model.id}-replay-${String(candleIndex).padStart(6, "0")}`,
-      modelId: chosen.model.id,
-      symbol,
-      side: chosen.signal.side,
-      // Final outcome is determined by replaying candle path against TP/SL.
-      result: "Win",
-      entryMs,
-      exitMs,
-      riskPct,
-      rr,
-      units: safeUnits
-    });
-
-    lastEntryByModel.set(chosen.model.id, candleIndex);
-  }
-
-  return blueprints.sort(
-    (left, right) =>
-      right.exitMs - left.exitMs || right.entryMs - left.entryMs || left.id.localeCompare(right.id)
-  );
 };
 
 const insertSortedExit = (activeExitMs: number[], exitMs: number) => {
@@ -8521,12 +8245,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [uploadedStrategyModels]);
   const modelsSurfaceEntries = useMemo(() => {
     return modelsSurfaceCatalog.map((model) => {
-      const runtimeProfile =
-        resolveStrategyRuntimeModelProfile(model.id) ??
-        resolveStrategyRuntimeModelProfile(model.name);
-      const backtestSummary = runtimeProfile
-        ? buildBacktestModelSurfaceSummary(runtimeProfile.modelKind)
-        : buildFallbackModelSurfaceSummary(model);
+      const backtestSummary =
+        buildStrategyBacktestSurfaceSummary(model) ?? buildFallbackModelSurfaceSummary(model);
 
       return {
         ...model,
@@ -9787,20 +9507,40 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         : 1
     );
 
-    return buildReplayTradeBlueprints({
+    return buildStrategyReplayTradeBlueprints({
       candles,
-      models: appliedBacktestModelProfiles,
+      models: toStrategyReplayModels(
+        appliedBacktestModelProfiles,
+        appliedBacktestSettings.aiModelStates
+      ),
       symbol: appliedBacktestSettings.symbol,
       unitsPerMove,
-      windowBars: appliedBacktestSettings.chunkBars
+      chunkBars: appliedBacktestSettings.chunkBars,
+      strategyCatalog: modelsSurfaceCatalog,
+      tpDollars: appliedBacktestSettings.tpDollars,
+      slDollars: appliedBacktestSettings.slDollars,
+      stopMode: appliedBacktestSettings.stopMode,
+      breakEvenTriggerPct: appliedBacktestSettings.breakEvenTriggerPct,
+      trailingStartPct: appliedBacktestSettings.trailingStartPct,
+      trailingDistPct: appliedBacktestSettings.trailingDistPct,
+      maxBarsInTrade: appliedBacktestSettings.maxBarsInTrade
     });
   }, [
     appliedBacktestModelProfiles,
+    appliedBacktestSettings.aiModelStates,
     appliedBacktestSettings.chunkBars,
+    appliedBacktestSettings.breakEvenTriggerPct,
     appliedBacktestSettings.dollarsPerMove,
+    appliedBacktestSettings.maxBarsInTrade,
+    appliedBacktestSettings.slDollars,
     appliedBacktestSettings.symbol,
+    appliedBacktestSettings.stopMode,
+    appliedBacktestSettings.tpDollars,
+    appliedBacktestSettings.trailingDistPct,
+    appliedBacktestSettings.trailingStartPct,
     backtestHasRun,
     backtestHistorySeedReady,
+    modelsSurfaceCatalog,
     selectedBacktestCandles
   ]);
 
@@ -10655,23 +10395,40 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         ? dollarsPerMove
         : 1
     );
-    const blueprints = buildReplayTradeBlueprints({
+    const blueprints = buildStrategyReplayTradeBlueprints({
       candles: selectedCandles,
-      models: backtestModelProfiles,
+      models: toStrategyReplayModels(backtestModelProfiles, aiModelStates),
       symbol: selectedSymbol,
       unitsPerMove,
-      windowBars: chunkBars
+      chunkBars,
+      strategyCatalog: modelsSurfaceCatalog,
+      tpDollars,
+      slDollars,
+      stopMode,
+      breakEvenTriggerPct,
+      trailingStartPct,
+      trailingDistPct,
+      maxBarsInTrade
     });
 
     return enforceMaxConcurrentTradeBlueprints(blueprints, maxConcurrentTrades);
   }, [
+    aiModelStates,
     backtestModelProfiles,
+    breakEvenTriggerPct,
     chunkBars,
     shouldBuildChartPanelReplayRows,
     dollarsPerMove,
     maxConcurrentTrades,
+    maxBarsInTrade,
+    modelsSurfaceCatalog,
     selectedCandles,
-    selectedSymbol
+    selectedSymbol,
+    slDollars,
+    stopMode,
+    tpDollars,
+    trailingDistPct,
+    trailingStartPct
   ]);
   const chartPanelOneMinuteCandlesBySymbol = useMemo<Record<string, Candle[]> | undefined>(() => {
     if (!shouldBuildChartPanelReplayRows || selectedTimeframe === "1m" || !minutePreciseEnabled) {

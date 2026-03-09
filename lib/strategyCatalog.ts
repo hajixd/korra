@@ -29,6 +29,49 @@ export type StrategyExitSpec = {
   earlyExit: string[];
 };
 
+export type StrategyBacktestLiteral = string | number | boolean | null;
+
+export type StrategyBacktestCondition =
+  | {
+      feature: string;
+    }
+  | {
+      not: StrategyBacktestCondition;
+    }
+  | {
+      all: StrategyBacktestCondition[];
+    }
+  | {
+      any: StrategyBacktestCondition[];
+    }
+  | {
+      eq: [string, StrategyBacktestLiteral];
+    }
+  | {
+      neq: [string, StrategyBacktestLiteral];
+    };
+
+export type StrategyBacktestCheck = {
+  label: string;
+  when: StrategyBacktestCondition;
+};
+
+export type StrategyBacktestDirectionalChecks = {
+  checks: StrategyBacktestCheck[];
+};
+
+export type StrategyBacktestSpec = {
+  source?: string;
+  entry: {
+    long: StrategyBacktestDirectionalChecks;
+    short: StrategyBacktestDirectionalChecks;
+  };
+  exit?: {
+    long?: StrategyBacktestDirectionalChecks;
+    short?: StrategyBacktestDirectionalChecks;
+  };
+};
+
 export type StrategyModelCatalogEntry = {
   id: string;
   name: string;
@@ -36,6 +79,7 @@ export type StrategyModelCatalogEntry = {
   description: string;
   entry: StrategyEntrySpec;
   exit: StrategyExitSpec;
+  backtest?: StrategyBacktestSpec;
 };
 
 export type StrategyRuntimeModelProfile = {

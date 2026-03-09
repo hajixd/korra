@@ -6,59 +6,100 @@
     "retracement continuation",
     "fib confluence"
   ],
-  "description": "if impulse_leg_is_clean && retrace_hits_fib_confluence && rejection_confirms then resume_trend()",
+  "description": "Pullback model that trades with the base trend once the normalized pullback reaches the opposite side without repeating the same spike recently.",
   "entry": {
-    "context": [
-      "fib_anchor := clear_impulse_swing; never_random_noise",
-      "require fib_confluence_with(structure || liquidity || vwap)",
-      "default_mode := trend_continuation unless countertrend_plan_is_explicit"
-    ],
-    "setup": [
-      "setup_valid := retrace_into({ 0.382, 0.5, 0.618 })",
-      "retrace_behavior := smaller_bodies || rejection_wicks",
-      "zone_valid := overlap(prior_structure || vwap || session_extreme)"
-    ],
+    "context": [],
+    "setup": [],
     "trigger": [
-      "entry when rejection_candle_closes_from(fib_zone)",
-      "alt_trigger := break(lower_high || higher_low)",
-      "no_blind_limit unless fib_zone_confluence >= strong"
+      "Long when the base trend is up, the pullback oscillator is in the down zone, and there has not been another downside spike recently.",
+      "Short when the base trend is down, the pullback oscillator is in the up zone, and there has not been another upside spike recently."
     ],
-    "confirmation": [
-      "confirm htf_trend_structure remains_intact",
-      "confirm fib_zone overlaps_reactive_level",
-      "confirm retrace_depth <= planned_invalidation_depth"
-    ],
-    "invalidation": [
-      "invalidate if price_closes_beyond(fib_zone && structure_pivot)",
-      "invalidate if pullback_transitions_into full_reversal",
-      "invalidate if fib_anchor_becomes_invalid"
-    ],
-    "noTrade": [
-      "skip if anchors_are_ambiguous || keep_repainting",
-      "skip if market_state == choppy_range && impulse_leg_missing",
-      "skip if nearby_structure caps_reward_before_trade_can_breathe"
-    ]
+    "confirmation": [],
+    "invalidation": [],
+    "noTrade": []
   },
   "exit": {
-    "stopLoss": [
-      "stop := beyond(fib_zone && swing_pivot)",
-      "alt_stop := beyond(structure_low_high_that_invalidates_trend)",
-      "never_place_stop_on_exact_fib_number := true"
-    ],
-    "takeProfit": [
-      "tp1 := prior_swing_extreme",
-      "tp2 := fib_extension || measured_move",
-      "take_profit_faster if retrace_depth_is_deep && trend_quality_is_weaker"
-    ],
-    "timeExit": [
-      "exit if rejection_never_expands after few_candles",
-      "flatten before session_handoff if setup_is_intraday_only",
-      "no_hold fib_pullback after timing_window_closes := true"
-    ],
+    "stopLoss": [],
+    "takeProfit": [],
+    "timeExit": [],
     "earlyExit": [
-      "exit_early if price_accepts_through(fib_zone)",
-      "exit_early if rejection_candle_is_fully_negated",
-      "exit_early if trend_resumes_too_slowly && stalls_at_midrange"
+      "Long exit when price has already made the upside impulse that ends the pullback trade.",
+      "Short exit when price has already made the downside impulse that ends the pullback trade."
     ]
+  },
+  "backtest": {
+    "source": "AI.zip /src/App.tsx modelEntryGate() and chooseExit()",
+    "entry": {
+      "long": {
+        "checks": [
+          {
+            "label": "Trend is already up",
+            "when": {
+              "feature": "upTrendBase"
+            }
+          },
+          {
+            "label": "The pullback oscillator is in the down zone",
+            "when": {
+              "feature": "normDown"
+            }
+          },
+          {
+            "label": "There has not been another downside spike recently",
+            "when": {
+              "not": {
+                "feature": "recentDown"
+              }
+            }
+          }
+        ]
+      },
+      "short": {
+        "checks": [
+          {
+            "label": "Trend is already down",
+            "when": {
+              "feature": "downTrendBase"
+            }
+          },
+          {
+            "label": "The pullback oscillator is in the up zone",
+            "when": {
+              "feature": "normUp"
+            }
+          },
+          {
+            "label": "There has not been another upside spike recently",
+            "when": {
+              "not": {
+                "feature": "recentUp"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "exit": {
+      "long": {
+        "checks": [
+          {
+            "label": "Price has already made the upside impulse that ends the trade",
+            "when": {
+              "feature": "upPrice"
+            }
+          }
+        ]
+      },
+      "short": {
+        "checks": [
+          {
+            "label": "Price has already made the downside impulse that ends the trade",
+            "when": {
+              "feature": "downPrice"
+            }
+          }
+        ]
+      }
+    }
   }
 }

@@ -6,59 +6,112 @@
     "breakout momentum",
     "impulse continuation"
   ],
-  "description": "if htf_bias == trend && breakout_retest_valid && expansion_confirms then execute_continuation()",
+  "description": "Continuation model that waits for the base trend, a fresh opposing spike, and no repeated spike in the same direction.",
   "entry": {
-    "context": [
-      "bias := htf_impulse_direction || session_open_drive_direction",
-      "levels := { breakout_base, retest_extreme, liquidity_target }",
-      "require hold_outside(broken_range) before trigger_check"
-    ],
-    "setup": [
-      "setup_valid := compression_near(breakout_level) || shallow_pullback_after_impulse",
-      "retest_valid := close_back_inside_range == false && rejection_depth <= allowed_retest",
-      "flow_valid := consecutive_closes_in_bias >= 2"
-    ],
+    "context": [],
+    "setup": [],
     "trigger": [
-      "long_entry when price > retest_high; short_entry when price < retest_low",
-      "continuation_candle_entry only_if candle_body_close beyond trigger_level",
-      "skip if trigger_candle_range > 1.0 * avg_recent_range"
+      "Long when the base trend is already up, price prints a fresh downside spike, and there has not been another downside spike recently.",
+      "Short when the base trend is already down, price prints a fresh upside spike, and there has not been another upside spike recently."
     ],
-    "confirmation": [
-      "confirm expansion_range > avg_recent_expansion",
-      "confirm volume_up || tape_speed_up at trigger_level",
-      "confirm structure_holds(reclaimed_level)"
-    ],
-    "invalidation": [
-      "invalidate if price_rotates_back_inside(prior_range)",
-      "invalidate if retest_close crosses breakout_base",
-      "invalidate if session_impulse_fades && divergence_detected"
-    ],
-    "noTrade": [
-      "skip if high_impact_news inside entry_window",
-      "skip if higher_timeframe_opposition <= target_distance",
-      "skip if spread_wide || trigger_close_through == false"
-    ]
+    "confirmation": [],
+    "invalidation": [],
+    "noTrade": []
   },
   "exit": {
-    "stopLoss": [
-      "stop := beyond(retest_extreme || breakout_base)",
-      "if structure_loose then stop := far_side(compression_box)",
-      "abort_trade if stop_distance > planned_max_risk"
-    ],
-    "takeProfit": [
-      "tp1 := first_extension || nearest_liquidity",
-      "tp2 := session_extreme || measured_move when continuation_clean",
-      "do_not_expand_target_after_fill := true"
-    ],
-    "timeExit": [
-      "exit if follow_through_missing for 3..6 execution_candles",
-      "reduce_size before low_liquidity_handoff",
-      "no_carry_on_scalp_breakout_into_dead_hours := true"
-    ],
+    "stopLoss": [],
+    "takeProfit": [],
+    "timeExit": [],
     "earlyExit": [
-      "exit_early if full_candle_closes_back_inside(range)",
-      "exit_early if counter_impulse_body > entry_candle_body",
-      "exit_early if breakout_level_fails_on_next_retest"
+      "Long exit when the uptrend is still intact and price has already made the upside spike that ends the move.",
+      "Short exit when the downtrend is still intact and price has already made the downside spike that ends the move."
     ]
+  },
+  "backtest": {
+    "source": "AI.zip /src/App.tsx modelEntryGate() and chooseExit()",
+    "entry": {
+      "long": {
+        "checks": [
+          {
+            "label": "Trend is already up",
+            "when": {
+              "feature": "upTrendBase"
+            }
+          },
+          {
+            "label": "Price just printed a downside spike",
+            "when": {
+              "feature": "downPrice"
+            }
+          },
+          {
+            "label": "There has not been another downside spike recently",
+            "when": {
+              "not": {
+                "feature": "recentDown"
+              }
+            }
+          }
+        ]
+      },
+      "short": {
+        "checks": [
+          {
+            "label": "Trend is already down",
+            "when": {
+              "feature": "downTrendBase"
+            }
+          },
+          {
+            "label": "Price just printed an upside spike",
+            "when": {
+              "feature": "upPrice"
+            }
+          },
+          {
+            "label": "There has not been another upside spike recently",
+            "when": {
+              "not": {
+                "feature": "recentUp"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "exit": {
+      "long": {
+        "checks": [
+          {
+            "label": "The uptrend is still intact",
+            "when": {
+              "feature": "upTrendBase"
+            }
+          },
+          {
+            "label": "Price has already made the upside spike that ends the move",
+            "when": {
+              "feature": "upPrice"
+            }
+          }
+        ]
+      },
+      "short": {
+        "checks": [
+          {
+            "label": "The downtrend is still intact",
+            "when": {
+              "feature": "downTrendBase"
+            }
+          },
+          {
+            "label": "Price has already made the downside spike that ends the move",
+            "when": {
+              "feature": "downPrice"
+            }
+          }
+        ]
+      }
+    }
   }
 }
