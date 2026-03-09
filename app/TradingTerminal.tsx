@@ -51,7 +51,10 @@ import {
   type AssistantChartAction
 } from "./tools/chartActions";
 import { normalizeChartActions } from "../lib/assistant-tools";
-import { resolveStrategyRuntimeModelProfile } from "../lib/strategyCatalog";
+import {
+  STRATEGY_MODEL_CATALOG,
+  resolveStrategyRuntimeModelProfile
+} from "../lib/strategyCatalog";
 
 const loadRecharts = () => import("recharts");
 let lightweightChartsPromise: Promise<typeof import("lightweight-charts")> | null = null;
@@ -109,7 +112,7 @@ const DEFAULT_COPYTRADE_ROUTE =
 const DIRECT_MT5_ADD_ACCOUNT_PATH = "/settings/account?view=add";
 type SavedPreset = { name: string; settings: Record<string, any>; savedAt: number };
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
-type SurfaceTab = "chart" | "settings" | "backtest" | "ai" | "copytrade";
+type SurfaceTab = "chart" | "settings" | "models" | "backtest" | "ai" | "copytrade";
 type BacktestTab =
   | "mainSettings"
   | "mainStats"
@@ -139,7 +142,7 @@ type BacktestHeroStatCard = {
   valueStyle?: CSSProperties;
 };
 
-const SURFACE_TAB_IDS: SurfaceTab[] = ["chart", "settings", "backtest", "ai", "copytrade"];
+const SURFACE_TAB_IDS: SurfaceTab[] = ["chart", "settings", "models", "backtest", "ai", "copytrade"];
 const BACKTEST_TAB_IDS: BacktestTab[] = [
   "mainSettings",
   "mainStats",
@@ -3399,6 +3402,7 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
 const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
   { id: "chart", label: "Chart" },
   { id: "settings", label: "Settings" },
+  { id: "models", label: "Models" },
   { id: "backtest", label: "Backtest" },
   { id: "ai", label: "Gideon" },
   { id: "copytrade", label: "Copy-Trade" }
@@ -8356,6 +8360,29 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const availableAiLibraries = useMemo(() => {
     return aiLibraryDefs.filter((library) => !selectedAiLibraries.includes(library.id));
   }, [aiLibraryDefs, selectedAiLibraries]);
+  const modelsSurfaceEntries = useMemo(() => {
+    return STRATEGY_MODEL_CATALOG.map((catalogModel) => {
+      const matchingModelName =
+        availableAiModelNames.find((name) => {
+          const normalizedName = name.trim().toLowerCase();
+          return (
+            normalizedName === catalogModel.name.toLowerCase() ||
+            normalizedName === catalogModel.id.replace(/-/g, " ") ||
+            catalogModel.aliases.some((alias) => alias.toLowerCase() === normalizedName)
+          );
+        }) ?? catalogModel.name;
+      const state = aiModelStates[matchingModelName] ?? 0;
+
+      return {
+        ...catalogModel,
+        matchingModelName,
+        state
+      };
+    });
+  }, [aiModelStates, availableAiModelNames]);
+  const activeModelsSurfaceCount = useMemo(() => {
+    return modelsSurfaceEntries.filter((entry) => entry.state > 0).length;
+  }, [modelsSurfaceEntries]);
 
   useEffect(() => {
     if (confidenceGateDisabled && confidenceThreshold !== 0) {
@@ -8486,7 +8513,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [selectedSurfaceTab]);
 
   useEffect(() => {
-    if (selectedSurfaceTab !== "backtest" && selectedSurfaceTab !== "settings") {
+    if (
+      selectedSurfaceTab !== "backtest" &&
+      selectedSurfaceTab !== "settings" &&
+      selectedSurfaceTab !== "models"
+    ) {
       setIsBacktestSurfaceSettled(true);
       return;
     }
@@ -16129,6 +16160,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     `${appliedBacktestSettings.symbol} · ${appliedBacktestSettings.timeframe} · ` +
     `${appliedBacktestSettings.aiMode === "off" ? "AI Off" : "AI On"}`;
   const isGideonSurface = selectedSurfaceTab === "ai";
+  const backtestSurfaceLoadingLabel =
+    selectedSurfaceTab === "models" ? "Loading Models..." : "Preparing Backtest...";
 
   return (
     <main className={`terminal${isGideonSurface ? " terminal-gideon" : ""}`}>
@@ -16142,7 +16175,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               className={`surface-tab ${selectedSurfaceTab === tab.id ? "active" : ""}`}
               onClick={() => {
                 if (
-                  (tab.id === "backtest" || tab.id === "settings") &&
+                  (tab.id === "backtest" || tab.id === "settings" || tab.id === "models") &&
                   selectedSurfaceTab !== tab.id
                 ) {
                   setIsBacktestSurfaceSettled(false);
@@ -17099,10 +17132,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           </section>
         ) : null}
 
-        {selectedSurfaceTab === "backtest" || selectedSurfaceTab === "settings" ? (
+        {selectedSurfaceTab === "backtest" ||
+        selectedSurfaceTab === "settings" ||
+        selectedSurfaceTab === "models" ? (
           <section
             className="backtest-surface"
-            aria-label={selectedSurfaceTab === "settings" ? "settings workspace" : "backtest workspace"}
+            aria-label={
+              selectedSurfaceTab === "settings"
+                ? "settings workspace"
+                : selectedSurfaceTab === "models"
+                  ? "models workspace"
+                  : "backtest workspace"
+            }
           >
             <div className="backtest-shell">
               {selectedSurfaceTab === "settings" ? (
@@ -17266,6 +17307,37 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 </div>
               ) : null}
 
+              {selectedSurfaceTab === "models" ? (
+                <div className="backtest-card compact models-surface-overview">
+                  <div className="backtest-card-head backtest-stats-head">
+                    <div>
+                      <h3>Models</h3>
+                      <p>Structured entry and exit references for every model available in Korra.</p>
+                    </div>
+                    <div className="models-surface-overview-actions">
+                      <span className="models-surface-meta-pill">
+                        {activeModelsSurfaceCount} active / {modelsSurfaceEntries.length} total
+                      </span>
+                      <button
+                        type="button"
+                        className="panel-action-btn"
+                        onClick={() => setModelsModalOpen(true)}
+                      >
+                        Edit States
+                      </button>
+                    </div>
+                  </div>
+                  <div className="backtest-toolbar-note backtest-toolbar-note-stack">
+                    <span className="backtest-toolbar-note-range">
+                      Left click in Settings opens model toggles. This tab is your clean reference library.
+                    </span>
+                    <span className="backtest-toolbar-note-meta">
+                      Entry and exit logic only, aligned to the site&apos;s current model catalog.
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+
               {selectedSurfaceTab === "backtest" ? (
                 <nav className="backtest-tabs" aria-label="backtest modules">
                   {backtestTabs.map((tab) => (
@@ -17283,9 +17355,81 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
               <section className={`backtest-panel ${!isBacktestSurfaceSettled ? "backtest-panel-loading" : ""}`}>
                 {!isBacktestSurfaceSettled ? (
-                  <ChartLoadingSpinner label="Preparing Backtest..." />
+                  <ChartLoadingSpinner label={backtestSurfaceLoadingLabel} />
                 ) : (
                   <>
+              {selectedSurfaceTab === "models" ? (
+                <div className="models-library-grid">
+                  {modelsSurfaceEntries.map((model) => (
+                    <article
+                      key={model.id}
+                      className={`backtest-card models-library-card ${model.state > 0 ? "is-active" : ""}`}
+                    >
+                      <div className="models-library-card-head">
+                        <div className="models-library-card-copy">
+                          <div className="models-library-title-row">
+                            <h3>{model.name}</h3>
+                            <span className={`models-library-state models-library-state-${model.state}`}>
+                              {getAiModelStateLabel(model.state)}
+                            </span>
+                          </div>
+                          <p>{model.description}</p>
+                        </div>
+                      </div>
+
+                      <div className="models-library-chip-row" aria-label={`${model.name} aliases`}>
+                        {model.aliases.map((alias) => (
+                          <span key={`${model.id}-${alias}`} className="models-library-chip">
+                            {alias}
+                          </span>
+                        ))}
+                      </div>
+
+                      <div className="models-library-sections">
+                        <section className="models-library-section">
+                          <header>
+                            <span>Entry</span>
+                            <small>Setup, trigger, confirmation</small>
+                          </header>
+                          <ul>
+                            {[
+                              ...model.entry.context,
+                              ...model.entry.setup,
+                              ...model.entry.trigger,
+                              ...model.entry.confirmation,
+                              ...model.entry.noTrade
+                            ]
+                              .slice(0, 6)
+                              .map((item, index) => (
+                                <li key={`${model.id}-entry-${index}`}>{item}</li>
+                              ))}
+                          </ul>
+                        </section>
+
+                        <section className="models-library-section">
+                          <header>
+                            <span>Exit</span>
+                            <small>Stop, target, time, early exit</small>
+                          </header>
+                          <ul>
+                            {[
+                              ...model.exit.stopLoss,
+                              ...model.exit.takeProfit,
+                              ...model.exit.timeExit,
+                              ...model.exit.earlyExit
+                            ]
+                              .slice(0, 6)
+                              .map((item, index) => (
+                                <li key={`${model.id}-exit-${index}`}>{item}</li>
+                              ))}
+                          </ul>
+                        </section>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <>
               {selectedSurfaceTab === "backtest" &&
               backtestDateFilteredTrades.length === 0 &&
               backtestModelProfiles.length === 0 ? (
@@ -17312,7 +17456,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 <ChartLoadingSpinner label={backtestInlineLoaderLabel} />
               ) : null}
 
-              {selectedBacktestTab === "mainStats" ? (
+              {selectedSurfaceTab === "backtest" && selectedBacktestTab === "mainStats" ? (
                 <div className="backtest-grid">
                   <div className="backtest-card">
                     <div className="backtest-card-head backtest-stats-head">
@@ -17398,7 +17542,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 </div>
               ) : null}
 
-              {selectedSurfaceTab === "settings" || selectedBacktestTab === "mainSettings" ? (
+              {selectedSurfaceTab === "settings" ||
+              (selectedSurfaceTab === "backtest" && selectedBacktestTab === "mainSettings") ? (
                 <div className="backtest-grid" style={{ gap: "0.75rem" }}>
                   <div className="main-settings-kpi-strip" aria-label="AI rolling statistics">
                     <div className="main-settings-kpi-strip-track">
@@ -18664,7 +18809,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 </div>
               </AiSettingsModal>
 
-              {selectedBacktestTab === "history" ? (
+              {selectedSurfaceTab === "backtest" && selectedBacktestTab === "history" ? (
                 <div className="backtest-grid">
                   <div className="backtest-card">
                     <button
@@ -19076,7 +19221,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 </div>
               ) : null}
 
-              {selectedBacktestTab === "calendar" ? (
+              {selectedSurfaceTab === "backtest" && selectedBacktestTab === "calendar" ? (
                 <div className="backtest-grid">
                   <div className="backtest-card">
                     <div className="backtest-card-head">
@@ -19328,7 +19473,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 </div>
               ) : null}
 
-              {selectedBacktestTab === "cluster" ? (
+              {selectedSurfaceTab === "backtest" && selectedBacktestTab === "cluster" ? (
                 <div className="backtest-grid">
                   <div className="backtest-card">
                     <AIZipClusterMap
@@ -19368,7 +19513,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   </div>
                 </div>
               ) : null}
-              {selectedSurfaceTab === "settings" || selectedBacktestTab === "timeSettings" ? (
+                </>
+              )}
+              {selectedSurfaceTab === "settings" ||
+              (selectedSurfaceTab === "backtest" && selectedBacktestTab === "timeSettings") ? (
                 <div className="backtest-grid">
                   <div className="backtest-grid two-up">
                     <div className="backtest-card">
@@ -19518,7 +19666,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 </div>
               ) : null}
 
-              {selectedBacktestTab === "performanceStats" ? (
+              {selectedSurfaceTab === "backtest" && selectedBacktestTab === "performanceStats" ? (
                 <div
                   style={{
                     marginTop: 14,
@@ -19819,7 +19967,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 </div>
               ) : null}
 
-              {selectedBacktestTab === "entryExit" ? (
+              {selectedSurfaceTab === "backtest" && selectedBacktestTab === "entryExit" ? (
                 <div
                   style={{
                     marginTop: 14,
@@ -20000,7 +20148,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 </div>
               ) : null}
 
-              {selectedBacktestTab === "dimensions" ? (
+              {selectedSurfaceTab === "backtest" && selectedBacktestTab === "dimensions" ? (
                 <div className="backtest-card">
                   <div className="backtest-card-head">
                     <div>
@@ -20358,7 +20506,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 </div>
               ) : null}
 
-              {selectedBacktestTab === "propFirm" ? (
+              {selectedSurfaceTab === "backtest" && selectedBacktestTab === "propFirm" ? (
                 <div style={{ display: "grid", gap: "0.9rem" }}>
                   <div className="backtest-grid">
                     <div className="backtest-card">
