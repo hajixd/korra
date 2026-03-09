@@ -429,11 +429,19 @@ html[data-korra-copytrade-active="true"] #root {
   flex-wrap: nowrap;
 }
 
+.korra-copytrade-shell__toolbarSideColumn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
 .korra-copytrade-shell__toolbarSelectWrap {
   position: relative;
-  width: 112px;
-  max-width: 112px;
-  flex: 0 0 112px;
+  width: 132px;
+  max-width: 132px;
+  flex: 0 0 132px;
 }
 
 .korra-copytrade-shell__toolbarSelectWrap::after {
@@ -452,18 +460,9 @@ html[data-korra-copytrade-active="true"] #root {
 .korra-copytrade-shell__toolbarSelect {
   appearance: none;
   width: 100%;
-  min-height: 32px;
-  border: 1px solid #242424;
-  border-radius: 999px;
-  background: #080808;
-  color: #f5f5f5;
-  padding: 0 30px 0 12px;
-  font-size: 11px;
-  line-height: 1;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  min-height: 33px;
+  padding-right: 30px;
   text-transform: none;
-  cursor: pointer;
 }
 
 .korra-copytrade-shell__toolbarSelect:focus {
@@ -494,18 +493,16 @@ html[data-korra-copytrade-active="true"] #root {
 .korra-copytrade-shell__toolbarStatusRow {
   margin-top: 10px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
 }
 
 .korra-copytrade-shell__toolbarInlineActions {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-wrap: nowrap;
-  flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .korra-copytrade-shell__presetSelect,
@@ -1124,13 +1121,12 @@ html[data-korra-copytrade-active="true"] #root {
     margin-top: 2px;
   }
 
-  .korra-copytrade-shell__toolbarStatusRow {
-    align-items: flex-start;
+  .korra-copytrade-shell__toolbarSideColumn {
+    align-items: flex-end;
   }
 
   .korra-copytrade-shell__toolbarInlineActions {
     flex-wrap: wrap;
-    justify-content: flex-end;
   }
 }
 
@@ -1148,10 +1144,16 @@ html[data-korra-copytrade-active="true"] #root {
   .korra-copytrade-shell__toolbarActionGroup,
   .korra-copytrade-shell__toolbarActions--stats,
   .korra-copytrade-shell__toolbarActions--stats .korra-copytrade-shell__toolbarActionGroup,
+  .korra-copytrade-shell__toolbarSideColumn,
   .korra-copytrade-shell__toolbarInlineActions,
   .korra-copytrade-shell__controlHeader,
   .korra-copytrade-shell__controlActions {
     justify-content: flex-start;
+  }
+
+  .korra-copytrade-shell__toolbarSideColumn {
+    align-items: flex-start;
+    width: 100%;
   }
 
   .korra-copytrade-shell__toolbarSelectWrap {
@@ -1222,7 +1224,8 @@ html[data-korra-copytrade-active="true"] #root {
 }
 
 @media (max-width: 640px) {
-  .korra-copytrade-shell__toolbarActions {
+  .korra-copytrade-shell__toolbarActions,
+  .korra-copytrade-shell__toolbarSideColumn {
     width: 100%;
     flex-direction: column;
     align-items: stretch;
@@ -1238,6 +1241,7 @@ html[data-korra-copytrade-active="true"] #root {
 
   .korra-copytrade-shell__toolbarInlineActions {
     flex-wrap: wrap;
+    width: 100%;
   }
 
   .korra-copytrade-shell__toolbarBack {
@@ -5036,6 +5040,23 @@ const injectedScript = `
     navigateEmbeddedPath(DIRECT_MT5_ADD_ACCOUNT_PATH);
   };
 
+  const navigateToTradezellaAccountStatistics = (accountId) => {
+    const normalizedAccountId = String(accountId || "").trim();
+
+    try {
+      const url = new URL("/tracking", window.location.origin);
+      if (normalizedAccountId) {
+        url.searchParams.set("accounts", normalizedAccountId);
+      }
+      window.location.assign(url.pathname + url.search + url.hash);
+    } catch {
+      const nextPath = normalizedAccountId
+        ? "/tracking?accounts=" + encodeURIComponent(normalizedAccountId)
+        : "/tracking";
+      window.location.assign(nextPath);
+    }
+  };
+
   const getCustomCopyTradeStore = () => {
     if (!isObjectRecord(window.__korraCustomCopyTradeStore)) {
       window.__korraCustomCopyTradeStore = {
@@ -6111,6 +6132,7 @@ const injectedScript = `
 
   const buildStatisticsHeaderMarkup = (account, dashboard, formState) => {
     const accountId = String(account && account.id || "").trim();
+    const providerAccountId = String(account && account.providerAccountId || "").trim();
     const connection = resolveConnectionState(account);
     const trading = resolveTradingState(account, dashboard);
     const selectedPresetName = String(formState && formState.selectedPresetName || "").trim();
@@ -6147,6 +6169,12 @@ const injectedScript = `
             : "Pause"
       ) +
       "</button>";
+    const detailedStatisticsButton =
+      '<button class="korra-copytrade-shell__button korra-copytrade-shell__toolbarBack" data-korra-action="open-detailed-statistics" data-account-id="' +
+      escapeHtml(accountId) +
+      '" data-provider-account-id="' +
+      escapeHtml(providerAccountId) +
+      '">Detailed Statics</button>';
 
     return (
       '<div class="korra-copytrade-shell__toolbar">' +
@@ -6168,7 +6196,7 @@ const injectedScript = `
       "</div>" +
       '<div class="korra-copytrade-shell__toolbarInlineActions">' +
       '<label class="korra-copytrade-shell__toolbarSelectWrap">' +
-      '<select class="korra-copytrade-shell__toolbarSelect" data-korra-preset-account-id="' +
+      '<select class="korra-copytrade-shell__button korra-copytrade-shell__toolbarSelect" data-korra-preset-account-id="' +
       escapeHtml(accountId) +
       '"' +
       (controlsDisabled ? ' disabled="disabled"' : "") +
@@ -6180,7 +6208,10 @@ const injectedScript = `
       "</div>" +
       "</div>" +
       "</div>" +
+      '<div class="korra-copytrade-shell__toolbarSideColumn">' +
       '<button class="korra-copytrade-shell__button korra-copytrade-shell__toolbarBack" data-korra-action="back-home">All Accounts</button>' +
+      detailedStatisticsButton +
+      "</div>" +
       "</div>"
     );
   };
@@ -7509,6 +7540,11 @@ const injectedScript = `
 
         if (action === "back-home") {
           navigateToCustomCopyTradeHome();
+          return;
+        }
+
+        if (action === "open-detailed-statistics") {
+          navigateToTradezellaAccountStatistics(target.dataset.accountId || "");
           return;
         }
 
