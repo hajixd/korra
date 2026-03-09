@@ -4125,14 +4125,14 @@ const fetchHybridHistoryCandles = async (
       return recentOneMinuteCandles.slice(-targetBars);
     }
 
-    if (historyCandles.length >= MIN_SEED_CANDLES) {
-      return historyCandles.slice(-targetBars);
-    }
-
     const recentTimeframeCandles = await fetchMarketCandles(
       timeframe,
       Math.min(targetBars, MARKET_MAX_HISTORY_CANDLES)
     ).catch(() => []);
+
+    if (historyCandles.length >= MIN_SEED_CANDLES) {
+      return mergeHistoricalAndRecentCandles(historyCandles, recentTimeframeCandles, targetBars);
+    }
 
     if (recentTimeframeCandles.length >= MIN_SEED_CANDLES) {
       return recentTimeframeCandles.slice(-targetBars);
