@@ -30696,7 +30696,7 @@ export default function App() {
                   <div style={{ ...ui.tiny, marginTop: 4 }}>
                     {aiExitStrict === 0
                       ? "0 (OFF)"
-                      : `${aiExitStrict} (1 = lenient · 100 = aggressive)`}
+                      : `${aiExitStrict} (1 = lenient · 100 = strict)`}
                   </div>
                 </div>
 

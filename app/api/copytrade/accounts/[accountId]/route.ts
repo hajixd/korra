@@ -103,7 +103,6 @@ export async function PATCH(request: Request, context: RouteContext) {
       ...(payload.symbol !== undefined ? { symbol: String(payload.symbol) } : {}),
       ...(payload.timeframe !== undefined ? { timeframe: parseTimeframe(payload.timeframe) } : {}),
       ...(payload.lot !== undefined ? { lot: parseNumeric(payload.lot) } : {}),
-      ...(payload.aggressive !== undefined ? { aggressive: payload.aggressive === true } : {}),
       ...(payload.chunkBars !== undefined
         ? { chunkBars: parseNumeric(payload.chunkBars) }
         : {}),

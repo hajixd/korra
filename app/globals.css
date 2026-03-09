@@ -1535,19 +1535,6 @@ button {
   flex-shrink: 0;
 }
 
-.models-library-card-copy p {
-  margin: 0;
-  color: rgba(214, 223, 238, 0.78);
-  font-size: 0.67rem;
-  line-height: 1.55;
-}
-
-.models-library-code-note {
-  color: rgba(175, 192, 216, 0.62);
-  font-size: 0.58rem;
-  line-height: 1.45;
-}
-
 .models-library-sections {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1571,11 +1558,6 @@ button {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-}
-
-.models-library-section header small {
-  color: rgba(175, 192, 216, 0.62);
-  font-size: 0.58rem;
 }
 
 .models-library-section ul {

@@ -16,7 +16,6 @@ input int InpRequestTimeoutMs = 8000;
 input long InpMagicNumber = 26032026;
 input int InpSlippagePoints = 50;
 
-input bool InpAggressive = true;
 input int InpChunkBars = 24;
 input double InpDollarsPerMove = 25.0;
 input int InpMaxConcurrentTrades = 1;
@@ -91,11 +90,6 @@ string NormalizeTimeframe(string value)
     return "1W";
 
   return "15m";
-}
-
-string BoolToFlag(const bool value)
-{
-  return value ? "1" : "0";
 }
 
 string Hex2(const int value)
@@ -202,7 +196,6 @@ string BuildSignalUrl()
   query += "format=plain";
   query += "&symbol=" + UrlEncode(g_signalSymbol);
   query += "&timeframe=" + UrlEncode(g_timeframe);
-  query += "&aggressive=" + BoolToFlag(InpAggressive);
   query += "&chunkBars=" + IntegerToString((int)MathMax(8, InpChunkBars));
   query += "&dollarsPerMove=" + DoubleToString(MathMax(1.0, InpDollarsPerMove), 4);
   query += "&maxConcurrentTrades=" + IntegerToString((int)MathMax(1, InpMaxConcurrentTrades));

@@ -133,7 +133,6 @@ export async function POST(request: Request) {
       symbol: typeof payload.symbol === "string" ? payload.symbol : undefined,
       timeframe: parseTimeframe(payload.timeframe),
       lot: typeof payload.lot === "number" ? payload.lot : undefined,
-      aggressive: typeof payload.aggressive === "boolean" ? payload.aggressive : undefined,
       chunkBars: typeof payload.chunkBars === "number" ? payload.chunkBars : undefined,
       dollarsPerMove:
         typeof payload.dollarsPerMove === "number" ? payload.dollarsPerMove : undefined,

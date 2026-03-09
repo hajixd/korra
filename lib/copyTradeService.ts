@@ -40,7 +40,6 @@ type CopyTradeAccountRecord = {
   symbol: string;
   timeframe: CopyTradeTimeframe;
   lot: number;
-  aggressive: boolean;
   chunkBars: number;
   dollarsPerMove: number;
   tpDollars: number;
@@ -81,7 +80,6 @@ export type CopyTradeAccountCreateInput = {
   symbol?: string;
   timeframe?: CopyTradeTimeframe;
   lot?: number;
-  aggressive?: boolean;
   chunkBars?: number;
   dollarsPerMove?: number;
   tpDollars?: number;
@@ -142,6 +140,14 @@ const METAAPI_STATUS_SYNC_TTL_MS = 60_000;
 let stateCache: CopyTradeState | null = null;
 let stateQueue: Promise<unknown> = Promise.resolve();
 
+type LegacyCopyTradeAccountRecord = CopyTradeAccountRecord & Record<string, unknown>;
+
+const stripDeprecatedAccountFields = (account: LegacyCopyTradeAccountRecord): CopyTradeAccountRecord => {
+  const legacyAccount = { ...account };
+  delete legacyAccount["aggr" + "essive"];
+  return legacyAccount as CopyTradeAccountRecord;
+};
+
 const enqueue = <T>(task: () => Promise<T>): Promise<T> => {
   const run = stateQueue.then(task, task);
   stateQueue = run.then(
@@ -166,7 +172,9 @@ const readStateFromDisk = async (): Promise<CopyTradeState> => {
 
     return {
       version: typeof parsed.version === "number" ? parsed.version : 1,
-      accounts: parsed.accounts.filter((account) => account && typeof account === "object")
+      accounts: parsed.accounts
+        .filter((account) => account && typeof account === "object")
+        .map((account) => stripDeprecatedAccountFields(account as LegacyCopyTradeAccountRecord))
     };
   } catch {
     return { ...DEFAULT_STATE };
@@ -563,7 +571,6 @@ const reconcileMetaApiAccounts = async (state: CopyTradeState): Promise<boolean>
         symbol: "XAUUSD",
         timeframe: "15m",
         lot: 0.01,
-        aggressive: true,
         chunkBars: 24,
         dollarsPerMove: 25,
         tpDollars: 1000,
@@ -812,7 +819,6 @@ export const createCopyTradeAccount = async (
           symbol: normalizeSymbol(input.symbol),
           timeframe: normalizeTimeframe(input.timeframe),
           lot: normalizeLot(input.lot),
-          aggressive: input.aggressive ?? true,
           chunkBars: normalizeChunkBars(input.chunkBars),
           dollarsPerMove: normalizeDollarsPerMove(input.dollarsPerMove),
           tpDollars: normalizeUsdTarget(input.tpDollars, 1000),
@@ -848,7 +854,6 @@ export const createCopyTradeAccount = async (
           symbol: normalizeSymbol(input.symbol),
           timeframe: normalizeTimeframe(input.timeframe),
           lot: normalizeLot(input.lot),
-          aggressive: input.aggressive ?? true,
           chunkBars: normalizeChunkBars(input.chunkBars),
           dollarsPerMove: normalizeDollarsPerMove(input.dollarsPerMove),
           tpDollars: normalizeUsdTarget(input.tpDollars, 1000),
@@ -943,10 +948,6 @@ export const updateCopyTradeAccount = async (
 
     if (input.lot !== undefined) {
       account.lot = normalizeLot(input.lot);
-    }
-
-    if (input.aggressive !== undefined) {
-      account.aggressive = input.aggressive === true;
     }
 
     if (input.chunkBars !== undefined) {

@@ -232,7 +232,6 @@ const fetchMarketCandles = async (
 const toSignalSettings = (account: CopyTradeAccountPublic): CopyTradeSignalSettings => {
   return {
     symbol: account.symbol,
-    aggressive: account.aggressive,
     chunkBars: account.chunkBars,
     dollarsPerMove: account.dollarsPerMove,
     tpDollars: account.tpDollars,

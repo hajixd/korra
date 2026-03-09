@@ -80,7 +80,6 @@ const DEFAULT_SETTINGS: CopyTradeSignalSettings = {
   symbol: "XAUUSD",
   dollarsPerMove: 25,
   chunkBars: 24,
-  aggressive: true,
   maxConcurrentTrades: 1,
   tpDollars: 1000,
   slDollars: 1000,
@@ -100,27 +99,6 @@ const toNoStoreHeaders = (contentType?: string): Record<string, string> => {
   }
 
   return headers;
-};
-
-const parseBoolean = (value: string | null, fallback: boolean): boolean => {
-  if (value === null) {
-    return fallback;
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) {
-    return fallback;
-  }
-
-  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
-    return true;
-  }
-
-  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
-    return false;
-  }
-
-  return fallback;
 };
 
 const parseNumber = (value: string | null, fallback: number, min: number, max: number): number => {
@@ -432,7 +410,6 @@ export async function GET(request: Request) {
 
   const settings: CopyTradeSignalSettings = {
     symbol: signalSymbol,
-    aggressive: parseBoolean(url.searchParams.get("aggressive"), DEFAULT_SETTINGS.aggressive),
     chunkBars: parseInteger(url.searchParams.get("chunkBars"), DEFAULT_SETTINGS.chunkBars, 8, 180),
     dollarsPerMove: parseNumber(
       url.searchParams.get("dollarsPerMove"),

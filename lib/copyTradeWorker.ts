@@ -295,7 +295,6 @@ const processCopyTradeAccount = async (
         symbol: account.symbol,
         dollarsPerMove: account.dollarsPerMove,
         chunkBars: account.chunkBars,
-        aggressive: account.aggressive,
         maxConcurrentTrades: account.maxConcurrentTrades,
         tpDollars: account.tpDollars,
         slDollars: account.slDollars,

@@ -145,10 +145,8 @@ type BacktestHeroStatCard = {
   valueStyle?: CSSProperties;
 };
 type StrategyBacktestSurfaceSummary = {
-  summary: string;
   entryTrigger: string[];
   exitTrigger: string[];
-  note: string;
 };
 
 const SURFACE_TAB_IDS: SurfaceTab[] = ["chart", "settings", "models", "backtest", "ai", "copytrade"];
@@ -2462,113 +2460,83 @@ const parseStrategyModelCatalogEntry = (value: unknown): StrategyModelCatalogEnt
   };
 };
 
-const BUILT_IN_BACKTEST_NOTE =
-  "Based on the replay backtest code: model-specific entry signal plus the shared exit engine.";
-
 const buildBacktestModelSurfaceSummary = (
   modelKind: StrategyModelKind
 ): StrategyBacktestSurfaceSummary => {
   if (modelKind === "momentum") {
     return {
-      summary: "This backtest model looks for strong continuation in the recent move.",
       entryTrigger: [
-        "It combines the longer lookback trend and the most recent push, then triggers only when that continuation score is strong enough.",
-        "It goes long when the recent move is pointing up and short when the recent move is pointing down."
+        "Long: the full lookback trend and the last 5 bars both push up strongly enough to clear the continuation threshold (0.16).",
+        "Short: the same continuation score points down strongly enough to clear that threshold."
       ],
-      exitTrigger: [
-        "There is no separate momentum-specific exit signal in the replay code. The shared exit engine closes the trade on take profit or stop loss first.",
-        "If neither level is hit, the trade times out after roughly 6 to 28 bars, or up to 36 bars in aggressive mode."
-      ],
-      note: BUILT_IN_BACKTEST_NOTE
+      exitTrigger: []
     };
   }
 
   if (modelKind === "meanReversion") {
     return {
-      summary: "This backtest model fades price when it is stretched too far from its recent average.",
       entryTrigger: [
-        "It only triggers when price is far enough from the recent mean and is already closing near the top or bottom of the lookback range.",
-        "It shorts overextended highs and buys oversold lows once that stretch is large enough."
+        "Long: price is at least 1.15 standard deviations below the recent mean and is closing in the lower half of the range.",
+        "Short: price is at least 1.15 standard deviations above the recent mean and is closing in the upper half of the range."
       ],
-      exitTrigger: [
-        "There is no dedicated mean-reversion exit rule in the replay signal. The shared backtest engine manages take profit, stop loss, break-even, and trailing stop behavior.",
-        "If none of those fire first, the replay closes the trade after about 4 to 18 bars, or up to 22 bars in aggressive mode."
-      ],
-      note: BUILT_IN_BACKTEST_NOTE
+      exitTrigger: []
     };
   }
 
   if (modelKind === "seasons") {
     return {
-      summary: "This backtest model trades a combined seasonal bias from the day of year and the hour of day.",
       entryTrigger: [
-        "It builds one score from a yearly seasonal wave and a UTC intraday wave, then triggers only when that combined seasonal reading is strong enough.",
-        "It goes long when the combined seasonal score is positive and short when it is negative."
+        "Long: the combined day-of-year and hour-of-day seasonal score is at least +0.26.",
+        "Short: the same seasonal score is at most -0.26."
       ],
-      exitTrigger: [
-        "The seasons model does not have its own coded exit condition. It still uses the shared take-profit and stop-loss exit path.",
-        "If price never hits either level, the replay closes it on time after about 10 to 28 bars, or up to 34 bars in aggressive mode."
-      ],
-      note: BUILT_IN_BACKTEST_NOTE
+      exitTrigger: []
     };
   }
 
   if (modelKind === "timeOfDay") {
     return {
-      summary:
-        "This backtest model behaves differently by session: continuation during London/New York hours and fading extremes during Asia hours.",
       entryTrigger: [
-        "From 07:00 to 16:00 UTC it follows session momentum and triggers when recent directional strength is strong enough.",
-        "From 20:00 to 04:59 UTC it flips into mean reversion and fades moves that are too stretched from the recent average.",
-        "Outside those UTC session windows, it does not trigger."
+        "London / New York long: from 07:00 to 16:00 UTC, the session momentum score clears the upside threshold (0.16).",
+        "London / New York short: from 07:00 to 16:00 UTC, the session momentum score clears the downside threshold (0.16).",
+        "Asia long: from 20:00 to 04:59 UTC, price is at least 1.05 standard deviations below the recent mean.",
+        "Asia short: from 20:00 to 04:59 UTC, price is at least 1.05 standard deviations above the recent mean.",
+        "No trade: outside those UTC session windows, the model stays flat."
       ],
-      exitTrigger: [
-        "The exit is still handled by the shared backtest engine rather than a separate time-of-day exit rule: take profit, stop loss, break-even, or trailing stop can close it first.",
-        "If none of those fire, the replay times out the trade after about 6 to 22 bars in London/New York or 4 to 16 bars in Asia, with wider limits in aggressive mode."
-      ],
-      note: BUILT_IN_BACKTEST_NOTE
+      exitTrigger: []
     };
   }
 
   if (modelKind === "fibonacci") {
     return {
-      summary: "This backtest model reacts when price is sitting close to a Fibonacci retracement of the recent range.",
       entryTrigger: [
-        "It checks the nearest retracement level in the recent range and only triggers when price is close enough to one of those Fibonacci bands.",
-        "In the replay code it buys when the nearest level is at or below the 50% retracement and sells when the nearest level is above 50%."
+        "Long: price is within 8% of the recent range from a Fibonacci level at or below the 50% retracement.",
+        "Short: price is within 8% of the recent range from a Fibonacci level above the 50% retracement."
       ],
-      exitTrigger: [
-        "There is no separate Fibonacci exit signal in the replay entry model. Exits are handled by the shared take-profit and stop-loss logic.",
-        "If neither level hits first, the trade closes on time after about 6 to 24 bars, or up to 30 bars in aggressive mode."
-      ],
-      note: BUILT_IN_BACKTEST_NOTE
+      exitTrigger: []
     };
   }
 
   return {
-    summary: "This backtest model reacts when support or resistance pressure becomes strong enough near the recent range edges.",
     entryTrigger: [
-      "It builds separate support and resistance pressure scores from range position, wick balance, and how often price has touched the nearby extremes.",
-      "It goes long when support pressure wins and short when resistance pressure wins."
+      "Long: support pressure near the bottom of the range reaches 0.60 and stays stronger than resistance pressure.",
+      "Short: resistance pressure near the top of the range reaches 0.60 and stays stronger than support pressure.",
+      "Pressure is built from range position, wick balance, and repeated touches of the recent extreme."
     ],
-    exitTrigger: [
-      "This model also relies on the shared exit engine rather than a unique support-and-resistance exit rule.",
-      "If take profit, stop loss, break-even, or trailing stop do not close it first, the replay times it out after about 5 to 19 bars, or up to 25 bars in aggressive mode."
-    ],
-    note: BUILT_IN_BACKTEST_NOTE
+    exitTrigger: []
   };
 };
 
-const buildFallbackModelSurfaceSummary = (): StrategyBacktestSurfaceSummary => {
+const buildFallbackModelSurfaceSummary = (
+  model: StrategyModelCatalogEntry
+): StrategyBacktestSurfaceSummary => {
   return {
-    summary: "This uploaded model does not have a built-in replay backtest summary yet.",
-    entryTrigger: [
-      "No code-derived entry trigger is available for this custom model in the current backtest engine."
-    ],
+    entryTrigger: sanitizeStrategyTextList(model.entry.trigger),
     exitTrigger: [
-      "No code-derived exit trigger is available for this custom model in the current backtest engine."
-    ],
-    note: "Built-in models on this tab are summarized directly from the replay backtest logic."
+      ...sanitizeStrategyTextList(model.exit.stopLoss),
+      ...sanitizeStrategyTextList(model.exit.takeProfit),
+      ...sanitizeStrategyTextList(model.exit.timeExit),
+      ...sanitizeStrategyTextList(model.exit.earlyExit)
+    ]
   };
 };
 
@@ -6885,14 +6853,12 @@ const evaluateReplaySignal = ({
   modelKind,
   candles,
   entryIndex,
-  windowBars,
-  aggressive
+  windowBars
 }: {
   modelKind: ReplayModelKind;
   candles: Candle[];
   entryIndex: number;
   windowBars: number;
-  aggressive: boolean;
 }): ReplayEntrySignal | null => {
   const lookbackBars = Math.max(8, Math.min(180, Math.round(windowBars) || 24));
 
@@ -6932,7 +6898,6 @@ const evaluateReplaySignal = ({
   }
 
   const rangeAbs = Math.max(0.000001, maxHigh - minLow);
-  const rangePct = rangeAbs / Math.max(0.000001, Math.abs(previous.close));
   const trendRet = (previous.close - firstClose) / Math.max(0.000001, Math.abs(firstClose));
   const recentStart = Math.max(startIndex, entryIndex - Math.min(5, lookbackBars));
   const recentClose = candles[recentStart]?.close ?? firstClose;
@@ -6979,7 +6944,7 @@ const evaluateReplaySignal = ({
 
   if (modelKind === "momentum") {
     const score = Math.abs(trendRet) * 175 + Math.abs(shortRet) * 245;
-    const threshold = aggressive ? 0.08 : 0.16;
+    const threshold = 0.16;
     if (score < threshold) return null;
     const side: TradeSide = (trendRet || shortRet) >= 0 ? "Long" : "Short";
     const strength = clamp(
@@ -6990,14 +6955,14 @@ const evaluateReplaySignal = ({
     return {
       side,
       strength,
-      holdBars: Math.round(6 + strength * (aggressive ? 30 : 22)),
+      holdBars: Math.round(6 + strength * 22),
       rrWeight: 0.45 + strength * 0.45,
       riskWeight: 0.4 + strength * 0.35
     };
   }
 
   if (modelKind === "meanReversion") {
-    const zThreshold = aggressive ? 0.9 : 1.15;
+    const zThreshold = 1.15;
     if (Math.abs(zScore) < zThreshold) return null;
     const side: TradeSide | null =
       zScore >= zThreshold && closePos > 0.52
@@ -7007,15 +6972,14 @@ const evaluateReplaySignal = ({
           : null;
     if (!side) return null;
     const strength = clamp(
-      (Math.abs(zScore) - zThreshold) / (aggressive ? 2.2 : 1.8) +
-        Math.abs(closePos - 0.5) * 0.6,
+      (Math.abs(zScore) - zThreshold) / 1.8 + Math.abs(closePos - 0.5) * 0.6,
       0,
       1
     );
     return {
       side,
       strength,
-      holdBars: Math.round(4 + strength * (aggressive ? 18 : 14)),
+      holdBars: Math.round(4 + strength * 14),
       rrWeight: 0.35 + strength * 0.35,
       riskWeight: 0.55 + strength * 0.3
     };
@@ -7023,13 +6987,13 @@ const evaluateReplaySignal = ({
 
   if (modelKind === "seasons") {
     const score = seasonalWave * 0.65 + intradayWave * 0.35;
-    const threshold = aggressive ? 0.16 : 0.26;
+    const threshold = 0.26;
     if (Math.abs(score) < threshold) return null;
     const strength = clamp((Math.abs(score) - threshold) / (1 - threshold), 0, 1);
     return {
       side: score >= 0 ? "Long" : "Short",
       strength,
-      holdBars: Math.round(10 + strength * (aggressive ? 24 : 18)),
+      holdBars: Math.round(10 + strength * 18),
       rrWeight: 0.4 + strength * 0.4,
       riskWeight: 0.5
     };
@@ -7040,26 +7004,26 @@ const evaluateReplaySignal = ({
     const asiaHours = hour <= 4 || hour >= 20;
     if (londonNyHours) {
       const score = trendRet * 210 + shortRet * 150;
-      const threshold = aggressive ? 0.09 : 0.16;
+      const threshold = 0.16;
       if (Math.abs(score) < threshold) return null;
       const strength = clamp((Math.abs(score) - threshold) / Math.max(0.1, 1 - threshold), 0, 1);
       return {
         side: score >= 0 ? "Long" : "Short",
         strength,
-        holdBars: Math.round(6 + strength * (aggressive ? 22 : 16)),
+        holdBars: Math.round(6 + strength * 16),
         rrWeight: 0.45 + strength * 0.35,
         riskWeight: 0.45 + strength * 0.25
       };
     }
 
     if (asiaHours) {
-      const zThreshold = aggressive ? 0.75 : 1.05;
+      const zThreshold = 1.05;
       if (Math.abs(zScore) < zThreshold) return null;
       const strength = clamp((Math.abs(zScore) - zThreshold) / 2, 0, 1);
       return {
         side: zScore >= 0 ? "Short" : "Long",
         strength,
-        holdBars: Math.round(4 + strength * (aggressive ? 16 : 12)),
+        holdBars: Math.round(4 + strength * 12),
         rrWeight: 0.35 + strength * 0.25,
         riskWeight: 0.55 + strength * 0.25
       };
@@ -7069,7 +7033,7 @@ const evaluateReplaySignal = ({
   }
 
   if (modelKind === "fibonacci") {
-    const nearBand = aggressive ? 0.11 : 0.08;
+    const nearBand = 0.08;
     if (nearestFibDistance > nearBand) return null;
     const side: TradeSide = nearestFibLevel <= 0.5 ? "Long" : "Short";
     const strength = clamp(
@@ -7080,7 +7044,7 @@ const evaluateReplaySignal = ({
     return {
       side,
       strength,
-      holdBars: Math.round(6 + strength * (aggressive ? 24 : 18)),
+      holdBars: Math.round(6 + strength * 18),
       rrWeight: 0.5 + strength * 0.4,
       riskWeight: 0.4 + strength * 0.3
     };
@@ -7094,7 +7058,7 @@ const evaluateReplaySignal = ({
     Math.max(0, (closePos - 0.76) * 4) +
     Math.max(0, -wickBalance) +
     (resistanceTouches / lookbackBars) * 0.7;
-  const threshold = aggressive ? 0.45 : 0.6;
+  const threshold = 0.6;
 
   if (supportPressure < threshold && resistancePressure < threshold) {
     return null;
@@ -7105,7 +7069,7 @@ const evaluateReplaySignal = ({
   return {
     side: longSide ? "Long" : "Short",
     strength,
-    holdBars: Math.round(5 + strength * (aggressive ? 20 : 14)),
+    holdBars: Math.round(5 + strength * 14),
     rrWeight: 0.4 + strength * 0.3,
     riskWeight: 0.5 + strength * 0.25
   };
@@ -7116,15 +7080,13 @@ const buildReplayTradeBlueprints = ({
   models,
   symbol,
   unitsPerMove,
-  windowBars,
-  aggressive
+  windowBars
 }: {
   candles: Candle[];
   models: ModelProfile[];
   symbol: string;
   unitsPerMove: number;
   windowBars: number;
-  aggressive: boolean;
 }): TradeBlueprint[] => {
   if (models.length === 0 || candles.length < 3) {
     return [];
@@ -7146,10 +7108,7 @@ const buildReplayTradeBlueprints = ({
 
     for (const model of models) {
       const modelKind = model.modelKind;
-      const cooldownBars = Math.max(
-        1,
-        Math.round(getReplayModelCooldownBars(modelKind) * (aggressive ? 0.75 : 1))
-      );
+      const cooldownBars = Math.max(1, Math.round(getReplayModelCooldownBars(modelKind)));
       const previousEntryIndex = lastEntryByModel.get(model.id) ?? Number.NEGATIVE_INFINITY;
       if (candleIndex - previousEntryIndex < cooldownBars) {
         continue;
@@ -7159,8 +7118,7 @@ const buildReplayTradeBlueprints = ({
         modelKind,
         candles,
         entryIndex: candleIndex,
-        windowBars,
-        aggressive
+        windowBars
       });
       if (!signal) {
         continue;
@@ -7168,7 +7126,7 @@ const buildReplayTradeBlueprints = ({
 
       const longBiasWeight = signal.side === "Long" ? model.longBias : 1 - model.longBias;
       const weightedStrength = clamp(signal.strength * (0.75 + longBiasWeight * 0.6), 0, 1);
-      const minStrength = aggressive ? 0.14 : 0.26;
+      const minStrength = 0.26;
       if (weightedStrength < minStrength) {
         continue;
       }
@@ -8568,7 +8526,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         resolveStrategyRuntimeModelProfile(model.name);
       const backtestSummary = runtimeProfile
         ? buildBacktestModelSurfaceSummary(runtimeProfile.modelKind)
-        : buildFallbackModelSurfaceSummary();
+        : buildFallbackModelSurfaceSummary(model);
 
       return {
         ...model,
@@ -9834,12 +9792,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       models: appliedBacktestModelProfiles,
       symbol: appliedBacktestSettings.symbol,
       unitsPerMove,
-      windowBars: appliedBacktestSettings.chunkBars,
-      // AI Model mode is less strict and checks more bars. AI Filter mode is stricter.
-      aggressive: appliedAiModelEveryCandleMode
+      windowBars: appliedBacktestSettings.chunkBars
     });
   }, [
-    appliedAiModelEveryCandleMode,
     appliedBacktestModelProfiles,
     appliedBacktestSettings.chunkBars,
     appliedBacktestSettings.dollarsPerMove,
@@ -10685,7 +10640,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const chartPanelEffectiveConfidenceThreshold = chartPanelConfidenceGateDisabled
     ? 0
     : confidenceThreshold;
-  const chartPanelAiModelEveryCandleMode = aiMode !== "off" && !aiFilterEnabled;
   const chartPanelTradeBlueprints = useMemo(() => {
     if (!shouldBuildChartPanelReplayRows) {
       return [] as TradeBlueprint[];
@@ -10706,14 +10660,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       models: backtestModelProfiles,
       symbol: selectedSymbol,
       unitsPerMove,
-      windowBars: chunkBars,
-      aggressive: chartPanelAiModelEveryCandleMode
+      windowBars: chunkBars
     });
 
     return enforceMaxConcurrentTradeBlueprints(blueprints, maxConcurrentTrades);
   }, [
     backtestModelProfiles,
-    chartPanelAiModelEveryCandleMode,
     chunkBars,
     shouldBuildChartPanelReplayRows,
     dollarsPerMove,
@@ -17620,7 +17572,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <div className="backtest-card-head backtest-stats-head">
                     <div>
                       <h3>Models</h3>
-                      <p>Structured entry and exit references for every model available in Korra.</p>
                     </div>
                     <div className="models-surface-overview-actions">
                       <button
@@ -17639,21 +17590,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       />
                     </div>
                   </div>
-                  <div className="backtest-toolbar-note backtest-toolbar-note-stack">
-                    <span className="backtest-toolbar-note-range">
-                      Upload a model JSON to extend this library or replace a built-in definition by id.
-                    </span>
-                    <span
-                      className={`backtest-toolbar-note-meta${
-                        modelsSurfaceNotice
-                          ? ` models-surface-status models-surface-status-${modelsSurfaceNoticeTone}`
-                          : ""
-                      }`}
+                  {modelsSurfaceNotice ? (
+                    <div
+                      className={`backtest-toolbar-note-meta models-surface-status models-surface-status-${modelsSurfaceNoticeTone}`}
                     >
-                      {modelsSurfaceNotice ||
-                        `${modelsSurfaceEntries.length} models in library / ${uploadedStrategyModels.length} uploaded`}
-                    </span>
-                  </div>
+                      {modelsSurfaceNotice}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -17686,8 +17629,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           <div className="models-library-title-row">
                             <h3>{model.name}</h3>
                           </div>
-                          <p>{model.backtestSummary.summary}</p>
-                          <span className="models-library-code-note">{model.backtestSummary.note}</span>
                         </div>
                         <button
                           type="button"
@@ -17702,29 +17643,31 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         <section className="models-library-section">
                           <header>
                             <span>Entry Trigger</span>
-                            <small>What opens the trade in the replay backtest</small>
                           </header>
-                          <ul>
-                            {model.backtestSummary.entryTrigger.map((item, index) => (
-                              <li key={`${model.id}-entry-trigger-${index}`}>
-                                <span className="models-library-rule-copy">{item}</span>
-                              </li>
-                            ))}
-                          </ul>
+                          {model.backtestSummary.entryTrigger.length > 0 ? (
+                            <ul>
+                              {model.backtestSummary.entryTrigger.map((item, index) => (
+                                <li key={`${model.id}-entry-trigger-${index}`}>
+                                  <span className="models-library-rule-copy">{item}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
                         </section>
 
                         <section className="models-library-section">
                           <header>
                             <span>Exit Trigger</span>
-                            <small>What closes the trade in the replay backtest</small>
                           </header>
-                          <ul>
-                            {model.backtestSummary.exitTrigger.map((item, index) => (
-                              <li key={`${model.id}-exit-trigger-${index}`}>
-                                <span className="models-library-rule-copy">{item}</span>
-                              </li>
-                            ))}
-                          </ul>
+                          {model.backtestSummary.exitTrigger.length > 0 ? (
+                            <ul>
+                              {model.backtestSummary.exitTrigger.map((item, index) => (
+                                <li key={`${model.id}-exit-trigger-${index}`}>
+                                  <span className="models-library-rule-copy">{item}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
                         </section>
                       </div>
                     </article>
@@ -17978,7 +17921,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           <div className="ai-zip-note">
                             {aiExitStrictness === 0
                               ? "0 (OFF)"
-                              : `${aiExitStrictness} (1 = lenient · 100 = aggressive)`}
+                              : `${aiExitStrictness} (1 = lenient · 100 = strict)`}
                           </div>
                         </div>
 

@@ -50,7 +50,6 @@ export type CopyTradeSignalSettings = {
   symbol: string;
   dollarsPerMove: number;
   chunkBars: number;
-  aggressive: boolean;
   maxConcurrentTrades: number;
   tpDollars: number;
   slDollars: number;
@@ -200,14 +199,12 @@ const evaluateReplaySignal = ({
   modelKind,
   candles,
   entryIndex,
-  windowBars,
-  aggressive
+  windowBars
 }: {
   modelKind: ReplayModelKind;
   candles: CopyTradeCandle[];
   entryIndex: number;
   windowBars: number;
-  aggressive: boolean;
 }): ReplayEntrySignal | null => {
   const lookbackBars = Math.max(8, Math.min(180, Math.round(windowBars) || 24));
 
@@ -293,21 +290,21 @@ const evaluateReplaySignal = ({
 
   if (modelKind === "momentum") {
     const score = Math.abs(trendRet) * 175 + Math.abs(shortRet) * 245;
-    const threshold = aggressive ? 0.08 : 0.16;
+    const threshold = 0.16;
     if (score < threshold) return null;
     const side: BacktestHistoryTradeSide = (trendRet || shortRet) >= 0 ? "Long" : "Short";
     const strength = clamp((score - threshold) / Math.max(0.1, 1 - threshold), 0, 1);
     return {
       side,
       strength,
-      holdBars: Math.round(6 + strength * (aggressive ? 30 : 22)),
+      holdBars: Math.round(6 + strength * 22),
       rrWeight: 0.45 + strength * 0.45,
       riskWeight: 0.4 + strength * 0.35
     };
   }
 
   if (modelKind === "meanReversion") {
-    const zThreshold = aggressive ? 0.9 : 1.15;
+    const zThreshold = 1.15;
     if (Math.abs(zScore) < zThreshold) return null;
     const side: BacktestHistoryTradeSide | null =
       zScore >= zThreshold && closePos > 0.52
@@ -317,14 +314,14 @@ const evaluateReplaySignal = ({
           : null;
     if (!side) return null;
     const strength = clamp(
-      (Math.abs(zScore) - zThreshold) / (aggressive ? 2.2 : 1.8) + Math.abs(closePos - 0.5) * 0.6,
+      (Math.abs(zScore) - zThreshold) / 1.8 + Math.abs(closePos - 0.5) * 0.6,
       0,
       1
     );
     return {
       side,
       strength,
-      holdBars: Math.round(4 + strength * (aggressive ? 18 : 14)),
+      holdBars: Math.round(4 + strength * 14),
       rrWeight: 0.35 + strength * 0.35,
       riskWeight: 0.55 + strength * 0.3
     };
@@ -332,13 +329,13 @@ const evaluateReplaySignal = ({
 
   if (modelKind === "seasons") {
     const score = seasonalWave * 0.65 + intradayWave * 0.35;
-    const threshold = aggressive ? 0.16 : 0.26;
+    const threshold = 0.26;
     if (Math.abs(score) < threshold) return null;
     const strength = clamp((Math.abs(score) - threshold) / (1 - threshold), 0, 1);
     return {
       side: score >= 0 ? "Long" : "Short",
       strength,
-      holdBars: Math.round(10 + strength * (aggressive ? 24 : 18)),
+      holdBars: Math.round(10 + strength * 18),
       rrWeight: 0.4 + strength * 0.4,
       riskWeight: 0.5
     };
@@ -350,26 +347,26 @@ const evaluateReplaySignal = ({
 
     if (londonNyHours) {
       const score = trendRet * 210 + shortRet * 150;
-      const threshold = aggressive ? 0.09 : 0.16;
+      const threshold = 0.16;
       if (Math.abs(score) < threshold) return null;
       const strength = clamp((Math.abs(score) - threshold) / Math.max(0.1, 1 - threshold), 0, 1);
       return {
         side: score >= 0 ? "Long" : "Short",
         strength,
-        holdBars: Math.round(6 + strength * (aggressive ? 22 : 16)),
+        holdBars: Math.round(6 + strength * 16),
         rrWeight: 0.45 + strength * 0.35,
         riskWeight: 0.45 + strength * 0.25
       };
     }
 
     if (asiaHours) {
-      const zThreshold = aggressive ? 0.75 : 1.05;
+      const zThreshold = 1.05;
       if (Math.abs(zScore) < zThreshold) return null;
       const strength = clamp((Math.abs(zScore) - zThreshold) / 2, 0, 1);
       return {
         side: zScore >= 0 ? "Short" : "Long",
         strength,
-        holdBars: Math.round(4 + strength * (aggressive ? 16 : 12)),
+        holdBars: Math.round(4 + strength * 12),
         rrWeight: 0.35 + strength * 0.25,
         riskWeight: 0.55 + strength * 0.25
       };
@@ -379,14 +376,14 @@ const evaluateReplaySignal = ({
   }
 
   if (modelKind === "fibonacci") {
-    const nearBand = aggressive ? 0.11 : 0.08;
+    const nearBand = 0.08;
     if (nearestFibDistance > nearBand) return null;
     const side: BacktestHistoryTradeSide = nearestFibLevel <= 0.5 ? "Long" : "Short";
     const strength = clamp((nearBand - nearestFibDistance) / nearBand + Math.abs(shortRet) * 180, 0, 1);
     return {
       side,
       strength,
-      holdBars: Math.round(6 + strength * (aggressive ? 24 : 18)),
+      holdBars: Math.round(6 + strength * 18),
       rrWeight: 0.5 + strength * 0.4,
       riskWeight: 0.4 + strength * 0.3
     };
@@ -396,7 +393,7 @@ const evaluateReplaySignal = ({
     Math.max(0, (0.24 - closePos) * 4) + Math.max(0, wickBalance) + (supportTouches / lookbackBars) * 0.7;
   const resistancePressure =
     Math.max(0, (closePos - 0.76) * 4) + Math.max(0, -wickBalance) + (resistanceTouches / lookbackBars) * 0.7;
-  const threshold = aggressive ? 0.45 : 0.6;
+  const threshold = 0.6;
 
   if (supportPressure < threshold && resistancePressure < threshold) {
     return null;
@@ -407,7 +404,7 @@ const evaluateReplaySignal = ({
   return {
     side: longSide ? "Long" : "Short",
     strength,
-    holdBars: Math.round(5 + strength * (aggressive ? 20 : 14)),
+    holdBars: Math.round(5 + strength * 14),
     rrWeight: 0.4 + strength * 0.3,
     riskWeight: 0.5 + strength * 0.25
   };
@@ -418,15 +415,13 @@ const buildReplayTradeBlueprints = ({
   models,
   symbol,
   unitsPerMove,
-  windowBars,
-  aggressive
+  windowBars
 }: {
   candles: CopyTradeCandle[];
   models: ModelProfile[];
   symbol: string;
   unitsPerMove: number;
   windowBars: number;
-  aggressive: boolean;
 }): BacktestHistoryTradeBlueprint[] => {
   if (models.length === 0 || candles.length < 3) {
     return [];
@@ -448,10 +443,7 @@ const buildReplayTradeBlueprints = ({
 
     for (const model of models) {
       const modelKind = model.modelKind;
-      const cooldownBars = Math.max(
-        1,
-        Math.round(getReplayModelCooldownBars(modelKind) * (aggressive ? 0.75 : 1))
-      );
+      const cooldownBars = Math.max(1, Math.round(getReplayModelCooldownBars(modelKind)));
       const previousEntryIndex = lastEntryByModel.get(model.id) ?? Number.NEGATIVE_INFINITY;
       if (candleIndex - previousEntryIndex < cooldownBars) {
         continue;
@@ -461,8 +453,7 @@ const buildReplayTradeBlueprints = ({
         modelKind,
         candles,
         entryIndex: candleIndex,
-        windowBars,
-        aggressive
+        windowBars
       });
       if (!signal) {
         continue;
@@ -470,7 +461,7 @@ const buildReplayTradeBlueprints = ({
 
       const longBiasWeight = signal.side === "Long" ? model.longBias : 1 - model.longBias;
       const weightedStrength = clamp(signal.strength * (0.75 + longBiasWeight * 0.6), 0, 1);
-      const minStrength = aggressive ? 0.14 : 0.26;
+      const minStrength = 0.26;
       if (weightedStrength < minStrength) {
         continue;
       }
@@ -613,8 +604,7 @@ export const computeActiveReplaySignal = (args: {
     models: modelProfiles,
     symbol: settings.symbol,
     unitsPerMove: settings.dollarsPerMove,
-    windowBars: settings.chunkBars,
-    aggressive: settings.aggressive
+    windowBars: settings.chunkBars
   });
 
   const constrainedBlueprints = enforceMaxConcurrentTradeBlueprints(

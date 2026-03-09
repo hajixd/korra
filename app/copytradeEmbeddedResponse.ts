@@ -3402,7 +3402,6 @@ const injectedScript = `
     symbol: "XAUUSD",
     timeframe: "15m",
     lot: 0.01,
-    aggressive: true,
     chunkBars: 24,
     dollarsPerMove: 25,
     tpDollars: 1000,
@@ -3712,10 +3711,6 @@ const injectedScript = `
           : settings.selectedTimeframe
       ),
       lot: clampNumber(settings.lot, 0.01, 100, COPYTRADE_BRIDGE_DEFAULTS.lot),
-      aggressive:
-        typeof settings.aggressive === "boolean"
-          ? settings.aggressive
-          : COPYTRADE_BRIDGE_DEFAULTS.aggressive,
       chunkBars: clampNumber(
         settings.chunkBars,
         8,
