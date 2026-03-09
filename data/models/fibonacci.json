@@ -6,13 +6,13 @@
     "retracement continuation",
     "fib confluence"
   ],
-  "description": "Pullback model that trades with the base trend once the normalized pullback reaches the opposite side without repeating the same spike recently.",
+  "description": "Pullback model that trades with the 30 over 200 EMA bias when the normalized oscillator reaches the pullback zone and no repeat spike has printed in the last 10 bars.",
   "entry": {
     "context": [],
     "setup": [],
     "trigger": [
-      "Long when the base trend is up, the pullback oscillator is in the down zone, and there has not been another downside spike recently.",
-      "Short when the base trend is down, the pullback oscillator is in the up zone, and there has not been another upside spike recently."
+      "Long when the 30 EMA is above the 200 EMA, the normalized oscillator is below 40, and there has not been another downside spike in the last 10 bars.",
+      "Short when the 30 EMA is below the 200 EMA, the normalized oscillator is above 60, and there has not been another upside spike in the last 10 bars."
     ],
     "confirmation": [],
     "invalidation": [],
@@ -23,8 +23,8 @@
     "takeProfit": [],
     "timeExit": [],
     "earlyExit": [
-      "Long exit when price has already made the upside impulse that ends the pullback trade.",
-      "Short exit when price has already made the downside impulse that ends the pullback trade."
+      "Long exit when price has already printed the upside impulse that ends the pullback trade.",
+      "Short exit when price has already printed the downside impulse that ends the pullback trade."
     ]
   },
   "backtest": {
@@ -33,19 +33,19 @@
       "long": {
         "checks": [
           {
-            "label": "Trend is already up",
+            "label": "The 30 EMA is above the 200 EMA",
             "when": {
               "feature": "upTrendBase"
             }
           },
           {
-            "label": "The pullback oscillator is in the down zone",
+            "label": "The normalized oscillator is below 40",
             "when": {
               "feature": "normDown"
             }
           },
           {
-            "label": "There has not been another downside spike recently",
+            "label": "No downside spike printed in the last 10 bars",
             "when": {
               "not": {
                 "feature": "recentDown"
@@ -57,19 +57,19 @@
       "short": {
         "checks": [
           {
-            "label": "Trend is already down",
+            "label": "The 30 EMA is below the 200 EMA",
             "when": {
               "feature": "downTrendBase"
             }
           },
           {
-            "label": "The pullback oscillator is in the up zone",
+            "label": "The normalized oscillator is above 60",
             "when": {
               "feature": "normUp"
             }
           },
           {
-            "label": "There has not been another upside spike recently",
+            "label": "No upside spike printed in the last 10 bars",
             "when": {
               "not": {
                 "feature": "recentUp"
@@ -83,7 +83,7 @@
       "long": {
         "checks": [
           {
-            "label": "Price has already made the upside impulse that ends the trade",
+            "label": "Price has already printed the upside impulse that ends the trade",
             "when": {
               "feature": "upPrice"
             }
@@ -93,7 +93,7 @@
       "short": {
         "checks": [
           {
-            "label": "Price has already made the downside impulse that ends the trade",
+            "label": "Price has already printed the downside impulse that ends the trade",
             "when": {
               "feature": "downPrice"
             }

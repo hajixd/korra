@@ -6,13 +6,13 @@
     "s/r",
     "level reaction"
   ],
-  "description": "Level reaction model that trades when price is sitting at support or resistance, the reversal candle is there, and the local range is large enough.",
+  "description": "Level reaction model that trades when price is in the outer 8% of the local range, a reversal candle prints, and the window range is wide enough.",
   "entry": {
     "context": [],
     "setup": [],
     "trigger": [
-      "Long when price is near support, a bullish reversal prints, and the local range is large enough.",
-      "Short when price is near resistance, a bearish reversal prints, and the local range is large enough."
+      "Long when price is in the lower edge of the local range, a bullish reversal candle prints, and the window range is wide enough.",
+      "Short when price is in the upper edge of the local range, a bearish reversal candle prints, and the window range is wide enough."
     ],
     "confirmation": [],
     "invalidation": [],
@@ -30,19 +30,19 @@
       "long": {
         "checks": [
           {
-            "label": "Price is sitting near support",
+            "label": "Price is in the bottom 8% of the local range",
             "when": {
               "feature": "nearSupport"
             }
           },
           {
-            "label": "A bullish reversal has printed",
+            "label": "The latest candle qualifies as a bullish reversal",
             "when": {
               "feature": "bullishReversal"
             }
           },
           {
-            "label": "The local range is large enough",
+            "label": "The window range is wider than 0.8%",
             "when": {
               "feature": "sufficientRange"
             }
@@ -52,19 +52,19 @@
       "short": {
         "checks": [
           {
-            "label": "Price is sitting near resistance",
+            "label": "Price is in the top 8% of the local range",
             "when": {
               "feature": "nearResistance"
             }
           },
           {
-            "label": "A bearish reversal has printed",
+            "label": "The latest candle qualifies as a bearish reversal",
             "when": {
               "feature": "bearishReversal"
             }
           },
           {
-            "label": "The local range is large enough",
+            "label": "The window range is wider than 0.8%",
             "when": {
               "feature": "sufficientRange"
             }

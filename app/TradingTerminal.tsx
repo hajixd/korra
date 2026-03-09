@@ -153,8 +153,10 @@ type BacktestHeroStatCard = {
   valueStyle?: CSSProperties;
 };
 type StrategyBacktestSurfaceSummary = {
-  entryTrigger: string[];
-  exitTrigger: string[];
+  buyEntryTrigger: string[];
+  sellEntryTrigger: string[];
+  buyExitTrigger: string[];
+  sellExitTrigger: string[];
 };
 
 const SURFACE_TAB_IDS: SurfaceTab[] = ["chart", "settings", "models", "backtest", "ai", "copytrade"];
@@ -2610,17 +2612,48 @@ const parseStrategyModelCatalogEntry = (value: unknown): StrategyModelCatalogEnt
   };
 };
 
+const splitDirectionalStrategyText = (values: readonly string[]) => {
+  const buy: string[] = [];
+  const sell: string[] = [];
+
+  for (const value of values) {
+    const normalized = value.trim();
+    if (!normalized) {
+      continue;
+    }
+
+    if (/^(long|buy)\s*:/i.test(normalized)) {
+      buy.push(normalized.replace(/^(long|buy)\s*:\s*/i, ""));
+      continue;
+    }
+
+    if (/^(short|sell)\s*:/i.test(normalized)) {
+      sell.push(normalized.replace(/^(short|sell)\s*:\s*/i, ""));
+      continue;
+    }
+
+    buy.push(normalized);
+  }
+
+  return { buy, sell };
+};
+
 const buildFallbackModelSurfaceSummary = (
   model: StrategyModelCatalogEntry
 ): StrategyBacktestSurfaceSummary => {
+  const entry = splitDirectionalStrategyText(sanitizeStrategyTextList(model.entry.trigger));
+  const exit = splitDirectionalStrategyText([
+    ...sanitizeStrategyTextList(model.exit.stopLoss),
+    ...sanitizeStrategyTextList(model.exit.takeProfit),
+    ...sanitizeStrategyTextList(model.exit.timeExit),
+    ...sanitizeStrategyTextList(model.exit.earlyExit)
+  ]);
+
   return {
-    entryTrigger: sanitizeStrategyTextList(model.entry.trigger),
-    exitTrigger: [
-      ...sanitizeStrategyTextList(model.exit.stopLoss),
-      ...sanitizeStrategyTextList(model.exit.takeProfit),
-      ...sanitizeStrategyTextList(model.exit.timeExit),
-      ...sanitizeStrategyTextList(model.exit.earlyExit)
-    ]
+    buyEntryTrigger: entry.buy,
+    sellEntryTrigger: entry.sell,
+    buyExitTrigger: exit.buy,
+    sellExitTrigger: exit.sell
   };
 };
 
@@ -17404,12 +17437,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <div className="models-library-sections">
                         <section className="models-library-section">
                           <header>
-                            <span>Entry Trigger</span>
+                            <span>Buy Entry Trigger</span>
                           </header>
-                          {model.backtestSummary.entryTrigger.length > 0 ? (
+                          {model.backtestSummary.buyEntryTrigger.length > 0 ? (
                             <ul>
-                              {model.backtestSummary.entryTrigger.map((item, index) => (
-                                <li key={`${model.id}-entry-trigger-${index}`}>
+                              {model.backtestSummary.buyEntryTrigger.map((item, index) => (
+                                <li key={`${model.id}-buy-entry-trigger-${index}`}>
                                   <span className="models-library-rule-copy">{item}</span>
                                 </li>
                               ))}
@@ -17419,12 +17452,42 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
                         <section className="models-library-section">
                           <header>
-                            <span>Exit Trigger</span>
+                            <span>Sell Entry Trigger</span>
                           </header>
-                          {model.backtestSummary.exitTrigger.length > 0 ? (
+                          {model.backtestSummary.sellEntryTrigger.length > 0 ? (
                             <ul>
-                              {model.backtestSummary.exitTrigger.map((item, index) => (
-                                <li key={`${model.id}-exit-trigger-${index}`}>
+                              {model.backtestSummary.sellEntryTrigger.map((item, index) => (
+                                <li key={`${model.id}-sell-entry-trigger-${index}`}>
+                                  <span className="models-library-rule-copy">{item}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </section>
+
+                        <section className="models-library-section">
+                          <header>
+                            <span>Buy Exit Trigger</span>
+                          </header>
+                          {model.backtestSummary.buyExitTrigger.length > 0 ? (
+                            <ul>
+                              {model.backtestSummary.buyExitTrigger.map((item, index) => (
+                                <li key={`${model.id}-buy-exit-trigger-${index}`}>
+                                  <span className="models-library-rule-copy">{item}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </section>
+
+                        <section className="models-library-section">
+                          <header>
+                            <span>Sell Exit Trigger</span>
+                          </header>
+                          {model.backtestSummary.sellExitTrigger.length > 0 ? (
+                            <ul>
+                              {model.backtestSummary.sellExitTrigger.map((item, index) => (
+                                <li key={`${model.id}-sell-exit-trigger-${index}`}>
                                   <span className="models-library-rule-copy">{item}</span>
                                 </li>
                               ))}

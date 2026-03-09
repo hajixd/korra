@@ -6,13 +6,13 @@
     "breakout momentum",
     "impulse continuation"
   ],
-  "description": "Continuation model that waits for the base trend, a fresh opposing spike, and no repeated spike in the same direction.",
+  "description": "Continuation model that follows the 30 over 200 EMA bias after a fresh 2 ATR counter-spike and no repeat spike in the last 10 bars.",
   "entry": {
     "context": [],
     "setup": [],
     "trigger": [
-      "Long when the base trend is already up, price prints a fresh downside spike, and there has not been another downside spike recently.",
-      "Short when the base trend is already down, price prints a fresh upside spike, and there has not been another upside spike recently."
+      "Long when the 30 EMA is above the 200 EMA, price prints a fresh downside spike, and there has not been another downside spike in the last 10 bars.",
+      "Short when the 30 EMA is below the 200 EMA, price prints a fresh upside spike, and there has not been another upside spike in the last 10 bars."
     ],
     "confirmation": [],
     "invalidation": [],
@@ -23,8 +23,8 @@
     "takeProfit": [],
     "timeExit": [],
     "earlyExit": [
-      "Long exit when the uptrend is still intact and price has already made the upside spike that ends the move.",
-      "Short exit when the downtrend is still intact and price has already made the downside spike that ends the move."
+      "Long exit when the 30 EMA stays above the 200 EMA and price has already printed the upside spike that ends the move.",
+      "Short exit when the 30 EMA stays below the 200 EMA and price has already printed the downside spike that ends the move."
     ]
   },
   "backtest": {
@@ -33,19 +33,19 @@
       "long": {
         "checks": [
           {
-            "label": "Trend is already up",
+            "label": "The 30 EMA is above the 200 EMA",
             "when": {
               "feature": "upTrendBase"
             }
           },
           {
-            "label": "Price just printed a downside spike",
+            "label": "Price just printed a 2 ATR downside spike",
             "when": {
               "feature": "downPrice"
             }
           },
           {
-            "label": "There has not been another downside spike recently",
+            "label": "No downside spike printed in the last 10 bars",
             "when": {
               "not": {
                 "feature": "recentDown"
@@ -57,19 +57,19 @@
       "short": {
         "checks": [
           {
-            "label": "Trend is already down",
+            "label": "The 30 EMA is below the 200 EMA",
             "when": {
               "feature": "downTrendBase"
             }
           },
           {
-            "label": "Price just printed an upside spike",
+            "label": "Price just printed a 2 ATR upside spike",
             "when": {
               "feature": "upPrice"
             }
           },
           {
-            "label": "There has not been another upside spike recently",
+            "label": "No upside spike printed in the last 10 bars",
             "when": {
               "not": {
                 "feature": "recentUp"
@@ -83,13 +83,13 @@
       "long": {
         "checks": [
           {
-            "label": "The uptrend is still intact",
+            "label": "The 30 EMA is still above the 200 EMA",
             "when": {
               "feature": "upTrendBase"
             }
           },
           {
-            "label": "Price has already made the upside spike that ends the move",
+            "label": "Price has already printed the 2 ATR upside spike that ends the move",
             "when": {
               "feature": "upPrice"
             }
@@ -99,13 +99,13 @@
       "short": {
         "checks": [
           {
-            "label": "The downtrend is still intact",
+            "label": "The 30 EMA is still below the 200 EMA",
             "when": {
               "feature": "downTrendBase"
             }
           },
           {
-            "label": "Price has already made the downside spike that ends the move",
+            "label": "Price has already printed the 2 ATR downside spike that ends the move",
             "when": {
               "feature": "downPrice"
             }

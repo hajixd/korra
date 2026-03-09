@@ -6,13 +6,13 @@
     "calendar flow",
     "cycle bias"
   ],
-  "description": "Cycle model that trades only when the season bucket has just changed and the base trend still agrees.",
+  "description": "Cycle model that trades only when the season bucket has just changed, the 30 over 200 EMA bias still agrees, and the oscillator is not already stretched.",
   "entry": {
     "context": [],
     "setup": [],
     "trigger": [
-      "Long when the season bucket has just turned to summer, the base trend is up, and the market is not already overbought.",
-      "Short when the season bucket has just turned to winter, the base trend is down, and the market is not already oversold."
+      "Long when the season bucket has just turned to summer, the 30 EMA is above the 200 EMA, and the oscillator is not already above 60.",
+      "Short when the season bucket has just turned to winter, the 30 EMA is below the 200 EMA, and the oscillator is not already below 40."
     ],
     "confirmation": [],
     "invalidation": [],
@@ -52,13 +52,13 @@
             }
           },
           {
-            "label": "Trend is already up",
+            "label": "The 30 EMA is above the 200 EMA",
             "when": {
               "feature": "upTrendBase"
             }
           },
           {
-            "label": "The market is not already overbought",
+            "label": "The normalized oscillator is not above 60",
             "when": {
               "not": {
                 "feature": "normUp"
@@ -89,13 +89,13 @@
             }
           },
           {
-            "label": "Trend is already down",
+            "label": "The 30 EMA is below the 200 EMA",
             "when": {
               "feature": "downTrendBase"
             }
           },
           {
-            "label": "The market is not already oversold",
+            "label": "The normalized oscillator is not below 40",
             "when": {
               "not": {
                 "feature": "normDown"

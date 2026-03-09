@@ -33,8 +33,10 @@ export type StrategyReplayModelProfile = {
 };
 
 export type StrategyBacktestSurfaceSummary = {
-  entryTrigger: string[];
-  exitTrigger: string[];
+  buyEntryTrigger: string[];
+  sellEntryTrigger: string[];
+  buyExitTrigger: string[];
+  sellExitTrigger: string[];
 };
 
 type FeatureSeries = {
@@ -640,28 +642,20 @@ export const buildStrategyBacktestSurfaceSummary = (
     return null;
   }
 
-  const formatDirection = (
-    sideLabel: "Long" | "Short",
-    checks: StrategyBacktestDirectionalChecks | undefined
-  ): string[] => {
+  const formatDirection = (checks: StrategyBacktestDirectionalChecks | undefined): string[] => {
     if (!checks || checks.checks.length === 0) {
       return [];
     }
 
-    return checks.checks.map((item) => `${sideLabel}: ${item.label}`);
+    return checks.checks.map((item) => item.label);
   };
 
-  const entryTrigger = [
-    ...formatDirection("Long", spec.entry.long),
-    ...formatDirection("Short", spec.entry.short)
-  ];
-
-  const exitTrigger = [
-    ...formatDirection("Long", spec.exit?.long),
-    ...formatDirection("Short", spec.exit?.short)
-  ];
-
-  return { entryTrigger, exitTrigger };
+  return {
+    buyEntryTrigger: formatDirection(spec.entry.long),
+    sellEntryTrigger: formatDirection(spec.entry.short),
+    buyExitTrigger: formatDirection(spec.exit?.long),
+    sellExitTrigger: formatDirection(spec.exit?.short)
+  };
 };
 
 export const buildStrategyReplayTradeBlueprints = ({

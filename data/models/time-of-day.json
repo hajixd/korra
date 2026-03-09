@@ -6,13 +6,13 @@
     "session timing",
     "intraday clock edge"
   ],
-  "description": "Session bucket model that trades when the day or night bucket has just flipped and the base trend agrees.",
+  "description": "Session bucket model that trades when the day or night state has just flipped and the 30 over 200 EMA bias points the same way.",
   "entry": {
     "context": [],
     "setup": [],
     "trigger": [
-      "Long when the time bucket has just flipped to day and the base trend is up.",
-      "Short when the time bucket has just flipped to night and the base trend is down."
+      "Long when the time bucket has just flipped to day and the 30 EMA is above the 200 EMA.",
+      "Short when the time bucket has just flipped to night and the 30 EMA is below the 200 EMA."
     ],
     "confirmation": [],
     "invalidation": [],
@@ -52,7 +52,7 @@
             }
           },
           {
-            "label": "Trend is already up",
+            "label": "The 30 EMA is above the 200 EMA",
             "when": {
               "feature": "upTrendBase"
             }
@@ -81,7 +81,7 @@
             }
           },
           {
-            "label": "Trend is already down",
+            "label": "The 30 EMA is below the 200 EMA",
             "when": {
               "feature": "downTrendBase"
             }

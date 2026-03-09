@@ -6,13 +6,13 @@
     "reversion fade",
     "stretch reversal"
   ],
-  "description": "Reversal model that buys after a fresh upside spike in a down base trend and sells after a fresh downside spike in an up base trend.",
+  "description": "Reversal model that fades a fresh 2 ATR spike against the 30 over 200 EMA bias when that same spike has not repeated in the last 10 bars.",
   "entry": {
     "context": [],
     "setup": [],
     "trigger": [
-      "Long when the base trend is down, price prints a fresh upside spike, and there has not been another upside spike recently.",
-      "Short when the base trend is up, price prints a fresh downside spike, and there has not been another downside spike recently."
+      "Long when the 30 EMA is below the 200 EMA, price prints a fresh upside spike, and there has not been another upside spike in the last 10 bars.",
+      "Short when the 30 EMA is above the 200 EMA, price prints a fresh downside spike, and there has not been another downside spike in the last 10 bars."
     ],
     "confirmation": [],
     "invalidation": [],
@@ -23,8 +23,8 @@
     "takeProfit": [],
     "timeExit": [],
     "earlyExit": [
-      "Long exit when the base trend flips back up.",
-      "Short exit when the base trend flips back down."
+      "Long exit when the 30 EMA crosses back above the 200 EMA.",
+      "Short exit when the 30 EMA crosses back below the 200 EMA."
     ]
   },
   "backtest": {
@@ -33,19 +33,19 @@
       "long": {
         "checks": [
           {
-            "label": "Trend is already down",
+            "label": "The 30 EMA is below the 200 EMA",
             "when": {
               "feature": "downTrendBase"
             }
           },
           {
-            "label": "Price just printed an upside spike",
+            "label": "Price just printed a 2 ATR upside spike",
             "when": {
               "feature": "upPrice"
             }
           },
           {
-            "label": "There has not been another upside spike recently",
+            "label": "No upside spike printed in the last 10 bars",
             "when": {
               "not": {
                 "feature": "recentUp"
@@ -57,19 +57,19 @@
       "short": {
         "checks": [
           {
-            "label": "Trend is already up",
+            "label": "The 30 EMA is above the 200 EMA",
             "when": {
               "feature": "upTrendBase"
             }
           },
           {
-            "label": "Price just printed a downside spike",
+            "label": "Price just printed a 2 ATR downside spike",
             "when": {
               "feature": "downPrice"
             }
           },
           {
-            "label": "There has not been another downside spike recently",
+            "label": "No downside spike printed in the last 10 bars",
             "when": {
               "not": {
                 "feature": "recentDown"
@@ -83,7 +83,7 @@
       "long": {
         "checks": [
           {
-            "label": "The base trend has flipped back up",
+            "label": "The 30 EMA has crossed back above the 200 EMA",
             "when": {
               "feature": "upTrendBase"
             }
@@ -93,7 +93,7 @@
       "short": {
         "checks": [
           {
-            "label": "The base trend has flipped back down",
+            "label": "The 30 EMA has crossed back below the 200 EMA",
             "when": {
               "feature": "downTrendBase"
             }
