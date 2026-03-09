@@ -54,7 +54,8 @@ import { normalizeChartActions } from "../lib/assistant-tools";
 import {
   STRATEGY_MODEL_CATALOG,
   resolveStrategyRuntimeModelProfile,
-  type StrategyModelCatalogEntry
+  type StrategyModelCatalogEntry,
+  type StrategyModelKind
 } from "../lib/strategyCatalog";
 
 const loadRecharts = () => import("recharts");
@@ -143,10 +144,11 @@ type BacktestHeroStatCard = {
   meta: string;
   valueStyle?: CSSProperties;
 };
-type StrategyConditionGroup = {
-  id: string;
-  label: string;
-  items: string[];
+type StrategyBacktestSurfaceSummary = {
+  summary: string;
+  entryTrigger: string[];
+  exitTrigger: string[];
+  note: string;
 };
 
 const SURFACE_TAB_IDS: SurfaceTab[] = ["chart", "settings", "models", "backtest", "ai", "copytrade"];
@@ -2460,34 +2462,114 @@ const parseStrategyModelCatalogEntry = (value: unknown): StrategyModelCatalogEnt
   };
 };
 
-const buildStrategyConditionGroups = (
-  groups: Array<{ id: string; label: string; items: string[] }>
-): StrategyConditionGroup[] => {
-  return groups.filter((group) => group.items.length > 0);
+const BUILT_IN_BACKTEST_NOTE =
+  "Based on the replay backtest code: model-specific entry signal plus the shared exit engine.";
+
+const buildBacktestModelSurfaceSummary = (
+  modelKind: StrategyModelKind
+): StrategyBacktestSurfaceSummary => {
+  if (modelKind === "momentum") {
+    return {
+      summary: "This backtest model looks for strong continuation in the recent move.",
+      entryTrigger: [
+        "It combines the longer lookback trend and the most recent push, then triggers only when that continuation score is strong enough.",
+        "It goes long when the recent move is pointing up and short when the recent move is pointing down."
+      ],
+      exitTrigger: [
+        "There is no separate momentum-specific exit signal in the replay code. The shared exit engine closes the trade on take profit or stop loss first.",
+        "If neither level is hit, the trade times out after roughly 6 to 28 bars, or up to 36 bars in aggressive mode."
+      ],
+      note: BUILT_IN_BACKTEST_NOTE
+    };
+  }
+
+  if (modelKind === "meanReversion") {
+    return {
+      summary: "This backtest model fades price when it is stretched too far from its recent average.",
+      entryTrigger: [
+        "It only triggers when price is far enough from the recent mean and is already closing near the top or bottom of the lookback range.",
+        "It shorts overextended highs and buys oversold lows once that stretch is large enough."
+      ],
+      exitTrigger: [
+        "There is no dedicated mean-reversion exit rule in the replay signal. The shared backtest engine manages take profit, stop loss, break-even, and trailing stop behavior.",
+        "If none of those fire first, the replay closes the trade after about 4 to 18 bars, or up to 22 bars in aggressive mode."
+      ],
+      note: BUILT_IN_BACKTEST_NOTE
+    };
+  }
+
+  if (modelKind === "seasons") {
+    return {
+      summary: "This backtest model trades a combined seasonal bias from the day of year and the hour of day.",
+      entryTrigger: [
+        "It builds one score from a yearly seasonal wave and a UTC intraday wave, then triggers only when that combined seasonal reading is strong enough.",
+        "It goes long when the combined seasonal score is positive and short when it is negative."
+      ],
+      exitTrigger: [
+        "The seasons model does not have its own coded exit condition. It still uses the shared take-profit and stop-loss exit path.",
+        "If price never hits either level, the replay closes it on time after about 10 to 28 bars, or up to 34 bars in aggressive mode."
+      ],
+      note: BUILT_IN_BACKTEST_NOTE
+    };
+  }
+
+  if (modelKind === "timeOfDay") {
+    return {
+      summary:
+        "This backtest model behaves differently by session: continuation during London/New York hours and fading extremes during Asia hours.",
+      entryTrigger: [
+        "From 07:00 to 16:00 UTC it follows session momentum and triggers when recent directional strength is strong enough.",
+        "From 20:00 to 04:59 UTC it flips into mean reversion and fades moves that are too stretched from the recent average.",
+        "Outside those UTC session windows, it does not trigger."
+      ],
+      exitTrigger: [
+        "The exit is still handled by the shared backtest engine rather than a separate time-of-day exit rule: take profit, stop loss, break-even, or trailing stop can close it first.",
+        "If none of those fire, the replay times out the trade after about 6 to 22 bars in London/New York or 4 to 16 bars in Asia, with wider limits in aggressive mode."
+      ],
+      note: BUILT_IN_BACKTEST_NOTE
+    };
+  }
+
+  if (modelKind === "fibonacci") {
+    return {
+      summary: "This backtest model reacts when price is sitting close to a Fibonacci retracement of the recent range.",
+      entryTrigger: [
+        "It checks the nearest retracement level in the recent range and only triggers when price is close enough to one of those Fibonacci bands.",
+        "In the replay code it buys when the nearest level is at or below the 50% retracement and sells when the nearest level is above 50%."
+      ],
+      exitTrigger: [
+        "There is no separate Fibonacci exit signal in the replay entry model. Exits are handled by the shared take-profit and stop-loss logic.",
+        "If neither level hits first, the trade closes on time after about 6 to 24 bars, or up to 30 bars in aggressive mode."
+      ],
+      note: BUILT_IN_BACKTEST_NOTE
+    };
+  }
+
+  return {
+    summary: "This backtest model reacts when support or resistance pressure becomes strong enough near the recent range edges.",
+    entryTrigger: [
+      "It builds separate support and resistance pressure scores from range position, wick balance, and how often price has touched the nearby extremes.",
+      "It goes long when support pressure wins and short when resistance pressure wins."
+    ],
+    exitTrigger: [
+      "This model also relies on the shared exit engine rather than a unique support-and-resistance exit rule.",
+      "If take profit, stop loss, break-even, or trailing stop do not close it first, the replay times it out after about 5 to 19 bars, or up to 25 bars in aggressive mode."
+    ],
+    note: BUILT_IN_BACKTEST_NOTE
+  };
 };
 
-const buildStrategyEntryConditionGroups = (
-  model: StrategyModelCatalogEntry
-): StrategyConditionGroup[] => {
-  return buildStrategyConditionGroups([
-    { id: "context", label: "Context", items: model.entry.context },
-    { id: "setup", label: "Setup", items: model.entry.setup },
-    { id: "trigger", label: "Trigger", items: model.entry.trigger },
-    { id: "confirm", label: "Confirmation", items: model.entry.confirmation },
-    { id: "invalidate", label: "Invalidation", items: model.entry.invalidation },
-    { id: "avoid", label: "No Trade", items: model.entry.noTrade }
-  ]);
-};
-
-const buildStrategyExitConditionGroups = (
-  model: StrategyModelCatalogEntry
-): StrategyConditionGroup[] => {
-  return buildStrategyConditionGroups([
-    { id: "stop", label: "Stop Loss", items: model.exit.stopLoss },
-    { id: "target", label: "Take Profit", items: model.exit.takeProfit },
-    { id: "time", label: "Time Exit", items: model.exit.timeExit },
-    { id: "early", label: "Early Exit", items: model.exit.earlyExit }
-  ]);
+const buildFallbackModelSurfaceSummary = (): StrategyBacktestSurfaceSummary => {
+  return {
+    summary: "This uploaded model does not have a built-in replay backtest summary yet.",
+    entryTrigger: [
+      "No code-derived entry trigger is available for this custom model in the current backtest engine."
+    ],
+    exitTrigger: [
+      "No code-derived exit trigger is available for this custom model in the current backtest engine."
+    ],
+    note: "Built-in models on this tab are summarized directly from the replay backtest logic."
+  };
 };
 
 const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
@@ -8480,11 +8562,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return Array.from(next.values());
   }, [uploadedStrategyModels]);
   const modelsSurfaceEntries = useMemo(() => {
-    return modelsSurfaceCatalog.map((model) => ({
-      ...model,
-      entryConditionGroups: buildStrategyEntryConditionGroups(model),
-      exitConditionGroups: buildStrategyExitConditionGroups(model)
-    }));
+    return modelsSurfaceCatalog.map((model) => {
+      const runtimeProfile =
+        resolveStrategyRuntimeModelProfile(model.id) ??
+        resolveStrategyRuntimeModelProfile(model.name);
+      const backtestSummary = runtimeProfile
+        ? buildBacktestModelSurfaceSummary(runtimeProfile.modelKind)
+        : buildFallbackModelSurfaceSummary();
+
+      return {
+        ...model,
+        backtestSummary
+      };
+    });
   }, [modelsSurfaceCatalog]);
 
   useEffect(() => {
@@ -17596,7 +17686,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           <div className="models-library-title-row">
                             <h3>{model.name}</h3>
                           </div>
-                          <p>{model.description}</p>
+                          <p>{model.backtestSummary.summary}</p>
+                          <span className="models-library-code-note">{model.backtestSummary.note}</span>
                         </div>
                         <button
                           type="button"
@@ -17610,47 +17701,29 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <div className="models-library-sections">
                         <section className="models-library-section">
                           <header>
-                            <span>Entry</span>
-                            <small>
-                              {model.entryConditionGroups.reduce(
-                                (count, group) => count + group.items.length,
-                                0
-                              )}{" "}
-                              conditions
-                            </small>
+                            <span>Entry Trigger</span>
+                            <small>What opens the trade in the replay backtest</small>
                           </header>
                           <ul>
-                            {model.entryConditionGroups.flatMap((group) =>
-                              group.items.map((item, index) => (
-                                <li key={`${model.id}-entry-${group.id}-${index}`}>
-                                  <span className="models-library-rule-label">{group.label}:</span>
-                                  <span className="models-library-rule-copy">{item}</span>
-                                </li>
-                              ))
-                            )}
+                            {model.backtestSummary.entryTrigger.map((item, index) => (
+                              <li key={`${model.id}-entry-trigger-${index}`}>
+                                <span className="models-library-rule-copy">{item}</span>
+                              </li>
+                            ))}
                           </ul>
                         </section>
 
                         <section className="models-library-section">
                           <header>
-                            <span>Exit</span>
-                            <small>
-                              {model.exitConditionGroups.reduce(
-                                (count, group) => count + group.items.length,
-                                0
-                              )}{" "}
-                              conditions
-                            </small>
+                            <span>Exit Trigger</span>
+                            <small>What closes the trade in the replay backtest</small>
                           </header>
                           <ul>
-                            {model.exitConditionGroups.flatMap((group) =>
-                              group.items.map((item, index) => (
-                                <li key={`${model.id}-exit-${group.id}-${index}`}>
-                                  <span className="models-library-rule-label">{group.label}:</span>
-                                  <span className="models-library-rule-copy">{item}</span>
-                                </li>
-                              ))
-                            )}
+                            {model.backtestSummary.exitTrigger.map((item, index) => (
+                              <li key={`${model.id}-exit-trigger-${index}`}>
+                                <span className="models-library-rule-copy">{item}</span>
+                              </li>
+                            ))}
                           </ul>
                         </section>
                       </div>
