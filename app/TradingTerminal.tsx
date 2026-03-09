@@ -159,7 +159,7 @@ type StrategyBacktestSurfaceSummary = {
   sellExitTrigger: string[];
 };
 
-const SURFACE_TAB_IDS: SurfaceTab[] = ["chart", "settings", "models", "backtest", "ai", "copytrade"];
+const SURFACE_TAB_IDS: SurfaceTab[] = ["chart", "models", "settings", "backtest", "ai", "copytrade"];
 const BACKTEST_TAB_IDS: BacktestTab[] = [
   "mainSettings",
   "mainStats",
@@ -2230,6 +2230,7 @@ type AiSettingsModalProps = {
   title: string;
   subtitle?: string;
   size?: "default" | "wide" | "xwide";
+  cardClassName?: string;
   bodyClassName?: string;
   open: boolean;
   onClose: () => void;
@@ -3535,6 +3536,7 @@ const AiSettingsModal = ({
   title,
   subtitle,
   size = "default",
+  cardClassName,
   bodyClassName,
   open,
   onClose,
@@ -3553,7 +3555,9 @@ const AiSettingsModal = ({
         }
       }}
     >
-      <div className={`ai-zip-modal-card ${size !== "default" ? `size-${size}` : ""}`}>
+      <div
+        className={`ai-zip-modal-card ${size !== "default" ? `size-${size}` : ""} ${cardClassName ?? ""}`.trim()}
+      >
         <div className="ai-zip-modal-head">
           <div className="ai-zip-modal-title-wrap">
             <strong>{title}</strong>
@@ -3736,8 +3740,8 @@ const sidebarTabs: Array<{ id: PanelTab; label: string }> = [
 
 const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
   { id: "chart", label: "Chart" },
-  { id: "settings", label: "Settings" },
   { id: "models", label: "Models" },
+  { id: "settings", label: "Settings" },
   { id: "backtest", label: "Backtest" },
   { id: "ai", label: "Gideon" },
   { id: "copytrade", label: "Copy-Trade" }
@@ -4493,7 +4497,8 @@ const fetchRecentOneMinuteCandles = async (
 const fetchHybridHistoryCandles = async (
   timeframe: Timeframe,
   targetBars: number,
-  recentOneMinutePromise?: Promise<Candle[]>
+  recentOneMinutePromise?: Promise<Candle[]>,
+  allowOneMinuteFallback = true
 ): Promise<Candle[]> => {
   try {
     // Always seed from ClickHouse/history first before blending in recent market candles.
@@ -4504,6 +4509,10 @@ const fetchHybridHistoryCandles = async (
 
     if (timeframe === "1m") {
       if (historyCandles.length >= MIN_SEED_CANDLES) {
+        return historyCandles.slice(-targetBars);
+      }
+
+      if (!allowOneMinuteFallback) {
         return historyCandles.slice(-targetBars);
       }
 
@@ -4523,8 +4532,22 @@ const fetchHybridHistoryCandles = async (
     if (recentTimeframeCandles.length >= MIN_SEED_CANDLES) {
       return recentTimeframeCandles.slice(-targetBars);
     }
+
+    if (!allowOneMinuteFallback) {
+      return historyCandles.length > 0
+        ? historyCandles.slice(-targetBars)
+        : recentTimeframeCandles.slice(-targetBars);
+    }
   } catch {
+    if (!allowOneMinuteFallback) {
+      return [];
+    }
+
     // Leave chart and backtest to use the recent 1m window when deeper history is unavailable.
+  }
+
+  if (!allowOneMinuteFallback) {
+    return [];
   }
 
   const recentOneMinuteCandles = await fetchRecentOneMinuteCandles(recentOneMinutePromise);
@@ -4534,17 +4557,29 @@ const fetchHybridHistoryCandles = async (
 
 const fetchHistoryCandles = async (
   timeframe: Timeframe,
-  recentOneMinutePromise?: Promise<Candle[]>
+  recentOneMinutePromise?: Promise<Candle[]>,
+  allowOneMinuteFallback = true
 ): Promise<Candle[]> => {
   const targetBars = chartHistoryCountByTimeframe[timeframe];
-  return fetchHybridHistoryCandles(timeframe, targetBars, recentOneMinutePromise);
+  return fetchHybridHistoryCandles(
+    timeframe,
+    targetBars,
+    recentOneMinutePromise,
+    allowOneMinuteFallback
+  );
 };
 
 const fetchBacktestHistoryCandles = async (
   timeframe: Timeframe,
-  recentOneMinutePromise?: Promise<Candle[]>
+  recentOneMinutePromise?: Promise<Candle[]>,
+  allowOneMinuteFallback = true
 ): Promise<Candle[]> => {
-  return fetchHybridHistoryCandles(timeframe, BACKTEST_MAX_HISTORY_CANDLES, recentOneMinutePromise);
+  return fetchHybridHistoryCandles(
+    timeframe,
+    BACKTEST_MAX_HISTORY_CANDLES,
+    recentOneMinutePromise,
+    allowOneMinuteFallback
+  );
 };
 
 const XAUUSD_PAIR = "XAU_USD";
@@ -4800,6 +4835,72 @@ const getUtcDayEndExclusiveMsFromYmd = (ymd: string): number | null => {
   }
 
   return startMs + 86_400_000;
+};
+
+const estimateHistoryBarsForDateRange = (
+  startYmd: string,
+  endYmd: string,
+  timeframe: Timeframe,
+  paddingBars = 0
+): number => {
+  const fallbackBars = chartHistoryCountByTimeframe[timeframe];
+  const startMs = getUtcDayStartMsFromYmd(startYmd);
+  const endExclusiveMs = getUtcDayEndExclusiveMsFromYmd(endYmd);
+
+  if (startMs === null || endExclusiveMs === null || endExclusiveMs <= startMs) {
+    return fallbackBars;
+  }
+
+  const baseBars = Math.ceil((endExclusiveMs - startMs) / Math.max(60_000, getTimeframeMs(timeframe)));
+  return clamp(baseBars + Math.max(12, Math.floor(paddingBars)), MIN_SEED_CANDLES, BACKTEST_MAX_HISTORY_CANDLES);
+};
+
+const candlesCoverDateRange = (
+  candles: Candle[],
+  timeframe: Timeframe,
+  startYmd: string,
+  endYmd: string,
+  leadingBars = 0
+): boolean => {
+  if (candles.length < 3) {
+    return false;
+  }
+
+  const startMs = getUtcDayStartMsFromYmd(startYmd);
+  const endExclusiveMs = getUtcDayEndExclusiveMsFromYmd(endYmd);
+
+  if (startMs === null || endExclusiveMs === null) {
+    return false;
+  }
+
+  const paddingMs = Math.max(0, Math.floor(leadingBars)) * getTimeframeMs(timeframe);
+  const firstTime = candles[0]?.time ?? Number.POSITIVE_INFINITY;
+  const lastTime = candles[candles.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
+
+  return firstTime <= startMs - paddingMs && lastTime >= endExclusiveMs - getTimeframeMs(timeframe);
+};
+
+const filterCandlesToDateRange = (
+  candles: Candle[],
+  timeframe: Timeframe,
+  startYmd: string,
+  endYmd: string,
+  leadingBars = 0
+): Candle[] => {
+  const startMs = getUtcDayStartMsFromYmd(startYmd);
+  const endExclusiveMs = getUtcDayEndExclusiveMsFromYmd(endYmd);
+
+  if (startMs === null || endExclusiveMs === null) {
+    return candles;
+  }
+
+  const paddedStartMs =
+    startMs - Math.max(0, Math.floor(leadingBars)) * getTimeframeMs(timeframe);
+  const filtered = candles.filter(
+    (candle) => candle.time >= paddedStartMs && candle.time < endExclusiveMs
+  );
+
+  return filtered.length >= MIN_SEED_CANDLES ? filtered : candles;
 };
 
 const filterTradesByDateRange = (
@@ -7127,8 +7228,8 @@ const ModelRunEquityChart = ({
         <ComposedChart data={data} margin={{ top: 8, right: 14, bottom: 4, left: 0 }}>
           <defs>
             <linearGradient id="model-run-equity-fill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="rgba(88, 166, 255, 0.34)" />
-              <stop offset="100%" stopColor="rgba(88, 166, 255, 0.04)" />
+              <stop offset="0%" stopColor="rgba(255, 255, 255, 0.16)" />
+              <stop offset="100%" stopColor="rgba(255, 255, 255, 0.02)" />
             </linearGradient>
           </defs>
           <CartesianGrid stroke="rgba(255,255,255,0.08)" strokeDasharray="3 3" vertical={false} />
@@ -7151,7 +7252,7 @@ const ModelRunEquityChart = ({
           />
           <ReferenceLine y={0} stroke="rgba(255,255,255,0.16)" strokeDasharray="4 4" />
           <Tooltip
-            cursor={{ stroke: "rgba(88,166,255,0.35)", strokeWidth: 1 }}
+            cursor={{ stroke: "rgba(255,255,255,0.24)", strokeWidth: 1 }}
             content={({ active, payload, label }: RechartsTooltipRenderProps & { label?: string }) => {
               if (!active || !payload || payload.length === 0) {
                 return null;
@@ -7182,7 +7283,7 @@ const ModelRunEquityChart = ({
           <Line
             type="monotone"
             dataKey="cumulativePnl"
-            stroke="#58a6ff"
+            stroke="rgba(242, 244, 247, 0.92)"
             strokeWidth={2.2}
             dot={false}
             isAnimationActive={false}
@@ -9402,7 +9503,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     let cancelled = false;
     const isAlreadyOneMinute = appliedBacktestSettings.timeframe === "1m";
-    const recentOneMinutePromise = fetchRecentOneMinuteCandles();
+    const shouldLoadOneMinutePrecision =
+      appliedBacktestSettings.minutePreciseEnabled && !isAlreadyOneMinute;
+    const allowOneMinuteFallback =
+      appliedBacktestSettings.minutePreciseEnabled || isAlreadyOneMinute;
+    const recentOneMinutePromise = shouldLoadOneMinutePrecision
+      ? fetchRecentOneMinuteCandles()
+      : undefined;
     setStatsRefreshStatus("Loading Candle History");
 
     void (async () => {
@@ -9410,11 +9517,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         const promises: [Promise<Candle[]>, Promise<Candle[]>] = [
           fetchBacktestHistoryCandles(
             appliedBacktestSettings.timeframe,
-            recentOneMinutePromise
+            recentOneMinutePromise,
+            allowOneMinuteFallback
           ),
-          isAlreadyOneMinute
-            ? Promise.resolve([])
-            : fetchHistoryApiCandles("1m", BACKTEST_ONE_MINUTE_FETCH_COUNT).catch(() => [])
+          shouldLoadOneMinutePrecision
+            ? fetchHistoryApiCandles("1m", BACKTEST_ONE_MINUTE_FETCH_COUNT).catch(() => [])
+            : Promise.resolve([])
         ];
 
         const [deepHistoryCandles, oneMinuteCandles] = await Promise.all(promises);
@@ -9425,7 +9533,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         if (replaySeedCandles.length < MIN_SEED_CANDLES) {
           const fallbackHistoryCandles = await fetchHistoryCandles(
             appliedBacktestSettings.timeframe,
-            recentOneMinutePromise
+            recentOneMinutePromise,
+            allowOneMinuteFallback
           ).catch(() => []);
 
           if (fallbackHistoryCandles.length >= MIN_SEED_CANDLES) {
@@ -9440,7 +9549,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           }));
         }
 
-        if (!cancelled && !isAlreadyOneMinute && oneMinuteCandles.length > 0) {
+        if (!cancelled && shouldLoadOneMinutePrecision && oneMinuteCandles.length > 0) {
           setBacktestOneMinuteSeriesMap((prev) => ({
             ...prev,
             [oneMinuteKey]: oneMinuteCandles
@@ -9461,6 +9570,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [
     appliedBacktestKey,
+    appliedBacktestSettings.minutePreciseEnabled,
     appliedBacktestSettings.symbol,
     appliedBacktestSettings.timeframe,
     backtestHasRun,
@@ -12009,22 +12119,36 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     try {
       const candleKey = symbolTimeframeKey(selectedSymbol, modelRunTimeframe);
+      const leadingBars = Math.max(chunkBars * 3, maxBarsInTrade + 24);
+      const targetBars = estimateHistoryBarsForDateRange(
+        startDate,
+        endDate,
+        modelRunTimeframe,
+        leadingBars
+      );
       let candles = seriesMap[candleKey] ?? backtestSeriesMap[candleKey] ?? EMPTY_CANDLES;
 
-      if (candles.length < 3) {
-        candles = await fetchHistoryCandles(modelRunTimeframe);
+      if (
+        candles.length < MIN_SEED_CANDLES ||
+        !candlesCoverDateRange(candles, modelRunTimeframe, startDate, endDate, leadingBars)
+      ) {
+        candles = await fetchHybridHistoryCandles(modelRunTimeframe, targetBars);
 
-        if (candles.length >= 3) {
+        if (candles.length >= MIN_SEED_CANDLES && candles.length > (seriesMap[candleKey]?.length ?? 0)) {
           setSeriesMap((current) => ({
-            ...current,
-            [candleKey]: candles
-          }));
-          setBacktestSeriesMap((current) => ({
             ...current,
             [candleKey]: candles
           }));
         }
       }
+
+      candles = filterCandlesToDateRange(
+        candles,
+        modelRunTimeframe,
+        startDate,
+        endDate,
+        leadingBars
+      );
 
       if (candles.length < 3) {
         throw new Error("Not enough history was available to run this model.");
@@ -17778,6 +17902,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 title={activeModelRunEntry?.name ?? "Model Run"}
                 subtitle={`${selectedSymbol} · JSON replay run`}
                 size="xwide"
+                cardClassName="model-run-modal-card"
                 bodyClassName="model-run-modal-body"
                 open={Boolean(activeModelRunEntry)}
                 onClose={closeModelRunModal}
