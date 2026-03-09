@@ -101,7 +101,10 @@ const LIGHTWEIGHT_CHART_LINE_SPARSE_DOTTED: LineStyle = 4;
 const SETTINGS_STORAGE_KEY = "korra-settings";
 const PRESETS_STORAGE_KEY = "korra-presets";
 const TERMINAL_VIEW_STATE_STORAGE_KEY = "korra-terminal-view-state";
-const DEFAULT_COPYTRADE_ROUTE = "/settings/account";
+const DEFAULT_COPYTRADE_ROUTE_PATHNAME = "/settings/account";
+const DEFAULT_COPYTRADE_ROUTE_SEARCH = "?view=list";
+const DEFAULT_COPYTRADE_ROUTE =
+  `${DEFAULT_COPYTRADE_ROUTE_PATHNAME}${DEFAULT_COPYTRADE_ROUTE_SEARCH}`;
 const DIRECT_MT5_ADD_ACCOUNT_PATH = "/settings/account?view=add";
 type SavedPreset = { name: string; settings: Record<string, any>; savedAt: number };
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
@@ -159,6 +162,11 @@ const isBacktestTab = (value: unknown): value is BacktestTab => {
   return typeof value === "string" && BACKTEST_TAB_IDS.includes(value as BacktestTab);
 };
 
+const applyDefaultCopytradeRoute = (parsed: URL): void => {
+  parsed.pathname = DEFAULT_COPYTRADE_ROUTE_PATHNAME;
+  parsed.search = DEFAULT_COPYTRADE_ROUTE_SEARCH;
+};
+
 const normalizeCopytradeRestoredPath = (value: unknown): string => {
   if (typeof value !== "string" || !value.trim()) {
     return DEFAULT_COPYTRADE_ROUTE;
@@ -168,27 +176,24 @@ const normalizeCopytradeRestoredPath = (value: unknown): string => {
     const parsed = new URL(value, "https://korra.local");
 
     if (parsed.pathname === "/settings" || parsed.pathname === "/settings/") {
-      parsed.pathname = DEFAULT_COPYTRADE_ROUTE;
-      parsed.search = "";
+      applyDefaultCopytradeRoute(parsed);
     }
 
     if (parsed.pathname === "/settings/account-management") {
-      parsed.pathname = DEFAULT_COPYTRADE_ROUTE;
-      parsed.search = "";
+      applyDefaultCopytradeRoute(parsed);
     }
 
     if (parsed.pathname === "/tracking" || parsed.pathname === "/tracking/") {
-      parsed.pathname = DEFAULT_COPYTRADE_ROUTE;
-      parsed.search = "";
+      applyDefaultCopytradeRoute(parsed);
     }
 
     if (parsed.pathname === "/ftux-add-trade" || parsed.pathname === "/ftux-add-trade/") {
-      parsed.pathname = DEFAULT_COPYTRADE_ROUTE;
+      parsed.pathname = DEFAULT_COPYTRADE_ROUTE_PATHNAME;
       parsed.search = "?view=add";
     }
 
     if (parsed.pathname === "/ftux-add-trade/mt5" || parsed.pathname === "/ftux-add-trade/mt5/") {
-      parsed.pathname = DEFAULT_COPYTRADE_ROUTE;
+      parsed.pathname = DEFAULT_COPYTRADE_ROUTE_PATHNAME;
       parsed.search = "?view=add";
     }
 
@@ -196,8 +201,24 @@ const normalizeCopytradeRestoredPath = (value: unknown): string => {
       parsed.pathname === "/ftux-add-trade/mt5/sync" ||
       parsed.pathname === "/ftux-add-trade/mt5/sync/"
     ) {
-      parsed.pathname = DEFAULT_COPYTRADE_ROUTE;
+      parsed.pathname = DEFAULT_COPYTRADE_ROUTE_PATHNAME;
       parsed.search = "?view=add";
+    }
+
+    if (parsed.pathname.startsWith("/settings/account/")) {
+      applyDefaultCopytradeRoute(parsed);
+    }
+
+    if (parsed.pathname === DEFAULT_COPYTRADE_ROUTE_PATHNAME) {
+      const view = String(parsed.searchParams.get("view") || "").trim().toLowerCase();
+      const accountId = String(parsed.searchParams.get("accountId") || "").trim();
+      const providerAccountId = String(parsed.searchParams.get("providerAccountId") || "").trim();
+      const isAccountSpecificView =
+        view === "statistics" || accountId.length > 0 || providerAccountId.length > 0;
+
+      if (isAccountSpecificView) {
+        applyDefaultCopytradeRoute(parsed);
+      }
     }
 
     const isAllowedRoute =
@@ -13435,7 +13456,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       parsed.searchParams.set("seed", String(copytradeDashboardVersion));
       return parsed.pathname + parsed.search + parsed.hash;
     } catch {
-      return `/settings/account?seed=${encodeURIComponent(String(copytradeDashboardVersion))}`;
+      return `${DEFAULT_COPYTRADE_ROUTE}&seed=${encodeURIComponent(
+        String(copytradeDashboardVersion)
+      )}`;
     }
   }, [copytradeDashboardVersion]);
 

@@ -5014,34 +5014,6 @@ button {
   cursor: not-allowed;
 }
 
-.ai-quick-prompts {
-  padding: 0.48rem 0.64rem 0.56rem;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.38rem;
-  overflow-x: visible;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.ai-quick-btn {
-  border: 1px solid rgba(98, 123, 181, 0.42);
-  background: rgba(18, 28, 43, 0.8);
-  color: #c6d2ea;
-  border-radius: 999px;
-  padding: 0.28rem 0.56rem;
-  font-size: 0.62rem;
-  line-height: 1.2;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
-}
-
-.ai-quick-btn:hover {
-  background: rgba(30, 47, 74, 0.85);
-  border-color: rgba(124, 149, 204, 0.72);
-  color: #deebff;
-}
-
 .ai-thread {
   min-height: 0;
   flex: 1 1 auto;

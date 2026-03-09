@@ -1386,6 +1386,10 @@ const injectedScript = `
   let lastEmbeddedPath =
     localStorage.getItem(${JSON.stringify(COPYTRADE_LAST_ROUTE_STORAGE_KEY)}) ||
     (window.location.pathname + window.location.search + window.location.hash);
+  const DEFAULT_COPYTRADE_ROUTE_PATHNAME = "/settings/account";
+  const DEFAULT_COPYTRADE_ROUTE_SEARCH = "?view=list";
+  const DEFAULT_COPYTRADE_ROUTE =
+    DEFAULT_COPYTRADE_ROUTE_PATHNAME + DEFAULT_COPYTRADE_ROUTE_SEARCH;
   const DIRECT_MT5_ADD_ACCOUNT_PATH = "/settings/account?view=add";
   const KORRA_COPYTRADE_SHELL_ID = "korra-copytrade-shell";
   const KORRA_COPYTRADE_LIST_VIEW = "list";
@@ -1428,13 +1432,13 @@ const injectedScript = `
     }
 
     if (parsed.pathname === "/settings" || parsed.pathname === "/settings/") {
-      parsed.pathname = "/settings/account";
-      parsed.search = "";
+      parsed.pathname = DEFAULT_COPYTRADE_ROUTE_PATHNAME;
+      parsed.search = DEFAULT_COPYTRADE_ROUTE_SEARCH;
     }
 
     if (parsed.pathname === "/settings/account-management") {
-      parsed.pathname = "/settings/account";
-      parsed.search = "";
+      parsed.pathname = DEFAULT_COPYTRADE_ROUTE_PATHNAME;
+      parsed.search = DEFAULT_COPYTRADE_ROUTE_SEARCH;
     }
 
     if (parsed.pathname === "/ftux-add-trade" || parsed.pathname === "/ftux-add-trade/") {
@@ -5157,7 +5161,7 @@ const injectedScript = `
 
   const navigateToCopyTradeDashboard = () => {
     clearInlineMt5ConnectState();
-    window.location.assign("/settings/account?view=list");
+    window.location.assign(DEFAULT_COPYTRADE_ROUTE);
   };
 
   const queryInlineMt5FormControl = (selectors) => {
@@ -5679,7 +5683,8 @@ const injectedScript = `
     });
   };
 
-  const isCustomCopyTradeShellRoute = () => window.location.pathname === "/settings/account";
+  const isCustomCopyTradeShellRoute = () =>
+    window.location.pathname === DEFAULT_COPYTRADE_ROUTE_PATHNAME;
   document.documentElement.dataset.korraCopytradeActive = isCustomCopyTradeShellRoute()
     ? "true"
     : "false";
@@ -5721,7 +5726,7 @@ const injectedScript = `
   };
 
   const navigateToCustomCopyTradeHome = () => {
-    navigateEmbeddedPath("/settings/account?view=list");
+    navigateEmbeddedPath(DEFAULT_COPYTRADE_ROUTE);
   };
 
   const navigateToCustomCopyTradeStatistics = (accountId, providerAccountId) => {
