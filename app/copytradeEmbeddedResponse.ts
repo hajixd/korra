@@ -407,6 +407,7 @@ body {
   margin-left: auto;
   flex: 1 1 auto;
   min-width: 0;
+  flex-wrap: nowrap;
 }
 
 .korra-copytrade-shell__toolbarActionGroup {
@@ -416,7 +417,7 @@ body {
   gap: 10px;
   flex: 1 1 auto;
   min-width: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .korra-copytrade-shell__toolbarSelectWrap {
@@ -466,6 +467,7 @@ body {
 
 .korra-copytrade-shell__toolbarBack {
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .korra-copytrade-shell__presetSelect,
@@ -781,11 +783,11 @@ body {
 }
 
 .korra-copytrade-shell__heroValue--green {
-  color: #62f2b5;
+  color: #62f2b5 !important;
 }
 
 .korra-copytrade-shell__heroValue--red {
-  color: #ff9eaa;
+  color: #ff9eaa !important;
 }
 
 .korra-copytrade-shell__heroMeta {
@@ -797,10 +799,10 @@ body {
 
 .korra-copytrade-shell__chartCard {
   margin-top: 18px;
-  width: min(100%, 760px);
+  width: min(100%, 620px);
   margin-left: auto;
   margin-right: auto;
-  padding: 12px 14px 10px;
+  padding: 10px 12px 8px;
   border: 1px solid #202020;
   border-radius: 24px;
   background: rgba(0, 0, 0, 0.8);
@@ -1066,6 +1068,23 @@ body {
   color: #ff8f8f;
 }
 
+@media (max-width: 1120px) {
+  .korra-copytrade-shell__toolbarActions {
+    width: 100%;
+    flex-direction: column;
+    align-items: flex-end;
+  }
+
+  .korra-copytrade-shell__toolbarActionGroup {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .korra-copytrade-shell__toolbarBack {
+    margin-top: 2px;
+  }
+}
+
 @media (max-width: 900px) {
   #korra-copytrade-shell {
     padding: 16px 16px 24px;
@@ -1091,6 +1110,7 @@ body {
 
   .korra-copytrade-shell__toolbarBack {
     margin-left: 0;
+    margin-top: 0;
   }
 
   .korra-copytrade-shell__presetSelect,
@@ -6726,9 +6746,8 @@ const injectedScript = `
   };
 
   const buildEquityChartMarkup = (model, currency) => {
-    const balanceSeries = Array.isArray(model && model.balanceSeries) ? model.balanceSeries : [];
     const equitySeries = Array.isArray(model && model.equitySeries) ? model.equitySeries : [];
-    const allPoints = balanceSeries.concat(equitySeries).filter((point) => {
+    const allPoints = equitySeries.filter((point) => {
       return Number.isFinite(Number(point && point.time)) && Number.isFinite(Number(point && point.value));
     });
 
@@ -6736,7 +6755,7 @@ const injectedScript = `
       return (
         '<div class="korra-copytrade-shell__chartCard">' +
         '<div class="korra-copytrade-shell__chartHeader">' +
-        '<div><div class="korra-copytrade-shell__chartTitle">Balance</div>' +
+        '<div><div class="korra-copytrade-shell__chartTitle">Equity</div>' +
         '<div class="korra-copytrade-shell__chartSubtitle">No synchronized history yet.</div></div>' +
         "</div>" +
         "</div>"
@@ -6744,8 +6763,8 @@ const injectedScript = `
     }
 
     const width = 860;
-    const height = 148;
-    const padding = { top: 8, right: 14, bottom: 24, left: 60 };
+    const height = 126;
+    const padding = { top: 6, right: 12, bottom: 20, left: 52 };
     const times = allPoints.map((point) => Number(point.time));
     const values = allPoints.map((point) => Number(point.value));
     let minTime = Math.min.apply(null, times);
@@ -6831,16 +6850,6 @@ const injectedScript = `
         );
       })
       .join("");
-    const balancePath = buildChartPath(
-      balanceSeries,
-      width,
-      height,
-      padding,
-      minTime,
-      maxTime,
-      minValue,
-      maxValue
-    );
     const equityPath = buildChartPath(
       equitySeries,
       width,
@@ -6852,16 +6861,6 @@ const injectedScript = `
       maxValue
     );
     const interactivePointMap = new Map();
-    balanceSeries.forEach((point) => {
-      const time = Number(point && point.time);
-      if (!Number.isFinite(time)) {
-        return;
-      }
-      const key = String(time);
-      const entry = interactivePointMap.get(key) || { time };
-      entry.balance = Number(point && point.value);
-      interactivePointMap.set(key, entry);
-    });
     equitySeries.forEach((point) => {
       const time = Number(point && point.time);
       if (!Number.isFinite(time)) {
@@ -6907,11 +6906,9 @@ const injectedScript = `
       '<div class="korra-copytrade-shell__chartCard">' +
       '<div class="korra-copytrade-shell__chartHeader">' +
       '<div>' +
-      '<div class="korra-copytrade-shell__chartTitle">Balance</div>' +
+      '<div class="korra-copytrade-shell__chartTitle">Equity</div>' +
       "</div>" +
       '<div class="korra-copytrade-shell__chartLegend">' +
-      '<span class="korra-copytrade-shell__chartLegendItem"><span class="korra-copytrade-shell__chartLegendDot" style="background:#38bdf8;"></span>Balance' +
-      "</span>" +
       '<span class="korra-copytrade-shell__chartLegendItem"><span class="korra-copytrade-shell__chartLegendDot" style="background:#fb7185;"></span>Equity' +
       "</span>" +
       "</div>" +
@@ -6919,7 +6916,7 @@ const injectedScript = `
       '<div class="korra-copytrade-shell__chartStage" data-korra-chart-root="true" data-korra-chart-config="' +
       chartConfig +
       '">' +
-      '<svg class="korra-copytrade-shell__chartSvg" viewBox="0 0 860 148" role="img" aria-label="Account equity curve" data-korra-chart-svg="true">' +
+      '<svg class="korra-copytrade-shell__chartSvg" viewBox="0 0 860 126" role="img" aria-label="Account equity curve" data-korra-chart-svg="true">' +
       yAxisMarks +
       verticalMarks +
       '<line class="korra-copytrade-shell__chartGuideLine" data-korra-chart-guide="true" x1="' +
@@ -6932,16 +6929,8 @@ const injectedScript = `
       String(height - padding.bottom) +
       '" stroke="#a1a1aa" stroke-width="1" stroke-dasharray="3 3" opacity="0"></line>' +
       '<path d="' +
-      balancePath +
-      '" fill="none" stroke="#38bdf8" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"></path>' +
-      '<path d="' +
       equityPath +
       '" fill="none" stroke="#fb7185" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"></path>' +
-      '<circle class="korra-copytrade-shell__chartGuideDot" data-korra-chart-balance-dot="true" cx="' +
-      String(padding.left) +
-      '" cy="' +
-      String(padding.top) +
-      '" r="4" fill="#38bdf8" stroke="#020617" stroke-width="2" opacity="0"></circle>' +
       '<circle class="korra-copytrade-shell__chartGuideDot" data-korra-chart-equity-dot="true" cx="' +
       String(padding.left) +
       '" cy="' +
@@ -6960,7 +6949,6 @@ const injectedScript = `
       "</svg>" +
       '<div class="korra-copytrade-shell__chartTooltip" data-korra-chart-tooltip="true" aria-hidden="true">' +
       '<div class="korra-copytrade-shell__chartTooltipLabel" data-korra-chart-tooltip-label="true"></div>' +
-      '<div class="korra-copytrade-shell__chartTooltipRow"><span class="korra-copytrade-shell__chartTooltipSwatch" style="background:#38bdf8;"></span><span>Balance</span><span class="korra-copytrade-shell__chartTooltipValue" data-korra-chart-tooltip-balance="true"></span></div>' +
       '<div class="korra-copytrade-shell__chartTooltipRow"><span class="korra-copytrade-shell__chartTooltipSwatch" style="background:#fb7185;"></span><span>Equity</span><span class="korra-copytrade-shell__chartTooltipValue" data-korra-chart-tooltip-equity="true"></span></div>' +
       "</div>" +
       "</div>" +
@@ -7161,18 +7149,22 @@ const injectedScript = `
       Number.isFinite(Number(performanceModel.startingBalance))
         ? Number(performanceModel.currentBalance) - Number(performanceModel.startingBalance)
         : closedPnlValue;
+    const liveOpenProfitValue =
+      dashboard && dashboard.netOpenProfit != null && Number.isFinite(Number(dashboard.netOpenProfit))
+        ? Number(dashboard.netOpenProfit)
+        : null;
     const equityDeltaValue =
-      dashboard &&
-      Number.isFinite(Number(dashboard.equity)) &&
-      Number.isFinite(Number(dashboard.balance))
-        ? Number(dashboard.equity) - Number(dashboard.balance)
-        : dashboard && dashboard.netOpenProfit != null
-          ? Number(dashboard.netOpenProfit)
+      liveOpenProfitValue != null && liveOpenProfitValue !== 0
+        ? liveOpenProfitValue
+        : dashboard &&
+            Number.isFinite(Number(dashboard.equity)) &&
+            Number.isFinite(Number(dashboard.balance))
+          ? Number(dashboard.equity) - Number(dashboard.balance)
           : performanceModel &&
               Number.isFinite(Number(performanceModel.currentEquity)) &&
               Number.isFinite(Number(performanceModel.currentBalance))
             ? Number(performanceModel.currentEquity) - Number(performanceModel.currentBalance)
-            : null;
+            : liveOpenProfitValue;
     const balanceToneClass = resolveHeroToneClass(balanceDeltaValue);
     const equityToneClass = resolveHeroToneClass(equityDeltaValue);
     const closedPnlToneClass = resolveHeroToneClass(closedPnlValue);
