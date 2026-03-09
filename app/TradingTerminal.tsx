@@ -7359,6 +7359,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [minutePreciseEnabled, setMinutePreciseEnabled] = useState(false);
   const [selectedSurfaceTab, setSelectedSurfaceTab] = useState<SurfaceTab>("chart");
   const [selectedBacktestTab, setSelectedBacktestTab] = useState<BacktestTab>("mainStats");
+  const [terminalViewStateReady, setTerminalViewStateReady] = useState(false);
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(WORKSPACE_PANEL_DEFAULT_WIDTH);
   const [isWorkspacePanelResizing, setIsWorkspacePanelResizing] = useState(false);
@@ -7597,6 +7598,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   useEffect(() => {
     if (typeof window === "undefined") {
+      setTerminalViewStateReady(true);
       return;
     }
 
@@ -7620,11 +7622,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
     } catch {
       // Ignore corrupted persisted view state.
+    } finally {
+      setTerminalViewStateReady(true);
     }
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (typeof window === "undefined" || !terminalViewStateReady) {
       return;
     }
 
@@ -7639,7 +7643,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     } catch {
       // Ignore storage write failures.
     }
-  }, [selectedBacktestTab, selectedSurfaceTab]);
+  }, [selectedBacktestTab, selectedSurfaceTab, terminalViewStateReady]);
 
   useEffect(() => {
     setAiModelStates((current) => syncAiModelStates(current, availableAiModelNames));
@@ -16320,6 +16324,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       </header>
 
       <section className="surface-stage">
+        {!terminalViewStateReady ? (
+          <section
+            aria-label="workspace startup"
+            style={{
+              flex: 1,
+              minHeight: 0,
+              background: "#040404"
+            }}
+          />
+        ) : (
+          <>
         <div className={`surface-view ${selectedSurfaceTab === "chart" ? "" : "hidden"}`}>
           <section
             ref={workspaceRef}
@@ -20639,6 +20654,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             </div>
           </section>
         ) : null}
+          </>
+        )}
       </section>
 
       {statsRefreshOverlayVisible ? (

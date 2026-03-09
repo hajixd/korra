@@ -3319,28 +3319,59 @@ const injectedScript = `
       throw new Error("Native fetch is unavailable in this browser.");
     }
 
-    const response = await nativeFetch(path, {
-      cache: "no-store",
-      credentials: "same-origin",
-      ...init,
-      headers: {
-        Accept: "application/json",
-        ...(init && init.headers ? init.headers : {})
+    const requestInit = isObjectRecord(init) ? init : {};
+    const timeoutMs = Number(requestInit.timeoutMs || 0);
+    const requestHeaders = isObjectRecord(requestInit.headers) ? requestInit.headers : {};
+    const fetchInit = { ...requestInit };
+    delete fetchInit.timeoutMs;
+
+    const controller =
+      timeoutMs > 0 && typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timeoutId =
+      controller && timeoutMs > 0
+        ? window.setTimeout(() => {
+            controller.abort();
+          }, timeoutMs)
+        : 0;
+
+    try {
+      const response = await nativeFetch(path, {
+        cache: "no-store",
+        credentials: "same-origin",
+        ...fetchInit,
+        signal: controller ? controller.signal : fetchInit.signal,
+        headers: {
+          Accept: "application/json",
+          ...requestHeaders
+        }
+      });
+
+      const responseText = await response.text();
+      const payload = responseText ? parseJsonSafe(responseText, responseText) : null;
+
+      if (!response.ok) {
+        const message =
+          payload &&
+          isObjectRecord(payload) &&
+          typeof payload.error === "string" &&
+          payload.error.trim()
+            ? payload.error.trim()
+            : responseText || "Request failed.";
+        throw new Error(message);
       }
-    });
 
-    const responseText = await response.text();
-    const payload = responseText ? parseJsonSafe(responseText, responseText) : null;
+      return payload;
+    } catch (error) {
+      if (controller && controller.signal.aborted) {
+        throw new Error("Request timed out. Please try again.");
+      }
 
-    if (!response.ok) {
-      const message =
-        payload && isObjectRecord(payload) && typeof payload.error === "string" && payload.error.trim()
-          ? payload.error.trim()
-          : responseText || "Request failed.";
-      throw new Error(message);
+      throw error;
+    } finally {
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
     }
-
-    return payload;
   };
 
   const readCopyTradeCredentialDraft = (credentialId) => {
@@ -4768,7 +4799,9 @@ const injectedScript = `
     listState.error = "";
     queueEmbeddedUiRefresh();
 
-    const promise = requestLocalJson("/api/copytrade/accounts?includeSummary=1")
+    const promise = requestLocalJson("/api/copytrade/accounts?includeSummary=1", {
+      timeoutMs: 12000
+    })
       .then((payload) => {
         listState.data = payload;
         listState.fetchedAt = Date.now();
@@ -4810,7 +4843,10 @@ const injectedScript = `
     queueEmbeddedUiRefresh();
 
     const promise = requestLocalJson(
-      "/api/copytrade/accounts/" + encodeURIComponent(String(accountId || "")) + "/dashboard"
+      "/api/copytrade/accounts/" + encodeURIComponent(String(accountId || "")) + "/dashboard",
+      {
+        timeoutMs: 15000
+      }
     )
       .then((payload) => {
         entry.data = payload;
@@ -6309,7 +6345,7 @@ const injectedScript = `
       void loadCustomCopyTradeDashboard(resolvedAccountId);
     }
 
-    if (!account && (detailEntry.loading || store.list.loading)) {
+    if (!account && (detailEntry.loading || store.list.loading) && !detailError) {
       return (
         buildStatisticsHeaderMarkup(
           {
@@ -6441,6 +6477,10 @@ const injectedScript = `
           escapeHtml(detailError) +
           "</div>"
         : "";
+    const loadingMarkup =
+      detailEntry.loading && !dashboard
+        ? '<div class="korra-copytrade-shell__message">Refreshing account...</div>'
+        : "";
     const positions = Array.isArray(dashboard && dashboard.openPositions)
       ? dashboard.openPositions
       : [];
@@ -6480,6 +6520,7 @@ const injectedScript = `
 
     return (
       header +
+      loadingMarkup +
       errorMarkup +
       controlsMarkup +
       metricsMarkup +
@@ -6488,9 +6529,7 @@ const injectedScript = `
       positionsMarkup +
       "</div>" +
       "</div>" +
-      (detailEntry.loading
-        ? buildCustomCopyTradeLoadingOverlayMarkup("Loading account...")
-        : formState && formState.pending
+      (formState && formState.pending
           ? buildCustomCopyTradeLoadingOverlayMarkup("Saving settings...")
           : formState && formState.pausePending
             ? buildCustomCopyTradeLoadingOverlayMarkup("Updating account...")
