@@ -4683,6 +4683,11 @@ const injectedScript = `
           pending: false,
           error: "",
           success: ""
+        },
+        summaryStream: {
+          source: null,
+          connected: false,
+          lastEventAt: 0
         }
       };
     }
@@ -4713,8 +4718,174 @@ const injectedScript = `
         success: ""
       };
     }
+    if (!isObjectRecord(store.summaryStream)) {
+      store.summaryStream = {
+        source: null,
+        connected: false,
+        lastEventAt: 0
+      };
+    }
 
     return store;
+  };
+
+  const getCustomCopyTradeSummaryStreamState = () => {
+    const store = getCustomCopyTradeStore();
+    if (!isObjectRecord(store.summaryStream)) {
+      store.summaryStream = {
+        source: null,
+        connected: false,
+        lastEventAt: 0
+      };
+    }
+    return store.summaryStream;
+  };
+
+  const upsertCustomCopyTradeSummaryItem = (payload, accountId, providerAccountId, summary) => {
+    if (!isObjectRecord(payload)) {
+      return false;
+    }
+
+    const normalizedAccountId = String(accountId || "").trim();
+    const normalizedProviderAccountId = String(providerAccountId || "").trim();
+    if (!normalizedAccountId && !normalizedProviderAccountId) {
+      return false;
+    }
+
+    const nextItem = {
+      accountId: normalizedAccountId,
+      summary
+    };
+    const currentItems = Array.isArray(payload.summaries) ? payload.summaries.slice() : [];
+    const itemIndex = currentItems.findIndex((item) => {
+      if (!isObjectRecord(item)) {
+        return false;
+      }
+      if (String(item.accountId || "").trim() === normalizedAccountId) {
+        return true;
+      }
+      const itemProviderAccountId =
+        item.summary && isObjectRecord(item.summary)
+          ? String(item.summary.providerAccountId || "").trim()
+          : "";
+      return normalizedProviderAccountId && itemProviderAccountId === normalizedProviderAccountId;
+    });
+
+    if (itemIndex >= 0) {
+      currentItems[itemIndex] = nextItem;
+    } else {
+      currentItems.push(nextItem);
+    }
+
+    payload.summaries = currentItems;
+    return true;
+  };
+
+  const applyCustomCopyTradeLiveSummary = (payload) => {
+    if (!isObjectRecord(payload)) {
+      return;
+    }
+
+    const accountId = String(payload.accountId || "").trim();
+    const providerAccountId = String(payload.providerAccountId || "").trim();
+    const summary = isObjectRecord(payload.summary) ? payload.summary : null;
+
+    if (!summary) {
+      return;
+    }
+
+    const store = getCustomCopyTradeStore();
+    let changed = false;
+
+    if (isObjectRecord(store.list.data)) {
+      changed =
+        upsertCustomCopyTradeSummaryItem(store.list.data, accountId, providerAccountId, summary) ||
+        changed;
+    }
+
+    const detailEntry = accountId ? getCustomCopyTradeDetailEntry(accountId) : null;
+    if (
+      detailEntry &&
+      isObjectRecord(detailEntry.data) &&
+      isObjectRecord(detailEntry.data.dashboard)
+    ) {
+      const dashboard = detailEntry.data.dashboard;
+      dashboard.providerAccountId = String(summary.providerAccountId || providerAccountId || "");
+      dashboard.login = String(summary.login || dashboard.login || "");
+      dashboard.server = String(summary.server || dashboard.server || "");
+      dashboard.broker = summary.broker ?? dashboard.broker ?? null;
+      dashboard.currency = String(summary.currency || dashboard.currency || "USD");
+      dashboard.balance = summary.balance ?? null;
+      dashboard.equity = summary.equity ?? null;
+      dashboard.tradeAllowed =
+        typeof summary.tradeAllowed === "boolean" ? summary.tradeAllowed : null;
+      dashboard.netOpenProfit = Number(summary.netOpenProfit || 0);
+      dashboard.openPositionsCount = Number(summary.openPositionsCount || 0);
+      dashboard.lastSyncedAt = Number(summary.lastSyncedAt || Date.now());
+      changed = true;
+    }
+
+    if (changed) {
+      queueEmbeddedUiRefresh();
+    }
+  };
+
+  const ensureCustomCopyTradeSummaryStream = () => {
+    if (typeof window.EventSource !== "function") {
+      return;
+    }
+
+    const streamState = getCustomCopyTradeSummaryStreamState();
+    if (streamState.source instanceof EventSource) {
+      return;
+    }
+
+    const source = new EventSource("/api/copytrade/accounts/stream");
+    streamState.source = source;
+    streamState.connected = false;
+
+    source.addEventListener("ready", () => {
+      streamState.connected = true;
+      streamState.lastEventAt = Date.now();
+    });
+
+    source.addEventListener("summary", (event) => {
+      streamState.connected = true;
+      streamState.lastEventAt = Date.now();
+
+      try {
+        const payload = JSON.parse(String(event.data || "{}"));
+        applyCustomCopyTradeLiveSummary(payload);
+      } catch {
+        // Ignore malformed live updates and keep the snapshot flow active.
+      }
+    });
+
+    source.addEventListener("idle", () => {
+      streamState.connected = true;
+      streamState.lastEventAt = Date.now();
+    });
+
+    source.onerror = () => {
+      streamState.connected = false;
+      if (source.readyState === EventSource.CLOSED && streamState.source === source) {
+        streamState.source = null;
+        window.setTimeout(() => {
+          if (isCustomCopyTradeShellRoute()) {
+            ensureCustomCopyTradeSummaryStream();
+          }
+        }, 3000);
+      }
+    };
+  };
+
+  const teardownCustomCopyTradeSummaryStream = () => {
+    const streamState = getCustomCopyTradeSummaryStreamState();
+    if (streamState.source instanceof EventSource) {
+      streamState.source.close();
+    }
+    streamState.source = null;
+    streamState.connected = false;
   };
 
   const getCustomCopyTradeAddFormState = () => {
@@ -4828,13 +4999,20 @@ const injectedScript = `
     listState.error = "";
     queueEmbeddedUiRefresh();
 
-    const promise = requestLocalJson("/api/copytrade/accounts?includeSummary=1", {
+    const promise = requestLocalJson("/api/copytrade/accounts", {
       timeoutMs: 12000
     })
       .then((payload) => {
         listState.data = payload;
         listState.fetchedAt = Date.now();
         listState.error = "";
+        if (isCustomCopyTradeShellRoute()) {
+          teardownCustomCopyTradeSummaryStream();
+          const routeState = readCustomCopyTradeViewState();
+          if (routeState.view !== KORRA_COPYTRADE_ADD_VIEW) {
+            ensureCustomCopyTradeSummaryStream();
+          }
+        }
         return payload;
       })
       .catch((error) => {
@@ -5276,7 +5454,7 @@ const injectedScript = `
       throw new Error("Missing copy-trade account id.");
     }
 
-    const confirmed = window.confirm("Delete this MT5 account?");
+    const confirmed = window.confirm("Hide this MT5 account?");
     if (!confirmed) {
       return false;
     }
@@ -5750,7 +5928,7 @@ const injectedScript = `
           '<div class="korra-copytrade-shell__rowAction">' +
           '<button class="korra-copytrade-shell__button korra-copytrade-shell__button--danger" data-korra-action="delete-account" data-account-id="' +
           escapeHtml(String(account.id)) +
-          '">Delete</button>' +
+          '">Hide</button>' +
           "</div>" +
           "</div>"
         );
@@ -5767,7 +5945,7 @@ const injectedScript = `
       '<div class="korra-copytrade-shell__cell korra-copytrade-shell__headCell--numeric">Positions</div>' +
       '<div class="korra-copytrade-shell__cell">Connection</div>' +
       '<div class="korra-copytrade-shell__cell">Trading</div>' +
-      '<div class="korra-copytrade-shell__cell korra-copytrade-shell__headCell--action">Delete</div>' +
+      '<div class="korra-copytrade-shell__cell korra-copytrade-shell__headCell--action">Hide</div>' +
       "</div>" +
       rows +
       "</div>" +
@@ -6551,7 +6729,7 @@ const injectedScript = `
               const store = getCustomCopyTradeStore();
               if (isObjectRecord(store.list)) {
                 store.list.error = String(
-                  (error && error.message) || error || "Failed to delete account."
+                  (error && error.message) || error || "Failed to hide account."
                 );
               }
               queueEmbeddedUiRefresh();
@@ -6655,6 +6833,7 @@ const injectedScript = `
   const renderCustomCopyTradeShell = () => {
     const existingShell = document.getElementById(KORRA_COPYTRADE_SHELL_ID);
     if (!isCustomCopyTradeShellRoute()) {
+      teardownCustomCopyTradeSummaryStream();
       if (existingShell) {
         existingShell.remove();
       }
@@ -6665,6 +6844,9 @@ const injectedScript = `
 
     const shell = ensureCustomCopyTradeShell();
     const routeState = readCustomCopyTradeViewState();
+    if (routeState.view !== KORRA_COPYTRADE_ADD_VIEW) {
+      ensureCustomCopyTradeSummaryStream();
+    }
     const markup =
       routeState.view === KORRA_COPYTRADE_STATS_VIEW
         ? buildCustomCopyTradeStatisticsMarkup(

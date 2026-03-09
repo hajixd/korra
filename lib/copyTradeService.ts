@@ -6,7 +6,8 @@ import {
   deleteMetaApiAccountById,
   ensureMetaApiAccount,
   getMetaApiAccountSnapshotById,
-  listMetaApiAccountSnapshots
+  listMetaApiAccountSnapshots,
+  undeployMetaApiAccountById
 } from "./metaApiCloud";
 
 export type CopyTradeAccountStatus = "Connected" | "Disconnected" | "Error";
@@ -29,6 +30,7 @@ type CopyTradeAccountRecord = {
   login: string;
   server: string;
   encryptedPassword: string;
+  hidden?: boolean;
   provider?: CopyTradeAccountProvider;
   providerAccountId?: string | null;
   providerState?: string | null;
@@ -107,7 +109,10 @@ const configuredMaxAccounts = Math.trunc(
   Number(process.env.COPYTRADE_MAX_ACCOUNTS ?? process.env.METAAPI_MAX_ACCOUNTS ?? "100")
 );
 export const COPYTRADE_MAX_ACCOUNTS =
-  Number.isFinite(configuredMaxAccounts) && configuredMaxAccounts > 0 ? configuredMaxAccounts : 100;
+  Math.min(
+    2,
+    Number.isFinite(configuredMaxAccounts) && configuredMaxAccounts > 0 ? configuredMaxAccounts : 2
+  );
 
 const configuredDataDir = process.env.COPYTRADE_DATA_DIR?.trim();
 const isReadOnlyServerlessFs =
@@ -347,6 +352,14 @@ const mapProviderStatusToCopyStatus = (
   return "Disconnected";
 };
 
+const isHiddenAccount = (account: Pick<CopyTradeAccountRecord, "hidden">): boolean => {
+  return account.hidden === true;
+};
+
+const isVisibleAccount = (account: Pick<CopyTradeAccountRecord, "hidden">): boolean => {
+  return !isHiddenAccount(account);
+};
+
 const syncLocalBridgeRuntime = (
   account: CopyTradeAccountRecord
 ): { changed: boolean; errorMessage: string | null } => {
@@ -540,6 +553,7 @@ const reconcileMetaApiAccounts = async (state: CopyTradeState): Promise<boolean>
         login: normalizedLogin,
         server: normalizedServer,
         encryptedPassword: encryptPassword(""),
+        hidden: false,
         provider: "metaapi",
         providerAccountId,
         providerState: snapshot.state,
@@ -617,6 +631,7 @@ const toPublicAccount = (account: CopyTradeAccountRecord): CopyTradeAccountPubli
   const { encryptedPassword: _encryptedPassword, ...rest } = account;
   return {
     ...rest,
+    hidden: isHiddenAccount(account),
     provider: normalizeProvider(rest.provider),
     running: account.status === "Connected" && !account.paused
   };
@@ -627,7 +642,7 @@ export const listCopyTradeAccounts = async (): Promise<CopyTradeAccountPublic[]>
     const state = await loadState();
     let changed = await reconcileMetaApiAccounts(state);
 
-    for (const account of state.accounts) {
+    for (const account of state.accounts.filter(isVisibleAccount)) {
       try {
         const sync = await syncAccountProviderRuntime(account);
         if (sync.changed) {
@@ -655,7 +670,7 @@ export const listCopyTradeAccounts = async (): Promise<CopyTradeAccountPublic[]>
       await saveStateToDisk(state);
     }
 
-    return state.accounts.map(toPublicAccount);
+    return state.accounts.filter(isVisibleAccount).map(toPublicAccount);
   });
 };
 
@@ -668,7 +683,7 @@ export const listCopyTradeWorkerAccounts = async (): Promise<CopyTradeAccountWor
       await saveStateToDisk(state);
     }
 
-    return state.accounts.map((account) => {
+    return state.accounts.filter(isVisibleAccount).map((account) => {
       const { encryptedPassword, ...rest } = account;
       let password = "";
       try {
@@ -679,6 +694,7 @@ export const listCopyTradeWorkerAccounts = async (): Promise<CopyTradeAccountWor
 
       return {
         ...rest,
+        hidden: isHiddenAccount(account),
         provider: normalizeProvider(rest.provider),
         password
       };
@@ -691,14 +707,7 @@ export const createCopyTradeAccount = async (
 ): Promise<CopyTradeAccountPublic> => {
   return enqueue(async () => {
     const state = await loadState();
-    if (state.accounts.length >= COPYTRADE_MAX_ACCOUNTS) {
-      throw new Error(
-        `TradeCopier account limit reached (${COPYTRADE_MAX_ACCOUNTS}). Remove an account before adding another.`
-      );
-    }
-
     const now = Date.now();
-
     const login = normalizeLogin(input.login);
     const server = normalizeServer(input.server);
     const password = normalizePassword(input.password);
@@ -707,6 +716,51 @@ export const createCopyTradeAccount = async (
     if (!login || !server || !password) {
       throw new Error("MT5 login, password, and server are required.");
     }
+
+    const visibleAccounts = state.accounts.filter(isVisibleAccount);
+    const matchingHiddenAccount =
+      state.accounts.find(
+        (account) =>
+          isHiddenAccount(account) &&
+          normalizeProvider(account.provider) === provider &&
+          account.login === login &&
+          account.server === server
+      ) || null;
+    const reusableHiddenAccount =
+      matchingHiddenAccount ||
+      (provider === "local_bridge"
+        ? state.accounts.find(
+            (account) =>
+              isHiddenAccount(account) && normalizeProvider(account.provider) !== "metaapi"
+          ) || null
+        : null);
+
+    if (!reusableHiddenAccount && state.accounts.length >= COPYTRADE_MAX_ACCOUNTS) {
+      throw new Error(
+        `TradeCopier slot limit reached (${COPYTRADE_MAX_ACCOUNTS}). Restore a hidden slot or permanently purge one before adding another account.`
+      );
+    }
+
+    if (!reusableHiddenAccount && visibleAccounts.length >= COPYTRADE_MAX_ACCOUNTS) {
+      throw new Error(
+        `TradeCopier account limit reached (${COPYTRADE_MAX_ACCOUNTS}). Hide an account before adding another.`
+      );
+    }
+
+    if (
+      provider === "metaapi" &&
+      !matchingHiddenAccount &&
+      state.accounts.some(
+        (account) =>
+          isHiddenAccount(account) && normalizeProvider(account.provider) === "metaapi"
+      ) &&
+      state.accounts.length >= COPYTRADE_MAX_ACCOUNTS
+    ) {
+      throw new Error(
+        "Hidden MetaApi slots can only be restored for the same MT5 login/server. A different MT5 login still requires a new MetaApi account."
+      );
+    }
+
     let providerAccountId: string | null = null;
     let providerState: string | null = null;
     let providerConnectionStatus: string | null = null;
@@ -714,6 +768,10 @@ export const createCopyTradeAccount = async (
 
     if (provider === "metaapi") {
       const providerSnapshot = await ensureMetaApiAccount({
+        existingAccountId:
+          matchingHiddenAccount && matchingHiddenAccount.providerAccountId
+            ? matchingHiddenAccount.providerAccountId
+            : undefined,
         login,
         password,
         server,
@@ -732,47 +790,97 @@ export const createCopyTradeAccount = async (
       providerStatus = "Disconnected";
     }
 
-    const account: CopyTradeAccountRecord = {
-      id:
-        provider === "metaapi" && providerAccountId
-          ? buildMetaApiRuntimeId(providerAccountId)
-          : buildRuntimeId(),
-      login,
-      server,
-      encryptedPassword: encryptPassword(password),
-      provider,
-      providerAccountId,
-      providerState,
-      providerConnectionStatus,
-      status: providerStatus,
-      paused: false,
-      symbol: normalizeSymbol(input.symbol),
-      timeframe: normalizeTimeframe(input.timeframe),
-      lot: normalizeLot(input.lot),
-      aggressive: input.aggressive ?? true,
-      chunkBars: normalizeChunkBars(input.chunkBars),
-      dollarsPerMove: normalizeDollarsPerMove(input.dollarsPerMove),
-      tpDollars: normalizeUsdTarget(input.tpDollars, 1000),
-      slDollars: normalizeUsdTarget(input.slDollars, 1000),
-      maxConcurrentTrades: normalizeMaxConcurrentTrades(input.maxConcurrentTrades),
-      stopMode: normalizeStopMode(input.stopMode),
-      breakEvenTriggerPct: normalizePct(input.breakEvenTriggerPct, 50),
-      trailingStartPct: normalizePct(input.trailingStartPct, 50),
-      trailingDistPct: normalizePct(input.trailingDistPct, 30),
-      lastError:
-        providerStatus === "Error"
-          ? `MetaApi account state ${providerState} (${providerConnectionStatus})`
-          : null,
-      lastHeartbeatAt: provider === "local_bridge" ? null : Date.now(),
-      lastSignalId: null,
-      lastSignalSide: null,
-      lastActionAt: null,
-      openPosition: null,
-      createdAt: now,
-      updatedAt: now
-    };
+    const nextId =
+      provider === "metaapi" && providerAccountId
+        ? buildMetaApiRuntimeId(providerAccountId)
+        : reusableHiddenAccount?.id || buildRuntimeId();
 
-    state.accounts.unshift(account);
+    const account: CopyTradeAccountRecord = reusableHiddenAccount
+      ? {
+          ...reusableHiddenAccount,
+          id: nextId,
+          login,
+          server,
+          encryptedPassword: encryptPassword(password),
+          hidden: false,
+          provider,
+          providerAccountId,
+          providerState,
+          providerConnectionStatus,
+          status: providerStatus,
+          paused: false,
+          symbol: normalizeSymbol(input.symbol),
+          timeframe: normalizeTimeframe(input.timeframe),
+          lot: normalizeLot(input.lot),
+          aggressive: input.aggressive ?? true,
+          chunkBars: normalizeChunkBars(input.chunkBars),
+          dollarsPerMove: normalizeDollarsPerMove(input.dollarsPerMove),
+          tpDollars: normalizeUsdTarget(input.tpDollars, 1000),
+          slDollars: normalizeUsdTarget(input.slDollars, 1000),
+          maxConcurrentTrades: normalizeMaxConcurrentTrades(input.maxConcurrentTrades),
+          stopMode: normalizeStopMode(input.stopMode),
+          breakEvenTriggerPct: normalizePct(input.breakEvenTriggerPct, 50),
+          trailingStartPct: normalizePct(input.trailingStartPct, 50),
+          trailingDistPct: normalizePct(input.trailingDistPct, 30),
+          lastError:
+            providerStatus === "Error"
+              ? `MetaApi account state ${providerState} (${providerConnectionStatus})`
+              : null,
+          lastHeartbeatAt: provider === "local_bridge" ? null : Date.now(),
+          lastSignalId: null,
+          lastSignalSide: null,
+          lastActionAt: null,
+          openPosition: null,
+          updatedAt: now
+        }
+      : {
+          id: nextId,
+          login,
+          server,
+          encryptedPassword: encryptPassword(password),
+          hidden: false,
+          provider,
+          providerAccountId,
+          providerState,
+          providerConnectionStatus,
+          status: providerStatus,
+          paused: false,
+          symbol: normalizeSymbol(input.symbol),
+          timeframe: normalizeTimeframe(input.timeframe),
+          lot: normalizeLot(input.lot),
+          aggressive: input.aggressive ?? true,
+          chunkBars: normalizeChunkBars(input.chunkBars),
+          dollarsPerMove: normalizeDollarsPerMove(input.dollarsPerMove),
+          tpDollars: normalizeUsdTarget(input.tpDollars, 1000),
+          slDollars: normalizeUsdTarget(input.slDollars, 1000),
+          maxConcurrentTrades: normalizeMaxConcurrentTrades(input.maxConcurrentTrades),
+          stopMode: normalizeStopMode(input.stopMode),
+          breakEvenTriggerPct: normalizePct(input.breakEvenTriggerPct, 50),
+          trailingStartPct: normalizePct(input.trailingStartPct, 50),
+          trailingDistPct: normalizePct(input.trailingDistPct, 30),
+          lastError:
+            providerStatus === "Error"
+              ? `MetaApi account state ${providerState} (${providerConnectionStatus})`
+              : null,
+          lastHeartbeatAt: provider === "local_bridge" ? null : Date.now(),
+          lastSignalId: null,
+          lastSignalSide: null,
+          lastActionAt: null,
+          openPosition: null,
+          createdAt: now,
+          updatedAt: now
+        };
+
+    if (reusableHiddenAccount) {
+      const index = state.accounts.findIndex((candidate) => candidate.id === reusableHiddenAccount.id);
+      if (index >= 0) {
+        state.accounts[index] = account;
+      } else {
+        state.accounts.unshift(account);
+      }
+    } else {
+      state.accounts.unshift(account);
+    }
     await saveStateToDisk(state);
 
     return toPublicAccount(account);
@@ -1003,18 +1111,24 @@ export const setCopyTradeAccountPaused = async (
 export const deleteCopyTradeAccount = async (accountId: string): Promise<boolean> => {
   return enqueue(async () => {
     const state = await loadState();
-    const accountToRemove = state.accounts.find((account) => account.id === accountId) || null;
-    const nextAccounts = state.accounts.filter((account) => account.id !== accountId);
+    const accountToHide = state.accounts.find((account) => account.id === accountId) || null;
 
-    if (nextAccounts.length === state.accounts.length) {
+    if (!accountToHide) {
       return false;
     }
 
-    state.accounts = nextAccounts;
+    accountToHide.hidden = true;
+    accountToHide.paused = true;
+    accountToHide.lastError = null;
+    accountToHide.lastSignalId = null;
+    accountToHide.lastSignalSide = null;
+    accountToHide.lastActionAt = null;
+    accountToHide.openPosition = null;
+    accountToHide.updatedAt = Date.now();
     await saveStateToDisk(state);
 
-    if (normalizeProvider(accountToRemove?.provider) === "metaapi" && accountToRemove?.providerAccountId) {
-      await deleteMetaApiAccountById(accountToRemove.providerAccountId).catch(() => undefined);
+    if (normalizeProvider(accountToHide.provider) === "metaapi" && accountToHide.providerAccountId) {
+      await undeployMetaApiAccountById(accountToHide.providerAccountId).catch(() => undefined);
     }
 
     return true;
@@ -1043,7 +1157,7 @@ export const patchCopyTradeAccountRuntime = async (
     const state = await loadState();
     const account = state.accounts.find((candidate) => candidate.id === accountId);
 
-    if (!account) {
+    if (!account || isHiddenAccount(account)) {
       return null;
     }
 
@@ -1087,7 +1201,7 @@ export const getCopyTradeAccountById = async (
     let changed = await reconcileMetaApiAccounts(state);
     const account = state.accounts.find((candidate) => candidate.id === accountId);
 
-    if (!account) {
+    if (!account || isHiddenAccount(account)) {
       if (changed) {
         await saveStateToDisk(state);
       }
@@ -1122,6 +1236,7 @@ export const getCopyTradeAccountByLoginServer = async (
       state.accounts.find((candidate) => {
         const candidateProvider = normalizeProvider(candidate.provider);
         return (
+          isVisibleAccount(candidate) &&
           candidate.login === normalizedLogin &&
           candidate.server.trim().toLowerCase() === normalizedServer &&
           (!normalizedProvider || candidateProvider === normalizedProvider)

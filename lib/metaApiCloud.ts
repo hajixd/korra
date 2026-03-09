@@ -1,4 +1,4 @@
-import MetaApi from "metaapi.cloud-sdk/dist/index";
+import MetaApi, { SynchronizationListener } from "metaapi.cloud-sdk/dist/index";
 
 type MetaApiTradeSide = "BUY" | "SELL";
 
@@ -16,7 +16,9 @@ type MetaApiAccountLike = {
   reload: () => Promise<void>;
   update: (payload: Record<string, unknown>) => Promise<unknown>;
   remove: () => Promise<unknown>;
+  undeploy: () => Promise<unknown>;
   getRPCConnection: () => MetaApiRpcConnectionLike;
+  getStreamingConnection: () => MetaApiStreamingConnectionLike;
 };
 
 type MetaApiRpcConnectionLike = {
@@ -90,6 +92,29 @@ type MetaApiRpcConnectionLike = {
   }>;
 };
 
+type MetaApiStreamingConnectionLike = {
+  connect: () => Promise<void>;
+  waitSynchronized: (options?: {
+    timeoutInSeconds?: number;
+    intervalInMilliseconds?: number;
+  }) => Promise<unknown>;
+  close: () => Promise<void>;
+  addSynchronizationListener: (listener: SynchronizationListener) => void;
+  removeSynchronizationListener: (listener: SynchronizationListener) => void;
+  terminalState: {
+    accountInformation?: {
+      broker?: string;
+      currency?: string;
+      balance?: number;
+      equity?: number;
+      tradeAllowed?: boolean;
+    };
+    positions?: Array<{
+      profit?: number;
+    }>;
+  };
+};
+
 export type MetaApiAccountSnapshot = {
   id: string;
   login: string;
@@ -158,6 +183,10 @@ export type MetaApiAccountSummarySnapshot = {
   openPositionsCount: number;
   netOpenProfit: number;
   lastSyncedAt: number;
+};
+
+export type MetaApiAccountSummaryStreamHandle = {
+  close: () => Promise<void>;
 };
 
 type EnsureMetaApiAccountInput = {
@@ -341,6 +370,52 @@ const toAccountSnapshot = (account: MetaApiAccountLike): MetaApiAccountSnapshot 
   connectionStatus: String(account.connectionStatus || "UNKNOWN"),
   createdAt: account.createdAt instanceof Date ? account.createdAt.getTime() : null
 });
+
+const buildSummarySnapshot = (
+  account: MetaApiAccountLike,
+  accountInformation: {
+    broker?: string;
+    currency?: string;
+    balance?: number;
+    equity?: number;
+    tradeAllowed?: boolean;
+  } | null | undefined,
+  positionsResponse:
+    | Array<{
+        profit?: number;
+      }>
+    | null
+    | undefined
+): MetaApiAccountSummarySnapshot => {
+  const positions = Array.isArray(positionsResponse) ? positionsResponse : [];
+  const netOpenProfit = positions.reduce((sum, position) => {
+    const profit = Number(position?.profit);
+    return sum + (Number.isFinite(profit) ? profit : 0);
+  }, 0);
+
+  return {
+    providerAccountId: String(account.id),
+    login: String(account.login || ""),
+    server: String(account.server || ""),
+    broker:
+      typeof accountInformation?.broker === "string" && accountInformation.broker.trim()
+        ? accountInformation.broker
+        : null,
+    currency:
+      typeof accountInformation?.currency === "string" && accountInformation.currency.trim()
+        ? accountInformation.currency
+        : "USD",
+    balance: toFiniteOrNull(accountInformation?.balance),
+    equity: toFiniteOrNull(accountInformation?.equity),
+    tradeAllowed:
+      typeof accountInformation?.tradeAllowed === "boolean"
+        ? accountInformation.tradeAllowed
+        : null,
+    openPositionsCount: positions.length,
+    netOpenProfit,
+    lastSyncedAt: Date.now()
+  };
+};
 
 const isNotFoundError = (error: unknown): boolean => {
   const message = String((error as Error)?.message || "").toLowerCase();
@@ -566,6 +641,111 @@ export const deleteMetaApiAccountById = async (accountId: string): Promise<void>
   await account.remove();
 };
 
+export const undeployMetaApiAccountById = async (accountId: string): Promise<void> => {
+  const account = await getMetaApiAccountById(accountId);
+  if (!account) {
+    return;
+  }
+
+  await account.undeploy().catch(() => undefined);
+};
+
+export const openMetaApiAccountSummaryStream = async (
+  input: {
+    providerAccountId?: string;
+    credentials?: {
+      login: string;
+      password: string;
+      server: string;
+    };
+  },
+  onUpdate: (snapshot: MetaApiAccountSummarySnapshot) => void
+): Promise<MetaApiAccountSummaryStreamHandle> => {
+  const account = await resolveTradeAccount({
+    providerAccountId: input.providerAccountId,
+    credentials: input.credentials
+  });
+
+  await ensureAccountDeployed(account);
+
+  const connection = account.getStreamingConnection();
+  await connection.connect();
+  await connection.waitSynchronized({
+    timeoutInSeconds: 60,
+    intervalInMilliseconds: 1000
+  });
+
+  let closed = false;
+
+  const emitSnapshot = () => {
+    if (closed) {
+      return;
+    }
+
+    onUpdate(
+      buildSummarySnapshot(
+        account,
+        connection.terminalState?.accountInformation,
+        connection.terminalState?.positions
+      )
+    );
+  };
+
+  class SummaryStreamListener extends SynchronizationListener {
+    async onConnected(): Promise<void> {
+      emitSnapshot();
+    }
+
+    async onDisconnected(): Promise<void> {
+      emitSnapshot();
+    }
+
+    async onBrokerConnectionStatusChanged(): Promise<void> {
+      emitSnapshot();
+    }
+
+    async onAccountInformationUpdated(): Promise<void> {
+      emitSnapshot();
+    }
+
+    async onPositionsReplaced(): Promise<void> {
+      emitSnapshot();
+    }
+
+    async onPositionsUpdated(): Promise<void> {
+      emitSnapshot();
+    }
+
+    async onPositionUpdated(): Promise<void> {
+      emitSnapshot();
+    }
+
+    async onPositionRemoved(): Promise<void> {
+      emitSnapshot();
+    }
+
+    async onSymbolPricesUpdated(): Promise<void> {
+      emitSnapshot();
+    }
+  }
+
+  const listener = new SummaryStreamListener();
+  connection.addSynchronizationListener(listener);
+  emitSnapshot();
+
+  return {
+    close: async () => {
+      if (closed) {
+        return;
+      }
+
+      closed = true;
+      connection.removeSynchronizationListener(listener);
+      await connection.close().catch(() => undefined);
+    }
+  };
+};
+
 export const openMetaApiMarketPosition = async (
   input: MetaApiOrderInput
 ): Promise<{ positionTicket: number; filledPrice: number | null; providerAccountId: string }> => {
@@ -667,35 +847,7 @@ export const getMetaApiAccountSummary = async (input: {
           .catch((): Awaited<ReturnType<MetaApiRpcConnectionLike["getAccountInformation"]>> => ({})),
         rpc.getPositions({ refreshTerminalState: true }).catch(() => [])
       ]);
-
-      const positions = Array.isArray(positionsResponse) ? positionsResponse : [];
-      const netOpenProfit = positions.reduce((sum, position) => {
-        const profit = Number(position?.profit);
-        return sum + (Number.isFinite(profit) ? profit : 0);
-      }, 0);
-
-      return {
-        providerAccountId: String(account.id),
-        login: String(account.login || ""),
-        server: String(account.server || ""),
-        broker:
-          typeof accountInformation?.broker === "string" && accountInformation.broker.trim()
-            ? accountInformation.broker
-            : null,
-        currency:
-          typeof accountInformation?.currency === "string" && accountInformation.currency.trim()
-            ? accountInformation.currency
-            : "USD",
-        balance: toFiniteOrNull(accountInformation?.balance),
-        equity: toFiniteOrNull(accountInformation?.equity),
-        tradeAllowed:
-          typeof accountInformation?.tradeAllowed === "boolean"
-            ? accountInformation.tradeAllowed
-            : null,
-        openPositionsCount: positions.length,
-        netOpenProfit,
-        lastSyncedAt: Date.now()
-      } satisfies MetaApiAccountSummarySnapshot;
+      return buildSummarySnapshot(account, accountInformation, positionsResponse);
     });
   });
 };
