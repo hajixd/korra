@@ -517,6 +517,12 @@ html[data-korra-copytrade-active="true"] #root {
   white-space: nowrap;
 }
 
+.korra-copytrade-shell__toolbarSideColumn .korra-copytrade-shell__toolbarBack {
+  width: 180px;
+  box-sizing: border-box;
+  text-align: center;
+}
+
 .korra-copytrade-shell__toolbarActions--stats {
   flex: 0 0 auto;
   flex-direction: column;
@@ -6951,7 +6957,7 @@ const injectedScript = `
       escapeHtml(accountId) +
       '" data-provider-account-id="' +
       escapeHtml(providerAccountId) +
-      '">Detailed Statics</button>';
+      '">Detailed Statistics</button>';
 
     return (
       '<div class="korra-copytrade-shell__toolbar">' +
@@ -8150,8 +8156,8 @@ const injectedScript = `
           "</div>"
         : "";
     const loadingMarkup =
-      detailEntry.loading && !dashboard
-        ? '<div class="korra-copytrade-shell__message">Refreshing account...</div>'
+      detailEntry.loading
+        ? buildCustomCopyTradeLoadingOverlayMarkup(dashboard ? "Refreshing account..." : "Loading account...")
         : "";
     const positions = Array.isArray(dashboard && dashboard.openPositions)
       ? dashboard.openPositions
