@@ -1477,20 +1477,16 @@ button {
   flex-wrap: wrap;
 }
 
-.models-surface-meta-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 34px;
-  padding: 0.28rem 0.7rem;
-  border-radius: 999px;
-  border: 1px solid rgba(88, 166, 255, 0.28);
-  background: linear-gradient(135deg, rgba(26, 58, 97, 0.78), rgba(14, 25, 44, 0.92));
-  color: rgba(216, 233, 255, 0.96);
-  font-size: 0.64rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.models-surface-status {
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.models-surface-status-success {
+  color: rgba(201, 255, 234, 0.9);
+}
+
+.models-surface-status-error {
+  color: rgba(255, 202, 202, 0.9);
 }
 
 .models-library-grid {
@@ -1506,11 +1502,6 @@ button {
   background:
     radial-gradient(120% 120% at 0% 0%, rgba(33, 71, 117, 0.18), transparent 58%),
     linear-gradient(180deg, rgba(9, 14, 21, 0.96), rgba(6, 10, 15, 0.98));
-}
-
-.models-library-card.is-active {
-  border-color: rgba(16, 185, 129, 0.28);
-  box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.08);
 }
 
 .models-library-card-head {
@@ -1540,62 +1531,15 @@ button {
   letter-spacing: 0.02em;
 }
 
+.models-library-download-btn {
+  flex-shrink: 0;
+}
+
 .models-library-card-copy p {
   margin: 0;
   color: rgba(214, 223, 238, 0.78);
   font-size: 0.67rem;
   line-height: 1.55;
-}
-
-.models-library-state {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0.16rem 0.46rem;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  font-size: 0.56rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-}
-
-.models-library-state-0 {
-  border-color: rgba(148, 163, 184, 0.24);
-  color: rgba(201, 210, 223, 0.76);
-  background: rgba(61, 74, 92, 0.24);
-}
-
-.models-library-state-1 {
-  border-color: rgba(88, 166, 255, 0.28);
-  color: rgba(205, 229, 255, 0.95);
-  background: rgba(27, 70, 122, 0.34);
-}
-
-.models-library-state-2 {
-  border-color: rgba(16, 185, 129, 0.3);
-  color: rgba(201, 255, 234, 0.96);
-  background: rgba(12, 78, 56, 0.42);
-}
-
-.models-library-chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.38rem;
-}
-
-.models-library-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.18rem 0.45rem;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(222, 232, 247, 0.76);
-  font-size: 0.55rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
 }
 
 .models-library-sections {
@@ -1637,23 +1581,32 @@ button {
 }
 
 .models-library-section li {
-  position: relative;
-  padding-left: 0.82rem;
+  display: grid;
+  gap: 0.24rem;
+  padding: 0.68rem 0.74rem;
+  border-radius: 0.78rem;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
   color: rgba(223, 233, 246, 0.82);
   font-size: 0.65rem;
   line-height: 1.48;
 }
 
 .models-library-section li::before {
-  content: "";
-  position: absolute;
-  left: 0.05rem;
-  top: 0.45rem;
-  width: 0.34rem;
-  height: 0.34rem;
-  border-radius: 999px;
-  background: linear-gradient(135deg, rgba(88, 166, 255, 0.96), rgba(16, 185, 129, 0.9));
-  box-shadow: 0 0 0 4px rgba(88, 166, 255, 0.08);
+  content: none;
+}
+
+.models-library-rule-label {
+  color: rgba(245, 249, 255, 0.96);
+  font-size: 0.56rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.models-library-rule-copy {
+  margin: 0;
+  color: rgba(223, 233, 246, 0.82);
 }
 
 @media (max-width: 960px) {

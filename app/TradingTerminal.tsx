@@ -53,7 +53,8 @@ import {
 import { normalizeChartActions } from "../lib/assistant-tools";
 import {
   STRATEGY_MODEL_CATALOG,
-  resolveStrategyRuntimeModelProfile
+  resolveStrategyRuntimeModelProfile,
+  type StrategyModelCatalogEntry
 } from "../lib/strategyCatalog";
 
 const loadRecharts = () => import("recharts");
@@ -104,6 +105,7 @@ const LIGHTWEIGHT_CHART_LINE_DOTTED: LineStyle = 1;
 const LIGHTWEIGHT_CHART_LINE_SPARSE_DOTTED: LineStyle = 4;
 const SETTINGS_STORAGE_KEY = "korra-settings";
 const PRESETS_STORAGE_KEY = "korra-presets";
+const UPLOADED_STRATEGY_MODELS_STORAGE_KEY = "korra-uploaded-strategy-models";
 const TERMINAL_VIEW_STATE_STORAGE_KEY = "korra-terminal-view-state";
 const DEFAULT_COPYTRADE_ROUTE_PATHNAME = "/settings/account";
 const DEFAULT_COPYTRADE_ROUTE_SEARCH = "?view=list";
@@ -140,6 +142,11 @@ type BacktestHeroStatCard = {
   tone: "up" | "down" | "neutral";
   meta: string;
   valueStyle?: CSSProperties;
+};
+type StrategyConditionGroup = {
+  id: string;
+  label: string;
+  items: string[];
 };
 
 const SURFACE_TAB_IDS: SurfaceTab[] = ["chart", "settings", "models", "backtest", "ai", "copytrade"];
@@ -2389,6 +2396,96 @@ const getNextAiModelState = (state: AiModelState, mouseButton: number): AiModelS
 
 const getNextAiFeatureLevel = (level: AiFeatureLevel): AiFeatureLevel => {
   return ((level + 1) % 5) as AiFeatureLevel;
+};
+
+const sanitizeStrategyTextList = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter((item) => item.length > 0);
+};
+
+const parseStrategyModelCatalogEntry = (value: unknown): StrategyModelCatalogEntry | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const entryRecord =
+    record.entry && typeof record.entry === "object"
+      ? (record.entry as Record<string, unknown>)
+      : null;
+  const exitRecord =
+    record.exit && typeof record.exit === "object" ? (record.exit as Record<string, unknown>) : null;
+  const id = typeof record.id === "string" ? record.id.trim() : "";
+  const name = typeof record.name === "string" ? record.name.trim() : "";
+  const description = typeof record.description === "string" ? record.description.trim() : "";
+
+  if (!id || !name || !description || !entryRecord || !exitRecord) {
+    return null;
+  }
+
+  const entry = {
+    context: sanitizeStrategyTextList(entryRecord.context),
+    setup: sanitizeStrategyTextList(entryRecord.setup),
+    trigger: sanitizeStrategyTextList(entryRecord.trigger),
+    confirmation: sanitizeStrategyTextList(entryRecord.confirmation),
+    invalidation: sanitizeStrategyTextList(entryRecord.invalidation),
+    noTrade: sanitizeStrategyTextList(entryRecord.noTrade)
+  };
+  const exit = {
+    stopLoss: sanitizeStrategyTextList(exitRecord.stopLoss),
+    takeProfit: sanitizeStrategyTextList(exitRecord.takeProfit),
+    timeExit: sanitizeStrategyTextList(exitRecord.timeExit),
+    earlyExit: sanitizeStrategyTextList(exitRecord.earlyExit)
+  };
+
+  if (
+    !Object.values(entry).some((items) => items.length > 0) ||
+    !Object.values(exit).some((items) => items.length > 0)
+  ) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    aliases: sanitizeStrategyTextList(record.aliases),
+    description,
+    entry,
+    exit
+  };
+};
+
+const buildStrategyConditionGroups = (
+  groups: Array<{ id: string; label: string; items: string[] }>
+): StrategyConditionGroup[] => {
+  return groups.filter((group) => group.items.length > 0);
+};
+
+const buildStrategyEntryConditionGroups = (
+  model: StrategyModelCatalogEntry
+): StrategyConditionGroup[] => {
+  return buildStrategyConditionGroups([
+    { id: "setup", label: "Setup", items: model.entry.setup },
+    { id: "trigger", label: "Trigger", items: model.entry.trigger },
+    { id: "confirm", label: "Confirm", items: model.entry.confirmation },
+    { id: "avoid", label: "Avoid", items: model.entry.noTrade }
+  ]);
+};
+
+const buildStrategyExitConditionGroups = (
+  model: StrategyModelCatalogEntry
+): StrategyConditionGroup[] => {
+  return buildStrategyConditionGroups([
+    { id: "stop", label: "Stop Loss", items: model.exit.stopLoss },
+    { id: "target", label: "Take Profit", items: model.exit.takeProfit },
+    { id: "time", label: "Time Exit", items: model.exit.timeExit },
+    { id: "early", label: "Early Exit", items: model.exit.earlyExit }
+  ]);
 };
 
 const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
@@ -7498,6 +7595,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [trailingDistPct, setTrailingDistPct] = useState(30);
   const [methodSettingsOpen, setMethodSettingsOpen] = useState(false);
   const [modelsModalOpen, setModelsModalOpen] = useState(false);
+  const [uploadedStrategyModels, setUploadedStrategyModels] = useState<StrategyModelCatalogEntry[]>([]);
+  const [uploadedStrategyModelsReady, setUploadedStrategyModelsReady] = useState(false);
+  const [modelsSurfaceNotice, setModelsSurfaceNotice] = useState("");
+  const [modelsSurfaceNoticeTone, setModelsSurfaceNoticeTone] = useState<
+    "neutral" | "success" | "error"
+  >("neutral");
   const [featuresModalOpen, setFeaturesModalOpen] = useState(false);
   const [librariesModalOpen, setLibrariesModalOpen] = useState(false);
   const [aiModelStates, setAiModelStates] = useState<Record<string, AiModelState>>(() => {
@@ -7816,6 +7919,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const chartBarIndexByGaplessTimeRef = useRef<Map<number, number>>(new Map());
   const workspaceRef = useRef<HTMLElement | null>(null);
   const settingsFileInputRef = useRef<HTMLInputElement | null>(null);
+  const modelsUploadInputRef = useRef<HTMLInputElement | null>(null);
   const presetMenuRef = useRef<HTMLDivElement | null>(null);
   const chartSourceLengthRef = useRef(0);
   const previousChartSourceLengthRef = useRef(0);
@@ -8360,29 +8464,26 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const availableAiLibraries = useMemo(() => {
     return aiLibraryDefs.filter((library) => !selectedAiLibraries.includes(library.id));
   }, [aiLibraryDefs, selectedAiLibraries]);
-  const modelsSurfaceEntries = useMemo(() => {
-    return STRATEGY_MODEL_CATALOG.map((catalogModel) => {
-      const matchingModelName =
-        availableAiModelNames.find((name) => {
-          const normalizedName = name.trim().toLowerCase();
-          return (
-            normalizedName === catalogModel.name.toLowerCase() ||
-            normalizedName === catalogModel.id.replace(/-/g, " ") ||
-            catalogModel.aliases.some((alias) => alias.toLowerCase() === normalizedName)
-          );
-        }) ?? catalogModel.name;
-      const state = aiModelStates[matchingModelName] ?? 0;
+  const modelsSurfaceCatalog = useMemo(() => {
+    const next = new Map<string, StrategyModelCatalogEntry>();
 
-      return {
-        ...catalogModel,
-        matchingModelName,
-        state
-      };
-    });
-  }, [aiModelStates, availableAiModelNames]);
-  const activeModelsSurfaceCount = useMemo(() => {
-    return modelsSurfaceEntries.filter((entry) => entry.state > 0).length;
-  }, [modelsSurfaceEntries]);
+    for (const model of STRATEGY_MODEL_CATALOG) {
+      next.set(model.id, model);
+    }
+
+    for (const model of uploadedStrategyModels) {
+      next.set(model.id, model);
+    }
+
+    return Array.from(next.values());
+  }, [uploadedStrategyModels]);
+  const modelsSurfaceEntries = useMemo(() => {
+    return modelsSurfaceCatalog.map((model) => ({
+      ...model,
+      entryConditionGroups: buildStrategyEntryConditionGroups(model),
+      exitConditionGroups: buildStrategyExitConditionGroups(model)
+    }));
+  }, [modelsSurfaceCatalog]);
 
   useEffect(() => {
     if (confidenceGateDisabled && confidenceThreshold !== 0) {
@@ -11748,12 +11849,127 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     e.target.value = "";
   }, [applySettings]);
 
+  const handleOpenModelUpload = useCallback(() => {
+    modelsUploadInputRef.current?.click();
+  }, []);
+
+  const handleUploadStrategyModels = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+
+    if (!files.length) {
+      return;
+    }
+
+    try {
+      const parsedModels: StrategyModelCatalogEntry[] = [];
+
+      for (const file of files) {
+        let parsedJson: unknown;
+
+        try {
+          parsedJson = JSON.parse(await file.text()) as unknown;
+        } catch {
+          throw new Error(`${file.name} is not valid JSON.`);
+        }
+
+        const parsedModel = parseStrategyModelCatalogEntry(parsedJson);
+
+        if (!parsedModel) {
+          throw new Error(`${file.name} is missing required Korra model fields.`);
+        }
+
+        parsedModels.push(parsedModel);
+      }
+
+      startTransition(() => {
+        setUploadedStrategyModels((current) => {
+          const next = new Map(current.map((model) => [model.id, model] as const));
+
+          for (const model of parsedModels) {
+            next.set(model.id, model);
+          }
+
+          return Array.from(next.values());
+        });
+        setModelsSurfaceNotice(
+          `Uploaded ${parsedModels.length} model${parsedModels.length === 1 ? "" : "s"}.`
+        );
+        setModelsSurfaceNoticeTone("success");
+      });
+    } catch (error) {
+      setModelsSurfaceNotice(error instanceof Error ? error.message : "Model upload failed.");
+      setModelsSurfaceNoticeTone("error");
+    } finally {
+      event.target.value = "";
+    }
+  }, []);
+
+  const handleDownloadStrategyModel = useCallback((model: StrategyModelCatalogEntry) => {
+    const blob = new Blob([JSON.stringify(model, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `${model.id}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
   useEffect(() => {
     try {
       const raw = localStorage.getItem(PRESETS_STORAGE_KEY);
       if (raw) setSavedPresets(JSON.parse(raw));
     } catch { /* corrupt */ }
   }, []);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(UPLOADED_STRATEGY_MODELS_STORAGE_KEY);
+
+      if (!raw) {
+        setUploadedStrategyModelsReady(true);
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as unknown;
+
+      if (!Array.isArray(parsed)) {
+        setUploadedStrategyModelsReady(true);
+        return;
+      }
+
+      const models = parsed
+        .map((entry) => parseStrategyModelCatalogEntry(entry))
+        .filter((entry): entry is StrategyModelCatalogEntry => entry !== null);
+
+      setUploadedStrategyModels(models);
+
+      if (models.length !== parsed.length) {
+        setModelsSurfaceNotice("Some saved uploaded models were skipped because they were invalid.");
+        setModelsSurfaceNoticeTone("error");
+      }
+    } catch {
+      setModelsSurfaceNotice("Saved uploaded models could not be restored.");
+      setModelsSurfaceNoticeTone("error");
+    } finally {
+      setUploadedStrategyModelsReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!uploadedStrategyModelsReady) {
+      return;
+    }
+
+    try {
+      localStorage.setItem(
+        UPLOADED_STRATEGY_MODELS_STORAGE_KEY,
+        JSON.stringify(uploadedStrategyModels)
+      );
+    } catch {
+      // Ignore storage quota failures and keep the in-memory model library usable.
+    }
+  }, [uploadedStrategyModels, uploadedStrategyModelsReady]);
 
   useEffect(() => {
     if (!presetMenuOpen) return;
@@ -17315,24 +17531,35 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <p>Structured entry and exit references for every model available in Korra.</p>
                     </div>
                     <div className="models-surface-overview-actions">
-                      <span className="models-surface-meta-pill">
-                        {activeModelsSurfaceCount} active / {modelsSurfaceEntries.length} total
-                      </span>
                       <button
                         type="button"
                         className="panel-action-btn"
-                        onClick={() => setModelsModalOpen(true)}
+                        onClick={handleOpenModelUpload}
                       >
-                        Edit States
+                        Upload Model
                       </button>
+                      <input
+                        ref={modelsUploadInputRef}
+                        type="file"
+                        accept=".json,application/json"
+                        onChange={handleUploadStrategyModels}
+                        style={{ display: "none" }}
+                      />
                     </div>
                   </div>
                   <div className="backtest-toolbar-note backtest-toolbar-note-stack">
                     <span className="backtest-toolbar-note-range">
-                      Left click in Settings opens model toggles. This tab is your clean reference library.
+                      Upload a model JSON to extend this library or replace a built-in definition by id.
                     </span>
-                    <span className="backtest-toolbar-note-meta">
-                      Entry and exit logic only, aligned to the site&apos;s current model catalog.
+                    <span
+                      className={`backtest-toolbar-note-meta${
+                        modelsSurfaceNotice
+                          ? ` models-surface-status models-surface-status-${modelsSurfaceNoticeTone}`
+                          : ""
+                      }`}
+                    >
+                      {modelsSurfaceNotice ||
+                        `${modelsSurfaceEntries.length} models in library / ${uploadedStrategyModels.length} uploaded`}
                     </span>
                   </div>
                 </div>
@@ -17361,67 +17588,51 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               {selectedSurfaceTab === "models" ? (
                 <div className="models-library-grid">
                   {modelsSurfaceEntries.map((model) => (
-                    <article
-                      key={model.id}
-                      className={`backtest-card models-library-card ${model.state > 0 ? "is-active" : ""}`}
-                    >
+                    <article key={model.id} className="backtest-card models-library-card">
                       <div className="models-library-card-head">
                         <div className="models-library-card-copy">
                           <div className="models-library-title-row">
                             <h3>{model.name}</h3>
-                            <span className={`models-library-state models-library-state-${model.state}`}>
-                              {getAiModelStateLabel(model.state)}
-                            </span>
                           </div>
                           <p>{model.description}</p>
                         </div>
-                      </div>
-
-                      <div className="models-library-chip-row" aria-label={`${model.name} aliases`}>
-                        {model.aliases.map((alias) => (
-                          <span key={`${model.id}-${alias}`} className="models-library-chip">
-                            {alias}
-                          </span>
-                        ))}
+                        <button
+                          type="button"
+                          className="panel-action-btn models-library-download-btn"
+                          onClick={() => handleDownloadStrategyModel(model)}
+                        >
+                          Download
+                        </button>
                       </div>
 
                       <div className="models-library-sections">
                         <section className="models-library-section">
                           <header>
                             <span>Entry</span>
-                            <small>Setup, trigger, confirmation</small>
+                            <small>{model.entryConditionGroups.length} condition groups</small>
                           </header>
                           <ul>
-                            {[
-                              ...model.entry.context,
-                              ...model.entry.setup,
-                              ...model.entry.trigger,
-                              ...model.entry.confirmation,
-                              ...model.entry.noTrade
-                            ]
-                              .slice(0, 6)
-                              .map((item, index) => (
-                                <li key={`${model.id}-entry-${index}`}>{item}</li>
-                              ))}
+                            {model.entryConditionGroups.map((group) => (
+                              <li key={`${model.id}-entry-${group.id}`}>
+                                <span className="models-library-rule-label">{group.label}</span>
+                                <p className="models-library-rule-copy">{group.items.join("; ")}</p>
+                              </li>
+                            ))}
                           </ul>
                         </section>
 
                         <section className="models-library-section">
                           <header>
                             <span>Exit</span>
-                            <small>Stop, target, time, early exit</small>
+                            <small>{model.exitConditionGroups.length} condition groups</small>
                           </header>
                           <ul>
-                            {[
-                              ...model.exit.stopLoss,
-                              ...model.exit.takeProfit,
-                              ...model.exit.timeExit,
-                              ...model.exit.earlyExit
-                            ]
-                              .slice(0, 6)
-                              .map((item, index) => (
-                                <li key={`${model.id}-exit-${index}`}>{item}</li>
-                              ))}
+                            {model.exitConditionGroups.map((group) => (
+                              <li key={`${model.id}-exit-${group.id}`}>
+                                <span className="models-library-rule-label">{group.label}</span>
+                                <p className="models-library-rule-copy">{group.items.join("; ")}</p>
+                              </li>
+                            ))}
                           </ul>
                         </section>
                       </div>
