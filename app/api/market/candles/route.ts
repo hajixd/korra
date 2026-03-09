@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { GET as getHistoryCandles } from "../../history/candles/route";
 
 const API_BASE = "https://trading-system-delta.vercel.app/api/public/candles";
 const ALLOWED_TIMEFRAMES = new Set(["M1", "M5", "M15", "M30", "H1", "H4", "D", "W", "M"]);
@@ -16,6 +17,81 @@ const ALLOWED_PAIRS = new Set([
   "BTC_USD"
 ]);
 const MAX_UPSTREAM_LIMIT = 10000;
+
+const buildHistoryFallbackRequest = (
+  request: Request,
+  pair: string,
+  timeframe: string,
+  limit: number
+) => {
+  const fallbackUrl = new URL(request.url);
+  fallbackUrl.pathname = "/api/history/candles";
+  fallbackUrl.searchParams.set("pair", pair);
+  fallbackUrl.searchParams.set("timeframe", timeframe);
+  fallbackUrl.searchParams.set("count", String(limit));
+  fallbackUrl.searchParams.delete("limit");
+  fallbackUrl.searchParams.delete("api_key");
+
+  return new Request(fallbackUrl.toString(), {
+    method: "GET",
+    headers: request.headers
+  });
+};
+
+const buildEmptyCandlesResponse = (
+  pair: string,
+  timeframe: string,
+  limit: number,
+  details?: string
+) =>
+  NextResponse.json(
+    {
+      pair,
+      timeframe,
+      count: 0,
+      requestedLimit: limit,
+      candles: [],
+      source: "market-fallback",
+      error: details || "Market feed unavailable."
+    },
+    {
+      status: 200,
+      headers: {
+        "Cache-Control": "no-store",
+        "X-Korra-Market-Source": "empty-fallback"
+      }
+    }
+  );
+
+const fallbackToHistory = async (
+  request: Request,
+  pair: string,
+  timeframe: string,
+  limit: number,
+  reason: string
+) => {
+  try {
+    const historyResponse = await getHistoryCandles(
+      buildHistoryFallbackRequest(request, pair, timeframe, limit)
+    );
+    const body = await historyResponse.text();
+
+    if (!historyResponse.ok) {
+      return buildEmptyCandlesResponse(pair, timeframe, limit, reason);
+    }
+
+    const headers = new Headers(historyResponse.headers);
+    headers.set("Cache-Control", "no-store");
+    headers.set("X-Korra-Market-Source", "history-fallback");
+    headers.set("X-Korra-Market-Reason", reason);
+    return new Response(body, {
+      status: historyResponse.status,
+      headers
+    });
+  } catch {
+    return buildEmptyCandlesResponse(pair, timeframe, limit, reason);
+  }
+};
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -62,12 +138,12 @@ export async function GET(request: Request) {
     const text = await response.text();
 
     if (!response.ok) {
-      return NextResponse.json(
-        {
-          error: `Upstream error ${response.status}`,
-          details: text.slice(0, 2000)
-        },
-        { status: response.status }
+      return fallbackToHistory(
+        request,
+        pair,
+        timeframe,
+        limit,
+        `upstream-${response.status}`
       );
     }
 
@@ -75,15 +151,20 @@ export async function GET(request: Request) {
       status: 200,
       headers: {
         "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        "X-Korra-Market-Source": "upstream",
         "X-RateLimit-Limit": response.headers.get("X-RateLimit-Limit") || "",
         "X-RateLimit-Remaining": response.headers.get("X-RateLimit-Remaining") || "",
         "X-RateLimit-Reset": response.headers.get("X-RateLimit-Reset") || ""
       }
     });
   } catch (error) {
-    return NextResponse.json(
-      { error: (error as Error).message || "Unknown error" },
-      { status: 500 }
+    return fallbackToHistory(
+      request,
+      pair,
+      timeframe,
+      limit,
+      (error as Error).message || "unknown-error"
     );
   }
 }

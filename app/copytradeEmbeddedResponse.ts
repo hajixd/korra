@@ -485,6 +485,20 @@ body {
   min-width: 0;
 }
 
+.korra-copytrade-shell__controlValue {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  border: 1px solid #1d1d1d;
+  border-radius: 10px;
+  background: #070707;
+  color: #f1f1f1;
+  padding: 0 10px;
+  font-size: 11px;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
 .korra-copytrade-shell__controlFieldLabel {
   font-size: 9px;
   line-height: 1.4;
@@ -5545,16 +5559,6 @@ const injectedScript = `
           escapeHtml(formState && formState.reconnectPending ? "Connecting..." : "Reconnect") +
           "</button>"
         : "";
-    const timeframeOptions = ["1m", "5m", "15m", "1H", "4H", "1D", "1W"]
-      .map((value) => {
-        const selected =
-          String(formState && formState.timeframe || "") === value
-            ? ' selected="selected"'
-            : "";
-        return '<option value="' + value + '"' + selected + ">" + value + "</option>";
-      })
-      .join("");
-
     return (
       '<div class="korra-copytrade-shell__controlCard">' +
       '<div class="korra-copytrade-shell__controlHeader">' +
@@ -5563,8 +5567,8 @@ const injectedScript = `
       '<div class="korra-copytrade-shell__controlSubtitle">' +
       escapeHtml(
         selectedPresetName
-          ? "Active settings preset: " + selectedPresetName
-          : "Use a saved preset or adjust the live account settings."
+          ? "Assigned settings preset for this account."
+          : "Load or save presets from the top-right toolbar."
       ) +
       "</div>" +
       "</div>" +
@@ -5587,61 +5591,14 @@ const injectedScript = `
       ) +
       "</button>" +
       reconnectButton +
-      '<button class="korra-copytrade-shell__button korra-copytrade-shell__button--primary" data-korra-action="save-account-settings" data-account-id="' +
-      escapeHtml(accountId) +
-      '">' +
-      escapeHtml(formState && formState.pending ? "Saving..." : "Save Changes") +
-      "</button>" +
       "</div>" +
       "</div>" +
       '<div class="korra-copytrade-shell__controlsGrid">' +
       '<label class="korra-copytrade-shell__controlField">' +
-      '<span class="korra-copytrade-shell__controlFieldLabel">Symbol</span>' +
-      '<input class="korra-copytrade-shell__controlInput" data-korra-account-id="' +
-      escapeHtml(accountId) +
-      '" data-korra-account-field="symbol" value="' +
-      escapeHtml(String(formState && formState.symbol || "")) +
-      '" />' +
-      "</label>" +
-      '<label class="korra-copytrade-shell__controlField">' +
-      '<span class="korra-copytrade-shell__controlFieldLabel">Timeframe</span>' +
-      '<select class="korra-copytrade-shell__controlSelect" data-korra-account-id="' +
-      escapeHtml(accountId) +
-      '" data-korra-account-field="timeframe">' +
-      timeframeOptions +
-      "</select>" +
-      "</label>" +
-      '<label class="korra-copytrade-shell__controlField">' +
-      '<span class="korra-copytrade-shell__controlFieldLabel">Lot</span>' +
-      '<input class="korra-copytrade-shell__controlInput" type="number" step="0.01" min="0.01" data-korra-account-id="' +
-      escapeHtml(accountId) +
-      '" data-korra-account-field="lot" value="' +
-      escapeHtml(String(formState && formState.lot || "")) +
-      '" />' +
-      "</label>" +
-      '<label class="korra-copytrade-shell__controlField">' +
-      '<span class="korra-copytrade-shell__controlFieldLabel">TP $</span>' +
-      '<input class="korra-copytrade-shell__controlInput" type="number" step="1" min="1" data-korra-account-id="' +
-      escapeHtml(accountId) +
-      '" data-korra-account-field="tpDollars" value="' +
-      escapeHtml(String(formState && formState.tpDollars || "")) +
-      '" />' +
-      "</label>" +
-      '<label class="korra-copytrade-shell__controlField">' +
-      '<span class="korra-copytrade-shell__controlFieldLabel">SL $</span>' +
-      '<input class="korra-copytrade-shell__controlInput" type="number" step="1" min="1" data-korra-account-id="' +
-      escapeHtml(accountId) +
-      '" data-korra-account-field="slDollars" value="' +
-      escapeHtml(String(formState && formState.slDollars || "")) +
-      '" />' +
-      "</label>" +
-      '<label class="korra-copytrade-shell__controlField">' +
-      '<span class="korra-copytrade-shell__controlFieldLabel">Max Trades</span>' +
-      '<input class="korra-copytrade-shell__controlInput" type="number" step="1" min="1" max="10" data-korra-account-id="' +
-      escapeHtml(accountId) +
-      '" data-korra-account-field="maxConcurrentTrades" value="' +
-      escapeHtml(String(formState && formState.maxConcurrentTrades || "")) +
-      '" />' +
+      '<span class="korra-copytrade-shell__controlFieldLabel">Preset</span>' +
+      '<div class="korra-copytrade-shell__controlValue">' +
+      escapeHtml(selectedPresetName || "No preset loaded") +
+      "</div>" +
       "</label>" +
       "</div>" +
       feedbackMarkup +
@@ -6642,10 +6599,14 @@ const injectedScript = `
         if (action === "load-preset") {
           const accountId = String(target.dataset.accountId || "").trim();
           const formState = getCustomCopyTradeAccountFormState(accountId, null);
-          applyCopyTradePresetToFormState(
-            accountId,
-            formState ? formState.selectedPresetName : ""
-          );
+          if (
+            applyCopyTradePresetToFormState(
+              accountId,
+              formState ? formState.selectedPresetName : ""
+            )
+          ) {
+            void saveCustomCopyTradeAccountSettings(accountId);
+          }
           return;
         }
 
