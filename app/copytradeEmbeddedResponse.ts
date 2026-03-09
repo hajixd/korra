@@ -437,14 +437,26 @@ html[data-korra-copytrade-active="true"] #root {
   flex: 0 0 auto;
 }
 
-.korra-copytrade-shell__toolbarSelectWrap {
+.korra-copytrade-shell__toolbarPresetMenu {
   position: relative;
+  min-width: 0;
+}
+
+.korra-copytrade-shell__toolbarSelectWrap {
   width: 132px;
   max-width: 132px;
   flex: 0 0 132px;
 }
 
-.korra-copytrade-shell__toolbarSelectWrap::after {
+.korra-copytrade-shell__toolbarPresetButton {
+  position: relative;
+  min-width: 132px;
+  justify-content: flex-start;
+  padding-right: 30px;
+  text-transform: none;
+}
+
+.korra-copytrade-shell__toolbarPresetButton::after {
   content: "";
   position: absolute;
   top: 50%;
@@ -457,22 +469,47 @@ html[data-korra-copytrade-active="true"] #root {
   pointer-events: none;
 }
 
-.korra-copytrade-shell__toolbarSelect {
-  appearance: none;
+.korra-copytrade-shell__toolbarPresetMenu--open .korra-copytrade-shell__toolbarPresetButton::after {
+  transform: translateY(-20%) rotate(-135deg);
+}
+
+.korra-copytrade-shell__toolbarPresetPopover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 172px;
+  padding: 6px;
+  border: 1px solid #202020;
+  border-radius: 14px;
+  background: #090909;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.38);
+  z-index: 24;
+}
+
+.korra-copytrade-shell__toolbarPresetOption {
   width: 100%;
-  min-height: 33px;
-  padding-right: 30px;
-  text-transform: none;
+  justify-content: flex-start;
+  border-color: transparent;
+  background: transparent;
+  padding-left: 10px;
+  padding-right: 10px;
 }
 
-.korra-copytrade-shell__toolbarSelect:focus {
-  outline: none;
-  border-color: #343434;
+.korra-copytrade-shell__toolbarPresetOption:hover {
+  background: #111111;
+  border-color: transparent;
 }
 
-.korra-copytrade-shell__toolbarSelect:disabled {
-  opacity: 0.55;
-  cursor: default;
+.korra-copytrade-shell__toolbarPresetOption--active {
+  background: #121212;
+  border-color: #262626;
+}
+
+.korra-copytrade-shell__toolbarPresetEmpty {
+  padding: 10px 12px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #7d7d7d;
 }
 
 .korra-copytrade-shell__toolbarBack {
@@ -1156,6 +1193,7 @@ html[data-korra-copytrade-active="true"] #root {
     width: 100%;
   }
 
+  .korra-copytrade-shell__toolbarPresetMenu,
   .korra-copytrade-shell__toolbarSelectWrap {
     width: 140px;
     max-width: 140px;
@@ -1232,6 +1270,7 @@ html[data-korra-copytrade-active="true"] #root {
   }
 
   .korra-copytrade-shell__toolbarActionGroup,
+  .korra-copytrade-shell__toolbarPresetMenu,
   .korra-copytrade-shell__toolbarSelectWrap,
   .korra-copytrade-shell__toolbarBack {
     width: 100%;
@@ -1950,11 +1989,17 @@ const injectedScript = `
   const filterTrades = (seed, searchParams) => {
     let trades = getSeedTrades(seed);
     const selectedAccounts = normalizeAccountSelection(searchParams);
-    if (
-      selectedAccounts.length > 0 &&
-      !selectedAccounts.includes(DEFAULT_LOCAL_ACCOUNT.id)
-    ) {
-      return [];
+    if (selectedAccounts.length > 0) {
+      const selectedAccountSet = new Set(
+        selectedAccounts.map((value) => String(value || "").trim()).filter(Boolean)
+      );
+      trades = trades.filter((trade) => {
+        const tradeAccountId = String(
+          trade &&
+          (trade.account_id || trade.accountId || trade.external_account_id || DEFAULT_LOCAL_ACCOUNT.id)
+        ).trim() || DEFAULT_LOCAL_ACCOUNT.id;
+        return selectedAccountSet.has(tradeAccountId);
+      });
     }
 
     const startDate = normalizeDateValue(getFilterValue(searchParams, "start_date") || getFilterValue(searchParams, "startDate"));
@@ -2022,16 +2067,33 @@ const injectedScript = `
   const filterDays = (seed, searchParams) => {
     const days = cloneJson(seed && seed.days && seed.days.days, []);
     const selectedAccounts = normalizeAccountSelection(searchParams);
-    if (
-      selectedAccounts.length > 0 &&
-      !selectedAccounts.includes(DEFAULT_LOCAL_ACCOUNT.id)
-    ) {
-      return [];
-    }
+    const selectedAccountSet =
+      selectedAccounts.length > 0
+        ? new Set(selectedAccounts.map((value) => String(value || "").trim()).filter(Boolean))
+        : null;
 
     const startDate = normalizeDateValue(getFilterValue(searchParams, "start_date") || getFilterValue(searchParams, "startDate"));
     const endDate = normalizeDateValue(getFilterValue(searchParams, "end_date") || getFilterValue(searchParams, "endDate"));
     return days.filter((day) => {
+      if (selectedAccountSet) {
+        const dayTrades = Array.isArray(day && day.trades) ? day.trades : [];
+        const dayAccountIds = dayTrades
+          .map((trade) =>
+            String(
+              trade &&
+              (trade.account_id || trade.accountId || trade.external_account_id || DEFAULT_LOCAL_ACCOUNT.id)
+            ).trim() || DEFAULT_LOCAL_ACCOUNT.id
+          );
+        const fallbackDayAccountId =
+          String(day && (day.account_id || day.accountId || "")).trim() || DEFAULT_LOCAL_ACCOUNT.id;
+        if (
+          !dayAccountIds.some((accountId) => selectedAccountSet.has(accountId)) &&
+          !selectedAccountSet.has(fallbackDayAccountId)
+        ) {
+          return false;
+        }
+      }
+
       const dayKey = normalizeDateValue(day.realized || day.day || "");
       if (startDate && dayKey < startDate) {
         return false;
@@ -2668,13 +2730,13 @@ const injectedScript = `
     };
   };
 
-  const createMockResult = (input, method) => {
+  const createMockResult = (input, method, seedOverride = null) => {
     const parsed = safeUrl(input);
     const path = parsed ? parsed.pathname : "";
     const normalizedPath = path.startsWith("/api/") ? path.slice(5) : path;
     const normalizedSegments = normalizedPath.split("/").filter(Boolean);
     const searchParams = parsed ? parsed.searchParams : new URLSearchParams();
-    const seed = readBacktestSeed();
+    const seed = seedOverride || readBacktestSeed();
     const logType = getFilterValue(searchParams, "log_type");
 
     if (path.endsWith("/validate_token")) {
@@ -3944,6 +4006,636 @@ const injectedScript = `
     }
   };
 
+  const LIVE_TRADEZELLA_SEED_CACHE_TTL_MS = 15_000;
+  const liveTradezellaSeedCache = new Map();
+
+  const getLiveTradezellaSelectedAccountIds = (searchParams) =>
+    normalizeAccountSelection(searchParams)
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .filter((value) => value !== DEFAULT_LOCAL_ACCOUNT.id);
+
+  const computeDirectionalPriceMove = (side, openPrice, closePrice) => {
+    const numericOpen = Number(openPrice);
+    const numericClose = Number(closePrice);
+    if (!Number.isFinite(numericOpen) || !Number.isFinite(numericClose)) {
+      return 0;
+    }
+
+    const rawMove = numericClose - numericOpen;
+    return String(side || "").toUpperCase() === "SELL" ? -rawMove : rawMove;
+  };
+
+  const buildLiveTradezellaExecutionRows = (
+    tradeId,
+    side,
+    symbol,
+    volume,
+    openPrice,
+    closePrice,
+    openIso,
+    closeIso,
+    profit
+  ) => {
+    const normalizedSide = String(side || "").toUpperCase() === "SELL" ? "SELL" : "BUY";
+    const openAction = normalizedSide === "SELL" ? "sell" : "buy";
+    const closeAction = normalizedSide === "SELL" ? "buy" : "sell";
+    const numericVolume = Number(volume) || 0;
+
+    return [
+      {
+        id: tradeId + ":open",
+        execution_id: tradeId + ":open",
+        action: openAction,
+        side: normalizedSide,
+        symbol,
+        quantity: numericVolume,
+        adjusted: 0,
+        price: Number(openPrice) || 0,
+        commission: 0,
+        fee: 0,
+        profits: 0,
+        current_position: numericVolume,
+        strike: 0,
+        realized: openIso,
+        created_at: openIso
+      },
+      {
+        id: tradeId + ":close",
+        execution_id: tradeId + ":close",
+        action: closeAction,
+        side: normalizedSide,
+        symbol,
+        quantity: numericVolume,
+        adjusted: 0,
+        price: Number(closePrice) || 0,
+        commission: 0,
+        fee: 0,
+        profits: Number(profit) || 0,
+        current_position: 0,
+        strike: 0,
+        realized: closeIso,
+        created_at: closeIso
+      }
+    ];
+  };
+
+  const buildStreakSummary = (values) => {
+    let currentWinning = 0;
+    let currentLosing = 0;
+    let maxWinning = 0;
+    let maxLosing = 0;
+
+    values.forEach((value) => {
+      const numeric = Number(value) || 0;
+      if (numeric > 0) {
+        currentWinning += 1;
+        currentLosing = 0;
+        maxWinning = Math.max(maxWinning, currentWinning);
+      } else if (numeric < 0) {
+        currentLosing += 1;
+        currentWinning = 0;
+        maxLosing = Math.max(maxLosing, currentLosing);
+      } else {
+        currentWinning = 0;
+        currentLosing = 0;
+      }
+    });
+
+    return {
+      currentWinning,
+      currentLosing,
+      maxWinning,
+      maxLosing
+    };
+  };
+
+  const buildLiveTradezellaSeedFromDashboards = (entries) => {
+    const mappedAccounts = [];
+    const tradeDetails = [];
+    let latestSyncAt = 0;
+    let combinedCurrentBalance = 0;
+
+    entries.forEach((entry) => {
+      const account = entry && entry.account;
+      const dashboard = entry && entry.dashboard;
+      if (!account || !dashboard) {
+        return;
+      }
+
+      const currency =
+        typeof dashboard.currency === "string" && dashboard.currency.trim()
+          ? dashboard.currency
+          : MOCK_USER.display_currency;
+      const currentBalance = Number(dashboard.balance);
+      const closedTrades = buildClosedTradeHistoryItems(dashboard.recentDeals)
+        .slice()
+        .sort((left, right) => Number(left.closeTime || 0) - Number(right.closeTime || 0));
+      const realizedNet = closedTrades.reduce(
+        (sum, trade) => sum + (Number(trade && trade.profit) || 0),
+        0
+      );
+      let runningBalance =
+        Number.isFinite(currentBalance) ? currentBalance - realizedNet : -realizedNet;
+      const syncedAt = Number(dashboard.lastSyncedAt) || 0;
+      latestSyncAt = Math.max(latestSyncAt, syncedAt);
+      combinedCurrentBalance += Number.isFinite(currentBalance) ? currentBalance : 0;
+
+      const mappedAccount = {
+        ...mapCopyTradeAccountToTradezellaAccount(account, null),
+        count: Array.isArray(dashboard.openPositions) ? dashboard.openPositions.length : 0,
+        running_balance: Number.isFinite(currentBalance) ? currentBalance : 0,
+        has_trades: closedTrades.length > 0,
+        trades_count: closedTrades.length,
+        account_size: runningBalance,
+        display_currency: currency,
+        last_imported_at:
+          toIsoStringOrNull(syncedAt) ||
+          toIsoStringOrNull(account && account.updatedAt) ||
+          MOCK_USER.created_at
+      };
+      mappedAccounts.push(mappedAccount);
+
+      closedTrades.forEach((trade, index) => {
+        const openIso =
+          Number.isFinite(Number(trade && trade.openTime)) && Number(trade.openTime) > 0
+            ? new Date(Number(trade.openTime)).toISOString()
+            : toIsoStringOrNull(syncedAt) || new Date().toISOString();
+        const closeIso =
+          Number.isFinite(Number(trade && trade.closeTime)) && Number(trade.closeTime) > 0
+            ? new Date(Number(trade.closeTime)).toISOString()
+            : openIso;
+        const side = String(trade && trade.side || "BUY").toUpperCase() === "SELL" ? "SELL" : "BUY";
+        const tradeId = String(account.id) + ":" + String(trade && trade.id || index);
+        const entryPrice = Number(trade && trade.openPrice);
+        const exitPrice = Number(trade && trade.closePrice);
+        const points = computeDirectionalPriceMove(side, entryPrice, exitPrice);
+        const profit = Number(trade && trade.profit) || 0;
+        const startingBalance = Math.abs(runningBalance) > 0 ? Math.abs(runningBalance) : 1;
+        const roi = (profit / startingBalance) * 100;
+        const numericVolume = Number(trade && trade.volume) || 0;
+
+        runningBalance += profit;
+
+        tradeDetails.push({
+          id: tradeId,
+          public_uid: tradeId,
+          trade_public_uid: tradeId,
+          account_id: String(account.id),
+          account_name: buildCopyTradeDisplayName(account),
+          open_date: openIso,
+          created_at: openIso,
+          realized: closeIso,
+          status: "closed",
+          symbol: String(trade && trade.symbol || "N/A"),
+          quantity: numericVolume,
+          net_profits: profit,
+          net_roi: roi,
+          ticks_value: points,
+          pips: points,
+          points,
+          realized_rr: 0,
+          side,
+          avg_buy_price: side === "BUY" ? (Number.isFinite(entryPrice) ? entryPrice : 0) : 0,
+          avg_sell_price: side === "SELL" ? (Number.isFinite(entryPrice) ? entryPrice : 0) : 0,
+          adjusted_cost: 0,
+          adjusted_proceeds: 0,
+          calculated_fees: 0,
+          commission: 0,
+          entry_price: Number.isFinite(entryPrice) ? entryPrice : 0,
+          entry_price_in_currency: Number.isFinite(entryPrice) ? entryPrice : 0,
+          exit_price: Number.isFinite(exitPrice) ? exitPrice : 0,
+          exit_price_in_currency: Number.isFinite(exitPrice) ? exitPrice : 0,
+          fee: 0,
+          fees: 0,
+          hold_time:
+            Number.isFinite(Number(trade && trade.duration)) && Number(trade.duration) > 0
+              ? Math.round(Number(trade.duration) / 1000)
+              : 0,
+          in_trade_price_range: 0,
+          initial_target: 0,
+          highest_price: Number.isFinite(exitPrice) ? exitPrice : Number.isFinite(entryPrice) ? entryPrice : 0,
+          lowest_price: Number.isFinite(entryPrice) ? entryPrice : Number.isFinite(exitPrice) ? exitPrice : 0,
+          maximum_profits: profit > 0 ? profit : null,
+          minimum_profits: profit < 0 ? profit : null,
+          price_mae: 0,
+          price_mfe: 0,
+          profit_target: 0,
+          profits: profit,
+          rating: 0,
+          reward_ratio: 0,
+          stop_loss: 0,
+          strike: 0,
+          trade_risk: 0,
+          zella_score: 0,
+          reviewed: false,
+          tags: [],
+          playbooks: [],
+          category_tags: {},
+          tags_categories_list: {},
+          transactions: buildLiveTradezellaExecutionRows(
+            tradeId,
+            side,
+            String(trade && trade.symbol || "N/A"),
+            numericVolume,
+            entryPrice,
+            exitPrice,
+            openIso,
+            closeIso,
+            profit
+          ),
+          performance: [
+            {
+              trade_public_uid: tradeId,
+              realized: openIso,
+              time_zone: MOCK_USER.time_zone,
+              symbol: String(trade && trade.symbol || "N/A"),
+              net_profits: 0,
+              roi: 0,
+              total_pl: 0
+            },
+            {
+              trade_public_uid: tradeId,
+              realized: closeIso,
+              time_zone: MOCK_USER.time_zone,
+              symbol: String(trade && trade.symbol || "N/A"),
+              net_profits: profit,
+              roi,
+              total_pl: profit
+            }
+          ],
+          notebook_folder_id: null,
+          has_note: false
+        });
+      });
+    });
+
+    const sortedTradeDetails = tradeDetails
+      .slice()
+      .sort((left, right) => new Date(right.realized).getTime() - new Date(left.realized).getTime());
+    const tradeDetailMap = {};
+    sortedTradeDetails.forEach((trade) => {
+      tradeDetailMap[trade.id] = trade;
+    });
+
+    const provisionalSeed = {
+      accounts: mappedAccounts,
+      allTrades: {
+        trades: sortedTradeDetails
+      }
+    };
+    const dailyRows = buildSeedDailyRows(provisionalSeed, new URLSearchParams());
+    const gains = sortedTradeDetails.reduce((sum, trade) => {
+      const pnl = Number(trade && trade.net_profits) || 0;
+      return pnl > 0 ? sum + pnl : sum;
+    }, 0);
+    const lossesMagnitude = sortedTradeDetails.reduce((sum, trade) => {
+      const pnl = Number(trade && trade.net_profits) || 0;
+      return pnl < 0 ? sum + Math.abs(pnl) : sum;
+    }, 0);
+    const winners = sortedTradeDetails.filter((trade) => Number(trade && trade.net_profits) > 0).length;
+    const losers = sortedTradeDetails.filter((trade) => Number(trade && trade.net_profits) < 0).length;
+    const breakEvens = sortedTradeDetails.length - winners - losers;
+    const totalNet = gains - lossesMagnitude;
+    const totalVolume = sortedTradeDetails.reduce(
+      (sum, trade) => sum + Math.abs(Number(trade && trade.quantity) || 0),
+      0
+    );
+    const initialBalance = combinedCurrentBalance - totalNet;
+    const lowestDrawdown = dailyRows.reduce(
+      (minValue, row) => Math.min(minValue, Number(row && row.drawdown) || 0),
+      0
+    );
+    const averageDrawdown =
+      dailyRows.length > 0
+        ? dailyRows.reduce((sum, row) => sum + (Number(row && row.averageDrawdown) || 0), 0) /
+          dailyRows.length
+        : 0;
+    const currentDrawdown = dailyRows.length > 0 ? Number(dailyRows[dailyRows.length - 1].drawdown) || 0 : 0;
+    const dailyNetValues = dailyRows.map((row) => Number(row && row.net) || 0);
+    const tradeNetValues = sortedTradeDetails
+      .slice()
+      .sort((left, right) => new Date(left.realized).getTime() - new Date(right.realized).getTime())
+      .map((trade) => Number(trade && trade.net_profits) || 0);
+    const dayStreaks = buildStreakSummary(dailyNetValues);
+    const tradeStreaks = buildStreakSummary(tradeNetValues);
+    const winningDays = dailyRows.filter((row) => Number(row && row.net) > 0).length;
+    const losingDays = dailyRows.filter((row) => Number(row && row.net) < 0).length;
+    const breakevenDays = dailyRows.length - winningDays - losingDays;
+    const averageWinningTrade = winners > 0 ? gains / winners : 0;
+    const averageLosingTrade = losers > 0 ? -(lossesMagnitude / losers) : 0;
+    const profitFactor = lossesMagnitude > 0 ? gains / lossesMagnitude : gains > 0 ? gains : 0;
+    const avgWinToLoss =
+      winners > 0 && losers > 0 && averageLosingTrade !== 0
+        ? averageWinningTrade / Math.abs(averageLosingTrade)
+        : winners > 0
+          ? averageWinningTrade
+          : 0;
+    const maxDrawdownPercent =
+      Math.abs(initialBalance) > 0 ? (Math.abs(lowestDrawdown) / Math.abs(initialBalance)) * 100 : 0;
+    const recoveryFactor =
+      Math.abs(lowestDrawdown) > 0 ? totalNet / Math.abs(lowestDrawdown) : totalNet > 0 ? totalNet : 0;
+    const consistencyValue = dailyRows.length > 0 ? (winningDays / dailyRows.length) * 100 : 0;
+    const zellaScore = Math.max(
+      0,
+      Math.min(
+        100,
+        (
+          (sortedTradeDetails.length > 0 ? (winners / sortedTradeDetails.length) * 100 : 0) +
+          Math.min(profitFactor * 25, 100) +
+          Math.min(avgWinToLoss * 40, 100) +
+          Math.min(Math.max(recoveryFactor, 0) * 20, 100) +
+          Math.max(0, 100 - maxDrawdownPercent * 4) +
+          consistencyValue
+        ) / 6
+      )
+    );
+
+    const daysPayload = {
+      days: dailyRows
+        .slice()
+        .sort((left, right) => String(right.day || "").localeCompare(String(left.day || "")))
+        .map((row) => {
+          const dayKey = String(row && row.day || "");
+          const dayTrades = sortedTradeDetails.filter(
+            (trade) => normalizeDateValue(trade.realized) === dayKey
+          );
+          const dayGains = dayTrades.reduce((sum, trade) => {
+            const pnl = Number(trade && trade.net_profits) || 0;
+            return pnl > 0 ? sum + pnl : sum;
+          }, 0);
+          const dayLosses = dayTrades.reduce((sum, trade) => {
+            const pnl = Number(trade && trade.net_profits) || 0;
+            return pnl < 0 ? sum + Math.abs(pnl) : sum;
+          }, 0);
+          const dayVolume = dayTrades.reduce(
+            (sum, trade) => sum + Math.abs(Number(trade && trade.quantity) || 0),
+            0
+          );
+          const dayWinners = dayTrades.filter((trade) => Number(trade && trade.net_profits) > 0).length;
+          const dayLosers = dayTrades.filter((trade) => Number(trade && trade.net_profits) < 0).length;
+          const dayBreakEvens = dayTrades.length - dayWinners - dayLosers;
+          return {
+            id: "day-" + dayKey,
+            day: dayKey,
+            realized: dayKey + "T00:00:00.000Z",
+            show_day: true,
+            closed: true,
+            trades_loaded: true,
+            time_zone: MOCK_USER.time_zone,
+            daily_note: null,
+            stats: {
+              trades_count: dayTrades.length,
+              winners: dayWinners,
+              losers: dayLosers,
+              break_evens: dayBreakEvens,
+              volume: dayVolume,
+              profits: Number(row && row.net) || 0,
+              net_profits: Number(row && row.net) || 0,
+              fees: 0,
+              roi_positive: dayGains,
+              roi_negative: -dayLosses,
+              profit_factor: dayLosses > 0 ? dayGains / dayLosses : dayGains > 0 ? dayGains : 0
+            },
+            performance: dayTrades.map((trade) => ({
+              trade_public_uid: trade.trade_public_uid,
+              realized: trade.realized,
+              time_zone: MOCK_USER.time_zone,
+              symbol: trade.symbol,
+              net_profits: Number(trade.net_profits) || 0,
+              roi: Number(trade.net_roi) || 0,
+              total_pl: Number(trade.net_profits) || 0
+            })),
+            trades: dayTrades
+          };
+        }),
+      page_count: 1
+    };
+
+    const lastImportIso =
+      toIsoStringOrNull(latestSyncAt) ||
+      (sortedTradeDetails[0] ? sortedTradeDetails[0].realized : null) ||
+      new Date().toISOString();
+
+    return {
+      updatedAt: lastImportIso,
+      dashboardStats: {
+        ...cloneDefaultDashboardResponse(),
+        count: sortedTradeDetails.length,
+        per_page: sortedTradeDetails.length,
+        total_count: sortedTradeDetails.length,
+        winners,
+        losers,
+        break_evens: breakEvens,
+        total_gain_loss: totalNet,
+        trade_count: sortedTradeDetails.length,
+        trade_expectancy:
+          sortedTradeDetails.length > 0 ? totalNet / sortedTradeDetails.length : 0,
+        profit_factor: profitFactor,
+        winning_trades_sum: gains,
+        losing_trades_sum: -lossesMagnitude,
+        average_daily_volume: dailyRows.length > 0 ? totalVolume / dailyRows.length : totalVolume,
+        average_winning_trade: averageWinningTrade,
+        average_losing_trade: averageLosingTrade,
+        total_commissions: 0,
+        max_wins: tradeStreaks.maxWinning,
+        max_losses: tradeStreaks.maxLosing,
+        winning_days: winningDays,
+        losing_days: losingDays,
+        breakeven_days: breakevenDays,
+        winning_trades_count: winners,
+        losing_trades_count: losers,
+        breakeven_trades_count: breakEvens,
+        day_streaks: {
+          current_winning: dayStreaks.currentWinning,
+          current_losing: dayStreaks.currentLosing,
+          winning: dayStreaks.maxWinning,
+          losing: dayStreaks.maxLosing
+        },
+        trade_streaks: {
+          current_winning_streak: tradeStreaks.currentWinning,
+          current_losing_streak: tradeStreaks.currentLosing,
+          max_wins: tradeStreaks.maxWinning,
+          max_losses: tradeStreaks.maxLosing
+        },
+        max_drawdown: {
+          drawdown: lowestDrawdown,
+          percent: maxDrawdownPercent
+        },
+        average_drawdown: {
+          drawdown: averageDrawdown,
+          percent:
+            Math.abs(initialBalance) > 0
+              ? (Math.abs(averageDrawdown) / Math.abs(initialBalance)) * 100
+              : 0
+        },
+        current_drawdown: {
+          drawdown: currentDrawdown,
+          percent:
+            Math.abs(initialBalance) > 0
+              ? (Math.abs(currentDrawdown) / Math.abs(initialBalance)) * 100
+              : 0
+        }
+      },
+      stats: {
+        winners,
+        losers,
+        break_evens: breakEvens,
+        volume: totalVolume,
+        gross_pl: gains,
+        net_pl: totalNet,
+        profit_factor: profitFactor,
+        total_commissions: 0,
+        trade_count: sortedTradeDetails.length
+      },
+      zellaScore: {
+        win_rate: sortedTradeDetails.length > 0 ? (winners / sortedTradeDetails.length) * 100 : 0,
+        win_rate_value:
+          sortedTradeDetails.length > 0 ? (winners / sortedTradeDetails.length) * 100 : 0,
+        profit_factor: profitFactor,
+        profit_factor_value: profitFactor,
+        avg_win_to_loss: avgWinToLoss,
+        avg_win_to_loss_value: avgWinToLoss,
+        recovery_factor: recoveryFactor,
+        recovery_factor_value: recoveryFactor,
+        max_drawdown: maxDrawdownPercent,
+        max_drawdown_value: maxDrawdownPercent,
+        consistency: consistencyValue,
+        consistency_value: consistencyValue,
+        zella_score: zellaScore
+      },
+      performance: dailyRows.map((row) => ({
+        date: String(row && row.day || ""),
+        profits: Number(row && row.net) || 0
+      })),
+      cumulative: {
+        cumulative: dailyRows.map((row) => ({
+          date: String(row && row.day || ""),
+          value: Number(row && row.cumulativePl) || 0,
+          cumulative_pl: Number(row && row.cumulativePl) || 0
+        })),
+        drawdown: dailyRows.map((row) => ({
+          date: String(row && row.day || ""),
+          value: Number(row && row.drawdown) || 0,
+          drawdown: Number(row && row.drawdown) || 0
+        }))
+      },
+      accountBalanceDatum: {
+        result: dailyRows.map((row) => ({
+          date: String(row && row.day || ""),
+          balance: initialBalance + (Number(row && row.cumulativePl) || 0)
+        })),
+        balances: dailyRows.map((row) => ({
+          date: String(row && row.day || ""),
+          balance: initialBalance + (Number(row && row.cumulativePl) || 0)
+        })),
+        labels: dailyRows.map((row) => String(row && row.day || ""))
+      },
+      recentTrades: {
+        trades: sortedTradeDetails.slice(0, 12),
+        item_count: sortedTradeDetails.length
+      },
+      openPositions: {
+        trades: [],
+        item_count: 0
+      },
+      allTrades: {
+        trades: sortedTradeDetails,
+        item_count: sortedTradeDetails.length,
+        page_count: 1,
+        from: sortedTradeDetails.length > 0 ? 1 : 0,
+        to: sortedTradeDetails.length
+      },
+      tradeStats: {
+        gain: gains,
+        loss: lossesMagnitude,
+        total_net_profits: totalNet,
+        total_volume: totalVolume,
+        profit_factor: profitFactor,
+        average_winning_trade: averageWinningTrade,
+        average_losing_trade: averageLosingTrade,
+        total_trades: sortedTradeDetails.length
+      },
+      days: daysPayload,
+      tradeDetails: tradeDetailMap,
+      accounts: mappedAccounts,
+      lastImport: {
+        is_sync: true,
+        updated_at: lastImportIso,
+        last_sync_time: lastImportIso
+      }
+    };
+  };
+
+  const resolveTradezellaLiveSeed = async (input) => {
+    const parsed = safeUrl(input);
+    const searchParams = parsed ? parsed.searchParams : new URLSearchParams();
+    const selectedAccountIds = getLiveTradezellaSelectedAccountIds(searchParams);
+    if (!selectedAccountIds.length) {
+      return null;
+    }
+
+    const cacheKey = selectedAccountIds.slice().sort().join(",");
+    const now = Date.now();
+    const cached = liveTradezellaSeedCache.get(cacheKey);
+    if (cached && cached.value && Number(cached.expiresAt) > now) {
+      return cached.value;
+    }
+    if (cached && cached.promise) {
+      return cached.promise;
+    }
+
+    const promise = (async () => {
+      const accountsPayload = await requestLocalJson("/api/copytrade/accounts");
+      const liveAccounts = Array.isArray(accountsPayload && accountsPayload.accounts)
+        ? accountsPayload.accounts
+        : [];
+      const selectedAccountSet = new Set(selectedAccountIds);
+      const matchedAccounts = liveAccounts.filter((account) =>
+        selectedAccountSet.has(String(account && account.id || "").trim())
+      );
+
+      if (!matchedAccounts.length) {
+        return null;
+      }
+
+      const snapshots = await Promise.all(
+        matchedAccounts.map(async (account) => {
+          const dashboardPayload = await requestLocalJson(
+            "/api/copytrade/accounts/" + encodeURIComponent(String(account.id || "")) + "/dashboard"
+          );
+          return {
+            account,
+            dashboard: dashboardPayload && dashboardPayload.dashboard ? dashboardPayload.dashboard : null
+          };
+        })
+      );
+
+      const usableSnapshots = snapshots.filter((entry) => entry && entry.dashboard);
+      return usableSnapshots.length > 0
+        ? buildLiveTradezellaSeedFromDashboards(usableSnapshots)
+        : null;
+    })()
+      .then((value) => {
+        liveTradezellaSeedCache.set(cacheKey, {
+          value,
+          expiresAt: Date.now() + LIVE_TRADEZELLA_SEED_CACHE_TTL_MS
+        });
+        return value;
+      })
+      .catch((error) => {
+        liveTradezellaSeedCache.delete(cacheKey);
+        throw error;
+      });
+
+    liveTradezellaSeedCache.set(cacheKey, {
+      promise,
+      expiresAt: now + LIVE_TRADEZELLA_SEED_CACHE_TTL_MS
+    });
+
+    return promise;
+  };
+
   const findCopyTradeAccountById = (accounts, accountId) =>
     accounts.find((account) => String(account && account.id) === String(accountId || "")) || null;
 
@@ -4331,6 +5023,15 @@ const injectedScript = `
     const bridgeResult = await resolveTradezellaBridgeResult(input, method, body);
     if (bridgeResult) {
       return buildMockResponse(bridgeResult);
+    }
+
+    try {
+      const liveSeed = await resolveTradezellaLiveSeed(input);
+      if (liveSeed) {
+        return buildMockResponse(createMockResult(input, method, liveSeed));
+      }
+    } catch {
+      // Fall back to the static local seed if live bridge hydration fails.
     }
 
     return createMockResponse(input, method);
@@ -5081,7 +5782,8 @@ const injectedScript = `
           source: null,
           connected: false,
           lastEventAt: 0
-        }
+        },
+        openPresetAccountId: ""
       };
     }
 
@@ -5120,6 +5822,28 @@ const injectedScript = `
     }
 
     return store;
+  };
+
+  const getOpenCustomCopyTradePresetAccountId = () =>
+    String(getCustomCopyTradeStore().openPresetAccountId || "").trim();
+
+  const setOpenCustomCopyTradePresetAccountId = (accountId) => {
+    getCustomCopyTradeStore().openPresetAccountId = String(accountId || "").trim();
+  };
+
+  const toggleCustomCopyTradePresetMenu = (accountId) => {
+    const normalizedAccountId = String(accountId || "").trim();
+    if (!normalizedAccountId) {
+      setOpenCustomCopyTradePresetAccountId("");
+      queueEmbeddedUiRefresh();
+      return;
+    }
+
+    const currentOpenAccountId = getOpenCustomCopyTradePresetAccountId();
+    setOpenCustomCopyTradePresetAccountId(
+      currentOpenAccountId === normalizedAccountId ? "" : normalizedAccountId
+    );
+    queueEmbeddedUiRefresh();
   };
 
   const getCustomCopyTradeSummaryStreamState = () => {
@@ -5692,6 +6416,7 @@ const injectedScript = `
       formState.presetNameInput = "";
       formState.dirty = false;
       setCopyTradeAccountPresetAssignment(normalizedAccountId, "");
+      setOpenCustomCopyTradePresetAccountId("");
       formState.success = "Preset cleared.";
       queueEmbeddedUiRefresh();
       return;
@@ -5700,10 +6425,12 @@ const injectedScript = `
     formState.selectedPresetName = normalizedPresetName;
     formState.presetNameInput = normalizedPresetName;
     if (!applyCopyTradePresetToFormState(normalizedAccountId, normalizedPresetName)) {
+      setOpenCustomCopyTradePresetAccountId("");
       queueEmbeddedUiRefresh();
       return;
     }
 
+    setOpenCustomCopyTradePresetAccountId("");
     await saveCustomCopyTradeAccountSettings(normalizedAccountId);
   };
 
@@ -6130,6 +6857,56 @@ const injectedScript = `
     return options.join("");
   };
 
+  const buildCopyTradePresetMenuMarkup = (accountId, selectedPresetName, controlsDisabled) => {
+    const normalizedAccountId = String(accountId || "").trim();
+    const normalizedSelected = String(selectedPresetName || "").trim();
+    const presets = readCopyTradeSettingPresets();
+    const names = Object.keys(presets).sort((left, right) => left.localeCompare(right));
+    const isOpen =
+      !controlsDisabled && getOpenCustomCopyTradePresetAccountId() === normalizedAccountId;
+    const buttonLabel = normalizedSelected || "Load Preset";
+    const menuItems = names.length
+      ? [
+          '<button class="korra-copytrade-shell__button korra-copytrade-shell__toolbarPresetOption' +
+            (normalizedSelected ? "" : ' korra-copytrade-shell__toolbarPresetOption--active') +
+            '" data-korra-action="select-preset" data-account-id="' +
+            escapeHtml(normalizedAccountId) +
+            '" data-preset-name="">No preset</button>'
+        ].concat(
+          names.map((name) =>
+            '<button class="korra-copytrade-shell__button korra-copytrade-shell__toolbarPresetOption' +
+            (name === normalizedSelected
+              ? ' korra-copytrade-shell__toolbarPresetOption--active'
+              : "") +
+            '" data-korra-action="select-preset" data-account-id="' +
+            escapeHtml(normalizedAccountId) +
+            '" data-preset-name="' +
+            escapeHtml(name) +
+            '">' +
+            escapeHtml(name) +
+            "</button>"
+          )
+        ).join("")
+      : '<div class="korra-copytrade-shell__toolbarPresetEmpty">No saved presets yet.</div>';
+
+    return (
+      '<div class="korra-copytrade-shell__toolbarPresetMenu' +
+      (isOpen ? ' korra-copytrade-shell__toolbarPresetMenu--open' : "") +
+      '">' +
+      '<button class="korra-copytrade-shell__button korra-copytrade-shell__toolbarPresetButton" data-korra-action="toggle-preset-menu" data-account-id="' +
+      escapeHtml(normalizedAccountId) +
+      '"' +
+      (controlsDisabled ? ' disabled="disabled"' : "") +
+      ">" +
+      escapeHtml(buttonLabel) +
+      "</button>" +
+      (isOpen
+        ? '<div class="korra-copytrade-shell__toolbarPresetPopover">' + menuItems + "</div>"
+        : "") +
+      "</div>"
+    );
+  };
+
   const buildStatisticsHeaderMarkup = (account, dashboard, formState) => {
     const accountId = String(account && account.id || "").trim();
     const providerAccountId = String(account && account.providerAccountId || "").trim();
@@ -6195,15 +6972,7 @@ const injectedScript = `
       pauseButtonMarkup +
       "</div>" +
       '<div class="korra-copytrade-shell__toolbarInlineActions">' +
-      '<label class="korra-copytrade-shell__toolbarSelectWrap">' +
-      '<select class="korra-copytrade-shell__button korra-copytrade-shell__toolbarSelect" data-korra-preset-account-id="' +
-      escapeHtml(accountId) +
-      '"' +
-      (controlsDisabled ? ' disabled="disabled"' : "") +
-      ">" +
-      buildCopyTradePresetOptionsMarkup(selectedPresetName) +
-      "</select>" +
-      "</label>" +
+      buildCopyTradePresetMenuMarkup(accountId, selectedPresetName, controlsDisabled) +
       reconnectButton +
       "</div>" +
       "</div>" +
@@ -7163,6 +7932,8 @@ const injectedScript = `
           side: String(openDeal.side || closeDeal.side || "N/A"),
           symbol: String(openDeal.symbol || closeDeal.symbol || "N/A"),
           volume: Number(closeDeal.volume ?? openDeal.volume ?? Number.NaN),
+          openPrice: Number(openDeal.price ?? Number.NaN),
+          closePrice: Number(closeDeal.price ?? Number.NaN),
           openTime: Number.isFinite(openTime) && openTime > 0 ? openTime : null,
           closeTime: Number.isFinite(closeTime) && closeTime > 0 ? closeTime : null,
           duration:
@@ -7588,6 +8359,19 @@ const injectedScript = `
 
         if (action === "reconnect-account") {
           void reconnectCustomCopyTradeAccount(target.dataset.accountId || "");
+          return;
+        }
+
+        if (action === "toggle-preset-menu") {
+          toggleCustomCopyTradePresetMenu(target.dataset.accountId || "");
+          return;
+        }
+
+        if (action === "select-preset") {
+          void handleCustomCopyTradePresetSelection(
+            target.dataset.accountId || "",
+            target.dataset.presetName || ""
+          );
           return;
         }
 

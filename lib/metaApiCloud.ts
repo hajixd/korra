@@ -941,7 +941,7 @@ export const getMetaApiAccountDashboard = async (input: {
   dealsLookbackHours?: number;
   dealsLimit?: number;
 }): Promise<MetaApiAccountDashboardSnapshot> => {
-  const lookbackHours = Math.max(1, Math.min(24 * 31, Math.trunc(input.dealsLookbackHours ?? 24)));
+  const lookbackHours = Math.max(1, Math.min(24 * 365, Math.trunc(input.dealsLookbackHours ?? 24)));
   const dealsLimit = Math.max(1, Math.min(500, Math.trunc(input.dealsLimit ?? 60)));
   const cacheKey = `${buildMetaApiCacheKey(input)}:dashboard:${lookbackHours}:${dealsLimit}`;
 
