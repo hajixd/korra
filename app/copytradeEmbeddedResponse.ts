@@ -78,6 +78,10 @@ body {
   display: none !important;
 }
 
+html[data-korra-copytrade-active="true"] #root {
+  display: none !important;
+}
+
 .korra-copytrade-shell__toolbar {
   display: flex;
   align-items: flex-start;
@@ -449,15 +453,17 @@ body {
   appearance: none;
   width: 100%;
   min-height: 32px;
-  border: 1px solid #202020;
+  border: 1px solid #242424;
   border-radius: 999px;
-  background: #0b0b0b;
-  color: #dddddd;
-  padding: 0 34px 0 12px;
-  font-size: 10px;
+  background: #080808;
+  color: #f5f5f5;
+  padding: 0 30px 0 12px;
+  font-size: 11px;
   line-height: 1;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  cursor: pointer;
 }
 
 .korra-copytrade-shell__toolbarSelect:focus {
@@ -4963,6 +4969,9 @@ const injectedScript = `
   };
 
   const isCustomCopyTradeShellRoute = () => window.location.pathname === "/settings/account";
+  document.documentElement.dataset.korraCopytradeActive = isCustomCopyTradeShellRoute()
+    ? "true"
+    : "false";
 
   const readCustomCopyTradeViewState = () => {
     const parsed = safeUrl(window.location.href);
@@ -6120,25 +6129,7 @@ const injectedScript = `
           escapeHtml(formState && formState.reconnectPending ? "Connecting..." : "Reconnect") +
           "</button>"
         : "";
-
-    return (
-      '<div class="korra-copytrade-shell__toolbar">' +
-      '<div class="korra-copytrade-shell__toolbarMain">' +
-      '<div class="korra-copytrade-shell__eyebrow">Copy Trade / Statistics</div>' +
-      '<div class="korra-copytrade-shell__title">' +
-      escapeHtml(buildCopyTradeDisplayName(account)) +
-      "</div>" +
-      '<div class="korra-copytrade-shell__subtitle">' +
-      escapeHtml(String((account && account.server) || "").trim()) +
-      " / " +
-      escapeHtml(syncedAt) +
-      "</div>" +
-      '<div class="korra-copytrade-shell__toolbarStatusRow">' +
-      '<div class="korra-copytrade-shell__statusLine">' +
-      buildStatusPillMarkup(connection.label, connection.tone) +
-      buildStatusPillMarkup(trading.label, trading.tone) +
-      "</div>" +
-      '<div class="korra-copytrade-shell__toolbarInlineActions">' +
+    const pauseButtonMarkup =
       '<button class="korra-copytrade-shell__button ' +
       (account && account.paused
         ? "korra-copytrade-shell__button--success"
@@ -6155,7 +6146,27 @@ const injectedScript = `
             ? "Resume"
             : "Pause"
       ) +
-      "</button>" +
+      "</button>";
+
+    return (
+      '<div class="korra-copytrade-shell__toolbar">' +
+      '<div class="korra-copytrade-shell__toolbarMain">' +
+      '<div class="korra-copytrade-shell__eyebrow">Copy Trade / Statistics</div>' +
+      '<div class="korra-copytrade-shell__title">' +
+      escapeHtml(buildCopyTradeDisplayName(account)) +
+      "</div>" +
+      '<div class="korra-copytrade-shell__subtitle">' +
+      escapeHtml(String((account && account.server) || "").trim()) +
+      " / " +
+      escapeHtml(syncedAt) +
+      "</div>" +
+      '<div class="korra-copytrade-shell__toolbarStatusRow">' +
+      '<div class="korra-copytrade-shell__statusLine">' +
+      buildStatusPillMarkup(connection.label, connection.tone) +
+      (account && account.paused ? "" : buildStatusPillMarkup(trading.label, trading.tone)) +
+      pauseButtonMarkup +
+      "</div>" +
+      '<div class="korra-copytrade-shell__toolbarInlineActions">' +
       '<label class="korra-copytrade-shell__toolbarSelectWrap">' +
       '<select class="korra-copytrade-shell__toolbarSelect" data-korra-preset-account-id="' +
       escapeHtml(accountId) +
@@ -7814,16 +7825,25 @@ const injectedScript = `
 
   const renderCustomCopyTradeShell = () => {
     const existingShell = document.getElementById(KORRA_COPYTRADE_SHELL_ID);
+    const root = document.getElementById("root");
     if (!isCustomCopyTradeShellRoute()) {
       teardownCustomCopyTradeSummaryStream();
       if (existingShell) {
         existingShell.remove();
+      }
+      document.documentElement.dataset.korraCopytradeActive = "false";
+      if (root instanceof HTMLElement) {
+        root.style.display = "";
       }
       document.body.style.background = "#ffffff";
       document.documentElement.style.background = "#ffffff";
       return;
     }
 
+    document.documentElement.dataset.korraCopytradeActive = "true";
+    if (root instanceof HTMLElement) {
+      root.style.display = "none";
+    }
     const shell = ensureCustomCopyTradeShell();
     const routeState = readCustomCopyTradeViewState();
     if (routeState.view !== KORRA_COPYTRADE_ADD_VIEW) {
