@@ -676,55 +676,132 @@ export const openMetaApiAccountSummaryStream = async (
   });
 
   let closed = false;
+  let lastAccountInformation:
+    | {
+        broker?: string;
+        currency?: string;
+        balance?: number;
+        equity?: number;
+        tradeAllowed?: boolean;
+      }
+    | null
+    | undefined = connection.terminalState?.accountInformation;
+  let lastStreamEquity = toFiniteOrNull(lastAccountInformation?.equity);
 
   const emitSnapshot = () => {
     if (closed) {
       return;
     }
 
+    const terminalAccountInformation = connection.terminalState?.accountInformation;
+    const mergedAccountInformation = {
+      ...(lastAccountInformation || {}),
+      ...(terminalAccountInformation || {})
+    };
+    const effectiveEquity =
+      lastStreamEquity ??
+      toFiniteOrNull(terminalAccountInformation?.equity) ??
+      toFiniteOrNull(lastAccountInformation?.equity);
+
+    if (effectiveEquity !== null) {
+      mergedAccountInformation.equity = effectiveEquity;
+    }
+
     onUpdate(
       buildSummarySnapshot(
         account,
-        connection.terminalState?.accountInformation,
+        mergedAccountInformation,
         connection.terminalState?.positions
       )
     );
   };
 
   class SummaryStreamListener extends SynchronizationListener {
-    async onConnected(): Promise<void> {
+    async onConnected(_instanceIndex?: string, _replicas?: number): Promise<void> {
+      lastAccountInformation = connection.terminalState?.accountInformation ?? lastAccountInformation;
       emitSnapshot();
     }
 
-    async onDisconnected(): Promise<void> {
+    async onDisconnected(_instanceIndex?: string): Promise<void> {
       emitSnapshot();
     }
 
-    async onBrokerConnectionStatusChanged(): Promise<void> {
+    async onBrokerConnectionStatusChanged(
+      _instanceIndex?: string,
+      _connected?: boolean
+    ): Promise<void> {
       emitSnapshot();
     }
 
-    async onAccountInformationUpdated(): Promise<void> {
+    async onAccountInformationUpdated(
+      _instanceIndex?: string,
+      accountInformation?: {
+        broker?: string;
+        currency?: string;
+        balance?: number;
+        equity?: number;
+        tradeAllowed?: boolean;
+      }
+    ): Promise<void> {
+      lastAccountInformation = {
+        ...(lastAccountInformation || {}),
+        ...(accountInformation || {})
+      };
+      const nextEquity = toFiniteOrNull(accountInformation?.equity);
+      if (nextEquity !== null) {
+        lastStreamEquity = nextEquity;
+      }
       emitSnapshot();
     }
 
-    async onPositionsReplaced(): Promise<void> {
+    async onPositionsReplaced(
+      _instanceIndex?: string,
+      _positions?: Array<{ profit?: number }>
+    ): Promise<void> {
       emitSnapshot();
     }
 
-    async onPositionsUpdated(): Promise<void> {
+    async onPositionsUpdated(
+      _instanceIndex?: string,
+      _positions?: Array<{ profit?: number }>,
+      _removedPositionIds?: string[]
+    ): Promise<void> {
       emitSnapshot();
     }
 
-    async onPositionUpdated(): Promise<void> {
+    async onPositionUpdated(
+      _instanceIndex?: string,
+      _position?: { profit?: number }
+    ): Promise<void> {
       emitSnapshot();
     }
 
-    async onPositionRemoved(): Promise<void> {
+    async onPositionRemoved(_instanceIndex?: string, _positionId?: string): Promise<void> {
       emitSnapshot();
     }
 
-    async onSymbolPricesUpdated(): Promise<void> {
+    async onSymbolPriceUpdated(
+      _instanceIndex?: string,
+      price?: unknown
+    ): Promise<void> {
+      const nextEquity = toFiniteOrNull(
+        (price as { equity?: number } | null | undefined)?.equity
+      );
+      if (nextEquity !== null) {
+        lastStreamEquity = nextEquity;
+      }
+      emitSnapshot();
+    }
+
+    async onSymbolPricesUpdated(
+      _instanceIndex?: string,
+      _prices?: Array<unknown>,
+      equity?: number
+    ): Promise<void> {
+      const nextEquity = toFiniteOrNull(equity);
+      if (nextEquity !== null) {
+        lastStreamEquity = nextEquity;
+      }
       emitSnapshot();
     }
   }

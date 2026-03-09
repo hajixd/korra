@@ -4999,7 +4999,7 @@ const injectedScript = `
     listState.error = "";
     queueEmbeddedUiRefresh();
 
-    const promise = requestLocalJson("/api/copytrade/accounts", {
+    const promise = requestLocalJson("/api/copytrade/accounts?includeSummary=1", {
       timeoutMs: 12000
     })
       .then((payload) => {
@@ -5454,7 +5454,7 @@ const injectedScript = `
       throw new Error("Missing copy-trade account id.");
     }
 
-    const confirmed = window.confirm("Hide this MT5 account?");
+    const confirmed = window.confirm("Delete this MT5 account?");
     if (!confirmed) {
       return false;
     }
@@ -5928,7 +5928,7 @@ const injectedScript = `
           '<div class="korra-copytrade-shell__rowAction">' +
           '<button class="korra-copytrade-shell__button korra-copytrade-shell__button--danger" data-korra-action="delete-account" data-account-id="' +
           escapeHtml(String(account.id)) +
-          '">Hide</button>' +
+          '">Delete</button>' +
           "</div>" +
           "</div>"
         );
@@ -5945,7 +5945,7 @@ const injectedScript = `
       '<div class="korra-copytrade-shell__cell korra-copytrade-shell__headCell--numeric">Positions</div>' +
       '<div class="korra-copytrade-shell__cell">Connection</div>' +
       '<div class="korra-copytrade-shell__cell">Trading</div>' +
-      '<div class="korra-copytrade-shell__cell korra-copytrade-shell__headCell--action">Hide</div>' +
+      '<div class="korra-copytrade-shell__cell korra-copytrade-shell__headCell--action">Delete</div>' +
       "</div>" +
       rows +
       "</div>" +
@@ -6729,7 +6729,7 @@ const injectedScript = `
               const store = getCustomCopyTradeStore();
               if (isObjectRecord(store.list)) {
                 store.list.error = String(
-                  (error && error.message) || error || "Failed to hide account."
+                  (error && error.message) || error || "Failed to delete account."
                 );
               }
               queueEmbeddedUiRefresh();
