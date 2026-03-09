@@ -17435,64 +17435,72 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       </div>
 
                       <div className="models-library-sections">
-                        <section className="models-library-section">
+                        <section className="models-library-section models-library-section-buy">
                           <header>
                             <span>Buy Entry Trigger</span>
                           </header>
                           {model.backtestSummary.buyEntryTrigger.length > 0 ? (
-                            <ul>
+                            <ul className="models-library-rule-list">
                               {model.backtestSummary.buyEntryTrigger.map((item, index) => (
                                 <li key={`${model.id}-buy-entry-trigger-${index}`}>
                                   <span className="models-library-rule-copy">{item}</span>
                                 </li>
                               ))}
                             </ul>
-                          ) : null}
+                          ) : (
+                            <div className="models-library-rule-spacer" aria-hidden="true" />
+                          )}
                         </section>
 
-                        <section className="models-library-section">
+                        <section className="models-library-section models-library-section-sell">
                           <header>
                             <span>Sell Entry Trigger</span>
                           </header>
                           {model.backtestSummary.sellEntryTrigger.length > 0 ? (
-                            <ul>
+                            <ul className="models-library-rule-list">
                               {model.backtestSummary.sellEntryTrigger.map((item, index) => (
                                 <li key={`${model.id}-sell-entry-trigger-${index}`}>
                                   <span className="models-library-rule-copy">{item}</span>
                                 </li>
                               ))}
                             </ul>
-                          ) : null}
+                          ) : (
+                            <div className="models-library-rule-spacer" aria-hidden="true" />
+                          )}
                         </section>
 
-                        <section className="models-library-section">
+                        <section className="models-library-section models-library-section-buy">
                           <header>
                             <span>Buy Exit Trigger</span>
                           </header>
                           {model.backtestSummary.buyExitTrigger.length > 0 ? (
-                            <ul>
+                            <ul className="models-library-rule-list">
                               {model.backtestSummary.buyExitTrigger.map((item, index) => (
                                 <li key={`${model.id}-buy-exit-trigger-${index}`}>
                                   <span className="models-library-rule-copy">{item}</span>
                                 </li>
                               ))}
                             </ul>
-                          ) : null}
+                          ) : (
+                            <div className="models-library-rule-spacer" aria-hidden="true" />
+                          )}
                         </section>
 
-                        <section className="models-library-section">
+                        <section className="models-library-section models-library-section-sell">
                           <header>
                             <span>Sell Exit Trigger</span>
                           </header>
                           {model.backtestSummary.sellExitTrigger.length > 0 ? (
-                            <ul>
+                            <ul className="models-library-rule-list">
                               {model.backtestSummary.sellExitTrigger.map((item, index) => (
                                 <li key={`${model.id}-sell-exit-trigger-${index}`}>
                                   <span className="models-library-rule-copy">{item}</span>
                                 </li>
                               ))}
                             </ul>
-                          ) : null}
+                          ) : (
+                            <div className="models-library-rule-spacer" aria-hidden="true" />
+                          )}
                         </section>
                       </div>
                     </article>
