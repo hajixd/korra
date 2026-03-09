@@ -1,0 +1,37 @@
+{
+  "id": "momentum",
+  "name": "Momentum",
+  "kind": "Model",
+  "modelKind": "momentum",
+  "aliases": [
+    "trend continuation",
+    "breakout momentum",
+    "impulse continuation"
+  ],
+  "description": "Trend-following model focused on range expansion and continuation after compression or pullback absorption.",
+  "primaryStrategyId": "momentum-breakout",
+  "risk": {
+    "minPct": 0.0014,
+    "maxPct": 0.0044
+  },
+  "reward": {
+    "rrMin": 1.45,
+    "rrMax": 3.1
+  },
+  "bias": {
+    "longBias": 0.56,
+    "winRate": 0.58
+  },
+  "preferredSessions": ["London", "New York"],
+  "preferredTimeframes": ["5m", "15m", "1H"],
+  "entryFocus": [
+    "Expansion out of balance",
+    "Pullback holds above breakout level",
+    "Range and body expansion confirm follow-through"
+  ],
+  "exitFocus": [
+    "Partial at first extension",
+    "Trail behind fresh structure",
+    "Exit early if breakout fails back into range"
+  ]
+}

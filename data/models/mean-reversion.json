@@ -1,0 +1,37 @@
+{
+  "id": "mean-reversion",
+  "name": "Mean Reversion",
+  "kind": "Model",
+  "modelKind": "meanReversion",
+  "aliases": [
+    "fade the extreme",
+    "reversion fade",
+    "stretch reversal"
+  ],
+  "description": "Counter-move model that fades statistically stretched price once rejection and re-acceptance back toward value appear.",
+  "primaryStrategyId": "mean-reversion-fade",
+  "risk": {
+    "minPct": 0.0011,
+    "maxPct": 0.0036
+  },
+  "reward": {
+    "rrMin": 1.2,
+    "rrMax": 2.4
+  },
+  "bias": {
+    "longBias": 0.5,
+    "winRate": 0.6
+  },
+  "preferredSessions": ["Asia", "New York Lunch"],
+  "preferredTimeframes": ["5m", "15m", "1H"],
+  "entryFocus": [
+    "Extended deviation from mean",
+    "Sweep and rejection at an extreme",
+    "Re-acceptance back inside balance"
+  ],
+  "exitFocus": [
+    "Take profit at mean or VWAP",
+    "Reduce quickly after reversion starts",
+    "Abort if trend resumes through the extreme"
+  ]
+}

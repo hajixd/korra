@@ -1,0 +1,37 @@
+{
+  "id": "time-of-day",
+  "name": "Time of Day",
+  "kind": "Model",
+  "modelKind": "timeOfDay",
+  "aliases": [
+    "session flow",
+    "session timing",
+    "intraday clock edge"
+  ],
+  "description": "Session-aware model that trades repeatable opening-drive, sweep, or reversion behavior inside defined intraday windows.",
+  "primaryStrategyId": "session-flow",
+  "risk": {
+    "minPct": 0.0012,
+    "maxPct": 0.0038
+  },
+  "reward": {
+    "rrMin": 1.25,
+    "rrMax": 2.35
+  },
+  "bias": {
+    "longBias": 0.5,
+    "winRate": 0.57
+  },
+  "preferredSessions": ["Asia", "London", "New York"],
+  "preferredTimeframes": ["1m", "5m", "15m"],
+  "entryFocus": [
+    "Time-window specific setup",
+    "Opening range or sweep behavior",
+    "Session liquidity confirms the move"
+  ],
+  "exitFocus": [
+    "Take profit before the edge decays",
+    "Flatten when the time window closes",
+    "Exit if price cannot hold the session level"
+  ]
+}

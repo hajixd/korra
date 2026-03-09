@@ -51,6 +51,7 @@ import {
   type AssistantChartAction
 } from "./tools/chartActions";
 import { normalizeChartActions } from "../lib/assistant-tools";
+import { resolveStrategyRuntimeModelProfile } from "../lib/strategyCatalog";
 
 const loadRecharts = () => import("recharts");
 let lightweightChartsPromise: Promise<typeof import("lightweight-charts")> | null = null;
@@ -1953,6 +1954,8 @@ type ModelProfile = {
   name: string;
   kind: "Person" | "Model";
   accountNumber?: string;
+  modelKind: ReplayModelKind;
+  strategyId?: string;
   riskMin: number;
   riskMax: number;
   rrMin: number;
@@ -3276,6 +3279,7 @@ const basePersonProfile: ModelProfile = {
   name: "Korra",
   kind: "Person",
   accountNumber: createPseudoAccountNumber("korra"),
+  modelKind: "momentum",
   riskMin: 0.0018,
   riskMax: 0.0048,
   rrMin: 1.35,
@@ -3294,6 +3298,7 @@ const createSyntheticModelProfile = (name: string): ModelProfile => {
     id: createModelId(name),
     name,
     kind: "Model",
+    modelKind: resolveReplayModelKind(name),
     riskMin,
     riskMax: riskMin + 0.0018 + sample(16) * 0.0022,
     rrMin,
@@ -3314,14 +3319,31 @@ const buildModelProfiles = (aiZipModelNames: string[]): ModelProfile[] => {
       continue;
     }
 
-    const modelId = createModelId(name);
+    const catalogProfile = resolveStrategyRuntimeModelProfile(name);
+    const modelId = catalogProfile?.id ?? createModelId(name);
 
     if (seen.has(modelId)) {
       continue;
     }
 
     seen.add(modelId);
-    profiles.push(createSyntheticModelProfile(name));
+    profiles.push(
+      catalogProfile
+        ? {
+            id: catalogProfile.id,
+            name: catalogProfile.name,
+            kind: "Model",
+            modelKind: catalogProfile.modelKind,
+            strategyId: catalogProfile.strategyId,
+            riskMin: catalogProfile.riskMin,
+            riskMax: catalogProfile.riskMax,
+            rrMin: catalogProfile.rrMin,
+            rrMax: catalogProfile.rrMax,
+            longBias: catalogProfile.longBias,
+            winRate: catalogProfile.winRate
+          }
+        : createSyntheticModelProfile(name)
+    );
   }
 
   return profiles;
@@ -6940,7 +6962,7 @@ const buildReplayTradeBlueprints = ({
     const candidates: Array<{ model: ModelProfile; signal: ReplayEntrySignal }> = [];
 
     for (const model of models) {
-      const modelKind = resolveReplayModelKind(model.name);
+      const modelKind = model.modelKind;
       const cooldownBars = Math.max(
         1,
         Math.round(getReplayModelCooldownBars(modelKind) * (aggressive ? 0.75 : 1))
@@ -8402,6 +8424,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       id: `backtest-${backtestModelProfiles.map((model) => model.id).join("-")}`,
       name: backtestModelSelectionSummary,
       kind: "Model",
+      modelKind: backtestModelProfiles[0]!.modelKind,
       riskMin: aggregate.riskMin / count,
       riskMax: aggregate.riskMax / count,
       rrMin: aggregate.rrMin / count,

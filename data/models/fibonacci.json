@@ -1,0 +1,37 @@
+{
+  "id": "fibonacci",
+  "name": "Fibonacci",
+  "kind": "Model",
+  "modelKind": "fibonacci",
+  "aliases": [
+    "fib pullback",
+    "retracement continuation",
+    "fib confluence"
+  ],
+  "description": "Retracement model that waits for pullbacks into Fibonacci levels that overlap with structure and continuation confirmation.",
+  "primaryStrategyId": "fibonacci-pullback",
+  "risk": {
+    "minPct": 0.0012,
+    "maxPct": 0.0039
+  },
+  "reward": {
+    "rrMin": 1.4,
+    "rrMax": 2.8
+  },
+  "bias": {
+    "longBias": 0.53,
+    "winRate": 0.56
+  },
+  "preferredSessions": ["London", "New York"],
+  "preferredTimeframes": ["5m", "15m", "1H"],
+  "entryFocus": [
+    "Orderly pullback into 0.382 to 0.618",
+    "Fib level overlaps with structure",
+    "Continuation trigger confirms rejection"
+  ],
+  "exitFocus": [
+    "Scale at prior swing",
+    "Hold runner to extension only if trend resumes cleanly",
+    "Exit if the pullback turns into full reversal"
+  ]
+}

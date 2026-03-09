@@ -6,6 +6,7 @@ import {
   type BacktestHistoryTradeBlueprint,
   type BacktestHistoryTradeSide
 } from "../app/backtestHistoryShared";
+import { resolveStrategyRuntimeModelProfile } from "./strategyCatalog";
 
 export type CopyTradeTimeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
 
@@ -37,6 +38,8 @@ type ReplayEntrySignal = {
 type ModelProfile = {
   id: string;
   name: string;
+  modelKind: ReplayModelKind;
+  strategyId?: string;
   riskMin: number;
   riskMax: number;
   rrMin: number;
@@ -91,6 +94,7 @@ const createSyntheticModelProfile = (name: string): ModelProfile => {
   return {
     id: createModelId(name),
     name,
+    modelKind: resolveReplayModelKind(name),
     riskMin,
     riskMax: riskMin + 0.0018 + sample(16) * 0.0022,
     rrMin,
@@ -110,14 +114,29 @@ const buildModelProfiles = (aiZipModelNames: string[]): ModelProfile[] => {
       continue;
     }
 
-    const modelId = createModelId(name);
+    const catalogProfile = resolveStrategyRuntimeModelProfile(name);
+    const modelId = catalogProfile?.id ?? createModelId(name);
 
     if (seen.has(modelId)) {
       continue;
     }
 
     seen.add(modelId);
-    profiles.push(createSyntheticModelProfile(name));
+    profiles.push(
+      catalogProfile
+        ? {
+            id: catalogProfile.id,
+            name: catalogProfile.name,
+            modelKind: catalogProfile.modelKind,
+            strategyId: catalogProfile.strategyId,
+            riskMin: catalogProfile.riskMin,
+            riskMax: catalogProfile.riskMax,
+            rrMin: catalogProfile.rrMin,
+            rrMax: catalogProfile.rrMax,
+            longBias: catalogProfile.longBias
+          }
+        : createSyntheticModelProfile(name)
+    );
   }
 
   return profiles;
@@ -430,7 +449,7 @@ const buildReplayTradeBlueprints = ({
     const candidates: Array<{ model: ModelProfile; signal: ReplayEntrySignal }> = [];
 
     for (const model of models) {
-      const modelKind = resolveReplayModelKind(model.name);
+      const modelKind = model.modelKind;
       const cooldownBars = Math.max(
         1,
         Math.round(getReplayModelCooldownBars(modelKind) * (aggressive ? 0.75 : 1))

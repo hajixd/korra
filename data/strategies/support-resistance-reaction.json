@@ -1,0 +1,101 @@
+{
+  "id": "support-resistance-reaction",
+  "modelId": "support-resistance",
+  "name": "Support / Resistance Reaction",
+  "summary": "Trade clean break, reclaim, or rejection behavior around well-defined support and resistance zones.",
+  "marketConditions": [
+    "Clear higher-timeframe levels are in play.",
+    "The level is fresh or has obvious liquidity around it.",
+    "Price approaches the level with controlled rather than random structure."
+  ],
+  "sessionFocus": [
+    "London tests of overnight levels",
+    "New York retests of session extremes",
+    "Late-session defense of daily levels"
+  ],
+  "timeframeBias": ["4H level map", "15m approach structure", "5m trigger"],
+  "entry": {
+    "context": [
+      "Mark daily and weekly highs, lows, prior session levels, and untouched reaction zones.",
+      "Prefer levels with liquidity or repeated reactions, not random midrange points.",
+      "Know whether you want breakout continuation or rejection before price touches the level."
+    ],
+    "setup": [
+      "Price approaches a defined support or resistance with clean swings.",
+      "Sweep or rejection occurs at the level.",
+      "Structure around the level compresses enough to define risk."
+    ],
+    "trigger": [
+      "Enter on reclaim of support or failure below resistance for rejection trades.",
+      "Enter on close and hold beyond the level for breakout trades.",
+      "Execute only when the level reaction is obvious and risk is defined."
+    ],
+    "confirmation": [
+      "Multiple touches or volume make the level meaningful.",
+      "Wick rejection or closing behavior confirms the response at the level.",
+      "Next path of price is open enough for planned reward."
+    ],
+    "invalidation": [
+      "Price accepts through the level and holds.",
+      "Level breaks with range expansion against the thesis.",
+      "Reaction stays noisy and whipsaws both sides of the zone."
+    ],
+    "noTrade": [
+      "Level is already overused and reactions are decaying.",
+      "Another stronger level sits too close behind entry.",
+      "Approach is messy with no clean risk boundary."
+    ]
+  },
+  "exit": {
+    "stopLoss": [
+      "Place stop beyond the far side of the zone or sweep extreme.",
+      "Use zone width to size the trade instead of guessing.",
+      "If the zone is too wide, skip the trade."
+    ],
+    "takeProfit": [
+      "Target the next clear level or liquidity pool.",
+      "Pay partials at 1R if the reaction trade is countertrend.",
+      "Hold runners only if breakout acceptance or clean rejection continuation develops."
+    ],
+    "management": [
+      "Move stop behind the defended zone after first move away.",
+      "Scale out as price reaches the next level cluster.",
+      "Exit if price drifts back into the zone and stalls."
+    ],
+    "timeExit": [
+      "Close if price cannot leave the zone quickly.",
+      "Flatten before session close if the trade depends on active liquidity.",
+      "Do not carry a level reaction after the level has already been consumed."
+    ],
+    "earlyExit": [
+      "Zone is retaken with conviction.",
+      "Breakout retest fails immediately.",
+      "Repeated tests erode the reaction edge after entry."
+    ]
+  },
+  "risk": {
+    "riskPerTrade": "0.25% to 0.70%",
+    "rrTarget": "1.35R to 2.7R",
+    "maxConcurrentTrades": 2,
+    "sizing": [
+      "Risk from the full zone width, not from a random line in the middle.",
+      "Reduce size when trading countertrend level reactions.",
+      "Do not add to a trade while price is still inside the zone."
+    ],
+    "exposureLimits": [
+      "One level thesis per zone.",
+      "Do not hold both breakout and rejection ideas at the same time on one level.",
+      "Stop once repeated tests show the level is weakening."
+    ]
+  },
+  "journaling": [
+    "Record the exact level or zone traded.",
+    "Note whether the entry was a reclaim, rejection, or breakout hold.",
+    "Review whether the zone was fresh, tested, or exhausted."
+  ],
+  "assistantPrompts": [
+    "Which levels matter to you most: daily, weekly, session, or intraday swing levels?",
+    "Do you trade rejections, breakouts, or both around the same zone?",
+    "How do you decide a level is still fresh enough to react?"
+  ]
+}

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { inflateRawSync } from "node:zlib";
+import { DEFAULT_STRATEGY_MODEL_NAMES } from "./strategyCatalog";
 
 const AI_ZIP_PATH = path.join(process.cwd(), "AI.zip");
 const AI_ZIP_APP_SOURCE_PATH = "/src/App.tsx";
@@ -11,14 +12,7 @@ const ZIP_STORE_METHOD = 0;
 const ZIP_DEFLATE_METHOD = 8;
 const MODELS_ARRAY_PATTERN = /const\s+MODELS\s*=\s*\[([\s\S]*?)\];/;
 
-const fallbackAiZipModelNames = [
-  "Momentum",
-  "Mean Reversion",
-  "Seasons",
-  "Time of Day",
-  "Fibonacci",
-  "Support / Resistance"
-];
+const fallbackAiZipModelNames = [...DEFAULT_STRATEGY_MODEL_NAMES];
 
 const extractModelsFromSource = (source: string): string[] => {
   const body = source.match(MODELS_ARRAY_PATTERN)?.[1];

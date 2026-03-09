@@ -109,6 +109,24 @@ type AssistantChecklistItem = {
   satisfied: boolean;
 };
 
+type AssistantStrategyDraft = {
+  name: string;
+  matchedModelId: string;
+  matchedModelName: string;
+  matchedStrategyId: string;
+  matchedStrategyName: string;
+  summary: string;
+  marketConditions: string[];
+  entryChecklist: string[];
+  confirmationSignals: string[];
+  invalidationSignals: string[];
+  exitChecklist: string[];
+  managementRules: string[];
+  riskRules: string[];
+  missingDetails: string[];
+  draftJson: Record<string, unknown>;
+};
+
 type AssistantMessage = {
   id: string;
   role: "user" | "assistant";
@@ -120,6 +138,7 @@ type AssistantMessage = {
   requestChecklist?: AssistantChecklistItem[];
   toolsUsed?: string[];
   cannotAnswer?: boolean;
+  strategyDraft?: AssistantStrategyDraft;
 };
 
 type PersistedAssistantThread = {
@@ -143,6 +162,7 @@ type AssistantApiResponse = {
     chartAnimations?: AssistantChartAnimation[];
     requestChecklist?: AssistantChecklistItem[];
     toolsUsed?: string[];
+    strategyDraft?: AssistantStrategyDraft;
   };
   modelTrace?: {
     instruction: string;
@@ -190,7 +210,7 @@ const MAX_PERSISTED_TURNS = 160;
 const buildWelcomeMessage = (): AssistantMessage => ({
   id: "welcome",
   role: "assistant",
-  content: "How can I help you?"
+  content: "How can I help you? Describe a strategy idea and I can turn it into a playbook."
 });
 
 const normalizeToolPill = (value: string): string => {
@@ -452,7 +472,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
       {
         id: `welcome-${Date.now()}`,
         role: "assistant",
-        content: "How can I help you?"
+        content: "How can I help you? Describe a strategy idea and I can turn it into a playbook."
       }
     ]);
     setTurns([]);
@@ -635,7 +655,11 @@ export default function AssistantPanel(props: AssistantPanelProps) {
           toolsUsed: Array.isArray(payload.response.toolsUsed)
             ? payload.response.toolsUsed.map(normalizeToolPill).filter((tool) => tool.length > 0)
             : [],
-          cannotAnswer: payload.response.cannotAnswer
+          cannotAnswer: payload.response.cannotAnswer,
+          strategyDraft:
+            payload.response.strategyDraft && typeof payload.response.strategyDraft === "object"
+              ? (payload.response.strategyDraft as AssistantStrategyDraft)
+              : undefined
         };
 
         const hasAnimationResponse =
@@ -878,6 +902,23 @@ export default function AssistantPanel(props: AssistantPanelProps) {
     </div>
   );
 
+  const renderStrategySection = (title: string, items: string[]) => {
+    if (items.length === 0) {
+      return null;
+    }
+
+    return (
+      <section className="ai-strategy-section" key={title}>
+        <strong>{title}</strong>
+        <ul>
+          {items.map((item, index) => (
+            <li key={`${title}-${index}`}>{boldText(item)}</li>
+          ))}
+        </ul>
+      </section>
+    );
+  };
+
   return (
     <div className="ai-tab-shell">
       <div className="watchlist-head ai-head">
@@ -903,7 +944,10 @@ export default function AssistantPanel(props: AssistantPanelProps) {
           const hasTools = Boolean(message.toolsUsed && message.toolsUsed.length > 0);
           const hasBullets = Boolean(message.bullets && message.bullets.length > 0);
           const hasChecklist = Boolean(message.requestChecklist && message.requestChecklist.length > 0);
-          const hasDetails = message.role === "assistant" && (hasTools || hasBullets || hasChecklist);
+          const hasStrategyDraft = Boolean(message.strategyDraft);
+          const hasDetails =
+            message.role === "assistant" &&
+            (hasTools || hasBullets || hasChecklist || hasStrategyDraft);
           const detailsExpanded = hasDetails && Boolean(detailsExpandedByMessageId[message.id]);
 
           return (
@@ -917,6 +961,33 @@ export default function AssistantPanel(props: AssistantPanelProps) {
             </header>
 
             <p className="ai-msg-content">{boldText(message.content)}</p>
+
+            {message.strategyDraft ? (
+              <section className="ai-strategy-card">
+                <div className="ai-strategy-head">
+                  <div className="ai-strategy-head-copy">
+                    <strong>{message.strategyDraft.name}</strong>
+                    <span>
+                      {message.strategyDraft.matchedModelName} · {message.strategyDraft.matchedStrategyName}
+                    </span>
+                  </div>
+                  <span className="ai-strategy-pill">{message.strategyDraft.matchedModelId}</span>
+                </div>
+
+                <p className="ai-strategy-summary">{boldText(message.strategyDraft.summary)}</p>
+
+                <div className="ai-strategy-grid">
+                  {renderStrategySection("Market Conditions", message.strategyDraft.marketConditions)}
+                  {renderStrategySection("Entry", message.strategyDraft.entryChecklist)}
+                  {renderStrategySection("Confirmation", message.strategyDraft.confirmationSignals)}
+                  {renderStrategySection("Invalidation", message.strategyDraft.invalidationSignals)}
+                  {renderStrategySection("Exit", message.strategyDraft.exitChecklist)}
+                  {renderStrategySection("Management", message.strategyDraft.managementRules)}
+                  {renderStrategySection("Risk", message.strategyDraft.riskRules)}
+                  {renderStrategySection("Missing Details", message.strategyDraft.missingDetails)}
+                </div>
+              </section>
+            ) : null}
 
             {hasDetails ? (
               <button
@@ -968,6 +1039,15 @@ export default function AssistantPanel(props: AssistantPanelProps) {
                       </li>
                     ))}
                   </ul>
+                ) : null}
+
+                {message.strategyDraft ? (
+                  <section className="ai-strategy-json">
+                    <header>
+                      <strong>Strategy JSON</strong>
+                    </header>
+                    <pre>{JSON.stringify(message.strategyDraft.draftJson, null, 2)}</pre>
+                  </section>
                 ) : null}
               </section>
             ) : null}
@@ -1066,7 +1146,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
             }
           }}
           rows={3}
-          placeholder="How can I help you?"
+          placeholder="Ask about trades, charts, or describe a strategy idea."
           disabled={isPending}
         />
         <div className="ai-compose-meta">

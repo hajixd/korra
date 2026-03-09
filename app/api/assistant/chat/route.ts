@@ -17,6 +17,12 @@ import {
   normalizeChartActions,
   resolveGraphTemplate
 } from "../../../../lib/assistant-tools";
+import {
+  STRATEGY_MODEL_CATALOG,
+  buildStrategyCatalogPromptContext,
+  resolveStrategyModelCatalogEntry,
+  resolveStrategyTemplate
+} from "../../../../lib/strategyCatalog";
 
 type ChatTurn = {
   role: "user" | "assistant";
@@ -208,6 +214,24 @@ type ChartCodingOutput = {
   chartAnimations?: Array<Record<string, unknown>>;
 };
 
+type StrategyDraft = {
+  name: string;
+  matchedModelId: string;
+  matchedModelName: string;
+  matchedStrategyId: string;
+  matchedStrategyName: string;
+  summary: string;
+  marketConditions: string[];
+  entryChecklist: string[];
+  confirmationSignals: string[];
+  invalidationSignals: string[];
+  exitChecklist: string[];
+  managementRules: string[];
+  riskRules: string[];
+  missingDetails: string[];
+  draftJson: Record<string, unknown>;
+};
+
 type ChatRequestBody = {
   messages?: unknown;
   context?: unknown;
@@ -308,6 +332,13 @@ const INDICATOR_REQUEST_RE =
   /\b(rsi|overbought|oversold|over bought|over sold|macd|stoch|stochastic|ema|sma|moving average|atr|indicator)\b/i;
 const SOCIAL_GREETING_RE =
   /^(hi|hello|hey|yo|sup|what'?s up|how are you|gm|gn|good morning|good afternoon|good evening)[!.?\s]*$/i;
+const STRATEGY_CONTEXT_RE = /\b(strategy|playbook|trading system|system)\b/i;
+const STRATEGY_BUILD_RE =
+  /\b(build|create|make|design|draft|write|organize|refine|turn|convert|describe|structure)\b/i;
+const STRATEGY_SELF_DESCRIPTION_RE =
+  /\b(my strategy is|i enter when|i exit when|my rules are|the idea is|here'?s my strategy)\b/i;
+const STRATEGY_RULE_RE =
+  /\b(entry|exit|stop(?: loss)?|target|risk|confirmation|invalidation|setup|no[- ]trade|take profit)\b/gi;
 const TRADING_REQUEST_RE =
   /\b(trade|trading|chart|graph|draw|support|resistance|trend|line|box|fvg|arrow|ruler|candle|candlestick|price|xau|xauusd|gold|rsi|macd|ema|sma|atr|indicator|backtest|history|pnl|risk|entry|stop|target|buy|sell|volume|volatility)\b/i;
 const INTERNET_CONTEXT_RE =
@@ -422,6 +453,17 @@ const INDICATOR_CODING_PROMPT = [
   "- atr: period=14",
   "- stochastic: k=14, d=3",
   "If multiple indicators are requested, return multiple plans."
+].join("\n");
+
+const STRATEGY_DRAFT_PROMPT = [
+  "Return only JSON with this shape:",
+  '{"name":string,"matchedModelId":string,"matchedStrategyId":string,"summary":string,"marketConditions":[string],"entryChecklist":[string],"confirmationSignals":[string],"invalidationSignals":[string],"exitChecklist":[string],"managementRules":[string],"riskRules":[string],"missingDetails":[string],"draftJson":{"name":string,"modelId":string,"strategyId":string,"thesis":string,"marketConditions":[string],"entry":{"context":[string],"setup":[string],"trigger":[string],"confirmation":[string],"invalidation":[string],"noTrade":[string]},"exit":{"stopLoss":[string],"takeProfit":[string],"management":[string],"timeExit":[string],"earlyExit":[string]},"risk":{"riskPerTrade":string,"rrTarget":string,"maxConcurrentTrades":number,"sizing":[string],"exposureLimits":[string]},"notes":[string]}}',
+  "Turn the user's strategy description into a concrete trading playbook draft.",
+  "Choose the closest model and strategy from the provided catalog, then tailor it to the user's wording.",
+  "Cover entry and exit completely: context, setup, trigger, confirmation, invalidation, no-trade filters, stop, targets, management, and time-based exits.",
+  "If details are missing, make conservative assumptions and list the missing details explicitly.",
+  "Keep the language direct and execution-focused.",
+  "Do not include markdown or commentary outside the JSON."
 ].join("\n");
 
 const REASONING_PROMPT = [
@@ -3885,6 +3927,257 @@ const normalizeDataAnalysisOutput = (input: unknown): DataAnalysisOutput => {
   };
 };
 
+const normalizeTextList = (input: unknown, limit: number): string[] => {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const values: string[] = [];
+  const seen = new Set<string>();
+
+  for (const row of input) {
+    const text = sanitizeAssistantText(toText(row, ""));
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    values.push(text);
+    if (values.length >= limit) {
+      break;
+    }
+  }
+
+  return values;
+};
+
+const normalizeStrategyDraft = (input: unknown): StrategyDraft | null => {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const raw = input as Record<string, unknown>;
+  const matchedModelId = toText(raw.matchedModelId, "");
+  const matchedStrategyId = toText(raw.matchedStrategyId, "");
+  const matchedModel = resolveStrategyModelCatalogEntry(matchedModelId);
+  const matchedStrategy = matchedStrategyId ? resolveStrategyTemplate(matchedStrategyId) : null;
+
+  if (!matchedModel || !matchedStrategy) {
+    return null;
+  }
+
+  const draftJson =
+    raw.draftJson && typeof raw.draftJson === "object"
+      ? (raw.draftJson as Record<string, unknown>)
+      : {};
+
+  return {
+    name: sanitizeAssistantText(toText(raw.name, matchedStrategy.name)),
+    matchedModelId: matchedModel.id,
+    matchedModelName: matchedModel.name,
+    matchedStrategyId: matchedStrategy.id,
+    matchedStrategyName: matchedStrategy.name,
+    summary: sanitizeAssistantText(toText(raw.summary, matchedStrategy.summary)),
+    marketConditions: normalizeTextList(raw.marketConditions, 6),
+    entryChecklist: normalizeTextList(raw.entryChecklist, 8),
+    confirmationSignals: normalizeTextList(raw.confirmationSignals, 6),
+    invalidationSignals: normalizeTextList(raw.invalidationSignals, 6),
+    exitChecklist: normalizeTextList(raw.exitChecklist, 8),
+    managementRules: normalizeTextList(raw.managementRules, 6),
+    riskRules: normalizeTextList(raw.riskRules, 6),
+    missingDetails: normalizeTextList(raw.missingDetails, 6),
+    draftJson
+  };
+};
+
+const countStrategyRuleTerms = (prompt: string): number => {
+  const matches = prompt.match(STRATEGY_RULE_RE);
+  return matches ? matches.length : 0;
+};
+
+const isStrategyDraftRequest = (prompt: string): boolean => {
+  const ruleTermCount = countStrategyRuleTerms(prompt);
+
+  if (STRATEGY_CONTEXT_RE.test(prompt) && (STRATEGY_BUILD_RE.test(prompt) || ruleTermCount >= 2)) {
+    return true;
+  }
+
+  if (STRATEGY_SELF_DESCRIPTION_RE.test(prompt) && ruleTermCount >= 2) {
+    return true;
+  }
+
+  if (
+    /\b(turn this into|convert this into|organize this into|help me structure|help me turn this into)\b/i.test(
+      prompt
+    ) &&
+    ruleTermCount >= 2
+  ) {
+    return true;
+  }
+
+  return false;
+};
+
+const resolveHeuristicStrategyMatch = (prompt: string) => {
+  const directModel = resolveStrategyModelCatalogEntry(prompt);
+  if (directModel) {
+    return {
+      model: directModel,
+      strategy: resolveStrategyTemplate(directModel.primaryStrategyId)
+    };
+  }
+
+  const text = prompt.toLowerCase();
+
+  if (/(mean reversion|reversion|fade|overextended|stretch|vwap)/.test(text)) {
+    const model = resolveStrategyModelCatalogEntry("mean reversion");
+    return model ? { model, strategy: resolveStrategyTemplate(model.primaryStrategyId) } : null;
+  }
+
+  if (/(season|seasonality|cycle|calendar|month|weekday|week open)/.test(text)) {
+    const model = resolveStrategyModelCatalogEntry("seasons");
+    return model ? { model, strategy: resolveStrategyTemplate(model.primaryStrategyId) } : null;
+  }
+
+  if (/(time of day|session|london|new york|asia|open drive|opening range)/.test(text)) {
+    const model = resolveStrategyModelCatalogEntry("time of day");
+    return model ? { model, strategy: resolveStrategyTemplate(model.primaryStrategyId) } : null;
+  }
+
+  if (/(fib|fibonacci|retracement|pullback)/.test(text)) {
+    const model = resolveStrategyModelCatalogEntry("fibonacci");
+    return model ? { model, strategy: resolveStrategyTemplate(model.primaryStrategyId) } : null;
+  }
+
+  if (/(support|resistance|s\/r|level|zone|reclaim|rejection)/.test(text)) {
+    const model = resolveStrategyModelCatalogEntry("support resistance");
+    return model ? { model, strategy: resolveStrategyTemplate(model.primaryStrategyId) } : null;
+  }
+
+  if (/(momentum|breakout|continuation|trend)/.test(text)) {
+    const model = resolveStrategyModelCatalogEntry("momentum");
+    return model ? { model, strategy: resolveStrategyTemplate(model.primaryStrategyId) } : null;
+  }
+
+  const fallbackModel = STRATEGY_MODEL_CATALOG[0] ?? null;
+  return fallbackModel
+    ? {
+        model: fallbackModel,
+        strategy: resolveStrategyTemplate(fallbackModel.primaryStrategyId)
+      }
+    : null;
+};
+
+const buildFallbackStrategyDraft = (prompt: string): StrategyDraft | null => {
+  const matched = resolveHeuristicStrategyMatch(prompt);
+  if (!matched?.model || !matched.strategy) {
+    return null;
+  }
+
+  const { model, strategy } = matched;
+  const notes = normalizeTextList(
+    [prompt, ...strategy.journaling.map((item) => `Journal: ${item}`)],
+    6
+  );
+
+  return {
+    name: `${strategy.name} Draft`,
+    matchedModelId: model.id,
+    matchedModelName: model.name,
+    matchedStrategyId: strategy.id,
+    matchedStrategyName: strategy.name,
+    summary: strategy.summary,
+    marketConditions: strategy.marketConditions.slice(0, 4),
+    entryChecklist: [...strategy.entry.context, ...strategy.entry.setup, ...strategy.entry.trigger].slice(0, 8),
+    confirmationSignals: strategy.entry.confirmation.slice(0, 6),
+    invalidationSignals: strategy.entry.invalidation.slice(0, 6),
+    exitChecklist: [...strategy.exit.stopLoss, ...strategy.exit.takeProfit, ...strategy.exit.timeExit].slice(0, 8),
+    managementRules: [...strategy.exit.management, ...strategy.exit.earlyExit].slice(0, 6),
+    riskRules: [
+      `Risk per trade: ${strategy.risk.riskPerTrade}`,
+      `Reward target: ${strategy.risk.rrTarget}`,
+      `Max concurrent trades: ${strategy.risk.maxConcurrentTrades}`,
+      ...strategy.risk.sizing.slice(0, 2),
+      ...strategy.risk.exposureLimits.slice(0, 1)
+    ].slice(0, 6),
+    missingDetails: strategy.assistantPrompts.slice(0, 3),
+    draftJson: {
+      name: `${strategy.name} Draft`,
+      modelId: model.id,
+      strategyId: strategy.id,
+      thesis: strategy.summary,
+      marketConditions: strategy.marketConditions,
+      entry: strategy.entry,
+      exit: strategy.exit,
+      risk: strategy.risk,
+      notes
+    }
+  };
+};
+
+const executeStrategyDraftStage = async (params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  turns: ChatTurn[];
+  context: AssistantContext;
+}): Promise<StrategyDraft | null> => {
+  const fallback = buildFallbackStrategyDraft(getLastUserPrompt(params.turns));
+  const matched = resolveHeuristicStrategyMatch(getLastUserPrompt(params.turns));
+
+  try {
+    const completion = await nebiusChatCompletion({
+      apiKey: params.apiKey,
+      baseUrl: params.baseUrl,
+      model: params.model,
+      messages: [
+        {
+          role: "system",
+          content: `${AI_SYSTEM_PROMPT}\n${STRATEGY_DRAFT_PROMPT}\nSTRATEGY_CATALOG:\n${buildStrategyCatalogPromptContext()}`
+        },
+        {
+          role: "user",
+          content: `BUILD_STRATEGY_DRAFT_JSON:\n${JSON.stringify({
+            latestPrompt: getLastUserPrompt(params.turns),
+            conversation: buildConversationTranscript(params.turns),
+            context: {
+              symbol: params.context.symbol,
+              timeframe: params.context.timeframe
+            },
+            suggestedModelId: matched?.model?.id ?? null,
+            suggestedStrategyId: matched?.strategy?.id ?? null,
+            template:
+              matched?.strategy
+                ? {
+                    id: matched.strategy.id,
+                    name: matched.strategy.name,
+                    summary: matched.strategy.summary,
+                    marketConditions: matched.strategy.marketConditions,
+                    entry: matched.strategy.entry,
+                    exit: matched.strategy.exit,
+                    risk: matched.strategy.risk,
+                    assistantPrompts: matched.strategy.assistantPrompts
+                  }
+                : null
+          })}`
+        }
+      ],
+      maxTokens: 1900,
+      responseFormat: {
+        type: "json_object"
+      }
+    });
+
+    const parsed = normalizeStrategyDraft(
+      safeJsonParse<Record<string, unknown>>(extractNebiusMessageText(completion.message.content), {})
+    );
+
+    return parsed ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
+
 const executeDataAnalysisStage = async (params: {
   apiKey: string;
   baseUrl: string;
@@ -5459,6 +5752,85 @@ export async function POST(request: Request) {
           candleRows: context.liveCandles.length
         }
       });
+    }
+
+    const strategyDraftRequested =
+      !socialOnlyRequest &&
+      !explicitDrawRequest &&
+      !wantsVisualization &&
+      !wantsAnimation &&
+      isStrategyDraftRequest(lastUserPrompt);
+
+    if (strategyDraftRequested) {
+      toolsUsed.add("strategy_catalog");
+      const strategyDraft = await executeStrategyDraftStage({
+        apiKey,
+        baseUrl,
+        model: modelSelection.reasoning,
+        turns,
+        context
+      });
+
+      if (strategyDraft) {
+        toolsUsed.add("strategy_draft_builder");
+        const emptyActions = normalizeChartActions([]);
+        const emptyAnimations = normalizeChartAnimationsFromCoding({});
+        const shortAnswer = sanitizeDeliveryText(
+          strategyDraft.missingDetails.length > 0
+            ? `I mapped that into a ${strategyDraft.matchedStrategyName} draft using the ${strategyDraft.matchedModelName} model. Entry, exit, and risk are structured below. I still need: ${strategyDraft.missingDetails.slice(0, 2).join("; ")}.`
+            : `I mapped that into a ${strategyDraft.matchedStrategyName} draft using the ${strategyDraft.matchedModelName} model. Entry, exit, and risk are structured below.`
+        );
+        const bullets =
+          strategyDraft.missingDetails.length > 0
+            ? [
+                {
+                  tone: "gold" as const,
+                  text: `Still needed: ${strategyDraft.missingDetails.slice(0, 2).join("; ")}`
+                }
+              ]
+            : [];
+        const requestChecklist = buildResponseChecklist({
+          plan: requestChecklistPlan,
+          shortAnswer,
+          responseCannotAnswer: false,
+          charts: [],
+          chartActions: emptyActions,
+          chartAnimations: emptyAnimations,
+          toolsUsed
+        });
+
+        return NextResponse.json({
+          status: "ok",
+          response: {
+            cannotAnswer: false,
+            cannotAnswerReason: "",
+            shortAnswer,
+            bullets,
+            charts: [],
+            chartActions: [],
+            chartAnimations: [],
+            requestChecklist,
+            toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel),
+            strategyDraft
+          },
+          modelTrace: null,
+          dataTrace: {
+            requestMode: requestMode.mode,
+            requestChecklistPlan,
+            executionPlan,
+            strategyDraft: {
+              modelId: strategyDraft.matchedModelId,
+              strategyId: strategyDraft.matchedStrategyId
+            },
+            usedClickhouse: false,
+            clickhouseMeta: null,
+            backtestDataIncluded: false,
+            historyRows: context.historyRows.length,
+            backtestRows: context.backtest.trades.length,
+            candleRows: context.liveCandles.length
+          }
+        });
+      }
     }
 
     if (context.liveCandles.length > 0) {

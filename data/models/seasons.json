@@ -1,0 +1,37 @@
+{
+  "id": "seasons",
+  "name": "Seasons",
+  "kind": "Model",
+  "modelKind": "seasons",
+  "aliases": [
+    "seasonality",
+    "calendar flow",
+    "cycle bias"
+  ],
+  "description": "Cycle-based model that uses recurring monthly, weekly, or session tendencies as directional bias and timing context.",
+  "primaryStrategyId": "seasonal-cycle-bias",
+  "risk": {
+    "minPct": 0.0013,
+    "maxPct": 0.004
+  },
+  "reward": {
+    "rrMin": 1.35,
+    "rrMax": 2.5
+  },
+  "bias": {
+    "longBias": 0.52,
+    "winRate": 0.54
+  },
+  "preferredSessions": ["Week Open", "London", "New York"],
+  "preferredTimeframes": ["15m", "1H", "4H"],
+  "entryFocus": [
+    "Recurring time-based directional tendency",
+    "Current structure aligns with the cycle",
+    "Trend timing confirms the historical pattern"
+  ],
+  "exitFocus": [
+    "Exit into known seasonal objective",
+    "Tighten as the window closes",
+    "Close fast if current flow diverges from the cycle"
+  ]
+}

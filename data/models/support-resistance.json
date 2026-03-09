@@ -1,0 +1,37 @@
+{
+  "id": "support-resistance",
+  "name": "Support / Resistance",
+  "kind": "Model",
+  "modelKind": "supportResistance",
+  "aliases": [
+    "support resistance",
+    "s/r",
+    "level reaction"
+  ],
+  "description": "Level-reaction model that trades clean break, reclaim, or rejection behavior around well-defined support and resistance zones.",
+  "primaryStrategyId": "support-resistance-reaction",
+  "risk": {
+    "minPct": 0.0013,
+    "maxPct": 0.0042
+  },
+  "reward": {
+    "rrMin": 1.35,
+    "rrMax": 2.7
+  },
+  "bias": {
+    "longBias": 0.52,
+    "winRate": 0.59
+  },
+  "preferredSessions": ["London", "New York"],
+  "preferredTimeframes": ["5m", "15m", "4H"],
+  "entryFocus": [
+    "Reaction at a well-defined level",
+    "Sweep, reclaim, or breakout hold",
+    "Clear risk boundary around the zone"
+  ],
+  "exitFocus": [
+    "Target next level or liquidity pool",
+    "Scale once price leaves the zone",
+    "Exit fast if price accepts back through the level"
+  ]
+}
