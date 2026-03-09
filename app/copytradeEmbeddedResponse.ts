@@ -401,17 +401,29 @@ body {
 .korra-copytrade-shell__toolbarActions {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 12px;
   justify-content: flex-end;
   max-width: 100%;
+  margin-left: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.korra-copytrade-shell__toolbarActionGroup {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .korra-copytrade-shell__toolbarSelectWrap {
   position: relative;
-  width: 168px;
-  max-width: 168px;
-  flex: 0 0 168px;
+  width: 144px;
+  max-width: 144px;
+  flex: 0 0 144px;
 }
 
 .korra-copytrade-shell__toolbarSelectWrap::after {
@@ -453,7 +465,6 @@ body {
 }
 
 .korra-copytrade-shell__toolbarBack {
-  margin-left: auto;
   flex-shrink: 0;
 }
 
@@ -786,6 +797,9 @@ body {
 
 .korra-copytrade-shell__chartCard {
   margin-top: 18px;
+  width: min(100%, 760px);
+  margin-left: auto;
+  margin-right: auto;
   padding: 12px 14px 10px;
   border: 1px solid #202020;
   border-radius: 24px;
@@ -1063,19 +1077,20 @@ body {
   }
 
   .korra-copytrade-shell__toolbarActions,
+  .korra-copytrade-shell__toolbarActionGroup,
   .korra-copytrade-shell__controlHeader,
   .korra-copytrade-shell__controlActions {
     justify-content: flex-start;
   }
 
   .korra-copytrade-shell__toolbarSelectWrap {
-    width: 160px;
-    max-width: 160px;
-    flex: 0 0 160px;
+    width: 140px;
+    max-width: 140px;
+    flex: 0 0 140px;
   }
 
   .korra-copytrade-shell__toolbarBack {
-    margin-left: auto;
+    margin-left: 0;
   }
 
   .korra-copytrade-shell__presetSelect,
@@ -1129,8 +1144,11 @@ body {
 @media (max-width: 640px) {
   .korra-copytrade-shell__toolbarActions {
     width: 100%;
+    flex-direction: column;
+    align-items: stretch;
   }
 
+  .korra-copytrade-shell__toolbarActionGroup,
   .korra-copytrade-shell__toolbarSelectWrap,
   .korra-copytrade-shell__toolbarBack {
     width: 100%;
@@ -6043,6 +6061,7 @@ const injectedScript = `
       "</div>" +
       "</div>" +
       '<div class="korra-copytrade-shell__toolbarActions">' +
+      '<div class="korra-copytrade-shell__toolbarActionGroup">' +
       '<button class="korra-copytrade-shell__button ' +
       (account && account.paused
         ? "korra-copytrade-shell__button--success"
@@ -6070,6 +6089,7 @@ const injectedScript = `
       "</select>" +
       "</label>" +
       reconnectButton +
+      "</div>" +
       '<button class="korra-copytrade-shell__button korra-copytrade-shell__toolbarBack" data-korra-action="back-home">All Accounts</button>' +
       "</div>" +
       "</div>"
@@ -6724,8 +6744,8 @@ const injectedScript = `
     }
 
     const width = 860;
-    const height = 196;
-    const padding = { top: 10, right: 16, bottom: 26, left: 68 };
+    const height = 148;
+    const padding = { top: 8, right: 14, bottom: 24, left: 60 };
     const times = allPoints.map((point) => Number(point.time));
     const values = allPoints.map((point) => Number(point.value));
     let minTime = Math.min.apply(null, times);
@@ -6899,7 +6919,7 @@ const injectedScript = `
       '<div class="korra-copytrade-shell__chartStage" data-korra-chart-root="true" data-korra-chart-config="' +
       chartConfig +
       '">' +
-      '<svg class="korra-copytrade-shell__chartSvg" viewBox="0 0 860 196" role="img" aria-label="Account equity curve" data-korra-chart-svg="true">' +
+      '<svg class="korra-copytrade-shell__chartSvg" viewBox="0 0 860 148" role="img" aria-label="Account equity curve" data-korra-chart-svg="true">' +
       yAxisMarks +
       verticalMarks +
       '<line class="korra-copytrade-shell__chartGuideLine" data-korra-chart-guide="true" x1="' +
@@ -7142,13 +7162,17 @@ const injectedScript = `
         ? Number(performanceModel.currentBalance) - Number(performanceModel.startingBalance)
         : closedPnlValue;
     const equityDeltaValue =
-      dashboard && dashboard.netOpenProfit != null
-        ? Number(dashboard.netOpenProfit)
-        : performanceModel &&
-            Number.isFinite(Number(performanceModel.currentEquity)) &&
-            Number.isFinite(Number(performanceModel.currentBalance))
-          ? Number(performanceModel.currentEquity) - Number(performanceModel.currentBalance)
-          : null;
+      dashboard &&
+      Number.isFinite(Number(dashboard.equity)) &&
+      Number.isFinite(Number(dashboard.balance))
+        ? Number(dashboard.equity) - Number(dashboard.balance)
+        : dashboard && dashboard.netOpenProfit != null
+          ? Number(dashboard.netOpenProfit)
+          : performanceModel &&
+              Number.isFinite(Number(performanceModel.currentEquity)) &&
+              Number.isFinite(Number(performanceModel.currentBalance))
+            ? Number(performanceModel.currentEquity) - Number(performanceModel.currentBalance)
+            : null;
     const balanceToneClass = resolveHeroToneClass(balanceDeltaValue);
     const equityToneClass = resolveHeroToneClass(equityDeltaValue);
     const closedPnlToneClass = resolveHeroToneClass(closedPnlValue);
