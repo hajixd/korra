@@ -20,6 +20,28 @@ The target system is not "always use many agents". It is:
 - keep latency low for simple prompts
 - escalate cleanly for complex prompts
 
+## Best-Structure Conclusion
+
+The best structure is not a flat mesh of 16 peers all talking to each other on every request.
+
+The best structure is:
+
+- one supervisor-style orchestrator
+- one deterministic intake and clarification layer
+- a small pool of specialist worker agents
+- typed evidence packets moving through a DAG
+- only the minimum active agents per request
+
+So Gideon should expose a 16-agent capability catalog, but most requests should only activate 3-8 agents.
+
+This is the right compromise between:
+
+- flexibility for open-ended requests
+- speed for simple questions
+- debuggability in production
+- lower tool confusion
+- better scope control
+
 ## Research Summary
 
 ### Nebius capabilities relevant to this design
@@ -139,7 +161,14 @@ Examples:
 
 - "Which timeframe should I use for this XAUUSD view?"
 - "Do you want stats from trade history, backtest trades, or recent candles?"
-- "Should I turn this into a model draft, Pine script logic, or Korra model JSON?"
+- "Do you want this as a Korra Models JSON draft, or do you explicitly want code for another platform?"
+
+Strategy-default rule:
+
+- if the user asks to "make a strategy", Gideon should assume the target is Korra `Models` JSON
+- do not ask for preferred programming language or trading platform unless the user explicitly asks for code
+- do not force a separate risk-management intake if the Models tab already lets the user tune TP/SL after import
+- always return a downloadable `.json` artifact when the strategy draft is ready
 
 ### Stage 4: Fan-out task graph
 
@@ -251,6 +280,7 @@ This system uses up to 16 agents, but most requests will use 3-8.
 13. `A13 Strategy Architect Agent`
     - turns user strategy language into Korra strategy JSON
     - identifies missing rules and readiness state
+    - defaults to Models-tab-compatible JSON, not external platform code
 
 14. `A14 Chart Planner Agent`
     - decides which assistant-panel graphs are needed
@@ -321,6 +351,13 @@ Example: "Turn this into a strategy and show it on chart."
 - A15 Chart Execution
 - A06 Synthesizer
 - A07 Auditor
+
+Output defaults:
+
+- Korra `Models` JSON
+- panel preview and/or chart preview if requested
+- `.json` download option
+- no generic "preferred language or trading platform?" question
 
 ### Strategy coding
 
@@ -501,11 +538,14 @@ This design fixes that by:
 lib/gideon/
   contracts.ts
   orchestrator.ts
-  scheduler.ts
   model-policy.ts
   telemetry.ts
   cache.ts
   validators.ts
+  functions/
+    intent.ts
+    depth.ts
+    index.ts
   agents/
     intake.ts
     depth.ts
@@ -522,12 +562,21 @@ lib/gideon/
     synthesize.ts
     audit.ts
   tools/
+    catalog.ts
     market.ts
     clickhouse.ts
     internet.ts
     backtest.ts
     charts.ts
     indicators.ts
+    strategy.ts
+    code.ts
+  templates/
+    catalog.ts
+    animation.ts
+    clarification.ts
+    answers.ts
+    strategy.ts
 ```
 
 ### Existing files to reuse
@@ -640,7 +689,7 @@ Reason:
 
 ## Open items before coding
 
-1. Decide whether code-generation requests should produce Korra model JSON only, code patches only, or both.
-2. Decide whether "graphs if needed" means assistant-panel graphs by default or chart overlays first.
-3. Decide whether we want to expose internal execution traces in the UI or keep them server-only.
-4. Confirm the production Nebius model catalog at runtime and update the model policy from live availability.
+1. Decide whether "graphs if needed" means assistant-panel graphs by default or chart overlays first.
+2. Decide whether we want to expose internal execution traces in the UI or keep them server-only.
+3. Confirm the production Nebius model catalog at runtime and update the model policy from live availability.
+4. Decide when a strategy request should escalate from `Models` JSON into true code generation for Pine/MT5/other targets.

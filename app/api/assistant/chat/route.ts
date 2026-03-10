@@ -8,7 +8,6 @@ import {
   type NebiusModelSelection
 } from "../../../../lib/nebiusTokenFactory";
 import {
-  buildFallbackChartAnimation,
   chartAnimationsPromptSpec,
   chartActionsPromptSpec,
   GRAPH_TEMPLATE_ID_SET,
@@ -17,6 +16,16 @@ import {
   normalizeChartActions,
   resolveGraphTemplate
 } from "../../../../lib/assistant-tools";
+import {
+  buildChartActionsTool,
+  buildChartAnimationTool,
+  buildDeterministicFastPath,
+  buildPanelChartTool,
+  runSupervisorGraph,
+  type GideonExecutionSnapshot,
+  type GideonRuntimeContext,
+  type GideonTelemetryEvent
+} from "../../../../lib/gideon";
 import {
   STRATEGY_MODEL_CATALOG,
   buildStrategyBacktestFeaturePromptContext,
@@ -5669,6 +5678,49 @@ const buildFallbackFailureResponse = (message: string) => {
   };
 };
 
+const buildGideonTraceData = (
+  execution: GideonExecutionSnapshot,
+  telemetry: GideonTelemetryEvent[]
+) => {
+  return {
+    gideonPlan: {
+      requestKind: execution.intent.requestKind,
+      depth: execution.depth.depth,
+      activeAgents: execution.activeAgents,
+      functionIds: execution.functionIds,
+      toolIds: execution.toolIds,
+      templateIds: execution.templateIds,
+      strategyTarget: execution.strategyTarget,
+      recommendedGraphTemplate: execution.recommendedGraphTemplate,
+      clarificationQuestion: execution.clarificationQuestion
+    },
+    gideonExecution: {
+      toolResults: execution.toolResults.map((result) => ({
+        toolId: result.toolId,
+        status: result.status,
+        latencyMs: result.latencyMs,
+        outputKeys: result.output ? Object.keys(result.output).slice(0, 8) : []
+      })),
+      templateIds: execution.templateResults.map((template) => template.id)
+    },
+    gideonTelemetry: telemetry
+  };
+};
+
+const buildRouteGideonRuntime = (params: {
+  context: AssistantContext;
+  strategyThreadState: StrategyThreadState;
+}): GideonRuntimeContext => {
+  return {
+    symbol: params.context.symbol,
+    timeframe: params.context.timeframe,
+    liveCandles: params.context.liveCandles,
+    historyRows: params.context.historyRows,
+    backtestRows: params.context.backtest.trades,
+    strategyDraftJson: params.strategyThreadState.latestDraft?.draftJson ?? null
+  };
+};
+
 const INDICATOR_ALIAS_MAP: Array<{ name: string; regex: RegExp }> = [
   { name: "macd", regex: /\bmacd\b/i },
   { name: "rsi", regex: /\brsi\b|\boverbought\b|\boversold\b/i },
@@ -6283,6 +6335,96 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "At least one user message is required." }, { status: 400 });
   }
 
+  const lastUserPrompt = getLastUserPrompt(turns);
+  const runtimeNowMs = Date.now();
+  const { execution: gideonPlan, telemetry: gideonTelemetry } = await runSupervisorGraph({
+    requestId: `gideon-${runtimeNowMs}`,
+    promptSnapshot: {
+      latestUserPrompt: lastUserPrompt,
+      symbol: context.symbol,
+      timeframe: context.timeframe,
+      liveCandleCount: context.liveCandles.length,
+      historyRowCount: context.historyRows.length,
+      backtestRowCount: context.backtest.trades.length,
+      hasStrategyDraft: Boolean(strategyThreadState.latestDraft)
+    },
+    runtimeContext: {
+      symbol: context.symbol,
+      timeframe: context.timeframe,
+      liveCandles: context.liveCandles,
+      historyRows: context.historyRows,
+      backtestRows: context.backtest.trades,
+      strategyDraftJson: strategyThreadState.latestDraft?.draftJson ?? null
+    }
+  });
+  const gideonTraceData = buildGideonTraceData(gideonPlan, gideonTelemetry);
+  const gideonFastPath = buildDeterministicFastPath({
+    execution: gideonPlan,
+    prompt: lastUserPrompt
+  });
+
+  if (gideonFastPath) {
+    const toolsUsed = new Set<string>(gideonFastPath.toolIds);
+    const requestChecklistPlan = buildRequestChecklistPlan({
+      socialOnlyRequest: false,
+      strictToRequest: gideonPlan.intent.strictScope,
+      wantsNaturalOnly: true,
+      wantsVisualization: false,
+      explicitDrawRequest: false,
+      wantsAnimation: false,
+      needsDataFetch: false
+    });
+    const shortAnswer = sanitizeDeliveryText(gideonFastPath.shortAnswer);
+    const bullets = gideonFastPath.bullets.map((bullet) => ({
+      tone: bullet.tone,
+      text: sanitizeAssistantText(bullet.text)
+    }));
+    const chartActions = normalizeChartActions([]);
+    const chartAnimations = normalizeChartAnimationsFromCoding({});
+    const requestChecklist = buildResponseChecklist({
+      plan: requestChecklistPlan,
+      shortAnswer,
+      responseCannotAnswer: false,
+      charts: [],
+      chartActions,
+      chartAnimations,
+      toolsUsed
+    });
+
+    return NextResponse.json({
+      status: "ok",
+      response: {
+        cannotAnswer: false,
+        cannotAnswerReason: "",
+        shortAnswer,
+        bullets,
+        charts: [],
+        chartActions: [],
+        chartAnimations: [],
+        requestChecklist,
+        toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
+      },
+      modelTrace: null,
+      dataTrace: {
+        ...gideonTraceData,
+        fastPath: gideonFastPath.kind,
+        requestChecklistPlan,
+        runtimeClock: buildRuntimeClock({
+          nowMs: runtimeNowMs,
+          context,
+          clickhouseCandles: []
+        }),
+        internetContext: null,
+        usedClickhouse: false,
+        clickhouseMeta: null,
+        backtestDataIncluded: context.backtest.dataIncluded,
+        historyRows: context.historyRows.length,
+        backtestRows: context.backtest.trades.length,
+        candleRows: context.liveCandles.length
+      }
+    });
+  }
+
   const apiKey =
     process.env.NEBIUS_API_KEY ||
     process.env.TOKENFACTORY_API_KEY ||
@@ -6291,16 +6433,31 @@ export async function POST(request: Request) {
 
   if (!apiKey) {
     return NextResponse.json(
-      buildFallbackFailureResponse(
-        "I cannot answer because the Nebius API key is not configured on the server."
-      ),
+      {
+        ...buildFallbackFailureResponse(
+          "I cannot answer because the Nebius API key is not configured on the server."
+        ),
+        dataTrace: {
+          ...gideonTraceData,
+          runtimeClock: buildRuntimeClock({
+            nowMs: runtimeNowMs,
+            context,
+            clickhouseCandles: []
+          }),
+          internetContext: null,
+          usedClickhouse: false,
+          clickhouseMeta: null,
+          backtestDataIncluded: context.backtest.dataIncluded,
+          historyRows: context.historyRows.length,
+          backtestRows: context.backtest.trades.length,
+          candleRows: context.liveCandles.length
+        }
+      },
       { status: 200 }
     );
   }
 
   const baseUrl = process.env.NEBIUS_BASE_URL || "https://api.tokenfactory.nebius.com/v1";
-  const lastUserPrompt = getLastUserPrompt(turns);
-  const runtimeNowMs = Date.now();
   const capabilityRoute = resolveCapabilityRoute({
     prompt: lastUserPrompt,
     context,
@@ -6355,15 +6512,21 @@ export async function POST(request: Request) {
       });
     let explicitDrawRequest = socialOnlyPrompt
       ? false
-      : requestMode.wantsDraw || executionPlan.drawNeeded || capabilityRoute.wantsStrategyDraft;
+      : requestMode.wantsDraw ||
+        executionPlan.drawNeeded ||
+        capabilityRoute.wantsStrategyDraft ||
+        gideonPlan.intent.requestedArtifacts.includes("chart_draw");
     let wantsVisualization = socialOnlyPrompt
       ? false
       : requestMode.wantsVisualization ||
         executionPlan.graphNeeded ||
-        capabilityRoute.includeStrategyPanelCharts;
+        capabilityRoute.includeStrategyPanelCharts ||
+        gideonPlan.intent.requestedArtifacts.includes("panel_chart");
     let wantsAnimation = socialOnlyPrompt
       ? false
-      : requestMode.wantsAnimation || executionPlan.animationNeeded;
+      : requestMode.wantsAnimation ||
+        executionPlan.animationNeeded ||
+        gideonPlan.intent.requestedArtifacts.includes("animation");
     let wantsNaturalOnly = socialOnlyPrompt
       ? true
       : requestMode.wantsNaturalOnly || executionPlan.naturalOnly;
@@ -6472,7 +6635,10 @@ export async function POST(request: Request) {
 
     const requestedGraphType = socialOnlyRequest
       ? ""
-      : toText(executionPlan.graphType, capabilityRoute.preferredGraphType);
+      : toText(
+          executionPlan.graphType,
+          capabilityRoute.preferredGraphType || gideonPlan.recommendedGraphTemplate || ""
+        );
     let forcedGraphTemplate = resolveToolboxGraphTemplate(requestedGraphType);
     let graphToolingNeedsNewTool = false;
     if (
@@ -6531,6 +6697,7 @@ export async function POST(request: Request) {
         },
         modelTrace: null,
         dataTrace: {
+          ...gideonTraceData,
           requestMode: requestMode.mode,
           requestChecklistPlan,
           executionPlan,
@@ -6550,7 +6717,9 @@ export async function POST(request: Request) {
       });
     }
 
-    const strategyDraftRequested = !socialOnlyRequest && capabilityRoute.wantsStrategyDraft;
+    const strategyDraftRequested =
+      !socialOnlyRequest &&
+      (capabilityRoute.wantsStrategyDraft || gideonPlan.intent.requestKind === "strategy");
 
     if (strategyDraftRequested) {
       toolsUsed.add("strategy_catalog");
@@ -6649,6 +6818,7 @@ export async function POST(request: Request) {
           },
           modelTrace: null,
           dataTrace: {
+            ...gideonTraceData,
             requestMode: requestMode.mode,
             requestChecklistPlan,
             executionPlan,
@@ -6692,7 +6862,19 @@ export async function POST(request: Request) {
         response: {
           toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
         },
-        modelTrace: null
+        modelTrace: null,
+        dataTrace: {
+          ...gideonTraceData,
+          requestMode: requestMode.mode,
+          requestChecklistPlan,
+          executionPlan,
+          usedClickhouse: false,
+          clickhouseMeta: null,
+          backtestDataIncluded: context.backtest.dataIncluded,
+          historyRows: context.historyRows.length,
+          backtestRows: context.backtest.trades.length,
+          candleRows: context.liveCandles.length
+        }
       });
     }
 
@@ -6756,7 +6938,19 @@ export async function POST(request: Request) {
         response: {
           toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
         },
-        modelTrace: null
+        modelTrace: null,
+        dataTrace: {
+          ...gideonTraceData,
+          requestMode: requestMode.mode,
+          requestChecklistPlan,
+          executionPlan,
+          usedClickhouse: false,
+          clickhouseMeta: null,
+          backtestDataIncluded: context.backtest.dataIncluded,
+          historyRows: context.historyRows.length,
+          backtestRows: context.backtest.trades.length,
+          candleRows: context.liveCandles.length
+        }
       });
     }
 
@@ -7098,6 +7292,10 @@ export async function POST(request: Request) {
       toolsUsed.add("clickhouse_candles");
     }
 
+    const routeGideonRuntime = buildRouteGideonRuntime({
+      context,
+      strategyThreadState
+    });
     let charts = wantsVisualization
       ? buildChartsFromPlans(codingResult.chartPlans, context, toolState)
       : [];
@@ -7113,63 +7311,52 @@ export async function POST(request: Request) {
       const fallbackTitle =
         requestedGraphType ||
         resolveGraphTemplate(fallbackTemplateId).title;
-      const synthesized = buildPriceValueSeriesChart(
-        sourceRows,
-        fallbackTitle,
-        260,
-        fallbackTemplateId
-      );
+      const synthesized = buildPanelChartTool({
+        runtime: routeGideonRuntime,
+        templateId: fallbackTemplateId,
+        title: fallbackTitle,
+        points: 260,
+        candles: sourceRows
+      }).chart;
       if (synthesized && synthesized.data.length > 0) {
-        synthesized.mode = resolveGraphTemplate(fallbackTemplateId).mode;
         charts = [synthesized];
-        toolsUsed.add("coding_graph_tooling");
+        toolsUsed.add("build_panel_chart");
       }
     }
     let chartActions = explicitDrawRequest || wantsAnimation ? codingResult.chartActions : [];
+    const drawCandles = getDrawWindowCandles({
+      context,
+      clickhouseCandles: toolState.clickhouseCandles
+    });
     if (explicitDrawRequest) {
-      const drawCandles = getDrawWindowCandles({
-        context,
-        clickhouseCandles: toolState.clickhouseCandles
-      });
-      const dataAnchoredDrawActions = buildDrawActionsFromPrompt({
+      chartActions = buildChartActionsTool({
         prompt: lastUserPrompt,
-        candles: drawCandles
-      });
-      const hasControlAction = dataAnchoredDrawActions.some((action) => {
-        const type = String((action as Record<string, unknown>).type || "");
-        return type === "adjust_previous_drawings" || type === "toggle_dynamic_support_resistance";
-      });
-      chartActions = normalizeChartActions(
-        hasControlAction
-          ? dataAnchoredDrawActions
-          : [{ type: "clear_annotations" }, ...dataAnchoredDrawActions]
-      );
-      chartActions = sanitizeDrawActionsAgainstCandles({
-        actions: chartActions,
-        candles: drawCandles
-      });
-    }
-
-    if (wantsAnimation && chartActions.length === 0) {
-      chartActions = normalizeChartActions(
-        buildDefaultAnimationActions(
-          getDrawWindowCandles({
-            context,
-            clickhouseCandles: toolState.clickhouseCandles
-          })
-        )
-      );
+        runtime: routeGideonRuntime,
+        candles: drawCandles,
+        prependClear: true
+      }).chartActions;
+      if (chartActions.length > 0) {
+        toolsUsed.add("build_chart_actions");
+      }
     }
 
     let chartAnimations = codingResult.chartAnimations;
     if (wantsAnimation && chartAnimations.length === 0) {
-      const fallbackAnimation = buildFallbackChartAnimation({
-        title: "Chart Animation",
-        summary: "Sequential replay on chart with drawn tools and level annotations.",
-        actions: chartActions,
-        theme: "gold"
+      const fallbackAnimation = buildChartAnimationTool({
+        prompt: lastUserPrompt,
+        runtime: routeGideonRuntime,
+        requestKind: gideonPlan.intent.requestKind,
+        requestedArtifacts: gideonPlan.intent.requestedArtifacts,
+        chartActions,
+        candles: drawCandles
       });
-      chartAnimations = fallbackAnimation ? [fallbackAnimation] : [];
+      if (chartActions.length === 0 && fallbackAnimation.chartActions.length > 0) {
+        chartActions = fallbackAnimation.chartActions;
+      }
+      chartAnimations = fallbackAnimation.chartAnimations;
+      if (chartAnimations.length > 0) {
+        toolsUsed.add("build_chart_animation");
+      }
     }
 
     if (chartActions.length > 0) {
@@ -7350,6 +7537,7 @@ export async function POST(request: Request) {
       },
       modelTrace: null,
       dataTrace: {
+        ...gideonTraceData,
         requestMode: requestMode.mode,
         requestChecklistPlan,
         executionPlan,
