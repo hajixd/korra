@@ -7588,7 +7588,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     "Direction",
     "Model"
   ]);
-  const [embeddingCompression, setEmbeddingCompression] = useState(35);
   const [dimensionAmount, setDimensionAmount] = useState(32);
   const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>("jl");
   const [kEntry, setKEntry] = useState(12);
@@ -11680,7 +11679,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     chunkBars,
     distanceMetric,
     selectedAiDomains,
-    embeddingCompression,
     dimensionAmount,
     compressionMethod,
     kEntry,
@@ -11711,7 +11709,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     trailingDistPct, aiModelStates, aiFeatureLevels, aiFeatureModes,
     selectedAiLibraries, selectedAiLibrarySettings, selectedAiLibraryId, aiBulkScope,
     aiBulkWeight, aiBulkStride, aiBulkMaxSamples, chunkBars, distanceMetric,
-    selectedAiDomains, embeddingCompression, dimensionAmount, compressionMethod,
+    selectedAiDomains, dimensionAmount, compressionMethod,
     kEntry, kExit, knnVoteMode, hdbMinClusterSize, hdbMinSamples, hdbEpsQuantile,
     hdbSampleCap, antiCheatEnabled, validationMode, realismLevel, propInitialBalance,
     propDailyMaxLoss, propTotalMaxLoss, propProfitTarget, propProjectionMethod,
@@ -11775,7 +11773,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (s.chunkBars != null) setChunkBars(s.chunkBars);
     if (s.distanceMetric != null) setDistanceMetric(s.distanceMetric);
     if (s.selectedAiDomains != null) setSelectedAiDomains(s.selectedAiDomains);
-    if (s.embeddingCompression != null) setEmbeddingCompression(s.embeddingCompression);
     if (s.dimensionAmount != null) setDimensionAmount(s.dimensionAmount);
     if (s.compressionMethod != null) setCompressionMethod(s.compressionMethod);
     if (s.kEntry != null) setKEntry(s.kEntry);
@@ -11879,7 +11876,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setChunkBars(24);
     setDistanceMetric("euclidean");
     setSelectedAiDomains(["Direction", "Model"]);
-    setEmbeddingCompression(35);
     setDimensionAmount(32);
     setCompressionMethod("jl");
     setKEntry(12);
@@ -18700,26 +18696,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             <option value="manhattan">Manhattan (L1)</option>
                             <option value="chebyshev">Chebyshev (L-infinity)</option>
                           </select>
-                        </label>
-
-                        <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
-                          <span className="ai-zip-label">Compression</span>
-                          <input
-                            type="range"
-                            min={0}
-                            max={100}
-                            step={1}
-                            value={embeddingCompression}
-                            disabled={aiDisabled}
-                            onChange={(event) => {
-                              setEmbeddingCompression(
-                                clamp(Number(event.target.value) || 0, 0, 100)
-                              );
-                            }}
-                            className="backtest-slider"
-                            style={{ "--p": `${embeddingCompression}%` } as React.CSSProperties}
-                          />
-                          <span className="ai-zip-note">{embeddingCompression}%</span>
                         </label>
 
                         <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
