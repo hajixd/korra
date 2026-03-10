@@ -61,6 +61,23 @@ type PixelAgentSpot = {
   y: number;
   direction: PixelDirection;
   activity: string;
+  targetFurnitureId?: string;
+  targetOffsetX?: number;
+  targetOffsetY?: number;
+};
+
+type DecorationType = "poster" | "flower" | "coffee" | "serverroom" | "cat";
+
+type PixelDecoration = {
+  id: string;
+  type: DecorationType;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  frame?: number;
+  animated?: boolean;
+  zIndex?: number;
 };
 
 type OfficeRoom = {
@@ -73,6 +90,7 @@ type OfficeRoom = {
   h: number;
   floor: FloorTheme;
   furniture: PixelFurniture[];
+  decorations?: PixelDecoration[];
   agents: PixelAgentSpot[];
 };
 
@@ -89,6 +107,21 @@ type OfficeAgent = {
 
 const MAP_WIDTH = 2600;
 const MAP_HEIGHT = 1800;
+const MAP_SCALE = 1.55;
+const SIDEBAR_WIDTH = 640;
+
+const STAR_OFFICE_ASSETS = {
+  desk: "/gideon-pixel/star-office/desk-v3.webp",
+  sofa: "/gideon-pixel/star-office/sofa-idle-v3.png",
+  sofaShadow: "/gideon-pixel/star-office/sofa-shadow-v1.png",
+  plants: "/gideon-pixel/star-office/plants-spritesheet.webp",
+  posters: "/gideon-pixel/star-office/posters-spritesheet.webp",
+  coffee: "/gideon-pixel/star-office/coffee-machine-v3-grid.webp",
+  coffeeShadow: "/gideon-pixel/star-office/coffee-machine-shadow-v1.png",
+  serverroom: "/gideon-pixel/star-office/serverroom-spritesheet.webp",
+  cats: "/gideon-pixel/star-office/cats-spritesheet.webp",
+  flowers: "/gideon-pixel/star-office/flowers-bloom-v2.webp"
+} as const;
 
 const SPRITE_SHEETS = [
   "/gideon-pixel/char_0.png",
@@ -130,7 +163,17 @@ const OFFICE_ROOMS: OfficeRoom[] = [
       ...shelfRow("research-mid-west", 80, 180, 2),
       ...shelfRow("research-mid-east", 360, 180, 2)
     ],
-    agents: [{ agentId: "research", x: 316, y: 232, direction: "right", activity: "READ" }]
+    agents: [
+      {
+        agentId: "research",
+        x: 316,
+        y: 232,
+        direction: "right",
+        activity: "READ",
+        targetFurnitureId: "research-mid-west-shelf-1",
+        targetOffsetX: 18
+      }
+    ]
   },
   {
     id: "routing",
@@ -148,8 +191,22 @@ const OFFICE_ROOMS: OfficeRoom[] = [
       { id: "routing-plant", type: "plant", x: 24, y: 190, w: 26, h: 38 }
     ],
     agents: [
-      { agentId: "supervisor", x: 150, y: 184, direction: "up", activity: "ROUTE" },
-      { agentId: "depth", x: 236, y: 184, direction: "up", activity: "DEPTH" }
+      {
+        agentId: "supervisor",
+        x: 150,
+        y: 184,
+        direction: "up",
+        activity: "ROUTE",
+        targetFurnitureId: "routing-board"
+      },
+      {
+        agentId: "depth",
+        x: 236,
+        y: 184,
+        direction: "up",
+        activity: "DEPTH",
+        targetFurnitureId: "routing-terminal"
+      }
     ]
   },
   {
@@ -169,9 +226,27 @@ const OFFICE_ROOMS: OfficeRoom[] = [
       { id: "briefing-plant", type: "plant", x: 26, y: 34, w: 26, h: 38 },
       { id: "briefing-plant-b", type: "plant", x: 438, y: 34, w: 26, h: 38 }
     ],
+    decorations: [
+      { id: "briefing-poster", type: "poster", x: 360, y: 18, w: 56, h: 56, frame: 6 },
+      { id: "briefing-flower", type: "flower", x: 224, y: 150, w: 34, h: 34, frame: 7 }
+    ],
     agents: [
-      { agentId: "intake", x: 182, y: 184, direction: "right", activity: "BRIEF" },
-      { agentId: "clarifier", x: 312, y: 184, direction: "left", activity: "ASK" }
+      {
+        agentId: "intake",
+        x: 182,
+        y: 184,
+        direction: "right",
+        activity: "BRIEF",
+        targetFurnitureId: "briefing-table"
+      },
+      {
+        agentId: "clarifier",
+        x: 312,
+        y: 184,
+        direction: "left",
+        activity: "ASK",
+        targetFurnitureId: "briefing-board"
+      }
     ]
   },
   {
@@ -194,9 +269,28 @@ const OFFICE_ROOMS: OfficeRoom[] = [
       { id: "market-cooler", type: "cooler", x: 608, y: 72, w: 34, h: 52 },
       { id: "market-plant", type: "plant", x: 610, y: 448, w: 30, h: 42 }
     ],
+    decorations: [
+      { id: "market-poster-a", type: "poster", x: 72, y: 18, w: 58, h: 58, frame: 11 },
+      { id: "market-poster-b", type: "poster", x: 448, y: 18, w: 58, h: 58, frame: 18 },
+      { id: "market-serverroom", type: "serverroom", x: 512, y: 350, w: 128, h: 178, animated: true, zIndex: 2 }
+    ],
     agents: [
-      { agentId: "market", x: 122, y: 180, direction: "down", activity: "PRICE" },
-      { agentId: "signal", x: 498, y: 342, direction: "down", activity: "SCAN" }
+      {
+        agentId: "market",
+        x: 122,
+        y: 180,
+        direction: "down",
+        activity: "PRICE",
+        targetFurnitureId: "market-a-terminal"
+      },
+      {
+        agentId: "signal",
+        x: 498,
+        y: 342,
+        direction: "down",
+        activity: "SCAN",
+        targetFurnitureId: "market-f-terminal"
+      }
     ]
   },
   {
@@ -216,7 +310,20 @@ const OFFICE_ROOMS: OfficeRoom[] = [
       { id: "code-server-b", type: "server", x: 446, y: 226, w: 44, h: 100 },
       { id: "code-plant", type: "plant", x: 40, y: 280, w: 28, h: 40 }
     ],
-    agents: [{ agentId: "coder", x: 286, y: 210, direction: "up", activity: "CODE" }]
+    decorations: [
+      { id: "code-poster", type: "poster", x: 76, y: 20, w: 58, h: 58, frame: 2 },
+      { id: "code-serverroom", type: "serverroom", x: 356, y: 84, w: 118, h: 164, animated: true, zIndex: 2 }
+    ],
+    agents: [
+      {
+        agentId: "coder",
+        x: 286,
+        y: 210,
+        direction: "up",
+        activity: "CODE",
+        targetFurnitureId: "code-b-terminal"
+      }
+    ]
   },
   {
     id: "tools",
@@ -235,7 +342,20 @@ const OFFICE_ROOMS: OfficeRoom[] = [
       { id: "tool-archive", type: "archive", x: 54, y: 250, w: 96, h: 62 },
       { id: "tool-table", type: "table", x: 228, y: 232, w: 134, h: 76 }
     ],
-    agents: [{ agentId: "toolsmith", x: 290, y: 176, direction: "right", activity: "RUN" }]
+    decorations: [
+      { id: "tool-coffee", type: "coffee", x: 348, y: 170, w: 70, h: 70, frame: 15, zIndex: 2 },
+      { id: "tool-serverroom", type: "serverroom", x: 42, y: 150, w: 112, h: 156, animated: true, zIndex: 2 }
+    ],
+    agents: [
+      {
+        agentId: "toolsmith",
+        x: 290,
+        y: 176,
+        direction: "right",
+        activity: "RUN",
+        targetFurnitureId: "tool-console-terminal"
+      }
+    ]
   },
   {
     id: "strategy",
@@ -254,9 +374,27 @@ const OFFICE_ROOMS: OfficeRoom[] = [
       { id: "strategy-archive", type: "archive", x: 382, y: 318, w: 110, h: 66 },
       { id: "strategy-plant", type: "plant", x: 54, y: 320, w: 28, h: 40 }
     ],
+    decorations: [
+      { id: "strategy-poster", type: "poster", x: 404, y: 40, w: 60, h: 60, frame: 24 },
+      { id: "strategy-flower", type: "flower", x: 276, y: 174, w: 34, h: 34, frame: 11 }
+    ],
     agents: [
-      { agentId: "strategist", x: 216, y: 232, direction: "right", activity: "PLAN" },
-      { agentId: "modeler", x: 328, y: 232, direction: "left", activity: "JSON" }
+      {
+        agentId: "strategist",
+        x: 216,
+        y: 232,
+        direction: "right",
+        activity: "PLAN",
+        targetFurnitureId: "strategy-board"
+      },
+      {
+        agentId: "modeler",
+        x: 328,
+        y: 232,
+        direction: "left",
+        activity: "JSON",
+        targetFurnitureId: "strategy-table"
+      }
     ]
   },
   {
@@ -277,8 +415,23 @@ const OFFICE_ROOMS: OfficeRoom[] = [
       { id: "chart-table", type: "table", x: 230, y: 288, w: 162, h: 92 }
     ],
     agents: [
-      { agentId: "charter", x: 154, y: 270, direction: "up", activity: "DRAW" },
-      { agentId: "animator", x: 470, y: 270, direction: "up", activity: "MOVE" }
+      {
+        agentId: "charter",
+        x: 154,
+        y: 270,
+        direction: "up",
+        activity: "DRAW",
+        targetFurnitureId: "chart-board-a"
+      },
+      {
+        agentId: "animator",
+        x: 470,
+        y: 270,
+        direction: "up",
+        activity: "MOVE",
+        targetFurnitureId: "chart-projector",
+        targetOffsetY: 36
+      }
     ]
   },
   {
@@ -298,6 +451,12 @@ const OFFICE_ROOMS: OfficeRoom[] = [
       { id: "hearth-plant-a", type: "plant", x: 68, y: 282, w: 28, h: 40 },
       { id: "hearth-plant-b", type: "plant", x: 546, y: 282, w: 28, h: 40 }
     ],
+    decorations: [
+      { id: "hearth-cat", type: "cat", x: 280, y: 248, w: 44, h: 44, frame: 5, zIndex: 3 },
+      { id: "hearth-coffee", type: "coffee", x: 510, y: 42, w: 78, h: 78, frame: 24, zIndex: 2 },
+      { id: "hearth-flower", type: "flower", x: 322, y: 136, w: 36, h: 36, frame: 10, zIndex: 4 },
+      { id: "hearth-poster", type: "poster", x: 286, y: 26, w: 60, h: 60, frame: 28 }
+    ],
     agents: []
   },
   {
@@ -316,7 +475,17 @@ const OFFICE_ROOMS: OfficeRoom[] = [
       { id: "memory-archive-b", type: "archive", x: 216, y: 162, w: 100, h: 64 },
       { id: "memory-terminal", type: "terminal", x: 242, y: 248, w: 54, h: 30 }
     ],
-    agents: [{ agentId: "memory", x: 248, y: 218, direction: "up", activity: "CACHE" }]
+    decorations: [{ id: "memory-serverroom", type: "serverroom", x: 44, y: 164, w: 116, h: 162, animated: true, zIndex: 2 }],
+    agents: [
+      {
+        agentId: "memory",
+        x: 248,
+        y: 218,
+        direction: "up",
+        activity: "CACHE",
+        targetFurnitureId: "memory-archive-a"
+      }
+    ]
   },
   {
     id: "stats",
@@ -334,8 +503,22 @@ const OFFICE_ROOMS: OfficeRoom[] = [
       { id: "stats-plant", type: "plant", x: 428, y: 244, w: 28, h: 40 }
     ],
     agents: [
-      { agentId: "stats", x: 136, y: 210, direction: "up", activity: "STATS" },
-      { agentId: "indicator", x: 374, y: 210, direction: "up", activity: "MATH" }
+      {
+        agentId: "stats",
+        x: 136,
+        y: 210,
+        direction: "up",
+        activity: "STATS",
+        targetFurnitureId: "stats-board"
+      },
+      {
+        agentId: "indicator",
+        x: 374,
+        y: 210,
+        direction: "up",
+        activity: "MATH",
+        targetFurnitureId: "stats-b-terminal"
+      }
     ]
   },
   {
@@ -352,7 +535,16 @@ const OFFICE_ROOMS: OfficeRoom[] = [
       { id: "template-archive", type: "archive", x: 146, y: 146, w: 120, h: 66 },
       { id: "template-table", type: "table", x: 286, y: 132, w: 104, h: 68 }
     ],
-    agents: [{ agentId: "templater", x: 320, y: 198, direction: "up", activity: "FRAME" }]
+    agents: [
+      {
+        agentId: "templater",
+        x: 320,
+        y: 198,
+        direction: "up",
+        activity: "FRAME",
+        targetFurnitureId: "template-archive"
+      }
+    ]
   },
   {
     id: "cinema",
@@ -369,7 +561,18 @@ const OFFICE_ROOMS: OfficeRoom[] = [
       { id: "cinema-sofa-b", type: "sofa", x: 258, y: 170, w: 100, h: 58 },
       { id: "cinema-table", type: "table", x: 160, y: 186, w: 102, h: 58 }
     ],
-    agents: [{ agentId: "cinema", x: 216, y: 206, direction: "up", activity: "CUE" }]
+    decorations: [{ id: "cinema-poster", type: "poster", x: 180, y: 78, w: 64, h: 64, frame: 9 }],
+    agents: [
+      {
+        agentId: "cinema",
+        x: 216,
+        y: 206,
+        direction: "up",
+        activity: "CUE",
+        targetFurnitureId: "cinema-projector",
+        targetOffsetY: 28
+      }
+    ]
   },
   {
     id: "narrative",
@@ -386,7 +589,20 @@ const OFFICE_ROOMS: OfficeRoom[] = [
       { id: "narrative-sofa", type: "sofa", x: 56, y: 40, w: 220, h: 64 },
       { id: "narrative-plant", type: "plant", x: 274, y: 190, w: 26, h: 38 }
     ],
-    agents: [{ agentId: "writer", x: 166, y: 210, direction: "up", activity: "WRITE" }]
+    decorations: [
+      { id: "narrative-poster", type: "poster", x: 34, y: 108, w: 56, h: 56, frame: 15 },
+      { id: "narrative-flower", type: "flower", x: 206, y: 142, w: 30, h: 30, frame: 4 }
+    ],
+    agents: [
+      {
+        agentId: "writer",
+        x: 166,
+        y: 210,
+        direction: "up",
+        activity: "WRITE",
+        targetFurnitureId: "narrative-terminal"
+      }
+    ]
   },
   {
     id: "audit",
@@ -402,9 +618,24 @@ const OFFICE_ROOMS: OfficeRoom[] = [
       { id: "audit-board", type: "whiteboard", x: 88, y: 34, w: 160, h: 40 },
       { id: "audit-archive", type: "archive", x: 238, y: 196, w: 72, h: 52 }
     ],
+    decorations: [{ id: "audit-serverroom", type: "serverroom", x: 222, y: 74, w: 92, h: 128, animated: true, zIndex: 2 }],
     agents: [
-      { agentId: "auditor", x: 136, y: 224, direction: "up", activity: "AUDIT" },
-      { agentId: "sentinel", x: 216, y: 224, direction: "up", activity: "GUARD" }
+      {
+        agentId: "auditor",
+        x: 136,
+        y: 224,
+        direction: "up",
+        activity: "AUDIT",
+        targetFurnitureId: "audit-board"
+      },
+      {
+        agentId: "sentinel",
+        x: 216,
+        y: 224,
+        direction: "up",
+        activity: "GUARD",
+        targetFurnitureId: "audit-table"
+      }
     ]
   }
 ];
@@ -685,6 +916,36 @@ const hashString = (value: string): number => {
 
 const pickSpriteSheet = (seed: string): string =>
   SPRITE_SHEETS[hashString(seed) % SPRITE_SHEETS.length] ?? SPRITE_SHEETS[0];
+
+const pickVariant = (seed: string, total: number): number => {
+  if (total <= 0) {
+    return 0;
+  }
+
+  return hashString(seed) % total;
+};
+
+const buildGridSpriteStyle = (assetUrl: string, cols: number, rows: number, frame: number): CSSProperties => {
+  const boundedFrame = Math.max(0, frame) % Math.max(cols * rows, 1);
+  const col = boundedFrame % cols;
+  const row = Math.floor(boundedFrame / cols);
+
+  return {
+    backgroundImage: `url("${assetUrl}")`,
+    backgroundRepeat: "no-repeat",
+    backgroundSize: `${cols * 100}% ${rows * 100}%`,
+    backgroundPosition: `${cols === 1 ? 0 : (col / (cols - 1)) * 100}% ${
+      rows === 1 ? 0 : (row / (rows - 1)) * 100
+    }%`
+  };
+};
+
+const buildStripSpriteStyle = (assetUrl: string, frames: number, frame = 0): CSSProperties => ({
+  backgroundImage: `url("${assetUrl}")`,
+  backgroundRepeat: "no-repeat",
+  backgroundSize: `${frames * 100}% 100%`,
+  backgroundPosition: `${frames === 1 ? 0 : (Math.max(0, frame % frames) / (frames - 1)) * 100}% 0%`
+});
 
 const spriteRowY = (direction: PixelDirection): string => {
   switch (direction) {
@@ -993,8 +1254,14 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
       return;
     }
 
-    const nextLeft = Math.max(0, room.x + room.w / 2 - scrollNode.clientWidth / 2);
-    const nextTop = Math.max(0, room.y + room.h / 2 - scrollNode.clientHeight / 2);
+    const nextLeft = Math.max(
+      0,
+      (room.x + room.w / 2) * MAP_SCALE - scrollNode.clientWidth / 2
+    );
+    const nextTop = Math.max(
+      0,
+      (room.y + room.h / 2) * MAP_SCALE - scrollNode.clientHeight / 2
+    );
 
     scrollNode.scrollTo({
       left: nextLeft,
@@ -1076,71 +1343,199 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
             </div>
 
             <div className="gpx-map-shell" ref={mapScrollRef}>
-              <div className="gpx-map">
-                <div className="gpx-grid-layer" aria-hidden />
-                {roomSnapshots.map((snapshot) => (
-                  <section
-                    key={snapshot.room.id}
-                    className={`gpx-room floor-${snapshot.room.floor} state-${snapshot.state}`}
-                    style={
-                      {
-                        left: snapshot.room.x,
-                        top: snapshot.room.y,
-                        width: snapshot.room.w,
-                        height: snapshot.room.h
-                      } as CSSProperties
-                    }
-                  >
-                    <span className={`gpx-room-lamp state-${snapshot.state}`} aria-hidden />
+              <div className="gpx-map-scale">
+                <div className="gpx-map">
+                  <div className="gpx-grid-layer" aria-hidden />
+                  {roomSnapshots.map((snapshot) => (
+                    <section
+                      key={snapshot.room.id}
+                      className={`gpx-room floor-${snapshot.room.floor} state-${snapshot.state}`}
+                      style={
+                        {
+                          left: snapshot.room.x,
+                          top: snapshot.room.y,
+                          width: snapshot.room.w,
+                          height: snapshot.room.h
+                        } as CSSProperties
+                      }
+                    >
+                      <span className={`gpx-room-lamp state-${snapshot.state}`} aria-hidden />
 
-                    {snapshot.room.furniture.map((piece) => (
-                      <div
-                        key={piece.id}
-                        className={`gpx-furniture type-${piece.type}${snapshot.state !== "idle" ? " live" : ""}${
-                          piece.orientation === "v" ? " orient-v" : ""
-                        }`}
-                        style={
-                          {
-                            left: piece.x,
-                            top: piece.y,
-                            width: piece.w,
-                            height: piece.h
-                          } as CSSProperties
-                        }
-                      />
-                    ))}
+                      {snapshot.room.furniture.map((piece) => {
+                        const furnitureStyle = {
+                          left: piece.x,
+                          top: piece.y,
+                          width: piece.w,
+                          height: piece.h,
+                          ...(piece.type === "plant"
+                            ? buildGridSpriteStyle(
+                                STAR_OFFICE_ASSETS.plants,
+                                4,
+                                4,
+                                pickVariant(piece.id, 16)
+                              )
+                            : {})
+                        } as CSSProperties;
 
-                    {snapshot.agentSnapshots.map(({ spot, agent, state }) => (
-                      <div
-                        key={agent.id}
-                        className={`gpx-actor-slot state-${state}`}
-                        style={
-                          {
-                            left: spot.x,
-                            top: spot.y
-                          } as CSSProperties
+                        return (
+                          <div
+                            key={piece.id}
+                            className={`gpx-furniture type-${piece.type}${snapshot.state !== "idle" ? " live" : ""}${
+                              piece.orientation === "v" ? " orient-v" : ""
+                            }`}
+                            style={furnitureStyle}
+                          />
+                        );
+                      })}
+
+                      {snapshot.room.decorations?.map((decoration) => {
+                        let spriteStyle: CSSProperties = {};
+
+                        switch (decoration.type) {
+                          case "poster":
+                            spriteStyle = buildGridSpriteStyle(
+                              STAR_OFFICE_ASSETS.posters,
+                              4,
+                              8,
+                              decoration.frame ?? pickVariant(decoration.id, 32)
+                            );
+                            break;
+                          case "flower":
+                            spriteStyle = buildGridSpriteStyle(
+                              STAR_OFFICE_ASSETS.flowers,
+                              4,
+                              4,
+                              decoration.frame ?? pickVariant(decoration.id, 16)
+                            );
+                            break;
+                          case "coffee":
+                            spriteStyle = buildGridSpriteStyle(
+                              STAR_OFFICE_ASSETS.coffee,
+                              12,
+                              8,
+                              decoration.frame ?? pickVariant(decoration.id, 96)
+                            );
+                            break;
+                          case "serverroom":
+                            spriteStyle = buildStripSpriteStyle(STAR_OFFICE_ASSETS.serverroom, 40);
+                            break;
+                          case "cat":
+                            spriteStyle = buildGridSpriteStyle(
+                              STAR_OFFICE_ASSETS.cats,
+                              4,
+                              4,
+                              decoration.frame ?? pickVariant(decoration.id, 16)
+                            );
+                            break;
+                          default:
+                            break;
                         }
-                      >
-                        {(state === "active" || state === "warm") ? (
-                          <div className={`gpx-agent-bubble state-${state}`}>
-                            {state === "active" ? spot.activity : "READY"}
+
+                        return (
+                          <div
+                            key={decoration.id}
+                            className={`gpx-decoration type-${decoration.type}${
+                              decoration.animated ? " animated" : ""
+                            }${snapshot.state !== "idle" ? " live" : ""}`}
+                            style={
+                              {
+                                left: decoration.x,
+                                top: decoration.y,
+                                width: decoration.w,
+                                height: decoration.h,
+                                zIndex: decoration.zIndex ?? 2,
+                                ...spriteStyle
+                              } as CSSProperties
+                            }
+                            aria-hidden
+                          />
+                        );
+                      })}
+
+                      {snapshot.agentSnapshots.map(({ spot, agent, state }) => {
+                        const target = spot.targetFurnitureId
+                          ? snapshot.room.furniture.find((piece) => piece.id === spot.targetFurnitureId)
+                          : null;
+                        const targetCenterX =
+                          target && typeof spot.targetOffsetX === "number"
+                            ? target.x + target.w / 2 + spot.targetOffsetX
+                            : target
+                              ? target.x + target.w / 2
+                              : null;
+                        const targetCenterY =
+                          target && typeof spot.targetOffsetY === "number"
+                            ? target.y + target.h / 2 + spot.targetOffsetY
+                            : target
+                              ? target.y + target.h / 2
+                              : null;
+                        const dx =
+                          typeof targetCenterX === "number" ? targetCenterX - spot.x : 0;
+                        const dy =
+                          typeof targetCenterY === "number" ? targetCenterY - spot.y : 0;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+
+                        return (
+                          <div key={agent.id}>
+                            {target && state !== "idle" ? (
+                              <>
+                                <div
+                                  className={`gpx-interaction-line state-${state}`}
+                                  style={
+                                    {
+                                      left: spot.x,
+                                      top: spot.y - 22,
+                                      width: distance,
+                                      transform: `rotate(${angle}deg)`
+                                    } as CSSProperties
+                                  }
+                                />
+                                <div
+                                  className={`gpx-interaction-target state-${state}`}
+                                  style={
+                                    {
+                                      left: target.x - 6,
+                                      top: target.y - 6,
+                                      width: target.w + 12,
+                                      height: target.h + 12
+                                    } as CSSProperties
+                                  }
+                                />
+                              </>
+                            ) : null}
+
+                            <div
+                              className={`gpx-actor-slot state-${state}`}
+                              style={
+                                {
+                                  left: spot.x,
+                                  top: spot.y
+                                } as CSSProperties
+                              }
+                            >
+                              {(state === "active" || state === "warm") ? (
+                                <div className={`gpx-agent-bubble state-${state}`}>
+                                  {state === "active" ? spot.activity : "READY"}
+                                </div>
+                              ) : null}
+                              <div
+                                className={`gpx-actor dir-${spot.direction} state-${state}`}
+                                style={
+                                  {
+                                    backgroundImage: `url("${pickSpriteSheet(agent.id)}")`,
+                                    "--row-y": spriteRowY(spot.direction)
+                                  } as CSSProperties
+                                }
+                                aria-hidden
+                              />
+                              <span className="gpx-actor-badge">{agent.badge}</span>
+                            </div>
                           </div>
-                        ) : null}
-                        <div
-                          className={`gpx-actor dir-${spot.direction} state-${state}`}
-                          style={
-                            {
-                              backgroundImage: `url("${pickSpriteSheet(agent.id)}")`,
-                              "--row-y": spriteRowY(spot.direction)
-                            } as CSSProperties
-                          }
-                          aria-hidden
-                        />
-                        <span className="gpx-actor-badge">{agent.badge}</span>
-                      </div>
-                    ))}
-                  </section>
-                ))}
+                        );
+                      })}
+                    </section>
+                  ))}
+                </div>
               </div>
             </div>
           </section>
@@ -1372,8 +1767,8 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         .gpx-header {
           display: grid;
           grid-template-columns: minmax(0, 1fr) auto;
-          gap: 0.56rem;
-          padding: 0.58rem 0.66rem;
+          gap: 0.8rem;
+          padding: 0.78rem 0.9rem;
         }
 
         .gpx-header-copy {
@@ -1384,11 +1779,11 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
 
         .gpx-status {
           justify-self: flex-start;
-          padding: 0.18rem 0.4rem;
+          padding: 0.24rem 0.52rem;
           border: 2px solid #0e1222;
           background: #3f486d;
           color: #f6f7ff;
-          font-size: 0.62rem;
+          font-size: 0.74rem;
         }
 
         .gpx-status.live {
@@ -1399,15 +1794,15 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         .gpx-header-copy h3 {
           margin: 0;
           color: #fff8de;
-          font-size: 0.92rem;
+          font-size: 1.12rem;
           text-transform: uppercase;
         }
 
         .gpx-header-copy p {
           margin: 0;
           color: #d5daf6;
-          font-size: 0.62rem;
-          line-height: 1.46;
+          font-size: 0.76rem;
+          line-height: 1.5;
           max-width: 78ch;
         }
 
@@ -1420,22 +1815,22 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         }
 
         .gpx-stat {
-          min-width: 102px;
-          padding: 0.28rem 0.4rem;
+          min-width: 132px;
+          padding: 0.38rem 0.5rem;
           border: 2px solid #0f1324;
           background: #353b5b;
           display: grid;
-          gap: 0.12rem;
+          gap: 0.16rem;
         }
 
         .gpx-stat span {
           color: #bac3eb;
-          font-size: 0.46rem;
+          font-size: 0.56rem;
         }
 
         .gpx-stat strong {
           color: #fff7d4;
-          font-size: 0.56rem;
+          font-size: 0.72rem;
         }
 
         .gpx-sidebar-btn,
@@ -1443,7 +1838,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           border: 2px solid #101425;
           font: inherit;
           color: #fff7de;
-          padding: 0.34rem 0.54rem;
+          padding: 0.44rem 0.68rem;
           cursor: pointer;
           box-shadow: 3px 3px 0 rgba(7, 8, 15, 0.58);
         }
@@ -1467,12 +1862,12 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         .gpx-layout {
           min-height: 0;
           display: grid;
-          grid-template-columns: minmax(0, 1fr) 382px;
+          grid-template-columns: minmax(0, 1fr) ${SIDEBAR_WIDTH}px;
           gap: 0.46rem;
         }
 
         .gpx-layout.sidebar-collapsed {
-          grid-template-columns: minmax(0, 1fr) 56px;
+          grid-template-columns: minmax(0, 1fr) 68px;
         }
 
         .gpx-map-window {
@@ -1487,31 +1882,59 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           align-items: center;
           justify-content: space-between;
           gap: 0.36rem;
-          padding: 0.28rem 0.42rem;
+          padding: 0.38rem 0.56rem;
           border-bottom: 3px solid #14192b;
           background: #39405f;
           color: #fff8de;
-          font-size: 0.52rem;
+          font-size: 0.64rem;
         }
 
         .gpx-window-head strong {
           color: #c7ffd4;
-          font-size: 0.48rem;
+          font-size: 0.58rem;
         }
 
         .gpx-map-shell {
           min-height: 0;
           overflow: auto;
-          padding: 0.45rem;
+          padding: 0.8rem;
           background:
             linear-gradient(180deg, rgba(14, 18, 31, 0.98), rgba(7, 9, 16, 1));
+          overscroll-behavior: contain;
+        }
+
+        .gpx-map-shell::-webkit-scrollbar,
+        .gpx-sidebar::-webkit-scrollbar {
+          width: 14px;
+          height: 14px;
+        }
+
+        .gpx-map-shell::-webkit-scrollbar-track,
+        .gpx-sidebar::-webkit-scrollbar-track {
+          background: #151a28;
+          border: 2px solid #0e1222;
+        }
+
+        .gpx-map-shell::-webkit-scrollbar-thumb,
+        .gpx-sidebar::-webkit-scrollbar-thumb {
+          background: #49547a;
+          border: 2px solid #0e1222;
+        }
+
+        .gpx-map-scale {
+          position: relative;
+          width: ${Math.round(MAP_WIDTH * MAP_SCALE)}px;
+          height: ${Math.round(MAP_HEIGHT * MAP_SCALE)}px;
         }
 
         .gpx-map {
           position: relative;
           width: ${MAP_WIDTH}px;
           height: ${MAP_HEIGHT}px;
+          transform: scale(${MAP_SCALE});
+          transform-origin: top left;
           background:
+            radial-gradient(circle at 50% 8%, rgba(120, 145, 212, 0.08), transparent 20%),
             linear-gradient(180deg, #20243a, #171a2a),
             repeating-linear-gradient(
               0deg,
@@ -1548,6 +1971,28 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           box-shadow:
             inset 0 0 0 4px rgba(255, 255, 255, 0.06),
             8px 8px 0 rgba(0, 0, 0, 0.34);
+        }
+
+        .gpx-room::before {
+          content: "";
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 0;
+          height: 18px;
+          background: rgba(9, 12, 22, 0.24);
+          pointer-events: none;
+        }
+
+        .gpx-room::after {
+          content: "";
+          position: absolute;
+          left: 14px;
+          right: 14px;
+          bottom: 10px;
+          height: 8px;
+          background: rgba(0, 0, 0, 0.12);
+          pointer-events: none;
         }
 
         .gpx-room.floor-wood {
@@ -1619,6 +2064,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           position: absolute;
           border: 2px solid #0b0f1d;
           box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.42);
+          image-rendering: pixelated;
         }
 
         .gpx-furniture::before,
@@ -1646,6 +2092,12 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
             );
         }
 
+        .gpx-furniture.type-bookshelf.live {
+          box-shadow:
+            2px 2px 0 rgba(0, 0, 0, 0.42),
+            0 0 0 2px rgba(255, 243, 168, 0.12);
+        }
+
         .gpx-furniture.type-bookshelf.live::after {
           width: 8px;
           height: 8px;
@@ -1656,25 +2108,18 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         }
 
         .gpx-furniture.type-desk {
-          background:
-            linear-gradient(180deg, #b57d2d 0 18%, #8f6120 18% 72%, #5c3814 72% 100%);
+          border: 0;
+          background: center bottom / contain no-repeat url("${STAR_OFFICE_ASSETS.desk}");
+          box-shadow: none;
+          filter: drop-shadow(3px 5px 0 rgba(0, 0, 0, 0.4));
         }
 
         .gpx-furniture.type-desk::before {
-          left: 34px;
-          top: 8px;
-          width: 52px;
-          height: 28px;
-          border: 2px solid #101425;
-          background: #465b7f;
+          display: none;
         }
 
         .gpx-furniture.type-desk::after {
-          left: 22px;
-          right: 22px;
-          bottom: 10px;
-          height: 6px;
-          background: rgba(0, 0, 0, 0.3);
+          display: none;
         }
 
         .gpx-furniture.type-desk.live::before,
@@ -1683,15 +2128,29 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           animation: gpxScreenPulse 1.1s steps(2, end) infinite;
         }
 
+        .gpx-furniture.type-desk.live {
+          filter: drop-shadow(3px 5px 0 rgba(0, 0, 0, 0.4)) saturate(1.06);
+        }
+
         .gpx-furniture.type-terminal {
-          background: #22283a;
+          border-color: #0d2130;
+          background: rgba(60, 161, 209, 0.42);
+          box-shadow:
+            inset 0 0 0 2px rgba(169, 245, 255, 0.18),
+            2px 2px 0 rgba(0, 0, 0, 0.32);
+          backdrop-filter: blur(1px);
         }
 
         .gpx-furniture.type-terminal::before {
-          inset: 4px;
-          border: 2px solid #101425;
+          inset: 2px;
+          border: 1px solid rgba(169, 245, 255, 0.34);
           background:
-            linear-gradient(180deg, #9bd9ff, #4b7ecf);
+            linear-gradient(180deg, rgba(167, 235, 255, 0.9), rgba(62, 142, 198, 0.9)),
+            repeating-linear-gradient(
+              180deg,
+              rgba(255, 255, 255, 0.16) 0 2px,
+              transparent 2px 4px
+            );
         }
 
         .gpx-furniture.type-table {
@@ -1706,6 +2165,14 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           right: 14px;
           border: 2px solid #101425;
           background: #fff6de;
+        }
+
+        .gpx-furniture.type-table::after {
+          left: 14px;
+          bottom: 10px;
+          width: 30px;
+          height: 10px;
+          background: rgba(0, 0, 0, 0.16);
         }
 
         .gpx-furniture.type-whiteboard {
@@ -1753,16 +2220,16 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         }
 
         .gpx-furniture.type-plant {
-          background: #9a5f3c;
+          border: 0;
+          background-color: transparent;
+          background-position: center bottom;
+          background-repeat: no-repeat;
+          box-shadow: none;
+          filter: drop-shadow(2px 3px 0 rgba(0, 0, 0, 0.38));
         }
 
         .gpx-furniture.type-plant::before {
-          left: 4px;
-          right: 4px;
-          bottom: 14px;
-          height: calc(100% - 14px);
-          background:
-            linear-gradient(90deg, transparent 0 8%, #3d8a3f 8% 26%, transparent 26% 38%, #57a55a 38% 62%, transparent 62% 74%, #2f6c38 74% 92%, transparent 92% 100%);
+          display: none;
         }
 
         .gpx-furniture.type-server {
@@ -1790,13 +2257,22 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         }
 
         .gpx-furniture.type-sofa {
-          background:
-            linear-gradient(180deg, #dba2b3 0 18%, #8c4961 18% 100%);
+          border: 0;
+          background: center bottom / contain no-repeat url("${STAR_OFFICE_ASSETS.sofa}");
+          box-shadow: none;
+          filter: drop-shadow(4px 6px 0 rgba(0, 0, 0, 0.38));
         }
 
         .gpx-furniture.type-sofa::before {
-          inset: 12px 18px 14px;
-          background: #f0dbe4;
+          display: none;
+        }
+
+        .gpx-furniture.type-sofa::after {
+          display: none;
+        }
+
+        .gpx-furniture.type-sofa.live {
+          filter: drop-shadow(4px 6px 0 rgba(0, 0, 0, 0.38)) saturate(1.04);
         }
 
         .gpx-furniture.type-projector {
@@ -1904,6 +2380,53 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           animation: gpxSpriteGlow 1.25s steps(2, end) infinite;
         }
 
+        .gpx-interaction-line {
+          position: absolute;
+          z-index: 4;
+          height: 3px;
+          transform-origin: 0 50%;
+          pointer-events: none;
+          opacity: 0.88;
+        }
+
+        .gpx-interaction-line.state-active {
+          background:
+            repeating-linear-gradient(
+              90deg,
+              #9effc2 0 10px,
+              #59d88a 10px 18px
+            );
+          animation: gpxFlow 0.9s linear infinite;
+        }
+
+        .gpx-interaction-line.state-warm {
+          background:
+            repeating-linear-gradient(
+              90deg,
+              #dfe7ff 0 10px,
+              #8ea6ff 10px 18px
+            );
+          opacity: 0.62;
+        }
+
+        .gpx-interaction-target {
+          position: absolute;
+          z-index: 4;
+          border: 3px solid #0e1222;
+          pointer-events: none;
+        }
+
+        .gpx-interaction-target.state-active {
+          border-color: #9effc2;
+          box-shadow: 0 0 0 3px rgba(158, 255, 194, 0.14);
+          animation: gpxBlink 0.9s steps(2, end) infinite;
+        }
+
+        .gpx-interaction-target.state-warm {
+          border-color: #9eb2ff;
+          box-shadow: 0 0 0 3px rgba(158, 178, 255, 0.1);
+        }
+
         .gpx-actor-badge {
           position: absolute;
           left: 50%;
@@ -1915,6 +2438,57 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           color: #181c2a;
           font-size: 0.36rem;
           box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.48);
+        }
+
+        .gpx-decoration {
+          position: absolute;
+          background-repeat: no-repeat;
+          background-position: center center;
+          image-rendering: pixelated;
+          pointer-events: none;
+          filter: drop-shadow(3px 4px 0 rgba(0, 0, 0, 0.34));
+        }
+
+        .gpx-decoration.type-poster {
+          border: 3px solid #131828;
+          background-color: rgba(19, 24, 40, 0.32);
+        }
+
+        .gpx-decoration.type-flower {
+          animation: gpxFlowerSway 1.5s steps(2, end) infinite;
+          transform-origin: 50% 100%;
+        }
+
+        .gpx-decoration.type-cat {
+          animation: gpxCatNap 2.6s steps(2, end) infinite;
+          transform-origin: 50% 100%;
+        }
+
+        .gpx-decoration.type-coffee::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          background: center bottom / contain no-repeat url("${STAR_OFFICE_ASSETS.coffeeShadow}");
+          opacity: 0.84;
+          transform: translateY(7px);
+          z-index: -1;
+        }
+
+        .gpx-decoration.type-coffee.live {
+          animation: gpxScreenPulse 1.6s steps(2, end) infinite;
+        }
+
+        .gpx-decoration.type-serverroom {
+          background-position: 0 0;
+        }
+
+        .gpx-decoration.type-serverroom.animated.live {
+          animation: gpxServerroom 2.2s steps(40) infinite;
+        }
+
+        .gpx-decoration.type-serverroom.animated:not(.live) {
+          animation: gpxServerroom 4s steps(40) infinite;
+          opacity: 0.8;
         }
 
         .gpx-side-rail {
@@ -1929,14 +2503,15 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         }
 
         .gpx-side-toggle {
-          padding: 0.42rem 0.2rem;
+          padding: 0.5rem 0.24rem;
           color: #fff7de;
           background: #365268;
           cursor: pointer;
           writing-mode: vertical-rl;
           text-orientation: mixed;
           letter-spacing: 0.05em;
-          min-height: 132px;
+          min-height: 164px;
+          font-size: 0.7rem;
         }
 
         .gpx-side-toggle:hover {
@@ -1945,31 +2520,34 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
 
         .gpx-sidebar {
           min-height: 0;
-          overflow: auto;
+          overflow-y: auto;
+          overflow-x: hidden;
           display: grid;
-          gap: 0.46rem;
+          gap: 0.72rem;
           align-content: start;
-          padding-right: 0.1rem;
+          padding-right: 0.18rem;
+          overscroll-behavior: contain;
         }
 
         .gpx-panel {
           overflow: hidden;
-          padding-bottom: 0.34rem;
+          padding-bottom: 0.48rem;
+          min-width: 0;
         }
 
         .gpx-copy {
           margin: 0;
-          padding: 0.38rem 0.44rem 0;
+          padding: 0.56rem 0.7rem 0;
           color: #edf0ff;
-          font-size: 0.52rem;
-          line-height: 1.46;
+          font-size: 0.7rem;
+          line-height: 1.56;
         }
 
         .gpx-stage-list,
         .gpx-roster,
         .gpx-room-list,
         .gpx-artifacts {
-          padding: 0.36rem 0.44rem 0;
+          padding: 0.56rem 0.7rem 0;
         }
 
         .gpx-stage-list {
@@ -1981,20 +2559,20 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           display: grid;
           grid-template-columns: auto minmax(0, 1fr);
           gap: 0.3rem;
-          padding: 0.18rem 0.22rem;
+          padding: 0.28rem 0.34rem;
           border: 2px solid #0f1324;
           background: #2f3552;
         }
 
         .gpx-stage-pill span {
-          min-width: 24px;
+          min-width: 28px;
           color: #fff7d4;
-          font-size: 0.42rem;
+          font-size: 0.54rem;
         }
 
         .gpx-stage-pill strong {
           color: #edf0ff;
-          font-size: 0.46rem;
+          font-size: 0.64rem;
         }
 
         .gpx-stage-pill.state-done {
@@ -2017,7 +2595,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           display: grid;
           grid-template-columns: minmax(0, 1fr) auto;
           gap: 0.3rem;
-          padding: 0.2rem 0.24rem;
+          padding: 0.3rem 0.36rem;
           border: 2px solid #0f1324;
           background: #2f3552;
         }
@@ -2032,23 +2610,23 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         .gpx-room-row strong,
         .gpx-roster-row strong {
           color: #fff7de;
-          font-size: 0.47rem;
+          font-size: 0.62rem;
         }
 
         .gpx-room-row small,
         .gpx-roster-row small {
-          margin-top: 0.08rem;
+          margin-top: 0.12rem;
           color: #ced4fa;
-          font-size: 0.39rem;
-          line-height: 1.35;
+          font-size: 0.54rem;
+          line-height: 1.45;
         }
 
         .gpx-room-row > span {
           align-self: start;
           border: 2px solid #101425;
-          padding: 0.08rem 0.22rem;
+          padding: 0.14rem 0.28rem;
           color: #f6f7ff;
-          font-size: 0.38rem;
+          font-size: 0.48rem;
           background: #40476b;
         }
 
@@ -2069,14 +2647,14 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         }
 
         .gpx-subsection {
-          padding: 0.34rem 0.44rem 0;
+          padding: 0.42rem 0.7rem 0;
           display: grid;
-          gap: 0.18rem;
+          gap: 0.24rem;
         }
 
         .gpx-subsection > span {
           color: #fff7d4;
-          font-size: 0.45rem;
+          font-size: 0.56rem;
         }
 
         .gpx-tag-list {
@@ -2086,11 +2664,11 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         }
 
         .gpx-tag {
-          padding: 0.12rem 0.26rem;
+          padding: 0.18rem 0.34rem;
           border: 2px solid #101425;
           background: #2d314a;
           color: #edf0ff;
-          font-size: 0.38rem;
+          font-size: 0.48rem;
         }
 
         .gpx-tag.type-function {
@@ -2110,15 +2688,15 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         }
 
         .gpx-roster-row span {
-          width: 24px;
-          height: 24px;
+          width: 30px;
+          height: 30px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
           border: 2px solid #101425;
           background: #f6f1dc;
           color: #181c2a;
-          font-size: 0.4rem;
+          font-size: 0.48rem;
         }
 
         .gpx-roster-row.active {
@@ -2131,8 +2709,8 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
 
         .gpx-empty {
           color: #dde2ff;
-          font-size: 0.48rem;
-          line-height: 1.4;
+          font-size: 0.62rem;
+          line-height: 1.5;
         }
 
         .gpx-artifacts {
@@ -2142,21 +2720,39 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         }
 
         .gpx-artifact {
-          padding: 0.18rem 0.22rem;
+          padding: 0.26rem 0.3rem;
           border: 2px solid #101425;
           background: #2f3552;
           display: grid;
-          gap: 0.08rem;
+          gap: 0.12rem;
         }
 
         .gpx-artifact span {
           color: #cad2f7;
-          font-size: 0.36rem;
+          font-size: 0.46rem;
         }
 
         .gpx-artifact strong {
           color: #fff7d4;
-          font-size: 0.48rem;
+          font-size: 0.62rem;
+        }
+
+        @keyframes gpxFlow {
+          0% {
+            background-position: 0 0;
+          }
+          100% {
+            background-position: 24px 0;
+          }
+        }
+
+        @keyframes gpxServerroom {
+          from {
+            background-position: 0 0;
+          }
+          to {
+            background-position: 100% 0;
+          }
         }
 
         @keyframes gpxBlink {
@@ -2187,6 +2783,26 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           }
           50% {
             transform: translate(-50%, calc(-100% - 1px));
+          }
+        }
+
+        @keyframes gpxFlowerSway {
+          0%,
+          100% {
+            transform: rotate(0deg);
+          }
+          50% {
+            transform: rotate(2deg);
+          }
+        }
+
+        @keyframes gpxCatNap {
+          0%,
+          100% {
+            transform: translateY(0);
+          }
+          50% {
+            transform: translateY(2px);
           }
         }
 
@@ -2221,7 +2837,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
 
         @media (max-width: 1200px) {
           .gpx-layout {
-            grid-template-columns: minmax(0, 1fr) 340px;
+            grid-template-columns: minmax(0, 1fr) 420px;
           }
         }
 
@@ -2244,7 +2860,11 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           .gpx-actor-slot.state-active,
           .gpx-actor-slot.state-warm,
           .gpx-actor.state-active,
-          .gpx-actor.state-warm {
+          .gpx-actor.state-warm,
+          .gpx-decoration.type-flower,
+          .gpx-decoration.type-cat,
+          .gpx-decoration.type-coffee.live,
+          .gpx-decoration.type-serverroom.animated {
             animation: none !important;
           }
         }
