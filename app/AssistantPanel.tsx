@@ -28,6 +28,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
+import AssistantInlinePriceActionChart from "./AssistantInlinePriceActionChart";
 import AssistantChartAnimationModal from "./AssistantChartAnimationModal";
 import GideonWorkView from "./GideonWorkView";
 import {
@@ -218,6 +219,7 @@ type StrategyChartMarker = {
 
 type CandlestickSnapshotRow = {
   x: string;
+  time: number;
   open: number;
   high: number;
   low: number;
@@ -311,6 +313,7 @@ const parseCandlestickSnapshotRows = (rows: AssistantChart["data"]): Candlestick
       }
 
       const x = typeof row.x === "string" ? row.x : "";
+      const time = Number(row.time);
       const open = Number(row.open);
       const high = Number(row.high);
       const low = Number(row.low);
@@ -318,6 +321,7 @@ const parseCandlestickSnapshotRows = (rows: AssistantChart["data"]): Candlestick
 
       if (
         !x ||
+        !Number.isFinite(time) ||
         !Number.isFinite(open) ||
         !Number.isFinite(high) ||
         !Number.isFinite(low) ||
@@ -328,6 +332,7 @@ const parseCandlestickSnapshotRows = (rows: AssistantChart["data"]): Candlestick
 
       return {
         x,
+        time,
         open,
         high,
         low,
@@ -346,6 +351,7 @@ const isCandlestickSnapshotChart = (chart: AssistantChart): boolean => {
   return (
     isPlainRecord(sampleRow) &&
     typeof sampleRow.x === "string" &&
+    Number.isFinite(Number(sampleRow.time)) &&
     Number.isFinite(Number(sampleRow.open)) &&
     Number.isFinite(Number(sampleRow.high)) &&
     Number.isFinite(Number(sampleRow.low)) &&
@@ -1174,11 +1180,14 @@ export default function AssistantPanel(props: AssistantPanelProps) {
               : "x";
 
     if (isCandlestickSnapshotChart(chart)) {
-      return renderCandlestickSnapshot({
-        chart,
-        zones: fvgZones,
-        markers: entryMarkers
-      });
+      return (
+        <AssistantInlinePriceActionChart
+          chartId={chart.id}
+          rows={parseCandlestickSnapshotRows(chart.data)}
+          zones={fvgZones}
+          markers={entryMarkers}
+        />
+      );
     }
 
     if (family === "equity_curve" && hasKey("equity")) {
@@ -1543,16 +1552,6 @@ export default function AssistantPanel(props: AssistantPanelProps) {
 
                 {renderStrategyBacktestSummary(message.strategyDraft)}
 
-                {hasInlineStrategyCharts ? (
-                  <section className="ai-strategy-visuals">
-                    <header className="ai-strategy-visuals-head">
-                      <span>Chart Examples</span>
-                      <small>Embedded in chat</small>
-                    </header>
-                    {renderChartCards(inlineStrategyCharts)}
-                  </section>
-                ) : null}
-
                 <div className="ai-strategy-actions">
                   {!hasInlineStrategyCharts && message.chartActions && message.chartActions.length > 0 ? (
                     <button
@@ -1589,6 +1588,16 @@ export default function AssistantPanel(props: AssistantPanelProps) {
                   {renderStrategySection("Clarifying Questions", message.strategyDraft.clarifyingQuestions)}
                   {renderStrategySection("Missing Details", message.strategyDraft.missingDetails)}
                 </div>
+
+                {hasInlineStrategyCharts ? (
+                  <section className="ai-strategy-visuals">
+                    <header className="ai-strategy-visuals-head">
+                      <span>Chart Examples</span>
+                      <small>Embedded in chat</small>
+                    </header>
+                    {renderChartCards(inlineStrategyCharts)}
+                  </section>
+                ) : null}
               </section>
             ) : null}
 
