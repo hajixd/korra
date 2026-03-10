@@ -316,6 +316,34 @@ type InstructionChecklistAudit = {
   bullets: Array<{ tone: "green" | "red" | "gold" | "black"; text: string }>;
 };
 
+type CapabilityDomain =
+  | "social"
+  | "general_trading"
+  | "xauusd"
+  | "current_events"
+  | "statistics"
+  | "strategy"
+  | "indicator"
+  | "draw"
+  | "animation";
+
+type CapabilityRoute = {
+  domain: CapabilityDomain;
+  confidence: number;
+  requestMode: RequestMode;
+  strictToRequest: boolean;
+  needsInternet: boolean;
+  needsClickhouse: boolean;
+  clickhouseCountHint: number | null;
+  needsBacktest: boolean;
+  preferredGraphType: string;
+  preferNoBullets: boolean;
+  shouldSkipModelRouting: boolean;
+  shouldSkipResponseRewriters: boolean;
+  wantsStrategyDraft: boolean;
+  includeStrategyPanelCharts: boolean;
+};
+
 const MAX_CHAT_TURNS = 14;
 const MAX_HISTORY_ROWS = 700;
 const MAX_ACTION_ROWS = 700;
@@ -352,6 +380,39 @@ const BROAD_NEWS_QUESTION_RE =
   /\b(what(?:'s| is)\s+going\s+on|what\s+happened|current\s+events|latest\s+updates?|news\s+on|update\s+on|situation\s+in|what\s+is\s+happening)\b/i;
 const GLOBAL_EVENT_ENTITY_RE =
   /\b(iran|iraq|israel|gaza|ukraine|russia|china|taiwan|middle east|europe|usa|u\.s\.|united states|president|election|earthquake|hurricane|wildfire|conflict|war)\b/i;
+const XAUUSD_REQUEST_RE = /\b(xauusd|xau\/usd|xau_usd|spot gold|gold price|gold market|gold)\b/i;
+const CURRENT_MARKET_RE = /\b(current|latest|today|now|right now|recent|currently)\b/i;
+const CURRENT_PRICE_RE = /\b(price|quote|level|levels|where is|where's|trading at|mark|spot)\b/i;
+const STATS_REQUEST_RE =
+  /\b(stat|stats|statistics|metric|metrics|performance|win rate|hit rate|drawdown|expectancy|profit factor|payoff ratio|pnl|equity curve|distribution|outcome|session|hourly|weekday|month|monthly|hold time|duration|model performance|setup performance)\b/i;
+const STRUCTURED_ANSWER_RE =
+  /\b(list|bullet|bullets|steps|checklist|reasons|pros|cons|compare|comparison|breakdown|details)\b/i;
+
+const GRAPH_TEMPLATE_ALIAS_RULES: Array<{ pattern: RegExp; template: string }> = [
+  { pattern: /\b(drawdown|underwater)\b/i, template: "drawdown_curve" },
+  { pattern: /\b(win rate|hit rate)\b/i, template: "rolling_win_rate" },
+  { pattern: /\b(expectancy)\b/i, template: "rolling_expectancy" },
+  { pattern: /\b(profit factor)\b/i, template: "rolling_profit_factor" },
+  { pattern: /\b(payoff ratio)\b/i, template: "rolling_payoff_ratio" },
+  { pattern: /\b(equity|equity curve|capital curve)\b/i, template: "equity_curve" },
+  { pattern: /\b(pnl distribution|distribution|histogram)\b/i, template: "pnl_distribution" },
+  { pattern: /\b(session|london|new york|tokyo|sydney)\b/i, template: "session_performance" },
+  { pattern: /\b(hour|hourly|intraday|time of day)\b/i, template: "hourly_performance" },
+  { pattern: /\b(weekday|day of week)\b/i, template: "weekday_performance" },
+  { pattern: /\b(monthly pnl|pnl by month|monthly performance)\b/i, template: "monthly_pnl_bar" },
+  { pattern: /\b(monthly volume|volume by month)\b/i, template: "monthly_volume" },
+  { pattern: /\b(hold time|duration)\b/i, template: "hold_time_distribution" },
+  { pattern: /\b(long short)\b/i, template: "long_short_split" },
+  { pattern: /\b(model performance|setup performance|entry source)\b/i, template: "model_performance" },
+  { pattern: /\b(action|timeline|alerts|execution)\b/i, template: "action_timeline" },
+  { pattern: /\b(rsi)\b/i, template: "rsi_14" },
+  { pattern: /\b(macd)\b/i, template: "macd_hist_12_26_9" },
+  { pattern: /\b(ema)\b/i, template: "ema_20" },
+  { pattern: /\b(sma)\b/i, template: "sma_20" },
+  { pattern: /\b(volatility|atr|range)\b/i, template: "volatility_curve" },
+  { pattern: /\b(volume)\b/i, template: "cumulative_volume" },
+  { pattern: /\b(price action|price|candles?)\b/i, template: "price_action" }
+];
 
 const AI_SYSTEM_PROMPT = [
   "You are Gideon, a trading copilot.",
@@ -1334,8 +1395,8 @@ const buildRequestModePlan = (mode: RequestMode): RequestModePlan => {
   return {
     mode,
     wantsNaturalOnly: mode === "natural",
-    wantsVisualization: mode === "graph" || mode === "animation",
-    wantsDraw: mode === "draw",
+    wantsVisualization: mode === "graph",
+    wantsDraw: mode === "draw" || mode === "animation",
     wantsAnimation: mode === "animation",
     needsClickhouseHint: false,
     clickhouseCountHint: null,
@@ -1358,6 +1419,191 @@ const buildFallbackExecutionPlan = (modePlan: RequestModePlan): IntentExecutionP
   };
 };
 
+const prefersStructuredAnswer = (prompt: string): boolean => {
+  return STRUCTURED_ANSWER_RE.test(toText(prompt, ""));
+};
+
+const inferGraphTemplateFromPrompt = (prompt: string): string => {
+  const text = toText(prompt, "");
+  if (!text) {
+    return "";
+  }
+
+  for (const rule of GRAPH_TEMPLATE_ALIAS_RULES) {
+    if (rule.pattern.test(text)) {
+      return rule.template;
+    }
+  }
+
+  return VISUAL_REQUEST_RE.test(text) ? "price_action" : "";
+};
+
+const buildDeterministicRequestModePlan = (route: CapabilityRoute): RequestModePlan => {
+  return {
+    ...buildRequestModePlan(route.requestMode),
+    needsClickhouseHint: route.needsClickhouse,
+    clickhouseCountHint: route.clickhouseCountHint,
+    needsBacktestHint: route.needsBacktest,
+    strictToRequest: route.strictToRequest
+  };
+};
+
+const buildDeterministicExecutionPlan = (route: CapabilityRoute): IntentExecutionPlan => {
+  const requestModePlan = buildDeterministicRequestModePlan(route);
+
+  return {
+    ...buildFallbackExecutionPlan(requestModePlan),
+    graphNeeded: requestModePlan.wantsVisualization,
+    graphType: route.preferredGraphType,
+    drawNeeded: requestModePlan.wantsDraw,
+    animationNeeded: requestModePlan.wantsAnimation,
+    naturalOnly: requestModePlan.wantsNaturalOnly,
+    needsClickhouse: route.needsClickhouse,
+    clickhouseCount: route.clickhouseCountHint,
+    needsBacktest: route.needsBacktest,
+    strictToRequest: route.strictToRequest
+  };
+};
+
+const resolveCapabilityRoute = (params: {
+  prompt: string;
+  context: AssistantContext;
+  strategyThreadState: StrategyThreadState;
+}): CapabilityRoute => {
+  const prompt = toText(params.prompt, "");
+  const socialOnly = isSocialOnlyPrompt(prompt);
+  const strategyRequest = !socialOnly && isStrategyDraftFollowUp(prompt, params.strategyThreadState);
+  const animationRequest = !strategyRequest && ANIMATION_REQUEST_RE.test(prompt);
+  const drawRequest =
+    !strategyRequest && (isTechnicalDrawRequest(prompt) || isChartControlRequest(prompt));
+  const indicatorRequest = !strategyRequest && isIndicatorComputationRequest(prompt);
+  const statsRequest = !strategyRequest && STATS_REQUEST_RE.test(prompt);
+  const promptMentionsXauusd = XAUUSD_REQUEST_RE.test(prompt);
+  const contextIsXauusd = XAUUSD_REQUEST_RE.test(params.context.symbol);
+  const xauusdRequest =
+    promptMentionsXauusd ||
+    (contextIsXauusd && /\b(price|chart|market|pair|symbol|setup|trade|trend|support|resistance)\b/i.test(prompt));
+  const internetRequest = shouldHeuristicallyFetchInternetContext({
+    prompt,
+    socialOnlyRequest: socialOnly
+  });
+  const wantsVisualization = VISUAL_REQUEST_RE.test(prompt);
+  const wantsCurrentMarketData = CURRENT_MARKET_RE.test(prompt) || CURRENT_PRICE_RE.test(prompt);
+  const prefersNoBullets = !prefersStructuredAnswer(prompt);
+
+  let domain: CapabilityDomain = "general_trading";
+  let confidence = 0.78;
+
+  if (socialOnly) {
+    domain = "social";
+    confidence = 0.99;
+  } else if (strategyRequest) {
+    domain = "strategy";
+    confidence = 0.98;
+  } else if (animationRequest) {
+    domain = "animation";
+    confidence = 0.96;
+  } else if (drawRequest) {
+    domain = "draw";
+    confidence = 0.95;
+  } else if (internetRequest) {
+    domain = "current_events";
+    confidence = 0.94;
+  } else if (statsRequest) {
+    domain = "statistics";
+    confidence = 0.93;
+  } else if (indicatorRequest) {
+    domain = "indicator";
+    confidence = 0.91;
+  } else if (xauusdRequest) {
+    domain = "xauusd";
+    confidence = 0.9;
+  } else if (TRADING_REQUEST_RE.test(prompt)) {
+    domain = "general_trading";
+    confidence = 0.87;
+  }
+
+  let requestMode: RequestMode = "natural";
+  if (animationRequest) {
+    requestMode = "animation";
+  } else if (drawRequest) {
+    requestMode = "draw";
+  } else if (wantsVisualization && !strategyRequest) {
+    requestMode = "graph";
+  }
+
+  let needsInternet = false;
+  let needsClickhouse = false;
+  let clickhouseCountHint: number | null = null;
+  let needsBacktest = false;
+  let preferredGraphType = requestMode === "graph" ? inferGraphTemplateFromPrompt(prompt) : "";
+
+  if (domain === "current_events") {
+    needsInternet = true;
+    needsClickhouse = xauusdRequest || /\b(xau|xauusd|gold|dxy|yield|treasury)\b/i.test(prompt);
+    clickhouseCountHint = needsClickhouse ? 360 : null;
+  } else if (domain === "statistics") {
+    needsClickhouse =
+      requestMode === "graph" ||
+      /\b(candle|price|recent|latest|current|volume|volatility|range|hourly|weekday|month)\b/i.test(prompt);
+    clickhouseCountHint = needsClickhouse ? 420 : null;
+    needsBacktest =
+      params.context.backtest.hasRun &&
+      /\b(backtest|model|strategy|system|expectancy|profit factor|drawdown|win rate|equity)\b/i.test(prompt);
+  } else if (domain === "indicator") {
+    needsClickhouse = true;
+    clickhouseCountHint = 360;
+    if (!preferredGraphType && requestMode === "graph") {
+      preferredGraphType = inferGraphTemplateFromPrompt(prompt);
+    }
+  } else if (domain === "xauusd") {
+    needsClickhouse = wantsCurrentMarketData || requestMode === "graph" || requestMode === "draw";
+    clickhouseCountHint = needsClickhouse ? 360 : null;
+    if (requestMode === "graph" && !preferredGraphType) {
+      preferredGraphType = inferGraphTemplateFromPrompt(prompt) || "price_action";
+    }
+  } else if (domain === "draw") {
+    needsClickhouse = true;
+    clickhouseCountHint = 320;
+  } else if (domain === "animation") {
+    needsClickhouse = true;
+    clickhouseCountHint = 420;
+  } else if (domain === "general_trading") {
+    needsClickhouse =
+      requestMode === "graph" ||
+      /\b(current price|recent candles|latest candles|where is price|market structure)\b/i.test(prompt);
+    clickhouseCountHint = needsClickhouse ? 320 : null;
+    if (requestMode === "graph" && !preferredGraphType) {
+      preferredGraphType = inferGraphTemplateFromPrompt(prompt);
+    }
+  }
+
+  const strictToRequest = !/\b(overview|all the graphs|all graphs|dashboard|everything|full sweep)\b/i.test(
+    prompt
+  );
+
+  return {
+    domain,
+    confidence,
+    requestMode,
+    strictToRequest,
+    needsInternet,
+    needsClickhouse,
+    clickhouseCountHint,
+    needsBacktest,
+    preferredGraphType,
+    preferNoBullets:
+      prefersNoBullets &&
+      requestMode === "natural" &&
+      domain !== "statistics" &&
+      domain !== "strategy",
+    shouldSkipModelRouting: confidence >= 0.87,
+    shouldSkipResponseRewriters: confidence >= 0.9 && requestMode === "natural",
+    wantsStrategyDraft: strategyRequest,
+    includeStrategyPanelCharts: strategyRequest && params.context.liveCandles.length >= 20
+  };
+};
+
 const buildRequestChecklistPlan = (params: {
   socialOnlyRequest: boolean;
   strictToRequest: boolean;
@@ -1365,6 +1611,7 @@ const buildRequestChecklistPlan = (params: {
   wantsVisualization: boolean;
   explicitDrawRequest: boolean;
   wantsAnimation: boolean;
+  needsDataFetch?: boolean;
 }): RequestChecklistPlan => {
   const {
     socialOnlyRequest,
@@ -1372,7 +1619,8 @@ const buildRequestChecklistPlan = (params: {
     wantsNaturalOnly,
     wantsVisualization,
     explicitDrawRequest,
-    wantsAnimation
+    wantsAnimation,
+    needsDataFetch = false
   } = params;
 
   const items: RequestChecklistTemplateItem[] = [
@@ -1444,7 +1692,11 @@ const buildRequestChecklistPlan = (params: {
     requiresAnimation: !socialOnlyRequest && wantsAnimation,
     shouldAvoidDataFetch:
       socialOnlyRequest ||
-      (wantsNaturalOnly && !wantsVisualization && !explicitDrawRequest && !wantsAnimation),
+      (!needsDataFetch &&
+        wantsNaturalOnly &&
+        !wantsVisualization &&
+        !explicitDrawRequest &&
+        !wantsAnimation),
     strictToRequest,
     items: items.slice(0, 7),
     source: "fallback"
@@ -1495,7 +1747,8 @@ const buildResponseChecklist = (params: {
     wantsNaturalOnly: !plan.requiresGraph && !plan.requiresDraw && !plan.requiresAnimation,
     wantsVisualization: plan.requiresGraph,
     explicitDrawRequest: plan.requiresDraw,
-    wantsAnimation: plan.requiresAnimation
+    wantsAnimation: plan.requiresAnimation,
+    needsDataFetch: !plan.shouldAvoidDataFetch
   }).items;
 
   return items.slice(0, 7).map((item) => ({
@@ -1523,6 +1776,11 @@ const resolveToolboxGraphTemplate = (value: string): string | null => {
 
   if (GRAPH_TEMPLATE_ID_SET.has(normalized)) {
     return normalized;
+  }
+
+  const aliased = inferGraphTemplateFromPrompt(value);
+  if (aliased && GRAPH_TEMPLATE_ID_SET.has(aliased)) {
+    return aliased;
   }
 
   const compact = normalized.replace(/_/g, "");
@@ -3350,7 +3608,11 @@ const executeInstructionChecklistAuthorStage = async (params: {
     const requiresAnimation = items.some((item) => item.required && item.artifact === "animation");
     const requiresNaturalResponse = items.some((item) => item.required && item.artifact === "natural");
     const shouldAvoidDataFetch =
-      items.some((item) => item.required && item.artifact === "data") || fallback.shouldAvoidDataFetch;
+      requestKind === "social"
+        ? true
+        : items.some((item) => item.required && item.artifact === "data")
+          ? false
+          : fallback.shouldAvoidDataFetch;
 
     return {
       requestKind,
@@ -5207,6 +5469,63 @@ const STATIC_PRICE_ACTION_TEMPLATE_SET = new Set<string>([
   "equity_vs_price"
 ]);
 
+const buildCandleTemplateChart = (
+  rows: CandleRow[],
+  title: string,
+  points: number,
+  templateId: string
+): AssistantChart | null => {
+  if (STATIC_PRICE_ACTION_TEMPLATE_SET.has(templateId)) {
+    return buildPriceActionChart(rows, title, points, templateId);
+  }
+  return buildPriceValueSeriesChart(rows, title, points, templateId);
+};
+
+const buildStrategyPreviewCharts = (params: {
+  strategyDraft: StrategyDraft;
+  context: AssistantContext;
+}): AssistantChart[] => {
+  const candles = takeTail(params.context.liveCandles, 140);
+  if (candles.length < 20) {
+    return [];
+  }
+
+  const primary = buildPriceActionChart(
+    candles,
+    `${params.strategyDraft.matchedModelName} Preview`,
+    140,
+    "price_action"
+  );
+
+  let secondaryTemplate = "close_with_range";
+  let secondaryTitle = "Range Context";
+
+  if (params.strategyDraft.matchedModelId === "momentum") {
+    secondaryTemplate = "ema_20";
+    secondaryTitle = "Trend Filter";
+  } else if (params.strategyDraft.matchedModelId === "mean-reversion") {
+    secondaryTemplate = "rsi_14";
+    secondaryTitle = "Stretch Meter";
+  } else if (params.strategyDraft.matchedModelId === "fibonacci") {
+    secondaryTemplate = "range_expansion";
+    secondaryTitle = "Swing Range";
+  } else if (params.strategyDraft.matchedModelId === "support-resistance") {
+    secondaryTemplate = "close_with_range";
+    secondaryTitle = "Level Context";
+  }
+
+  const secondary = buildCandleTemplateChart(candles, secondaryTitle, 140, secondaryTemplate);
+  const charts = [primary, secondary]
+    .filter((chart): chart is AssistantChart => chart !== null)
+    .slice(0, 2);
+
+  for (const chart of charts) {
+    chart.mode = resolveGraphTemplate(chart.template).mode;
+  }
+
+  return charts;
+};
+
 const buildActionTimelineChart = (
   rows: ActionRow[],
   title: string,
@@ -5982,7 +6301,12 @@ export async function POST(request: Request) {
   const baseUrl = process.env.NEBIUS_BASE_URL || "https://api.tokenfactory.nebius.com/v1";
   const lastUserPrompt = getLastUserPrompt(turns);
   const runtimeNowMs = Date.now();
-  const heuristicRequestMode = classifyRequestMode(lastUserPrompt);
+  const capabilityRoute = resolveCapabilityRoute({
+    prompt: lastUserPrompt,
+    context,
+    strategyThreadState
+  });
+  const heuristicRequestMode = buildDeterministicRequestModePlan(capabilityRoute);
   const indicatorComputationRequested = isIndicatorComputationRequest(lastUserPrompt);
   const requestedIndicators = extractRequestedIndicators(lastUserPrompt);
 
@@ -5994,33 +6318,49 @@ export async function POST(request: Request) {
       baseUrl
     });
     const modelSelection = pickNebiusModels(modelsCatalog);
-    const requestMode = await executeRequestModeStage({
-      apiKey,
-      baseUrl,
-      model: modelSelection.coordinator,
-      turns,
-      context,
-      fallback: heuristicRequestMode
-    });
-    const executionPlan = await executeIntentExecutionStage({
-      apiKey,
-      baseUrl,
-      model: modelSelection.coordinator,
-      turns,
-      context,
-      modePlan: requestMode
-    });
+    const requestMode = capabilityRoute.shouldSkipModelRouting
+      ? heuristicRequestMode
+      : await executeRequestModeStage({
+          apiKey,
+          baseUrl,
+          model: modelSelection.coordinator,
+          turns,
+          context,
+          fallback: heuristicRequestMode
+        });
+    const deterministicExecutionPlan = {
+      ...buildDeterministicExecutionPlan(capabilityRoute),
+      graphNeeded: requestMode.wantsVisualization,
+      drawNeeded: requestMode.wantsDraw,
+      animationNeeded: requestMode.wantsAnimation,
+      naturalOnly: requestMode.wantsNaturalOnly,
+      strictToRequest: requestMode.strictToRequest
+    };
+    const executionPlan = capabilityRoute.shouldSkipModelRouting
+      ? deterministicExecutionPlan
+      : await executeIntentExecutionStage({
+          apiKey,
+          baseUrl,
+          model: modelSelection.coordinator,
+          turns,
+          context,
+          modePlan: requestMode
+        });
     const socialOnlyPrompt = isSocialOnlyPrompt(lastUserPrompt);
-    const internetContextRequested = shouldHeuristicallyFetchInternetContext({
-      prompt: lastUserPrompt,
-      socialOnlyRequest: socialOnlyPrompt
-    });
+    const internetContextRequested =
+      capabilityRoute.needsInternet ||
+      shouldHeuristicallyFetchInternetContext({
+        prompt: lastUserPrompt,
+        socialOnlyRequest: socialOnlyPrompt
+      });
     let explicitDrawRequest = socialOnlyPrompt
       ? false
-      : requestMode.wantsDraw || executionPlan.drawNeeded;
+      : requestMode.wantsDraw || executionPlan.drawNeeded || capabilityRoute.wantsStrategyDraft;
     let wantsVisualization = socialOnlyPrompt
       ? false
-      : requestMode.wantsVisualization || executionPlan.graphNeeded;
+      : requestMode.wantsVisualization ||
+        executionPlan.graphNeeded ||
+        capabilityRoute.includeStrategyPanelCharts;
     let wantsAnimation = socialOnlyPrompt
       ? false
       : requestMode.wantsAnimation || executionPlan.animationNeeded;
@@ -6029,18 +6369,19 @@ export async function POST(request: Request) {
       : requestMode.wantsNaturalOnly || executionPlan.naturalOnly;
     let strictToRequest = socialOnlyPrompt
       ? true
-      : requestMode.strictToRequest && executionPlan.strictToRequest;
+      : capabilityRoute.strictToRequest && requestMode.strictToRequest && executionPlan.strictToRequest;
     let mergedBacktestHint = socialOnlyPrompt
       ? false
-      : requestMode.needsBacktestHint || executionPlan.needsBacktest;
+      : requestMode.needsBacktestHint || executionPlan.needsBacktest || capabilityRoute.needsBacktest;
     let mergedClickhouseHint = socialOnlyPrompt
       ? false
-      : requestMode.needsClickhouseHint || executionPlan.needsClickhouse;
+      : requestMode.needsClickhouseHint || executionPlan.needsClickhouse || capabilityRoute.needsClickhouse;
     let mergedClickhouseCountHint = socialOnlyPrompt
       ? 0
       : Math.max(
           toNumber(requestMode.clickhouseCountHint, 0),
-          toNumber(executionPlan.clickhouseCount, 0)
+          toNumber(executionPlan.clickhouseCount, 0),
+          toNumber(capabilityRoute.clickhouseCountHint, 0)
         );
 
     const fallbackChecklistPlan = buildRequestChecklistPlan({
@@ -6049,18 +6390,21 @@ export async function POST(request: Request) {
       wantsNaturalOnly,
       wantsVisualization,
       explicitDrawRequest,
-      wantsAnimation
+      wantsAnimation,
+      needsDataFetch: mergedBacktestHint || mergedClickhouseHint || internetContextRequested
     });
-    let requestChecklistPlan = await executeInstructionChecklistAuthorStage({
-      apiKey,
-      baseUrl,
-      model: modelSelection.coordinator,
-      turns,
-      context,
-      modePlan: requestMode,
-      executionPlan,
-      fallback: fallbackChecklistPlan
-    });
+    let requestChecklistPlan = capabilityRoute.shouldSkipModelRouting
+      ? fallbackChecklistPlan
+      : await executeInstructionChecklistAuthorStage({
+          apiKey,
+          baseUrl,
+          model: modelSelection.coordinator,
+          turns,
+          context,
+          modePlan: requestMode,
+          executionPlan,
+          fallback: fallbackChecklistPlan
+        });
 
     let socialOnlyRequest = socialOnlyPrompt;
     if (!socialOnlyRequest && requestChecklistPlan.requestKind !== "task") {
@@ -6126,7 +6470,9 @@ export async function POST(request: Request) {
       strictToRequest = strictToRequest && requestChecklistPlan.strictToRequest;
     }
 
-    const requestedGraphType = socialOnlyRequest ? "" : toText(executionPlan.graphType, "");
+    const requestedGraphType = socialOnlyRequest
+      ? ""
+      : toText(executionPlan.graphType, capabilityRoute.preferredGraphType);
     let forcedGraphTemplate = resolveToolboxGraphTemplate(requestedGraphType);
     let graphToolingNeedsNewTool = false;
     if (
@@ -6204,12 +6550,7 @@ export async function POST(request: Request) {
       });
     }
 
-    const strategyDraftRequested =
-      !socialOnlyRequest &&
-      !explicitDrawRequest &&
-      !wantsVisualization &&
-      !wantsAnimation &&
-      isStrategyDraftFollowUp(lastUserPrompt, strategyThreadState);
+    const strategyDraftRequested = !socialOnlyRequest && capabilityRoute.wantsStrategyDraft;
 
     if (strategyDraftRequested) {
       toolsUsed.add("strategy_catalog");
@@ -6232,10 +6573,19 @@ export async function POST(request: Request) {
           context,
           strategyDraft
         });
+        const previewCharts = capabilityRoute.includeStrategyPanelCharts
+          ? buildStrategyPreviewCharts({
+              strategyDraft,
+              context
+            })
+          : [];
         const hasPreview =
           preview.chartActions.length > 0 || preview.chartAnimations.length > 0;
         if (hasPreview) {
           toolsUsed.add("strategy_preview");
+        }
+        if (previewCharts.length > 0) {
+          toolsUsed.add("strategy_panel_chart");
         }
         if (preview.chartActions.length > 0) {
           toolsUsed.add("chart_actions");
@@ -6277,7 +6627,7 @@ export async function POST(request: Request) {
           plan: requestChecklistPlan,
           shortAnswer,
           responseCannotAnswer: false,
-          charts: [],
+          charts: previewCharts,
           chartActions: preview.chartActions,
           chartAnimations: preview.chartAnimations,
           toolsUsed
@@ -6290,7 +6640,7 @@ export async function POST(request: Request) {
             cannotAnswerReason: "",
             shortAnswer,
             bullets,
-            charts: [],
+            charts: previewCharts,
             chartActions: preview.chartActions,
             chartAnimations: preview.chartAnimations,
             requestChecklist,
@@ -6346,16 +6696,52 @@ export async function POST(request: Request) {
       });
     }
 
-    const planningResult = await executePlanningStage({
-      apiKey,
-      baseUrl,
-      model: modelSelection.coordinator,
-      turns,
-      context,
-      request,
-      toolState,
-      nowMs: runtimeNowMs
-    });
+    const deterministicPlanningResult: {
+      planning: PlanningOutput;
+      status?: "needs_backtest_data";
+      reason?: string;
+    } = {
+      planning: {
+        needsBacktestData: false,
+        backtestReason: mergedBacktestHint
+          ? "Detailed backtest rows are needed to fulfill this request accurately."
+          : "",
+        needsClickhouseData:
+          mergedClickhouseHint ||
+          explicitDrawRequest ||
+          wantsVisualization ||
+          (indicatorComputationRequested && context.liveCandles.length < 80),
+        clickhouseQuery:
+          mergedClickhouseHint ||
+          explicitDrawRequest ||
+          wantsVisualization ||
+          (indicatorComputationRequested && context.liveCandles.length < 80)
+            ? buildAutoClickhouseQuery({
+                context,
+                prompt: lastUserPrompt,
+                nowMs: runtimeNowMs
+              })
+            : undefined,
+        needsInternetData: internetContextRequested,
+        internetQuery: internetContextRequested
+          ? buildAutoInternetQuery({
+              prompt: lastUserPrompt
+            })
+          : undefined
+      }
+    };
+    const planningResult = capabilityRoute.shouldSkipModelRouting
+      ? deterministicPlanningResult
+      : await executePlanningStage({
+          apiKey,
+          baseUrl,
+          model: modelSelection.coordinator,
+          turns,
+          context,
+          request,
+          toolState,
+          nowMs: runtimeNowMs
+        });
 
     if (planningResult.status === "needs_backtest_data") {
       toolsUsed.add("backtest_data_request");
@@ -6828,53 +7214,60 @@ export async function POST(request: Request) {
       strictToRequest && wantsNaturalOnly
         ? []
         : baseBullets;
+    if (capabilityRoute.preferNoBullets) {
+      finalBullets = [];
+    }
     const rawFinalShortAnswer = sanitizeDeliveryText(
       shortAnswer ||
         (finalBullets.length > 0 ? sanitizeAssistantText(finalBullets[0]?.text ?? "") : "")
     );
     let finalShortAnswer = rawFinalShortAnswer;
-    const checklistAudit = await executeInstructionChecklistAuditStage({
-      apiKey,
-      baseUrl,
-      model: modelSelection.coordinator,
-      turns,
-      checklistPlan: requestChecklistPlan,
-      candidate: {
-        shortAnswer: finalShortAnswer,
-        cannotAnswer: responseCannotAnswer,
-        cannotAnswerReason: responseCannotAnswerReason,
-        bullets: finalBullets,
-        chartsCount: charts.length,
-        drawingsCount: chartActions.length,
-        animationsCount: chartAnimations.length,
-        toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
-      }
-    });
-    if (checklistAudit) {
-      if (!checklistAudit.allowCharts) {
-        charts = [];
-        toolsUsed.delete("coding_graph_tooling");
-        toolsUsed.delete("graph_template_resolution");
-      }
-      if (!checklistAudit.allowDrawings) {
-        chartActions = [];
-        toolsUsed.delete("chart_actions");
-      }
-      if (!checklistAudit.allowAnimations) {
-        chartAnimations = [];
-        toolsUsed.delete("chart_animation");
-      }
-      if (!checklistAudit.allowBullets) {
-        finalBullets = [];
-      } else if (checklistAudit.bullets.length > 0) {
-        finalBullets = checklistAudit.bullets;
-      }
-      if (checklistAudit.shortAnswer) {
-        finalShortAnswer = sanitizeDeliveryText(checklistAudit.shortAnswer);
+    if (!capabilityRoute.shouldSkipResponseRewriters) {
+      const checklistAudit = await executeInstructionChecklistAuditStage({
+        apiKey,
+        baseUrl,
+        model: modelSelection.coordinator,
+        turns,
+        checklistPlan: requestChecklistPlan,
+        candidate: {
+          shortAnswer: finalShortAnswer,
+          cannotAnswer: responseCannotAnswer,
+          cannotAnswerReason: responseCannotAnswerReason,
+          bullets: finalBullets,
+          chartsCount: charts.length,
+          drawingsCount: chartActions.length,
+          animationsCount: chartAnimations.length,
+          toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
+        }
+      });
+      if (checklistAudit) {
+        if (!checklistAudit.allowCharts) {
+          charts = [];
+          toolsUsed.delete("coding_graph_tooling");
+          toolsUsed.delete("graph_template_resolution");
+        }
+        if (!checklistAudit.allowDrawings) {
+          chartActions = [];
+          toolsUsed.delete("chart_actions");
+        }
+        if (!checklistAudit.allowAnimations) {
+          chartAnimations = [];
+          toolsUsed.delete("chart_animation");
+        }
+        if (!checklistAudit.allowBullets) {
+          finalBullets = [];
+        } else if (checklistAudit.bullets.length > 0) {
+          finalBullets = checklistAudit.bullets;
+        }
+        if (checklistAudit.shortAnswer) {
+          finalShortAnswer = sanitizeDeliveryText(checklistAudit.shortAnswer);
+        }
       }
     }
 
-    const shouldUseSpeakerRewrite = Boolean(finalShortAnswer || responseCannotAnswerReason);
+    const shouldUseSpeakerRewrite =
+      !capabilityRoute.shouldSkipResponseRewriters &&
+      Boolean(finalShortAnswer || responseCannotAnswerReason);
     if (shouldUseSpeakerRewrite && (finalShortAnswer || responseCannotAnswerReason)) {
       const rewritten = await executeSpeakerStage({
         apiKey,
