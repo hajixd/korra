@@ -218,6 +218,13 @@ type StrategyDraft = {
   backtestSummary?: StrategyBacktestSummary | null;
 };
 
+type StrategyPreviewResult = {
+  chartActions: NormalizedChartActions;
+  chartAnimations: NormalizedChartAnimations;
+  charts: AssistantChart[];
+  backtestSummary: StrategyBacktestSummary | null;
+};
+
 type StrategyThreadState = {
   latestDraft: StrategyDraft | null;
 };
@@ -940,6 +947,44 @@ const buildConceptClarificationChartActions = (params: {
   }
 
   return normalizeChartActions(rawActions);
+};
+
+const createEmptyStrategyPreviewResult = (): StrategyPreviewResult => ({
+  chartActions: normalizeChartActions([]),
+  chartAnimations: normalizeChartAnimationsFromCoding({}),
+  charts: [],
+  backtestSummary: null
+});
+
+const normalizeStrategyPreviewResult = (value: unknown): StrategyPreviewResult => {
+  if (!value || typeof value !== "object") {
+    return createEmptyStrategyPreviewResult();
+  }
+
+  const raw = value as {
+    chartActions?: unknown;
+    chartAnimations?: unknown;
+    charts?: unknown;
+    backtestSummary?: StrategyBacktestSummary | null;
+  };
+
+  return {
+    chartActions: normalizeChartActions(raw.chartActions),
+    chartAnimations: normalizeChartAnimationsFromCoding({
+      chartAnimations: raw.chartAnimations
+    }),
+    charts: Array.isArray(raw.charts)
+      ? raw.charts.filter((chart): chart is AssistantChart => {
+          if (!chart || typeof chart !== "object") {
+            return false;
+          }
+
+          const candidate = chart as AssistantChart;
+          return typeof candidate.id === "string" && Array.isArray(candidate.data);
+        })
+      : [],
+    backtestSummary: raw.backtestSummary ?? null
+  };
 };
 
 const summarizeTradeRows = (rows: TradeRow[]) => {
@@ -2034,28 +2079,37 @@ export const runGideonRequestRuntime = async (params: {
 
       if (strategyDraft) {
         toolsUsed.add("strategy_draft_builder");
-        const preview = await deps.executeStrategyPreviewStage({
-          apiKey,
-          baseUrl,
-          model: modelSelection.coding,
-          turns,
-          context,
-          strategyDraft
-        });
+        let preview = createEmptyStrategyPreviewResult();
+        try {
+          preview = normalizeStrategyPreviewResult(
+            await deps.executeStrategyPreviewStage({
+              apiKey,
+              baseUrl,
+              model: modelSelection.coding,
+              turns,
+              context,
+              strategyDraft
+            })
+          );
+        } catch {
+          preview = createEmptyStrategyPreviewResult();
+        }
         const routeGideonRuntime = createRouteRuntime({
           context,
           strategyThreadState
         });
-        const previewCharts =
-          preview.charts.length > 0
-            ? preview.charts
-            : capabilityRoute.includeStrategyPanelCharts
-              ? buildStrategyPreviewChartsTool({
-                  runtime: routeGideonRuntime,
-                  matchedModelId: strategyDraft.matchedModelId,
-                  matchedModelName: strategyDraft.matchedModelName
-                })
-              : [];
+        let previewCharts = preview.charts;
+        if (previewCharts.length === 0 && capabilityRoute.includeStrategyPanelCharts) {
+          try {
+            previewCharts = buildStrategyPreviewChartsTool({
+              runtime: routeGideonRuntime,
+              matchedModelId: strategyDraft.matchedModelId,
+              matchedModelName: strategyDraft.matchedModelName
+            });
+          } catch {
+            previewCharts = [];
+          }
+        }
         const hasPreview =
           preview.chartActions.length > 0 ||
           preview.chartAnimations.length > 0 ||

@@ -108,6 +108,19 @@ const buildCandles = () => {
   return rows;
 };
 
+const buildFlatCandles = () =>
+  Array.from({ length: 140 }, (_, index) => {
+    const base = 2910 + Math.sin(index / 12) * 0.2;
+    return {
+      time: now - (139 - index) * 15 * minute,
+      open: Number(base.toFixed(4)),
+      high: Number((base + 0.3).toFixed(4)),
+      low: Number((base - 0.3).toFixed(4)),
+      close: Number((base + (index % 2 === 0 ? 0.05 : -0.05)).toFixed(4)),
+      volume: 100
+    };
+  });
+
 const normalizeTimestamp = (value) => {
   const numeric = Number(value || 0);
   return Number.isFinite(numeric) ? Math.trunc(numeric) : 0;
@@ -238,6 +251,7 @@ const buildActionRows = (historyRows) => {
 };
 
 const liveCandles = buildCandles();
+const flatCandles = buildFlatCandles();
 const historyRows = buildTradeRows({ count: 12, startDaysAgo: 14, startingId: "h" });
 const backtestRows = buildTradeRows({ count: 24, startDaysAgo: 38, startingId: "b" });
 const backtestSummary = summarizeTrades(backtestRows);
@@ -278,6 +292,12 @@ const baseContext = {
     },
     trades: backtestRows
   }
+};
+
+const flatContext = {
+  ...baseContext,
+  liveCandles: flatCandles,
+  activeTrade: null
 };
 
 const lower = (value) => String(value || "").toLowerCase();
@@ -971,6 +991,18 @@ const questionBank = [
     }
   },
   {
+    id: "strategy_fvg_flat_window_fallback",
+    category: "strategy",
+    prompt: "Make a fair value gap strategy for me.",
+    context: flatContext,
+    checks: {
+      minCharts: 1,
+      minDrawings: 1,
+      mustIncludeAnyText: ["fair value gap", "entry", "adjust"],
+      mustAvoidAny: ["assistant runtime error", "value is null", "support / resistance", "support-resistance"]
+    }
+  },
+  {
     id: "internet_macro_news",
     category: "internet",
     prompt: "Any major macro news today that matters for gold?",
@@ -1083,7 +1115,7 @@ const runCase = async (practiceCase) => {
     },
     body: JSON.stringify({
       messages: buildMessages(practiceCase),
-      context: baseContext,
+      context: practiceCase.context || baseContext,
       threadState: {
         latestDraft: null
       }
