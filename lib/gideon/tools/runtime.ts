@@ -1,5 +1,6 @@
 import type { GideonExecutionSnapshot, GideonRuntimeContext, GideonToolExecutionResult } from "../contracts";
 import { buildChartActionsTool, buildChartAnimationTool, buildPanelChartTool, resolveGraphTemplateTool } from "./charts";
+import { computeIndicatorSnapshotTool } from "./indicators";
 import { getLatestPriceAnchorTool, getMultiTimeframeContextTool, getRecentCandlesTool } from "./market";
 import { resolveSymbolTool, resolveTimeframeTool } from "./request";
 import { computeMetricTool, inferMetricIdFromPrompt, summarizeBacktestResultsTool, summarizeTradeHistoryTool } from "./stats";
@@ -58,6 +59,15 @@ export const executeSelectedTools = async (params: {
           computeMetricTool({
             runtime,
             metricId: inferMetricIdFromPrompt(prompt) ?? "win_rate"
+          })
+        )
+      );
+    } else if (toolId === "compute_indicator_snapshot") {
+      tasks.push(
+        timed(toolId, () =>
+          computeIndicatorSnapshotTool({
+            prompt,
+            runtime
           })
         )
       );

@@ -130,6 +130,7 @@ export async function POST(request: Request) {
       password,
       server,
       provider: parseProvider(payload.provider),
+      presetName: typeof payload.presetName === "string" ? payload.presetName : undefined,
       symbol: typeof payload.symbol === "string" ? payload.symbol : undefined,
       timeframe: parseTimeframe(payload.timeframe),
       lot: typeof payload.lot === "number" ? payload.lot : undefined,

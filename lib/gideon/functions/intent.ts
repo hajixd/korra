@@ -100,11 +100,12 @@ const inferRequestKind = (prompt: string): GideonRequestKind => {
 
 const inferArtifacts = (prompt: string, requestKind: GideonRequestKind): GideonArtifact[] => {
   const output: GideonArtifact[] = ["text"];
+  const asksGraph = GRAPH_RE.test(prompt) && !DRAW_RE.test(prompt);
 
   if (BULLET_RE.test(prompt) || requestKind === "analysis") {
     output.push("bullets");
   }
-  if (GRAPH_RE.test(prompt) || VISUAL_STATS_RE.test(prompt)) {
+  if (asksGraph || VISUAL_STATS_RE.test(prompt)) {
     output.push("panel_chart");
   }
   if (DRAW_RE.test(prompt) || requestKind === "strategy") {

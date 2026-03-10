@@ -17,16 +17,7 @@ import {
   resolveGraphTemplate
 } from "../../../../lib/assistant-tools";
 import {
-  buildChartActionsTool,
-  buildChartAnimationTool,
-  buildChartsFromPlansTool,
-  buildDeterministicFastPath,
-  buildPanelChartTool,
-  buildStrategyPreviewChartsTool,
-  runSupervisorGraph,
-  type GideonExecutionSnapshot,
-  type GideonRuntimeContext,
-  type GideonTelemetryEvent
+  runGideonRequestRuntime
 } from "../../../../lib/gideon";
 import {
   STRATEGY_MODEL_CATALOG,
@@ -1843,7 +1834,15 @@ const buildAutoInternetQuery = (params: {
   planningQuery?: PlanningOutput["internetQuery"];
 }): NonNullable<PlanningOutput["internetQuery"]> => {
   const { prompt, planningQuery } = params;
-  const defaultQuery = toText(prompt, "");
+  const promptText = toText(prompt, "");
+  let defaultQuery = promptText;
+  if (
+    /\b(gold|xau|xauusd)\b/i.test(promptText) &&
+    /\b(news|macro|fed|cpi|nfp|yield|dollar|rates?|today|latest)\b/i.test(promptText)
+  ) {
+    defaultQuery =
+      "gold macro news today Reuters Bloomberg Fed yields dollar CPI NFP";
+  }
   const planningValue = planningQuery && typeof planningQuery === "object" ? planningQuery : {};
   return {
     query: toText(planningValue?.query, defaultQuery).slice(0, 220),
@@ -3528,6 +3527,49 @@ const executeGraphToolboxResolutionStage = async (params: {
   }
 };
 
+const normalizeSocialText = (value: string): string => {
+  return toText(value, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ");
+};
+
+const buildDeterministicSocialReply = (prompt: string): string => {
+  const normalized = normalizeSocialText(prompt);
+  if (!normalized) {
+    return "What do you want to check in the market?";
+  }
+  if (/\b(good morning|gm)\b/.test(normalized)) {
+    return "Ready when you are, what do you want to check in the market?";
+  }
+  if (/\bgood afternoon\b/.test(normalized)) {
+    return "Ready when you are, what do you want to check in the market?";
+  }
+  if (/\b(good evening|gn)\b/.test(normalized)) {
+    return "Ready when you are, what do you want to check in the market?";
+  }
+  if (/\b(how are you|what s up|whats up|sup|yo)\b/.test(normalized)) {
+    return "Ready when you are, what do you want to check in the market?";
+  }
+  return "What do you want to check in the market?";
+};
+
+const isWeakSocialReply = (reply: string, prompt: string): boolean => {
+  const normalizedReply = normalizeSocialText(reply);
+  const normalizedPrompt = normalizeSocialText(prompt);
+  if (!normalizedReply) {
+    return true;
+  }
+  if (normalizedReply === normalizedPrompt) {
+    return true;
+  }
+  if (/^(hi|hello|hey|yo|sup|gm|gn|good morning|good afternoon|good evening)$/.test(normalizedReply)) {
+    return true;
+  }
+  return normalizedReply.length <= 4;
+};
+
 const executeSocialReplyStage = async (params: {
   apiKey: string;
   baseUrl: string;
@@ -3536,6 +3578,11 @@ const executeSocialReplyStage = async (params: {
 }): Promise<string> => {
   const { apiKey, baseUrl, model, turns } = params;
   const lastPrompt = getLastUserPrompt(turns);
+  const deterministicReply = sanitizeDeliveryText(buildDeterministicSocialReply(lastPrompt));
+
+  if (isSocialOnlyPrompt(lastPrompt)) {
+    return deterministicReply;
+  }
 
   try {
     const completion = await nebiusChatCompletion({
@@ -3565,7 +3612,7 @@ const executeSocialReplyStage = async (params: {
     });
 
     const sanitized = sanitizeDeliveryText(extractNebiusMessageText(completion.message.content));
-    if (sanitized) {
+    if (sanitized && !isWeakSocialReply(sanitized, lastPrompt)) {
       return sanitized;
     }
 
@@ -3588,9 +3635,10 @@ const executeSocialReplyStage = async (params: {
       maxTokens: 48
     });
 
-    return sanitizeDeliveryText(extractNebiusMessageText(retry.message.content));
+    const retryText = sanitizeDeliveryText(extractNebiusMessageText(retry.message.content));
+    return retryText && !isWeakSocialReply(retryText, lastPrompt) ? retryText : deterministicReply;
   } catch {
-    return sanitizeDeliveryText(lastPrompt);
+    return deterministicReply;
   }
 };
 
@@ -5011,50 +5059,6 @@ const buildFallbackFailureResponse = (message: string) => {
   };
 };
 
-const buildGideonTraceData = (
-  execution: GideonExecutionSnapshot,
-  telemetry: GideonTelemetryEvent[]
-) => {
-  return {
-    gideonPlan: {
-      requestKind: execution.intent.requestKind,
-      depth: execution.depth.depth,
-      activeAgents: execution.activeAgents,
-      functionIds: execution.functionIds,
-      toolIds: execution.toolIds,
-      templateIds: execution.templateIds,
-      strategyTarget: execution.strategyTarget,
-      recommendedGraphTemplate: execution.recommendedGraphTemplate,
-      clarificationQuestion: execution.clarificationQuestion
-    },
-    gideonExecution: {
-      toolResults: execution.toolResults.map((result) => ({
-        toolId: result.toolId,
-        status: result.status,
-        latencyMs: result.latencyMs,
-        outputKeys: result.output ? Object.keys(result.output).slice(0, 8) : []
-      })),
-      templateIds: execution.templateResults.map((template) => template.id)
-    },
-    gideonTelemetry: telemetry
-  };
-};
-
-const buildRouteGideonRuntime = (params: {
-  context: AssistantContext;
-  strategyThreadState: StrategyThreadState;
-}): GideonRuntimeContext => {
-  return {
-    symbol: params.context.symbol,
-    timeframe: params.context.timeframe,
-    liveCandles: params.context.liveCandles,
-    historyRows: params.context.historyRows,
-    backtestRows: params.context.backtest.trades,
-    actionRows: params.context.actionRows,
-    strategyDraftJson: params.strategyThreadState.latestDraft?.draftJson ?? null
-  };
-};
-
 const INDICATOR_ALIAS_MAP: Array<{ name: string; regex: RegExp }> = [
   { name: "macd", regex: /\bmacd\b/i },
   { name: "rsi", regex: /\brsi\b|\boverbought\b|\boversold\b/i },
@@ -5669,1252 +5673,60 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "At least one user message is required." }, { status: 400 });
   }
 
-  const lastUserPrompt = getLastUserPrompt(turns);
-  const runtimeNowMs = Date.now();
-  const { execution: gideonPlan, telemetry: gideonTelemetry } = await runSupervisorGraph({
-    requestId: `gideon-${runtimeNowMs}`,
-    promptSnapshot: {
-      latestUserPrompt: lastUserPrompt,
-      symbol: context.symbol,
-      timeframe: context.timeframe,
-      liveCandleCount: context.liveCandles.length,
-      historyRowCount: context.historyRows.length,
-      backtestRowCount: context.backtest.trades.length,
-      hasStrategyDraft: Boolean(strategyThreadState.latestDraft)
-    },
-    runtimeContext: {
-      symbol: context.symbol,
-      timeframe: context.timeframe,
-      liveCandles: context.liveCandles,
-      historyRows: context.historyRows,
-      backtestRows: context.backtest.trades,
-      actionRows: context.actionRows,
-      strategyDraftJson: strategyThreadState.latestDraft?.draftJson ?? null
-    }
-  });
-  const gideonTraceData = buildGideonTraceData(gideonPlan, gideonTelemetry);
-  const gideonFastPath = buildDeterministicFastPath({
-    execution: gideonPlan,
-    prompt: lastUserPrompt
-  });
-
-  if (gideonFastPath) {
-    const toolsUsed = new Set<string>(gideonFastPath.toolIds);
-    const requestChecklistPlan = buildRequestChecklistPlan({
-      socialOnlyRequest: false,
-      strictToRequest: gideonPlan.intent.strictScope,
-      wantsNaturalOnly: true,
-      wantsVisualization: false,
-      explicitDrawRequest: false,
-      wantsAnimation: false,
-      needsDataFetch: false
-    });
-    const shortAnswer = sanitizeDeliveryText(gideonFastPath.shortAnswer);
-    const bullets = gideonFastPath.bullets.map((bullet) => ({
-      tone: bullet.tone,
-      text: sanitizeAssistantText(bullet.text)
-    }));
-    const chartActions = normalizeChartActions([]);
-    const chartAnimations = normalizeChartAnimationsFromCoding({});
-    const requestChecklist = buildResponseChecklist({
-      plan: requestChecklistPlan,
-      shortAnswer,
-      responseCannotAnswer: false,
-      charts: [],
-      chartActions,
-      chartAnimations,
-      toolsUsed
-    });
-
-    return NextResponse.json({
-      status: "ok",
-      response: {
-        cannotAnswer: false,
-        cannotAnswerReason: "",
-        shortAnswer,
-        bullets,
-        charts: [],
-        chartActions: [],
-        chartAnimations: [],
-        requestChecklist,
-        toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
-      },
-      modelTrace: null,
-      dataTrace: {
-        ...gideonTraceData,
-        fastPath: gideonFastPath.kind,
-        requestChecklistPlan,
-        runtimeClock: buildRuntimeClock({
-          nowMs: runtimeNowMs,
-          context,
-          clickhouseCandles: []
-        }),
-        internetContext: null,
-        usedClickhouse: false,
-        clickhouseMeta: null,
-        backtestDataIncluded: context.backtest.dataIncluded,
-        historyRows: context.historyRows.length,
-        backtestRows: context.backtest.trades.length,
-        candleRows: context.liveCandles.length
-      }
-    });
-  }
-
-  const apiKey =
-    process.env.NEBIUS_API_KEY ||
-    process.env.TOKENFACTORY_API_KEY ||
-    process.env.AI_API_KEY ||
-    "";
-
-  if (!apiKey) {
-    return NextResponse.json(
-      {
-        ...buildFallbackFailureResponse(
-          "I cannot answer because the Nebius API key is not configured on the server."
-        ),
-        dataTrace: {
-          ...gideonTraceData,
-          runtimeClock: buildRuntimeClock({
-            nowMs: runtimeNowMs,
-            context,
-            clickhouseCandles: []
-          }),
-          internetContext: null,
-          usedClickhouse: false,
-          clickhouseMeta: null,
-          backtestDataIncluded: context.backtest.dataIncluded,
-          historyRows: context.historyRows.length,
-          backtestRows: context.backtest.trades.length,
-          candleRows: context.liveCandles.length
-        }
-      },
-      { status: 200 }
-    );
-  }
-
-  const baseUrl = process.env.NEBIUS_BASE_URL || "https://api.tokenfactory.nebius.com/v1";
-  const capabilityRoute = resolveCapabilityRoute({
-    prompt: lastUserPrompt,
+  const runtimeResult = await runGideonRequestRuntime({
+    request,
+    turns,
     context,
-    strategyThreadState
+    strategyThreadState,
+    deps: {
+      buildRequestChecklistPlan,
+      buildResponseChecklist,
+      buildFallbackFailureResponse,
+      resolveCapabilityRoute,
+      buildDeterministicRequestModePlan,
+      isIndicatorComputationRequest,
+      extractRequestedIndicators,
+      executeRequestModeStage,
+      buildDeterministicExecutionPlan,
+      executeIntentExecutionStage,
+      shouldHeuristicallyFetchInternetContext,
+      toNumber,
+      executeInstructionChecklistAuthorStage,
+      isSocialOnlyPrompt,
+      toText,
+      resolveToolboxGraphTemplate,
+      executeGraphToolboxResolutionStage,
+      sanitizeAssistantText,
+      sanitizeDeliveryText,
+      executeSocialReplyStage,
+      normalizeToolLabel,
+      executeStrategyDraftStage,
+      executeStrategyPreviewStage,
+      pickFirstNonEmptyTextList,
+      buildRuntimeClock,
+      buildAutoClickhouseQuery,
+      buildAutoInternetQuery,
+      executePlanningStage,
+      fetchInternetContext,
+      fetchClickhouseCandles,
+      buildIndicatorSnapshot,
+      getRecentWindowCandles,
+      executeIndicatorCodingStage,
+      getRecentWindowCount,
+      clamp,
+      MAX_CLICKHOUSE_COUNT,
+      mergeIndicatorSnapshot,
+      executeDataAnalysisStage,
+      executeReasoningStage,
+      executeCodingStage,
+      getDrawWindowCandles,
+      buildMarketPriceAnchor,
+      summarizeDrawnActions,
+      executeInstructionChecklistAuditStage,
+      executeSpeakerStage,
+      hasOutOfRangePriceReference
+    }
   });
-  const heuristicRequestMode = buildDeterministicRequestModePlan(capabilityRoute);
-  const indicatorComputationRequested = isIndicatorComputationRequest(lastUserPrompt);
-  const requestedIndicators = extractRequestedIndicators(lastUserPrompt);
 
-  try {
-    const toolsUsed = new Set<string>();
-
-    const modelsCatalog = await fetchNebiusModelCatalog({
-      apiKey,
-      baseUrl
-    });
-    const modelSelection = pickNebiusModels(modelsCatalog);
-    const requestMode = capabilityRoute.shouldSkipModelRouting
-      ? heuristicRequestMode
-      : await executeRequestModeStage({
-          apiKey,
-          baseUrl,
-          model: modelSelection.coordinator,
-          turns,
-          context,
-          fallback: heuristicRequestMode
-        });
-    const deterministicExecutionPlan = {
-      ...buildDeterministicExecutionPlan(capabilityRoute),
-      graphNeeded: requestMode.wantsVisualization,
-      drawNeeded: requestMode.wantsDraw,
-      animationNeeded: requestMode.wantsAnimation,
-      naturalOnly: requestMode.wantsNaturalOnly,
-      strictToRequest: requestMode.strictToRequest
-    };
-    const executionPlan = capabilityRoute.shouldSkipModelRouting
-      ? deterministicExecutionPlan
-      : await executeIntentExecutionStage({
-          apiKey,
-          baseUrl,
-          model: modelSelection.coordinator,
-          turns,
-          context,
-          modePlan: requestMode
-        });
-    const socialOnlyPrompt = isSocialOnlyPrompt(lastUserPrompt);
-    const internetContextRequested =
-      capabilityRoute.needsInternet ||
-      shouldHeuristicallyFetchInternetContext({
-        prompt: lastUserPrompt,
-        socialOnlyRequest: socialOnlyPrompt
-      });
-    let explicitDrawRequest = socialOnlyPrompt
-      ? false
-      : requestMode.wantsDraw ||
-        executionPlan.drawNeeded ||
-        capabilityRoute.wantsStrategyDraft ||
-        gideonPlan.intent.requestedArtifacts.includes("chart_draw");
-    let wantsVisualization = socialOnlyPrompt
-      ? false
-      : requestMode.wantsVisualization ||
-        executionPlan.graphNeeded ||
-        capabilityRoute.includeStrategyPanelCharts ||
-        gideonPlan.intent.requestedArtifacts.includes("panel_chart");
-    let wantsAnimation = socialOnlyPrompt
-      ? false
-      : requestMode.wantsAnimation ||
-        executionPlan.animationNeeded ||
-        gideonPlan.intent.requestedArtifacts.includes("animation");
-    let wantsNaturalOnly = socialOnlyPrompt
-      ? true
-      : requestMode.wantsNaturalOnly || executionPlan.naturalOnly;
-    let strictToRequest = socialOnlyPrompt
-      ? true
-      : capabilityRoute.strictToRequest && requestMode.strictToRequest && executionPlan.strictToRequest;
-    let mergedBacktestHint = socialOnlyPrompt
-      ? false
-      : requestMode.needsBacktestHint || executionPlan.needsBacktest || capabilityRoute.needsBacktest;
-    let mergedClickhouseHint = socialOnlyPrompt
-      ? false
-      : requestMode.needsClickhouseHint || executionPlan.needsClickhouse || capabilityRoute.needsClickhouse;
-    let mergedClickhouseCountHint = socialOnlyPrompt
-      ? 0
-      : Math.max(
-          toNumber(requestMode.clickhouseCountHint, 0),
-          toNumber(executionPlan.clickhouseCount, 0),
-          toNumber(capabilityRoute.clickhouseCountHint, 0)
-        );
-
-    const fallbackChecklistPlan = buildRequestChecklistPlan({
-      socialOnlyRequest: socialOnlyPrompt,
-      strictToRequest,
-      wantsNaturalOnly,
-      wantsVisualization,
-      explicitDrawRequest,
-      wantsAnimation,
-      needsDataFetch: mergedBacktestHint || mergedClickhouseHint || internetContextRequested
-    });
-    let requestChecklistPlan = capabilityRoute.shouldSkipModelRouting
-      ? fallbackChecklistPlan
-      : await executeInstructionChecklistAuthorStage({
-          apiKey,
-          baseUrl,
-          model: modelSelection.coordinator,
-          turns,
-          context,
-          modePlan: requestMode,
-          executionPlan,
-          fallback: fallbackChecklistPlan
-        });
-
-    let socialOnlyRequest = socialOnlyPrompt;
-    if (!socialOnlyRequest && requestChecklistPlan.requestKind !== "task") {
-      requestChecklistPlan = {
-        ...requestChecklistPlan,
-        requestKind: "task",
-        source: requestChecklistPlan.source
-      };
-    }
-    if (socialOnlyRequest) {
-      explicitDrawRequest = false;
-      wantsVisualization = false;
-      wantsAnimation = false;
-      wantsNaturalOnly = true;
-      strictToRequest = true;
-      mergedBacktestHint = false;
-      mergedClickhouseHint = false;
-      mergedClickhouseCountHint = 0;
-      requestChecklistPlan = {
-        ...requestChecklistPlan,
-        requestKind: "social",
-        requiresNaturalResponse: true,
-        requiresGraph: false,
-        requiresDraw: false,
-        requiresAnimation: false,
-        shouldAvoidDataFetch: true,
-        strictToRequest: true,
-        items:
-          requestChecklistPlan.items.length > 0
-            ? requestChecklistPlan.items
-            : [
-                {
-                  id: "intent",
-                  label: "Intent: social conversation",
-                  required: true,
-                  artifact: "scope"
-                },
-                {
-                  id: "natural",
-                  label: "Natural-language reply",
-                  required: true,
-                  artifact: "natural"
-                },
-                {
-                  id: "social_scope",
-                  label: "No market artifacts for social request",
-                  required: true,
-                  artifact: "scope"
-                }
-              ],
-        source: requestChecklistPlan.source
-      };
-    } else {
-      explicitDrawRequest = explicitDrawRequest || requestChecklistPlan.requiresDraw;
-      wantsVisualization = wantsVisualization || requestChecklistPlan.requiresGraph;
-      wantsAnimation = wantsAnimation || requestChecklistPlan.requiresAnimation;
-      wantsNaturalOnly =
-        wantsNaturalOnly ||
-        (requestChecklistPlan.requiresNaturalResponse &&
-          !requestChecklistPlan.requiresGraph &&
-          !requestChecklistPlan.requiresDraw &&
-          !requestChecklistPlan.requiresAnimation);
-      strictToRequest = strictToRequest && requestChecklistPlan.strictToRequest;
-    }
-
-    const requestedGraphType = socialOnlyRequest
-      ? ""
-      : toText(
-          executionPlan.graphType,
-          capabilityRoute.preferredGraphType || gideonPlan.recommendedGraphTemplate || ""
-        );
-    let forcedGraphTemplate = resolveToolboxGraphTemplate(requestedGraphType);
-    let graphToolingNeedsNewTool = false;
-    if (
-      !socialOnlyRequest &&
-      (executionPlan.graphNeeded || requestChecklistPlan.requiresGraph) &&
-      requestedGraphType &&
-      !forcedGraphTemplate
-    ) {
-      toolsUsed.add("coding_graph_tooling");
-      const graphResolution = await executeGraphToolboxResolutionStage({
-        apiKey,
-        baseUrl,
-        model: modelSelection.coding,
-        requestedGraphType
-      });
-      forcedGraphTemplate = graphResolution.resolvedTemplate;
-      graphToolingNeedsNewTool = graphResolution.needsNewTooling;
-    }
-    if (forcedGraphTemplate) {
-      toolsUsed.add("graph_template_resolution");
-    }
-
-    if (socialOnlyRequest) {
-      const shortAnswer = sanitizeAssistantText(
-        await executeSocialReplyStage({
-          apiKey,
-          baseUrl,
-          model: modelSelection.writer,
-          turns
-        })
-      );
-      const emptyActions = normalizeChartActions([]);
-      const emptyAnimations = normalizeChartAnimationsFromCoding({});
-      const requestChecklist = buildResponseChecklist({
-        plan: requestChecklistPlan,
-        shortAnswer,
-        responseCannotAnswer: false,
-        charts: [],
-        chartActions: emptyActions,
-        chartAnimations: emptyAnimations,
-        toolsUsed
-      });
-
-      return NextResponse.json({
-        status: "ok",
-        response: {
-          cannotAnswer: false,
-          cannotAnswerReason: "",
-          shortAnswer,
-          bullets: [],
-          charts: [],
-          chartActions: [],
-          chartAnimations: [],
-          requestChecklist,
-          toolsUsed: []
-        },
-        modelTrace: null,
-        dataTrace: {
-          ...gideonTraceData,
-          requestMode: requestMode.mode,
-          requestChecklistPlan,
-          executionPlan,
-          runtimeClock: buildRuntimeClock({
-            nowMs: runtimeNowMs,
-            context,
-            clickhouseCandles: []
-          }),
-          internetContext: null,
-          usedClickhouse: false,
-          clickhouseMeta: null,
-          backtestDataIncluded: context.backtest.dataIncluded,
-          historyRows: context.historyRows.length,
-          backtestRows: context.backtest.trades.length,
-          candleRows: context.liveCandles.length
-        }
-      });
-    }
-
-    const strategyDraftRequested =
-      !socialOnlyRequest &&
-      (capabilityRoute.wantsStrategyDraft || gideonPlan.intent.requestKind === "strategy");
-
-    if (strategyDraftRequested) {
-      toolsUsed.add("strategy_catalog");
-      const strategyDraft = await executeStrategyDraftStage({
-        apiKey,
-        baseUrl,
-        models: modelSelection,
-        turns,
-        context,
-        strategyThreadState
-      });
-
-      if (strategyDraft) {
-        toolsUsed.add("strategy_draft_builder");
-        const preview = await executeStrategyPreviewStage({
-          apiKey,
-          baseUrl,
-          model: modelSelection.coding,
-          turns,
-          context,
-          strategyDraft
-        });
-        const routeGideonRuntime = buildRouteGideonRuntime({
-          context,
-          strategyThreadState
-        });
-        const previewCharts = capabilityRoute.includeStrategyPanelCharts
-          ? buildStrategyPreviewChartsTool({
-              runtime: routeGideonRuntime,
-              matchedModelId: strategyDraft.matchedModelId,
-              matchedModelName: strategyDraft.matchedModelName
-            })
-          : [];
-        const hasPreview =
-          preview.chartActions.length > 0 || preview.chartAnimations.length > 0;
-        if (hasPreview) {
-          toolsUsed.add("strategy_preview");
-        }
-        if (previewCharts.length > 0) {
-          toolsUsed.add("strategy_panel_chart");
-        }
-        if (preview.chartActions.length > 0) {
-          toolsUsed.add("chart_actions");
-        }
-        if (preview.chartAnimations.length > 0) {
-          toolsUsed.add("chart_animation");
-        }
-        const outstandingQuestions = pickFirstNonEmptyTextList(
-          strategyDraft.clarifyingQuestions,
-          strategyDraft.missingDetails
-        );
-        const shortAnswer = sanitizeDeliveryText(
-          strategyDraft.status === "clarify"
-            ? hasPreview
-              ? outstandingQuestions.length > 0
-                ? `I mapped that into a ${strategyDraft.matchedModelName} draft and sketched it on the chart. Like this? I still need: ${outstandingQuestions
-                    .slice(0, 2)
-                    .join("; ")}.`
-                : `I mapped that into a ${strategyDraft.matchedModelName} draft and sketched it on the chart. Like this?`
-              : outstandingQuestions.length > 0
-                ? `I mapped that into a ${strategyDraft.matchedModelName} draft. I still need: ${outstandingQuestions
-                    .slice(0, 2)
-                    .join("; ")}.`
-                : `I mapped that into a ${strategyDraft.matchedModelName} draft.`
-            : hasPreview
-              ? `I turned that into a ${strategyDraft.matchedModelName} model JSON and sketched it on the chart. Like this? You can add it to Models or download the JSON below.`
-              : `I turned that into a ${strategyDraft.matchedModelName} model JSON. You can add it to Models or download the JSON below.`
-        );
-        const bullets =
-          strategyDraft.status === "clarify" && outstandingQuestions.length > 0
-            ? [
-                {
-                  tone: "gold" as const,
-                  text: `Still needed: ${outstandingQuestions.slice(0, 2).join("; ")}`
-                }
-              ]
-            : [];
-        const requestChecklist = buildResponseChecklist({
-          plan: requestChecklistPlan,
-          shortAnswer,
-          responseCannotAnswer: false,
-          charts: previewCharts,
-          chartActions: preview.chartActions,
-          chartAnimations: preview.chartAnimations,
-          toolsUsed
-        });
-
-        return NextResponse.json({
-          status: "ok",
-          response: {
-            cannotAnswer: false,
-            cannotAnswerReason: "",
-            shortAnswer,
-            bullets,
-            charts: previewCharts,
-            chartActions: preview.chartActions,
-            chartAnimations: preview.chartAnimations,
-            requestChecklist,
-            toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel),
-            strategyDraft
-          },
-          modelTrace: null,
-          dataTrace: {
-            ...gideonTraceData,
-            requestMode: requestMode.mode,
-            requestChecklistPlan,
-            executionPlan,
-            strategyDraft: {
-              modelId: strategyDraft.matchedModelId
-            },
-            usedClickhouse: false,
-            clickhouseMeta: null,
-            backtestDataIncluded: false,
-            historyRows: context.historyRows.length,
-            backtestRows: context.backtest.trades.length,
-            candleRows: context.liveCandles.length
-          }
-        });
-      }
-    }
-
-    if (context.liveCandles.length > 0) {
-      toolsUsed.add("live_stream_data");
-    }
-
-    const toolState: ToolState = {
-      clickhouseCandles: [],
-      clickhouseMeta: null,
-      requestedBacktestData: false,
-      internetContext: null
-    };
-
-    if (
-      mergedBacktestHint &&
-      context.backtest.hasRun &&
-      !context.backtest.dataIncluded
-    ) {
-      toolsUsed.add("backtest_data_request");
-      return NextResponse.json({
-        status: "needs_backtest_data",
-        reason: "Detailed backtest rows are needed to fulfill this request accurately.",
-        request: {
-          type: "backtest_trades"
-        },
-        response: {
-          toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
-        },
-        modelTrace: null,
-        dataTrace: {
-          ...gideonTraceData,
-          requestMode: requestMode.mode,
-          requestChecklistPlan,
-          executionPlan,
-          usedClickhouse: false,
-          clickhouseMeta: null,
-          backtestDataIncluded: context.backtest.dataIncluded,
-          historyRows: context.historyRows.length,
-          backtestRows: context.backtest.trades.length,
-          candleRows: context.liveCandles.length
-        }
-      });
-    }
-
-    const deterministicPlanningResult: {
-      planning: PlanningOutput;
-      status?: "needs_backtest_data";
-      reason?: string;
-    } = {
-      planning: {
-        needsBacktestData: false,
-        backtestReason: mergedBacktestHint
-          ? "Detailed backtest rows are needed to fulfill this request accurately."
-          : "",
-        needsClickhouseData:
-          mergedClickhouseHint ||
-          explicitDrawRequest ||
-          wantsVisualization ||
-          (indicatorComputationRequested && context.liveCandles.length < 80),
-        clickhouseQuery:
-          mergedClickhouseHint ||
-          explicitDrawRequest ||
-          wantsVisualization ||
-          (indicatorComputationRequested && context.liveCandles.length < 80)
-            ? buildAutoClickhouseQuery({
-                context,
-                prompt: lastUserPrompt,
-                nowMs: runtimeNowMs
-              })
-            : undefined,
-        needsInternetData: internetContextRequested,
-        internetQuery: internetContextRequested
-          ? buildAutoInternetQuery({
-              prompt: lastUserPrompt
-            })
-          : undefined
-      }
-    };
-    const planningResult = capabilityRoute.shouldSkipModelRouting
-      ? deterministicPlanningResult
-      : await executePlanningStage({
-          apiKey,
-          baseUrl,
-          model: modelSelection.coordinator,
-          turns,
-          context,
-          request,
-          toolState,
-          nowMs: runtimeNowMs
-        });
-
-    if (planningResult.status === "needs_backtest_data") {
-      toolsUsed.add("backtest_data_request");
-      return NextResponse.json({
-        status: "needs_backtest_data",
-        reason:
-          planningResult.reason ||
-          "Detailed backtest data is required to answer accurately.",
-        request: {
-          type: "backtest_trades"
-        },
-        response: {
-          toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
-        },
-        modelTrace: null,
-        dataTrace: {
-          ...gideonTraceData,
-          requestMode: requestMode.mode,
-          requestChecklistPlan,
-          executionPlan,
-          usedClickhouse: false,
-          clickhouseMeta: null,
-          backtestDataIncluded: context.backtest.dataIncluded,
-          historyRows: context.historyRows.length,
-          backtestRows: context.backtest.trades.length,
-          candleRows: context.liveCandles.length
-        }
-      });
-    }
-
-    const shouldAutofetchInternet =
-      !socialOnlyRequest &&
-      toolState.internetContext === null &&
-      (Boolean(planningResult.planning.needsInternetData) || internetContextRequested);
-
-    if (shouldAutofetchInternet) {
-      const internetQuery = buildAutoInternetQuery({
-        prompt: lastUserPrompt,
-        planningQuery: planningResult.planning.internetQuery
-      });
-      if (internetQuery.query) {
-        const contextResult = await fetchInternetContext({
-          query: internetQuery.query,
-          recencyDays: toNumber(internetQuery.recencyDays, 3),
-          maxResults: toNumber(internetQuery.maxResults, 5)
-        });
-        toolState.internetContext = contextResult;
-        planningResult.planning.needsInternetData = true;
-        planningResult.planning.internetQuery = internetQuery;
-        if (contextResult.results.length > 0) {
-          toolsUsed.add("internet_search");
-        }
-      }
-    }
-    if (toolState.internetContext && toolState.internetContext.results.length > 0) {
-      toolsUsed.add("internet_search");
-    }
-
-    const shouldAutofetchClickhouse =
-      toolState.clickhouseCandles.length === 0 &&
-      (Boolean(planningResult.planning.needsClickhouseData) ||
-        mergedClickhouseHint ||
-        explicitDrawRequest ||
-        wantsVisualization ||
-        (indicatorComputationRequested && context.liveCandles.length < 80));
-
-    if (shouldAutofetchClickhouse) {
-      const autoQuery: NonNullable<PlanningOutput["clickhouseQuery"]> =
-        buildAutoClickhouseQuery({
-        context,
-        prompt: lastUserPrompt,
-        nowMs: runtimeNowMs,
-        planningQuery: planningResult.planning.clickhouseQuery
-        }) ?? {};
-      if (mergedClickhouseCountHint > 0) {
-        autoQuery.count = Math.max(
-          toNumber(autoQuery.count, 0),
-          mergedClickhouseCountHint
-        );
-      }
-
-      try {
-        const result = await fetchClickhouseCandles(request, autoQuery);
-        toolState.clickhouseCandles = result.candles;
-        toolState.clickhouseMeta = {
-          pair: result.pair,
-          timeframe: result.timeframe,
-          count: result.candles.length
-        };
-
-        planningResult.planning.needsClickhouseData = true;
-        planningResult.planning.clickhouseQuery = autoQuery;
-        toolsUsed.add("clickhouse_candles");
-      } catch {
-        // Continue to reasoning stage; it will handle insufficient data safely.
-      }
-    }
-
-    let indicatorSnapshot = buildIndicatorSnapshot(
-      getRecentWindowCandles({
-        context,
-        clickhouseCandles: toolState.clickhouseCandles
-      })
-    );
-    let indicatorCodingResult: IndicatorCodingResult = {
-      computed: {},
-      computedAny: false,
-      requiredMinCandles: 0,
-      needsMoreData: false
-    };
-    if (indicatorComputationRequested && requestedIndicators.length > 0) {
-      indicatorCodingResult = await executeIndicatorCodingStage({
-        apiKey,
-        baseUrl,
-        model: modelSelection.coding,
-        prompt: lastUserPrompt,
-        requestedIndicators,
-        candles: getRecentWindowCandles({
-          context,
-          clickhouseCandles: toolState.clickhouseCandles
-        }),
-        indicatorSnapshot,
-        nowMs: runtimeNowMs
-      });
-
-      if (indicatorCodingResult.needsMoreData) {
-        const codingQuery = buildAutoClickhouseQuery({
-          context,
-          prompt: lastUserPrompt,
-          nowMs: runtimeNowMs,
-          planningQuery: planningResult.planning.clickhouseQuery
-        }) ?? {};
-        const desiredCount = clamp(
-          Math.max(
-            toNumber(codingQuery.count, getRecentWindowCount(context.timeframe)),
-            indicatorCodingResult.requiredMinCandles + 120,
-            320
-          ),
-          80,
-          MAX_CLICKHOUSE_COUNT
-        );
-
-        const availableCount = getRecentWindowCandles({
-          context,
-          clickhouseCandles: toolState.clickhouseCandles
-        }).length;
-        if (desiredCount > availableCount) {
-          try {
-            const result = await fetchClickhouseCandles(request, {
-              ...codingQuery,
-              count: desiredCount
-            });
-            if (result.candles.length > 0) {
-              toolState.clickhouseCandles = result.candles;
-              toolState.clickhouseMeta = {
-                pair: result.pair,
-                timeframe: result.timeframe,
-                count: result.candles.length
-              };
-              planningResult.planning.needsClickhouseData = true;
-              planningResult.planning.clickhouseQuery = {
-                ...codingQuery,
-                count: desiredCount
-              };
-              toolsUsed.add("clickhouse_candles");
-            }
-          } catch {
-            // Continue with current data.
-          }
-        }
-
-        indicatorCodingResult = await executeIndicatorCodingStage({
-          apiKey,
-          baseUrl,
-          model: modelSelection.coding,
-          prompt: lastUserPrompt,
-          requestedIndicators,
-          candles: getRecentWindowCandles({
-            context,
-            clickhouseCandles: toolState.clickhouseCandles
-          }),
-          indicatorSnapshot: buildIndicatorSnapshot(
-            getRecentWindowCandles({
-              context,
-              clickhouseCandles: toolState.clickhouseCandles
-            })
-          ),
-          nowMs: runtimeNowMs
-        });
-      }
-
-      if (indicatorCodingResult.computedAny) {
-        toolsUsed.add("coding_indicator_tooling");
-      }
-    }
-
-    indicatorSnapshot = mergeIndicatorSnapshot({
-      baseSnapshot: buildIndicatorSnapshot(
-        getRecentWindowCandles({
-          context,
-          clickhouseCandles: toolState.clickhouseCandles
-        })
-      ),
-      computed: indicatorCodingResult.computed
-    });
-
-    let dataAnalysis = await executeDataAnalysisStage({
-      apiKey,
-      baseUrl,
-      model: modelSelection.analysis,
-      turns,
-      context,
-      toolState,
-      planning: planningResult.planning,
-      indicatorSnapshot,
-      nowMs: runtimeNowMs
-    });
-    if (dataAnalysis.summary || dataAnalysis.keyFindings.length > 0) {
-      toolsUsed.add("analysis_model");
-    }
-
-    let reasoning = await executeReasoningStage({
-      apiKey,
-      baseUrl,
-      models: modelSelection,
-      turns,
-      context,
-      toolState,
-      planning: planningResult.planning,
-      requestChecklist: requestChecklistPlan,
-      indicatorSnapshot,
-      dataAnalysis,
-      nowMs: runtimeNowMs
-    });
-
-    const shouldRetryReasoningWithMoreData =
-      reasoning.cannotAnswer &&
-      toolState.clickhouseCandles.length === 0 &&
-      (wantsVisualization ||
-        explicitDrawRequest ||
-        indicatorComputationRequested ||
-        mergedClickhouseHint ||
-        context.liveCandles.length < 80);
-
-    if (shouldRetryReasoningWithMoreData) {
-      const recoveryQuery: NonNullable<PlanningOutput["clickhouseQuery"]> =
-        buildAutoClickhouseQuery({
-        context,
-        prompt: lastUserPrompt,
-        nowMs: runtimeNowMs,
-        planningQuery: planningResult.planning.clickhouseQuery
-        }) ?? {};
-      if (mergedClickhouseCountHint > 0) {
-        recoveryQuery.count = Math.max(
-          toNumber(recoveryQuery.count, 0),
-          mergedClickhouseCountHint
-        );
-      }
-
-      try {
-        const result = await fetchClickhouseCandles(request, {
-          ...recoveryQuery,
-          count: Math.max(toNumber(recoveryQuery?.count, 240), 240)
-        });
-        if (result.candles.length > 0) {
-          toolState.clickhouseCandles = result.candles;
-          toolState.clickhouseMeta = {
-            pair: result.pair,
-            timeframe: result.timeframe,
-            count: result.candles.length
-          };
-          planningResult.planning.needsClickhouseData = true;
-          planningResult.planning.clickhouseQuery = recoveryQuery;
-          toolsUsed.add("clickhouse_candles");
-
-          const retryBaseSnapshot = buildIndicatorSnapshot(
-            getRecentWindowCandles({
-              context,
-              clickhouseCandles: toolState.clickhouseCandles
-            })
-          );
-          const retryIndicatorCoding =
-            indicatorComputationRequested && requestedIndicators.length > 0
-              ? await executeIndicatorCodingStage({
-                  apiKey,
-                  baseUrl,
-                  model: modelSelection.coding,
-                  prompt: lastUserPrompt,
-                  requestedIndicators,
-                  candles: getRecentWindowCandles({
-                    context,
-                    clickhouseCandles: toolState.clickhouseCandles
-                  }),
-                  indicatorSnapshot: retryBaseSnapshot,
-                  nowMs: runtimeNowMs
-                })
-              : {
-                  computed: {},
-                  computedAny: false,
-                  requiredMinCandles: 0,
-                  needsMoreData: false
-                };
-          if (retryIndicatorCoding.computedAny) {
-            toolsUsed.add("coding_indicator_tooling");
-          }
-          indicatorSnapshot = mergeIndicatorSnapshot({
-            baseSnapshot: retryBaseSnapshot,
-            computed: retryIndicatorCoding.computed
-          });
-          dataAnalysis = await executeDataAnalysisStage({
-            apiKey,
-            baseUrl,
-            model: modelSelection.analysis,
-            turns,
-            context,
-            toolState,
-            planning: planningResult.planning,
-            indicatorSnapshot,
-            nowMs: runtimeNowMs
-          });
-          if (dataAnalysis.summary || dataAnalysis.keyFindings.length > 0) {
-            toolsUsed.add("analysis_model");
-          }
-          reasoning = await executeReasoningStage({
-            apiKey,
-            baseUrl,
-            models: modelSelection,
-            turns,
-            context,
-            toolState,
-            planning: planningResult.planning,
-            requestChecklist: requestChecklistPlan,
-            indicatorSnapshot,
-            dataAnalysis,
-            nowMs: runtimeNowMs
-          });
-        }
-      } catch {
-        // Keep current reasoning result.
-      }
-    }
-
-    const codingResult = socialOnlyRequest
-      ? {
-          chartPlans: [] as ChartPlan[],
-          chartActions: normalizeChartActions([]),
-          chartAnimations: normalizeChartAnimationsFromCoding({})
-        }
-      : await executeCodingStage({
-          apiKey,
-          baseUrl,
-          models: modelSelection,
-          reasoning,
-          dataAnalysis,
-          indicatorSnapshot,
-          context,
-          toolState,
-          requestMode,
-          requestedGraphType,
-          forcedGraphTemplate,
-          wantsAnimation,
-          nowMs: runtimeNowMs
-        });
-
-    if (toolState.clickhouseCandles.length > 0) {
-      toolsUsed.add("clickhouse_candles");
-    }
-
-    const routeGideonRuntime = buildRouteGideonRuntime({
-      context,
-      strategyThreadState
-    });
-    let charts = wantsVisualization
-      ? buildChartsFromPlansTool({
-          plans: codingResult.chartPlans,
-          runtime: routeGideonRuntime,
-          candles: toolState.clickhouseCandles
-        })
-      : [];
-    if (wantsVisualization && charts.length === 0) {
-      const sourceRows = getRecentWindowCandles({
-        context,
-        clickhouseCandles: toolState.clickhouseCandles
-      });
-      const fallbackTemplateId =
-        forcedGraphTemplate ||
-        resolveToolboxGraphTemplate(requestedGraphType) ||
-        "price_action";
-      const fallbackTitle =
-        requestedGraphType ||
-        resolveGraphTemplate(fallbackTemplateId).title;
-      const synthesized = buildPanelChartTool({
-        runtime: routeGideonRuntime,
-        templateId: fallbackTemplateId,
-        title: fallbackTitle,
-        points: 260,
-        candles: sourceRows
-      }).chart;
-      if (synthesized && synthesized.data.length > 0) {
-        charts = [synthesized];
-        toolsUsed.add("build_panel_chart");
-      }
-    }
-    let chartActions = explicitDrawRequest || wantsAnimation ? codingResult.chartActions : [];
-    const drawCandles = getDrawWindowCandles({
-      context,
-      clickhouseCandles: toolState.clickhouseCandles
-    });
-    if (explicitDrawRequest) {
-      chartActions = buildChartActionsTool({
-        prompt: lastUserPrompt,
-        runtime: routeGideonRuntime,
-        candles: drawCandles,
-        prependClear: true
-      }).chartActions;
-      if (chartActions.length > 0) {
-        toolsUsed.add("build_chart_actions");
-      }
-    }
-
-    let chartAnimations = codingResult.chartAnimations;
-    if (wantsAnimation && chartAnimations.length === 0) {
-      const fallbackAnimation = buildChartAnimationTool({
-        prompt: lastUserPrompt,
-        runtime: routeGideonRuntime,
-        requestKind: gideonPlan.intent.requestKind,
-        requestedArtifacts: gideonPlan.intent.requestedArtifacts,
-        chartActions,
-        candles: drawCandles
-      });
-      if (chartActions.length === 0 && fallbackAnimation.chartActions.length > 0) {
-        chartActions = fallbackAnimation.chartActions;
-      }
-      chartAnimations = fallbackAnimation.chartAnimations;
-      if (chartAnimations.length > 0) {
-        toolsUsed.add("build_chart_animation");
-      }
-    }
-
-    if (chartActions.length > 0) {
-      toolsUsed.add("chart_actions");
-    }
-    if (chartAnimations.length > 0) {
-      toolsUsed.add("chart_animation");
-    }
-    const usedClickhouseData = toolState.clickhouseCandles.length > 0;
-    const marketPriceAnchor = buildMarketPriceAnchor({
-      candles: getRecentWindowCandles({
-        context,
-        clickhouseCandles: toolState.clickhouseCandles
-      }),
-      nowMs: runtimeNowMs
-    });
-    const isDrawOnlyRequest = explicitDrawRequest && !wantsVisualization;
-    const drawSummary = summarizeDrawnActions(chartActions);
-    const responseCannotAnswer = explicitDrawRequest
-      ? chartActions.length === 0 && reasoning.cannotAnswer
-      : wantsVisualization
-        ? charts.length === 0 && reasoning.cannotAnswer
-        : reasoning.cannotAnswer;
-    const responseCannotAnswerReason = responseCannotAnswer ? reasoning.cannotAnswerReason : "";
-    const shortAnswer = explicitDrawRequest
-      ? drawSummary ||
-        (isDrawOnlyRequest
-          ? responseCannotAnswer
-            ? reasoning.cannotAnswerReason
-            : sanitizeAssistantText(reasoning.shortAnswer || reasoning.cannotAnswerReason)
-          : sanitizeAssistantText(reasoning.shortAnswer))
-      : sanitizeAssistantText(reasoning.shortAnswer || reasoning.cannotAnswerReason);
-
-    const baseBullets = isDrawOnlyRequest
-      ? []
-      : reasoning.bullets.length > 0
-        ? reasoning.bullets
-        : responseCannotAnswer
-          ? [{ tone: "gold" as const, text: reasoning.cannotAnswerReason }]
-          : [];
-    let finalBullets =
-      strictToRequest && wantsNaturalOnly
-        ? []
-        : baseBullets;
-    if (capabilityRoute.preferNoBullets) {
-      finalBullets = [];
-    }
-    const rawFinalShortAnswer = sanitizeDeliveryText(
-      shortAnswer ||
-        (finalBullets.length > 0 ? sanitizeAssistantText(finalBullets[0]?.text ?? "") : "")
-    );
-    let finalShortAnswer = rawFinalShortAnswer;
-    if (!capabilityRoute.shouldSkipResponseRewriters) {
-      const checklistAudit = await executeInstructionChecklistAuditStage({
-        apiKey,
-        baseUrl,
-        model: modelSelection.coordinator,
-        turns,
-        checklistPlan: requestChecklistPlan,
-        candidate: {
-          shortAnswer: finalShortAnswer,
-          cannotAnswer: responseCannotAnswer,
-          cannotAnswerReason: responseCannotAnswerReason,
-          bullets: finalBullets,
-          chartsCount: charts.length,
-          drawingsCount: chartActions.length,
-          animationsCount: chartAnimations.length,
-          toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
-        }
-      });
-      if (checklistAudit) {
-        if (!checklistAudit.allowCharts) {
-          charts = [];
-          toolsUsed.delete("coding_graph_tooling");
-          toolsUsed.delete("graph_template_resolution");
-        }
-        if (!checklistAudit.allowDrawings) {
-          chartActions = [];
-          toolsUsed.delete("chart_actions");
-        }
-        if (!checklistAudit.allowAnimations) {
-          chartAnimations = [];
-          toolsUsed.delete("chart_animation");
-        }
-        if (!checklistAudit.allowBullets) {
-          finalBullets = [];
-        } else if (checklistAudit.bullets.length > 0) {
-          finalBullets = checklistAudit.bullets;
-        }
-        if (checklistAudit.shortAnswer) {
-          finalShortAnswer = sanitizeDeliveryText(checklistAudit.shortAnswer);
-        }
-      }
-    }
-
-    const shouldUseSpeakerRewrite =
-      !capabilityRoute.shouldSkipResponseRewriters &&
-      Boolean(finalShortAnswer || responseCannotAnswerReason);
-    if (shouldUseSpeakerRewrite && (finalShortAnswer || responseCannotAnswerReason)) {
-      const rewritten = await executeSpeakerStage({
-        apiKey,
-        baseUrl,
-        model: modelSelection.writer,
-        turns,
-        draftAnswer: finalShortAnswer || responseCannotAnswerReason,
-        cannotAnswer: responseCannotAnswer,
-        cannotAnswerReason: responseCannotAnswerReason,
-        marketAnchor: marketPriceAnchor,
-        strictPriceAnchoring: true
-      });
-      if (rewritten) {
-        finalShortAnswer = sanitizeDeliveryText(rewritten);
-      }
-    }
-    if (hasOutOfRangePriceReference({ text: finalShortAnswer, anchor: marketPriceAnchor })) {
-      const anchoredRewrite = await executeSpeakerStage({
-        apiKey,
-        baseUrl,
-        model: modelSelection.writer,
-        turns,
-        draftAnswer: finalShortAnswer,
-        cannotAnswer: responseCannotAnswer,
-        cannotAnswerReason: responseCannotAnswerReason,
-        marketAnchor: marketPriceAnchor,
-        strictPriceAnchoring: true
-      });
-      if (
-        anchoredRewrite &&
-        !hasOutOfRangePriceReference({ text: anchoredRewrite, anchor: marketPriceAnchor })
-      ) {
-        finalShortAnswer = sanitizeDeliveryText(anchoredRewrite);
-      } else if (marketPriceAnchor) {
-        finalShortAnswer = sanitizeDeliveryText(
-          `Current ${context.symbol} live price is around ${marketPriceAnchor.latestClose.toFixed(2)}. I would wait for confirmation around this current range before acting.`
-        );
-      }
-    }
-    const requestChecklist = buildResponseChecklist({
-      plan: requestChecklistPlan,
-      shortAnswer: finalShortAnswer,
-      responseCannotAnswer,
-      charts,
-      chartActions,
-      chartAnimations,
-      toolsUsed
-    });
-
-    const responseRuntimeClock = buildRuntimeClock({
-      nowMs: runtimeNowMs,
-      context,
-      clickhouseCandles: toolState.clickhouseCandles
-    });
-    const responseInternetContext = toolState.internetContext
-      ? {
-          provider: toolState.internetContext.provider,
-          query: toolState.internetContext.query,
-          count: toolState.internetContext.results.length,
-          fetchedAt: toolState.internetContext.fetchedAt
-        }
-      : null;
-
-    // Ensure request-scope data is explicitly released after shaping response.
-    toolState.clickhouseCandles = [];
-    toolState.internetContext = null;
-
-    return NextResponse.json({
-      status: "ok",
-      response: {
-        cannotAnswer: responseCannotAnswer,
-        cannotAnswerReason: responseCannotAnswerReason,
-        shortAnswer: finalShortAnswer,
-        bullets: finalBullets,
-        charts,
-        chartActions,
-        chartAnimations,
-        requestChecklist,
-        toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel)
-      },
-      modelTrace: null,
-      dataTrace: {
-        ...gideonTraceData,
-        requestMode: requestMode.mode,
-        requestChecklistPlan,
-        executionPlan,
-        runtimeClock: responseRuntimeClock,
-        internetContext: responseInternetContext,
-        requestModeHints: {
-          needsClickhouse: mergedClickhouseHint,
-          clickhouseCount: mergedClickhouseCountHint || null,
-          needsBacktest: mergedBacktestHint,
-          strictToRequest,
-          naturalOnly: wantsNaturalOnly
-        },
-        graphPlan: {
-          requestedGraphType,
-          forcedGraphTemplate,
-          graphToolingNeedsNewTool
-        },
-        usedClickhouse: usedClickhouseData,
-        clickhouseMeta: toolState.clickhouseMeta,
-        backtestDataIncluded: context.backtest.dataIncluded,
-        historyRows: context.historyRows.length,
-        backtestRows: context.backtest.trades.length,
-        candleRows: context.liveCandles.length
-      }
-    });
-  } catch (error) {
-    return NextResponse.json(
-      buildFallbackFailureResponse(
-        error instanceof Error
-          ? `I cannot answer due to an assistant runtime error: ${error.message}`
-          : "I cannot answer due to an assistant runtime error."
-      ),
-      { status: 200 }
-    );
-  }
+  return NextResponse.json(runtimeResult.body, { status: runtimeResult.status });
 }

@@ -107,7 +107,10 @@ type OfficeAgent = {
 
 const MAP_WIDTH = 2600;
 const MAP_HEIGHT = 1800;
-const MAP_SCALE = 1.55;
+const DEFAULT_MAP_SCALE = 1.72;
+const MIN_MAP_SCALE = 1.24;
+const MAX_MAP_SCALE = 2.18;
+const MAP_SCALE_STEP = 0.16;
 const SIDEBAR_WIDTH = 640;
 
 const STAR_OFFICE_ASSETS = {
@@ -984,6 +987,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
   } = props;
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mapScale, setMapScale] = useState(DEFAULT_MAP_SCALE);
   const mapScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -1242,33 +1246,34 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
     return activeRoom ?? "market";
   }, [roomSnapshots, thinkingStage]);
 
-  useEffect(() => {
-    if (!open || !mapScrollRef.current) {
-      return;
-    }
+  const focusRoom = ROOM_BY_ID.get(focusRoomId) ?? OFFICE_ROOMS[0];
+  const mapScalePercent = Math.round(mapScale * 100);
 
+  const scrollToRoom = (roomId: string, behavior: ScrollBehavior = "smooth") => {
     const scrollNode = mapScrollRef.current;
-    const room = ROOM_BY_ID.get(focusRoomId);
+    const room = ROOM_BY_ID.get(roomId);
 
-    if (!room) {
+    if (!scrollNode || !room) {
       return;
     }
 
-    const nextLeft = Math.max(
-      0,
-      (room.x + room.w / 2) * MAP_SCALE - scrollNode.clientWidth / 2
-    );
-    const nextTop = Math.max(
-      0,
-      (room.y + room.h / 2) * MAP_SCALE - scrollNode.clientHeight / 2
-    );
+    const nextLeft = Math.max(0, (room.x + room.w / 2) * mapScale - scrollNode.clientWidth / 2);
+    const nextTop = Math.max(0, (room.y + room.h / 2) * mapScale - scrollNode.clientHeight / 2);
 
     scrollNode.scrollTo({
       left: nextLeft,
       top: nextTop,
-      behavior: "smooth"
+      behavior
     });
-  }, [focusRoomId, open]);
+  };
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    scrollToRoom(focusRoomId, "smooth");
+  }, [focusRoomId, mapScale, open]);
 
   if (!open) {
     return null;
@@ -1339,7 +1344,64 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           <section className="gpx-map-window">
             <div className="gpx-window-head">
               <span>PIXEL FLOORPLAN</span>
-              <strong>{isPending ? "WORKING" : "STANDBY"}</strong>
+              <strong>{focusRoom?.name ?? (isPending ? "WORKING" : "STANDBY")}</strong>
+            </div>
+
+            <div className="gpx-map-toolbar">
+              <div className="gpx-map-toolbar-copy">
+                <span>ZOOM {mapScalePercent}%</span>
+                <strong>Scroll, zoom, or jump straight to a room.</strong>
+              </div>
+
+              <div className="gpx-map-actions">
+                <button
+                  type="button"
+                  className="gpx-map-action"
+                  onClick={() =>
+                    setMapScale((current) => Math.max(MIN_MAP_SCALE, Number((current - MAP_SCALE_STEP).toFixed(2))))
+                  }
+                >
+                  ZOOM OUT
+                </button>
+                <button
+                  type="button"
+                  className="gpx-map-action"
+                  onClick={() =>
+                    setMapScale((current) => Math.min(MAX_MAP_SCALE, Number((current + MAP_SCALE_STEP).toFixed(2))))
+                  }
+                >
+                  ZOOM IN
+                </button>
+                <button
+                  type="button"
+                  className="gpx-map-action"
+                  onClick={() => setMapScale(DEFAULT_MAP_SCALE)}
+                >
+                  RESET
+                </button>
+                <button
+                  type="button"
+                  className="gpx-map-action emphasis"
+                  onClick={() => scrollToRoom(focusRoomId)}
+                >
+                  FOCUS ROOM
+                </button>
+              </div>
+            </div>
+
+            <div className="gpx-room-jumps" aria-label="Jump to room">
+              {roomSnapshots.map((snapshot) => (
+                <button
+                  key={snapshot.room.id}
+                  type="button"
+                  className={`gpx-room-chip state-${snapshot.state}${
+                    snapshot.room.id === focusRoomId ? " focus" : ""
+                  }`}
+                  onClick={() => scrollToRoom(snapshot.room.id)}
+                >
+                  {snapshot.room.name}
+                </button>
+              ))}
             </div>
 
             <div className="gpx-map-shell" ref={mapScrollRef}>
@@ -1594,13 +1656,20 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
                   </div>
                   <div className="gpx-room-list">
                     {roomSnapshots.map((snapshot) => (
-                      <div key={snapshot.room.id} className={`gpx-room-row state-${snapshot.state}`}>
+                      <button
+                        key={snapshot.room.id}
+                        type="button"
+                        className={`gpx-room-row state-${snapshot.state}${
+                          snapshot.room.id === focusRoomId ? " focus" : ""
+                        }`}
+                        onClick={() => scrollToRoom(snapshot.room.id)}
+                      >
                         <div>
                           <strong>{snapshot.room.name}</strong>
                           <small>{snapshot.room.purpose}</small>
                         </div>
                         <span>{snapshot.state.toUpperCase()}</span>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 </section>
@@ -1744,8 +1813,8 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           inset: 0;
           display: grid;
           grid-template-rows: auto minmax(0, 1fr);
-          gap: 0.46rem;
-          padding: 0.46rem;
+          gap: 0.62rem;
+          padding: 0.62rem;
           background:
             radial-gradient(circle at 50% 0%, rgba(54, 71, 109, 0.42), transparent 42%),
             linear-gradient(180deg, #0c101a 0%, #05070d 100%);
@@ -1767,8 +1836,8 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         .gpx-header {
           display: grid;
           grid-template-columns: minmax(0, 1fr) auto;
-          gap: 0.8rem;
-          padding: 0.78rem 0.9rem;
+          gap: 1rem;
+          padding: 0.96rem 1.1rem;
         }
 
         .gpx-header-copy {
@@ -1779,11 +1848,11 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
 
         .gpx-status {
           justify-self: flex-start;
-          padding: 0.24rem 0.52rem;
+          padding: 0.28rem 0.62rem;
           border: 2px solid #0e1222;
           background: #3f486d;
           color: #f6f7ff;
-          font-size: 0.74rem;
+          font-size: 0.82rem;
         }
 
         .gpx-status.live {
@@ -1794,14 +1863,14 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         .gpx-header-copy h3 {
           margin: 0;
           color: #fff8de;
-          font-size: 1.12rem;
+          font-size: 1.36rem;
           text-transform: uppercase;
         }
 
         .gpx-header-copy p {
           margin: 0;
           color: #d5daf6;
-          font-size: 0.76rem;
+          font-size: 0.88rem;
           line-height: 1.5;
           max-width: 78ch;
         }
@@ -1815,22 +1884,22 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         }
 
         .gpx-stat {
-          min-width: 132px;
-          padding: 0.38rem 0.5rem;
+          min-width: 156px;
+          padding: 0.5rem 0.66rem;
           border: 2px solid #0f1324;
           background: #353b5b;
           display: grid;
-          gap: 0.16rem;
+          gap: 0.2rem;
         }
 
         .gpx-stat span {
           color: #bac3eb;
-          font-size: 0.56rem;
+          font-size: 0.64rem;
         }
 
         .gpx-stat strong {
           color: #fff7d4;
-          font-size: 0.72rem;
+          font-size: 0.84rem;
         }
 
         .gpx-sidebar-btn,
@@ -1838,7 +1907,8 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           border: 2px solid #101425;
           font: inherit;
           color: #fff7de;
-          padding: 0.44rem 0.68rem;
+          padding: 0.58rem 0.88rem;
+          font-size: 0.76rem;
           cursor: pointer;
           box-shadow: 3px 3px 0 rgba(7, 8, 15, 0.58);
         }
@@ -1863,17 +1933,17 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           min-height: 0;
           display: grid;
           grid-template-columns: minmax(0, 1fr) ${SIDEBAR_WIDTH}px;
-          gap: 0.46rem;
+          gap: 0.62rem;
         }
 
         .gpx-layout.sidebar-collapsed {
-          grid-template-columns: minmax(0, 1fr) 68px;
+          grid-template-columns: minmax(0, 1fr) 84px;
         }
 
         .gpx-map-window {
           min-height: 0;
           display: grid;
-          grid-template-rows: auto minmax(0, 1fr);
+          grid-template-rows: auto auto auto minmax(0, 1fr);
           overflow: hidden;
         }
 
@@ -1881,23 +1951,112 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 0.36rem;
-          padding: 0.38rem 0.56rem;
+          gap: 0.46rem;
+          padding: 0.56rem 0.76rem;
           border-bottom: 3px solid #14192b;
           background: #39405f;
           color: #fff8de;
-          font-size: 0.64rem;
+          font-size: 0.74rem;
         }
 
         .gpx-window-head strong {
           color: #c7ffd4;
-          font-size: 0.58rem;
+          font-size: 0.68rem;
+        }
+
+        .gpx-map-toolbar {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 0.64rem;
+          align-items: center;
+          padding: 0.66rem 0.82rem;
+          border-bottom: 3px solid #14192b;
+          background: #303652;
+        }
+
+        .gpx-map-toolbar-copy {
+          display: grid;
+          gap: 0.16rem;
+        }
+
+        .gpx-map-toolbar-copy span {
+          color: #fff7d4;
+          font-size: 0.66rem;
+        }
+
+        .gpx-map-toolbar-copy strong {
+          color: #dce4ff;
+          font-size: 0.8rem;
+          line-height: 1.45;
+        }
+
+        .gpx-map-actions {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          gap: 0.38rem;
+        }
+
+        .gpx-map-action {
+          border: 2px solid #101425;
+          padding: 0.5rem 0.78rem;
+          background: #3b476a;
+          color: #fff7de;
+          font: inherit;
+          font-size: 0.72rem;
+          cursor: pointer;
+          box-shadow: 3px 3px 0 rgba(7, 8, 15, 0.5);
+        }
+
+        .gpx-map-action:hover {
+          background: #4b5d87;
+        }
+
+        .gpx-map-action.emphasis {
+          background: #3d7b58;
+        }
+
+        .gpx-map-action.emphasis:hover {
+          background: #4a946a;
+        }
+
+        .gpx-room-jumps {
+          display: flex;
+          gap: 0.34rem;
+          flex-wrap: wrap;
+          padding: 0.72rem 0.82rem;
+          border-bottom: 3px solid #14192b;
+          background: #262c43;
+        }
+
+        .gpx-room-chip {
+          border: 2px solid #101425;
+          padding: 0.4rem 0.6rem;
+          background: #38405f;
+          color: #f3f6ff;
+          font: inherit;
+          font-size: 0.68rem;
+          cursor: pointer;
+          box-shadow: 3px 3px 0 rgba(7, 8, 15, 0.42);
+        }
+
+        .gpx-room-chip.state-active {
+          background: #326048;
+        }
+
+        .gpx-room-chip.state-warm {
+          background: #46568b;
+        }
+
+        .gpx-room-chip.focus {
+          outline: 2px solid #ffe69f;
+          outline-offset: 1px;
         }
 
         .gpx-map-shell {
           min-height: 0;
           overflow: auto;
-          padding: 0.8rem;
+          padding: 1rem;
           background:
             linear-gradient(180deg, rgba(14, 18, 31, 0.98), rgba(7, 9, 16, 1));
           overscroll-behavior: contain;
@@ -1923,15 +2082,15 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
 
         .gpx-map-scale {
           position: relative;
-          width: ${Math.round(MAP_WIDTH * MAP_SCALE)}px;
-          height: ${Math.round(MAP_HEIGHT * MAP_SCALE)}px;
+          width: ${Math.round(MAP_WIDTH * mapScale)}px;
+          height: ${Math.round(MAP_HEIGHT * mapScale)}px;
         }
 
         .gpx-map {
           position: relative;
           width: ${MAP_WIDTH}px;
           height: ${MAP_HEIGHT}px;
-          transform: scale(${MAP_SCALE});
+          transform: scale(${mapScale});
           transform-origin: top left;
           background:
             radial-gradient(circle at 50% 8%, rgba(120, 145, 212, 0.08), transparent 20%),
@@ -2503,15 +2662,15 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         }
 
         .gpx-side-toggle {
-          padding: 0.5rem 0.24rem;
+          padding: 0.7rem 0.3rem;
           color: #fff7de;
           background: #365268;
           cursor: pointer;
           writing-mode: vertical-rl;
           text-orientation: mixed;
           letter-spacing: 0.05em;
-          min-height: 164px;
-          font-size: 0.7rem;
+          min-height: 196px;
+          font-size: 0.82rem;
         }
 
         .gpx-side-toggle:hover {
@@ -2523,56 +2682,56 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           overflow-y: auto;
           overflow-x: hidden;
           display: grid;
-          gap: 0.72rem;
+          gap: 0.9rem;
           align-content: start;
-          padding-right: 0.18rem;
+          padding-right: 0.26rem;
           overscroll-behavior: contain;
         }
 
         .gpx-panel {
           overflow: hidden;
-          padding-bottom: 0.48rem;
+          padding-bottom: 0.62rem;
           min-width: 0;
         }
 
         .gpx-copy {
           margin: 0;
-          padding: 0.56rem 0.7rem 0;
+          padding: 0.74rem 0.88rem 0;
           color: #edf0ff;
-          font-size: 0.7rem;
-          line-height: 1.56;
+          font-size: 0.84rem;
+          line-height: 1.62;
         }
 
         .gpx-stage-list,
         .gpx-roster,
         .gpx-room-list,
         .gpx-artifacts {
-          padding: 0.56rem 0.7rem 0;
+          padding: 0.74rem 0.88rem 0;
         }
 
         .gpx-stage-list {
           display: grid;
-          gap: 0.22rem;
+          gap: 0.34rem;
         }
 
         .gpx-stage-pill {
           display: grid;
           grid-template-columns: auto minmax(0, 1fr);
-          gap: 0.3rem;
-          padding: 0.28rem 0.34rem;
+          gap: 0.4rem;
+          padding: 0.42rem 0.5rem;
           border: 2px solid #0f1324;
           background: #2f3552;
         }
 
         .gpx-stage-pill span {
-          min-width: 28px;
+          min-width: 34px;
           color: #fff7d4;
-          font-size: 0.54rem;
+          font-size: 0.62rem;
         }
 
         .gpx-stage-pill strong {
           color: #edf0ff;
-          font-size: 0.64rem;
+          font-size: 0.78rem;
         }
 
         .gpx-stage-pill.state-done {
@@ -2587,15 +2746,15 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         .gpx-room-list,
         .gpx-roster {
           display: grid;
-          gap: 0.22rem;
+          gap: 0.34rem;
         }
 
         .gpx-room-row,
         .gpx-roster-row {
           display: grid;
           grid-template-columns: minmax(0, 1fr) auto;
-          gap: 0.3rem;
-          padding: 0.3rem 0.36rem;
+          gap: 0.42rem;
+          padding: 0.46rem 0.54rem;
           border: 2px solid #0f1324;
           background: #2f3552;
         }
@@ -2610,24 +2769,36 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         .gpx-room-row strong,
         .gpx-roster-row strong {
           color: #fff7de;
-          font-size: 0.62rem;
+          font-size: 0.76rem;
         }
 
         .gpx-room-row small,
         .gpx-roster-row small {
-          margin-top: 0.12rem;
+          margin-top: 0.16rem;
           color: #ced4fa;
-          font-size: 0.54rem;
+          font-size: 0.64rem;
           line-height: 1.45;
         }
 
         .gpx-room-row > span {
           align-self: start;
           border: 2px solid #101425;
-          padding: 0.14rem 0.28rem;
+          padding: 0.2rem 0.34rem;
           color: #f6f7ff;
-          font-size: 0.48rem;
+          font-size: 0.56rem;
           background: #40476b;
+        }
+
+        .gpx-room-row {
+          width: 100%;
+          text-align: left;
+          cursor: pointer;
+          font: inherit;
+          appearance: none;
+        }
+
+        .gpx-room-row:hover {
+          transform: translate(-1px, -1px);
         }
 
         .gpx-room-row.state-active {
@@ -2646,29 +2817,34 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           background: #4d6fb8;
         }
 
+        .gpx-room-row.focus {
+          outline: 2px solid #ffe69f;
+          outline-offset: 1px;
+        }
+
         .gpx-subsection {
-          padding: 0.42rem 0.7rem 0;
+          padding: 0.56rem 0.88rem 0;
           display: grid;
-          gap: 0.24rem;
+          gap: 0.3rem;
         }
 
         .gpx-subsection > span {
           color: #fff7d4;
-          font-size: 0.56rem;
+          font-size: 0.64rem;
         }
 
         .gpx-tag-list {
           display: flex;
           flex-wrap: wrap;
-          gap: 0.18rem;
+          gap: 0.24rem;
         }
 
         .gpx-tag {
-          padding: 0.18rem 0.34rem;
+          padding: 0.26rem 0.44rem;
           border: 2px solid #101425;
           background: #2d314a;
           color: #edf0ff;
-          font-size: 0.48rem;
+          font-size: 0.58rem;
         }
 
         .gpx-tag.type-function {
@@ -2688,15 +2864,15 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         }
 
         .gpx-roster-row span {
-          width: 30px;
-          height: 30px;
+          width: 38px;
+          height: 38px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
           border: 2px solid #101425;
           background: #f6f1dc;
           color: #181c2a;
-          font-size: 0.48rem;
+          font-size: 0.58rem;
         }
 
         .gpx-roster-row.active {
@@ -2709,7 +2885,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
 
         .gpx-empty {
           color: #dde2ff;
-          font-size: 0.62rem;
+          font-size: 0.74rem;
           line-height: 1.5;
         }
 
@@ -2720,21 +2896,21 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         }
 
         .gpx-artifact {
-          padding: 0.26rem 0.3rem;
+          padding: 0.4rem 0.46rem;
           border: 2px solid #101425;
           background: #2f3552;
           display: grid;
-          gap: 0.12rem;
+          gap: 0.18rem;
         }
 
         .gpx-artifact span {
           color: #cad2f7;
-          font-size: 0.46rem;
+          font-size: 0.54rem;
         }
 
         .gpx-artifact strong {
           color: #fff7d4;
-          font-size: 0.62rem;
+          font-size: 0.74rem;
         }
 
         @keyframes gpxFlow {
@@ -2835,9 +3011,46 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           }
         }
 
-        @media (max-width: 1200px) {
+        @media (max-width: 1280px) {
           .gpx-layout {
-            grid-template-columns: minmax(0, 1fr) 420px;
+            grid-template-columns: minmax(0, 1fr) 500px;
+          }
+        }
+
+        @media (max-width: 1060px) {
+          .gpx-layout,
+          .gpx-layout.sidebar-collapsed {
+            grid-template-columns: minmax(0, 1fr);
+            grid-template-rows: minmax(0, 1fr) auto;
+          }
+
+          .gpx-side-rail,
+          .gpx-side-rail.collapsed {
+            grid-template-rows: auto minmax(0, 1fr);
+          }
+
+          .gpx-side-toggle {
+            writing-mode: horizontal-tb;
+            text-orientation: initial;
+            min-height: auto;
+            padding: 0.72rem 0.92rem;
+          }
+
+          .gpx-sidebar {
+            max-height: 38vh;
+          }
+
+          .gpx-map-toolbar {
+            grid-template-columns: minmax(0, 1fr);
+          }
+
+          .gpx-map-actions {
+            justify-content: flex-start;
+          }
+
+          .gpx-room-jumps {
+            max-height: 10.8rem;
+            overflow: auto;
           }
         }
 
@@ -2848,6 +3061,15 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
 
           .gpx-toolbar {
             justify-content: flex-start;
+          }
+
+          .gpx-map-actions {
+            gap: 0.3rem;
+          }
+
+          .gpx-map-action,
+          .gpx-room-chip {
+            font-size: 0.64rem;
           }
         }
 

@@ -99,6 +99,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       ...(payload.login !== undefined ? { login: String(payload.login) } : {}),
       ...(payload.server !== undefined ? { server: String(payload.server) } : {}),
       ...(passwordProvided ? { password: String(payload.password) } : {}),
+      ...(payload.presetName !== undefined ? { presetName: String(payload.presetName) } : {}),
       ...(payload.provider !== undefined ? { provider: parseProvider(payload.provider) } : {}),
       ...(payload.symbol !== undefined ? { symbol: String(payload.symbol) } : {}),
       ...(payload.timeframe !== undefined ? { timeframe: parseTimeframe(payload.timeframe) } : {}),

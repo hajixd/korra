@@ -6030,7 +6030,15 @@ const injectedScript = `
 
     const sourceUpdatedAt = Number(account && account.updatedAt) || 0;
     const defaultDraft = buildCopyTradeAccountSettingsDraft(account);
-    const assignedPresetName = getCopyTradeAccountPresetAssignment(normalizedAccountId);
+    const hasServerAccount = isObjectRecord(account);
+    const persistedPresetName = hasServerAccount
+      ? String(account.presetName || "").trim()
+      : "";
+    const cachedPresetName = getCopyTradeAccountPresetAssignment(normalizedAccountId);
+    if (hasServerAccount && cachedPresetName !== persistedPresetName) {
+      setCopyTradeAccountPresetAssignment(normalizedAccountId, persistedPresetName);
+    }
+    const assignedPresetName = hasServerAccount ? persistedPresetName : cachedPresetName;
     const existing = isObjectRecord(store.accountForms[normalizedAccountId])
       ? store.accountForms[normalizedAccountId]
       : null;
@@ -6057,13 +6065,20 @@ const injectedScript = `
       !existing.reconnectPending
     ) {
       Object.assign(existing, defaultDraft, {
-        selectedPresetName: existing.selectedPresetName || assignedPresetName,
-        presetNameInput:
-          String(existing.presetNameInput || "").trim() ||
-          existing.selectedPresetName ||
-          assignedPresetName,
+        selectedPresetName: assignedPresetName,
+        presetNameInput: assignedPresetName,
         sourceUpdatedAt
       });
+    } else if (
+      hasServerAccount &&
+      !existing.dirty &&
+      !existing.pending &&
+      !existing.pausePending &&
+      !existing.reconnectPending &&
+      String(existing.selectedPresetName || "").trim() !== assignedPresetName
+    ) {
+      existing.selectedPresetName = assignedPresetName;
+      existing.presetNameInput = assignedPresetName;
     } else if (!String(existing.selectedPresetName || "").trim() && assignedPresetName) {
       existing.selectedPresetName = assignedPresetName;
       if (!String(existing.presetNameInput || "").trim()) {
@@ -6210,6 +6225,11 @@ const injectedScript = `
       return;
     }
 
+    setCopyTradeAccountPresetAssignment(
+      normalizedAccountId,
+      String(account.presetName || "").trim()
+    );
+
     const store = getCustomCopyTradeStore();
     if (
       isObjectRecord(store.list.data) &&
@@ -6267,6 +6287,7 @@ const injectedScript = `
 
   const buildCopyTradeAccountPatchFromFormState = (formState) => {
     return {
+      presetName: String(formState.selectedPresetName || "").trim(),
       symbol: normalizeSymbol(formState.symbol),
       timeframe: normalizeCopyTradeTimeframe(formState.timeframe),
       lot: clampNumber(formState.lot, 0.01, 100, COPYTRADE_BRIDGE_DEFAULTS.lot),
@@ -6297,6 +6318,65 @@ const injectedScript = `
         )
       )
     };
+  };
+
+  const saveCustomCopyTradeAccountPresetAssignment = async (accountId, presetName) => {
+    const normalizedAccountId = String(accountId || "").trim();
+    const formState = getCustomCopyTradeAccountFormState(normalizedAccountId, null);
+    if (
+      !normalizedAccountId ||
+      !formState ||
+      formState.pending ||
+      formState.pausePending ||
+      formState.reconnectPending
+    ) {
+      return false;
+    }
+
+    formState.pending = true;
+    formState.error = "";
+    formState.success = "";
+    queueEmbeddedUiRefresh();
+
+    try {
+      const response = await requestLocalJson(
+        "/api/copytrade/accounts/" + encodeURIComponent(normalizedAccountId),
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            presetName: String(presetName || "").trim()
+          })
+        }
+      );
+      const account = response && response.account ? response.account : null;
+      if (!account) {
+        throw new Error("Failed to update preset assignment.");
+      }
+
+      syncCustomCopyTradeAccountIntoStore(account);
+      formState.pending = false;
+      formState.selectedPresetName = String(account.presetName || "").trim();
+      formState.presetNameInput = String(account.presetName || "").trim();
+      formState.sourceUpdatedAt = Number(account.updatedAt) || Date.now();
+      formState.error = "";
+      formState.success = String(account.presetName || "").trim()
+        ? "Preset connected."
+        : "Preset cleared.";
+      void loadCustomCopyTradeList(true);
+      queueEmbeddedUiRefresh();
+      return true;
+    } catch (error) {
+      formState.pending = false;
+      formState.error = String(
+        (error && error.message) || error || "Failed to update preset assignment."
+      );
+      formState.success = "";
+      queueEmbeddedUiRefresh();
+      return false;
+    }
   };
 
   const applyCopyTradePresetToFormState = (accountId, presetName) => {
@@ -6386,12 +6466,12 @@ const injectedScript = `
       syncCustomCopyTradeAccountIntoStore(account);
       formState.pending = false;
       formState.dirty = false;
+      formState.selectedPresetName = String(account.presetName || "").trim();
+      formState.presetNameInput = String(account.presetName || "").trim();
       formState.sourceUpdatedAt = Number(account.updatedAt) || Date.now();
       formState.error = "";
       formState.success = "Settings saved.";
-      if (String(formState.selectedPresetName || "").trim()) {
-        setCopyTradeAccountPresetAssignment(accountId, formState.selectedPresetName);
-      }
+      setCopyTradeAccountPresetAssignment(accountId, String(account.presetName || "").trim());
       void loadCustomCopyTradeList(true);
       queueEmbeddedUiRefresh();
     } catch (error) {
@@ -6418,13 +6498,18 @@ const injectedScript = `
     formState.success = "";
 
     if (!normalizedPresetName) {
+      const previousPresetName = String(formState.selectedPresetName || "").trim();
       formState.selectedPresetName = "";
       formState.presetNameInput = "";
-      formState.dirty = false;
       setCopyTradeAccountPresetAssignment(normalizedAccountId, "");
       setOpenCustomCopyTradePresetAccountId("");
-      formState.success = "Preset cleared.";
       queueEmbeddedUiRefresh();
+      if (!(await saveCustomCopyTradeAccountPresetAssignment(normalizedAccountId, ""))) {
+        formState.selectedPresetName = previousPresetName;
+        formState.presetNameInput = previousPresetName;
+        setCopyTradeAccountPresetAssignment(normalizedAccountId, previousPresetName);
+        queueEmbeddedUiRefresh();
+      }
       return;
     }
 
@@ -6443,6 +6528,13 @@ const injectedScript = `
   const toggleCustomCopyTradeAccountPaused = async (accountId, paused) => {
     const formState = getCustomCopyTradeAccountFormState(accountId, null);
     if (!formState || formState.pausePending) {
+      return;
+    }
+
+    if (!paused && !String(formState.selectedPresetName || "").trim()) {
+      formState.error = "Assign a saved preset to this MT5 account before resuming copy trading.";
+      formState.success = "";
+      queueEmbeddedUiRefresh();
       return;
     }
 
@@ -6922,6 +7014,7 @@ const injectedScript = `
     const controlsDisabled =
       formState &&
       (formState.pending || formState.pausePending || formState.reconnectPending);
+    const resumeBlocked = Boolean(account && account.paused && !selectedPresetName);
     const syncedAt =
       dashboard && dashboard.lastSyncedAt
         ? formatDateTimeLabel(dashboard.lastSyncedAt)
@@ -6943,7 +7036,9 @@ const injectedScript = `
       escapeHtml(accountId) +
       '" data-paused="' +
       escapeHtml(String(!(account && account.paused))) +
-      '">' +
+      '"' +
+      (controlsDisabled || resumeBlocked ? ' disabled="disabled"' : "") +
+      ">" +
       escapeHtml(
         formState && formState.pausePending
           ? "Updating..."
@@ -6994,6 +7089,10 @@ const injectedScript = `
   const buildStatisticsControlsMarkup = (account, formState) => {
     const accountId = String(account && account.id || "").trim();
     const selectedPresetName = String(formState && formState.selectedPresetName || "").trim();
+    const controlsDisabled =
+      formState &&
+      (formState.pending || formState.pausePending || formState.reconnectPending);
+    const resumeBlocked = Boolean(account && account.paused && !selectedPresetName);
     const feedbackMarkup = formState && formState.error
       ? '<div class="korra-copytrade-shell__feedback korra-copytrade-shell__feedback--error">' +
         escapeHtml(formState.error) +
@@ -7033,7 +7132,9 @@ const injectedScript = `
       escapeHtml(accountId) +
       '" data-paused="' +
       escapeHtml(String(!(account && account.paused))) +
-      '">' +
+      '"' +
+      (controlsDisabled || resumeBlocked ? ' disabled="disabled"' : "") +
+      ">" +
       escapeHtml(
         formState && formState.pausePending
           ? "Updating..."
@@ -8382,7 +8483,10 @@ const injectedScript = `
         }
 
         if (action === "save-preset") {
-          saveCopyTradePresetFromFormState(target.dataset.accountId || "");
+          const accountId = target.dataset.accountId || "";
+          if (saveCopyTradePresetFromFormState(accountId)) {
+            void saveCustomCopyTradeAccountSettings(accountId);
+          }
           return;
         }
 

@@ -30,6 +30,7 @@ type CopyTradeAccountRecord = {
   login: string;
   server: string;
   encryptedPassword: string;
+  presetName: string;
   hidden?: boolean;
   provider?: CopyTradeAccountProvider;
   providerAccountId?: string | null;
@@ -77,6 +78,7 @@ export type CopyTradeAccountCreateInput = {
   password: string;
   server: string;
   provider?: CopyTradeAccountProvider;
+  presetName?: string | null;
   symbol?: string;
   timeframe?: CopyTradeTimeframe;
   lot?: number;
@@ -145,6 +147,7 @@ type LegacyCopyTradeAccountRecord = CopyTradeAccountRecord & Record<string, unkn
 const stripDeprecatedAccountFields = (account: LegacyCopyTradeAccountRecord): CopyTradeAccountRecord => {
   const legacyAccount = { ...account };
   delete legacyAccount["aggr" + "essive"];
+  legacyAccount.presetName = normalizePresetName(legacyAccount.presetName);
   return legacyAccount as CopyTradeAccountRecord;
 };
 
@@ -256,6 +259,13 @@ const normalizeLogin = (value: unknown): string => {
 };
 
 const normalizeServer = (value: unknown): string => {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim();
+};
+
+const normalizePresetName = (value: unknown): string => {
   if (typeof value !== "string") {
     return "";
   }
@@ -561,6 +571,7 @@ const reconcileMetaApiAccounts = async (state: CopyTradeState): Promise<boolean>
         login: normalizedLogin,
         server: normalizedServer,
         encryptedPassword: encryptPassword(""),
+        presetName: "",
         hidden: false,
         provider: "metaapi",
         providerAccountId,
@@ -801,6 +812,10 @@ export const createCopyTradeAccount = async (
       provider === "metaapi" && providerAccountId
         ? buildMetaApiRuntimeId(providerAccountId)
         : reusableHiddenAccount?.id || buildRuntimeId();
+    const presetName =
+      input.presetName !== undefined
+        ? normalizePresetName(input.presetName)
+        : normalizePresetName(reusableHiddenAccount?.presetName);
 
     const account: CopyTradeAccountRecord = reusableHiddenAccount
       ? {
@@ -809,6 +824,7 @@ export const createCopyTradeAccount = async (
           login,
           server,
           encryptedPassword: encryptPassword(password),
+          presetName,
           hidden: false,
           provider,
           providerAccountId,
@@ -844,6 +860,7 @@ export const createCopyTradeAccount = async (
           login,
           server,
           encryptedPassword: encryptPassword(password),
+          presetName,
           hidden: false,
           provider,
           providerAccountId,
@@ -936,6 +953,19 @@ export const updateCopyTradeAccount = async (
         throw new Error("MT5 password cannot be empty.");
       }
       account.encryptedPassword = encryptPassword(nextPassword);
+    }
+
+    const nextPresetName =
+      input.presetName !== undefined
+        ? normalizePresetName(input.presetName)
+        : normalizePresetName(account.presetName);
+
+    if (input.paused === false && !nextPresetName) {
+      throw new Error("Assign a saved preset to this MT5 account before resuming copy trading.");
+    }
+
+    if (input.presetName !== undefined) {
+      account.presetName = nextPresetName;
     }
 
     if (input.symbol !== undefined) {

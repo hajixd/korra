@@ -96,7 +96,7 @@ export const GIDEON_TOOL_CATALOG: readonly GideonToolDefinition[] = [
     kind: "compute",
     cacheable: true,
     latencyClass: "low",
-    requestKinds: ["analysis", "stats", "strategy", "mixed"],
+    requestKinds: ["question", "analysis", "stats", "strategy", "mixed"],
     needs: ["indicator_compute"],
     outputArtifacts: ["text"]
   },
@@ -107,7 +107,7 @@ export const GIDEON_TOOL_CATALOG: readonly GideonToolDefinition[] = [
     kind: "compute",
     cacheable: true,
     latencyClass: "medium",
-    requestKinds: ["analysis", "stats", "strategy", "mixed"],
+    requestKinds: ["question", "analysis", "stats", "strategy", "mixed"],
     needs: ["indicator_compute"],
     outputArtifacts: ["panel_chart"]
   },

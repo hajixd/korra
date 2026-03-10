@@ -7,10 +7,11 @@ type GideonFastPathBullet = {
 };
 
 export type GideonFastPathResult = {
-  kind: "market_price" | "stats_metric";
+  kind: "social_reply" | "market_price" | "stats_metric" | "indicator_question" | "chart_draw";
   shortAnswer: string;
   bullets: GideonFastPathBullet[];
   toolIds: string[];
+  chartActions?: Record<string, unknown>[];
 };
 
 type PriceAnchorOutput = {
@@ -42,8 +43,78 @@ type MetricOutput = {
   totalTrades?: number;
 };
 
+type IndicatorSnapshotOutput = {
+  symbol?: string;
+  timeframe?: string;
+  latestTimeIso?: string | null;
+  rsi14?: {
+    value?: number;
+    state?: string;
+    momentum?: number;
+    overboughtThreshold?: number;
+    oversoldThreshold?: number;
+  } | null;
+  macd?: {
+    histogram?: number;
+    regime?: string;
+    crossedUp?: boolean;
+    crossedDown?: boolean;
+  } | null;
+  ema20?: {
+    value?: number;
+    slope?: number;
+  } | null;
+  sma20?: {
+    value?: number;
+    slope?: number;
+  } | null;
+  atr14?: {
+    value?: number;
+    change?: number;
+  } | null;
+  stochastic_14_3?: {
+    k?: number;
+    d?: number;
+    state?: string;
+  } | null;
+};
+
+type ChartActionsOutput = {
+  chartActions?: Array<Record<string, unknown>>;
+};
+
 const VISUAL_ARTIFACTS = new Set(["panel_chart", "chart_draw", "animation", "strategy_json", "code_patch"]);
 const PRICE_QUESTION_RE = /\b(price|current|latest|right now|now|trading at|where is|quote)\b/i;
+const SIMPLE_GREETING_RE =
+  /^(hi|hello|hey|yo|sup|what'?s up|how are you|gm|gn|good morning|good afternoon|good evening)[!.?\s]*$/i;
+
+const normalizeSocialText = (value: string): string => {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ");
+};
+
+const buildDeterministicSocialReply = (prompt: string): string => {
+  const normalized = normalizeSocialText(prompt);
+  if (!normalized) {
+    return "What do you want to check in the market?";
+  }
+  if (/\b(good morning|gm)\b/.test(normalized)) {
+    return "Ready when you are, what do you want to check in the market?";
+  }
+  if (/\bgood afternoon\b/.test(normalized)) {
+    return "Ready when you are, what do you want to check in the market?";
+  }
+  if (/\b(good evening|gn)\b/.test(normalized)) {
+    return "Ready when you are, what do you want to check in the market?";
+  }
+  if (/\b(how are you|what s up|whats up|sup|yo)\b/.test(normalized)) {
+    return "Ready when you are, what do you want to check in the market?";
+  }
+  return "What do you want to check in the market?";
+};
 
 const formatPrice = (value: number): string => {
   const abs = Math.abs(value);
@@ -118,6 +189,25 @@ const hasVisualArtifacts = (execution: GideonExecutionSnapshot): boolean => {
   return execution.intent.requestedArtifacts.some((artifact) => VISUAL_ARTIFACTS.has(artifact));
 };
 
+const buildSocialReplyFastPath = (params: {
+  execution: GideonExecutionSnapshot;
+  prompt: string;
+}): GideonFastPathResult | null => {
+  const { execution, prompt } = params;
+  if (execution.intent.requestKind !== "social") {
+    return null;
+  }
+  if (!SIMPLE_GREETING_RE.test(prompt.trim())) {
+    return null;
+  }
+  return {
+    kind: "social_reply",
+    shortAnswer: buildDeterministicSocialReply(prompt),
+    bullets: [],
+    toolIds: []
+  };
+};
+
 const buildMarketPriceFastPath = (params: {
   execution: GideonExecutionSnapshot;
   prompt: string;
@@ -127,6 +217,9 @@ const buildMarketPriceFastPath = (params: {
     return null;
   }
   if (!execution.intent.needs.includes("market_data")) {
+    return null;
+  }
+  if (execution.intent.needs.includes("indicator_compute")) {
     return null;
   }
   if (execution.intent.needs.includes("internet_research") || execution.intent.needs.includes("backtest_stats")) {
@@ -172,6 +265,176 @@ const buildMarketPriceFastPath = (params: {
     bullets: bullets.slice(0, 2),
     toolIds: ["resolve_symbol", "get_latest_price_anchor"].filter((toolId) => Boolean(findToolResult(execution, toolId)))
   };
+};
+
+const describeDrawAction = (action: Record<string, unknown>): string | null => {
+  const type = String(action.type || "");
+  if (type === "draw_support_resistance") {
+    return "support/resistance levels";
+  }
+  if (type === "draw_horizontal_line") {
+    return "horizontal level";
+  }
+  if (type === "draw_vertical_line") {
+    return "vertical marker";
+  }
+  if (type === "draw_trend_line") {
+    return "trend line";
+  }
+  if (type === "draw_box") {
+    return "box zone";
+  }
+  if (type === "draw_fvg") {
+    return "fair value gap";
+  }
+  if (type === "draw_arrow") {
+    return "arrow marker";
+  }
+  if (type === "draw_long_position") {
+    return "long position";
+  }
+  if (type === "draw_short_position") {
+    return "short position";
+  }
+  if (type === "mark_candlestick") {
+    return "candle marker";
+  }
+  return null;
+};
+
+const buildChartDrawFastPath = (params: {
+  execution: GideonExecutionSnapshot;
+}): GideonFastPathResult | null => {
+  const { execution } = params;
+  if (!execution.intent.requestedArtifacts.includes("chart_draw")) {
+    return null;
+  }
+  if (
+    execution.intent.needs.includes("internet_research") ||
+    execution.intent.needs.includes("strategy_compile") ||
+    execution.intent.needs.includes("code_generation")
+  ) {
+    return null;
+  }
+
+  const chartActionsOutput = getToolOutput<ChartActionsOutput>(execution, "build_chart_actions");
+  const chartActions = Array.isArray(chartActionsOutput?.chartActions)
+    ? chartActionsOutput.chartActions
+    : [];
+  if (chartActions.length === 0) {
+    return null;
+  }
+
+  const described = chartActions
+    .map((action) => describeDrawAction(action))
+    .filter((value): value is string => Boolean(value));
+  const preview = described.slice(0, 2).join(" and ");
+
+  return {
+    kind: "chart_draw",
+    shortAnswer:
+      preview.length > 0
+        ? `Drew ${preview} on the main chart.`
+        : `Drew ${chartActions.length} chart annotation${chartActions.length === 1 ? "" : "s"}.`,
+    bullets: [],
+    toolIds: ["build_chart_actions"].filter((toolId) => Boolean(findToolResult(execution, toolId))),
+    chartActions
+  };
+};
+
+const buildIndicatorQuestionFastPath = (params: {
+  execution: GideonExecutionSnapshot;
+  prompt: string;
+}): GideonFastPathResult | null => {
+  const { execution, prompt } = params;
+  if (execution.intent.requestKind !== "question") {
+    return null;
+  }
+  if (!execution.intent.needs.includes("indicator_compute")) {
+    return null;
+  }
+  if (execution.intent.needs.includes("internet_research")) {
+    return null;
+  }
+
+  const indicators = getToolOutput<IndicatorSnapshotOutput>(execution, "compute_indicator_snapshot");
+  if (!indicators) {
+    return null;
+  }
+
+  const symbol = String(indicators.symbol || execution.runtimeContext.symbol || "XAUUSD");
+  const timeframe = String(indicators.timeframe || execution.runtimeContext.timeframe || "M15");
+  const normalizedPrompt = prompt.toLowerCase();
+  const bullets: GideonFastPathBullet[] = [];
+
+  if ((/\brsi\b|\boverbought\b|\boversold\b/.test(normalizedPrompt)) && indicators.rsi14) {
+    const rsi = indicators.rsi14;
+    const value = Number(rsi.value ?? NaN);
+    if (Number.isFinite(value)) {
+      const state = String(rsi.state || "neutral");
+      const answer =
+        state === "overbought"
+          ? `RSI 14 on ${symbol} ${timeframe} is ${value.toFixed(2)}, so it is overbought.`
+          : state === "oversold"
+            ? `RSI 14 on ${symbol} ${timeframe} is ${value.toFixed(2)}, so it is oversold.`
+            : `RSI 14 on ${symbol} ${timeframe} is ${value.toFixed(2)}, so it is not overbought.`;
+      if (typeof rsi.momentum === "number") {
+        bullets.push({
+          tone: rsi.momentum >= 0 ? "green" : "red",
+          text: `RSI momentum: ${rsi.momentum >= 0 ? "+" : ""}${rsi.momentum.toFixed(2)}`
+        });
+      }
+      if (indicators.latestTimeIso) {
+        bullets.push({
+          tone: "black",
+          text: `Latest candle time: ${indicators.latestTimeIso}`
+        });
+      }
+      return {
+        kind: "indicator_question",
+        shortAnswer: answer,
+        bullets: bullets.slice(0, 2),
+        toolIds: ["compute_indicator_snapshot"]
+      };
+    }
+  }
+
+  if (/\bmacd\b/.test(normalizedPrompt) && indicators.macd) {
+    const macd = indicators.macd;
+    const histogram = Number(macd.histogram ?? NaN);
+    const regime = String(macd.regime || "flat").replace(/_/g, " ");
+    if (Number.isFinite(histogram)) {
+      return {
+        kind: "indicator_question",
+        shortAnswer: `MACD on ${symbol} ${timeframe} is ${regime} with histogram ${histogram.toFixed(4)}.`,
+        bullets: [
+          {
+            tone: macd.crossedUp ? "green" : macd.crossedDown ? "red" : "black",
+            text: macd.crossedUp ? "Latest cross: bullish" : macd.crossedDown ? "Latest cross: bearish" : "No fresh cross"
+          }
+        ],
+        toolIds: ["compute_indicator_snapshot"]
+      };
+    }
+  }
+
+  if (/\batr\b|\bvolatility\b/.test(normalizedPrompt) && indicators.atr14) {
+    const atr = indicators.atr14;
+    const value = Number(atr.value ?? NaN);
+    if (Number.isFinite(value)) {
+      return {
+        kind: "indicator_question",
+        shortAnswer: `ATR 14 on ${symbol} ${timeframe} is ${value.toFixed(4)}.`,
+        bullets: typeof atr.change === "number" ? [{
+          tone: atr.change >= 0 ? "gold" : "black",
+          text: `ATR change: ${atr.change >= 0 ? "+" : ""}${atr.change.toFixed(4)}`
+        }] : [],
+        toolIds: ["compute_indicator_snapshot"]
+      };
+    }
+  }
+
+  return null;
 };
 
 const metricShortAnswer = (params: {
@@ -287,9 +550,6 @@ export const buildDeterministicFastPath = (params: {
   execution: GideonExecutionSnapshot;
   prompt: string;
 }): GideonFastPathResult | null => {
-  if (hasVisualArtifacts(params.execution)) {
-    return null;
-  }
   if (
     params.execution.intent.needs.includes("internet_research") ||
     params.execution.intent.needs.includes("strategy_compile") ||
@@ -298,5 +558,23 @@ export const buildDeterministicFastPath = (params: {
     return null;
   }
 
-  return buildMarketPriceFastPath(params) ?? buildStatsMetricFastPath(params);
+  const socialFastPath = buildSocialReplyFastPath(params);
+  if (socialFastPath) {
+    return socialFastPath;
+  }
+
+  const drawFastPath = buildChartDrawFastPath(params);
+  if (drawFastPath) {
+    return drawFastPath;
+  }
+
+  if (hasVisualArtifacts(params.execution)) {
+    return null;
+  }
+
+  return (
+    buildIndicatorQuestionFastPath(params) ??
+    buildMarketPriceFastPath(params) ??
+    buildStatsMetricFastPath(params)
+  );
 };
