@@ -216,6 +216,14 @@ type StrategyChartMarker = {
   label: string;
 };
 
+type CandlestickSnapshotRow = {
+  x: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+};
+
 const DRAW_STAGE_RE =
   /\b(draw|mark|annotate|support|resistance|trendline|trend line|line|box|fvg|fair value gap|arrow|ruler)\b/i;
 const GRAPH_STAGE_RE =
@@ -293,6 +301,287 @@ const parseStrategyChartMarkers = (config: AssistantChart["config"]): StrategyCh
   });
 
   return mapped.filter((item): item is StrategyChartMarker => item !== null);
+};
+
+const parseCandlestickSnapshotRows = (rows: AssistantChart["data"]): CandlestickSnapshotRow[] => {
+  return rows
+    .map((row) => {
+      if (!isPlainRecord(row)) {
+        return null;
+      }
+
+      const x = typeof row.x === "string" ? row.x : "";
+      const open = Number(row.open);
+      const high = Number(row.high);
+      const low = Number(row.low);
+      const close = Number(row.close);
+
+      if (
+        !x ||
+        !Number.isFinite(open) ||
+        !Number.isFinite(high) ||
+        !Number.isFinite(low) ||
+        !Number.isFinite(close)
+      ) {
+        return null;
+      }
+
+      return {
+        x,
+        open,
+        high,
+        low,
+        close
+      };
+    })
+    .filter((row): row is CandlestickSnapshotRow => row !== null);
+};
+
+const isCandlestickSnapshotChart = (chart: AssistantChart): boolean => {
+  if (resolveGraphTemplate(chart.template).family !== "price_action") {
+    return false;
+  }
+
+  const sampleRow = chart.data[0];
+  return (
+    isPlainRecord(sampleRow) &&
+    typeof sampleRow.x === "string" &&
+    Number.isFinite(Number(sampleRow.open)) &&
+    Number.isFinite(Number(sampleRow.high)) &&
+    Number.isFinite(Number(sampleRow.low)) &&
+    Number.isFinite(Number(sampleRow.close))
+  );
+};
+
+const renderCandlestickSnapshot = (params: {
+  chart: AssistantChart;
+  zones: StrategyChartZone[];
+  markers: StrategyChartMarker[];
+}) => {
+  const rows = parseCandlestickSnapshotRows(params.chart.data);
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const width = 820;
+  const height = 236;
+  const padding = {
+    top: 14,
+    right: 18,
+    bottom: 28,
+    left: 54
+  };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const slotWidth = plotWidth / rows.length;
+  const bodyWidth = Math.max(4, Math.min(slotWidth * 0.62, 14));
+  const labelIndexByX = new Map(rows.map((row, index) => [row.x, index]));
+  const markerPrices = params.markers.map((marker) => marker.y);
+  const zonePrices = params.zones.flatMap((zone) => [zone.yStart, zone.yEnd]);
+  const allLows = [...rows.map((row) => row.low), ...markerPrices, ...zonePrices];
+  const allHighs = [...rows.map((row) => row.high), ...markerPrices, ...zonePrices];
+  const domainLow = Math.min(...allLows);
+  const domainHigh = Math.max(...allHighs);
+  const range = Math.max(0.0001, domainHigh - domainLow);
+  const minPrice = domainLow - range * 0.14;
+  const maxPrice = domainHigh + range * 0.14;
+  const yTicks = Array.from({ length: 5 }, (_, index) => {
+    const ratio = index / 4;
+    return maxPrice - ratio * (maxPrice - minPrice);
+  });
+  const xLabelIndices = Array.from(
+    new Set([0, Math.floor((rows.length - 1) / 3), Math.floor(((rows.length - 1) * 2) / 3), rows.length - 1])
+  ).sort((left, right) => left - right);
+
+  const xForIndex = (index: number) => {
+    return padding.left + (index + 0.5) * slotWidth;
+  };
+
+  const yForPrice = (price: number) => {
+    const ratio = (price - minPrice) / (maxPrice - minPrice);
+    return padding.top + (1 - ratio) * plotHeight;
+  };
+
+  return (
+    <div className="ai-candle-snapshot" role="img" aria-label={params.chart.title}>
+      <svg viewBox={`0 0 ${width} ${height}`} className="ai-candle-svg">
+        <rect
+          x={0}
+          y={0}
+          width={width}
+          height={height}
+          rx={12}
+          fill="rgba(7, 12, 20, 0.98)"
+        />
+
+        {yTicks.map((tick) => {
+          const y = yForPrice(tick);
+          return (
+            <g key={`${params.chart.id}-y-${tick.toFixed(4)}`}>
+              <line
+                x1={padding.left}
+                x2={width - padding.right}
+                y1={y}
+                y2={y}
+                stroke="rgba(159, 172, 198, 0.14)"
+                strokeDasharray="3 5"
+              />
+              <text
+                x={padding.left - 8}
+                y={y + 4}
+                textAnchor="end"
+                className="ai-candle-axis"
+              >
+                {tick.toFixed(2)}
+              </text>
+            </g>
+          );
+        })}
+
+        {xLabelIndices.map((index) => {
+          const row = rows[index];
+          if (!row) {
+            return null;
+          }
+
+          const x = xForIndex(index);
+          return (
+            <g key={`${params.chart.id}-x-${row.x}`}>
+              <line
+                x1={x}
+                x2={x}
+                y1={padding.top}
+                y2={height - padding.bottom}
+                stroke="rgba(159, 172, 198, 0.08)"
+              />
+              <text
+                x={x}
+                y={height - 8}
+                textAnchor="middle"
+                className="ai-candle-axis"
+              >
+                {row.x}
+              </text>
+            </g>
+          );
+        })}
+
+        {params.zones.map((zone, index) => {
+          const startIndex = labelIndexByX.get(zone.xStart);
+          const endIndex = labelIndexByX.get(zone.xEnd);
+          if (startIndex == null || endIndex == null) {
+            return null;
+          }
+
+          const zoneStart = padding.left + Math.min(startIndex, endIndex) * slotWidth;
+          const zoneEnd = padding.left + (Math.max(startIndex, endIndex) + 1) * slotWidth;
+          const zoneTop = yForPrice(Math.max(zone.yStart, zone.yEnd));
+          const zoneBottom = yForPrice(Math.min(zone.yStart, zone.yEnd));
+          const bullish = zone.direction === "bullish";
+
+          return (
+            <g key={`${params.chart.id}-zone-${index}`}>
+              <rect
+                x={zoneStart}
+                y={zoneTop}
+                width={Math.max(zoneEnd - zoneStart, bodyWidth)}
+                height={Math.max(zoneBottom - zoneTop, 6)}
+                rx={6}
+                fill={bullish ? "rgba(19, 201, 143, 0.18)" : "rgba(240, 69, 90, 0.18)"}
+                stroke={bullish ? "rgba(19, 201, 143, 0.72)" : "rgba(240, 69, 90, 0.72)"}
+              />
+              {zone.label ? (
+                <text
+                  x={zoneStart + 8}
+                  y={Math.max(zoneTop + 12, padding.top + 12)}
+                  className="ai-candle-zone-label"
+                >
+                  {zone.label}
+                </text>
+              ) : null}
+            </g>
+          );
+        })}
+
+        {rows.map((row, index) => {
+          const bullish = row.close >= row.open;
+          const candleX = xForIndex(index);
+          const wickTop = yForPrice(row.high);
+          const wickBottom = yForPrice(row.low);
+          const bodyTop = yForPrice(Math.max(row.open, row.close));
+          const bodyBottom = yForPrice(Math.min(row.open, row.close));
+          const bodyHeight = Math.max(bodyBottom - bodyTop, 2);
+
+          return (
+            <g key={`${params.chart.id}-candle-${index}`}>
+              <line
+                x1={candleX}
+                x2={candleX}
+                y1={wickTop}
+                y2={wickBottom}
+                stroke={bullish ? "#19d39a" : "#f25f73"}
+                strokeWidth={1.4}
+                strokeLinecap="round"
+              />
+              <rect
+                x={candleX - bodyWidth / 2}
+                y={bodyTop}
+                width={bodyWidth}
+                height={bodyHeight}
+                rx={1.6}
+                fill={bullish ? "rgba(19, 201, 143, 0.88)" : "rgba(240, 69, 90, 0.88)"}
+                stroke={bullish ? "#baf5df" : "#ffd0d6"}
+                strokeWidth={0.8}
+              />
+            </g>
+          );
+        })}
+
+        {params.markers.map((marker, index) => {
+          const candleIndex = labelIndexByX.get(marker.x);
+          if (candleIndex == null) {
+            return null;
+          }
+
+          const x = xForIndex(candleIndex);
+          const y = yForPrice(marker.y);
+          const bullish = marker.direction === "bullish";
+          const arrowTipY = bullish ? y - 12 : y + 12;
+          const labelY = bullish ? y - 18 : y + 24;
+
+          return (
+            <g key={`${params.chart.id}-marker-${index}`}>
+              <line
+                x1={x}
+                x2={x}
+                y1={bullish ? y - 4 : y + 4}
+                y2={arrowTipY}
+                stroke={bullish ? "#8bf0c8" : "#ff9eaa"}
+                strokeWidth={1.4}
+              />
+              <polygon
+                points={
+                  bullish
+                    ? `${x},${arrowTipY - 6} ${x - 5},${arrowTipY + 2} ${x + 5},${arrowTipY + 2}`
+                    : `${x},${arrowTipY + 6} ${x - 5},${arrowTipY - 2} ${x + 5},${arrowTipY - 2}`
+                }
+                fill={bullish ? "#13c98f" : "#f0455a"}
+              />
+              <circle cx={x} cy={y} r={3.5} fill={bullish ? "#13c98f" : "#f0455a"} />
+              <text
+                x={x}
+                y={labelY}
+                textAnchor="middle"
+                className="ai-candle-marker-label"
+              >
+                {marker.label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
 };
 
 const buildWelcomeMessage = (): AssistantMessage => ({
@@ -818,9 +1107,14 @@ export default function AssistantPanel(props: AssistantPanelProps) {
         const hasAnimationResponse =
           Array.isArray(payload.response.chartAnimations) &&
           payload.response.chartAnimations.length > 0;
+        const hasEmbeddedStrategyCharts =
+          Boolean(payload.response.strategyDraft) &&
+          Array.isArray(payload.response.charts) &&
+          payload.response.charts.length > 0;
 
         if (
           !hasAnimationResponse &&
+          !hasEmbeddedStrategyCharts &&
           Array.isArray(payload.response.chartActions) &&
           payload.response.chartActions.length > 0 &&
           typeof onRunChartActions === "function"
@@ -878,6 +1172,14 @@ export default function AssistantPanel(props: AssistantPanelProps) {
             : hasKey("label")
               ? "label"
               : "x";
+
+    if (isCandlestickSnapshotChart(chart)) {
+      return renderCandlestickSnapshot({
+        chart,
+        zones: fvgZones,
+        markers: entryMarkers
+      });
+    }
 
     if (family === "equity_curve" && hasKey("equity")) {
       return (
@@ -1078,8 +1380,12 @@ export default function AssistantPanel(props: AssistantPanelProps) {
       {charts.map((chart) => {
         const templateMeta = resolveGraphTemplate(chart.template);
         const mode = chart.mode ?? templateMeta.mode;
+        const candlestickSnapshot = isCandlestickSnapshotChart(chart);
         return (
-          <section key={chart.id} className="ai-chart-card">
+          <section
+            key={chart.id}
+            className={`ai-chart-card${candlestickSnapshot ? " photo" : ""}`}
+          >
             <div className="ai-chart-head">
               <strong>{chart.title}</strong>
               <div className="ai-chart-head-meta">
@@ -1190,6 +1496,17 @@ export default function AssistantPanel(props: AssistantPanelProps) {
           const hasBullets = Boolean(message.bullets && message.bullets.length > 0);
           const hasChecklist = Boolean(message.requestChecklist && message.requestChecklist.length > 0);
           const hasStrategyDraft = Boolean(message.strategyDraft);
+          const inlineStrategyCharts =
+            hasStrategyDraft && Array.isArray(message.charts)
+              ? message.charts.filter(
+                  (chart) => resolveGraphTemplate(chart.template).family === "price_action"
+                )
+              : [];
+          const inlineStrategyChartIds = new Set(inlineStrategyCharts.map((chart) => chart.id));
+          const remainingCharts = Array.isArray(message.charts)
+            ? message.charts.filter((chart) => !inlineStrategyChartIds.has(chart.id))
+            : [];
+          const hasInlineStrategyCharts = inlineStrategyCharts.length > 0;
           const hasDetails =
             message.role === "assistant" &&
             (hasTools || hasBullets || hasChecklist || hasStrategyDraft);
@@ -1226,8 +1543,18 @@ export default function AssistantPanel(props: AssistantPanelProps) {
 
                 {renderStrategyBacktestSummary(message.strategyDraft)}
 
+                {hasInlineStrategyCharts ? (
+                  <section className="ai-strategy-visuals">
+                    <header className="ai-strategy-visuals-head">
+                      <span>Chart Examples</span>
+                      <small>Embedded in chat</small>
+                    </header>
+                    {renderChartCards(inlineStrategyCharts)}
+                  </section>
+                ) : null}
+
                 <div className="ai-strategy-actions">
-                  {message.chartActions && message.chartActions.length > 0 ? (
+                  {!hasInlineStrategyCharts && message.chartActions && message.chartActions.length > 0 ? (
                     <button
                       type="button"
                       className="panel-action-btn"
@@ -1328,28 +1655,28 @@ export default function AssistantPanel(props: AssistantPanelProps) {
               </section>
             ) : null}
 
-            {message.charts && message.charts.length > 0 ? (
+            {remainingCharts.length > 0 ? (
               <>
-                {message.charts.some((chart) => resolveGraphTemplate(chart.template).mode === "static") ? (
+                {remainingCharts.some((chart) => resolveGraphTemplate(chart.template).mode === "static") ? (
                   <section className="ai-chart-group">
                     <header className="ai-chart-group-head">
                       <span>Static Charts</span>
                     </header>
                     {renderChartCards(
-                      message.charts.filter(
+                      remainingCharts.filter(
                         (chart) => resolveGraphTemplate(chart.template).mode === "static"
                       )
                     )}
                   </section>
                 ) : null}
 
-                {message.charts.some((chart) => resolveGraphTemplate(chart.template).mode === "dynamic") ? (
+                {remainingCharts.some((chart) => resolveGraphTemplate(chart.template).mode === "dynamic") ? (
                   <section className="ai-chart-group">
                     <header className="ai-chart-group-head">
                       <span>Dynamic Indicators</span>
                     </header>
                     {renderChartCards(
-                      message.charts.filter(
+                      remainingCharts.filter(
                         (chart) => resolveGraphTemplate(chart.template).mode === "dynamic"
                       )
                     )}

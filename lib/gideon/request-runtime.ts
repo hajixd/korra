@@ -2152,6 +2152,7 @@ export const runGideonRequestRuntime = async (params: {
         const fvgExampleCount = previewCharts.filter((chart) =>
           chart.id.startsWith("strategy-fvg-example-")
         ).length;
+        const hasFvgExamples = fvgExampleCount > 0;
         const latestStrategyPrompt =
           turns.length > 0 && turns[turns.length - 1]?.role === "user"
             ? turns[turns.length - 1]?.content ?? ""
@@ -2169,9 +2170,13 @@ export const runGideonRequestRuntime = async (params: {
             : "";
         const shortAnswer = deps.sanitizeDeliveryText(
           strategyDraft.matchedModelId === "fair-value-gap"
-            ? replayStatsSnippet && replayWindowSnippet
-              ? `I built the Fair Value Gap draft, drew ${fvgExampleCount >= 4 ? "four" : "the clearest recent"} FVG examples in chat, and ran a local replay over ${replayWindowSnippet}: ${replayStatsSnippet}. You can add the draft to Models or download the JSON below. Tell me how you want to adjust the entry, stop, target, or filters.`
-              : `I built the Fair Value Gap draft and drew the clearest recent FVG examples in chat with entry markers. You can add the draft to Models or download the JSON below. Tell me how you want to adjust the entry, stop, target, or filters.`
+            ? hasFvgExamples
+              ? replayStatsSnippet && replayWindowSnippet
+                ? `I built the Fair Value Gap draft, embedded ${fvgExampleCount >= 4 ? "four" : "the clearest recent"} candlestick examples in chat, and ran a local replay over ${replayWindowSnippet}: ${replayStatsSnippet}. You can add the draft to Models or download the JSON below. Tell me how you want to adjust the entry, stop, target, or filters.`
+                : `I built the Fair Value Gap draft and embedded the clearest recent candlestick examples in chat with entry markers. You can add the draft to Models or download the JSON below. Tell me how you want to adjust the entry, stop, target, or filters.`
+              : replayStatsSnippet && replayWindowSnippet
+                ? `I built the Fair Value Gap draft and embedded the current candle context in chat. I did not find a clean recent FVG example in the loaded window, so I ran a local replay over ${replayWindowSnippet}: ${replayStatsSnippet}. You can add the draft to Models or download the JSON below. Tell me how you want to adjust the entry, stop, target, or filters.`
+                : `I built the Fair Value Gap draft and embedded the current candle context in chat. I did not find a clean recent FVG example in the loaded window yet. You can add the draft to Models or download the JSON below. Tell me how you want to adjust the entry, stop, target, or filters.`
             : strategyDraft.status === "clarify"
               ? hasPreview
                 ? outstandingQuestions.length > 0
@@ -2191,6 +2196,14 @@ export const runGideonRequestRuntime = async (params: {
         const bullets =
           strategyDraft.matchedModelId === "fair-value-gap" && replaySummary
             ? [
+                ...(!hasFvgExamples
+                  ? [
+                      {
+                        tone: "gold" as const,
+                        text: "No clean recent FVG example was found in the loaded window, so the embedded chart shows current candle context."
+                      }
+                    ]
+                  : []),
                 {
                   tone: "green" as const,
                   text: `Replay: ${replaySummary.tradeCount} trades, ${replaySummary.winRatePct}% win rate, profit factor ${replaySummary.profitFactor ?? "n/a"}`

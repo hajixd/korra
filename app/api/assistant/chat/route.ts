@@ -4897,6 +4897,50 @@ const buildFairValueGapExampleCharts = (params: {
   });
 };
 
+const buildFairValueGapContextChart = (params: {
+  candles: CandleRow[];
+  timeframe: string;
+}): AssistantChart | null => {
+  if (params.candles.length === 0) {
+    return null;
+  }
+
+  const window = params.candles.slice(-Math.min(params.candles.length, 72));
+  const data = window.map((candle) => ({
+    x: formatTimeLabel(candle.time),
+    time: candle.time,
+    open: Number(candle.open.toFixed(4)),
+    high: Number(candle.high.toFixed(4)),
+    low: Number(candle.low.toFixed(4)),
+    close: Number(candle.close.toFixed(4))
+  }));
+
+  return {
+    id: "strategy-fvg-context",
+    template: "price_action",
+    title: "Current FVG Context",
+    subtitle: `Recent candle window on ${params.timeframe}`,
+    mode: "static",
+    data,
+    config: {
+      entryMarkers:
+        data.length > 0
+          ? [
+              {
+                x: data[data.length - 1]?.x ?? "",
+                y: data[data.length - 1]?.close ?? 0,
+                direction:
+                  (data[data.length - 1]?.close ?? 0) >= (data[data.length - 1]?.open ?? 0)
+                    ? "bullish"
+                    : "bearish",
+                label: "Current candle"
+              }
+            ]
+          : []
+    }
+  };
+};
+
 const summarizeStrategyReplayRows = (
   rows: TradeRow[],
   candles: CandleRow[]
@@ -5079,11 +5123,19 @@ const buildDeterministicFairValueGapPreview = (params: {
   const candles = params.context.liveCandles;
   const replayExamples = findFairValueGapExamples(candles, 28);
   const examples = replayExamples.slice(-4);
-  const charts = buildFairValueGapExampleCharts({
+  const exampleCharts = buildFairValueGapExampleCharts({
     candles,
     examples,
     timeframe: params.context.timeframe
   });
+  const contextChart =
+    exampleCharts.length === 0
+      ? buildFairValueGapContextChart({
+          candles,
+          timeframe: params.context.timeframe
+        })
+      : null;
+  const charts = contextChart ? [contextChart] : exampleCharts;
 
   const latestExample = examples[examples.length - 1] ?? null;
   const actions: Array<Record<string, unknown>> = [{ type: "clear_annotations" }];
@@ -5174,7 +5226,6 @@ const buildDeterministicFairValueGapPreview = (params: {
           symbol: params.context.symbol
         });
   const backtestSummary = summarizeStrategyReplayRows(effectiveReplayRows, candles);
-  const replayTimelineChart = buildStrategyReplayTimelineChart(effectiveReplayRows, backtestSummary);
 
   return {
     chartActions:
@@ -5182,7 +5233,7 @@ const buildDeterministicFairValueGapPreview = (params: {
         ? normalizeChartActions(actions)
         : buildFallbackStrategyPreviewActions(params.strategyDraft, params.context),
     chartAnimations: normalizeChartAnimationsFromCoding({}),
-    charts: replayTimelineChart ? [...charts, replayTimelineChart] : charts,
+    charts,
     backtestSummary
   };
 };

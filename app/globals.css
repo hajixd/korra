@@ -5846,6 +5846,31 @@ button {
   min-height: 30px;
 }
 
+.ai-strategy-visuals {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.ai-strategy-visuals-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.ai-strategy-visuals-head span,
+.ai-strategy-visuals-head small {
+  color: #cdd9ec;
+  font-size: 0.56rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.ai-strategy-visuals-head small {
+  color: rgba(205, 217, 236, 0.62);
+}
+
 .ai-strategy-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -5946,6 +5971,14 @@ button {
   min-width: 0;
 }
 
+.ai-chart-card.photo {
+  border-color: rgba(108, 152, 234, 0.22);
+  background:
+    radial-gradient(130% 100% at 12% 0%, rgba(51, 90, 154, 0.22), transparent 55%),
+    linear-gradient(180deg, rgba(8, 13, 20, 0.98), rgba(7, 11, 18, 0.98));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
 .ai-chart-head {
   display: flex;
   align-items: baseline;
@@ -6011,6 +6044,37 @@ button {
 .ai-chart-body .recharts-responsive-container {
   width: 100% !important;
   max-width: 100%;
+}
+
+.ai-candle-snapshot {
+  width: 100%;
+  height: 100%;
+}
+
+.ai-candle-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.ai-candle-axis {
+  fill: rgba(205, 217, 236, 0.76);
+  font-size: 10px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.ai-candle-zone-label {
+  fill: rgba(235, 243, 255, 0.92);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.ai-candle-marker-label {
+  fill: #f2f7ff;
+  font-size: 10px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
 }
 
 .ai-animation-grid {
