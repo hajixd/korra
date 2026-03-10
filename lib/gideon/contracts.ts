@@ -55,13 +55,27 @@ export type GideonRuntimeTrade = {
   exitTime?: number | null;
 };
 
+export type GideonRuntimeAction = {
+  id?: string | null;
+  label?: string | null;
+  timestamp?: number | null;
+};
+
 export type GideonRuntimeContext = {
   symbol: string;
   timeframe: string;
   liveCandles: GideonRuntimeCandle[];
   historyRows: GideonRuntimeTrade[];
   backtestRows: GideonRuntimeTrade[];
+  actionRows?: GideonRuntimeAction[];
   strategyDraftJson?: Record<string, unknown> | null;
+};
+
+export type GideonChartPlan = {
+  template: string;
+  title: string;
+  source: "history" | "backtest" | "candles" | "clickhouse" | "actions";
+  points?: number;
 };
 
 export type GideonIntentPacket = {

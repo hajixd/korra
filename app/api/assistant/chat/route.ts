@@ -19,8 +19,10 @@ import {
 import {
   buildChartActionsTool,
   buildChartAnimationTool,
+  buildChartsFromPlansTool,
   buildDeterministicFastPath,
   buildPanelChartTool,
+  buildStrategyPreviewChartsTool,
   runSupervisorGraph,
   type GideonExecutionSnapshot,
   type GideonRuntimeContext,
@@ -954,18 +956,6 @@ const formatTimeLabel = (timestampMs: number): string => {
   return `${month}/${day} ${hours}:${minutes} UTC`;
 };
 
-const extractTemplatePeriod = (templateId: string, fallback: number): number => {
-  const match = templateId.match(/_(\d{1,3})(?:_|$)/);
-  if (!match) {
-    return fallback;
-  }
-  const value = Number(match[1]);
-  if (!Number.isFinite(value)) {
-    return fallback;
-  }
-  return clamp(Math.round(value), 2, 300);
-};
-
 const rollingMeanAt = (values: number[], index: number, period: number): number => {
   const end = Math.max(0, Math.min(values.length - 1, index));
   const start = Math.max(0, end - Math.max(1, period) + 1);
@@ -980,27 +970,6 @@ const rollingMeanAt = (values: number[], index: number, period: number): number 
     count += 1;
   }
   return count > 0 ? sum / count : 0;
-};
-
-const rollingStdAt = (values: number[], index: number, period: number): number => {
-  const mean = rollingMeanAt(values, index, period);
-  const end = Math.max(0, Math.min(values.length - 1, index));
-  const start = Math.max(0, end - Math.max(1, period) + 1);
-  let sumSq = 0;
-  let count = 0;
-  for (let i = start; i <= end; i += 1) {
-    const value = values[i];
-    if (!Number.isFinite(value)) {
-      continue;
-    }
-    const diff = value - mean;
-    sumSq += diff * diff;
-    count += 1;
-  }
-  if (count <= 1) {
-    return 0;
-  }
-  return Math.sqrt(sumSq / count);
 };
 
 const computeEmaSeries = (values: number[], period: number): number[] => {
@@ -1051,219 +1020,6 @@ const computeRsiSeries = (closes: number[], period: number): number[] => {
   }
 
   return rsi;
-};
-
-const buildDerivedPriceValues = (rows: CandleRow[], templateId: string): number[] => {
-  if (rows.length === 0) {
-    return [];
-  }
-
-  const normalizedTemplate = templateId.toLowerCase();
-  const closes = rows.map((row) => row.close);
-  const highs = rows.map((row) => row.high);
-  const lows = rows.map((row) => row.low);
-  const volumes = rows.map((row) => row.volume);
-  const ranges = rows.map((row) => Math.max(0, row.high - row.low));
-  const period = extractTemplatePeriod(normalizedTemplate, 14);
-  const ema = computeEmaSeries(closes, period);
-  const fastEma = computeEmaSeries(closes, 12);
-  const slowEma = computeEmaSeries(closes, 26);
-  const signalEma = computeEmaSeries(
-    fastEma.map((value, index) => value - (slowEma[index] ?? value)),
-    9
-  );
-  const rsi = computeRsiSeries(closes, period);
-
-  if (normalizedTemplate.startsWith("sma_")) {
-    return closes.map((_, index) => rollingMeanAt(closes, index, period));
-  }
-
-  if (
-    normalizedTemplate.startsWith("ema_") ||
-    normalizedTemplate.startsWith("rma_") ||
-    normalizedTemplate.startsWith("kama_") ||
-    normalizedTemplate.startsWith("zlema_")
-  ) {
-    return ema;
-  }
-
-  if (normalizedTemplate.startsWith("wma_")) {
-    return closes.map((_, index) => {
-      const end = index;
-      const start = Math.max(0, end - period + 1);
-      let weightedSum = 0;
-      let weightTotal = 0;
-      let weight = 1;
-      for (let i = start; i <= end; i += 1) {
-        const close = closes[i] ?? 0;
-        weightedSum += close * weight;
-        weightTotal += weight;
-        weight += 1;
-      }
-      return weightTotal > 0 ? weightedSum / weightTotal : closes[end] ?? 0;
-    });
-  }
-
-  if (normalizedTemplate.startsWith("hma_")) {
-    return closes.map((_, index) => {
-      const half = Math.max(2, Math.floor(period / 2));
-      const sqrtPeriod = Math.max(2, Math.floor(Math.sqrt(period)));
-      const wmaHalf = rollingMeanAt(closes, index, half);
-      const wmaFull = rollingMeanAt(closes, index, period);
-      return rollingMeanAt([2 * wmaHalf - wmaFull], 0, sqrtPeriod);
-    });
-  }
-
-  if (normalizedTemplate.startsWith("vwma_")) {
-    return closes.map((_, index) => {
-      const end = index;
-      const start = Math.max(0, end - period + 1);
-      let weightedPrice = 0;
-      let weightedVolume = 0;
-      for (let i = start; i <= end; i += 1) {
-        const volume = volumes[i] ?? 0;
-        weightedPrice += (closes[i] ?? 0) * volume;
-        weightedVolume += volume;
-      }
-      return weightedVolume > 0 ? weightedPrice / weightedVolume : closes[end] ?? 0;
-    });
-  }
-
-  if (normalizedTemplate.includes("bollinger_upper")) {
-    return closes.map((_, index) => {
-      const mean = rollingMeanAt(closes, index, period);
-      return mean + 2 * rollingStdAt(closes, index, period);
-    });
-  }
-
-  if (normalizedTemplate.includes("bollinger_lower")) {
-    return closes.map((_, index) => {
-      const mean = rollingMeanAt(closes, index, period);
-      return mean - 2 * rollingStdAt(closes, index, period);
-    });
-  }
-
-  if (normalizedTemplate.includes("bollinger_mid")) {
-    return closes.map((_, index) => rollingMeanAt(closes, index, period));
-  }
-
-  if (normalizedTemplate.includes("keltner_upper")) {
-    return closes.map((_, index) => rollingMeanAt(closes, index, period) + 1.5 * rollingMeanAt(ranges, index, period));
-  }
-
-  if (normalizedTemplate.includes("keltner_lower")) {
-    return closes.map((_, index) => rollingMeanAt(closes, index, period) - 1.5 * rollingMeanAt(ranges, index, period));
-  }
-
-  if (normalizedTemplate.includes("keltner_mid")) {
-    return closes.map((_, index) => rollingMeanAt(closes, index, period));
-  }
-
-  if (normalizedTemplate.includes("donchian_upper")) {
-    return highs.map((_, index) => Math.max(...highs.slice(Math.max(0, index - period + 1), index + 1)));
-  }
-
-  if (normalizedTemplate.includes("donchian_lower")) {
-    return lows.map((_, index) => Math.min(...lows.slice(Math.max(0, index - period + 1), index + 1)));
-  }
-
-  if (normalizedTemplate.includes("donchian_mid")) {
-    return highs.map((_, index) => {
-      const start = Math.max(0, index - period + 1);
-      const localHigh = Math.max(...highs.slice(start, index + 1));
-      const localLow = Math.min(...lows.slice(start, index + 1));
-      return (localHigh + localLow) / 2;
-    });
-  }
-
-  if (normalizedTemplate.includes("vwap")) {
-    let cumulativePV = 0;
-    let cumulativeVolume = 0;
-    return closes.map((close, index) => {
-      const typicalPrice = ((highs[index] ?? close) + (lows[index] ?? close) + close) / 3;
-      const volume = volumes[index] ?? 0;
-      cumulativePV += typicalPrice * volume;
-      cumulativeVolume += volume;
-      return cumulativeVolume > 0 ? cumulativePV / cumulativeVolume : close;
-    });
-  }
-
-  if (normalizedTemplate.includes("rsi")) {
-    return rsi;
-  }
-
-  if (normalizedTemplate.includes("macd_hist")) {
-    return fastEma.map((value, index) => value - (slowEma[index] ?? value) - (signalEma[index] ?? 0));
-  }
-
-  if (normalizedTemplate.includes("macd_signal")) {
-    return signalEma;
-  }
-
-  if (normalizedTemplate.includes("macd_line")) {
-    return fastEma.map((value, index) => value - (slowEma[index] ?? value));
-  }
-
-  if (normalizedTemplate.includes("roc") || normalizedTemplate.includes("ppo")) {
-    return closes.map((close, index) => {
-      const priorIndex = Math.max(0, index - period);
-      const prior = closes[priorIndex] ?? close;
-      if (Math.abs(prior) <= 1e-9) {
-        return 0;
-      }
-      return ((close - prior) / prior) * 100;
-    });
-  }
-
-  if (
-    normalizedTemplate.includes("momentum") ||
-    normalizedTemplate.includes("mom_") ||
-    normalizedTemplate.includes("close_change")
-  ) {
-    return closes.map((close, index) => {
-      if (index === 0) {
-        return 0;
-      }
-      return close - (closes[index - 1] ?? close);
-    });
-  }
-
-  if (normalizedTemplate.includes("cumulative_volume")) {
-    let cumulative = 0;
-    return volumes.map((volume) => {
-      cumulative += volume;
-      return cumulative;
-    });
-  }
-
-  if (normalizedTemplate.includes("volume")) {
-    return volumes;
-  }
-
-  if (
-    normalizedTemplate.includes("atr") ||
-    normalizedTemplate.includes("volatility") ||
-    normalizedTemplate.includes("range")
-  ) {
-    return ranges.map((_, index) => rollingMeanAt(ranges, index, period));
-  }
-
-  if (normalizedTemplate.includes("percentile")) {
-    return closes.map((close, index) => {
-      const window = closes.slice(Math.max(0, index - period + 1), index + 1);
-      if (window.length === 0) {
-        return 0;
-      }
-      const sorted = [...window].sort((left, right) => left - right);
-      let rank = 0;
-      while (rank < sorted.length && sorted[rank]! <= close) {
-        rank += 1;
-      }
-      return (rank / sorted.length) * 100;
-    });
-  }
-
-  return closes;
 };
 
 const buildContextDigest = (context: AssistantContext): Record<string, unknown> => {
@@ -5235,429 +4991,6 @@ const executeCodingStage = async (params: {
   };
 };
 
-const takeTail = <T>(rows: T[], count: number): T[] => {
-  if (rows.length <= count) {
-    return rows;
-  }
-  return rows.slice(rows.length - count);
-};
-
-const buildEquityCurveChart = (
-  rows: TradeRow[],
-  title: string,
-  points: number,
-  templateId: string
-): AssistantChart | null => {
-  if (rows.length === 0) {
-    return null;
-  }
-
-  const sorted = [...rows].sort((a, b) => a.exitTime - b.exitTime);
-  const sliced = takeTail(sorted, points);
-  let equity = 0;
-
-  const data = sliced.map((row) => {
-    equity += row.pnlUsd;
-    return {
-      x: formatTimeLabel(row.exitTime * 1000),
-      equity: Number(equity.toFixed(2)),
-      pnl: Number(row.pnlUsd.toFixed(2))
-    };
-  });
-
-  return {
-    id: `equity-${rows[rows.length - 1]?.id ?? "chart"}`,
-    template: templateId,
-    title,
-    subtitle: `${rows.length} trades`,
-    data,
-    config: {
-      xKey: "x",
-      yKey: "equity"
-    }
-  };
-};
-
-const buildPnlDistributionChart = (
-  rows: TradeRow[],
-  title: string,
-  templateId: string
-): AssistantChart | null => {
-  if (rows.length < 2) {
-    return null;
-  }
-
-  const values = rows.map((row) => row.pnlUsd);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const bins = 12;
-  const span = Math.max(1, max - min);
-  const step = span / bins;
-
-  const histogram = Array.from({ length: bins }, (_, idx) => ({
-    start: min + step * idx,
-    end: min + step * (idx + 1),
-    count: 0
-  }));
-
-  for (const value of values) {
-    const bucket = Math.min(bins - 1, Math.max(0, Math.floor((value - min) / step)));
-    histogram[bucket]!.count += 1;
-  }
-
-  return {
-    id: `hist-${rows[rows.length - 1]?.id ?? "chart"}`,
-    template: templateId,
-    title,
-    subtitle: "PnL histogram",
-    data: histogram.map((bucket) => ({
-      bucket: `${bucket.start.toFixed(0)}..${bucket.end.toFixed(0)}`,
-      count: bucket.count
-    })),
-    config: {
-      xKey: "bucket",
-      yKey: "count"
-    }
-  };
-};
-
-const buildSessionPerformanceChart = (
-  rows: TradeRow[],
-  title: string,
-  templateId: string
-): AssistantChart | null => {
-  if (rows.length === 0) {
-    return null;
-  }
-
-  const order: Array<"Tokyo" | "London" | "New York" | "Sydney"> = [
-    "Tokyo",
-    "London",
-    "New York",
-    "Sydney"
-  ];
-
-  const buckets = new Map<string, { pnl: number; count: number; wins: number }>();
-  for (const row of rows) {
-    const session = getSessionLabel(row.entryTime);
-    const current = buckets.get(session) ?? { pnl: 0, count: 0, wins: 0 };
-    current.pnl += row.pnlUsd;
-    current.count += 1;
-    current.wins += row.result === "Win" ? 1 : 0;
-    buckets.set(session, current);
-  }
-
-  return {
-    id: `session-${rows[rows.length - 1]?.id ?? "chart"}`,
-    template: templateId,
-    title,
-    data: order.map((session) => {
-      const item = buckets.get(session) ?? { pnl: 0, count: 0, wins: 0 };
-      const winRate = item.count > 0 ? (item.wins / item.count) * 100 : 0;
-      return {
-        session,
-        pnl: Number(item.pnl.toFixed(2)),
-        trades: item.count,
-        winRate: Number(winRate.toFixed(2))
-      };
-    }),
-    config: {
-      xKey: "session",
-      yKey: "pnl",
-      yKeyAlt: "winRate"
-    }
-  };
-};
-
-const buildTradeOutcomeChart = (
-  rows: TradeRow[],
-  title: string,
-  templateId: string
-): AssistantChart | null => {
-  if (rows.length === 0) {
-    return null;
-  }
-
-  let wins = 0;
-  let losses = 0;
-
-  for (const row of rows) {
-    if (row.result === "Win") {
-      wins += 1;
-    } else {
-      losses += 1;
-    }
-  }
-
-  return {
-    id: `outcomes-${rows[rows.length - 1]?.id ?? "chart"}`,
-    template: templateId,
-    title,
-    data: [
-      { label: "Wins", value: wins },
-      { label: "Losses", value: losses }
-    ],
-    config: {
-      labelKey: "label",
-      valueKey: "value"
-    }
-  };
-};
-
-const buildPriceActionChart = (
-  rows: CandleRow[],
-  title: string,
-  points: number,
-  templateId: string
-): AssistantChart | null => {
-  if (rows.length === 0) {
-    return null;
-  }
-
-  const data = takeTail(rows, points).map((row) => ({
-    x: formatTimeLabel(row.time),
-    close: Number(row.close.toFixed(4)),
-    high: Number(row.high.toFixed(4)),
-    low: Number(row.low.toFixed(4)),
-    volume: Number(row.volume.toFixed(2))
-  }));
-
-  return {
-    id: `price-${rows[rows.length - 1]?.time ?? "chart"}`,
-    template: templateId,
-    title,
-    subtitle: `${rows.length} candles`,
-    data,
-    config: {
-      xKey: "x",
-      yKey: "close",
-      yKeyHigh: "high",
-      yKeyLow: "low"
-    }
-  };
-};
-
-const buildPriceValueSeriesChart = (
-  rows: CandleRow[],
-  title: string,
-  points: number,
-  templateId: string
-): AssistantChart | null => {
-  if (rows.length === 0) {
-    return null;
-  }
-
-  const slicedRows = takeTail(rows, points);
-  const values = buildDerivedPriceValues(slicedRows, templateId);
-  if (values.length === 0) {
-    return null;
-  }
-
-  const data = slicedRows.map((row, index) => ({
-    x: formatTimeLabel(row.time),
-    value: Number((values[index] ?? 0).toFixed(6)),
-    close: Number(row.close.toFixed(6))
-  }));
-
-  return {
-    id: `series-${templateId}-${slicedRows[slicedRows.length - 1]?.time ?? "chart"}`,
-    template: templateId,
-    title,
-    subtitle: `${rows.length} candles`,
-    data,
-    config: {
-      xKey: "x",
-      yKey: "value"
-    }
-  };
-};
-
-const STATIC_PRICE_ACTION_TEMPLATE_SET = new Set<string>([
-  "price_action",
-  "close_with_range",
-  "equity_vs_price"
-]);
-
-const buildCandleTemplateChart = (
-  rows: CandleRow[],
-  title: string,
-  points: number,
-  templateId: string
-): AssistantChart | null => {
-  if (STATIC_PRICE_ACTION_TEMPLATE_SET.has(templateId)) {
-    return buildPriceActionChart(rows, title, points, templateId);
-  }
-  return buildPriceValueSeriesChart(rows, title, points, templateId);
-};
-
-const buildStrategyPreviewCharts = (params: {
-  strategyDraft: StrategyDraft;
-  context: AssistantContext;
-}): AssistantChart[] => {
-  const candles = takeTail(params.context.liveCandles, 140);
-  if (candles.length < 20) {
-    return [];
-  }
-
-  const primary = buildPriceActionChart(
-    candles,
-    `${params.strategyDraft.matchedModelName} Preview`,
-    140,
-    "price_action"
-  );
-
-  let secondaryTemplate = "close_with_range";
-  let secondaryTitle = "Range Context";
-
-  if (params.strategyDraft.matchedModelId === "momentum") {
-    secondaryTemplate = "ema_20";
-    secondaryTitle = "Trend Filter";
-  } else if (params.strategyDraft.matchedModelId === "mean-reversion") {
-    secondaryTemplate = "rsi_14";
-    secondaryTitle = "Stretch Meter";
-  } else if (params.strategyDraft.matchedModelId === "fibonacci") {
-    secondaryTemplate = "range_expansion";
-    secondaryTitle = "Swing Range";
-  } else if (params.strategyDraft.matchedModelId === "support-resistance") {
-    secondaryTemplate = "close_with_range";
-    secondaryTitle = "Level Context";
-  }
-
-  const secondary = buildCandleTemplateChart(candles, secondaryTitle, 140, secondaryTemplate);
-  const charts = [primary, secondary]
-    .filter((chart): chart is AssistantChart => chart !== null)
-    .slice(0, 2);
-
-  for (const chart of charts) {
-    chart.mode = resolveGraphTemplate(chart.template).mode;
-  }
-
-  return charts;
-};
-
-const buildActionTimelineChart = (
-  rows: ActionRow[],
-  title: string,
-  templateId: string
-): AssistantChart | null => {
-  if (rows.length === 0) {
-    return null;
-  }
-
-  const buckets = new Map<string, number>();
-
-  for (const row of rows) {
-    const label = row.label || "Action";
-    buckets.set(label, (buckets.get(label) ?? 0) + 1);
-  }
-
-  const data = Array.from(buckets.entries())
-    .map(([label, count]) => ({ label, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 8);
-
-  return {
-    id: `actions-${rows[rows.length - 1]?.id ?? "chart"}`,
-    template: templateId,
-    title,
-    data,
-    config: {
-      xKey: "label",
-      yKey: "count"
-    }
-  };
-};
-
-const buildChartsFromPlans = (
-  plans: ChartPlan[],
-  context: AssistantContext,
-  toolState: ToolState
-): AssistantChart[] => {
-  const charts: AssistantChart[] = [];
-
-  for (const plan of plans) {
-    const points = clamp(toNumber(plan.points, 220), 40, 1000);
-    const resolvedTemplate = resolveGraphTemplate(plan.template);
-    const templateId = resolvedTemplate.id;
-    const templateFamily = resolvedTemplate.family;
-    const chartTitle = toText(plan.title, resolvedTemplate.title);
-    const historyRows = context.historyRows;
-    const backtestRows = context.backtest.trades;
-    const candleRows = context.liveCandles;
-    const clickhouseRows = toolState.clickhouseCandles;
-    const recentWindowRows = getRecentWindowCandles({
-      context,
-      clickhouseCandles: clickhouseRows
-    });
-    const actionRows = context.actionRows;
-
-    let chart: AssistantChart | null = null;
-
-    if (templateFamily === "equity_curve") {
-      const sourceRows =
-        plan.source === "backtest" && backtestRows.length > 0
-          ? backtestRows
-          : historyRows.length > 0
-            ? historyRows
-            : backtestRows;
-      chart = buildEquityCurveChart(sourceRows, chartTitle, points, templateId);
-    } else if (templateFamily === "pnl_distribution") {
-      const sourceRows =
-        plan.source === "backtest" && backtestRows.length > 0
-          ? backtestRows
-          : historyRows.length > 0
-            ? historyRows
-            : backtestRows;
-      chart = buildPnlDistributionChart(sourceRows, chartTitle, templateId);
-    } else if (templateFamily === "session_performance") {
-      const sourceRows =
-        plan.source === "backtest" && backtestRows.length > 0
-          ? backtestRows
-          : historyRows.length > 0
-            ? historyRows
-            : backtestRows;
-      chart = buildSessionPerformanceChart(sourceRows, chartTitle, templateId);
-    } else if (templateFamily === "trade_outcomes") {
-      const sourceRows =
-        plan.source === "backtest" && backtestRows.length > 0
-          ? backtestRows
-          : historyRows.length > 0
-            ? historyRows
-            : backtestRows;
-      chart = buildTradeOutcomeChart(sourceRows, chartTitle, templateId);
-    } else if (templateFamily === "price_action") {
-      const sourceRows =
-        plan.source === "clickhouse" && clickhouseRows.length > 0
-          ? recentWindowRows
-          : candleRows.length > 0
-            ? candleRows
-            : recentWindowRows;
-
-      if (STATIC_PRICE_ACTION_TEMPLATE_SET.has(templateId)) {
-        chart = buildPriceActionChart(sourceRows, chartTitle, points, templateId);
-      } else {
-        chart = buildPriceValueSeriesChart(sourceRows, chartTitle, points, templateId);
-      }
-    } else if (templateFamily === "action_timeline") {
-      chart = buildActionTimelineChart(actionRows, chartTitle, templateId);
-    }
-
-    if (chart && chart.data.length > 0) {
-      chart.mode = resolvedTemplate.mode;
-      charts.push(chart);
-    }
-  }
-
-  const uniqueByTemplate = new Map<string, AssistantChart>();
-  for (const chart of charts) {
-    if (!uniqueByTemplate.has(chart.template)) {
-      uniqueByTemplate.set(chart.template, chart);
-    }
-  }
-
-  return Array.from(uniqueByTemplate.values()).slice(0, 3);
-};
-
 const buildFallbackFailureResponse = (message: string) => {
   return {
     status: "ok",
@@ -5717,6 +5050,7 @@ const buildRouteGideonRuntime = (params: {
     liveCandles: params.context.liveCandles,
     historyRows: params.context.historyRows,
     backtestRows: params.context.backtest.trades,
+    actionRows: params.context.actionRows,
     strategyDraftJson: params.strategyThreadState.latestDraft?.draftJson ?? null
   };
 };
@@ -6354,6 +5688,7 @@ export async function POST(request: Request) {
       liveCandles: context.liveCandles,
       historyRows: context.historyRows,
       backtestRows: context.backtest.trades,
+      actionRows: context.actionRows,
       strategyDraftJson: strategyThreadState.latestDraft?.draftJson ?? null
     }
   });
@@ -6742,10 +6077,15 @@ export async function POST(request: Request) {
           context,
           strategyDraft
         });
+        const routeGideonRuntime = buildRouteGideonRuntime({
+          context,
+          strategyThreadState
+        });
         const previewCharts = capabilityRoute.includeStrategyPanelCharts
-          ? buildStrategyPreviewCharts({
-              strategyDraft,
-              context
+          ? buildStrategyPreviewChartsTool({
+              runtime: routeGideonRuntime,
+              matchedModelId: strategyDraft.matchedModelId,
+              matchedModelName: strategyDraft.matchedModelName
             })
           : [];
         const hasPreview =
@@ -7297,7 +6637,11 @@ export async function POST(request: Request) {
       strategyThreadState
     });
     let charts = wantsVisualization
-      ? buildChartsFromPlans(codingResult.chartPlans, context, toolState)
+      ? buildChartsFromPlansTool({
+          plans: codingResult.chartPlans,
+          runtime: routeGideonRuntime,
+          candles: toolState.clickhouseCandles
+        })
       : [];
     if (wantsVisualization && charts.length === 0) {
       const sourceRows = getRecentWindowCandles({

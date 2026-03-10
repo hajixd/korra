@@ -8,7 +8,9 @@ import {
 } from "../../assistant-tools";
 import type {
   GideonArtifact,
+  GideonChartPlan,
   GideonRequestKind,
+  GideonRuntimeAction,
   GideonRuntimeCandle,
   GideonRuntimeContext,
   GideonRuntimeTrade
@@ -1154,6 +1156,38 @@ const buildTradeOutcomeChart = (
   };
 };
 
+const buildActionTimelineChart = (
+  rows: GideonRuntimeAction[],
+  title: string,
+  templateId: string
+): GideonPanelChart | null => {
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const buckets = new Map<string, number>();
+  for (const row of rows) {
+    const label = String(row.label || "Action").trim() || "Action";
+    buckets.set(label, (buckets.get(label) ?? 0) + 1);
+  }
+
+  const data = Array.from(buckets.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort((left, right) => right.count - left.count)
+    .slice(0, 8);
+
+  return {
+    id: `actions-${String(rows[rows.length - 1]?.id || "chart")}`,
+    template: templateId,
+    title,
+    data,
+    config: {
+      xKey: "label",
+      yKey: "count"
+    }
+  };
+};
+
 const buildPriceActionChart = (
   rows: GideonRuntimeCandle[],
   title: string,
@@ -1185,6 +1219,18 @@ const buildPriceActionChart = (
       yKeyLow: "low"
     }
   };
+};
+
+const buildCandleTemplateChart = (
+  rows: GideonRuntimeCandle[],
+  title: string,
+  points: number,
+  templateId: string
+): GideonPanelChart | null => {
+  if (STATIC_PRICE_ACTION_TEMPLATE_SET.has(templateId)) {
+    return buildPriceActionChart(rows, title, points, templateId);
+  }
+  return buildPriceValueSeriesChart(rows, title, points, templateId);
 };
 
 const buildPriceValueSeriesChart = (
@@ -1313,4 +1359,137 @@ export const buildPanelChartTool = (params: {
     mode: resolvedTemplate.mode,
     source: resolvedTemplate.family === "price_action" ? "candles" : tradeRows === params.runtime.backtestRows ? "backtest" : "history"
   };
+};
+
+export const buildChartsFromPlansTool = (params: {
+  plans: GideonChartPlan[];
+  runtime: GideonRuntimeContext;
+  candles?: GideonRuntimeCandle[] | null;
+}): GideonPanelChart[] => {
+  const charts: GideonPanelChart[] = [];
+  const clickhouseCandles = params.candles ?? [];
+  const recentWindowRows = selectRecentWindowCandles({
+    runtime: params.runtime,
+    candles: clickhouseCandles
+  });
+  const actionRows = params.runtime.actionRows ?? [];
+
+  for (const plan of params.plans) {
+    const points = clamp(toNumber(plan.points, 220), 40, 1000);
+    const resolvedTemplate = resolveGraphTemplate(plan.template);
+    const templateId = resolvedTemplate.id;
+    const chartTitle = String(plan.title || resolvedTemplate.title).trim() || resolvedTemplate.title;
+
+    let chart: GideonPanelChart | null = null;
+
+    if (resolvedTemplate.family === "equity_curve") {
+      const sourceRows =
+        plan.source === "backtest" && params.runtime.backtestRows.length > 0
+          ? params.runtime.backtestRows
+          : params.runtime.historyRows.length > 0
+            ? params.runtime.historyRows
+            : params.runtime.backtestRows;
+      chart = buildEquityCurveChart(sourceRows, chartTitle, points, templateId);
+    } else if (resolvedTemplate.family === "pnl_distribution") {
+      const sourceRows =
+        plan.source === "backtest" && params.runtime.backtestRows.length > 0
+          ? params.runtime.backtestRows
+          : params.runtime.historyRows.length > 0
+            ? params.runtime.historyRows
+            : params.runtime.backtestRows;
+      chart = buildPnlDistributionChart(sourceRows, chartTitle, templateId);
+    } else if (resolvedTemplate.family === "session_performance") {
+      const sourceRows =
+        plan.source === "backtest" && params.runtime.backtestRows.length > 0
+          ? params.runtime.backtestRows
+          : params.runtime.historyRows.length > 0
+            ? params.runtime.historyRows
+            : params.runtime.backtestRows;
+      chart = buildSessionPerformanceChart(sourceRows, chartTitle, templateId);
+    } else if (resolvedTemplate.family === "trade_outcomes") {
+      const sourceRows =
+        plan.source === "backtest" && params.runtime.backtestRows.length > 0
+          ? params.runtime.backtestRows
+          : params.runtime.historyRows.length > 0
+            ? params.runtime.historyRows
+            : params.runtime.backtestRows;
+      chart = buildTradeOutcomeChart(sourceRows, chartTitle, templateId);
+    } else if (resolvedTemplate.family === "price_action") {
+      const sourceRows =
+        plan.source === "clickhouse" && clickhouseCandles.length > 0
+          ? recentWindowRows
+          : params.runtime.liveCandles.length > 0
+            ? params.runtime.liveCandles
+            : recentWindowRows;
+      chart = buildCandleTemplateChart(sourceRows, chartTitle, points, templateId);
+    } else if (resolvedTemplate.family === "action_timeline") {
+      chart = buildActionTimelineChart(actionRows, chartTitle, templateId);
+    }
+
+    if (chart && chart.data.length > 0) {
+      chart.mode = resolvedTemplate.mode;
+      charts.push(chart);
+    }
+  }
+
+  const uniqueByTemplate = new Map<string, GideonPanelChart>();
+  for (const chart of charts) {
+    if (!uniqueByTemplate.has(chart.template)) {
+      uniqueByTemplate.set(chart.template, chart);
+    }
+  }
+
+  return Array.from(uniqueByTemplate.values()).slice(0, 3);
+};
+
+export const buildStrategyPreviewChartsTool = (params: {
+  runtime: GideonRuntimeContext;
+  matchedModelId: string;
+  matchedModelName: string;
+  candles?: GideonRuntimeCandle[] | null;
+}): GideonPanelChart[] => {
+  const candles = takeTail(params.candles ?? params.runtime.liveCandles, 140);
+  if (candles.length < 20) {
+    return [];
+  }
+
+  let secondaryTemplate = "close_with_range";
+  let secondaryTitle = "Range Context";
+
+  if (params.matchedModelId === "momentum") {
+    secondaryTemplate = "ema_20";
+    secondaryTitle = "Trend Filter";
+  } else if (params.matchedModelId === "mean-reversion") {
+    secondaryTemplate = "rsi_14";
+    secondaryTitle = "Stretch Meter";
+  } else if (params.matchedModelId === "fibonacci") {
+    secondaryTemplate = "range_expansion";
+    secondaryTitle = "Swing Range";
+  } else if (params.matchedModelId === "support-resistance") {
+    secondaryTemplate = "close_with_range";
+    secondaryTitle = "Level Context";
+  }
+
+  const primary = buildPriceActionChart(
+    candles,
+    `${params.matchedModelName} Preview`,
+    140,
+    "price_action"
+  );
+  const secondary = buildCandleTemplateChart(
+    candles,
+    secondaryTitle,
+    140,
+    secondaryTemplate
+  );
+
+  const charts = [primary, secondary]
+    .filter((chart): chart is GideonPanelChart => chart !== null)
+    .slice(0, 2);
+
+  for (const chart of charts) {
+    chart.mode = resolveGraphTemplate(chart.template).mode;
+  }
+
+  return charts;
 };
