@@ -23,14 +23,19 @@ type GideonWorkViewProps = {
   actionCount: number;
 };
 
+type RoomState = "active" | "warm" | "idle";
+type PixelDirection = "down" | "right" | "left" | "up";
+
 type OfficeRoom = {
   id: string;
   name: string;
   purpose: string;
-  accent: string;
-  gridColumn: string;
-  gridRow: string;
   agentIds: string[];
+  labelX: number;
+  labelY: number;
+  agentX?: number;
+  agentY?: number;
+  direction?: PixelDirection;
 };
 
 type OfficeAgent = {
@@ -44,141 +49,177 @@ type OfficeAgent = {
   idleCopy: string;
 };
 
+const SPRITE_SHEETS = [
+  "/gideon-pixel/char_0.png",
+  "/gideon-pixel/char_1.png",
+  "/gideon-pixel/char_2.png",
+  "/gideon-pixel/char_3.png",
+  "/gideon-pixel/char_4.png",
+  "/gideon-pixel/char_5.png"
+];
+
 const OFFICE_ROOMS: OfficeRoom[] = [
   {
-    id: "briefing",
-    name: "Briefing Lobby",
-    purpose: "Prompt intake, ambiguity scan, and first-pass scope control.",
-    accent: "#7ca8ff",
-    gridColumn: "1 / span 4",
-    gridRow: "1 / span 1",
-    agentIds: ["intake", "clarifier"]
+    id: "research",
+    name: "Research Library",
+    purpose: "Live browsing, freshness checks, and source verification.",
+    agentIds: ["research"],
+    labelX: 8,
+    labelY: 8,
+    agentX: 9,
+    agentY: 22,
+    direction: "right"
   },
   {
     id: "routing",
     name: "Routing Deck",
-    purpose: "Depth estimate, agent fanout, and concurrency limits.",
-    accent: "#9a8cff",
-    gridColumn: "5 / span 3",
-    gridRow: "1 / span 1",
-    agentIds: ["supervisor", "depth"]
+    purpose: "Depth scoring, fanout, and agent scheduling.",
+    agentIds: ["supervisor", "depth"],
+    labelX: 43,
+    labelY: 5,
+    agentX: 49,
+    agentY: 15,
+    direction: "left"
   },
   {
-    id: "memory",
-    name: "Memory Vault",
-    purpose: "Thread memory, recent context, and draft continuity.",
-    accent: "#66d7c4",
-    gridColumn: "8 / span 3",
-    gridRow: "1 / span 1",
-    agentIds: ["memory"]
+    id: "briefing",
+    name: "Briefing Lobby",
+    purpose: "Goal parsing and clarification checks.",
+    agentIds: ["intake", "clarifier"],
+    labelX: 62,
+    labelY: 7,
+    agentX: 63,
+    agentY: 25,
+    direction: "down"
   },
   {
     id: "market",
     name: "Market Bay",
-    purpose: "Live market context, XAUUSD reads, and symbol focus.",
-    accent: "#5aca8c",
-    gridColumn: "11 / span 2",
-    gridRow: "1 / span 1",
-    agentIds: ["market", "signal"]
-  },
-  {
-    id: "research",
-    name: "Research Library",
-    purpose: "Current-events browsing, source checks, and freshness gates.",
-    accent: "#57c5ff",
-    gridColumn: "1 / span 3",
-    gridRow: "2 / span 1",
-    agentIds: ["research"]
-  },
-  {
-    id: "stats",
-    name: "Stats Lab",
-    purpose: "Metric extraction, distributions, and backtest summaries.",
-    accent: "#86d873",
-    gridColumn: "4 / span 3",
-    gridRow: "2 / span 1",
-    agentIds: ["stats", "indicator"]
-  },
-  {
-    id: "tools",
-    name: "Tool Dock",
-    purpose: "Deterministic executors, data fetches, and runtime handoffs.",
-    accent: "#f2b56d",
-    gridColumn: "7 / span 3",
-    gridRow: "2 / span 1",
-    agentIds: ["toolsmith"]
-  },
-  {
-    id: "templates",
-    name: "Template Loft",
-    purpose: "Graph blueprints, answer frames, and reusable render layouts.",
-    accent: "#d78dff",
-    gridColumn: "10 / span 3",
-    gridRow: "2 / span 1",
-    agentIds: ["templater"]
-  },
-  {
-    id: "strategy",
-    name: "Strategy Atelier",
-    purpose: "Model-tab strategy drafting and JSON assembly.",
-    accent: "#ff9378",
-    gridColumn: "1 / span 4",
-    gridRow: "3 / span 2",
-    agentIds: ["strategist", "modeler"]
-  },
-  {
-    id: "charts",
-    name: "Chart Studio",
-    purpose: "Chart previews, overlays, graph plans, and visual reasoning.",
-    accent: "#6cb8ff",
-    gridColumn: "5 / span 4",
-    gridRow: "3 / span 2",
-    agentIds: ["charter", "animator"]
-  },
-  {
-    id: "cinema",
-    name: "Replay Cinema",
-    purpose: "Animated walkthroughs, step timing, and playback polish.",
-    accent: "#f0c75b",
-    gridColumn: "9 / span 4",
-    gridRow: "3 / span 1",
-    agentIds: ["cinema"]
+    purpose: "Symbol context, XAUUSD reads, and price structure.",
+    agentIds: ["market", "signal"],
+    labelX: 86,
+    labelY: 8,
+    agentX: 91,
+    agentY: 23,
+    direction: "left"
   },
   {
     id: "code",
     name: "Code Forge",
-    purpose: "Strategy code, indicator math, and tool scaffolding.",
-    accent: "#5ee0bd",
-    gridColumn: "9 / span 2",
-    gridRow: "4 / span 1",
-    agentIds: ["coder"]
+    purpose: "Indicator math, strategy code, and implementation work.",
+    agentIds: ["coder"],
+    labelX: 16,
+    labelY: 30,
+    agentX: 15,
+    agentY: 37,
+    direction: "down"
+  },
+  {
+    id: "tools",
+    name: "Tool Dock",
+    purpose: "Deterministic tool execution and runtime actions.",
+    agentIds: ["toolsmith"],
+    labelX: 34,
+    labelY: 30,
+    agentX: 39,
+    agentY: 37,
+    direction: "down"
+  },
+  {
+    id: "memory",
+    name: "Memory Vault",
+    purpose: "Thread memory and local context packing.",
+    agentIds: ["memory"],
+    labelX: 26,
+    labelY: 48,
+    agentX: 30,
+    agentY: 58,
+    direction: "down"
+  },
+  {
+    id: "stats",
+    name: "Stats Lab",
+    purpose: "Metric extraction, win-rate math, and distributions.",
+    agentIds: ["stats", "indicator"],
+    labelX: 8,
+    labelY: 67,
+    agentX: 15,
+    agentY: 80,
+    direction: "down"
+  },
+  {
+    id: "templates",
+    name: "Template Loft",
+    purpose: "Chart shells, answer frames, and reusable layouts.",
+    agentIds: ["templater"],
+    labelX: 34,
+    labelY: 67,
+    agentX: 39,
+    agentY: 80,
+    direction: "down"
+  },
+  {
+    id: "strategy",
+    name: "Strategy Atelier",
+    purpose: "Model-tab strategy drafting and JSON shaping.",
+    agentIds: ["strategist", "modeler"],
+    labelX: 62,
+    labelY: 60,
+    agentX: 67,
+    agentY: 76,
+    direction: "right"
+  },
+  {
+    id: "charts",
+    name: "Chart Studio",
+    purpose: "Chart plans, visuals, overlays, and annotations.",
+    agentIds: ["charter", "animator"],
+    labelX: 79,
+    labelY: 60,
+    agentX: 80,
+    agentY: 76,
+    direction: "left"
   },
   {
     id: "narrative",
     name: "Narrative Lounge",
-    purpose: "Answer drafting, trimming, and user-facing clarity.",
-    accent: "#9cb0ff",
-    gridColumn: "11 / span 2",
-    gridRow: "4 / span 1",
-    agentIds: ["writer"]
+    purpose: "Direct answer drafting and trimming.",
+    agentIds: ["writer"],
+    labelX: 58,
+    labelY: 86,
+    agentX: 58,
+    agentY: 71,
+    direction: "right"
   },
   {
     id: "audit",
     name: "Audit Terrace",
-    purpose: "Scope checks, unsupported-claim filters, and extra-stuff removal.",
-    accent: "#f09a9a",
-    gridColumn: "1 / span 6",
-    gridRow: "5 / span 1",
-    agentIds: ["auditor", "sentinel"]
+    purpose: "Scope control, quality checks, and extra-stuff removal.",
+    agentIds: ["auditor", "sentinel"],
+    labelX: 89,
+    labelY: 86,
+    agentX: 86,
+    agentY: 76,
+    direction: "left"
+  },
+  {
+    id: "cinema",
+    name: "Replay Cinema",
+    purpose: "Playback sequencing and motion timing.",
+    agentIds: ["cinema"],
+    labelX: 92,
+    labelY: 26,
+    agentX: 80,
+    agentY: 23,
+    direction: "up"
   },
   {
     id: "hearth",
     name: "Hearth Lounge",
-    purpose: "Idle agents cool off here between runs and keep a soft watch.",
-    accent: "#d8a76c",
-    gridColumn: "7 / span 6",
-    gridRow: "5 / span 1",
-    agentIds: []
+    purpose: "Idle agents cool off here between runs.",
+    agentIds: [],
+    labelX: 12,
+    labelY: 90
   }
 ];
 
@@ -411,6 +452,8 @@ const STAGE_AGENT_MAP: Record<string, string[]> = {
   "Annotation Planning": ["charter", "templater", "strategist"]
 };
 
+const AGENT_BY_ID = new Map(OFFICE_AGENTS.map((agent) => [agent.id, agent]));
+
 const uniqueStrings = (values: string[]): string[] => {
   const seen = new Set<string>();
   const output: string[] = [];
@@ -425,6 +468,33 @@ const uniqueStrings = (values: string[]): string[] => {
   }
 
   return output;
+};
+
+const hashString = (value: string): number => {
+  let hash = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+
+  return hash;
+};
+
+const pickSpriteSheet = (seed: string): string =>
+  SPRITE_SHEETS[hashString(seed) % SPRITE_SHEETS.length] ?? SPRITE_SHEETS[0];
+
+const spriteRowY = (direction: PixelDirection | undefined): string => {
+  switch (direction) {
+    case "right":
+      return "-48px";
+    case "left":
+      return "-96px";
+    case "up":
+      return "-144px";
+    case "down":
+    default:
+      return "0px";
+  }
 };
 
 export default function GideonWorkView(props: GideonWorkViewProps) {
@@ -486,8 +556,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
     const set = new Set<string>();
 
     for (const stage of stagePlan) {
-      const stageAgents = STAGE_AGENT_MAP[stage] ?? [];
-      for (const agentId of stageAgents) {
+      for (const agentId of STAGE_AGENT_MAP[stage] ?? []) {
         set.add(agentId);
       }
     }
@@ -557,16 +626,43 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
     wantsStrategy
   ]);
 
-  const activeRoomCount = OFFICE_ROOMS.filter((room) =>
-    room.agentIds.some((agentId) => activeAgentIds.has(agentId))
-  ).length;
+  const roomSnapshots = useMemo(
+    () =>
+      OFFICE_ROOMS.map((room) => {
+        const roomAgents = room.agentIds
+          .map((agentId) => AGENT_BY_ID.get(agentId))
+          .filter((agent): agent is OfficeAgent => Boolean(agent));
+        const activeAgents = roomAgents.filter((agent) => activeAgentIds.has(agent.id));
+        const warmAgents = roomAgents.filter((agent) => warmAgentIds.has(agent.id));
+        const state: RoomState =
+          activeAgents.length > 0 ? "active" : warmAgents.length > 0 ? "warm" : "idle";
+        const leadAgent =
+          activeAgents[0] ?? warmAgents[0] ?? roomAgents[0] ?? null;
 
-  const activeAgents = OFFICE_AGENTS.filter((agent) => activeAgentIds.has(agent.id));
-  const chillAgents = OFFICE_AGENTS.filter(
-    (agent) => !activeAgentIds.has(agent.id) && !warmAgentIds.has(agent.id)
-  ).slice(0, 6);
+        return {
+          room,
+          roomAgents,
+          activeAgents,
+          warmAgents,
+          state,
+          leadAgent
+        };
+      }),
+    [activeAgentIds, warmAgentIds]
+  );
 
-  const activeStageIndex = isPending
+  const activeAgents = useMemo(
+    () => OFFICE_AGENTS.filter((agent) => activeAgentIds.has(agent.id)),
+    [activeAgentIds]
+  );
+  const chillAgents = useMemo(
+    () =>
+      OFFICE_AGENTS.filter((agent) => !activeAgentIds.has(agent.id) && !warmAgentIds.has(agent.id)).slice(0, 8),
+    [activeAgentIds, warmAgentIds]
+  );
+
+  const activeRoomCount = roomSnapshots.filter((snapshot) => snapshot.state === "active").length;
+  const currentStageIndex = isPending
     ? Math.max(stagePlan.indexOf(thinkingStage), 0)
     : stagePlan.length > 0
       ? stagePlan.length - 1
@@ -620,196 +716,208 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
     ]
   );
 
-  const engagedTemplates = useMemo(() => {
-    const templates = uniqueStrings([
-      latestHasStrategyDraft || wantsStrategy ? "models_json_template" : "",
-      latestChartCount > 0 || wantsCharting ? "panel_chart_template" : "",
-      latestAnimationCount > 0 || wantsAnimation ? "chart_replay_template" : "",
-      wantsCurrent ? "market_brief_template" : "",
-      wantsStats ? "stats_story_template" : "",
-      latestCannotAnswer ? "clarification_template" : "",
-      "direct_answer_template"
-    ]);
+  const engagedTemplates = useMemo(
+    () =>
+      uniqueStrings([
+        latestHasStrategyDraft || wantsStrategy ? "models_json_template" : "",
+        latestChartCount > 0 || wantsCharting ? "panel_chart_template" : "",
+        latestAnimationCount > 0 || wantsAnimation ? "chart_replay_template" : "",
+        wantsCurrent ? "market_brief_template" : "",
+        wantsStats ? "stats_story_template" : "",
+        latestCannotAnswer ? "clarification_template" : "",
+        "direct_answer_template"
+      ]).slice(0, 6),
+    [
+      latestAnimationCount,
+      latestCannotAnswer,
+      latestChartCount,
+      latestHasStrategyDraft,
+      wantsAnimation,
+      wantsCharting,
+      wantsCurrent,
+      wantsStats,
+      wantsStrategy
+    ]
+  );
 
-    return templates.slice(0, 6);
-  }, [
-    latestAnimationCount,
-    latestCannotAnswer,
-    latestChartCount,
-    latestHasStrategyDraft,
-    wantsAnimation,
-    wantsCharting,
-    wantsCurrent,
-    wantsStats,
-    wantsStrategy
-  ]);
+  const stageTicker = useMemo(() => {
+    const activeRooms = roomSnapshots
+      .filter((snapshot) => snapshot.state === "active")
+      .slice(0, 4)
+      .map((snapshot) => `${snapshot.room.name}: ${snapshot.leadAgent?.name ?? "Lead"}`);
+
+    if (activeRooms.length > 0) {
+      return activeRooms.join("  //  ");
+    }
+
+    const warmRooms = roomSnapshots
+      .filter((snapshot) => snapshot.state === "warm")
+      .slice(0, 3)
+      .map((snapshot) => `${snapshot.room.name}: ready`);
+
+    return warmRooms.length > 0
+      ? warmRooms.join("  //  ")
+      : "Office standby. Waiting for the next prompt.";
+  }, [roomSnapshots]);
 
   if (!open) {
     return null;
   }
 
   return (
-    <div className="gwo-overlay" aria-hidden={!open}>
+    <div className="gpx-overlay" aria-hidden={!open}>
       <button
         type="button"
-        className="gwo-backdrop"
+        className="gpx-backdrop"
         aria-label="Close Gideon work view"
         onClick={onClose}
       />
 
       <section
-        className="gwo-shell"
+        className="gpx-shell"
         role="dialog"
         aria-modal="true"
-        aria-label="Gideon work view"
+        aria-label="Gideon pixel work view"
         onClick={(event) => event.stopPropagation()}
       >
-        <header className="gwo-head">
-          <div className="gwo-head-copy">
-            <span className={`gwo-status-pill${isPending ? " live" : ""}`}>
-              {isPending ? "Live Run" : "Office Idle"}
+        <header className="gpx-header">
+          <div className="gpx-header-copy">
+            <span className={`gpx-status${isPending ? " live" : ""}`}>
+              {isPending ? "LIVE RUN" : "OFFICE IDLE"}
             </span>
             <h3>Gideon Office</h3>
             <p>
               {isPending
-                ? `Running ${activeAgents.length || 1} agents across ${activeRoomCount || 1} rooms while ${thinkingStage.toLowerCase()}.`
-                : "The office is on standby. Open rooms stay warm so the next answer starts fast."}
+                ? `${activeAgents.length || 1} agents active across ${activeRoomCount || 1} rooms while ${thinkingStage.toLowerCase()}.`
+                : "The office is quiet but warm. Agents stay seated and ready for the next question."}
             </p>
           </div>
 
-          <div className="gwo-head-meta">
-            <div className="gwo-meta-card">
-              <span>Focus</span>
+          <div className="gpx-toolbar">
+            <div className="gpx-stat">
+              <span>FOCUS</span>
               <strong>
-                {symbol} · {timeframe}
+                {symbol} / {timeframe}
               </strong>
             </div>
-            <div className="gwo-meta-card">
-              <span>Context</span>
+            <div className="gpx-stat">
+              <span>CONTEXT</span>
               <strong>
-                {candleCount} candles · {historyCount} trades
+                {candleCount}C / {historyCount}T
               </strong>
             </div>
-            <div className="gwo-meta-card">
-              <span>Signals</span>
+            <div className="gpx-stat">
+              <span>SURFACE</span>
               <strong>
-                {latestChartCount} charts · {actionCount} actions
+                {latestChartCount}G / {actionCount}A
               </strong>
             </div>
-            <button type="button" className="gwo-close" onClick={onClose}>
-              Close
+            <button type="button" className="gpx-close" onClick={onClose}>
+              CLOSE
             </button>
           </div>
         </header>
 
-        <div className="gwo-body">
-          <div className="gwo-map-shell">
-            <div className="gwo-map-halo gwo-map-halo-a" />
-            <div className="gwo-map-halo gwo-map-halo-b" />
-            <div className="gwo-map-halo gwo-map-halo-c" />
-
-            <div className="gwo-map">
-              {OFFICE_ROOMS.map((room, roomIndex) => {
-                const roomAgents = OFFICE_AGENTS.filter((agent) => agent.roomId === room.id);
-                const hasActiveAgent = roomAgents.some((agent) => activeAgentIds.has(agent.id));
-                const hasWarmAgent = roomAgents.some((agent) => warmAgentIds.has(agent.id));
-                const roomState = hasActiveAgent ? "active" : hasWarmAgent ? "warm" : "idle";
-
-                return (
-                  <section
-                    key={room.id}
-                    className={`gwo-room state-${roomState}`}
-                    style={
-                      {
-                        gridColumn: room.gridColumn,
-                        gridRow: room.gridRow,
-                        "--room-accent": room.accent,
-                        "--room-delay": `${roomIndex * 90}ms`
-                      } as CSSProperties
-                    }
-                  >
-                    <div className="gwo-room-head">
-                      <div>
-                        <strong>{room.name}</strong>
-                        <span>{room.purpose}</span>
-                      </div>
-                      <small>{roomAgents.length > 0 ? `${roomAgents.length} seats` : "Lounge"}</small>
-                    </div>
-
-                    {roomAgents.length > 0 ? (
-                      <div className="gwo-agent-grid">
-                        {roomAgents.map((agent, agentIndex) => {
-                          const isActive = activeAgentIds.has(agent.id);
-                          const isWarm = warmAgentIds.has(agent.id);
-                          const state = isActive ? "active" : isWarm ? "warm" : "idle";
-                          const statusCopy = isActive
-                            ? agent.activeCopy
-                            : isWarm
-                              ? agent.readyCopy
-                              : agent.idleCopy;
-
-                          return (
-                            <article
-                              key={agent.id}
-                              className={`gwo-agent state-${state}`}
-                              style={
-                                {
-                                  "--agent-shift": `${0.25 + agentIndex * 0.16}s`
-                                } as CSSProperties
-                              }
-                            >
-                              <span className="gwo-agent-badge">{agent.badge}</span>
-                              <div className="gwo-agent-copy">
-                                <strong>{agent.name}</strong>
-                                <span>{agent.title}</span>
-                                <p>{statusCopy}</p>
-                              </div>
-                            </article>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="gwo-hearth">
-                        <span className="gwo-hearth-fire" aria-hidden>
-                          <span />
-                          <span />
-                          <span />
-                        </span>
-                        <div>
-                          <strong>Quiet Mode</strong>
-                          <p>Idle agents drift through here between tasks and keep the office calm.</p>
-                        </div>
-                      </div>
-                    )}
-                  </section>
-                );
-              })}
+        <div className="gpx-layout">
+          <section className="gpx-scene-window">
+            <div className="gpx-window-head">
+              <span>PIXEL OFFICE</span>
+              <strong>{isPending ? "WORKING" : "CHILLING"}</strong>
             </div>
-          </div>
 
-          <aside className="gwo-side">
-            <section className="gwo-panel">
-              <header className="gwo-panel-head">
-                <span>Mission</span>
-                <strong>{isPending ? "In Flight" : "Last Brief"}</strong>
-              </header>
-              <p className="gwo-mission-copy">
+            <div className="gpx-scene-shell">
+              <div className="gpx-scene">
+                {roomSnapshots.map((snapshot) => {
+                  const { room, state, leadAgent } = snapshot;
+
+                  return (
+                    <div
+                      key={`${room.id}-label`}
+                      className={`gpx-room-tag state-${state}`}
+                      style={
+                        {
+                          left: `${room.labelX}%`,
+                          top: `${room.labelY}%`
+                        } as CSSProperties
+                      }
+                    >
+                      <strong>{room.name}</strong>
+                      <span>{state === "active" ? "WORKING" : state === "warm" ? "READY" : "CHILL"}</span>
+                      <small>{leadAgent ? leadAgent.name : "Quiet room"}</small>
+                    </div>
+                  );
+                })}
+
+                {roomSnapshots.map((snapshot) => {
+                  const { room, state, leadAgent } = snapshot;
+                  if (!leadAgent || typeof room.agentX !== "number" || typeof room.agentY !== "number") {
+                    return null;
+                  }
+
+                  return (
+                    <div
+                      key={`${room.id}-actor`}
+                      className={`gpx-actor-slot state-${state}`}
+                      style={
+                        {
+                          left: `${room.agentX}%`,
+                          top: `${room.agentY}%`
+                        } as CSSProperties
+                      }
+                    >
+                      <div
+                        className={`gpx-actor dir-${room.direction ?? "down"} state-${state}`}
+                        style={
+                          {
+                            backgroundImage: `url("${pickSpriteSheet(leadAgent.id)}")`,
+                            "--row-y": spriteRowY(room.direction)
+                          } as CSSProperties
+                        }
+                        aria-hidden
+                      />
+                      <div className="gpx-actor-chip">
+                        <span>{leadAgent.badge}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <div className="gpx-stage-readout">
+                  <span>ROOMS {activeRoomCount.toString().padStart(2, "0")}</span>
+                  <strong>{stageTicker}</strong>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <aside className="gpx-sidebar">
+            <section className="gpx-panel">
+              <div className="gpx-window-head">
+                <span>MISSION</span>
+                <strong>{isPending ? "IN FLIGHT" : "LAST BRIEF"}</strong>
+              </div>
+              <p className="gpx-copy">
                 {latestPrompt.trim().length > 0
                   ? latestPrompt
-                  : "No live brief yet. The office is waiting for the next request."}
+                  : "No live brief yet. Send a prompt and the office will start moving."}
               </p>
             </section>
 
-            <section className="gwo-panel">
-              <header className="gwo-panel-head">
-                <span>Stage Rail</span>
+            <section className="gpx-panel">
+              <div className="gpx-window-head">
+                <span>PIPELINE</span>
                 <strong>{thinkingStage}</strong>
-              </header>
-              <div className="gwo-stage-rail">
+              </div>
+              <div className="gpx-stage-list">
                 {stagePlan.map((stage, index) => {
-                  const state = index < activeStageIndex ? "done" : index === activeStageIndex ? "active" : "todo";
+                  const state =
+                    index < currentStageIndex
+                      ? "done"
+                      : index === currentStageIndex
+                        ? "active"
+                        : "todo";
                   return (
-                    <div key={stage} className={`gwo-stage state-${state}`}>
+                    <div key={stage} className={`gpx-stage-pill state-${state}`}>
                       <span>{String(index + 1).padStart(2, "0")}</span>
                       <strong>{stage}</strong>
                     </div>
@@ -818,57 +926,55 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
               </div>
             </section>
 
-            <section className="gwo-panel">
-              <header className="gwo-panel-head">
-                <span>Functions</span>
-                <strong>{engagedFunctions.length}</strong>
-              </header>
-              <div className="gwo-tag-grid">
-                {engagedFunctions.map((entry) => (
-                  <span key={entry} className="gwo-tag gwo-tag-function">
-                    {entry}
-                  </span>
-                ))}
+            <section className="gpx-panel">
+              <div className="gpx-window-head">
+                <span>SYSTEM</span>
+                <strong>FUNCTION / TOOL / TEMPLATE</strong>
+              </div>
+
+              <div className="gpx-subsection">
+                <span>FUNCTIONS</span>
+                <div className="gpx-tag-list">
+                  {engagedFunctions.map((item) => (
+                    <span key={item} className="gpx-tag type-function">
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="gpx-subsection">
+                <span>TOOLS</span>
+                <div className="gpx-tag-list">
+                  {engagedTools.map((item) => (
+                    <span key={item} className="gpx-tag type-tool">
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="gpx-subsection">
+                <span>TEMPLATES</span>
+                <div className="gpx-tag-list">
+                  {engagedTemplates.map((item) => (
+                    <span key={item} className="gpx-tag type-template">
+                      {item}
+                    </span>
+                  ))}
+                </div>
               </div>
             </section>
 
-            <section className="gwo-panel">
-              <header className="gwo-panel-head">
-                <span>Tools</span>
-                <strong>{engagedTools.length}</strong>
-              </header>
-              <div className="gwo-tag-grid">
-                {engagedTools.map((entry) => (
-                  <span key={entry} className="gwo-tag gwo-tag-tool">
-                    {entry}
-                  </span>
-                ))}
-              </div>
-            </section>
-
-            <section className="gwo-panel">
-              <header className="gwo-panel-head">
-                <span>Templates</span>
-                <strong>{engagedTemplates.length}</strong>
-              </header>
-              <div className="gwo-tag-grid">
-                {engagedTemplates.map((entry) => (
-                  <span key={entry} className="gwo-tag gwo-tag-template">
-                    {entry}
-                  </span>
-                ))}
-              </div>
-            </section>
-
-            <section className="gwo-panel">
-              <header className="gwo-panel-head">
-                <span>Working Now</span>
+            <section className="gpx-panel">
+              <div className="gpx-window-head">
+                <span>WORKING NOW</span>
                 <strong>{activeAgents.length}</strong>
-              </header>
-              <div className="gwo-roster">
+              </div>
+              <div className="gpx-roster">
                 {activeAgents.length > 0 ? (
                   activeAgents.map((agent) => (
-                    <div key={agent.id} className="gwo-roster-row active">
+                    <div key={agent.id} className="gpx-roster-row active">
                       <span>{agent.badge}</span>
                       <div>
                         <strong>{agent.name}</strong>
@@ -877,19 +983,19 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
                     </div>
                   ))
                 ) : (
-                  <div className="gwo-roster-empty">No heavy branch is running right now.</div>
+                  <div className="gpx-empty">No heavy branch is running right now.</div>
                 )}
               </div>
             </section>
 
-            <section className="gwo-panel">
-              <header className="gwo-panel-head">
-                <span>Chill Zone</span>
+            <section className="gpx-panel">
+              <div className="gpx-window-head">
+                <span>CHILL ZONE</span>
                 <strong>{chillAgents.length}</strong>
-              </header>
-              <div className="gwo-roster">
+              </div>
+              <div className="gpx-roster">
                 {chillAgents.map((agent) => (
-                  <div key={agent.id} className="gwo-roster-row idle">
+                  <div key={agent.id} className="gpx-roster-row idle">
                     <span>{agent.badge}</span>
                     <div>
                       <strong>{agent.name}</strong>
@@ -900,27 +1006,35 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
               </div>
             </section>
 
-            <section className="gwo-panel">
-              <header className="gwo-panel-head">
-                <span>Artifacts</span>
-                <strong>Live Surface</strong>
-              </header>
-              <div className="gwo-artifact-grid">
-                <div className="gwo-artifact-card">
-                  <span>Charts</span>
+            <section className="gpx-panel">
+              <div className="gpx-window-head">
+                <span>ARTIFACTS</span>
+                <strong>LIVE SURFACE</strong>
+              </div>
+              <div className="gpx-artifacts">
+                <div className="gpx-artifact">
+                  <span>CHARTS</span>
                   <strong>{latestChartCount}</strong>
                 </div>
-                <div className="gwo-artifact-card">
-                  <span>Animations</span>
+                <div className="gpx-artifact">
+                  <span>ANIMS</span>
                   <strong>{latestAnimationCount}</strong>
                 </div>
-                <div className="gwo-artifact-card">
-                  <span>Checklist</span>
+                <div className="gpx-artifact">
+                  <span>CHECKS</span>
                   <strong>{latestChecklistCount}</strong>
                 </div>
-                <div className="gwo-artifact-card">
-                  <span>Strategy</span>
-                  <strong>{latestHasStrategyDraft ? "Ready" : "None"}</strong>
+                <div className="gpx-artifact">
+                  <span>MODEL</span>
+                  <strong>{latestHasStrategyDraft ? "READY" : "NONE"}</strong>
+                </div>
+                <div className="gpx-artifact">
+                  <span>ANSWER</span>
+                  <strong>{latestCannotAnswer ? "GAP" : "OK"}</strong>
+                </div>
+                <div className="gpx-artifact">
+                  <span>SYMB</span>
+                  <strong>{symbol}</strong>
                 </div>
               </div>
             </section>
@@ -929,809 +1043,588 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
       </section>
 
       <style jsx>{`
-        .gwo-overlay {
+        .gpx-overlay {
           position: absolute;
           inset: 0;
           z-index: 8;
-          font-family:
-            "IBM Plex Mono",
-            "SFMono-Regular",
-            Menlo,
-            Monaco,
-            monospace;
+          font-family: "Gideon Pixel", "IBM Plex Mono", monospace;
+          letter-spacing: 0.02em;
         }
 
-        .gwo-backdrop {
+        .gpx-backdrop {
           position: absolute;
           inset: 0;
           border: 0;
-          background:
-            radial-gradient(120% 90% at 18% 0%, rgba(90, 140, 255, 0.18), transparent 56%),
-            radial-gradient(120% 90% at 100% 0%, rgba(240, 184, 79, 0.16), transparent 52%),
-            rgba(4, 8, 14, 0.92);
-          backdrop-filter: blur(10px);
-          cursor: default;
+          background: rgba(6, 8, 14, 0.92);
+          backdrop-filter: blur(2px);
         }
 
-        .gwo-shell {
+        .gpx-shell {
           position: absolute;
           inset: 0;
           display: grid;
           grid-template-rows: auto minmax(0, 1fr);
-          min-height: 0;
-          padding: 0.72rem;
-          gap: 0.72rem;
-          color: #e9eef9;
+          gap: 0.5rem;
+          padding: 0.5rem;
           background:
-            linear-gradient(180deg, rgba(11, 16, 24, 0.92), rgba(8, 11, 18, 0.96)),
-            repeating-linear-gradient(
-              0deg,
-              rgba(255, 255, 255, 0.015) 0,
-              rgba(255, 255, 255, 0.015) 1px,
-              transparent 1px,
-              transparent 26px
-            );
-          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-        }
-
-        .gwo-head {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) auto;
-          gap: 0.72rem;
-          padding: 0.8rem 0.9rem;
-          border: 1px solid rgba(98, 117, 160, 0.34);
-          border-radius: 22px;
-          background:
-            radial-gradient(120% 130% at 0% 0%, rgba(90, 140, 255, 0.18), transparent 52%),
-            linear-gradient(135deg, rgba(21, 27, 39, 0.95), rgba(12, 17, 27, 0.98));
-          box-shadow:
-            0 20px 44px rgba(0, 0, 0, 0.28),
-            0 0 0 1px rgba(255, 255, 255, 0.04) inset;
-        }
-
-        .gwo-head-copy {
-          display: grid;
-          gap: 0.28rem;
-          min-width: 0;
-        }
-
-        .gwo-head-copy h3 {
-          margin: 0;
-          font-size: 1.02rem;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-        }
-
-        .gwo-head-copy p {
-          margin: 0;
-          max-width: 72ch;
-          color: #9fb1ce;
-          font-size: 0.69rem;
-          line-height: 1.55;
-        }
-
-        .gwo-status-pill {
-          justify-self: flex-start;
-          display: inline-flex;
-          align-items: center;
-          gap: 0.32rem;
-          border-radius: 999px;
-          border: 1px solid rgba(128, 150, 191, 0.32);
-          background: rgba(16, 23, 35, 0.8);
-          color: #cfdaef;
-          padding: 0.16rem 0.5rem;
-          font-size: 0.57rem;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-        }
-
-        .gwo-status-pill.live {
-          border-color: rgba(90, 200, 140, 0.44);
-          background:
-            linear-gradient(120deg, rgba(11, 45, 31, 0.9), rgba(19, 63, 42, 0.96), rgba(11, 45, 31, 0.9));
-          background-size: 220% 100%;
-          color: #dff8ea;
-          animation: gwoShimmer 1.3s linear infinite;
-        }
-
-        .gwo-head-meta {
-          display: flex;
-          align-items: stretch;
-          flex-wrap: wrap;
-          justify-content: flex-end;
-          gap: 0.48rem;
-        }
-
-        .gwo-meta-card {
-          min-width: 124px;
-          display: grid;
-          align-content: center;
-          gap: 0.16rem;
-          padding: 0.52rem 0.66rem;
-          border-radius: 16px;
-          border: 1px solid rgba(117, 137, 178, 0.28);
-          background: rgba(10, 16, 25, 0.72);
-        }
-
-        .gwo-meta-card span {
-          color: #8fa5c7;
-          font-size: 0.56rem;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-        }
-
-        .gwo-meta-card strong {
-          color: #f0f5ff;
-          font-size: 0.66rem;
-          line-height: 1.4;
-        }
-
-        .gwo-close {
-          min-width: 104px;
-          border-radius: 16px;
-          border: 1px solid rgba(132, 158, 211, 0.36);
-          background: rgba(16, 24, 36, 0.8);
-          color: #e3ecfb;
-          padding: 0.58rem 0.86rem;
-          font: inherit;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-          cursor: pointer;
-          transition:
-            transform 0.18s ease,
-            border-color 0.18s ease,
-            background 0.18s ease;
-        }
-
-        .gwo-close:hover {
-          transform: translateY(-1px);
-          border-color: rgba(159, 191, 255, 0.62);
-          background: rgba(20, 31, 48, 0.92);
-        }
-
-        .gwo-body {
-          min-height: 0;
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) 348px;
-          gap: 0.72rem;
-        }
-
-        .gwo-map-shell {
-          position: relative;
-          min-height: 0;
-          overflow: auto;
-          border-radius: 24px;
-          border: 1px solid rgba(95, 116, 156, 0.28);
-          background:
-            linear-gradient(180deg, rgba(13, 18, 27, 0.96), rgba(9, 13, 20, 0.98)),
-            linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-            linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-          background-size: auto, 44px 44px, 44px 44px;
-          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
-        }
-
-        .gwo-map-halo {
-          position: absolute;
-          border-radius: 999px;
-          filter: blur(48px);
-          opacity: 0.34;
-          pointer-events: none;
-        }
-
-        .gwo-map-halo-a {
-          width: 220px;
-          height: 220px;
-          top: 8%;
-          left: 10%;
-          background: rgba(92, 140, 255, 0.24);
-        }
-
-        .gwo-map-halo-b {
-          width: 260px;
-          height: 260px;
-          top: 22%;
-          right: 10%;
-          background: rgba(240, 184, 79, 0.18);
-        }
-
-        .gwo-map-halo-c {
-          width: 320px;
-          height: 320px;
-          bottom: -10%;
-          left: 34%;
-          background: rgba(90, 200, 140, 0.14);
-        }
-
-        .gwo-map {
-          position: relative;
-          min-width: 1040px;
-          min-height: 100%;
-          display: grid;
-          grid-template-columns: repeat(12, minmax(0, 1fr));
-          grid-template-rows: repeat(5, minmax(108px, 1fr));
-          gap: 0.62rem;
-          padding: 0.72rem;
-        }
-
-        .gwo-room {
-          position: relative;
-          display: grid;
-          align-content: space-between;
-          gap: 0.58rem;
-          min-width: 0;
-          min-height: 0;
-          padding: 0.62rem;
-          border-radius: 18px;
-          border: 1px solid rgba(122, 141, 180, 0.22);
-          background:
-            linear-gradient(180deg, rgba(16, 22, 33, 0.96), rgba(10, 15, 23, 0.98)),
-            radial-gradient(160% 130% at 0% 0%, color-mix(in srgb, var(--room-accent) 18%, transparent), transparent 54%);
-          box-shadow:
-            0 18px 34px rgba(0, 0, 0, 0.24),
-            inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+            radial-gradient(circle at 50% 0%, rgba(43, 57, 90, 0.45), transparent 45%),
+            linear-gradient(180deg, #0d1019 0%, #060811 100%);
+          color: #f3f2ff;
           overflow: hidden;
         }
 
-        .gwo-room::before {
+        .gpx-header,
+        .gpx-panel,
+        .gpx-scene-window {
+          border: 3px solid #161b2f;
+          border-radius: 0;
+          background: #272b45;
+          box-shadow:
+            0 0 0 3px #4e567d,
+            6px 6px 0 rgba(3, 4, 10, 0.72);
+        }
+
+        .gpx-header {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 0.6rem;
+          padding: 0.6rem 0.7rem;
+        }
+
+        .gpx-header-copy {
+          display: grid;
+          gap: 0.22rem;
+          min-width: 0;
+        }
+
+        .gpx-status {
+          justify-self: flex-start;
+          padding: 0.18rem 0.4rem;
+          border: 2px solid #101427;
+          background: #40476a;
+          color: #f5f7ff;
+          font-size: 0.62rem;
+        }
+
+        .gpx-status.live {
+          background: #348e5c;
+          color: #f4fff8;
+          animation: gpxBlink 0.9s steps(2, end) infinite;
+        }
+
+        .gpx-header-copy h3 {
+          margin: 0;
+          font-size: 0.92rem;
+          color: #fff8de;
+          text-transform: uppercase;
+        }
+
+        .gpx-header-copy p {
+          margin: 0;
+          color: #d6d8f2;
+          font-size: 0.62rem;
+          line-height: 1.45;
+          max-width: 74ch;
+        }
+
+        .gpx-toolbar {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          gap: 0.42rem;
+          align-items: flex-start;
+        }
+
+        .gpx-stat {
+          min-width: 98px;
+          padding: 0.3rem 0.42rem;
+          border: 2px solid #12162b;
+          background: #353b5c;
+          display: grid;
+          gap: 0.14rem;
+        }
+
+        .gpx-stat span {
+          color: #bfc5ea;
+          font-size: 0.48rem;
+        }
+
+        .gpx-stat strong {
+          color: #fff8de;
+          font-size: 0.58rem;
+        }
+
+        .gpx-close {
+          min-width: 92px;
+          border: 2px solid #12162b;
+          background: #894156;
+          color: #fff2f4;
+          font: inherit;
+          padding: 0.34rem 0.52rem;
+          cursor: pointer;
+          box-shadow: 3px 3px 0 rgba(8, 9, 15, 0.58);
+        }
+
+        .gpx-close:hover {
+          background: #a24c64;
+        }
+
+        .gpx-layout {
+          min-height: 0;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 352px;
+          gap: 0.5rem;
+        }
+
+        .gpx-scene-window {
+          min-height: 0;
+          display: grid;
+          grid-template-rows: auto minmax(0, 1fr);
+          overflow: hidden;
+        }
+
+        .gpx-window-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.4rem;
+          padding: 0.28rem 0.45rem;
+          border-bottom: 3px solid #15192a;
+          background: #39405f;
+          color: #fff8de;
+          font-size: 0.54rem;
+        }
+
+        .gpx-window-head strong {
+          color: #f5ffd6;
+          font-size: 0.5rem;
+        }
+
+        .gpx-scene-shell {
+          min-height: 0;
+          padding: 0.45rem;
+          background:
+            linear-gradient(180deg, rgba(19, 23, 38, 0.98), rgba(10, 12, 20, 0.99));
+        }
+
+        .gpx-scene {
+          position: relative;
+          width: 100%;
+          aspect-ratio: 1308 / 521;
+          overflow: hidden;
+          border: 4px solid #0c1020;
+          background:
+            linear-gradient(180deg, rgba(11, 14, 24, 0.18), rgba(11, 14, 24, 0.18)),
+            url("/gideon-pixel/office-stage.jpg") center / cover no-repeat;
+          image-rendering: pixelated;
+          box-shadow:
+            inset 0 0 0 3px rgba(255, 255, 255, 0.05),
+            inset 0 0 0 7px rgba(0, 0, 0, 0.3);
+        }
+
+        .gpx-scene::after {
           content: "";
           position: absolute;
           inset: 0;
           background:
-            linear-gradient(135deg, rgba(255, 255, 255, 0.028), transparent 38%),
-            linear-gradient(transparent 65%, rgba(255, 255, 255, 0.02));
+            radial-gradient(circle at center, transparent 48%, rgba(6, 8, 14, 0.38) 100%);
           pointer-events: none;
         }
 
-        .gwo-room::after {
-          content: "";
+        .gpx-room-tag {
           position: absolute;
-          left: 0;
-          right: 0;
-          top: 0;
-          height: 2px;
-          background: color-mix(in srgb, var(--room-accent) 88%, white);
-          opacity: 0.44;
+          z-index: 3;
+          min-width: 92px;
+          padding: 0.18rem 0.28rem 0.2rem;
+          border: 2px solid #0e1222;
+          background: #23273f;
+          box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.54);
+          transform: translate(-50%, -50%);
+        }
+
+        .gpx-room-tag strong,
+        .gpx-room-tag span,
+        .gpx-room-tag small {
+          display: block;
+        }
+
+        .gpx-room-tag strong {
+          color: #fff8de;
+          font-size: 0.48rem;
+        }
+
+        .gpx-room-tag span {
+          margin-top: 0.08rem;
+          font-size: 0.42rem;
+          color: #d8ddff;
+        }
+
+        .gpx-room-tag small {
+          margin-top: 0.06rem;
+          color: #aeb6df;
+          font-size: 0.39rem;
+        }
+
+        .gpx-room-tag.state-active {
+          background: #2b4634;
+          animation: gpxBlink 0.95s steps(2, end) infinite;
+        }
+
+        .gpx-room-tag.state-warm {
+          background: #3c3752;
+        }
+
+        .gpx-room-tag.state-idle {
+          background: rgba(35, 39, 63, 0.88);
+          opacity: 0.88;
+        }
+
+        .gpx-actor-slot {
+          position: absolute;
+          z-index: 4;
+          width: 32px;
+          height: 48px;
+          transform: translate(-50%, -100%);
           pointer-events: none;
         }
 
-        .gwo-room.state-warm {
-          border-color: color-mix(in srgb, var(--room-accent) 36%, rgba(122, 141, 180, 0.22));
+        .gpx-actor-slot.state-active {
+          animation: gpxActorDrift 0.95s steps(2, end) infinite;
         }
 
-        .gwo-room.state-active {
-          border-color: color-mix(in srgb, var(--room-accent) 56%, rgba(122, 141, 180, 0.22));
-          box-shadow:
-            0 18px 34px rgba(0, 0, 0, 0.24),
-            0 0 0 1px color-mix(in srgb, var(--room-accent) 34%, transparent) inset,
-            0 0 28px color-mix(in srgb, var(--room-accent) 18%, transparent);
+        .gpx-actor-slot.state-warm {
+          animation: gpxActorBob 1.8s steps(2, end) infinite;
         }
 
-        .gwo-room.state-active::before {
-          animation: gwoPulse 2.1s ease-in-out infinite;
-          animation-delay: var(--room-delay);
+        .gpx-actor {
+          width: 32px;
+          height: 48px;
+          background-repeat: no-repeat;
+          background-size: 224px 192px;
+          background-position: 0 var(--row-y);
+          image-rendering: pixelated;
         }
 
-        .gwo-room-head {
-          position: relative;
-          z-index: 1;
-          display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          gap: 0.46rem;
+        .gpx-actor.state-active {
+          animation: gpxSpriteWalk 0.8s steps(6) infinite;
         }
 
-        .gwo-room-head strong {
-          display: block;
-          color: #f0f5ff;
-          font-size: 0.67rem;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
+        .gpx-actor.state-warm {
+          animation: gpxSpriteBreathe 1.1s steps(2, end) infinite;
         }
 
-        .gwo-room-head span {
-          display: block;
-          margin-top: 0.22rem;
-          color: #8ca0c0;
-          font-size: 0.58rem;
-          line-height: 1.45;
-        }
-
-        .gwo-room-head small {
-          color: color-mix(in srgb, var(--room-accent) 76%, white);
-          font-size: 0.55rem;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-          white-space: nowrap;
-        }
-
-        .gwo-agent-grid {
-          position: relative;
-          z-index: 1;
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
-          gap: 0.42rem;
-          min-width: 0;
-        }
-
-        .gwo-agent {
-          display: grid;
-          grid-template-columns: auto minmax(0, 1fr);
-          gap: 0.42rem;
-          padding: 0.44rem;
-          border-radius: 14px;
-          border: 1px solid rgba(109, 130, 170, 0.2);
-          background: rgba(7, 12, 19, 0.66);
-          min-width: 0;
-          transition:
-            transform 0.18s ease,
-            border-color 0.18s ease,
-            background 0.18s ease;
-        }
-
-        .gwo-agent.state-idle {
-          opacity: 0.74;
-        }
-
-        .gwo-agent.state-warm {
-          border-color: rgba(132, 168, 238, 0.32);
-          background: rgba(11, 17, 28, 0.8);
-          animation: gwoFloat 3s ease-in-out infinite;
-          animation-delay: var(--agent-shift);
-        }
-
-        .gwo-agent.state-active {
-          border-color: color-mix(in srgb, var(--room-accent) 58%, rgba(132, 168, 238, 0.34));
-          background:
-            linear-gradient(180deg, rgba(15, 23, 35, 0.96), rgba(10, 15, 23, 0.96)),
-            radial-gradient(120% 150% at 0% 0%, color-mix(in srgb, var(--room-accent) 18%, transparent), transparent 56%);
-          transform: translateY(-1px);
-          animation:
-            gwoFloat 2.2s ease-in-out infinite,
-            gwoBorderPulse 1.6s ease-in-out infinite;
-          animation-delay: var(--agent-shift);
-        }
-
-        .gwo-agent-badge {
-          width: 34px;
-          height: 34px;
-          flex-shrink: 0;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 12px;
-          border: 1px solid rgba(143, 166, 212, 0.38);
-          background:
-            linear-gradient(180deg, rgba(23, 35, 55, 0.9), rgba(13, 20, 31, 0.96));
-          color: #f2f7ff;
-          font-size: 0.61rem;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-        }
-
-        .gwo-agent-copy {
-          display: grid;
-          gap: 0.08rem;
-          min-width: 0;
-        }
-
-        .gwo-agent-copy strong {
-          color: #eef4ff;
-          font-size: 0.64rem;
+        .gpx-actor-chip {
+          position: absolute;
+          left: 50%;
+          bottom: calc(100% + 3px);
+          transform: translateX(-50%);
+          padding: 1px 4px;
+          border: 2px solid #0d1020;
+          background: #f5f1d8;
+          color: #181b28;
+          font-size: 0.38rem;
           line-height: 1.2;
+          box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.54);
         }
 
-        .gwo-agent-copy span {
-          color: color-mix(in srgb, var(--room-accent) 72%, white);
-          font-size: 0.53rem;
-          letter-spacing: 0.07em;
-          text-transform: uppercase;
-        }
-
-        .gwo-agent-copy p {
-          margin: 0.12rem 0 0;
-          color: #8fa5c7;
-          font-size: 0.56rem;
-          line-height: 1.42;
-        }
-
-        .gwo-hearth {
-          position: relative;
-          z-index: 1;
-          display: flex;
-          align-items: center;
-          gap: 0.72rem;
-          min-height: 0;
-          padding: 0.24rem 0;
-        }
-
-        .gwo-hearth strong {
-          display: block;
-          color: #f3e6d0;
-          font-size: 0.67rem;
-          letter-spacing: 0.06em;
-          text-transform: uppercase;
-        }
-
-        .gwo-hearth p {
-          margin: 0.16rem 0 0;
-          color: #bda98e;
-          font-size: 0.58rem;
-          line-height: 1.45;
-          max-width: 40ch;
-        }
-
-        .gwo-hearth-fire {
-          position: relative;
-          width: 56px;
-          height: 44px;
-          display: inline-flex;
-          align-items: flex-end;
-          justify-content: center;
-          gap: 0.18rem;
-          flex-shrink: 0;
-        }
-
-        .gwo-hearth-fire span {
-          display: block;
-          width: 11px;
-          border-radius: 999px 999px 6px 6px;
-          background: linear-gradient(180deg, #ffd06f 0%, #ff9d59 58%, #9f4624 100%);
-          animation: gwoFlame 1.4s ease-in-out infinite;
-        }
-
-        .gwo-hearth-fire span:nth-child(1) {
-          height: 24px;
-          animation-delay: 0s;
-        }
-
-        .gwo-hearth-fire span:nth-child(2) {
-          height: 34px;
-          animation-delay: 0.12s;
-        }
-
-        .gwo-hearth-fire span:nth-child(3) {
-          height: 20px;
-          animation-delay: 0.24s;
-        }
-
-        .gwo-side {
-          min-height: 0;
-          overflow: auto;
+        .gpx-stage-readout {
+          position: absolute;
+          left: 0.55rem;
+          right: 0.55rem;
+          bottom: 0.55rem;
+          z-index: 5;
+          padding: 0.22rem 0.34rem;
+          border: 2px solid #0d1020;
+          background: rgba(20, 24, 38, 0.92);
+          box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.54);
           display: grid;
-          gap: 0.58rem;
-          align-content: start;
+          gap: 0.1rem;
         }
 
-        .gwo-panel {
-          border-radius: 18px;
-          border: 1px solid rgba(96, 117, 156, 0.3);
-          background:
-            linear-gradient(180deg, rgba(14, 20, 31, 0.96), rgba(10, 15, 24, 0.98)),
-            radial-gradient(130% 100% at 0% 0%, rgba(90, 140, 255, 0.08), transparent 60%);
-          padding: 0.62rem;
-          display: grid;
-          gap: 0.46rem;
+        .gpx-stage-readout span {
+          color: #9ef0b7;
+          font-size: 0.42rem;
         }
 
-        .gwo-panel-head {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 0.42rem;
-        }
-
-        .gwo-panel-head span {
-          color: #8fa5c7;
-          font-size: 0.55rem;
-          letter-spacing: 0.09em;
-          text-transform: uppercase;
-        }
-
-        .gwo-panel-head strong {
-          color: #eef4ff;
-          font-size: 0.58rem;
-          letter-spacing: 0.07em;
-          text-transform: uppercase;
-        }
-
-        .gwo-mission-copy {
-          margin: 0;
-          color: #d8e2f3;
-          font-size: 0.62rem;
-          line-height: 1.5;
-        }
-
-        .gwo-stage-rail {
-          display: grid;
-          gap: 0.32rem;
-        }
-
-        .gwo-stage {
-          display: grid;
-          grid-template-columns: auto minmax(0, 1fr);
-          align-items: center;
-          gap: 0.42rem;
-          padding: 0.38rem 0.44rem;
-          border-radius: 12px;
-          border: 1px solid rgba(96, 117, 156, 0.24);
-          background: rgba(8, 13, 21, 0.62);
-        }
-
-        .gwo-stage span {
-          width: 26px;
-          height: 26px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 999px;
-          border: 1px solid rgba(117, 136, 178, 0.32);
-          color: #b7c7df;
-          font-size: 0.53rem;
-        }
-
-        .gwo-stage strong {
-          color: #dce6f7;
-          font-size: 0.6rem;
+        .gpx-stage-readout strong {
+          color: #f4f5ff;
+          font-size: 0.46rem;
           line-height: 1.35;
         }
 
-        .gwo-stage.state-done {
-          border-color: rgba(90, 200, 140, 0.28);
-          background: rgba(10, 29, 22, 0.58);
-        }
-
-        .gwo-stage.state-done span {
-          border-color: rgba(90, 200, 140, 0.34);
-          color: #c3f2da;
-        }
-
-        .gwo-stage.state-active {
-          border-color: rgba(240, 184, 79, 0.44);
-          background:
-            linear-gradient(120deg, rgba(61, 48, 17, 0.82), rgba(91, 70, 21, 0.92), rgba(61, 48, 17, 0.82));
-          background-size: 220% 100%;
-          animation: gwoShimmer 1.35s linear infinite;
-        }
-
-        .gwo-stage.state-active span {
-          border-color: rgba(255, 216, 138, 0.52);
-          color: #fff0cb;
-        }
-
-        .gwo-tag-grid {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 0.28rem;
-        }
-
-        .gwo-tag {
-          display: inline-flex;
-          align-items: center;
-          padding: 0.18rem 0.44rem;
-          border-radius: 999px;
-          border: 1px solid rgba(120, 140, 184, 0.28);
-          background: rgba(9, 15, 23, 0.76);
-          color: #d8e4f8;
-          font-size: 0.54rem;
-          letter-spacing: 0.06em;
-          text-transform: uppercase;
-        }
-
-        .gwo-tag-function {
-          border-color: rgba(95, 200, 150, 0.34);
-          color: #c9f5df;
-        }
-
-        .gwo-tag-tool {
-          border-color: rgba(240, 184, 79, 0.34);
-          color: #ffe5b5;
-        }
-
-        .gwo-tag-template {
-          border-color: rgba(201, 139, 255, 0.36);
-          color: #f1d6ff;
-        }
-
-        .gwo-roster {
+        .gpx-sidebar {
+          min-height: 0;
+          overflow: auto;
           display: grid;
-          gap: 0.34rem;
+          gap: 0.5rem;
+          align-content: start;
+          padding: 0 0.12rem 0.18rem 0;
         }
 
-        .gwo-roster-row {
+        .gpx-panel {
+          padding-bottom: 0.34rem;
+          overflow: hidden;
+        }
+
+        .gpx-copy {
+          margin: 0;
+          padding: 0.4rem 0.48rem 0;
+          color: #edf0ff;
+          font-size: 0.53rem;
+          line-height: 1.5;
+        }
+
+        .gpx-stage-list,
+        .gpx-roster,
+        .gpx-artifacts {
+          padding: 0.38rem 0.45rem 0;
+        }
+
+        .gpx-stage-list {
+          display: grid;
+          gap: 0.24rem;
+        }
+
+        .gpx-stage-pill {
           display: grid;
           grid-template-columns: auto minmax(0, 1fr);
-          align-items: start;
-          gap: 0.42rem;
-          padding: 0.34rem 0.38rem;
-          border-radius: 12px;
-          border: 1px solid rgba(103, 124, 166, 0.22);
-          background: rgba(8, 13, 21, 0.66);
+          align-items: center;
+          gap: 0.32rem;
+          padding: 0.2rem 0.24rem;
+          border: 2px solid #0f1324;
+          background: #303553;
         }
 
-        .gwo-roster-row span {
-          width: 28px;
-          height: 28px;
+        .gpx-stage-pill span {
+          min-width: 24px;
+          color: #fff6d2;
+          font-size: 0.42rem;
+        }
+
+        .gpx-stage-pill strong {
+          color: #edf0ff;
+          font-size: 0.48rem;
+        }
+
+        .gpx-stage-pill.state-done {
+          background: #325142;
+        }
+
+        .gpx-stage-pill.state-active {
+          background: #6d5530;
+          animation: gpxBlink 0.8s steps(2, end) infinite;
+        }
+
+        .gpx-subsection {
+          padding: 0.34rem 0.45rem 0;
+          display: grid;
+          gap: 0.18rem;
+        }
+
+        .gpx-subsection > span {
+          color: #fff7d4;
+          font-size: 0.46rem;
+        }
+
+        .gpx-tag-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.18rem;
+        }
+
+        .gpx-tag {
+          padding: 0.12rem 0.28rem;
+          border: 2px solid #0e1120;
+          background: #2d314a;
+          color: #edf0ff;
+          font-size: 0.4rem;
+        }
+
+        .gpx-tag.type-function {
+          background: #2e4e3f;
+        }
+
+        .gpx-tag.type-tool {
+          background: #5a492c;
+        }
+
+        .gpx-tag.type-template {
+          background: #4f365e;
+        }
+
+        .gpx-roster {
+          display: grid;
+          gap: 0.22rem;
+        }
+
+        .gpx-roster-row {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr);
+          gap: 0.28rem;
+          padding: 0.2rem 0.24rem;
+          border: 2px solid #0e1120;
+          background: #2e334f;
+        }
+
+        .gpx-roster-row span {
+          width: 24px;
+          height: 24px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          border-radius: 10px;
-          border: 1px solid rgba(133, 156, 202, 0.3);
-          background: rgba(16, 24, 38, 0.9);
-          color: #eef4ff;
-          font-size: 0.54rem;
-          letter-spacing: 0.06em;
-          text-transform: uppercase;
+          border: 2px solid #0e1120;
+          background: #f4f0d8;
+          color: #171b29;
+          font-size: 0.42rem;
         }
 
-        .gwo-roster-row strong {
+        .gpx-roster-row strong,
+        .gpx-roster-row small {
           display: block;
-          color: #ecf3ff;
-          font-size: 0.59rem;
         }
 
-        .gwo-roster-row small {
-          display: block;
-          margin-top: 0.12rem;
-          color: #90a4c7;
-          font-size: 0.55rem;
+        .gpx-roster-row strong {
+          color: #fff8de;
+          font-size: 0.48rem;
+        }
+
+        .gpx-roster-row small {
+          margin-top: 0.08rem;
+          color: #ced4fa;
+          font-size: 0.4rem;
+          line-height: 1.35;
+        }
+
+        .gpx-roster-row.active {
+          background: #315043;
+        }
+
+        .gpx-roster-row.idle {
+          background: #393657;
+          opacity: 0.9;
+        }
+
+        .gpx-empty {
+          color: #d9defb;
+          font-size: 0.48rem;
           line-height: 1.4;
         }
 
-        .gwo-roster-row.active {
-          border-color: rgba(90, 200, 140, 0.3);
-          background: rgba(10, 28, 22, 0.7);
-        }
-
-        .gwo-roster-row.idle {
-          opacity: 0.82;
-        }
-
-        .gwo-roster-empty {
-          color: #91a5c8;
-          font-size: 0.58rem;
-          line-height: 1.45;
-        }
-
-        .gwo-artifact-grid {
+        .gpx-artifacts {
           display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 0.34rem;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 0.22rem;
         }
 
-        .gwo-artifact-card {
-          border-radius: 14px;
-          border: 1px solid rgba(103, 124, 166, 0.22);
-          background: rgba(8, 13, 21, 0.7);
-          padding: 0.42rem 0.46rem;
+        .gpx-artifact {
+          padding: 0.22rem 0.24rem;
+          border: 2px solid #0f1324;
+          background: #303553;
           display: grid;
-          gap: 0.16rem;
+          gap: 0.08rem;
         }
 
-        .gwo-artifact-card span {
-          color: #8fa5c7;
-          font-size: 0.55rem;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
+        .gpx-artifact span {
+          color: #cbd2f8;
+          font-size: 0.38rem;
         }
 
-        .gwo-artifact-card strong {
-          color: #edf4ff;
-          font-size: 0.68rem;
+        .gpx-artifact strong {
+          color: #fff8de;
+          font-size: 0.5rem;
         }
 
-        @keyframes gwoFloat {
+        @keyframes gpxBlink {
           0%,
-          100% {
-            transform: translateY(0px);
-          }
-          50% {
-            transform: translateY(-4px);
-          }
-        }
-
-        @keyframes gwoBorderPulse {
-          0%,
-          100% {
-            box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
-          }
-          50% {
-            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04);
-          }
-        }
-
-        @keyframes gwoPulse {
-          0%,
-          100% {
-            opacity: 0.52;
-          }
-          50% {
-            opacity: 0.9;
-          }
-        }
-
-        @keyframes gwoShimmer {
-          0% {
-            background-position: 0% 0%;
-          }
-          100% {
-            background-position: 220% 0%;
-          }
-        }
-
-        @keyframes gwoFlame {
-          0%,
-          100% {
-            transform: translateY(0) scaleY(1);
-            opacity: 0.9;
-          }
-          50% {
-            transform: translateY(-3px) scaleY(1.08);
+          49% {
             opacity: 1;
           }
-        }
-
-        @media (max-width: 1280px) {
-          .gwo-body {
-            grid-template-columns: minmax(0, 1fr) 312px;
+          50%,
+          100% {
+            opacity: 0.78;
           }
         }
 
-        @media (max-width: 1100px) {
-          .gwo-shell {
-            padding: 0.54rem;
+        @keyframes gpxActorDrift {
+          0%,
+          100% {
+            transform: translate(-50%, -100%);
           }
+          50% {
+            transform: translate(calc(-50% + 1px), calc(-100% - 2px));
+          }
+        }
 
-          .gwo-head {
+        @keyframes gpxActorBob {
+          0%,
+          100% {
+            transform: translate(-50%, -100%);
+          }
+          50% {
+            transform: translate(-50%, calc(-100% - 1px));
+          }
+        }
+
+        @keyframes gpxSpriteWalk {
+          from {
+            background-position: 0 var(--row-y);
+          }
+          to {
+            background-position: -192px var(--row-y);
+          }
+        }
+
+        @keyframes gpxSpriteBreathe {
+          0%,
+          100% {
+            filter: brightness(1);
+          }
+          50% {
+            filter: brightness(1.08);
+          }
+        }
+
+        @media (max-width: 1220px) {
+          .gpx-layout {
             grid-template-columns: minmax(0, 1fr);
           }
 
-          .gwo-head-meta {
-            justify-content: flex-start;
-          }
-
-          .gwo-body {
-            grid-template-columns: minmax(0, 1fr);
-          }
-
-          .gwo-side {
+          .gpx-sidebar {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
         }
 
         @media (max-width: 760px) {
-          .gwo-head {
-            padding: 0.68rem;
+          .gpx-shell {
+            padding: 0.35rem;
+            gap: 0.35rem;
           }
 
-          .gwo-head-copy h3 {
-            font-size: 0.88rem;
-          }
-
-          .gwo-head-copy p {
-            font-size: 0.63rem;
-          }
-
-          .gwo-meta-card {
-            min-width: 0;
-            flex: 1 1 140px;
-          }
-
-          .gwo-side {
+          .gpx-header {
             grid-template-columns: minmax(0, 1fr);
           }
 
-          .gwo-map {
-            min-width: 900px;
+          .gpx-toolbar {
+            justify-content: flex-start;
+          }
+
+          .gpx-sidebar {
+            grid-template-columns: minmax(0, 1fr);
+          }
+
+          .gpx-room-tag {
+            min-width: 78px;
           }
         }
 
         @media (prefers-reduced-motion: reduce) {
-          .gwo-status-pill.live,
-          .gwo-room.state-active::before,
-          .gwo-agent.state-warm,
-          .gwo-agent.state-active,
-          .gwo-stage.state-active,
-          .gwo-hearth-fire span {
+          .gpx-status.live,
+          .gpx-room-tag.state-active,
+          .gpx-stage-pill.state-active,
+          .gpx-actor-slot.state-active,
+          .gpx-actor-slot.state-warm,
+          .gpx-actor.state-active,
+          .gpx-actor.state-warm {
             animation: none !important;
           }
         }
