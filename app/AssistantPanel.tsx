@@ -21,6 +21,8 @@ import {
   LineChart,
   Pie,
   PieChart,
+  ReferenceArea,
+  ReferenceDot,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -95,7 +97,7 @@ type AssistantChart = {
   subtitle?: string;
   mode?: "static" | "dynamic";
   data: Array<Record<string, string | number>>;
-  config?: Record<string, string | number | boolean>;
+  config?: Record<string, unknown>;
 };
 
 type AssistantBullet = {
@@ -123,6 +125,14 @@ type AssistantStrategyDraft = {
   missingDetails: string[];
   clarifyingQuestions: string[];
   draftJson: Record<string, unknown>;
+  backtestSummary?: {
+    tradeCount: number;
+    winRatePct: number;
+    profitFactor: number | null;
+    totalPnlUsd: number;
+    testedFrom: string | null;
+    testedTo: string | null;
+  } | null;
 };
 
 type AssistantMessage = {
@@ -190,6 +200,22 @@ const MAX_CONTEXT_ACTIONS = 360;
 const MAX_CONTEXT_BACKTEST_WHEN_REQUESTED = 2200;
 
 const PIE_COLORS = ["#13c98f", "#f0455a", "#bfc6d8", "#f0b84f"];
+type StrategyChartZone = {
+  xStart: string;
+  xEnd: string;
+  yStart: number;
+  yEnd: number;
+  direction: "bullish" | "bearish";
+  label?: string;
+};
+
+type StrategyChartMarker = {
+  x: string;
+  y: number;
+  direction: "bullish" | "bearish";
+  label: string;
+};
+
 const DRAW_STAGE_RE =
   /\b(draw|mark|annotate|support|resistance|trendline|trend line|line|box|fvg|fair value gap|arrow|ruler)\b/i;
 const GRAPH_STAGE_RE =
@@ -205,6 +231,69 @@ const SOCIAL_STAGE_RE =
 const ASSISTANT_THREAD_STORAGE_KEY = "korra:gideon:thread:v1";
 const MAX_PERSISTED_MESSAGES = 80;
 const MAX_PERSISTED_TURNS = 160;
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> => {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+};
+
+const parseStrategyChartZones = (config: AssistantChart["config"]): StrategyChartZone[] => {
+  const rawZones = isPlainRecord(config) && Array.isArray(config.fvgZones) ? config.fvgZones : [];
+  const mapped: Array<StrategyChartZone | null> = rawZones.map((item) => {
+    if (!isPlainRecord(item)) {
+      return null;
+    }
+
+    const xStart = typeof item.xStart === "string" ? item.xStart : "";
+    const xEnd = typeof item.xEnd === "string" ? item.xEnd : "";
+    const yStart = Number(item.yStart);
+    const yEnd = Number(item.yEnd);
+    const direction = item.direction === "bearish" ? "bearish" : "bullish";
+    const label = typeof item.label === "string" ? item.label : undefined;
+
+    if (!xStart || !xEnd || !Number.isFinite(yStart) || !Number.isFinite(yEnd)) {
+      return null;
+    }
+
+    return {
+      xStart,
+      xEnd,
+      yStart,
+      yEnd,
+      direction,
+      label
+    };
+  });
+
+  return mapped.filter((item): item is StrategyChartZone => item !== null);
+};
+
+const parseStrategyChartMarkers = (config: AssistantChart["config"]): StrategyChartMarker[] => {
+  const rawMarkers =
+    isPlainRecord(config) && Array.isArray(config.entryMarkers) ? config.entryMarkers : [];
+  const mapped: Array<StrategyChartMarker | null> = rawMarkers.map((item) => {
+    if (!isPlainRecord(item)) {
+      return null;
+    }
+
+    const x = typeof item.x === "string" ? item.x : "";
+    const y = Number(item.y);
+    const direction = item.direction === "bearish" ? "bearish" : "bullish";
+    const label = typeof item.label === "string" ? item.label : "";
+
+    if (!x || !Number.isFinite(y) || !label) {
+      return null;
+    }
+
+    return {
+      x,
+      y,
+      direction,
+      label
+    };
+  });
+
+  return mapped.filter((item): item is StrategyChartMarker => item !== null);
+};
 
 const buildWelcomeMessage = (): AssistantMessage => ({
   id: "welcome",
@@ -776,6 +865,8 @@ export default function AssistantPanel(props: AssistantPanelProps) {
     const family = resolveGraphTemplate(chart.template).family;
     const sampleRow = chart.data[0] ?? {};
     const hasKey = (key: string) => Object.prototype.hasOwnProperty.call(sampleRow, key);
+    const fvgZones = parseStrategyChartZones(chart.config);
+    const entryMarkers = parseStrategyChartMarkers(chart.config);
     const xKey = hasKey("x")
       ? "x"
       : hasKey("month")
@@ -894,9 +985,48 @@ export default function AssistantPanel(props: AssistantPanelProps) {
                 color: "#d4dae5"
               }}
             />
+            {fvgZones.map((zone, index) => (
+              <ReferenceArea
+                key={`${chart.id}-zone-${index}`}
+                x1={zone.xStart}
+                x2={zone.xEnd}
+                y1={zone.yStart}
+                y2={zone.yEnd}
+                ifOverflow="extendDomain"
+                fill={
+                  zone.direction === "bullish"
+                    ? "rgba(19, 201, 143, 0.18)"
+                    : "rgba(240, 69, 90, 0.18)"
+                }
+                stroke={
+                  zone.direction === "bullish"
+                    ? "rgba(19, 201, 143, 0.78)"
+                    : "rgba(240, 69, 90, 0.78)"
+                }
+                strokeOpacity={0.9}
+              />
+            ))}
             <Area type="monotone" dataKey="high" stroke="rgba(45,108,255,0.25)" fill="rgba(45,108,255,0.12)" />
             <Area type="monotone" dataKey="low" stroke="rgba(240,69,90,0.25)" fill="rgba(240,69,90,0.10)" />
             <Line type="monotone" dataKey="close" stroke="#13c98f" strokeWidth={2} dot={false} />
+            {entryMarkers.map((marker, index) => (
+              <ReferenceDot
+                key={`${chart.id}-marker-${index}`}
+                x={marker.x}
+                y={marker.y}
+                r={5}
+                ifOverflow="extendDomain"
+                fill={marker.direction === "bullish" ? "#13c98f" : "#f0455a"}
+                stroke="#09111a"
+                strokeWidth={1.5}
+                label={{
+                  value: `${marker.direction === "bullish" ? "↑" : "↓"} ${marker.label}`,
+                  position: marker.direction === "bullish" ? "top" : "bottom",
+                  fill: "#dbe7f9",
+                  fontSize: 10
+                }}
+              />
+            ))}
           </ComposedChart>
         </ResponsiveContainer>
       );
@@ -983,6 +1113,48 @@ export default function AssistantPanel(props: AssistantPanelProps) {
     );
   };
 
+  const renderStrategyBacktestSummary = (draft: AssistantStrategyDraft) => {
+    const summary = draft.backtestSummary;
+    if (!summary) {
+      return null;
+    }
+
+    const testedWindow =
+      summary.testedFrom && summary.testedTo
+        ? `${summary.testedFrom} -> ${summary.testedTo}`
+        : "Local replay window";
+
+    return (
+      <section className="ai-strategy-stats" aria-label="strategy replay summary">
+        <div className="ai-strategy-stat">
+          <span className="ai-strategy-stat-label">Trades</span>
+          <strong className="ai-strategy-stat-value">{summary.tradeCount}</strong>
+        </div>
+        <div className="ai-strategy-stat">
+          <span className="ai-strategy-stat-label">Win Rate</span>
+          <strong className="ai-strategy-stat-value">{summary.winRatePct.toFixed(1)}%</strong>
+        </div>
+        <div className="ai-strategy-stat">
+          <span className="ai-strategy-stat-label">Profit Factor</span>
+          <strong className="ai-strategy-stat-value">
+            {summary.profitFactor == null ? "N/A" : summary.profitFactor.toFixed(2)}
+          </strong>
+        </div>
+        <div className="ai-strategy-stat">
+          <span className="ai-strategy-stat-label">Net PnL</span>
+          <strong className="ai-strategy-stat-value">
+            {summary.totalPnlUsd >= 0 ? "+$" : "-$"}
+            {Math.abs(summary.totalPnlUsd).toFixed(2)}
+          </strong>
+        </div>
+        <div className="ai-strategy-stat wide">
+          <span className="ai-strategy-stat-label">Tested Window</span>
+          <strong className="ai-strategy-stat-value">{testedWindow}</strong>
+        </div>
+      </section>
+    );
+  };
+
   return (
     <div className="ai-tab-shell">
       <div className="watchlist-head ai-head">
@@ -1051,6 +1223,8 @@ export default function AssistantPanel(props: AssistantPanelProps) {
                 </div>
 
                 <p className="ai-strategy-summary">{boldText(message.strategyDraft.summary)}</p>
+
+                {renderStrategyBacktestSummary(message.strategyDraft)}
 
                 <div className="ai-strategy-actions">
                   {message.chartActions && message.chartActions.length > 0 ? (

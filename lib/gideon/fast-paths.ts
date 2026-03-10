@@ -99,21 +99,21 @@ const normalizeSocialText = (value: string): string => {
 const buildDeterministicSocialReply = (prompt: string): string => {
   const normalized = normalizeSocialText(prompt);
   if (!normalized) {
-    return "What do you want to check in the market?";
+    return "What do you want to check?";
   }
   if (/\b(good morning|gm)\b/.test(normalized)) {
-    return "Ready when you are, what do you want to check in the market?";
+    return "What do you want to check?";
   }
   if (/\bgood afternoon\b/.test(normalized)) {
-    return "Ready when you are, what do you want to check in the market?";
+    return "What do you want to check?";
   }
   if (/\b(good evening|gn)\b/.test(normalized)) {
-    return "Ready when you are, what do you want to check in the market?";
+    return "What do you want to check?";
   }
   if (/\b(how are you|what s up|whats up|sup|yo)\b/.test(normalized)) {
-    return "Ready when you are, what do you want to check in the market?";
+    return "What do you want to check?";
   }
-  return "What do you want to check in the market?";
+  return "What do you want to check?";
 };
 
 const formatPrice = (value: number): string => {

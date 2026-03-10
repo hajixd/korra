@@ -3,6 +3,7 @@ import meanReversionModel from "../data/models/mean-reversion.json";
 import seasonsModel from "../data/models/seasons.json";
 import timeOfDayModel from "../data/models/time-of-day.json";
 import fibonacciModel from "../data/models/fibonacci.json";
+import fairValueGapModel from "../data/models/fair-value-gap.json";
 import supportResistanceModel from "../data/models/support-resistance.json";
 
 export type StrategyModelKind =
@@ -11,6 +12,7 @@ export type StrategyModelKind =
   | "seasons"
   | "timeOfDay"
   | "fibonacci"
+  | "fairValueGap"
   | "supportResistance";
 
 export type StrategyEntrySpec = {
@@ -105,6 +107,7 @@ const MODEL_SOURCES = [
   seasonsModel,
   timeOfDayModel,
   fibonacciModel,
+  fairValueGapModel,
   supportResistanceModel
 ] as const;
 
@@ -114,6 +117,7 @@ const MODEL_KIND_BY_ID: Record<string, StrategyModelKind> = {
   seasons: "seasons",
   "time-of-day": "timeOfDay",
   fibonacci: "fibonacci",
+  "fair-value-gap": "fairValueGap",
   "support-resistance": "supportResistance"
 };
 
@@ -161,6 +165,14 @@ const MODEL_RUNTIME_DEFAULTS: Record<
     longBias: 0.53,
     winRate: 0.56
   },
+  fairValueGap: {
+    riskMin: 0.0011,
+    riskMax: 0.0038,
+    rrMin: 1.6,
+    rrMax: 3.2,
+    longBias: 0.52,
+    winRate: 0.57
+  },
   supportResistance: {
     riskMin: 0.0013,
     riskMax: 0.0042,
@@ -197,6 +209,7 @@ const MODEL_CLARIFYING_QUESTIONS: Record<StrategyModelKind, string[]> = {
     "What level or confluence do you need before entry is valid?",
     "What price action tells you the pullback has failed and the trade is over?"
   ],
+  fairValueGap: [],
   supportResistance: [
     "Which level type matters here: daily, weekly, session, or intraday structure?",
     "Are you trading the rejection, the reclaim, or the breakout hold?",
@@ -248,6 +261,14 @@ export const STRATEGY_BACKTEST_FEATURE_GUIDE: readonly StrategyBacktestFeatureGu
   {
     feature: "sufficientRange",
     description: "Recent chunk range is large enough to avoid compressed conditions."
+  },
+  {
+    feature: "bullishFvgRetest",
+    description: "A recent bullish fair value gap was revisited and held above its midpoint."
+  },
+  {
+    feature: "bearishFvgRetest",
+    description: "A recent bearish fair value gap was revisited and held below its midpoint."
   }
 ] as const;
 

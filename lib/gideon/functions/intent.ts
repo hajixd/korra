@@ -24,7 +24,7 @@ const STRATEGY_RULE_RE =
 const CODE_RE =
   /\b(code|script|pine|mql|mt5|metatrader|python|typescript|javascript|implement|patch|refactor)\b/i;
 const INTERNET_RE =
-  /\b(news|headline|headlines|macro|calendar|event|cpi|nfp|fomc|fed|geopolitical|breaking|latest|today|web|internet)\b/i;
+  /\b(news|headline|headlines|macro|calendar|event|cpi|nfp|fomc|fed|geopolitical|breaking|today|web|internet)\b/i;
 const XAU_RE = /\b(xauusd|xau\/usd|xau_usd|spot gold|gold)\b/i;
 const INDICATOR_RE =
   /\b(indicator|rsi|macd|ema|sma|atr|stoch|stochastic|moving average|volatility)\b/i;

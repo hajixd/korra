@@ -26,8 +26,11 @@ import {
   buildStrategyCatalogPromptContext,
   parseStrategyModelCatalogEntry,
   resolveStrategyModelCatalogEntry,
+  resolveStrategyRuntimeModelProfile,
   type StrategyModelCatalogEntry
 } from "../../../../lib/strategyCatalog";
+import { buildStrategyReplayTradeBlueprints } from "../../../../lib/strategyModelBacktest";
+import { computeBacktestHistoryRowsChunk } from "../../../backtestHistoryShared";
 
 type ChatTurn = {
   role: "user" | "assistant";
@@ -205,7 +208,7 @@ type AssistantChart = {
   subtitle?: string;
   mode?: "static" | "dynamic";
   data: Array<Record<string, string | number>>;
-  config?: Record<string, string | number | boolean>;
+  config?: Record<string, unknown>;
 };
 
 type ChartCodingOutput = {
@@ -217,6 +220,15 @@ type ChartCodingOutput = {
   }>;
   chartActions?: Array<Record<string, unknown>>;
   chartAnimations?: Array<Record<string, unknown>>;
+};
+
+type StrategyBacktestSummary = {
+  tradeCount: number;
+  winRatePct: number;
+  profitFactor: number | null;
+  totalPnlUsd: number;
+  testedFrom: string | null;
+  testedTo: string | null;
 };
 
 type StrategyDraft = {
@@ -232,6 +244,7 @@ type StrategyDraft = {
   missingDetails: string[];
   clarifyingQuestions: string[];
   draftJson: Record<string, unknown>;
+  backtestSummary?: StrategyBacktestSummary | null;
 };
 
 type StrategyThreadState = {
@@ -367,7 +380,7 @@ const INDICATOR_REQUEST_RE =
   /\b(rsi|overbought|oversold|over bought|over sold|macd|stoch|stochastic|ema|sma|moving average|atr|indicator)\b/i;
 const SOCIAL_GREETING_RE =
   /^(hi|hello|hey|yo|sup|what'?s up|how are you|gm|gn|good morning|good afternoon|good evening)[!.?\s]*$/i;
-const STRATEGY_CONTEXT_RE = /\b(strategy|playbook|trading system|system)\b/i;
+const STRATEGY_CONTEXT_RE = /\b(strategy|playbook|trading system|system|model)\b/i;
 const STRATEGY_BUILD_RE =
   /\b(build|create|make|design|draft|write|organize|refine|turn|convert|describe|structure)\b/i;
 const STRATEGY_SELF_DESCRIPTION_RE =
@@ -377,7 +390,7 @@ const STRATEGY_RULE_RE =
 const TRADING_REQUEST_RE =
   /\b(trade|trading|chart|graph|draw|support|resistance|trend|line|box|fvg|arrow|ruler|candle|candlestick|price|xau|xauusd|gold|rsi|macd|ema|sma|atr|indicator|backtest|history|pnl|risk|entry|stop|target|buy|sell|volume|volatility)\b/i;
 const INTERNET_CONTEXT_RE =
-  /\b(news|headline|headlines|macro|calendar|event|cpi|nfp|fomc|fed|interest rate|yield|dxy|geopolitical|war|sanction|breaking|latest|today|internet|web)\b/i;
+  /\b(news|headline|headlines|macro|calendar|event|cpi|nfp|fomc|fed|interest rate|yield|dxy|geopolitical|war|sanction|breaking|today|internet|web)\b/i;
 const BROAD_NEWS_QUESTION_RE =
   /\b(what(?:'s| is)\s+going\s+on|what\s+happened|current\s+events|latest\s+updates?|news\s+on|update\s+on|situation\s+in|what\s+is\s+happening)\b/i;
 const GLOBAL_EVENT_ENTITY_RE =
@@ -1859,6 +1872,13 @@ const shouldHeuristicallyFetchInternetContext = (params: {
   const { prompt, socialOnlyRequest } = params;
   const text = toText(prompt, "");
   if (!text || socialOnlyRequest) {
+    return false;
+  }
+
+  const looksLikeCurrentMarketQuestion =
+    (CURRENT_PRICE_RE.test(text) || INDICATOR_REQUEST_RE.test(text)) &&
+    (CURRENT_MARKET_RE.test(text) || XAUUSD_REQUEST_RE.test(text));
+  if (looksLikeCurrentMarketQuestion && !INTERNET_CONTEXT_RE.test(text) && !BROAD_NEWS_QUESTION_RE.test(text)) {
     return false;
   }
 
@@ -3538,21 +3558,21 @@ const normalizeSocialText = (value: string): string => {
 const buildDeterministicSocialReply = (prompt: string): string => {
   const normalized = normalizeSocialText(prompt);
   if (!normalized) {
-    return "What do you want to check in the market?";
+    return "What do you want to check?";
   }
   if (/\b(good morning|gm)\b/.test(normalized)) {
-    return "Ready when you are, what do you want to check in the market?";
+    return "What do you want to check?";
   }
   if (/\bgood afternoon\b/.test(normalized)) {
-    return "Ready when you are, what do you want to check in the market?";
+    return "What do you want to check?";
   }
   if (/\b(good evening|gn)\b/.test(normalized)) {
-    return "Ready when you are, what do you want to check in the market?";
+    return "What do you want to check?";
   }
   if (/\b(how are you|what s up|whats up|sup|yo)\b/.test(normalized)) {
-    return "Ready when you are, what do you want to check in the market?";
+    return "What do you want to check?";
   }
-  return "What do you want to check in the market?";
+  return "What do you want to check?";
 };
 
 const isWeakSocialReply = (reply: string, prompt: string): boolean => {
@@ -4370,6 +4390,11 @@ const resolveHeuristicStrategyMatch = (prompt: string) => {
 
   const text = prompt.toLowerCase();
 
+  if (/(fair value gap|\bfvg\b|imbalance|ict)/.test(text)) {
+    const model = resolveStrategyModelCatalogEntry("fair value gap");
+    return model ? { model } : null;
+  }
+
   if (/(mean reversion|reversion|fade|overextended|stretch|vwap)/.test(text)) {
     const model = resolveStrategyModelCatalogEntry("mean reversion");
     return model ? { model } : null;
@@ -4402,6 +4427,26 @@ const resolveHeuristicStrategyMatch = (prompt: string) => {
 
   const fallbackModel = STRATEGY_MODEL_CATALOG[0] ?? null;
   return fallbackModel ? { model: fallbackModel } : null;
+};
+
+const finalizeStrategyDraftForPreview = (
+  draft: StrategyDraft | null,
+  prompt: string
+): StrategyDraft | null => {
+  if (!draft) {
+    return null;
+  }
+
+  if (draft.matchedModelId === "fair-value-gap" && /\b(fair value gap|\bfvg\b|imbalance)\b/i.test(prompt)) {
+    return {
+      ...draft,
+      status: "ready",
+      missingDetails: [],
+      clarifyingQuestions: []
+    };
+  }
+
+  return draft;
 };
 
 const buildFallbackStrategyDraft = (
@@ -4485,6 +4530,15 @@ const executeStrategyDraftStage = async (params: {
     : latestPrompt;
   const fallback = buildFallbackStrategyDraft(latestPrompt, previousDraft);
   const matched = resolveHeuristicStrategyMatch(matchPrompt);
+  const canUseDeterministicFallback =
+    Boolean(fallback) &&
+    (Boolean(previousDraft) ||
+      /\b(model|strategy|playbook|system)\b/i.test(latestPrompt) ||
+      countStrategyRuleTerms(latestPrompt) >= 1);
+
+  if (canUseDeterministicFallback) {
+    return finalizeStrategyDraftForPreview(fallback, latestPrompt);
+  }
 
   try {
     const completion = await nebiusChatCompletion({
@@ -4531,10 +4585,15 @@ const executeStrategyDraftStage = async (params: {
       safeJsonParse<Record<string, unknown>>(extractNebiusMessageText(completion.message.content), {}),
       previousDraft
     );
+    const resolvedDraft =
+      /\b(fair value gap|\bfvg\b|imbalance)\b/i.test(latestPrompt) &&
+      parsed?.matchedModelId !== "fair-value-gap"
+        ? fallback
+        : (parsed ?? fallback);
 
-    return parsed ?? fallback;
+    return finalizeStrategyDraftForPreview(resolvedDraft, latestPrompt);
   } catch {
-    return fallback;
+    return finalizeStrategyDraftForPreview(fallback, latestPrompt);
   }
 };
 
@@ -4620,6 +4679,507 @@ const buildFallbackStrategyPreviewActions = (
   return normalizeChartActions(actions);
 };
 
+type FairValueGapExample = {
+  id: string;
+  direction: "bullish" | "bearish";
+  formationIndex: number;
+  entryIndex: number;
+  gapLow: number;
+  gapHigh: number;
+  midpoint: number;
+};
+
+const averageRecentCandleRange = (
+  candles: CandleRow[],
+  index: number,
+  lookback = 8
+): number => {
+  const start = Math.max(0, index - lookback + 1);
+  let total = 0;
+  let count = 0;
+
+  for (let cursor = start; cursor <= index; cursor += 1) {
+    const candle = candles[cursor];
+    if (!candle) {
+      continue;
+    }
+    total += Math.max(0, candle.high - candle.low);
+    count += 1;
+  }
+
+  return count > 0 ? total / count : 0;
+};
+
+const detectFairValueGapZoneAtIndex = (
+  candles: CandleRow[],
+  index: number
+): Pick<FairValueGapExample, "direction" | "gapLow" | "gapHigh" | "midpoint"> | null => {
+  if (index < 2 || index >= candles.length) {
+    return null;
+  }
+
+  const left = candles[index - 2];
+  const middle = candles[index - 1];
+  const right = candles[index];
+  if (!left || !middle || !right) {
+    return null;
+  }
+
+  const averageRange = Math.max(averageRecentCandleRange(candles, index), 0.000001);
+
+  if (left.high < right.low && middle.close >= middle.open) {
+    const gapLow = Number(left.high.toFixed(4));
+    const gapHigh = Number(right.low.toFixed(4));
+    if (gapHigh - gapLow >= averageRange * 0.08) {
+      return {
+        direction: "bullish",
+        gapLow,
+        gapHigh,
+        midpoint: Number(((gapLow + gapHigh) / 2).toFixed(4))
+      };
+    }
+  }
+
+  if (left.low > right.high && middle.close <= middle.open) {
+    const gapLow = Number(right.high.toFixed(4));
+    const gapHigh = Number(left.low.toFixed(4));
+    if (gapHigh - gapLow >= averageRange * 0.08) {
+      return {
+        direction: "bearish",
+        gapLow,
+        gapHigh,
+        midpoint: Number(((gapLow + gapHigh) / 2).toFixed(4))
+      };
+    }
+  }
+
+  return null;
+};
+
+const findFairValueGapExamples = (
+  candles: CandleRow[],
+  limit = 4
+): FairValueGapExample[] => {
+  if (candles.length < 24) {
+    return [];
+  }
+
+  const candidates: FairValueGapExample[] = [];
+
+  for (let formationIndex = 2; formationIndex < candles.length - 1; formationIndex += 1) {
+    const zone = detectFairValueGapZoneAtIndex(candles, formationIndex);
+    if (!zone) {
+      continue;
+    }
+
+    const lookaheadEnd = Math.min(candles.length - 1, formationIndex + 24);
+
+    for (let entryIndex = formationIndex + 1; entryIndex <= lookaheadEnd; entryIndex += 1) {
+      const candle = candles[entryIndex];
+      if (!candle) {
+        continue;
+      }
+
+      const gapPad = Math.max(0.000001, (zone.gapHigh - zone.gapLow) * 0.08);
+      const touched =
+        candle.low <= zone.gapHigh + gapPad && candle.high >= zone.gapLow - gapPad;
+      if (!touched) {
+        continue;
+      }
+
+      const respected =
+        zone.direction === "bullish"
+          ? candle.close >= zone.midpoint
+          : candle.close <= zone.midpoint;
+
+      if (!respected) {
+        continue;
+      }
+
+      candidates.push({
+        id: `${zone.direction}-${candles[formationIndex]?.time ?? formationIndex}`,
+        direction: zone.direction,
+        formationIndex,
+        entryIndex,
+        gapLow: zone.gapLow,
+        gapHigh: zone.gapHigh,
+        midpoint: zone.midpoint
+      });
+      break;
+    }
+  }
+
+  const selected: FairValueGapExample[] = [];
+  const recentFirst = [...candidates].sort((left, right) => right.entryIndex - left.entryIndex);
+
+  for (const candidate of recentFirst) {
+    const overlaps = selected.some((item) => {
+      return Math.abs(item.entryIndex - candidate.entryIndex) < 8;
+    });
+    if (overlaps) {
+      continue;
+    }
+
+    selected.push(candidate);
+    if (selected.length >= limit) {
+      break;
+    }
+  }
+
+  return selected.sort((left, right) => left.entryIndex - right.entryIndex);
+};
+
+const buildFairValueGapExampleCharts = (params: {
+  candles: CandleRow[];
+  examples: FairValueGapExample[];
+  timeframe: string;
+}): AssistantChart[] => {
+  return params.examples.map((example, index) => {
+    const windowStart = Math.max(0, example.formationIndex - 10);
+    const windowEnd = Math.min(params.candles.length - 1, example.entryIndex + 10);
+    const window = params.candles.slice(windowStart, windowEnd + 1);
+    const labelsByTime = new Map<number, string>();
+
+    const data = window.map((candle) => {
+      const label = formatTimeLabel(candle.time);
+      labelsByTime.set(candle.time, label);
+      return {
+        x: label,
+        time: candle.time,
+        open: Number(candle.open.toFixed(4)),
+        high: Number(candle.high.toFixed(4)),
+        low: Number(candle.low.toFixed(4)),
+        close: Number(candle.close.toFixed(4))
+      };
+    });
+
+    const formationTime = params.candles[example.formationIndex]?.time ?? 0;
+    const entryCandle = params.candles[example.entryIndex];
+    const directionLabel = example.direction === "bullish" ? "Bullish" : "Bearish";
+
+    return {
+      id: `strategy-fvg-example-${index + 1}-${example.id}`,
+      template: "price_action",
+      title: `FVG Example ${index + 1}`,
+      subtitle: `${directionLabel} retest on ${params.timeframe}`,
+      mode: "static",
+      data,
+      config: {
+        fvgZones: [
+          {
+            xStart: labelsByTime.get(formationTime) ?? data[0]?.x ?? "",
+            xEnd: labelsByTime.get(entryCandle?.time ?? 0) ?? data[data.length - 1]?.x ?? "",
+            yStart: example.gapLow,
+            yEnd: example.gapHigh,
+            direction: example.direction,
+            label: `${directionLabel} FVG`
+          }
+        ],
+        entryMarkers: entryCandle
+          ? [
+              {
+                x: labelsByTime.get(entryCandle.time) ?? data[data.length - 1]?.x ?? "",
+                y: Number(entryCandle.close.toFixed(4)),
+                direction: example.direction,
+                label: example.direction === "bullish" ? "Long entry" : "Short entry"
+              }
+            ]
+          : []
+      }
+    };
+  });
+};
+
+const summarizeStrategyReplayRows = (
+  rows: TradeRow[],
+  candles: CandleRow[]
+): StrategyBacktestSummary | null => {
+  if (rows.length === 0 && candles.length === 0) {
+    return null;
+  }
+
+  let wins = 0;
+  let grossProfitUsd = 0;
+  let grossLossUsd = 0;
+  let totalPnlUsd = 0;
+
+  for (const row of rows) {
+    totalPnlUsd += row.pnlUsd;
+    if (row.pnlUsd > 0) {
+      wins += 1;
+      grossProfitUsd += row.pnlUsd;
+    } else if (row.pnlUsd < 0) {
+      grossLossUsd += Math.abs(row.pnlUsd);
+    }
+  }
+
+  const testedFromMs =
+    rows.length > 0
+      ? Math.min(...rows.map((row) => row.entryTime))
+      : (candles[0]?.time ?? null);
+  const testedToMs =
+    rows.length > 0
+      ? Math.max(...rows.map((row) => row.exitTime))
+      : (candles[candles.length - 1]?.time ?? null);
+
+  return {
+    tradeCount: rows.length,
+    winRatePct: rows.length > 0 ? Number(((wins / rows.length) * 100).toFixed(1)) : 0,
+    profitFactor:
+      grossLossUsd > 0 ? Number((grossProfitUsd / grossLossUsd).toFixed(2)) : null,
+    totalPnlUsd: Number(totalPnlUsd.toFixed(2)),
+    testedFrom: testedFromMs ? formatTimeLabel(testedFromMs) : null,
+    testedTo: testedToMs ? formatTimeLabel(testedToMs) : null
+  };
+};
+
+const buildFairValueGapHeuristicReplayRows = (params: {
+  candles: CandleRow[];
+  examples: FairValueGapExample[];
+  symbol: string;
+}): TradeRow[] => {
+  return params.examples
+    .map((example, index) => {
+      const entryCandle = params.candles[example.entryIndex];
+      if (!entryCandle) {
+        return null;
+      }
+
+      const zoneSize = Math.max(0.0001, example.gapHigh - example.gapLow);
+      const entryPrice = Number(entryCandle.close.toFixed(4));
+      const targetPrice =
+        example.direction === "bullish"
+          ? Number((entryPrice + zoneSize * 1.8).toFixed(4))
+          : Number((entryPrice - zoneSize * 1.8).toFixed(4));
+      const stopPrice =
+        example.direction === "bullish"
+          ? Number((example.gapLow - zoneSize * 0.15).toFixed(4))
+          : Number((example.gapHigh + zoneSize * 0.15).toFixed(4));
+
+      let exitIndex = Math.min(params.candles.length - 1, example.entryIndex + 12);
+      let exitPrice = params.candles[exitIndex]?.close ?? entryPrice;
+      let result: "Win" | "Loss" = "Loss";
+
+      for (let cursor = example.entryIndex + 1; cursor <= exitIndex; cursor += 1) {
+        const candle = params.candles[cursor];
+        if (!candle) {
+          continue;
+        }
+
+        const stopHit =
+          example.direction === "bullish"
+            ? candle.low <= stopPrice
+            : candle.high >= stopPrice;
+        const targetHit =
+          example.direction === "bullish"
+            ? candle.high >= targetPrice
+            : candle.low <= targetPrice;
+
+        if (stopHit) {
+          exitIndex = cursor;
+          exitPrice = stopPrice;
+          result = "Loss";
+          break;
+        }
+
+        if (targetHit) {
+          exitIndex = cursor;
+          exitPrice = targetPrice;
+          result = "Win";
+          break;
+        }
+
+        if (cursor === exitIndex) {
+          exitPrice = candle.close;
+          result =
+            example.direction === "bullish"
+              ? candle.close >= entryPrice
+                ? "Win"
+                : "Loss"
+              : candle.close <= entryPrice
+                ? "Win"
+                : "Loss";
+        }
+      }
+
+      const pnlUsd =
+        example.direction === "bullish"
+          ? Number((exitPrice - entryPrice).toFixed(4))
+          : Number((entryPrice - exitPrice).toFixed(4));
+      const exitTime = params.candles[exitIndex]?.time ?? entryCandle.time;
+
+      return {
+        id: `strategy-fvg-replay-${index + 1}-${example.id}`,
+        symbol: params.symbol,
+        side: example.direction === "bullish" ? "Long" : "Short",
+        result,
+        entrySource: "Fair Value Gap Replay",
+        pnlPct: entryPrice !== 0 ? Number((((pnlUsd / entryPrice) * 100)).toFixed(4)) : 0,
+        pnlUsd,
+        entryTime: entryCandle.time,
+        exitTime,
+        entryPrice,
+        targetPrice,
+        stopPrice,
+        outcomePrice: Number(exitPrice.toFixed(4)),
+        units: 1,
+        entryAt: formatTimeLabel(entryCandle.time),
+        exitAt: formatTimeLabel(exitTime)
+      };
+    })
+    .filter((row): row is TradeRow => row !== null);
+};
+
+const buildStrategyReplayTimelineChart = (
+  rows: TradeRow[],
+  summary: StrategyBacktestSummary | null
+): AssistantChart | null => {
+  if (rows.length === 0 || !summary) {
+    return null;
+  }
+
+  const ordered = [...rows].sort((left, right) => left.exitTime - right.exitTime);
+  let equity = 0;
+
+  return {
+    id: "strategy-replay-equity",
+    template: "equity_curve",
+    title: "Replay Equity Timeline",
+    subtitle:
+      summary.testedFrom && summary.testedTo
+        ? `${summary.testedFrom} -> ${summary.testedTo}`
+        : "Local replay window",
+    mode: "static",
+    data: ordered.map((row) => {
+      equity += row.pnlUsd;
+      return {
+        x: formatTimeLabel(row.exitTime),
+        equity: Number(equity.toFixed(2))
+      };
+    })
+  };
+};
+
+const buildDeterministicFairValueGapPreview = (params: {
+  context: AssistantContext;
+  strategyDraft: StrategyDraft;
+}): {
+  chartActions: ReturnType<typeof normalizeChartActions>;
+  chartAnimations: ReturnType<typeof normalizeChartAnimationsFromCoding>;
+  charts: AssistantChart[];
+  backtestSummary: StrategyBacktestSummary | null;
+} => {
+  const candles = params.context.liveCandles;
+  const replayExamples = findFairValueGapExamples(candles, 28);
+  const examples = replayExamples.slice(-4);
+  const charts = buildFairValueGapExampleCharts({
+    candles,
+    examples,
+    timeframe: params.context.timeframe
+  });
+
+  const latestExample = examples[examples.length - 1] ?? null;
+  const actions: Array<Record<string, unknown>> = [{ type: "clear_annotations" }];
+
+  if (latestExample) {
+    actions.push({
+      type: "move_to_date",
+      time: candles[latestExample.entryIndex]?.time ?? candles[candles.length - 1]?.time ?? 0
+    });
+  }
+
+  examples.forEach((example, index) => {
+    const entryCandle = candles[example.entryIndex];
+    const formationCandle = candles[example.formationIndex];
+
+    if (!entryCandle || !formationCandle) {
+      return;
+    }
+
+    actions.push({
+      type: "draw_fvg",
+      timeStart: formationCandle.time,
+      timeEnd: entryCandle.time,
+      priceStart: example.gapLow,
+      priceEnd: example.gapHigh,
+      label: `FVG ${index + 1}`
+    });
+    actions.push({
+      type: "draw_arrow",
+      time: entryCandle.time,
+      price: Number(entryCandle.close.toFixed(4)),
+      markerShape: example.direction === "bullish" ? "arrowUp" : "arrowDown",
+      label: `Entry ${index + 1}`
+    });
+  });
+
+  const runtimeProfile =
+    resolveStrategyRuntimeModelProfile(params.strategyDraft.matchedModelId) ??
+    resolveStrategyRuntimeModelProfile(params.strategyDraft.matchedModelName);
+  const replayRows = runtimeProfile
+    ? (computeBacktestHistoryRowsChunk({
+        blueprints: buildStrategyReplayTradeBlueprints({
+          candles,
+          models: [
+            {
+              id: runtimeProfile.id,
+              name: runtimeProfile.name,
+              riskMin: runtimeProfile.riskMin,
+              riskMax: runtimeProfile.riskMax,
+              rrMin: runtimeProfile.rrMin,
+              rrMax: runtimeProfile.rrMax,
+              longBias: runtimeProfile.longBias,
+              state: 2
+            }
+          ],
+          symbol: params.context.symbol,
+          unitsPerMove: Math.max(1, Math.abs(params.context.activeTrade?.units ?? 1)),
+          chunkBars: 24,
+          tpDollars: 0,
+          slDollars: 0,
+          stopMode: 0,
+          breakEvenTriggerPct: 50,
+          trailingStartPct: 50,
+          trailingDistPct: 30,
+          maxBarsInTrade: 28
+        }),
+        candleSeriesBySymbol: {
+          [params.context.symbol]: candles
+        },
+        minutePreciseEnabled: false,
+        modelNamesById: {
+          [runtimeProfile.id]: runtimeProfile.name
+        },
+        tpDollars: 0,
+        slDollars: 0,
+        stopMode: 0,
+        breakEvenTriggerPct: 50,
+        trailingStartPct: 50,
+        trailingDistPct: 30
+      }) as TradeRow[])
+    : [];
+  const effectiveReplayRows =
+    replayRows.length > 0
+      ? replayRows
+      : buildFairValueGapHeuristicReplayRows({
+          candles,
+          examples: replayExamples,
+          symbol: params.context.symbol
+        });
+  const backtestSummary = summarizeStrategyReplayRows(effectiveReplayRows, candles);
+  const replayTimelineChart = buildStrategyReplayTimelineChart(effectiveReplayRows, backtestSummary);
+
+  return {
+    chartActions:
+      actions.length > 1
+        ? normalizeChartActions(actions)
+        : buildFallbackStrategyPreviewActions(params.strategyDraft, params.context),
+    chartAnimations: normalizeChartAnimationsFromCoding({}),
+    charts: replayTimelineChart ? [...charts, replayTimelineChart] : charts,
+    backtestSummary
+  };
+};
+
 const executeStrategyPreviewStage = async (params: {
   apiKey: string;
   baseUrl: string;
@@ -4630,12 +5190,23 @@ const executeStrategyPreviewStage = async (params: {
 }): Promise<{
   chartActions: ReturnType<typeof normalizeChartActions>;
   chartAnimations: ReturnType<typeof normalizeChartAnimationsFromCoding>;
+  charts: AssistantChart[];
+  backtestSummary: StrategyBacktestSummary | null;
 }> => {
   if (params.context.liveCandles.length < 20) {
     return {
       chartActions: normalizeChartActions([]),
-      chartAnimations: normalizeChartAnimationsFromCoding({})
+      chartAnimations: normalizeChartAnimationsFromCoding({}),
+      charts: [],
+      backtestSummary: null
     };
+  }
+
+  if (params.strategyDraft.matchedModelId === "fair-value-gap") {
+    return buildDeterministicFairValueGapPreview({
+      context: params.context,
+      strategyDraft: params.strategyDraft
+    });
   }
 
   const recentWindow = params.context.liveCandles.slice(-140);
@@ -4692,12 +5263,16 @@ const executeStrategyPreviewStage = async (params: {
         chartActions.length > 0
           ? chartActions
           : buildFallbackStrategyPreviewActions(params.strategyDraft, params.context),
-      chartAnimations: normalizeChartAnimationsFromCoding(parsed)
+      chartAnimations: normalizeChartAnimationsFromCoding(parsed),
+      charts: [],
+      backtestSummary: null
     };
   } catch {
     return {
       chartActions: buildFallbackStrategyPreviewActions(params.strategyDraft, params.context),
-      chartAnimations: normalizeChartAnimationsFromCoding({})
+      chartAnimations: normalizeChartAnimationsFromCoding({}),
+      charts: [],
+      backtestSummary: null
     };
   }
 };

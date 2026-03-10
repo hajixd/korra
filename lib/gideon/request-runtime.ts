@@ -190,7 +190,16 @@ type AssistantChart = {
   subtitle?: string;
   mode?: "static" | "dynamic";
   data: Array<Record<string, string | number>>;
-  config?: Record<string, string | number | boolean>;
+  config?: Record<string, unknown>;
+};
+
+type StrategyBacktestSummary = {
+  tradeCount: number;
+  winRatePct: number;
+  profitFactor: number | null;
+  totalPnlUsd: number;
+  testedFrom: string | null;
+  testedTo: string | null;
 };
 
 type StrategyDraft = {
@@ -206,6 +215,7 @@ type StrategyDraft = {
   missingDetails: string[];
   clarifyingQuestions: string[];
   draftJson: Record<string, unknown>;
+  backtestSummary?: StrategyBacktestSummary | null;
 };
 
 type StrategyThreadState = {
@@ -554,6 +564,8 @@ type RuntimeDeps = {
   executeStrategyPreviewStage: (params: StrategyPreviewStageParams) => Promise<{
     chartActions: NormalizedChartActions;
     chartAnimations: NormalizedChartAnimations;
+    charts: AssistantChart[];
+    backtestSummary: StrategyBacktestSummary | null;
   }>;
   pickFirstNonEmptyTextList: (...lists: Array<readonly string[]>) => string[];
   buildRuntimeClock: (params: {
@@ -831,8 +843,11 @@ export const runGideonRequestRuntime = async (params: {
     execution: gideonPlan,
     prompt: lastUserPrompt
   });
+  const strategyLikePrompt =
+    /\b(model|strategy|playbook|system)\b/i.test(lastUserPrompt) &&
+    /\b(build|create|make|turn|convert|draft|design|refine|organize|show)\b/i.test(lastUserPrompt);
 
-  if (gideonFastPath) {
+  if (gideonFastPath && !strategyLikePrompt) {
     const socialFastPath = gideonPlan.intent.requestKind === "social";
     const toolsUsed = new Set<string>(gideonFastPath.toolIds);
     const requestChecklistPlan = deps.buildRequestChecklistPlan({
@@ -1218,15 +1233,20 @@ export const runGideonRequestRuntime = async (params: {
           context,
           strategyThreadState
         });
-        const previewCharts = capabilityRoute.includeStrategyPanelCharts
-          ? buildStrategyPreviewChartsTool({
-              runtime: routeGideonRuntime,
-              matchedModelId: strategyDraft.matchedModelId,
-              matchedModelName: strategyDraft.matchedModelName
-            })
-          : [];
+        const previewCharts =
+          preview.charts.length > 0
+            ? preview.charts
+            : capabilityRoute.includeStrategyPanelCharts
+              ? buildStrategyPreviewChartsTool({
+                  runtime: routeGideonRuntime,
+                  matchedModelId: strategyDraft.matchedModelId,
+                  matchedModelName: strategyDraft.matchedModelName
+                })
+              : [];
         const hasPreview =
-          preview.chartActions.length > 0 || preview.chartAnimations.length > 0;
+          preview.chartActions.length > 0 ||
+          preview.chartAnimations.length > 0 ||
+          previewCharts.length > 0;
         if (hasPreview) {
           toolsUsed.add("strategy_preview");
         }
@@ -1239,29 +1259,85 @@ export const runGideonRequestRuntime = async (params: {
         if (preview.chartAnimations.length > 0) {
           toolsUsed.add("chart_animation");
         }
+        if (preview.backtestSummary) {
+          toolsUsed.add("strategy_backtest");
+        }
+        const strategyDraftWithPreview =
+          preview.backtestSummary != null
+            ? {
+                ...strategyDraft,
+                backtestSummary: preview.backtestSummary
+              }
+            : strategyDraft;
         const outstandingQuestions = deps.pickFirstNonEmptyTextList(
           strategyDraft.clarifyingQuestions,
           strategyDraft.missingDetails
         );
+        const replaySummary = preview.backtestSummary;
+        const replayStatsSnippet =
+          replaySummary && replaySummary.tradeCount > 0
+            ? `${replaySummary.tradeCount} trades, ${replaySummary.winRatePct}% win rate, profit factor ${replaySummary.profitFactor ?? "n/a"}`
+            : null;
+        const replayWindowSnippet =
+          replaySummary?.testedFrom && replaySummary?.testedTo
+            ? `${replaySummary.testedFrom} to ${replaySummary.testedTo}`
+            : null;
+        const fvgExampleCount = previewCharts.filter((chart) =>
+          chart.id.startsWith("strategy-fvg-example-")
+        ).length;
+        const latestStrategyPrompt =
+          turns.length > 0 && turns[turns.length - 1]?.role === "user"
+            ? turns[turns.length - 1]?.content ?? ""
+            : "";
+        const strategyPromptCue = latestStrategyPrompt
+          .replace(
+            /^(turn this into a model:?|convert this to a model:?|convert this into a model:?|create a model:?|make a model:?|create a strategy:?|make a strategy:?|build a strategy:?)/i,
+            ""
+          )
+          .trim()
+          .replace(/\.$/, "");
+        const strategyPromptLead =
+          strategyPromptCue.length > 0
+            ? ` for ${strategyPromptCue.slice(0, 140)}${strategyPromptCue.length > 140 ? "..." : ""}`
+            : "";
         const shortAnswer = deps.sanitizeDeliveryText(
-          strategyDraft.status === "clarify"
-            ? hasPreview
-              ? outstandingQuestions.length > 0
-                ? `I mapped that into a ${strategyDraft.matchedModelName} draft and sketched it on the chart. Like this? I still need: ${outstandingQuestions
-                    .slice(0, 2)
-                    .join("; ")}.`
-                : `I mapped that into a ${strategyDraft.matchedModelName} draft and sketched it on the chart. Like this?`
-              : outstandingQuestions.length > 0
-                ? `I mapped that into a ${strategyDraft.matchedModelName} draft. I still need: ${outstandingQuestions
-                    .slice(0, 2)
-                    .join("; ")}.`
-                : `I mapped that into a ${strategyDraft.matchedModelName} draft.`
-            : hasPreview
-              ? `I turned that into a ${strategyDraft.matchedModelName} model JSON and sketched it on the chart. Like this? You can add it to Models or download the JSON below.`
-              : `I turned that into a ${strategyDraft.matchedModelName} model JSON. You can add it to Models or download the JSON below.`
+          strategyDraft.matchedModelId === "fair-value-gap"
+            ? replayStatsSnippet && replayWindowSnippet
+              ? `I built the Fair Value Gap draft, drew ${fvgExampleCount >= 4 ? "four" : "the clearest recent"} FVG examples in chat, and ran a local replay over ${replayWindowSnippet}: ${replayStatsSnippet}. You can add the draft to Models or download the JSON below. Tell me how you want to adjust the entry, stop, target, or filters.`
+              : `I built the Fair Value Gap draft and drew the clearest recent FVG examples in chat with entry markers. You can add the draft to Models or download the JSON below. Tell me how you want to adjust the entry, stop, target, or filters.`
+            : strategyDraft.status === "clarify"
+              ? hasPreview
+                ? outstandingQuestions.length > 0
+                  ? `I mapped that into a ${strategyDraft.matchedModelName} draft${strategyPromptLead} and sketched it on the chart. Like this? I still need: ${outstandingQuestions
+                      .slice(0, 2)
+                      .join("; ")}.`
+                  : `I mapped that into a ${strategyDraft.matchedModelName} draft${strategyPromptLead} and sketched it on the chart. Like this?`
+                : outstandingQuestions.length > 0
+                  ? `I mapped that into a ${strategyDraft.matchedModelName} draft${strategyPromptLead}. I still need: ${outstandingQuestions
+                      .slice(0, 2)
+                      .join("; ")}.`
+                  : `I mapped that into a ${strategyDraft.matchedModelName} draft${strategyPromptLead}.`
+              : hasPreview
+                ? `I turned that into a ${strategyDraft.matchedModelName} model JSON${strategyPromptLead} and sketched it on the chart. Like this? You can add it to Models or download the JSON below.`
+                : `I turned that into a ${strategyDraft.matchedModelName} model JSON${strategyPromptLead}. You can add it to Models or download the JSON below.`
         );
         const bullets =
-          strategyDraft.status === "clarify" && outstandingQuestions.length > 0
+          strategyDraft.matchedModelId === "fair-value-gap" && replaySummary
+            ? [
+                {
+                  tone: "green" as const,
+                  text: `Replay: ${replaySummary.tradeCount} trades, ${replaySummary.winRatePct}% win rate, profit factor ${replaySummary.profitFactor ?? "n/a"}`
+                },
+                ...(replaySummary.testedFrom && replaySummary.testedTo
+                  ? [
+                      {
+                        tone: "gold" as const,
+                        text: `Tested window: ${replaySummary.testedFrom} to ${replaySummary.testedTo}`
+                      }
+                    ]
+                  : [])
+              ]
+            : strategyDraft.status === "clarify" && outstandingQuestions.length > 0
             ? [
                 {
                   tone: "gold" as const,
@@ -1291,7 +1367,7 @@ export const runGideonRequestRuntime = async (params: {
             chartAnimations: preview.chartAnimations,
             requestChecklist,
             toolsUsed: Array.from(toolsUsed).map(deps.normalizeToolLabel),
-            strategyDraft
+            strategyDraft: strategyDraftWithPreview
           },
           modelTrace: null,
           dataTrace: {

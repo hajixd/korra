@@ -48,6 +48,8 @@ type FeatureSeries = {
   recentDown: boolean[];
   normDown: boolean[];
   normUp: boolean[];
+  bullishFvgRetest: boolean[];
+  bearishFvgRetest: boolean[];
   seasonBucket: Array<string | null>;
   timeBucket: Array<string | null>;
 };
@@ -61,6 +63,8 @@ type FeatureSnapshot = {
   recentDown: boolean;
   normDown: boolean;
   normUp: boolean;
+  bullishFvgRetest: boolean;
+  bearishFvgRetest: boolean;
   seasonBucket: string | null;
   prevSeasonBucket: string | null;
   timeBucket: string | null;
@@ -226,6 +230,112 @@ const bearishBreakOfStructure = (candles: CandleLike[], index: number, length: n
   return candle.low < lowest && candle.high < highest;
 };
 
+type FairValueGapZone = {
+  direction: "bullish" | "bearish";
+  gapLow: number;
+  gapHigh: number;
+};
+
+const averageRecentRange = (candles: CandleLike[], index: number, lookback = 6): number => {
+  const start = Math.max(0, index - lookback + 1);
+  let total = 0;
+  let count = 0;
+  for (let cursor = start; cursor <= index; cursor += 1) {
+    const candle = candles[cursor];
+    if (!candle) {
+      continue;
+    }
+    total += Math.max(0, candle.high - candle.low);
+    count += 1;
+  }
+  return count > 0 ? total / count : 0;
+};
+
+const detectFairValueGapAtIndex = (
+  candles: CandleLike[],
+  index: number
+): FairValueGapZone | null => {
+  if (index < 2 || index >= candles.length) {
+    return null;
+  }
+
+  const left = candles[index - 2];
+  const middle = candles[index - 1];
+  const right = candles[index];
+  if (!left || !middle || !right) {
+    return null;
+  }
+
+  const averageRange = Math.max(averageRecentRange(candles, index, 8), 0.000001);
+
+  if (left.high < right.low && middle.close >= middle.open) {
+    const gapLow = Number(left.high.toFixed(4));
+    const gapHigh = Number(right.low.toFixed(4));
+    if (gapHigh - gapLow >= averageRange * 0.12) {
+      return {
+        direction: "bullish",
+        gapLow,
+        gapHigh
+      };
+    }
+  }
+
+  if (left.low > right.high && middle.close <= middle.open) {
+    const gapLow = Number(right.high.toFixed(4));
+    const gapHigh = Number(left.low.toFixed(4));
+    if (gapHigh - gapLow >= averageRange * 0.12) {
+      return {
+        direction: "bearish",
+        gapLow,
+        gapHigh
+      };
+    }
+  }
+
+  return null;
+};
+
+const hasRetestedFairValueGap = (
+  candles: CandleLike[],
+  index: number,
+  direction: "bullish" | "bearish",
+  lookback = 18
+): boolean => {
+  if (index < 3 || index >= candles.length) {
+    return false;
+  }
+
+  const candle = candles[index];
+  if (!candle) {
+    return false;
+  }
+
+  for (let cursor = Math.max(2, index - lookback); cursor < index; cursor += 1) {
+    const zone = detectFairValueGapAtIndex(candles, cursor);
+    if (!zone || zone.direction !== direction) {
+      continue;
+    }
+
+    const midpoint = (zone.gapLow + zone.gapHigh) / 2;
+    if (direction === "bullish") {
+      const touched = candle.low <= zone.gapHigh && candle.high >= zone.gapLow;
+      const held = candle.close >= midpoint;
+      if (touched && held) {
+        return true;
+      }
+      continue;
+    }
+
+    const touched = candle.high >= zone.gapLow && candle.low <= zone.gapHigh;
+    const held = candle.close <= midpoint;
+    if (touched && held) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
 const computeSmartMoneySeasons = (candles: CandleLike[], soft = 20, sharp = 40): Array<string | null> => {
   const seasons = new Array<string | null>(candles.length).fill(null);
   let previous: string | null = null;
@@ -300,6 +410,8 @@ const buildFeatureSeries = (candles: CandleLike[]): FeatureSeries => {
   const recentDown = new Array(candles.length).fill(false);
   const normDown = new Array(candles.length).fill(false);
   const normUp = new Array(candles.length).fill(false);
+  const bullishFvgRetest = new Array(candles.length).fill(false);
+  const bearishFvgRetest = new Array(candles.length).fill(false);
 
   for (let index = 0; index < candles.length; index += 1) {
     upTrendBase[index] = ema30[index]! > ema200[index]!;
@@ -329,6 +441,8 @@ const buildFeatureSeries = (candles: CandleLike[]): FeatureSeries => {
     const oscillator = normOsc[index];
     normDown[index] = oscillator < 40;
     normUp[index] = oscillator > 60;
+    bullishFvgRetest[index] = hasRetestedFairValueGap(candles, index, "bullish");
+    bearishFvgRetest[index] = hasRetestedFairValueGap(candles, index, "bearish");
   }
 
   return {
@@ -340,6 +454,8 @@ const buildFeatureSeries = (candles: CandleLike[]): FeatureSeries => {
     recentDown,
     normDown,
     normUp,
+    bullishFvgRetest,
+    bearishFvgRetest,
     seasonBucket,
     timeBucket
   };
@@ -407,6 +523,8 @@ const buildFeatureSnapshot = (
     recentDown: featureSeries.recentDown[index] ?? false,
     normDown: featureSeries.normDown[index] ?? false,
     normUp: featureSeries.normUp[index] ?? false,
+    bullishFvgRetest: featureSeries.bullishFvgRetest[index] ?? false,
+    bearishFvgRetest: featureSeries.bearishFvgRetest[index] ?? false,
     seasonBucket: featureSeries.seasonBucket[index] ?? null,
     prevSeasonBucket: index > 0 ? featureSeries.seasonBucket[index - 1] ?? null : null,
     timeBucket: featureSeries.timeBucket[index] ?? null,

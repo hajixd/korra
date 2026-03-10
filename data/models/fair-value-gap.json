@@ -1,0 +1,119 @@
+{
+  "id": "fair-value-gap",
+  "name": "Fair Value Gap",
+  "aliases": [
+    "fair value gap",
+    "fvg",
+    "ict fair value gap",
+    "imbalance",
+    "imbalance fill"
+  ],
+  "description": "Displacement-and-retest model that waits for a fresh three-candle fair value gap, enters on the first respectful revisit of the gap, and exits into the next impulse or clear invalidation through the zone.",
+  "entry": {
+    "context": [
+      "Bias with the direction of the displacement leg and nearby structure."
+    ],
+    "setup": [
+      "Find a three-candle imbalance where candle three does not overlap candle one.",
+      "Wait for the first revisit into the gap after the displacement leg."
+    ],
+    "trigger": [
+      "Long when the 30 EMA is above the 200 EMA, a recent bullish fair value gap exists, and price retests the gap while holding above its midpoint.",
+      "Short when the 30 EMA is below the 200 EMA, a recent bearish fair value gap exists, and price retests the gap while holding below its midpoint."
+    ],
+    "confirmation": [
+      "Prefer the retest candle to reject the gap and close back in the displacement direction.",
+      "Use a clear entry arrow at the retest candle rather than chasing the initial impulse."
+    ],
+    "invalidation": [
+      "Long invalidates if price accepts below the bullish gap low.",
+      "Short invalidates if price accepts above the bearish gap high."
+    ],
+    "noTrade": [
+      "Skip weak gaps with no displacement or gaps that already filled cleanly before the first retest."
+    ]
+  },
+  "exit": {
+    "stopLoss": [
+      "Place the stop beyond the far side of the gap."
+    ],
+    "takeProfit": [
+      "Scale at the next opposing liquidity pool or use 2R as the default first target."
+    ],
+    "timeExit": [],
+    "earlyExit": [
+      "Exit early if price accepts through the gap instead of rejecting it."
+    ]
+  },
+  "backtest": {
+    "source": "Local fair-value-gap replay heuristic",
+    "entry": {
+      "long": {
+        "checks": [
+          {
+            "label": "The 30 EMA is above the 200 EMA",
+            "when": {
+              "feature": "upTrendBase"
+            }
+          },
+          {
+            "label": "A recent bullish fair value gap was retested and respected",
+            "when": {
+              "feature": "bullishFvgRetest"
+            }
+          },
+          {
+            "label": "The window range is wide enough to avoid compression",
+            "when": {
+              "feature": "sufficientRange"
+            }
+          }
+        ]
+      },
+      "short": {
+        "checks": [
+          {
+            "label": "The 30 EMA is below the 200 EMA",
+            "when": {
+              "feature": "downTrendBase"
+            }
+          },
+          {
+            "label": "A recent bearish fair value gap was retested and respected",
+            "when": {
+              "feature": "bearishFvgRetest"
+            }
+          },
+          {
+            "label": "The window range is wide enough to avoid compression",
+            "when": {
+              "feature": "sufficientRange"
+            }
+          }
+        ]
+      }
+    },
+    "exit": {
+      "long": {
+        "checks": [
+          {
+            "label": "Price has already printed the upside impulse that completes the gap trade",
+            "when": {
+              "feature": "upPrice"
+            }
+          }
+        ]
+      },
+      "short": {
+        "checks": [
+          {
+            "label": "Price has already printed the downside impulse that completes the gap trade",
+            "when": {
+              "feature": "downPrice"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

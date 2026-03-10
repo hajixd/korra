@@ -6912,6 +6912,7 @@ type ReplayModelKind =
   | "seasons"
   | "timeOfDay"
   | "fibonacci"
+  | "fairValueGap"
   | "supportResistance";
 
 const resolveReplayModelKind = (name: string): ReplayModelKind => {
@@ -6931,6 +6932,14 @@ const resolveReplayModelKind = (name: string): ReplayModelKind => {
 
   if (normalized.includes("fibonacci") || normalized.includes("fib")) {
     return "fibonacci";
+  }
+
+  if (
+    normalized.includes("fair value gap") ||
+    normalized.includes("fvg") ||
+    normalized.includes("imbalance")
+  ) {
+    return "fairValueGap";
   }
 
   if (
