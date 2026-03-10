@@ -48,6 +48,7 @@ type ZoneOverlay = {
   y: number;
   width: number;
   height: number;
+  midY: number;
   direction: "bullish" | "bearish";
   label: string | undefined;
 };
@@ -134,12 +135,15 @@ export default function AssistantInlinePriceActionChart(
           const x2 = chart.timeScale().timeToCoordinate(toChartTime(Number(endTime)));
           const y1 = candleSeries.priceToCoordinate(Math.max(zone.yStart, zone.yEnd));
           const y2 = candleSeries.priceToCoordinate(Math.min(zone.yStart, zone.yEnd));
+          const midPrice = (zone.yStart + zone.yEnd) / 2;
+          const midY = candleSeries.priceToCoordinate(midPrice);
 
           if (
             !Number.isFinite(x1 ?? Number.NaN) ||
             !Number.isFinite(x2 ?? Number.NaN) ||
             !Number.isFinite(y1 ?? Number.NaN) ||
-            !Number.isFinite(y2 ?? Number.NaN)
+            !Number.isFinite(y2 ?? Number.NaN) ||
+            !Number.isFinite(midY ?? Number.NaN)
           ) {
             return null;
           }
@@ -150,6 +154,7 @@ export default function AssistantInlinePriceActionChart(
             y: Math.min(y1!, y2!),
             width: Math.max(Math.abs(x2! - x1!), 6),
             height: Math.max(Math.abs(y2! - y1!), 6),
+            midY: Number(midY!),
             direction: zone.direction,
             label: zone.label
           } satisfies ZoneOverlay;
@@ -170,6 +175,7 @@ export default function AssistantInlinePriceActionChart(
               zone.y === nextZone.y &&
               zone.width === nextZone.width &&
               zone.height === nextZone.height &&
+              zone.midY === nextZone.midY &&
               zone.direction === nextZone.direction &&
               zone.label === nextZone.label
             );
@@ -380,15 +386,28 @@ export default function AssistantInlinePriceActionChart(
                 rx={6}
                 fill={
                   zone.direction === "bullish"
-                    ? "rgba(25, 211, 154, 0.14)"
-                    : "rgba(242, 95, 115, 0.14)"
+                    ? "rgba(25, 211, 154, 0.18)"
+                    : "rgba(242, 95, 115, 0.18)"
                 }
                 stroke={
                   zone.direction === "bullish"
-                    ? "rgba(25, 211, 154, 0.72)"
-                    : "rgba(242, 95, 115, 0.72)"
+                    ? "rgba(25, 211, 154, 0.82)"
+                    : "rgba(242, 95, 115, 0.82)"
                 }
-                strokeWidth={1.2}
+                strokeWidth={1.3}
+              />
+              <line
+                x1={zone.x}
+                x2={zone.x + zone.width}
+                y1={zone.midY}
+                y2={zone.midY}
+                stroke={
+                  zone.direction === "bullish"
+                    ? "rgba(179, 252, 223, 0.9)"
+                    : "rgba(255, 206, 213, 0.9)"
+                }
+                strokeWidth={1}
+                strokeDasharray="5 4"
               />
               {zone.label ? (
                 <text

@@ -5081,36 +5081,6 @@ const buildFairValueGapHeuristicReplayRows = (params: {
     .filter((row): row is TradeRow => row !== null);
 };
 
-const buildStrategyReplayTimelineChart = (
-  rows: TradeRow[],
-  summary: StrategyBacktestSummary | null
-): AssistantChart | null => {
-  if (rows.length === 0 || !summary) {
-    return null;
-  }
-
-  const ordered = [...rows].sort((left, right) => left.exitTime - right.exitTime);
-  let equity = 0;
-
-  return {
-    id: "strategy-replay-equity",
-    template: "equity_curve",
-    title: "Replay Equity Timeline",
-    subtitle:
-      summary.testedFrom && summary.testedTo
-        ? `${summary.testedFrom} -> ${summary.testedTo}`
-        : "Local replay window",
-    mode: "static",
-    data: ordered.map((row) => {
-      equity += row.pnlUsd;
-      return {
-        x: formatTimeLabel(row.exitTime),
-        equity: Number(equity.toFixed(2))
-      };
-    })
-  };
-};
-
 const buildDeterministicFairValueGapPreview = (params: {
   context: AssistantContext;
   strategyDraft: StrategyDraft;

@@ -6,13 +6,13 @@
     "calendar flow",
     "cycle bias"
   ],
-  "description": "Cycle model that trades only when the season bucket has just changed, the 30 over 200 EMA bias still agrees, and the oscillator is not already stretched.",
+  "description": "Cycle model that trades only when the market enters summer or winter, the 30 over 200 EMA bias confirms that direction, and the oscillator is not already overextended.",
   "entry": {
     "context": [],
     "setup": [],
     "trigger": [
-      "Long when the season bucket has just turned to summer, the 30 EMA is above the 200 EMA, and the oscillator is not already above 60.",
-      "Short when the season bucket has just turned to winter, the 30 EMA is below the 200 EMA, and the oscillator is not already below 40."
+      "Long when the market enters summer, the 30 EMA is above the 200 EMA, and the oscillator is not already overbought.",
+      "Short when the market enters winter, the 30 EMA is below the 200 EMA, and the oscillator is not already oversold."
     ],
     "confirmation": [],
     "invalidation": [],
@@ -23,8 +23,8 @@
     "takeProfit": [],
     "timeExit": [],
     "earlyExit": [
-      "Long exit when the season bucket is no longer summer.",
-      "Short exit when the season bucket is no longer winter."
+      "Long exit when the market is no longer in summer.",
+      "Short exit when the market is no longer in winter."
     ]
   },
   "backtest": {
@@ -33,7 +33,7 @@
       "long": {
         "checks": [
           {
-            "label": "The season bucket has just turned to summer",
+            "label": "Enter summer",
             "when": {
               "all": [
                 {
@@ -52,13 +52,13 @@
             }
           },
           {
-            "label": "The 30 EMA is above the 200 EMA",
+            "label": "Up trend",
             "when": {
               "feature": "upTrendBase"
             }
           },
           {
-            "label": "The normalized oscillator is not above 60",
+            "label": "Not overbought",
             "when": {
               "not": {
                 "feature": "normUp"
@@ -70,7 +70,7 @@
       "short": {
         "checks": [
           {
-            "label": "The season bucket has just turned to winter",
+            "label": "Enter winter",
             "when": {
               "all": [
                 {
@@ -89,13 +89,13 @@
             }
           },
           {
-            "label": "The 30 EMA is below the 200 EMA",
+            "label": "Down trend",
             "when": {
               "feature": "downTrendBase"
             }
           },
           {
-            "label": "The normalized oscillator is not below 40",
+            "label": "Not oversold",
             "when": {
               "not": {
                 "feature": "normDown"
