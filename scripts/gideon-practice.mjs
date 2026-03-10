@@ -725,6 +725,61 @@ const questionBank = [
     checks: { minDrawings: 1, maxCharts: 0, mustIncludeAnyText: ["draw", "short", "position"] }
   },
   {
+    id: "draw_horizontal_line_tool",
+    category: "draw",
+    prompt: "Draw a horizontal line at 2918.",
+    checks: {
+      minDrawings: 1,
+      maxCharts: 0,
+      mustIncludeActionTypes: ["draw_horizontal_line"],
+      mustIncludeAnyText: ["horizontal", "line"]
+    }
+  },
+  {
+    id: "draw_vertical_line_tool",
+    category: "draw",
+    prompt: "Draw a vertical line on the latest candle.",
+    checks: {
+      minDrawings: 1,
+      maxCharts: 0,
+      mustIncludeActionTypes: ["draw_vertical_line"],
+      mustIncludeAnyText: ["vertical", "line"]
+    }
+  },
+  {
+    id: "draw_circle_marker",
+    category: "draw",
+    prompt: "Put a circle on the signal candle.",
+    checks: {
+      minDrawings: 1,
+      maxCharts: 0,
+      mustIncludeActionTypes: ["mark_candlestick"],
+      mustIncludeAnyText: ["circle", "marker", "candle"]
+    }
+  },
+  {
+    id: "draw_square_marker",
+    category: "draw",
+    prompt: "Mark the latest candle with a square.",
+    checks: {
+      minDrawings: 1,
+      maxCharts: 0,
+      mustIncludeActionTypes: ["mark_candlestick"],
+      mustIncludeAnyText: ["square", "marker", "candle"]
+    }
+  },
+  {
+    id: "draw_fibonacci_tool",
+    category: "draw",
+    prompt: "Draw a fibonacci retracement from the recent swing low to swing high.",
+    checks: {
+      minDrawings: 1,
+      maxCharts: 0,
+      mustIncludeActionTypes: ["draw_fibonacci"],
+      mustIncludeAnyText: ["fibonacci", "fib"]
+    }
+  },
+  {
     id: "math_break_even_2r",
     category: "math",
     prompt: "If I risk 1R to make 2R, what win rate do I need to break even?",
@@ -805,6 +860,63 @@ const questionBank = [
       maxCharts: 0,
       maxDrawings: 0,
       mustIncludeAnyText: ["yes", "above 2", "2.8", "2.9", "recovery"]
+    }
+  },
+  {
+    id: "concept_clarify_order_block_strategy",
+    category: "concept_clarify",
+    prompt: "Make me an order block strategy.",
+    checks: {
+      minDrawings: 6,
+      maxCharts: 0,
+      mustIncludeActionTypes: [
+        "draw_box",
+        "mark_candlestick",
+        "draw_arrow",
+        "draw_horizontal_line",
+        "draw_vertical_line",
+        "draw_fibonacci"
+      ],
+      mustIncludeAnyText: ["order block", "workflow", "body-only", "wick-inclusive", "redraw"]
+    }
+  },
+  {
+    id: "concept_clarify_draw_order_block",
+    category: "concept_clarify",
+    prompt: "Draw an order block so I can tell you if that is what I mean.",
+    checks: {
+      minDrawings: 5,
+      maxCharts: 0,
+      mustIncludeActionTypes: [
+        "draw_box",
+        "mark_candlestick",
+        "draw_arrow",
+        "draw_horizontal_line",
+        "draw_vertical_line"
+      ],
+      mustIncludeAnyText: ["order block", "correct it on-chart", "move", "add"]
+    }
+  },
+  {
+    id: "concept_clarify_breaker_block",
+    category: "concept_clarify",
+    prompt: "Show me a breaker block model.",
+    checks: {
+      minDrawings: 6,
+      maxCharts: 0,
+      mustIncludeActionTypes: ["draw_box", "mark_candlestick", "draw_fibonacci"],
+      mustIncludeAnyText: ["breaker block", "workflow", "redraw"]
+    }
+  },
+  {
+    id: "concept_clarify_ote",
+    category: "concept_clarify",
+    prompt: "Show me an OTE setup and let me correct it on the chart.",
+    checks: {
+      minDrawings: 6,
+      maxCharts: 0,
+      mustIncludeActionTypes: ["draw_box", "draw_fibonacci", "mark_candlestick"],
+      mustIncludeAnyText: ["optimal trade entry", "fib", "correct it on-chart"]
     }
   },
   {
@@ -947,6 +1059,9 @@ const summarize = (payload) => {
     bullets: Array.isArray(response.bullets) ? response.bullets.map((row) => String(row.text || "")) : [],
     charts: Array.isArray(response.charts) ? response.charts.length : 0,
     drawings: Array.isArray(response.chartActions) ? response.chartActions.length : 0,
+    actionTypes: Array.isArray(response.chartActions)
+      ? response.chartActions.map((row) => String(row?.type || ""))
+      : [],
     animations: Array.isArray(response.chartAnimations) ? response.chartAnimations.length : 0,
     toolsUsed: Array.isArray(response.toolsUsed) ? response.toolsUsed.map((value) => String(value)) : [],
     status: String(payload?.status ?? "")
@@ -990,6 +1105,7 @@ const evaluateCase = (practiceCase, result) => {
   const promptText = normalizeText(practiceCase.prompt || buildMessages(practiceCase).at(-1)?.content || "");
   const combinedText = normalizeText([summary.shortAnswer, ...summary.bullets].join(" "));
   const toolsUsed = summary.toolsUsed.map((value) => normalizeText(value));
+  const actionTypes = summary.actionTypes.map((value) => normalizeText(value));
 
   if (result.httpStatus !== 200) {
     issues.push(`http ${result.httpStatus}`);
@@ -1069,6 +1185,13 @@ const evaluateCase = (practiceCase, result) => {
       issues.push(`missing tool ${JSON.stringify(normalized)}`);
     }
   }
+  if (Array.isArray(checks.mustIncludeActionTypes)) {
+    for (const actionType of checks.mustIncludeActionTypes) {
+      if (!actionTypes.includes(normalizeText(actionType))) {
+        issues.push(`missing action type "${actionType}"`);
+      }
+    }
+  }
 
   return {
     passed: issues.length === 0,
@@ -1076,7 +1199,7 @@ const evaluateCase = (practiceCase, result) => {
   };
 };
 
-const categoryOrder = ["social", "price", "indicator", "stats", "graph", "draw", "math", "strategy", "internet", "follow_up"];
+const categoryOrder = ["social", "price", "indicator", "stats", "graph", "draw", "concept_clarify", "math", "strategy", "internet", "follow_up"];
 
 console.log(`Running ${selectedCases.length} cases against ${BASE_URL}`);
 if (CATEGORY_FILTER.size > 0) {
@@ -1112,6 +1235,7 @@ for (const practiceCase of selectedCases) {
           bullets: result.summary.bullets.slice(0, 3),
           charts: result.summary.charts,
           drawings: result.summary.drawings,
+          actionTypes: result.summary.actionTypes,
           animations: result.summary.animations,
           toolsUsed: result.summary.toolsUsed
         },

@@ -37,6 +37,8 @@ type FurnitureType =
   | "desk"
   | "terminal"
   | "table"
+  | "pingpong"
+  | "tv"
   | "whiteboard"
   | "cooler"
   | "plant"
@@ -107,11 +109,72 @@ type OfficeAgent = {
 
 const MAP_WIDTH = 2600;
 const MAP_HEIGHT = 1800;
-const DEFAULT_MAP_SCALE = 1.72;
-const MIN_MAP_SCALE = 1.24;
-const MAX_MAP_SCALE = 2.18;
-const MAP_SCALE_STEP = 0.16;
+const DEFAULT_MAP_SCALE = 2.24;
+const MIN_MAP_SCALE = 1.48;
+const MAX_MAP_SCALE = 3.36;
+const MAP_SCALE_STEP = 0.24;
 const SIDEBAR_WIDTH = 640;
+const CORRIDOR_WIDTH = 42;
+const AGENT_TICK_MS = 90;
+const AGENT_SPEED_BY_STATE: Record<RoomState, number> = {
+  active: 10,
+  warm: 8,
+  idle: 6
+};
+
+type WorldPoint = {
+  x: number;
+  y: number;
+};
+
+type RoomDoorSide = "top" | "right" | "bottom" | "left";
+
+type RoomDoor = {
+  id: string;
+  roomId: string;
+  x: number;
+  y: number;
+  side: RoomDoorSide;
+};
+
+type PathNode = {
+  id: string;
+  x: number;
+  y: number;
+};
+
+type AgentStation = {
+  id: string;
+  roomId: string | null;
+  x: number;
+  y: number;
+  direction: PixelDirection;
+  activity: string;
+  targetFurnitureId?: string;
+  targetOffsetX?: number;
+  targetOffsetY?: number;
+  holdMin?: number;
+  holdMax?: number;
+  groupId?: string;
+};
+
+type SimAgent = {
+  agentId: string;
+  x: number;
+  y: number;
+  direction: PixelDirection;
+  state: RoomState;
+  targetId: string;
+  targetRoomId: string | null;
+  targetFurnitureId?: string;
+  targetOffsetX?: number;
+  targetOffsetY?: number;
+  route: WorldPoint[];
+  holdTicks: number;
+  stationCycle: number;
+  activity: string;
+  groupId?: string;
+};
 
 const STAR_OFFICE_ASSETS = {
   desk: "/gideon-pixel/star-office/desk-v3.webp",
@@ -128,7 +191,6 @@ const STAR_OFFICE_ASSETS = {
 
 const SPRITE_SHEETS = [
   "/gideon-pixel/char_0.png",
-  "/gideon-pixel/char_1.png",
   "/gideon-pixel/char_2.png",
   "/gideon-pixel/char_3.png",
   "/gideon-pixel/char_4.png",
@@ -449,7 +511,8 @@ const OFFICE_ROOMS: OfficeRoom[] = [
     furniture: [
       { id: "hearth-sofa-a", type: "sofa", x: 60, y: 120, w: 132, h: 72 },
       { id: "hearth-sofa-b", type: "sofa", x: 448, y: 120, w: 132, h: 72 },
-      { id: "hearth-table", type: "table", x: 240, y: 128, w: 156, h: 84 },
+      { id: "hearth-pingpong", type: "pingpong", x: 218, y: 132, w: 204, h: 92 },
+      { id: "hearth-tv", type: "tv", x: 252, y: 34, w: 136, h: 60 },
       { id: "hearth-cooler", type: "cooler", x: 568, y: 44, w: 34, h: 52 },
       { id: "hearth-plant-a", type: "plant", x: 68, y: 282, w: 28, h: 40 },
       { id: "hearth-plant-b", type: "plant", x: 546, y: 282, w: 28, h: 40 }
@@ -560,6 +623,7 @@ const OFFICE_ROOMS: OfficeRoom[] = [
     floor: "dark",
     furniture: [
       { id: "cinema-projector", type: "projector", x: 182, y: 42, w: 70, h: 28 },
+      { id: "cinema-tv", type: "tv", x: 146, y: 86, w: 140, h: 62 },
       { id: "cinema-sofa-a", type: "sofa", x: 72, y: 170, w: 100, h: 58 },
       { id: "cinema-sofa-b", type: "sofa", x: 258, y: 170, w: 100, h: 58 },
       { id: "cinema-table", type: "table", x: 160, y: 186, w: 102, h: 58 }
@@ -917,6 +981,385 @@ const hashString = (value: string): number => {
   return hash;
 };
 
+const clampNumber = (value: number, min: number, max: number): number => Math.min(Math.max(value, min), max);
+
+const distanceBetweenPoints = (left: WorldPoint, right: WorldPoint): number =>
+  Math.hypot(right.x - left.x, right.y - left.y);
+
+const roomPoint = (roomId: string, x: number, y: number): WorldPoint => {
+  const room = ROOM_BY_ID.get(roomId);
+  return room ? { x: room.x + x, y: room.y + y } : { x, y };
+};
+
+const WORLD_FURNITURE = OFFICE_ROOMS.flatMap((room) =>
+  room.furniture.map((piece) => ({
+    ...piece,
+    roomId: room.id,
+    absX: room.x + piece.x,
+    absY: room.y + piece.y
+  }))
+);
+
+const WORLD_DECORATIONS = OFFICE_ROOMS.flatMap((room) =>
+  (room.decorations ?? []).map((decoration) => ({
+    ...decoration,
+    roomId: room.id,
+    absX: room.x + decoration.x,
+    absY: room.y + decoration.y
+  }))
+);
+
+type WorldTarget = (typeof WORLD_FURNITURE)[number] | (typeof WORLD_DECORATIONS)[number];
+
+const WORLD_TARGET_BY_ID = new Map(
+  [...WORLD_FURNITURE, ...WORLD_DECORATIONS].map((piece) => [piece.id, piece])
+);
+
+const ROOM_DOORS: RoomDoor[] = [
+  { id: "door-research", roomId: "research", x: 720, y: 286, side: "right" },
+  { id: "door-routing", roomId: "routing", x: 1015, y: 360, side: "bottom" },
+  { id: "door-briefing", roomId: "briefing", x: 1525, y: 390, side: "bottom" },
+  { id: "door-market", roomId: "market", x: 1840, y: 320, side: "left" },
+  { id: "door-code", roomId: "code", x: 630, y: 768, side: "right" },
+  { id: "door-tools", roomId: "tools", x: 700, y: 640, side: "left" },
+  { id: "door-strategy", roomId: "strategy", x: 1240, y: 644, side: "left" },
+  { id: "door-charts", roomId: "charts", x: 1840, y: 900, side: "left" },
+  { id: "door-hearth", roomId: "hearth", x: 720, y: 1210, side: "right" },
+  { id: "door-memory", roomId: "memory", x: 780, y: 1126, side: "left" },
+  { id: "door-stats", roomId: "stats", x: 1240, y: 1095, side: "left" },
+  { id: "door-templates", roomId: "templates", x: 1455, y: 1320, side: "top" },
+  { id: "door-cinema", roomId: "cinema", x: 760, y: 1490, side: "left" },
+  { id: "door-narrative", roomId: "narrative", x: 2100, y: 1395, side: "right" },
+  { id: "door-audit", roomId: "audit", x: 2160, y: 1385, side: "left" }
+];
+
+const ROOM_DOOR_BY_ROOM = new Map(ROOM_DOORS.map((door) => [door.roomId, door]));
+
+const PATH_NODES: PathNode[] = [
+  { id: "hub-west-top", x: 680, y: 286 },
+  { id: "hub-mid-top", x: 1015, y: 390 },
+  { id: "hub-east-top", x: 1525, y: 390 },
+  { id: "hub-market", x: 1790, y: 320 },
+  { id: "hub-west-mid", x: 680, y: 640 },
+  { id: "hub-center-mid", x: 1210, y: 640 },
+  { id: "hub-east-mid", x: 1790, y: 900 },
+  { id: "hub-west-low", x: 680, y: 1126 },
+  { id: "hub-center-low", x: 1210, y: 1095 },
+  { id: "hub-lounge", x: 680, y: 1210 },
+  { id: "hub-bottom-west", x: 680, y: 1490 },
+  { id: "hub-bottom-center", x: 1455, y: 1290 },
+  { id: "hub-bottom-east", x: 1790, y: 1395 },
+  { id: "hub-audit", x: 2140, y: 1385 },
+  ...ROOM_DOORS.map((door) => ({
+    id: door.id,
+    x: door.x,
+    y: door.y
+  }))
+];
+
+const PATH_NODE_BY_ID = new Map(PATH_NODES.map((node) => [node.id, node]));
+
+const PATH_EDGES: Array<[string, string]> = [
+  ["door-research", "hub-west-top"],
+  ["door-routing", "hub-mid-top"],
+  ["door-briefing", "hub-east-top"],
+  ["door-market", "hub-market"],
+  ["door-code", "hub-west-mid"],
+  ["door-tools", "hub-west-mid"],
+  ["door-strategy", "hub-center-mid"],
+  ["door-charts", "hub-east-mid"],
+  ["door-hearth", "hub-lounge"],
+  ["door-memory", "hub-west-low"],
+  ["door-stats", "hub-center-low"],
+  ["door-templates", "hub-bottom-center"],
+  ["door-cinema", "hub-bottom-west"],
+  ["door-narrative", "hub-bottom-east"],
+  ["door-audit", "hub-audit"],
+  ["hub-west-top", "hub-mid-top"],
+  ["hub-mid-top", "hub-east-top"],
+  ["hub-east-top", "hub-market"],
+  ["hub-west-top", "hub-west-mid"],
+  ["hub-west-mid", "hub-west-low"],
+  ["hub-west-low", "hub-lounge"],
+  ["hub-lounge", "hub-bottom-west"],
+  ["hub-west-mid", "hub-center-mid"],
+  ["hub-center-mid", "hub-east-mid"],
+  ["hub-center-mid", "hub-center-low"],
+  ["hub-center-low", "hub-bottom-center"],
+  ["hub-market", "hub-east-mid"],
+  ["hub-east-mid", "hub-bottom-east"],
+  ["hub-bottom-west", "hub-bottom-center"],
+  ["hub-bottom-center", "hub-bottom-east"],
+  ["hub-bottom-east", "hub-audit"],
+  ["hub-west-low", "hub-center-low"]
+];
+
+const PATH_LINKS = PATH_EDGES.reduce<Map<string, string[]>>((graph, [from, to]) => {
+  graph.set(from, [...(graph.get(from) ?? []), to]);
+  graph.set(to, [...(graph.get(to) ?? []), from]);
+  return graph;
+}, new Map());
+
+const PATH_SEGMENTS = PATH_EDGES.map(([fromId, toId], index) => {
+  const from = PATH_NODE_BY_ID.get(fromId);
+  const to = PATH_NODE_BY_ID.get(toId);
+  if (!from || !to) {
+    return {
+      id: `segment-${index}`,
+      x: 0,
+      y: 0,
+      w: 0,
+      h: 0
+    };
+  }
+
+  if (from.x === to.x) {
+    return {
+      id: `segment-${index}`,
+      x: from.x - CORRIDOR_WIDTH / 2,
+      y: Math.min(from.y, to.y) - CORRIDOR_WIDTH / 2,
+      w: CORRIDOR_WIDTH,
+      h: Math.abs(from.y - to.y) + CORRIDOR_WIDTH
+    };
+  }
+
+  return {
+    id: `segment-${index}`,
+    x: Math.min(from.x, to.x) - CORRIDOR_WIDTH / 2,
+    y: from.y - CORRIDOR_WIDTH / 2,
+    w: Math.abs(from.x - to.x) + CORRIDOR_WIDTH,
+    h: CORRIDOR_WIDTH
+  };
+});
+
+const HOME_STATIONS: AgentStation[] = OFFICE_ROOMS.flatMap((room) =>
+  room.agents.map((spot) => ({
+    id: `home-${spot.agentId}`,
+    roomId: room.id,
+    x: room.x + spot.x,
+    y: room.y + spot.y,
+    direction: spot.direction,
+    activity: spot.activity,
+    targetFurnitureId: spot.targetFurnitureId,
+    targetOffsetX: spot.targetOffsetX,
+    targetOffsetY: spot.targetOffsetY,
+    holdMin: 18,
+    holdMax: 28
+  }))
+);
+
+const HOME_STATION_BY_AGENT = new Map(
+  HOME_STATIONS.map((station) => [station.id.replace("home-", ""), station])
+);
+
+const WARM_STATIONS: AgentStation[] = [
+  {
+    id: "warm-briefing-a",
+    roomId: "briefing",
+    ...roomPoint("briefing", 202, 214),
+    direction: "right",
+    activity: "SYNC",
+    targetFurnitureId: "briefing-table",
+    holdMin: 20,
+    holdMax: 34,
+    groupId: "briefing-huddle"
+  },
+  {
+    id: "warm-briefing-b",
+    roomId: "briefing",
+    ...roomPoint("briefing", 290, 214),
+    direction: "left",
+    activity: "SYNC",
+    targetFurnitureId: "briefing-table",
+    holdMin: 20,
+    holdMax: 34,
+    groupId: "briefing-huddle"
+  },
+  {
+    id: "warm-routing-a",
+    roomId: "routing",
+    ...roomPoint("routing", 154, 212),
+    direction: "up",
+    activity: "QUEUE",
+    targetFurnitureId: "routing-board",
+    holdMin: 18,
+    holdMax: 30,
+    groupId: "routing-huddle"
+  },
+  {
+    id: "warm-routing-b",
+    roomId: "routing",
+    ...roomPoint("routing", 234, 212),
+    direction: "up",
+    activity: "QUEUE",
+    targetFurnitureId: "routing-terminal",
+    holdMin: 18,
+    holdMax: 30,
+    groupId: "routing-huddle"
+  },
+  {
+    id: "warm-strategy-a",
+    roomId: "strategy",
+    ...roomPoint("strategy", 216, 248),
+    direction: "right",
+    activity: "PLAN",
+    targetFurnitureId: "strategy-table",
+    holdMin: 22,
+    holdMax: 34,
+    groupId: "strategy-huddle"
+  },
+  {
+    id: "warm-strategy-b",
+    roomId: "strategy",
+    ...roomPoint("strategy", 330, 248),
+    direction: "left",
+    activity: "PLAN",
+    targetFurnitureId: "strategy-table",
+    holdMin: 22,
+    holdMax: 34,
+    groupId: "strategy-huddle"
+  },
+  {
+    id: "warm-charts-a",
+    roomId: "charts",
+    ...roomPoint("charts", 180, 310),
+    direction: "up",
+    activity: "DRAW",
+    targetFurnitureId: "chart-board-a",
+    holdMin: 18,
+    holdMax: 28,
+    groupId: "chart-sync"
+  },
+  {
+    id: "warm-charts-b",
+    roomId: "charts",
+    ...roomPoint("charts", 454, 310),
+    direction: "up",
+    activity: "REVIEW",
+    targetFurnitureId: "chart-board-b",
+    holdMin: 18,
+    holdMax: 28,
+    groupId: "chart-sync"
+  }
+];
+
+const IDLE_STATIONS: AgentStation[] = [
+  {
+    id: "idle-pingpong-a",
+    roomId: "hearth",
+    ...roomPoint("hearth", 246, 244),
+    direction: "right",
+    activity: "PONG",
+    targetFurnitureId: "hearth-pingpong",
+    holdMin: 28,
+    holdMax: 44,
+    groupId: "pingpong"
+  },
+  {
+    id: "idle-pingpong-b",
+    roomId: "hearth",
+    ...roomPoint("hearth", 390, 244),
+    direction: "left",
+    activity: "PONG",
+    targetFurnitureId: "hearth-pingpong",
+    holdMin: 28,
+    holdMax: 44,
+    groupId: "pingpong"
+  },
+  {
+    id: "idle-tv-hearth-a",
+    roomId: "hearth",
+    ...roomPoint("hearth", 126, 212),
+    direction: "right",
+    activity: "TV",
+    targetFurnitureId: "hearth-tv",
+    holdMin: 26,
+    holdMax: 42,
+    groupId: "tv-hearth"
+  },
+  {
+    id: "idle-tv-hearth-b",
+    roomId: "hearth",
+    ...roomPoint("hearth", 516, 212),
+    direction: "left",
+    activity: "TV",
+    targetFurnitureId: "hearth-tv",
+    holdMin: 26,
+    holdMax: 42,
+    groupId: "tv-hearth"
+  },
+  {
+    id: "idle-tv-cinema-a",
+    roomId: "cinema",
+    ...roomPoint("cinema", 134, 228),
+    direction: "right",
+    activity: "WATCH",
+    targetFurnitureId: "cinema-tv",
+    holdMin: 26,
+    holdMax: 42,
+    groupId: "tv-cinema"
+  },
+  {
+    id: "idle-tv-cinema-b",
+    roomId: "cinema",
+    ...roomPoint("cinema", 300, 228),
+    direction: "left",
+    activity: "WATCH",
+    targetFurnitureId: "cinema-tv",
+    holdMin: 26,
+    holdMax: 42,
+    groupId: "tv-cinema"
+  },
+  {
+    id: "idle-coffee-tools",
+    roomId: "tools",
+    ...roomPoint("tools", 326, 242),
+    direction: "right",
+    activity: "COFFEE",
+    targetFurnitureId: "tool-coffee",
+    holdMin: 18,
+    holdMax: 30,
+    groupId: "coffee-tools"
+  },
+  {
+    id: "idle-wander-west",
+    roomId: null,
+    x: 680,
+    y: 885,
+    direction: "down",
+    activity: "WANDER",
+    holdMin: 10,
+    holdMax: 18,
+    groupId: "hall-west"
+  },
+  {
+    id: "idle-wander-center",
+    roomId: null,
+    x: 1210,
+    y: 920,
+    direction: "down",
+    activity: "WANDER",
+    holdMin: 10,
+    holdMax: 18,
+    groupId: "hall-center"
+  },
+  {
+    id: "idle-wander-east",
+    roomId: null,
+    x: 1790,
+    y: 1180,
+    direction: "down",
+    activity: "CHAT",
+    holdMin: 10,
+    holdMax: 18,
+    groupId: "hall-east"
+  }
+];
+
+const ALL_STATIONS_BY_ID = new Map(
+  [...HOME_STATIONS, ...WARM_STATIONS, ...IDLE_STATIONS].map((station) => [station.id, station])
+);
+
 const pickSpriteSheet = (seed: string): string =>
   SPRITE_SHEETS[hashString(seed) % SPRITE_SHEETS.length] ?? SPRITE_SHEETS[0];
 
@@ -950,19 +1393,277 @@ const buildStripSpriteStyle = (assetUrl: string, frames: number, frame = 0): CSS
   backgroundPosition: `${frames === 1 ? 0 : (Math.max(0, frame % frames) / (frames - 1)) * 100}% 0%`
 });
 
+const pointInsideRoom = (point: WorldPoint, room: OfficeRoom): boolean =>
+  point.x >= room.x && point.x <= room.x + room.w && point.y >= room.y && point.y <= room.y + room.h;
+
+const findRoomIdForPoint = (point: WorldPoint): string | null =>
+  OFFICE_ROOMS.find((room) => pointInsideRoom(point, room))?.id ?? null;
+
+const getNearestPathNodeId = (point: WorldPoint): string | null => {
+  let bestId: string | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (const node of PATH_NODES) {
+    const distance = distanceBetweenPoints(point, node);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestId = node.id;
+    }
+  }
+
+  return bestId;
+};
+
+const buildShortestNodePath = (startId: string, endId: string): string[] => {
+  if (startId === endId) {
+    return [startId];
+  }
+
+  const distances = new Map<string, number>([[startId, 0]]);
+  const previous = new Map<string, string>();
+  const remaining = new Set(PATH_NODES.map((node) => node.id));
+
+  while (remaining.size > 0) {
+    let currentId: string | null = null;
+    let currentDistance = Number.POSITIVE_INFINITY;
+
+    for (const nodeId of remaining) {
+      const distance = distances.get(nodeId) ?? Number.POSITIVE_INFINITY;
+      if (distance < currentDistance) {
+        currentDistance = distance;
+        currentId = nodeId;
+      }
+    }
+
+    if (!currentId || currentDistance === Number.POSITIVE_INFINITY) {
+      break;
+    }
+
+    if (currentId === endId) {
+      break;
+    }
+
+    remaining.delete(currentId);
+
+    for (const neighborId of PATH_LINKS.get(currentId) ?? []) {
+      if (!remaining.has(neighborId)) {
+        continue;
+      }
+
+      const current = PATH_NODE_BY_ID.get(currentId);
+      const neighbor = PATH_NODE_BY_ID.get(neighborId);
+      if (!current || !neighbor) {
+        continue;
+      }
+
+      const nextDistance = currentDistance + distanceBetweenPoints(current, neighbor);
+      if (nextDistance < (distances.get(neighborId) ?? Number.POSITIVE_INFINITY)) {
+        distances.set(neighborId, nextDistance);
+        previous.set(neighborId, currentId);
+      }
+    }
+  }
+
+  const path: string[] = [];
+  let cursor: string | undefined = endId;
+
+  while (cursor) {
+    path.unshift(cursor);
+    cursor = previous.get(cursor);
+  }
+
+  return path[0] === startId ? path : [startId];
+};
+
+const normalizeRoutePoints = (points: WorldPoint[]): WorldPoint[] => {
+  const output: WorldPoint[] = [];
+
+  for (const point of points) {
+    const lastPoint = output[output.length - 1];
+    if (lastPoint && distanceBetweenPoints(lastPoint, point) < 2) {
+      continue;
+    }
+    output.push(point);
+  }
+
+  return output;
+};
+
+const stationHoldTicks = (agentId: string, station: AgentStation, cycle: number): number => {
+  const min = station.holdMin ?? 18;
+  const max = station.holdMax ?? min;
+  const spread = Math.max(max - min, 0);
+  return min + (spread > 0 ? hashString(`${agentId}:${station.id}:${cycle}`) % (spread + 1) : 0);
+};
+
+const selectAgentStation = (agentId: string, state: RoomState, cycle: number): AgentStation => {
+  if (state === "active") {
+    return (
+      HOME_STATION_BY_AGENT.get(agentId) ??
+      HOME_STATIONS[0] ?? {
+        id: `fallback-${agentId}`,
+        roomId: null,
+        x: MAP_WIDTH / 2,
+        y: MAP_HEIGHT / 2,
+        direction: "down",
+        activity: "WAIT"
+      }
+    );
+  }
+
+  const source = state === "warm" ? WARM_STATIONS : IDLE_STATIONS;
+  const startIndex = hashString(agentId) % source.length;
+  return source[(startIndex + cycle) % source.length] ?? source[0];
+};
+
+const buildRouteToStation = (start: WorldPoint, station: AgentStation): WorldPoint[] => {
+  const stationPoint = { x: station.x, y: station.y };
+  const startRoomId = findRoomIdForPoint(start);
+
+  if (startRoomId && station.roomId && startRoomId === station.roomId) {
+    return normalizeRoutePoints([stationPoint]);
+  }
+
+  const startDoorId = startRoomId ? ROOM_DOOR_BY_ROOM.get(startRoomId)?.id ?? null : getNearestPathNodeId(start);
+  const endDoorId = station.roomId ? ROOM_DOOR_BY_ROOM.get(station.roomId)?.id ?? null : getNearestPathNodeId(stationPoint);
+
+  if (!startDoorId || !endDoorId) {
+    return normalizeRoutePoints([stationPoint]);
+  }
+
+  const nodePath = buildShortestNodePath(startDoorId, endDoorId)
+    .map((nodeId) => PATH_NODE_BY_ID.get(nodeId))
+    .filter((node): node is PathNode => Boolean(node));
+
+  const points: WorldPoint[] = [];
+
+  if (startRoomId) {
+    const startDoor = PATH_NODE_BY_ID.get(startDoorId);
+    if (startDoor) {
+      points.push(startDoor);
+    }
+  }
+
+  points.push(...nodePath);
+
+  if (station.roomId || distanceBetweenPoints(nodePath[nodePath.length - 1] ?? start, stationPoint) > 4) {
+    points.push(stationPoint);
+  }
+
+  return normalizeRoutePoints(points);
+};
+
+const getDirectionFromDelta = (
+  dx: number,
+  dy: number,
+  fallback: PixelDirection = "down"
+): PixelDirection => {
+  if (Math.abs(dx) > Math.abs(dy)) {
+    return dx >= 0 ? "right" : "left";
+  }
+  if (Math.abs(dy) > 0) {
+    return dy >= 0 ? "down" : "up";
+  }
+  return fallback;
+};
+
 const spriteRowY = (direction: PixelDirection): string => {
   switch (direction) {
-    case "right":
+    case "up":
       return "-48px";
+    case "right":
     case "left":
       return "-96px";
-    case "up":
-      return "-144px";
     case "down":
     default:
       return "0px";
   }
 };
+
+const spriteFlip = (direction: PixelDirection): string => (direction === "left" ? "-1" : "1");
+
+const assignStationToAgent = (
+  agent: SimAgent,
+  state: RoomState,
+  station: AgentStation,
+  cycle: number
+): SimAgent => {
+  const route = buildRouteToStation({ x: agent.x, y: agent.y }, station);
+  const nextDirection =
+    route.length > 0
+      ? getDirectionFromDelta(route[0].x - agent.x, route[0].y - agent.y, agent.direction)
+      : station.direction;
+
+  return {
+    ...agent,
+    state,
+    direction: nextDirection,
+    targetId: station.id,
+    targetRoomId: station.roomId,
+    targetFurnitureId: station.targetFurnitureId,
+    targetOffsetX: station.targetOffsetX,
+    targetOffsetY: station.targetOffsetY,
+    route,
+    holdTicks: route.length === 0 ? stationHoldTicks(agent.agentId, station, cycle) : 0,
+    stationCycle: cycle,
+    activity: station.activity,
+    groupId: station.groupId
+  };
+};
+
+const stepSimAgent = (agent: SimAgent): SimAgent => {
+  if (agent.route.length === 0) {
+    return agent;
+  }
+
+  const [nextPoint, ...remainingRoute] = agent.route;
+  const speed = AGENT_SPEED_BY_STATE[agent.state];
+  const dx = nextPoint.x - agent.x;
+  const dy = nextPoint.y - agent.y;
+  const distance = Math.hypot(dx, dy);
+
+  if (distance <= speed) {
+    const lastHop = remainingRoute.length === 0;
+    const targetStation = ALL_STATIONS_BY_ID.get(agent.targetId);
+    return {
+      ...agent,
+      x: nextPoint.x,
+      y: nextPoint.y,
+      direction: lastHop && targetStation ? targetStation.direction : getDirectionFromDelta(dx, dy, agent.direction),
+      route: remainingRoute,
+      holdTicks: lastHop && targetStation ? stationHoldTicks(agent.agentId, targetStation, agent.stationCycle) : 0
+    };
+  }
+
+  return {
+    ...agent,
+    x: agent.x + (dx / distance) * speed,
+    y: agent.y + (dy / distance) * speed,
+    direction: getDirectionFromDelta(dx, dy, agent.direction)
+  };
+};
+
+const buildInitialSimAgents = (): SimAgent[] =>
+  OFFICE_AGENTS.map((agent) => {
+    const homeStation = HOME_STATION_BY_AGENT.get(agent.id) ?? HOME_STATIONS[0];
+    return {
+      agentId: agent.id,
+      x: homeStation?.x ?? MAP_WIDTH / 2,
+      y: homeStation?.y ?? MAP_HEIGHT / 2,
+      direction: homeStation?.direction ?? "down",
+      state: "idle",
+      targetId: homeStation?.id ?? `home-${agent.id}`,
+      targetRoomId: homeStation?.roomId ?? null,
+      targetFurnitureId: homeStation?.targetFurnitureId,
+      targetOffsetX: homeStation?.targetOffsetX,
+      targetOffsetY: homeStation?.targetOffsetY,
+      route: [],
+      holdTicks: homeStation ? stationHoldTicks(agent.id, homeStation, 0) : 16,
+      stationCycle: 0,
+      activity: homeStation?.activity ?? "WAIT",
+      groupId: homeStation?.groupId
+    };
+  });
 
 export default function GideonWorkView(props: GideonWorkViewProps) {
   const {
@@ -989,6 +1690,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mapScale, setMapScale] = useState(DEFAULT_MAP_SCALE);
   const mapScrollRef = useRef<HTMLDivElement | null>(null);
+  const mapScaleRef = useRef(DEFAULT_MAP_SCALE);
 
   useEffect(() => {
     if (!open) {
@@ -1004,6 +1706,10 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose, open]);
+
+  useEffect(() => {
+    mapScaleRef.current = mapScale;
+  }, [mapScale]);
 
   const wantsCurrent = /\b(current|latest|today|news|recent|now|browse)\b/i.test(latestPrompt);
   const wantsStrategy = /\b(strategy|model|playbook|json|entry|exit)\b/i.test(latestPrompt);
@@ -1097,51 +1803,91 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
     wantsStrategy
   ]);
 
+  const [simAgents, setSimAgents] = useState<SimAgent[]>(() => buildInitialSimAgents());
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setSimAgents((currentAgents) =>
+        currentAgents.map((currentAgent) => {
+          const desiredState: RoomState = activeAgentIds.has(currentAgent.agentId)
+            ? "active"
+            : warmAgentIds.has(currentAgent.agentId)
+              ? "warm"
+              : "idle";
+
+          let nextAgent = currentAgent;
+          const forcedStation = desiredState === "active" ? selectAgentStation(currentAgent.agentId, desiredState, 0) : null;
+          const stateChanged = currentAgent.state !== desiredState;
+          const forcedTargetChanged = forcedStation ? currentAgent.targetId !== forcedStation.id : false;
+
+          if (stateChanged || forcedTargetChanged) {
+            nextAgent = assignStationToAgent(
+              currentAgent,
+              desiredState,
+              forcedStation ?? selectAgentStation(currentAgent.agentId, desiredState, currentAgent.stationCycle),
+              desiredState === "active" ? 0 : currentAgent.stationCycle
+            );
+          }
+
+          if (nextAgent.route.length > 0) {
+            return stepSimAgent(nextAgent);
+          }
+
+          if (nextAgent.holdTicks > 0) {
+            return {
+              ...nextAgent,
+              state: desiredState,
+              holdTicks: nextAgent.holdTicks - 1
+            };
+          }
+
+          if (desiredState === "active") {
+            const activeStation = forcedStation ?? selectAgentStation(nextAgent.agentId, desiredState, 0);
+            return {
+              ...nextAgent,
+              state: desiredState,
+              direction: activeStation.direction,
+              activity: activeStation.activity,
+              holdTicks: stationHoldTicks(nextAgent.agentId, activeStation, 0)
+            };
+          }
+
+          const nextCycle = nextAgent.stationCycle + 1;
+          return assignStationToAgent(
+            nextAgent,
+            desiredState,
+            selectAgentStation(nextAgent.agentId, desiredState, nextCycle),
+            nextCycle
+          );
+        })
+      );
+    }, AGENT_TICK_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [activeAgentIds, open, warmAgentIds]);
+
   const roomSnapshots = useMemo(
     () =>
       OFFICE_ROOMS.map((room) => {
-        const agentSnapshots = room.agents
-          .map((spot) => {
-            const agent = AGENT_BY_ID.get(spot.agentId);
-            if (!agent) {
-              return null;
-            }
+        const occupants = simAgents.filter((agent) => pointInsideRoom(agent, room));
 
-            const state: RoomState = activeAgentIds.has(agent.id)
-              ? "active"
-              : warmAgentIds.has(agent.id)
-                ? "warm"
-                : "idle";
-
-            return {
-              spot,
-              agent,
-              state
-            };
-          })
-          .filter(
-            (
-              item
-            ): item is {
-              spot: PixelAgentSpot;
-              agent: OfficeAgent;
-              state: RoomState;
-            } => Boolean(item)
-          );
-
-        const state: RoomState = agentSnapshots.some((item) => item.state === "active")
+        const state: RoomState = occupants.some((item) => item.state === "active")
           ? "active"
-          : agentSnapshots.some((item) => item.state === "warm")
+          : occupants.some((item) => item.state === "warm")
             ? "warm"
             : "idle";
 
         return {
           room,
           state,
-          agentSnapshots
+          occupants
         };
       }),
-    [activeAgentIds, warmAgentIds]
+    [simAgents]
   );
 
   const activeAgents = useMemo(
@@ -1236,6 +1982,99 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
     ]
   );
 
+  const renderAgents = useMemo(
+    () =>
+      simAgents
+        .map((simAgent) => {
+          const agent = AGENT_BY_ID.get(simAgent.agentId);
+          if (!agent) {
+            return null;
+          }
+
+          const station = ALL_STATIONS_BY_ID.get(simAgent.targetId) ?? null;
+          const targetFurniture = simAgent.targetFurnitureId
+            ? WORLD_TARGET_BY_ID.get(simAgent.targetFurnitureId) ?? null
+            : null;
+
+          return {
+            agent,
+            simAgent,
+            station,
+            targetFurniture,
+            isMoving: simAgent.route.length > 0
+          };
+        })
+        .filter(
+          (
+            item
+          ): item is {
+            agent: OfficeAgent;
+            simAgent: SimAgent;
+            station: AgentStation | null;
+            targetFurniture: WorldTarget | null;
+            isMoving: boolean;
+          } => Boolean(item)
+        ),
+    [simAgents]
+  );
+
+  const agentLinks = useMemo(() => {
+    const links: Array<{
+      id: string;
+      left: (typeof renderAgents)[number];
+      right: (typeof renderAgents)[number];
+      state: RoomState;
+      label: string;
+    }> = [];
+    const usedAgentIds = new Set<string>();
+
+    for (let leftIndex = 0; leftIndex < renderAgents.length; leftIndex += 1) {
+      const left = renderAgents[leftIndex];
+      if (usedAgentIds.has(left.agent.id) || left.isMoving) {
+        continue;
+      }
+
+      for (let rightIndex = leftIndex + 1; rightIndex < renderAgents.length; rightIndex += 1) {
+        const right = renderAgents[rightIndex];
+        if (usedAgentIds.has(right.agent.id) || right.isMoving) {
+          continue;
+        }
+
+        const sameGroup =
+          left.simAgent.groupId &&
+          right.simAgent.groupId &&
+          left.simAgent.groupId === right.simAgent.groupId;
+        const sameRoom =
+          findRoomIdForPoint(left.simAgent) &&
+          findRoomIdForPoint(left.simAgent) === findRoomIdForPoint(right.simAgent);
+        const distance = distanceBetweenPoints(left.simAgent, right.simAgent);
+
+        if (!sameGroup && !(sameRoom && distance < 92)) {
+          continue;
+        }
+
+        usedAgentIds.add(left.agent.id);
+        usedAgentIds.add(right.agent.id);
+        links.push({
+          id: `${left.agent.id}-${right.agent.id}`,
+          left,
+          right,
+          state:
+            left.simAgent.state === "active" || right.simAgent.state === "active"
+              ? "active"
+              : left.simAgent.state === "warm" || right.simAgent.state === "warm"
+                ? "warm"
+                : "idle",
+          label:
+            left.simAgent.state === "idle" && right.simAgent.state === "idle" ? "CHAT" : "SYNC"
+        });
+        break;
+      }
+    }
+
+    return links;
+  }, [renderAgents]);
+
   const focusRoomId = useMemo(() => {
     const mapped = STAGE_ROOM_MAP[thinkingStage];
     if (mapped) {
@@ -1257,8 +2096,8 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
       return;
     }
 
-    const nextLeft = Math.max(0, (room.x + room.w / 2) * mapScale - scrollNode.clientWidth / 2);
-    const nextTop = Math.max(0, (room.y + room.h / 2) * mapScale - scrollNode.clientHeight / 2);
+    const nextLeft = Math.max(0, (room.x + room.w / 2) * mapScaleRef.current - scrollNode.clientWidth / 2);
+    const nextTop = Math.max(0, (room.y + room.h / 2) * mapScaleRef.current - scrollNode.clientHeight / 2);
 
     scrollNode.scrollTo({
       left: nextLeft,
@@ -1267,13 +2106,50 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
     });
   };
 
+  const zoomMap = (nextScale: number) => {
+    const scrollNode = mapScrollRef.current;
+    const boundedScale = clampNumber(Number(nextScale.toFixed(2)), MIN_MAP_SCALE, MAX_MAP_SCALE);
+
+    if (!scrollNode) {
+      setMapScale(boundedScale);
+      return;
+    }
+
+    const centerX = (scrollNode.scrollLeft + scrollNode.clientWidth / 2) / mapScale;
+    const centerY = (scrollNode.scrollTop + scrollNode.clientHeight / 2) / mapScale;
+
+    setMapScale(boundedScale);
+
+    requestAnimationFrame(() => {
+      scrollNode.scrollTo({
+        left: Math.max(0, centerX * boundedScale - scrollNode.clientWidth / 2),
+        top: Math.max(0, centerY * boundedScale - scrollNode.clientHeight / 2),
+        behavior: "auto"
+      });
+    });
+  };
+
   useEffect(() => {
     if (!open) {
       return;
     }
 
-    scrollToRoom(focusRoomId, "smooth");
-  }, [focusRoomId, mapScale, open]);
+    const scrollNode = mapScrollRef.current;
+    const room = ROOM_BY_ID.get(focusRoomId);
+
+    if (!scrollNode || !room) {
+      return;
+    }
+
+    const nextLeft = Math.max(0, (room.x + room.w / 2) * mapScaleRef.current - scrollNode.clientWidth / 2);
+    const nextTop = Math.max(0, (room.y + room.h / 2) * mapScaleRef.current - scrollNode.clientHeight / 2);
+
+    scrollNode.scrollTo({
+      left: nextLeft,
+      top: nextTop,
+      behavior: "smooth"
+    });
+  }, [focusRoomId, open]);
 
   if (!open) {
     return null;
@@ -1357,25 +2233,21 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
                 <button
                   type="button"
                   className="gpx-map-action"
-                  onClick={() =>
-                    setMapScale((current) => Math.max(MIN_MAP_SCALE, Number((current - MAP_SCALE_STEP).toFixed(2))))
-                  }
+                  onClick={() => zoomMap(mapScale - MAP_SCALE_STEP)}
                 >
                   ZOOM OUT
                 </button>
                 <button
                   type="button"
                   className="gpx-map-action"
-                  onClick={() =>
-                    setMapScale((current) => Math.min(MAX_MAP_SCALE, Number((current + MAP_SCALE_STEP).toFixed(2))))
-                  }
+                  onClick={() => zoomMap(mapScale + MAP_SCALE_STEP)}
                 >
                   ZOOM IN
                 </button>
                 <button
                   type="button"
                   className="gpx-map-action"
-                  onClick={() => setMapScale(DEFAULT_MAP_SCALE)}
+                  onClick={() => zoomMap(DEFAULT_MAP_SCALE)}
                 >
                   RESET
                 </button>
@@ -1408,6 +2280,36 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
               <div className="gpx-map-scale">
                 <div className="gpx-map">
                   <div className="gpx-grid-layer" aria-hidden />
+                  <div className="gpx-corridor-layer" aria-hidden>
+                    {PATH_SEGMENTS.map((segment) => (
+                      <div
+                        key={segment.id}
+                        className="gpx-corridor"
+                        style={
+                          {
+                            left: segment.x,
+                            top: segment.y,
+                            width: segment.w,
+                            height: segment.h
+                          } as CSSProperties
+                        }
+                      />
+                    ))}
+                    {PATH_NODES.filter((node) => node.id.startsWith("hub-")).map((node) => (
+                      <div
+                        key={node.id}
+                        className="gpx-corridor-node"
+                        style={
+                          {
+                            left: node.x - CORRIDOR_WIDTH / 2,
+                            top: node.y - CORRIDOR_WIDTH / 2,
+                            width: CORRIDOR_WIDTH,
+                            height: CORRIDOR_WIDTH
+                          } as CSSProperties
+                        }
+                      />
+                    ))}
+                  </div>
                   {roomSnapshots.map((snapshot) => (
                     <section
                       key={snapshot.room.id}
@@ -1422,6 +2324,10 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
                       }
                     >
                       <span className={`gpx-room-lamp state-${snapshot.state}`} aria-hidden />
+                      <div className={`gpx-room-label state-${snapshot.state}`}>
+                        <strong>{snapshot.room.name}</strong>
+                        <span>{snapshot.occupants.length} INSIDE</span>
+                      </div>
 
                       {snapshot.room.furniture.map((piece) => {
                         const furnitureStyle = {
@@ -1513,89 +2419,133 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
                           />
                         );
                       })}
-
-                      {snapshot.agentSnapshots.map(({ spot, agent, state }) => {
-                        const target = spot.targetFurnitureId
-                          ? snapshot.room.furniture.find((piece) => piece.id === spot.targetFurnitureId)
-                          : null;
-                        const targetCenterX =
-                          target && typeof spot.targetOffsetX === "number"
-                            ? target.x + target.w / 2 + spot.targetOffsetX
-                            : target
-                              ? target.x + target.w / 2
-                              : null;
-                        const targetCenterY =
-                          target && typeof spot.targetOffsetY === "number"
-                            ? target.y + target.h / 2 + spot.targetOffsetY
-                            : target
-                              ? target.y + target.h / 2
-                              : null;
-                        const dx =
-                          typeof targetCenterX === "number" ? targetCenterX - spot.x : 0;
-                        const dy =
-                          typeof targetCenterY === "number" ? targetCenterY - spot.y : 0;
-                        const distance = Math.sqrt(dx * dx + dy * dy);
-                        const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-
-                        return (
-                          <div key={agent.id}>
-                            {target && state !== "idle" ? (
-                              <>
-                                <div
-                                  className={`gpx-interaction-line state-${state}`}
-                                  style={
-                                    {
-                                      left: spot.x,
-                                      top: spot.y - 22,
-                                      width: distance,
-                                      transform: `rotate(${angle}deg)`
-                                    } as CSSProperties
-                                  }
-                                />
-                                <div
-                                  className={`gpx-interaction-target state-${state}`}
-                                  style={
-                                    {
-                                      left: target.x - 6,
-                                      top: target.y - 6,
-                                      width: target.w + 12,
-                                      height: target.h + 12
-                                    } as CSSProperties
-                                  }
-                                />
-                              </>
-                            ) : null}
-
-                            <div
-                              className={`gpx-actor-slot state-${state}`}
-                              style={
-                                {
-                                  left: spot.x,
-                                  top: spot.y
-                                } as CSSProperties
-                              }
-                            >
-                              {(state === "active" || state === "warm") ? (
-                                <div className={`gpx-agent-bubble state-${state}`}>
-                                  {state === "active" ? spot.activity : "READY"}
-                                </div>
-                              ) : null}
-                              <div
-                                className={`gpx-actor dir-${spot.direction} state-${state}`}
-                                style={
-                                  {
-                                    backgroundImage: `url("${pickSpriteSheet(agent.id)}")`,
-                                    "--row-y": spriteRowY(spot.direction)
-                                  } as CSSProperties
-                                }
-                                aria-hidden
-                              />
-                              <span className="gpx-actor-badge">{agent.badge}</span>
-                            </div>
-                          </div>
-                        );
-                      })}
                     </section>
+                  ))}
+
+                  {ROOM_DOORS.map((door) => (
+                    <div
+                      key={door.id}
+                      className={`gpx-room-door side-${door.side}`}
+                      style={
+                        {
+                          left: door.x,
+                          top: door.y
+                        } as CSSProperties
+                      }
+                    />
+                  ))}
+
+                  {renderAgents.map(({ agent, simAgent, targetFurniture, isMoving }) => {
+                    if (!targetFurniture || isMoving) {
+                      return null;
+                    }
+
+                    const targetCenterX =
+                      targetFurniture.absX +
+                      targetFurniture.w / 2 +
+                      (simAgent.targetOffsetX ?? 0);
+                    const targetCenterY =
+                      targetFurniture.absY +
+                      targetFurniture.h / 2 +
+                      (simAgent.targetOffsetY ?? 0);
+                    const dx = targetCenterX - simAgent.x;
+                    const dy = targetCenterY - simAgent.y;
+                    const distance = Math.hypot(dx, dy);
+                    const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+
+                    return (
+                      <div key={`${agent.id}-target`}>
+                        <div
+                          className={`gpx-interaction-line state-${simAgent.state}`}
+                          style={
+                            {
+                              left: simAgent.x,
+                              top: simAgent.y - 26,
+                              width: distance,
+                              transform: `rotate(${angle}deg)`
+                            } as CSSProperties
+                          }
+                        />
+                        <div
+                          className={`gpx-interaction-target state-${simAgent.state}`}
+                          style={
+                            {
+                              left: targetFurniture.absX - 6,
+                              top: targetFurniture.absY - 6,
+                              width: targetFurniture.w + 12,
+                              height: targetFurniture.h + 12
+                            } as CSSProperties
+                          }
+                        />
+                      </div>
+                    );
+                  })}
+
+                  {agentLinks.map((link) => {
+                    const dx = link.right.simAgent.x - link.left.simAgent.x;
+                    const dy = link.right.simAgent.y - link.left.simAgent.y;
+                    const distance = Math.hypot(dx, dy);
+                    const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+                    const midpointX = (link.left.simAgent.x + link.right.simAgent.x) / 2;
+                    const midpointY = (link.left.simAgent.y + link.right.simAgent.y) / 2;
+
+                    return (
+                      <div key={link.id}>
+                        <div
+                          className={`gpx-agent-link state-${link.state}`}
+                          style={
+                            {
+                              left: link.left.simAgent.x,
+                              top: link.left.simAgent.y - 24,
+                              width: distance,
+                              transform: `rotate(${angle}deg)`
+                            } as CSSProperties
+                          }
+                        />
+                        <div
+                          className={`gpx-agent-link-label state-${link.state}`}
+                          style={
+                            {
+                              left: midpointX,
+                              top: midpointY - 42
+                            } as CSSProperties
+                          }
+                        >
+                          {link.label}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {renderAgents.map(({ agent, simAgent, isMoving }) => (
+                    <div
+                      key={agent.id}
+                      className={`gpx-actor-slot state-${simAgent.state}${isMoving ? " moving" : ""}`}
+                      style={
+                        {
+                          left: simAgent.x,
+                          top: simAgent.y
+                        } as CSSProperties
+                      }
+                    >
+                      {!isMoving ? (
+                        <div className={`gpx-agent-bubble state-${simAgent.state}`}>
+                          {simAgent.activity}
+                        </div>
+                      ) : null}
+                      <div
+                        className={`gpx-actor state-${simAgent.state}${isMoving ? " moving" : ""}`}
+                        style={
+                          {
+                            backgroundImage: `url("${pickSpriteSheet(agent.id)}")`,
+                            "--row-y": spriteRowY(simAgent.direction),
+                            "--flip-x": spriteFlip(simAgent.direction)
+                          } as CSSProperties
+                        }
+                        aria-hidden
+                      />
+                      <span className="gpx-actor-badge">{agent.badge}</span>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -1852,7 +2802,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           border: 2px solid #0e1222;
           background: #3f486d;
           color: #f6f7ff;
-          font-size: 0.82rem;
+          font-size: 0.94rem;
         }
 
         .gpx-status.live {
@@ -1863,14 +2813,14 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         .gpx-header-copy h3 {
           margin: 0;
           color: #fff8de;
-          font-size: 1.36rem;
+          font-size: 1.72rem;
           text-transform: uppercase;
         }
 
         .gpx-header-copy p {
           margin: 0;
           color: #d5daf6;
-          font-size: 0.88rem;
+          font-size: 1rem;
           line-height: 1.5;
           max-width: 78ch;
         }
@@ -1894,12 +2844,12 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
 
         .gpx-stat span {
           color: #bac3eb;
-          font-size: 0.64rem;
+          font-size: 0.76rem;
         }
 
         .gpx-stat strong {
           color: #fff7d4;
-          font-size: 0.84rem;
+          font-size: 0.98rem;
         }
 
         .gpx-sidebar-btn,
@@ -1908,7 +2858,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           font: inherit;
           color: #fff7de;
           padding: 0.58rem 0.88rem;
-          font-size: 0.76rem;
+          font-size: 0.86rem;
           cursor: pointer;
           box-shadow: 3px 3px 0 rgba(7, 8, 15, 0.58);
         }
@@ -1956,12 +2906,12 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           border-bottom: 3px solid #14192b;
           background: #39405f;
           color: #fff8de;
-          font-size: 0.74rem;
+          font-size: 0.84rem;
         }
 
         .gpx-window-head strong {
           color: #c7ffd4;
-          font-size: 0.68rem;
+          font-size: 0.8rem;
         }
 
         .gpx-map-toolbar {
@@ -1981,12 +2931,12 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
 
         .gpx-map-toolbar-copy span {
           color: #fff7d4;
-          font-size: 0.66rem;
+          font-size: 0.78rem;
         }
 
         .gpx-map-toolbar-copy strong {
           color: #dce4ff;
-          font-size: 0.8rem;
+          font-size: 0.96rem;
           line-height: 1.45;
         }
 
@@ -2003,7 +2953,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           background: #3b476a;
           color: #fff7de;
           font: inherit;
-          font-size: 0.72rem;
+          font-size: 0.84rem;
           cursor: pointer;
           box-shadow: 3px 3px 0 rgba(7, 8, 15, 0.5);
         }
@@ -2035,7 +2985,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           background: #38405f;
           color: #f3f6ff;
           font: inherit;
-          font-size: 0.68rem;
+          font-size: 0.8rem;
           cursor: pointer;
           box-shadow: 3px 3px 0 rgba(7, 8, 15, 0.42);
         }
@@ -2123,9 +3073,33 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
             radial-gradient(circle at center, transparent 58%, rgba(0, 0, 0, 0.22) 100%);
         }
 
+        .gpx-corridor-layer {
+          position: absolute;
+          inset: 0;
+          z-index: 1;
+          pointer-events: none;
+        }
+
+        .gpx-corridor,
+        .gpx-corridor-node {
+          position: absolute;
+          background:
+            linear-gradient(180deg, rgba(222, 214, 199, 0.96), rgba(195, 186, 171, 0.96)),
+            repeating-linear-gradient(
+              90deg,
+              rgba(120, 108, 96, 0.08) 0 10px,
+              transparent 10px 18px
+            );
+          border: 3px solid #0d1121;
+          box-shadow:
+            inset 0 0 0 2px rgba(255, 255, 255, 0.18),
+            0 0 0 2px rgba(32, 37, 56, 0.25);
+        }
+
         .gpx-room {
           position: absolute;
           overflow: hidden;
+          z-index: 2;
           border: 6px solid #0d1121;
           box-shadow:
             inset 0 0 0 4px rgba(255, 255, 255, 0.06),
@@ -2219,6 +3193,66 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           background: #84a7ff;
         }
 
+        .gpx-room-label {
+          position: absolute;
+          left: 18px;
+          top: 20px;
+          z-index: 4;
+          display: grid;
+          gap: 0.14rem;
+          padding: 0.32rem 0.46rem;
+          border: 2px solid #101425;
+          background: rgba(17, 22, 36, 0.82);
+          box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.3);
+        }
+
+        .gpx-room-label strong,
+        .gpx-room-label span {
+          display: block;
+        }
+
+        .gpx-room-label strong {
+          color: #fff8de;
+          font-size: 0.72rem;
+          line-height: 1.1;
+        }
+
+        .gpx-room-label span {
+          color: #d7e0ff;
+          font-size: 0.52rem;
+        }
+
+        .gpx-room-label.state-active {
+          background: rgba(34, 63, 50, 0.88);
+        }
+
+        .gpx-room-label.state-warm {
+          background: rgba(43, 55, 92, 0.88);
+        }
+
+        .gpx-room-door {
+          position: absolute;
+          z-index: 6;
+          width: 42px;
+          height: 18px;
+          transform: translate(-50%, -50%);
+          border: 3px solid #101425;
+          background:
+            linear-gradient(180deg, #f4ddb2, #c28a4d),
+            repeating-linear-gradient(
+              90deg,
+              rgba(89, 53, 27, 0.4) 0 8px,
+              transparent 8px 12px
+            );
+          box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.34);
+        }
+
+        .gpx-room-door.side-left,
+        .gpx-room-door.side-right {
+          width: 18px;
+          height: 42px;
+        }
+
         .gpx-furniture {
           position: absolute;
           border: 2px solid #0b0f1d;
@@ -2283,7 +3317,8 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
 
         .gpx-furniture.type-desk.live::before,
         .gpx-furniture.type-terminal.live::before,
-        .gpx-furniture.type-projector.live::after {
+        .gpx-furniture.type-projector.live::after,
+        .gpx-furniture.type-tv.live::before {
           animation: gpxScreenPulse 1.1s steps(2, end) infinite;
         }
 
@@ -2332,6 +3367,57 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           width: 30px;
           height: 10px;
           background: rgba(0, 0, 0, 0.16);
+        }
+
+        .gpx-furniture.type-pingpong {
+          background:
+            linear-gradient(180deg, #225e77 0 18%, #1d4f64 18% 82%, #1a2730 82% 100%);
+        }
+
+        .gpx-furniture.type-pingpong::before {
+          left: 50%;
+          top: 10px;
+          bottom: 10px;
+          width: 4px;
+          transform: translateX(-50%);
+          background: rgba(244, 246, 250, 0.94);
+        }
+
+        .gpx-furniture.type-pingpong::after {
+          width: 16px;
+          height: 16px;
+          right: 18px;
+          top: 18px;
+          border-radius: 50%;
+          background: #fff3d9;
+          box-shadow:
+            -72px 18px 0 #ff8e6f,
+            -48px 26px 0 rgba(20, 25, 43, 0.28);
+        }
+
+        .gpx-furniture.type-tv {
+          background:
+            linear-gradient(180deg, #2d354c 0 18%, #10172a 18% 100%);
+        }
+
+        .gpx-furniture.type-tv::before {
+          inset: 8px;
+          background:
+            linear-gradient(180deg, rgba(138, 244, 255, 0.92), rgba(47, 97, 142, 0.92)),
+            repeating-linear-gradient(
+              180deg,
+              rgba(255, 255, 255, 0.12) 0 4px,
+              transparent 4px 8px
+            );
+        }
+
+        .gpx-furniture.type-tv::after {
+          left: 50%;
+          bottom: -12px;
+          width: 34px;
+          height: 12px;
+          transform: translateX(-50%);
+          background: linear-gradient(180deg, #6d7384, #343948);
         }
 
         .gpx-furniture.type-whiteboard {
@@ -2472,18 +3558,19 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
 
         .gpx-actor-slot {
           position: absolute;
-          z-index: 5;
-          width: 32px;
-          height: 48px;
+          z-index: 7;
+          width: 40px;
+          height: 60px;
           transform: translate(-50%, -100%);
           pointer-events: none;
         }
 
-        .gpx-actor-slot.state-active {
+        .gpx-actor-slot.moving {
           animation: gpxActorHop 0.9s steps(2, end) infinite;
         }
 
-        .gpx-actor-slot.state-warm {
+        .gpx-actor-slot.state-warm:not(.moving),
+        .gpx-actor-slot.state-idle:not(.moving) {
           animation: gpxActorBob 1.6s steps(2, end) infinite;
         }
 
@@ -2493,10 +3580,10 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           bottom: calc(100% + 10px);
           transform: translateX(-50%);
           border: 2px solid #101425;
-          padding: 1px 4px;
+          padding: 3px 6px;
           background: #f6f1dc;
           color: #171c2a;
-          font-size: 0.38rem;
+          font-size: 0.56rem;
           box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.48);
           white-space: nowrap;
         }
@@ -2523,26 +3610,29 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         }
 
         .gpx-actor {
-          width: 32px;
-          height: 48px;
+          width: 40px;
+          height: 60px;
           background-repeat: no-repeat;
-          background-size: 224px 192px;
-          background-position: 0 var(--row-y);
+          background-size: 280px 240px;
+          background-position: -120px var(--row-y);
+          transform: scaleX(var(--flip-x));
+          transform-origin: center center;
           image-rendering: pixelated;
         }
 
-        .gpx-actor.state-active {
-          animation: gpxSpriteWalk 0.85s steps(6) infinite;
+        .gpx-actor.moving {
+          animation: gpxSpriteWalk 0.76s steps(4) infinite;
         }
 
-        .gpx-actor.state-warm {
+        .gpx-actor.state-warm:not(.moving),
+        .gpx-actor.state-idle:not(.moving) {
           animation: gpxSpriteGlow 1.25s steps(2, end) infinite;
         }
 
         .gpx-interaction-line {
           position: absolute;
-          z-index: 4;
-          height: 3px;
+          z-index: 5;
+          height: 4px;
           transform-origin: 0 50%;
           pointer-events: none;
           opacity: 0.88;
@@ -2568,9 +3658,19 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           opacity: 0.62;
         }
 
+        .gpx-interaction-line.state-idle {
+          background:
+            repeating-linear-gradient(
+              90deg,
+              #fff4c3 0 10px,
+              #f0b56d 10px 18px
+            );
+          opacity: 0.56;
+        }
+
         .gpx-interaction-target {
           position: absolute;
-          z-index: 4;
+          z-index: 5;
           border: 3px solid #0e1222;
           pointer-events: none;
         }
@@ -2586,16 +3686,75 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           box-shadow: 0 0 0 3px rgba(158, 178, 255, 0.1);
         }
 
+        .gpx-interaction-target.state-idle {
+          border-color: #f4cc79;
+          box-shadow: 0 0 0 3px rgba(244, 204, 121, 0.1);
+        }
+
+        .gpx-agent-link {
+          position: absolute;
+          z-index: 6;
+          height: 3px;
+          transform-origin: 0 50%;
+          pointer-events: none;
+          background:
+            repeating-linear-gradient(
+              90deg,
+              rgba(255, 255, 255, 0.86) 0 8px,
+              rgba(126, 157, 255, 0.82) 8px 14px
+            );
+          opacity: 0.72;
+        }
+
+        .gpx-agent-link.state-active {
+          background:
+            repeating-linear-gradient(
+              90deg,
+              #c8ffd8 0 8px,
+              #57d46c 8px 14px
+            );
+        }
+
+        .gpx-agent-link.state-idle {
+          background:
+            repeating-linear-gradient(
+              90deg,
+              #fff4c8 0 8px,
+              #f0a96a 8px 14px
+            );
+        }
+
+        .gpx-agent-link-label {
+          position: absolute;
+          z-index: 7;
+          transform: translateX(-50%);
+          padding: 2px 5px;
+          border: 2px solid #101425;
+          background: #f6f1dc;
+          color: #171c2a;
+          font-size: 0.5rem;
+          box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.42);
+          white-space: nowrap;
+        }
+
+        .gpx-agent-link-label.state-active {
+          background: #e9ffd7;
+        }
+
+        .gpx-agent-link-label.state-warm {
+          background: #dfe6ff;
+        }
+
         .gpx-actor-badge {
           position: absolute;
           left: 50%;
           top: calc(100% + 3px);
           transform: translateX(-50%);
-          padding: 1px 4px;
+          padding: 2px 5px;
           border: 2px solid #101425;
           background: #f6f1dc;
           color: #181c2a;
-          font-size: 0.36rem;
+          font-size: 0.5rem;
           box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.48);
         }
 
@@ -2670,7 +3829,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           text-orientation: mixed;
           letter-spacing: 0.05em;
           min-height: 196px;
-          font-size: 0.82rem;
+          font-size: 0.92rem;
         }
 
         .gpx-side-toggle:hover {
@@ -2698,7 +3857,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           margin: 0;
           padding: 0.74rem 0.88rem 0;
           color: #edf0ff;
-          font-size: 0.84rem;
+          font-size: 0.98rem;
           line-height: 1.62;
         }
 
@@ -2726,12 +3885,12 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         .gpx-stage-pill span {
           min-width: 34px;
           color: #fff7d4;
-          font-size: 0.62rem;
+          font-size: 0.74rem;
         }
 
         .gpx-stage-pill strong {
           color: #edf0ff;
-          font-size: 0.78rem;
+          font-size: 0.9rem;
         }
 
         .gpx-stage-pill.state-done {
@@ -2769,14 +3928,14 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
         .gpx-room-row strong,
         .gpx-roster-row strong {
           color: #fff7de;
-          font-size: 0.76rem;
+          font-size: 0.88rem;
         }
 
         .gpx-room-row small,
         .gpx-roster-row small {
           margin-top: 0.16rem;
           color: #ced4fa;
-          font-size: 0.64rem;
+          font-size: 0.76rem;
           line-height: 1.45;
         }
 
@@ -2785,7 +3944,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           border: 2px solid #101425;
           padding: 0.2rem 0.34rem;
           color: #f6f7ff;
-          font-size: 0.56rem;
+          font-size: 0.66rem;
           background: #40476b;
         }
 
@@ -2830,7 +3989,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
 
         .gpx-subsection > span {
           color: #fff7d4;
-          font-size: 0.64rem;
+          font-size: 0.76rem;
         }
 
         .gpx-tag-list {
@@ -2844,7 +4003,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           border: 2px solid #101425;
           background: #2d314a;
           color: #edf0ff;
-          font-size: 0.58rem;
+          font-size: 0.68rem;
         }
 
         .gpx-tag.type-function {
@@ -2872,7 +4031,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
           border: 2px solid #101425;
           background: #f6f1dc;
           color: #181c2a;
-          font-size: 0.58rem;
+          font-size: 0.68rem;
         }
 
         .gpx-roster-row.active {
@@ -2885,7 +4044,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
 
         .gpx-empty {
           color: #dde2ff;
-          font-size: 0.74rem;
+          font-size: 0.88rem;
           line-height: 1.5;
         }
 
@@ -2905,12 +4064,12 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
 
         .gpx-artifact span {
           color: #cad2f7;
-          font-size: 0.54rem;
+          font-size: 0.66rem;
         }
 
         .gpx-artifact strong {
           color: #fff7d4;
-          font-size: 0.74rem;
+          font-size: 0.86rem;
         }
 
         @keyframes gpxFlow {
@@ -2987,7 +4146,7 @@ export default function GideonWorkView(props: GideonWorkViewProps) {
             background-position: 0 var(--row-y);
           }
           to {
-            background-position: -192px var(--row-y);
+            background-position: -160px var(--row-y);
           }
         }
 

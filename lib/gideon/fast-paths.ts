@@ -85,6 +85,8 @@ type ChartActionsOutput = {
 
 const VISUAL_ARTIFACTS = new Set(["panel_chart", "chart_draw", "animation", "strategy_json", "code_patch"]);
 const PRICE_QUESTION_RE = /\b(price|current|latest|right now|now|trading at|where is|quote)\b/i;
+const MARKET_CONTEXT_RE =
+  /\b(loaded range|loaded window|range|top|bottom|flat|candle time|window direction|up, down, or flat)\b/i;
 const SIMPLE_GREETING_RE =
   /^(hi|hello|hey|yo|sup|what'?s up|how are you|gm|gn|good morning|good afternoon|good evening)[!.?\s]*$/i;
 
@@ -225,7 +227,7 @@ const buildMarketPriceFastPath = (params: {
   if (execution.intent.needs.includes("internet_research") || execution.intent.needs.includes("backtest_stats")) {
     return null;
   }
-  if (!PRICE_QUESTION_RE.test(prompt)) {
+  if (!PRICE_QUESTION_RE.test(prompt) && !MARKET_CONTEXT_RE.test(prompt)) {
     return null;
   }
 
@@ -259,6 +261,41 @@ const buildMarketPriceFastPath = (params: {
     });
   }
 
+  const normalizedPrompt = prompt.toLowerCase();
+  if (/\b(candle time|latest candle time)\b/.test(normalizedPrompt) && price.latestTimeIso) {
+    return {
+      kind: "market_price",
+      shortAnswer: `Latest loaded ${symbol} ${timeframe} candle time is ${price.latestTimeIso}.`,
+      bullets: bullets.slice(0, 1),
+      toolIds: ["resolve_symbol", "get_latest_price_anchor"].filter((toolId) => Boolean(findToolResult(execution, toolId)))
+    };
+  }
+
+  if (
+    /\b(top|bottom|loaded range|range)\b/.test(normalizedPrompt) &&
+    typeof price.windowLow === "number" &&
+    typeof price.windowHigh === "number"
+  ) {
+    const span = Math.max(0.0001, price.windowHigh - price.windowLow);
+    const position = (price.latestClose - price.windowLow) / span;
+    const zone = position <= 0.33 ? "bottom" : position >= 0.67 ? "top" : "middle";
+    return {
+      kind: "market_price",
+      shortAnswer: `${symbol} on ${timeframe} is near the ${zone} of the loaded range.`,
+      bullets: bullets.slice(0, 2),
+      toolIds: ["resolve_symbol", "get_latest_price_anchor"].filter((toolId) => Boolean(findToolResult(execution, toolId)))
+    };
+  }
+
+  if (/\b(loaded window|up, down, or flat|flat)\b/.test(normalizedPrompt)) {
+    return {
+      kind: "market_price",
+      shortAnswer: `The loaded ${symbol} ${timeframe} window is ${moveText}.`,
+      bullets: bullets.slice(0, 2),
+      toolIds: ["resolve_symbol", "get_latest_price_anchor"].filter((toolId) => Boolean(findToolResult(execution, toolId)))
+    };
+  }
+
   return {
     kind: "market_price",
     shortAnswer: `${symbol} on ${timeframe} is ${formatPrice(price.latestClose)}. The latest loaded candle is ${freshnessText} and the loaded window is ${moveText}.`,
@@ -286,6 +323,9 @@ const describeDrawAction = (action: Record<string, unknown>): string | null => {
   }
   if (type === "draw_fvg") {
     return "fair value gap";
+  }
+  if (type === "draw_fibonacci") {
+    return "fibonacci retracement";
   }
   if (type === "draw_arrow") {
     return "arrow marker";
@@ -418,6 +458,48 @@ const buildIndicatorQuestionFastPath = (params: {
     }
   }
 
+  if (/\bema\b/.test(normalizedPrompt) && indicators.ema20) {
+    const ema = indicators.ema20;
+    const value = Number(ema.value ?? NaN);
+    if (Number.isFinite(value)) {
+      return {
+        kind: "indicator_question",
+        shortAnswer: `EMA 20 on ${symbol} ${timeframe} is ${value.toFixed(4)}.`,
+        bullets:
+          typeof ema.slope === "number"
+            ? [
+                {
+                  tone: ema.slope >= 0 ? "green" : "red",
+                  text: `EMA slope: ${ema.slope >= 0 ? "+" : ""}${ema.slope.toFixed(4)}`
+                }
+              ]
+            : [],
+        toolIds: ["compute_indicator_snapshot"]
+      };
+    }
+  }
+
+  if ((/\bsma\b|\bmoving average\b/.test(normalizedPrompt)) && indicators.sma20) {
+    const sma = indicators.sma20;
+    const value = Number(sma.value ?? NaN);
+    if (Number.isFinite(value)) {
+      return {
+        kind: "indicator_question",
+        shortAnswer: `SMA 20 on ${symbol} ${timeframe} is ${value.toFixed(4)}.`,
+        bullets:
+          typeof sma.slope === "number"
+            ? [
+                {
+                  tone: sma.slope >= 0 ? "green" : "red",
+                  text: `SMA slope: ${sma.slope >= 0 ? "+" : ""}${sma.slope.toFixed(4)}`
+                }
+              ]
+            : [],
+        toolIds: ["compute_indicator_snapshot"]
+      };
+    }
+  }
+
   if (/\batr\b|\bvolatility\b/.test(normalizedPrompt) && indicators.atr14) {
     const atr = indicators.atr14;
     const value = Number(atr.value ?? NaN);
@@ -429,6 +511,20 @@ const buildIndicatorQuestionFastPath = (params: {
           tone: atr.change >= 0 ? "gold" : "black",
           text: `ATR change: ${atr.change >= 0 ? "+" : ""}${atr.change.toFixed(4)}`
         }] : [],
+        toolIds: ["compute_indicator_snapshot"]
+      };
+    }
+  }
+
+  if (/\bstoch\b|\bstochastic\b/.test(normalizedPrompt) && indicators.stochastic_14_3) {
+    const stochastic = indicators.stochastic_14_3;
+    const k = Number(stochastic.k ?? NaN);
+    const d = Number(stochastic.d ?? NaN);
+    if (Number.isFinite(k) && Number.isFinite(d)) {
+      return {
+        kind: "indicator_question",
+        shortAnswer: `Stochastic 14 3 on ${symbol} ${timeframe} has %K ${k.toFixed(2)} and %D ${d.toFixed(2)}, so it is ${String(stochastic.state || "neutral")}.`,
+        bullets: [],
         toolIds: ["compute_indicator_snapshot"]
       };
     }

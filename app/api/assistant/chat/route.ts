@@ -375,7 +375,7 @@ const DRAW_WORD_RE = /\bdraw\b/i;
 const VISUAL_REQUEST_RE = /\b(chart|graph|plot|visual|visualize|overview)\b/i;
 const ANIMATION_REQUEST_RE = /\b(animate|animation|video|replay|playback|walkthrough|demo)\b/i;
 const TECHNICAL_DRAW_RE =
-  /\b(support|resistance|s\/r|trendline|trend line|horizontal line|vertical line|box|fvg|fair value gap|arrow|ruler|mark candlestick|draw)\b/i;
+  /\b(support|resistance|s\/r|trendline|trend line|horizontal line|vertical line|box|fvg|fair value gap|order block|breaker block|mitigation block|arrow|circle|square|ruler|fibonacci|fib|long position|short position|long setup|short setup|mark candlestick|draw)\b/i;
 const INDICATOR_REQUEST_RE =
   /\b(rsi|overbought|oversold|over bought|over sold|macd|stoch|stochastic|ema|sma|moving average|atr|indicator)\b/i;
 const SOCIAL_GREETING_RE =
@@ -388,7 +388,7 @@ const STRATEGY_SELF_DESCRIPTION_RE =
 const STRATEGY_RULE_RE =
   /\b(entry|exit|stop(?: loss)?|target|risk|confirmation|invalidation|setup|no[- ]trade|take profit)\b/gi;
 const TRADING_REQUEST_RE =
-  /\b(trade|trading|chart|graph|draw|support|resistance|trend|line|box|fvg|arrow|ruler|candle|candlestick|price|xau|xauusd|gold|rsi|macd|ema|sma|atr|indicator|backtest|history|pnl|risk|entry|stop|target|buy|sell|volume|volatility)\b/i;
+  /\b(trade|trading|chart|graph|draw|support|resistance|trend|line|box|fvg|fair value gap|order block|breaker block|mitigation block|arrow|circle|square|ruler|fibonacci|fib|candle|candlestick|price|xau|xauusd|gold|rsi|macd|ema|sma|atr|indicator|backtest|history|pnl|risk|entry|stop|target|buy|sell|volume|volatility)\b/i;
 const INTERNET_CONTEXT_RE =
   /\b(news|headline|headlines|macro|calendar|event|cpi|nfp|fomc|fed|interest rate|yield|dxy|geopolitical|war|sanction|breaking|today|internet|web)\b/i;
 const BROAD_NEWS_QUESTION_RE =
@@ -400,6 +400,8 @@ const CURRENT_MARKET_RE = /\b(current|latest|today|now|right now|recent|currentl
 const CURRENT_PRICE_RE = /\b(price|quote|level|levels|where is|where's|trading at|mark|spot)\b/i;
 const STATS_REQUEST_RE =
   /\b(stat|stats|statistics|metric|metrics|performance|win rate|hit rate|drawdown|expectancy|profit factor|payoff ratio|pnl|equity curve|distribution|outcome|session|hourly|weekday|month|monthly|hold time|duration|model performance|setup performance)\b/i;
+const VISUAL_STATS_REQUEST_RE =
+  /\b(curve|distribution|histogram|session|hourly|weekday|month|monthly|timeline|outcomes?)\b/i;
 const STRUCTURED_ANSWER_RE =
   /\b(list|bullet|bullets|steps|checklist|reasons|pros|cons|compare|comparison|breakdown|details)\b/i;
 
@@ -418,6 +420,7 @@ const GRAPH_TEMPLATE_ALIAS_RULES: Array<{ pattern: RegExp; template: string }> =
   { pattern: /\b(monthly volume|volume by month)\b/i, template: "monthly_volume" },
   { pattern: /\b(hold time|duration)\b/i, template: "hold_time_distribution" },
   { pattern: /\b(long short)\b/i, template: "long_short_split" },
+  { pattern: /\b(trade outcomes|win vs loss|wins vs losses|outcomes?)\b/i, template: "trade_outcomes" },
   { pattern: /\b(model performance|setup performance|entry source)\b/i, template: "model_performance" },
   { pattern: /\b(action|timeline|alerts|execution)\b/i, template: "action_timeline" },
   { pattern: /\b(rsi)\b/i, template: "rsi_14" },
@@ -1153,7 +1156,7 @@ const isChartControlRequest = (prompt: string): boolean => {
 
   const dynamicIntent =
     /\b(dynamic|indicator|auto)\b/.test(text) &&
-    /\b(draw|line|trendline|trend line|box|fvg|fair value gap|arrow|ruler|support|resistance|s\/r|mark|position)\b/.test(
+    /\b(draw|line|trendline|trend line|box|fvg|fair value gap|order block|breaker block|mitigation block|arrow|circle|square|ruler|fibonacci|fib|support|resistance|s\/r|mark|position|long|short)\b/.test(
       text
     );
 
@@ -1256,7 +1259,9 @@ const resolveCapabilityRoute = (params: {
     prompt,
     socialOnlyRequest: socialOnly
   });
-  const wantsVisualization = VISUAL_REQUEST_RE.test(prompt);
+  const wantsVisualization =
+    VISUAL_REQUEST_RE.test(prompt) &&
+    !/\b(no chart|without chart|text only|just text)\b/i.test(prompt);
   const wantsCurrentMarketData = CURRENT_MARKET_RE.test(prompt) || CURRENT_PRICE_RE.test(prompt);
   const prefersNoBullets = !prefersStructuredAnswer(prompt);
 
@@ -1297,6 +1302,8 @@ const resolveCapabilityRoute = (params: {
     requestMode = "animation";
   } else if (drawRequest) {
     requestMode = "draw";
+  } else if (statsRequest && VISUAL_STATS_REQUEST_RE.test(prompt)) {
+    requestMode = "graph";
   } else if (wantsVisualization && !strategyRequest) {
     requestMode = "graph";
   }

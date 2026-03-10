@@ -8,6 +8,7 @@ export type AssistantChartActionType =
   | "draw_trend_line"
   | "draw_box"
   | "draw_fvg"
+  | "draw_fibonacci"
   | "draw_support_resistance"
   | "draw_arrow"
   | "draw_long_position"
@@ -52,6 +53,7 @@ const ACTION_TYPES: AssistantChartActionType[] = [
   "draw_trend_line",
   "draw_box",
   "draw_fvg",
+  "draw_fibonacci",
   "draw_support_resistance",
   "draw_arrow",
   "draw_long_position",
@@ -75,6 +77,7 @@ const DYNAMIC_CAPABLE_ACTION_SET = new Set<AssistantChartActionType>([
   "draw_trend_line",
   "draw_box",
   "draw_fvg",
+  "draw_fibonacci",
   "draw_support_resistance",
   "draw_arrow",
   "draw_long_position",
@@ -340,6 +343,28 @@ const ACTION_ALIAS_GROUPS: Record<AssistantChartActionType, string[]> = {
     "mark_liquidity_void",
     "draw_value_gap",
     "draw_price_imbalance"
+  ],
+  draw_fibonacci: [
+    "draw_fib",
+    "draw_fibonacci_retracement",
+    "draw_fib_retracement",
+    "draw_fibonacci_tool",
+    "draw_fib_tool",
+    "draw_fib_levels",
+    "draw_retracement_levels",
+    "draw_golden_zone",
+    "draw_ote_range",
+    "draw_ote_box",
+    "plot_fibonacci",
+    "plot_fib",
+    "add_fib",
+    "add_fibonacci",
+    "add_retracement",
+    "draw_pullback_fib",
+    "draw_extension_fib",
+    "mark_fib_levels",
+    "mark_golden_pocket",
+    "show_fib"
   ],
   draw_support_resistance: [
     "draw_sr",
@@ -713,6 +738,7 @@ export const chartActionsPromptSpec = (): string => {
     '{"type":"draw_trend_line","timeStart":1709200000000,"priceStart":3340,"timeEnd":1709300000000,"priceEnd":3360}',
     '{"type":"draw_box","timeStart":1709200000000,"priceStart":3338,"timeEnd":1709300000000,"priceEnd":3352,"label":"Range"}',
     '{"type":"draw_fvg","timeStart":1709200000000,"timeEnd":1709300000000,"priceStart":3346,"priceEnd":3351}',
+    '{"type":"draw_fibonacci","timeStart":1709200000000,"priceStart":3338,"timeEnd":1709300000000,"priceEnd":3362,"label":"Fib"}',
     '{"type":"draw_support_resistance","priceStart":3330,"priceEnd":3360}',
     '{"type":"draw_arrow","time":1709251200000,"price":3355,"markerShape":"arrowDown","label":"Rejection"}',
     '{"type":"draw_long_position","entryPrice":3348,"stopPrice":3339,"targetPrice":3368}',

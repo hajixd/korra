@@ -1,6 +1,7 @@
 import { clearAnnotations } from "./clearAnnotations";
 import { drawArrow } from "./drawArrow";
 import { drawBox } from "./drawBox";
+import { drawFibonacci } from "./drawFibonacci";
 import { drawFvg } from "./drawFvg";
 import { drawHorizontalLine } from "./drawHorizontalLine";
 import { drawLongPosition } from "./drawLongPosition";
@@ -55,6 +56,11 @@ export const executeAssistantChartActions = (
 
     if (action.type === "draw_fvg") {
       drawFvg(action, ctx);
+      continue;
+    }
+
+    if (action.type === "draw_fibonacci") {
+      drawFibonacci(action, ctx);
       continue;
     }
 

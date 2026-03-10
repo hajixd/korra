@@ -448,6 +448,24 @@ const extractPromptPrice = (prompt: string): number | null => {
   return Number.isFinite(candidate) ? candidate : null;
 };
 
+const extractPromptPositionPrices = (
+  prompt: string
+): { entryPrice?: number; stopPrice?: number; targetPrice?: number } => {
+  const entryMatch = prompt.match(/\b(?:from|entry(?:\s+at)?)\s+(\d{3,6}(?:\.\d+)?)\b/i);
+  const stopMatch = prompt.match(/\b(?:stop|stop loss)(?:\s+(?:at|below|above))?\s+(\d{3,6}(?:\.\d+)?)\b/i);
+  const targetMatch = prompt.match(/\b(?:target|tp|take profit)(?:\s+(?:at|to))?\s+(\d{3,6}(?:\.\d+)?)\b/i);
+
+  const entryPrice = entryMatch ? Number(entryMatch[1]) : undefined;
+  const stopPrice = stopMatch ? Number(stopMatch[1]) : undefined;
+  const targetPrice = targetMatch ? Number(targetMatch[1]) : undefined;
+
+  return {
+    entryPrice: Number.isFinite(entryPrice) ? entryPrice : undefined,
+    stopPrice: Number.isFinite(stopPrice) ? stopPrice : undefined,
+    targetPrice: Number.isFinite(targetPrice) ? targetPrice : undefined
+  };
+};
+
 const inferCandleStepMs = (candles: GideonRuntimeCandle[]): number => {
   if (candles.length < 2) {
     return 60_000;
@@ -472,6 +490,126 @@ const inferCandleStepMs = (candles: GideonRuntimeCandle[]): number => {
 
   diffs.sort((left, right) => left - right);
   return Math.max(1_000, diffs[Math.floor(diffs.length / 2)] ?? 60_000);
+};
+
+const resolvePromptConceptLabel = (prompt: string): string | null => {
+  if (prompt.includes("breaker block")) {
+    return "Breaker Block";
+  }
+  if (prompt.includes("mitigation block")) {
+    return "Mitigation Block";
+  }
+  if (prompt.includes("order block")) {
+    return "Order Block";
+  }
+  return null;
+};
+
+const resolvePromptMarkerShape = (
+  prompt: string
+): "circle" | "square" | "arrowUp" | "arrowDown" => {
+  if (prompt.includes("square")) {
+    return "square";
+  }
+  if (
+    prompt.includes("down arrow") ||
+    prompt.includes("bearish arrow") ||
+    prompt.includes("sell arrow")
+  ) {
+    return "arrowDown";
+  }
+  if (prompt.includes("circle")) {
+    return "circle";
+  }
+  return "arrowUp";
+};
+
+const findPromptZoneAnchor = (
+  candles: GideonRuntimeCandle[]
+): {
+  candle: GideonRuntimeCandle;
+  timeStart: number;
+  timeEnd: number;
+  priceStart: number;
+  priceEnd: number;
+} | null => {
+  if (candles.length === 0) {
+    return null;
+  }
+
+  const recent = candles.slice(-Math.min(candles.length, 96));
+  const last = recent[recent.length - 1]!;
+  const bullishBias = last.close >= last.open;
+  let candidate: GideonRuntimeCandle | null = null;
+
+  for (let index = recent.length - 2; index >= Math.max(0, recent.length - 24); index -= 1) {
+    const candle = recent[index];
+    if (!candle) {
+      continue;
+    }
+    const isOpposing = bullishBias ? candle.close < candle.open : candle.close > candle.open;
+    if (isOpposing) {
+      candidate = candle;
+      break;
+    }
+  }
+
+  const anchor = candidate ?? recent[Math.max(0, recent.length - 8)] ?? last;
+  const bodyLow = Math.min(anchor.open, anchor.close);
+  const bodyHigh = Math.max(anchor.open, anchor.close);
+  const bodyRange = Math.max(0.0001, bodyHigh - bodyLow);
+  const padding = Math.max(0.0001, bodyRange * 0.18);
+
+  return {
+    candle: anchor,
+    timeStart: anchor.time,
+    timeEnd: last.time,
+    priceStart: Number((bodyLow - padding).toFixed(4)),
+    priceEnd: Number((bodyHigh + padding).toFixed(4))
+  };
+};
+
+const findPromptFibAnchors = (
+  candles: GideonRuntimeCandle[]
+): { timeStart: number; timeEnd: number; priceStart: number; priceEnd: number } | null => {
+  if (candles.length < 2) {
+    return null;
+  }
+
+  const recent = candles.slice(-Math.min(candles.length, 96));
+  let lowIndex = 0;
+  let highIndex = 0;
+  for (let index = 1; index < recent.length; index += 1) {
+    if ((recent[index]?.low ?? Number.POSITIVE_INFINITY) < (recent[lowIndex]?.low ?? Number.POSITIVE_INFINITY)) {
+      lowIndex = index;
+    }
+    if ((recent[index]?.high ?? Number.NEGATIVE_INFINITY) > (recent[highIndex]?.high ?? Number.NEGATIVE_INFINITY)) {
+      highIndex = index;
+    }
+  }
+
+  const firstIndex = Math.min(lowIndex, highIndex);
+  const lastIndex = Math.max(lowIndex, highIndex);
+  const first = recent[firstIndex];
+  const last = recent[lastIndex];
+  if (!first || !last) {
+    return null;
+  }
+
+  const useLowToHigh = lowIndex <= highIndex;
+  return useLowToHigh
+    ? {
+        timeStart: first.time,
+        timeEnd: last.time,
+        priceStart: Number(first.low.toFixed(4)),
+        priceEnd: Number(last.high.toFixed(4))
+      }
+    : {
+        timeStart: first.time,
+        timeEnd: last.time,
+        priceStart: Number(first.high.toFixed(4)),
+        priceEnd: Number(last.low.toFixed(4))
+      };
 };
 
 const parseAdjustIntentAction = (params: {
@@ -579,6 +717,8 @@ const parseDynamicDrawAction = (params: {
   const dynamicLookback = lookbackMatch ? clamp(toNumber(lookbackMatch[1], 0), 0, 1500) : undefined;
   const levels = levelsMatch ? clamp(toNumber(levelsMatch[1], 2), 1, 8) : undefined;
   const explicitPrice = extractPromptPrice(normalized);
+  const conceptLabel = resolvePromptConceptLabel(normalized);
+  const markerShape = resolvePromptMarkerShape(normalized);
 
   const baseAction = {
     dynamic: true,
@@ -622,6 +762,13 @@ const parseDynamicDrawAction = (params: {
       label: "Dynamic Box"
     };
   }
+  if (conceptLabel) {
+    return {
+      ...baseAction,
+      type: "draw_box",
+      label: `Dynamic ${conceptLabel}`
+    };
+  }
   if (normalized.includes("fvg") || normalized.includes("fair value gap")) {
     return {
       ...baseAction,
@@ -629,11 +776,22 @@ const parseDynamicDrawAction = (params: {
       label: "Dynamic FVG"
     };
   }
+  if (
+    /\b(fibonacci|fib|retracement|golden pocket|golden zone|ote|optimal trade entry)\b/.test(
+      normalized
+    )
+  ) {
+    return {
+      ...baseAction,
+      type: "draw_fibonacci",
+      label: "Dynamic Fibonacci"
+    };
+  }
   if (normalized.includes("arrow")) {
     return {
       ...baseAction,
       type: "draw_arrow",
-      markerShape: "arrowUp",
+      markerShape,
       label: "Dynamic Arrow"
     };
   }
@@ -658,11 +816,16 @@ const parseDynamicDrawAction = (params: {
       label: "Dynamic Ruler"
     };
   }
-  if (normalized.includes("mark") || normalized.includes("candle")) {
+  if (
+    normalized.includes("mark") ||
+    normalized.includes("candle") ||
+    normalized.includes("circle") ||
+    normalized.includes("square")
+  ) {
     return {
       ...baseAction,
       type: "mark_candlestick",
-      markerShape: "circle",
+      markerShape: markerShape === "square" ? "square" : "circle",
       note: "Dynamic candle marker"
     };
   }
@@ -711,6 +874,11 @@ const buildRawPromptChartActions = (params: {
   const support = getPriceQuantile(lows, 0.2) ?? Number(last.low.toFixed(4));
   const resistance = getPriceQuantile(highs, 0.8) ?? Number(last.high.toFixed(4));
   const explicitPrice = extractPromptPrice(prompt);
+  const positionPrices = extractPromptPositionPrices(prompt);
+  const conceptLabel = resolvePromptConceptLabel(prompt);
+  const zoneAnchor = findPromptZoneAnchor(recent);
+  const fibAnchors = findPromptFibAnchors(recent);
+  const markerShape = resolvePromptMarkerShape(prompt);
   const actions: AssistantChartAction[] = [];
 
   if (prompt.includes("support") || prompt.includes("resistance") || prompt.includes("s/r")) {
@@ -755,6 +923,23 @@ const buildRawPromptChartActions = (params: {
       label: "Range Box"
     });
   }
+  if (conceptLabel && zoneAnchor) {
+    actions.push({
+      type: "draw_box",
+      timeStart: zoneAnchor.timeStart,
+      timeEnd: zoneAnchor.timeEnd,
+      priceStart: zoneAnchor.priceStart,
+      priceEnd: zoneAnchor.priceEnd,
+      label: `${conceptLabel} Zone`
+    });
+    actions.push({
+      type: "mark_candlestick",
+      time: zoneAnchor.candle.time,
+      price: Number(((zoneAnchor.priceStart + zoneAnchor.priceEnd) / 2).toFixed(4)),
+      markerShape: "circle",
+      label: `${conceptLabel} Candle`
+    });
+  }
   if (prompt.includes("fvg") || prompt.includes("fair value gap")) {
     actions.push({
       type: "draw_fvg",
@@ -765,13 +950,55 @@ const buildRawPromptChartActions = (params: {
       label: "FVG"
     });
   }
+  if (/\blong position\b|\blong setup\b|\bbuy position\b|\bdraw long\b/.test(prompt)) {
+    actions.push({
+      type: "draw_long_position",
+      entryPrice: positionPrices.entryPrice ?? Number(last.close.toFixed(4)),
+      stopPrice: positionPrices.stopPrice ?? support,
+      targetPrice: positionPrices.targetPrice ?? resistance,
+      side: "long",
+      label: "Long Position"
+    });
+  }
+  if (/\bshort position\b|\bshort setup\b|\bsell position\b|\bdraw short\b/.test(prompt)) {
+    actions.push({
+      type: "draw_short_position",
+      entryPrice: positionPrices.entryPrice ?? Number(last.close.toFixed(4)),
+      stopPrice: positionPrices.stopPrice ?? resistance,
+      targetPrice: positionPrices.targetPrice ?? support,
+      side: "short",
+      label: "Short Position"
+    });
+  }
+  if (
+    /\b(fibonacci|fib|retracement|golden pocket|golden zone|ote|optimal trade entry)\b/.test(prompt) &&
+    fibAnchors
+  ) {
+    actions.push({
+      type: "draw_fibonacci",
+      ...fibAnchors,
+      label: "Fib"
+    });
+  }
   if (prompt.includes("arrow")) {
     actions.push({
       type: "draw_arrow",
       time: last.time,
       price: explicitPrice ?? Number(last.close.toFixed(4)),
-      markerShape: "arrowUp",
+      markerShape: markerShape === "arrowDown" ? "arrowDown" : "arrowUp",
       label: "Arrow"
+    });
+  }
+  if (prompt.includes("circle") || prompt.includes("square")) {
+    actions.push({
+      type: "mark_candlestick",
+      time: zoneAnchor?.candle.time ?? last.time,
+      price:
+        zoneAnchor != null
+          ? Number(((zoneAnchor.priceStart + zoneAnchor.priceEnd) / 2).toFixed(4))
+          : explicitPrice ?? Number(last.close.toFixed(4)),
+      markerShape: markerShape === "square" ? "square" : "circle",
+      label: markerShape === "square" ? "Square Marker" : "Circle Marker"
     });
   }
   if (prompt.includes("ruler")) {
@@ -845,7 +1072,12 @@ export const sanitizeChartActionsTool = (params: {
       next.price = clampPriceToBand(next.price, median);
       return next;
     }
-    if (next.type === "draw_box" || next.type === "draw_fvg" || next.type === "draw_ruler") {
+    if (
+      next.type === "draw_box" ||
+      next.type === "draw_fvg" ||
+      next.type === "draw_fibonacci" ||
+      next.type === "draw_ruler"
+    ) {
       next.priceStart = clampPriceToBand(next.priceStart, support);
       next.priceEnd = clampPriceToBand(next.priceEnd, resistance);
       return next;

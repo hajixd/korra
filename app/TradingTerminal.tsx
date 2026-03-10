@@ -5206,6 +5206,7 @@ const ASSISTANT_DRAWABLE_ACTION_TYPES = new Set<AssistantChartAction["type"]>([
   "draw_trend_line",
   "draw_box",
   "draw_fvg",
+  "draw_fibonacci",
   "draw_support_resistance",
   "draw_arrow",
   "draw_long_position",
@@ -5433,6 +5434,48 @@ const findLatestDynamicFvg = (
   return null;
 };
 
+const findDynamicFibAnchors = (
+  candles: Candle[]
+): { timeStart: number; timeEnd: number; priceStart: number; priceEnd: number } | null => {
+  if (candles.length < 2) {
+    return null;
+  }
+
+  let lowIndex = 0;
+  let highIndex = 0;
+  for (let index = 1; index < candles.length; index += 1) {
+    if ((candles[index]?.low ?? Number.POSITIVE_INFINITY) < (candles[lowIndex]?.low ?? Number.POSITIVE_INFINITY)) {
+      lowIndex = index;
+    }
+    if ((candles[index]?.high ?? Number.NEGATIVE_INFINITY) > (candles[highIndex]?.high ?? Number.NEGATIVE_INFINITY)) {
+      highIndex = index;
+    }
+  }
+
+  const firstIndex = Math.min(lowIndex, highIndex);
+  const lastIndex = Math.max(lowIndex, highIndex);
+  const first = candles[firstIndex];
+  const last = candles[lastIndex];
+  if (!first || !last) {
+    return null;
+  }
+
+  const useLowToHigh = lowIndex <= highIndex;
+  return useLowToHigh
+    ? {
+        timeStart: first.time,
+        timeEnd: last.time,
+        priceStart: Number(first.low.toFixed(4)),
+        priceEnd: Number(last.high.toFixed(4))
+      }
+    : {
+        timeStart: first.time,
+        timeEnd: last.time,
+        priceStart: Number(first.high.toFixed(4)),
+        priceEnd: Number(last.low.toFixed(4))
+      };
+};
+
 const resolveDynamicAssistantAction = (params: {
   action: AssistantChartAction;
   candles: Candle[];
@@ -5551,6 +5594,14 @@ const resolveDynamicAssistantAction = (params: {
         priceEnd: Number(((resistance + median) / 2).toFixed(4))
       }
     ];
+  }
+
+  if (action.type === "draw_fibonacci") {
+    const fibAnchors = findDynamicFibAnchors(sourceWindow);
+    if (!fibAnchors) {
+      return [];
+    }
+    return [{ ...stripDynamicMeta(action), ...fibAnchors }];
   }
 
   if (action.type === "draw_arrow") {

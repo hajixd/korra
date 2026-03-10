@@ -21,6 +21,7 @@ export type AssistantChartAction = {
     | "draw_trend_line"
     | "draw_box"
     | "draw_fvg"
+    | "draw_fibonacci"
     | "draw_support_resistance"
     | "draw_arrow"
     | "draw_long_position"

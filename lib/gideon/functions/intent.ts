@@ -13,12 +13,12 @@ const GRAPH_RE = /\b(graph|chart|plot|visual|visualize|overview)\b/i;
 const VISUAL_STATS_RE =
   /\b(curve|distribution|histogram|over time|timeline|session|hourly|weekday|monthly|heatmap|equity curve|drawdown curve)\b/i;
 const DRAW_RE =
-  /\b(draw|annotate|mark|support|resistance|trendline|trend line|horizontal line|vertical line|box|fvg|arrow|ruler)\b/i;
+  /\b(draw|annotate|mark|support|resistance|trendline|trend line|horizontal line|vertical line|box|fvg|fair value gap|order block|breaker block|mitigation block|arrow|circle|square|ruler|fibonacci|fib|long position|short position|long setup|short setup)\b/i;
 const ANIMATION_RE = /\b(animate|animation|video|replay|playback|walkthrough|demo)\b/i;
 const STATS_RE =
   /\b(stat|stats|statistics|metric|metrics|win rate|hit rate|drawdown|expectancy|profit factor|pnl|distribution|session|hourly|weekday|monthly)\b/i;
 const STRATEGY_RE =
-  /\b(strategy|playbook|trading system|model json|models tab|turn this into a model|turn this into a strategy)\b/i;
+  /\b(strategy|playbook|trading system|model json|models tab|turn this into a model|turn this into a strategy|create a model|make a model|build a model)\b/i;
 const STRATEGY_RULE_RE =
   /\b(entry|exit|trigger|confirmation|invalidation|stop|target|take profit|setup|retest|breakout|pullback|reclaim|sweep)\b/i;
 const CODE_RE =
@@ -30,6 +30,9 @@ const INDICATOR_RE =
   /\b(indicator|rsi|macd|ema|sma|atr|stoch|stochastic|moving average|volatility)\b/i;
 const STRICT_SCOPE_OFF_RE = /\b(overview|all the graphs|all graphs|dashboard|everything|full sweep)\b/i;
 const BULLET_RE = /\b(list|bullet|bullets|steps|checklist|breakdown|compare|comparison|why)\b/i;
+const NO_VISUAL_RE = /\b(no chart|without chart|text only|just text)\b/i;
+const AMBIGUOUS_CONCEPT_RE =
+  /\b(order block|breaker block|mitigation block|balanced price range|bpr|optimal trade entry|\bote\b)\b/i;
 
 const GRAPH_TEMPLATE_HINTS: Array<{ pattern: RegExp; template: string }> = [
   { pattern: /\b(drawdown|underwater)\b/i, template: "drawdown_curve" },
@@ -80,6 +83,7 @@ const pickGoalBullets = (prompt: string): string[] => {
 const dedupe = <T>(items: T[]): T[] => Array.from(new Set(items));
 
 const inferRequestKind = (prompt: string): GideonRequestKind => {
+  const wantsVisuals = !NO_VISUAL_RE.test(prompt);
   if (SOCIAL_RE.test(prompt)) {
     return "social";
   }
@@ -92,7 +96,7 @@ const inferRequestKind = (prompt: string): GideonRequestKind => {
   if (STATS_RE.test(prompt)) {
     return "stats";
   }
-  if (GRAPH_RE.test(prompt) || DRAW_RE.test(prompt) || ANIMATION_RE.test(prompt)) {
+  if ((wantsVisuals && GRAPH_RE.test(prompt)) || DRAW_RE.test(prompt) || ANIMATION_RE.test(prompt)) {
     return "analysis";
   }
   return "question";
@@ -100,7 +104,8 @@ const inferRequestKind = (prompt: string): GideonRequestKind => {
 
 const inferArtifacts = (prompt: string, requestKind: GideonRequestKind): GideonArtifact[] => {
   const output: GideonArtifact[] = ["text"];
-  const asksGraph = GRAPH_RE.test(prompt) && !DRAW_RE.test(prompt);
+  const wantsVisuals = !NO_VISUAL_RE.test(prompt);
+  const asksGraph = wantsVisuals && GRAPH_RE.test(prompt) && !DRAW_RE.test(prompt);
 
   if (BULLET_RE.test(prompt) || requestKind === "analysis") {
     output.push("bullets");
@@ -126,14 +131,18 @@ const inferArtifacts = (prompt: string, requestKind: GideonRequestKind): GideonA
 
 const inferNeeds = (prompt: string, requestKind: GideonRequestKind): GideonNeed[] => {
   const output: GideonNeed[] = [];
+  const wantsVisuals = !NO_VISUAL_RE.test(prompt);
   const needsChartPreview =
-    GRAPH_RE.test(prompt) ||
+    (wantsVisuals && GRAPH_RE.test(prompt)) ||
     VISUAL_STATS_RE.test(prompt) ||
     DRAW_RE.test(prompt) ||
     ANIMATION_RE.test(prompt) ||
     requestKind === "strategy";
 
-  if (XAU_RE.test(prompt) || /\b(price|where is|current|latest|chart)\b/i.test(prompt)) {
+  if (
+    XAU_RE.test(prompt) ||
+    /\b(price|where is|current|latest|right now|chart|range|window|candle time)\b/i.test(prompt)
+  ) {
     output.push("market_data");
   }
   if (STATS_RE.test(prompt)) {
@@ -206,6 +215,9 @@ const inferAmbiguityFlags = (params: {
   }
   if (requestKind === "coding" && inferStrategyTarget(prompt, requestKind) === "platform_code" && !/\b(pine|mql|mt5|python|typescript|javascript)\b/i.test(prompt)) {
     output.push("missing_code_target");
+  }
+  if (AMBIGUOUS_CONCEPT_RE.test(prompt)) {
+    output.push("missing_concept_definition");
   }
 
   return output;

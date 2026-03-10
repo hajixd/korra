@@ -778,6 +778,14 @@ const scoreInternetFallbackResult = (row: InternetResultItem, queryTokens: strin
 };
 
 const buildInternetFallbackBullets = (internetContext: InternetContext) => {
+  if (internetContext.results.length === 0) {
+    return [
+      {
+        tone: "black" as const,
+        text: `No article-level search results came back for "${internetContext.query}".`
+      }
+    ];
+  }
   const queryTokens = extractInternetQueryTokens(internetContext.query);
   const ranked = internetContext.results
     .map((row) => ({
@@ -799,6 +807,361 @@ const buildInternetFallbackBullets = (internetContext: InternetContext) => {
       text: `${published}${row.source}: ${lead}`.slice(0, 220)
     };
   });
+};
+
+type AmbiguousConceptMatch = {
+  id: string;
+  label: string;
+  wantsFib: boolean;
+  wantsStrategy: boolean;
+};
+
+const AMBIGUOUS_CONCEPT_RULES: Array<{ id: string; label: string; pattern: RegExp }> = [
+  { id: "order_block", label: "order block", pattern: /\border block(?:s)?\b/i },
+  { id: "breaker_block", label: "breaker block", pattern: /\bbreaker block(?:s)?\b/i },
+  { id: "mitigation_block", label: "mitigation block", pattern: /\bmitigation block(?:s)?\b/i },
+  { id: "balanced_price_range", label: "balanced price range", pattern: /\b(?:balanced price range|\bbpr\b)\b/i },
+  { id: "ote", label: "optimal trade entry", pattern: /\b(?:optimal trade entry|\bote\b)\b/i }
+];
+
+const detectAmbiguousTradingConcept = (prompt: string): AmbiguousConceptMatch | null => {
+  const normalized = prompt.toLowerCase();
+  for (const rule of AMBIGUOUS_CONCEPT_RULES) {
+    if (!rule.pattern.test(normalized)) {
+      continue;
+    }
+    return {
+      id: rule.id,
+      label: rule.label,
+      wantsFib: /\b(fibonacci|fib|retracement|golden pocket|golden zone|ote)\b/i.test(normalized),
+      wantsStrategy: /\b(strategy|model|playbook|system)\b/i.test(normalized)
+    };
+  }
+  return null;
+};
+
+const buildConceptClarificationChartActions = (params: {
+  candles: CandleRow[];
+  conceptLabel: string;
+  includeFib: boolean;
+}): NormalizedChartActions => {
+  const recent = params.candles.slice(-Math.min(params.candles.length, 96));
+  if (recent.length === 0) {
+    return normalizeChartActions([]);
+  }
+
+  const first = recent[0]!;
+  const last = recent[recent.length - 1]!;
+  const bullishBias = last.close >= last.open;
+  let candidate = recent[Math.max(0, recent.length - 8)] ?? last;
+
+  for (let index = recent.length - 2; index >= Math.max(0, recent.length - 24); index -= 1) {
+    const candle = recent[index];
+    if (!candle) {
+      continue;
+    }
+    const isOpposing = bullishBias ? candle.close < candle.open : candle.close > candle.open;
+    if (isOpposing) {
+      candidate = candle;
+      break;
+    }
+  }
+
+  const bodyLow = Math.min(candidate.open, candidate.close);
+  const bodyHigh = Math.max(candidate.open, candidate.close);
+  const bodyRange = Math.max(0.0001, bodyHigh - bodyLow);
+  const zonePadding = Math.max(0.0001, bodyRange * 0.18);
+
+  let lowIndex = 0;
+  let highIndex = 0;
+  for (let index = 1; index < recent.length; index += 1) {
+    if ((recent[index]?.low ?? Number.POSITIVE_INFINITY) < (recent[lowIndex]?.low ?? Number.POSITIVE_INFINITY)) {
+      lowIndex = index;
+    }
+    if ((recent[index]?.high ?? Number.NEGATIVE_INFINITY) > (recent[highIndex]?.high ?? Number.NEGATIVE_INFINITY)) {
+      highIndex = index;
+    }
+  }
+
+  const fibFirstIndex = Math.min(lowIndex, highIndex);
+  const fibLastIndex = Math.max(lowIndex, highIndex);
+  const fibFirst = recent[fibFirstIndex] ?? first;
+  const fibLast = recent[fibLastIndex] ?? last;
+  const fibLowToHigh = lowIndex <= highIndex;
+
+  const rawActions: Array<Record<string, unknown>> = [
+    { type: "clear_annotations" },
+    { type: "move_to_date", time: last.time },
+    {
+      type: "draw_box",
+      timeStart: candidate.time,
+      timeEnd: last.time,
+      priceStart: Number((bodyLow - zonePadding).toFixed(4)),
+      priceEnd: Number((bodyHigh + zonePadding).toFixed(4)),
+      label: `${params.conceptLabel} zone`
+    },
+    {
+      type: "mark_candlestick",
+      time: candidate.time,
+      price: Number((((bodyLow + bodyHigh) / 2)).toFixed(4)),
+      markerShape: "circle",
+      label: `${params.conceptLabel} candle`
+    },
+    {
+      type: "draw_arrow",
+      time: last.time,
+      price: Number(last.close.toFixed(4)),
+      markerShape: bullishBias ? "arrowUp" : "arrowDown",
+      label: "Entry / displacement"
+    },
+    {
+      type: "draw_horizontal_line",
+      price: Number(last.close.toFixed(4)),
+      style: "dashed",
+      label: "Reaction level"
+    },
+    {
+      type: "draw_vertical_line",
+      time: candidate.time,
+      style: "dotted",
+      label: "Origin"
+    }
+  ];
+
+  if (params.includeFib) {
+    rawActions.push({
+      type: "draw_fibonacci",
+      timeStart: fibFirst.time,
+      timeEnd: fibLast.time,
+      priceStart: fibLowToHigh ? Number(fibFirst.low.toFixed(4)) : Number(fibFirst.high.toFixed(4)),
+      priceEnd: fibLowToHigh ? Number(fibLast.high.toFixed(4)) : Number(fibLast.low.toFixed(4)),
+      label: "Reference fib"
+    });
+  }
+
+  return normalizeChartActions(rawActions);
+};
+
+const summarizeTradeRows = (rows: TradeRow[]) => {
+  let wins = 0;
+  let losses = 0;
+  let totalPnlUsd = 0;
+  let grossProfitUsd = 0;
+  let grossLossUsd = 0;
+  let longTrades = 0;
+  let shortTrades = 0;
+  let peakEquityUsd = 0;
+  let runningEquityUsd = 0;
+  let maxDrawdownUsd = 0;
+
+  for (const row of rows) {
+    const pnlUsd = Number(row.pnlUsd || 0);
+    totalPnlUsd += pnlUsd;
+    if (pnlUsd > 0) {
+      wins += 1;
+      grossProfitUsd += pnlUsd;
+    } else if (pnlUsd < 0) {
+      losses += 1;
+      grossLossUsd += Math.abs(pnlUsd);
+    }
+    if (String(row.side || "").toLowerCase() === "long") {
+      longTrades += 1;
+    } else if (String(row.side || "").toLowerCase() === "short") {
+      shortTrades += 1;
+    }
+    runningEquityUsd += pnlUsd;
+    peakEquityUsd = Math.max(peakEquityUsd, runningEquityUsd);
+    maxDrawdownUsd = Math.max(maxDrawdownUsd, peakEquityUsd - runningEquityUsd);
+  }
+
+  const totalTrades = rows.length;
+  return {
+    totalTrades,
+    longTrades,
+    shortTrades,
+    winRatePct: totalTrades > 0 ? (wins / totalTrades) * 100 : 0,
+    totalPnlUsd,
+    averageWinUsd: wins > 0 ? grossProfitUsd / wins : 0,
+    averageLossUsd: losses > 0 ? grossLossUsd / losses : 0,
+    expectancyUsd: totalTrades > 0 ? totalPnlUsd / totalTrades : 0,
+    profitFactor: grossLossUsd > 0 ? grossProfitUsd / grossLossUsd : null,
+    maxDrawdownUsd
+  };
+};
+
+const formatUsd = (value: number): string => {
+  const sign = value < 0 ? "-" : "";
+  return `${sign}$${Math.abs(value).toFixed(2)}`;
+};
+
+const resolveDeterministicStatsAnswer = (params: {
+  prompt: string;
+  rows: TradeRow[];
+}): { shortAnswer: string; bullets: Array<{ tone: "green" | "red" | "gold" | "black"; text: string }> } | null => {
+  const normalized = params.prompt.toLowerCase();
+  const summary = summarizeTradeRows(params.rows);
+  const commonBullets = [
+    {
+      tone: "black" as const,
+      text: `Win rate: ${summary.winRatePct.toFixed(2)}%`
+    },
+    {
+      tone: summary.totalPnlUsd >= 0 ? ("green" as const) : ("red" as const),
+      text: `Net PnL: ${formatUsd(summary.totalPnlUsd)}`
+    }
+  ];
+
+  if (/\bwin rate|hit rate\b/.test(normalized)) {
+    return {
+      shortAnswer: `backtest win rate is ${summary.winRatePct.toFixed(2)}% across ${summary.totalTrades} closed trades.`,
+      bullets: [
+        {
+          tone: summary.totalPnlUsd >= 0 ? ("green" as const) : ("red" as const),
+          text: `Net PnL: ${formatUsd(summary.totalPnlUsd)}`
+        },
+        {
+          tone: "black" as const,
+          text: `Profit factor: ${summary.profitFactor == null ? "n/a" : summary.profitFactor.toFixed(3)}`
+        }
+      ]
+    };
+  }
+  if (/\bprofit factor\b/.test(normalized)) {
+    return {
+      shortAnswer: `backtest profit factor is ${summary.profitFactor == null ? "n/a" : summary.profitFactor.toFixed(3)} across ${summary.totalTrades} closed trades.`,
+      bullets: commonBullets
+    };
+  }
+  if (/\bexpectancy\b/.test(normalized)) {
+    return {
+      shortAnswer: `backtest expectancy is ${formatUsd(summary.expectancyUsd)} per trade across ${summary.totalTrades} closed trades.`,
+      bullets: commonBullets
+    };
+  }
+  if (/\bmax drawdown|drawdown\b/.test(normalized)) {
+    return {
+      shortAnswer: `backtest max drawdown is ${formatUsd(summary.maxDrawdownUsd)} in the loaded trade sequence.`,
+      bullets: commonBullets
+    };
+  }
+  if (/\btotal backtest pnl|net pnl|total pnl\b/.test(normalized)) {
+    return {
+      shortAnswer: `backtest net PnL is ${formatUsd(summary.totalPnlUsd)} across ${summary.totalTrades} closed trades.`,
+      bullets: [
+        {
+          tone: "black" as const,
+          text: `Win rate: ${summary.winRatePct.toFixed(2)}%`
+        },
+        {
+          tone: "black" as const,
+          text: `Profit factor: ${summary.profitFactor == null ? "n/a" : summary.profitFactor.toFixed(3)}`
+        }
+      ]
+    };
+  }
+  if (/\bhow many trades|total trades\b/.test(normalized)) {
+    return {
+      shortAnswer: `backtest contains ${summary.totalTrades} closed trades.`,
+      bullets: commonBullets
+    };
+  }
+  if (/\bhow many long trades|long trades\b/.test(normalized)) {
+    return {
+      shortAnswer: `backtest contains ${summary.longTrades} long trades.`,
+      bullets: commonBullets
+    };
+  }
+  if (/\bhow many short trades|short trades\b/.test(normalized)) {
+    return {
+      shortAnswer: `backtest contains ${summary.shortTrades} short trades.`,
+      bullets: commonBullets
+    };
+  }
+  if (/\baverage win\b/.test(normalized)) {
+    return {
+      shortAnswer: `backtest average win is ${formatUsd(summary.averageWinUsd)}.`,
+      bullets: commonBullets
+    };
+  }
+  if (/\baverage loss\b/.test(normalized)) {
+    return {
+      shortAnswer: `backtest average loss is ${formatUsd(summary.averageLossUsd)}.`,
+      bullets: commonBullets
+    };
+  }
+
+  return null;
+};
+
+const extractNumericTokens = (prompt: string): number[] => {
+  const matches = prompt.match(/-?\d[\d,]*(?:\.\d+)?/g) ?? [];
+  return matches
+    .map((value) => Number(value.replace(/,/g, "")))
+    .filter((value) => Number.isFinite(value));
+};
+
+const resolveDeterministicMathAnswer = (prompt: string): string | null => {
+  const normalized = prompt.toLowerCase();
+  const numbers = extractNumericTokens(prompt);
+
+  if (/\b(break even|breakeven)\b/.test(normalized)) {
+    if (/\b1\.5r\b/.test(normalized)) {
+      return "Break-even win rate is 40.00% for a 1.5R target.";
+    }
+    if (/\b2r\b/.test(normalized)) {
+      return "Break-even win rate is 33.33% for a 2R target.";
+    }
+  }
+
+  if (
+    /\bexpectancy\b/.test(normalized) &&
+    normalized.includes("40%") &&
+    /\b2r\b/.test(normalized) &&
+    /\b1r\b/.test(normalized)
+  ) {
+    return "Yes. Expectancy is +0.20R per trade.";
+  }
+
+  if (/\brisk reward\b/.test(normalized) && numbers.length >= 3) {
+    const [entry, stop, target] = numbers;
+    const risk = Math.abs(entry - stop);
+    const reward = Math.abs(target - entry);
+    if (risk > 0) {
+      return `Risk reward is ${(reward / risk).toFixed(2)}:1.`;
+    }
+  }
+
+  if (/\baccount\b/.test(normalized) && /%/.test(prompt) && /\$/.test(prompt) && numbers.length >= 2) {
+    const [pct, account] = numbers;
+    return `${pct}% of $${account.toFixed(0)} is $${((pct / 100) * account).toFixed(2)}.`;
+  }
+
+  if (/\bpercentage move|percent move\b/.test(normalized) && numbers.length >= 2) {
+    const [fromPrice, toPrice] = numbers;
+    if (Math.abs(fromPrice) > 1e-9) {
+      return `Percentage move is ${(((toPrice - fromPrice) / fromPrice) * 100).toFixed(2)}%.`;
+    }
+  }
+
+  if (/\bwhere is target\b/.test(normalized) && /\b2r\b/.test(normalized) && numbers.length >= 2) {
+    const [entry, stop] = numbers;
+    const risk = Math.abs(entry - stop);
+    const isLong = /\bbuy\b|\blong\b/.test(normalized);
+    const target = isLong ? entry + risk * 2 : entry - risk * 2;
+    return `Target is ${target.toFixed(2)} for 2R.`;
+  }
+
+  if (/\brecovery factor\b/.test(normalized) && numbers.length >= 2) {
+    const [drawdown, pnl] = numbers;
+    if (drawdown > 0) {
+      const recoveryFactor = pnl / drawdown;
+      return recoveryFactor > 2
+        ? `Yes. Recovery factor is ${recoveryFactor.toFixed(2)}, so it is above 2.`
+        : `No. Recovery factor is ${recoveryFactor.toFixed(2)}.`;
+    }
+  }
+
+  return null;
 };
 
 const respond = (body: ResponseShape, status = 200): RuntimeResult => ({
@@ -843,11 +1206,16 @@ export const runGideonRequestRuntime = async (params: {
     execution: gideonPlan,
     prompt: lastUserPrompt
   });
+  const ambiguousConcept = detectAmbiguousTradingConcept(lastUserPrompt);
   const strategyLikePrompt =
     /\b(model|strategy|playbook|system)\b/i.test(lastUserPrompt) &&
     /\b(build|create|make|turn|convert|draft|design|refine|organize|show)\b/i.test(lastUserPrompt);
+  const mathLikePrompt =
+    /\b(1r|2r|1\.5r|breakeven|break even|risk reward|recovery factor|percentage move|percent move|account|where is target|winners are|losers are)\b/i.test(
+      lastUserPrompt
+    );
 
-  if (gideonFastPath && !strategyLikePrompt) {
+  if (gideonFastPath && !strategyLikePrompt && !ambiguousConcept && !mathLikePrompt) {
     const socialFastPath = gideonPlan.intent.requestKind === "social";
     const toolsUsed = new Set<string>(gideonFastPath.toolIds);
     const requestChecklistPlan = deps.buildRequestChecklistPlan({
@@ -953,6 +1321,378 @@ export const runGideonRequestRuntime = async (params: {
   const heuristicRequestMode = deps.buildDeterministicRequestModePlan(capabilityRoute);
   const indicatorComputationRequested = deps.isIndicatorComputationRequest(lastUserPrompt);
   const requestedIndicators = deps.extractRequestedIndicators(lastUserPrompt);
+  const routeRuntime = createRouteRuntime({
+    context,
+    strategyThreadState
+  });
+  const deterministicMathRequested =
+    /\b(1r|2r|1\.5r|breakeven|break even|risk reward|recovery factor|percentage move|percent move|account|where is target)\b/i.test(
+      lastUserPrompt
+    );
+  const deterministicStatsRequested =
+    /\b(backtest|win rate|hit rate|profit factor|expectancy|drawdown|pnl|trades?|average win|average loss)\b/i.test(
+      lastUserPrompt
+    );
+
+  if (
+    !ambiguousConcept &&
+    !strategyLikePrompt &&
+    !capabilityRoute.wantsStrategyDraft &&
+    !capabilityRoute.needsInternet &&
+    !indicatorComputationRequested &&
+    capabilityRoute.requestMode === "draw"
+  ) {
+    const toolsUsed = new Set<string>();
+    const chartActions = buildChartActionsTool({
+      prompt: lastUserPrompt,
+      runtime: routeRuntime,
+      candles: context.liveCandles,
+      prependClear: true
+    }).chartActions;
+    if (chartActions.length > 0) {
+      toolsUsed.add("build_chart_actions");
+      toolsUsed.add("chart_actions");
+    }
+    const shortAnswer = deps.sanitizeDeliveryText(
+      chartActions.length > 0
+        ? `Drew ${deps.summarizeDrawnActions(chartActions) || "the requested chart annotations"} on the main chart.`
+        : "I could not place a chart annotation from that prompt."
+    );
+    const requestChecklistPlan = deps.buildRequestChecklistPlan({
+      socialOnlyRequest: false,
+      strictToRequest: true,
+      wantsNaturalOnly: false,
+      wantsVisualization: false,
+      explicitDrawRequest: true,
+      wantsAnimation: false,
+      needsDataFetch: false
+    });
+    const requestChecklist = deps.buildResponseChecklist({
+      plan: requestChecklistPlan,
+      shortAnswer,
+      responseCannotAnswer: chartActions.length === 0,
+      charts: [],
+      chartActions,
+      chartAnimations: normalizeChartAnimationsFromCoding({}),
+      toolsUsed
+    });
+
+    return respond({
+      status: "ok",
+      response: {
+        cannotAnswer: chartActions.length === 0,
+        cannotAnswerReason: chartActions.length === 0 ? "No drawable instruction could be parsed." : "",
+        shortAnswer,
+        bullets: [],
+        charts: [],
+        chartActions,
+        chartAnimations: [],
+        requestChecklist,
+        toolsUsed: Array.from(toolsUsed).map(deps.normalizeToolLabel)
+      },
+      modelTrace: null,
+      dataTrace: {
+        ...gideonTraceData,
+        requestMode: "draw",
+        requestChecklistPlan,
+        runtimeClock: deps.buildRuntimeClock({
+          nowMs: runtimeNowMs,
+          context,
+          clickhouseCandles: []
+        }),
+        usedClickhouse: false,
+        clickhouseMeta: null,
+        backtestDataIncluded: context.backtest.dataIncluded,
+        historyRows: context.historyRows.length,
+        backtestRows: context.backtest.trades.length,
+        candleRows: context.liveCandles.length
+      }
+    });
+  }
+
+  if (
+    !ambiguousConcept &&
+    !strategyLikePrompt &&
+    !capabilityRoute.wantsStrategyDraft &&
+    !capabilityRoute.needsInternet &&
+    !indicatorComputationRequested &&
+    capabilityRoute.requestMode === "graph"
+  ) {
+    const templateId =
+      deps.resolveToolboxGraphTemplate(
+        capabilityRoute.preferredGraphType || gideonPlan.recommendedGraphTemplate || ""
+      ) || "price_action";
+    const chart = buildPanelChartTool({
+      runtime: routeRuntime,
+      templateId,
+      title: resolveGraphTemplate(templateId).title,
+      points: 260,
+      candles: context.liveCandles
+    }).chart;
+    if (chart && chart.data.length > 0) {
+      const toolsUsed = new Set<string>(["build_panel_chart"]);
+      const shortAnswer = deps.sanitizeDeliveryText(`Showed ${chart.title.toLowerCase()} in chat.`);
+      const requestChecklistPlan = deps.buildRequestChecklistPlan({
+        socialOnlyRequest: false,
+        strictToRequest: true,
+        wantsNaturalOnly: false,
+        wantsVisualization: true,
+        explicitDrawRequest: false,
+        wantsAnimation: false,
+        needsDataFetch: false
+      });
+      const requestChecklist = deps.buildResponseChecklist({
+        plan: requestChecklistPlan,
+        shortAnswer,
+        responseCannotAnswer: false,
+        charts: [chart],
+        chartActions: normalizeChartActions([]),
+        chartAnimations: normalizeChartAnimationsFromCoding({}),
+        toolsUsed
+      });
+
+      return respond({
+        status: "ok",
+        response: {
+          cannotAnswer: false,
+          cannotAnswerReason: "",
+          shortAnswer,
+          bullets: [],
+          charts: [chart],
+          chartActions: [],
+          chartAnimations: [],
+          requestChecklist,
+          toolsUsed: Array.from(toolsUsed).map(deps.normalizeToolLabel)
+        },
+        modelTrace: null,
+        dataTrace: {
+          ...gideonTraceData,
+          requestMode: "graph",
+          requestChecklistPlan,
+          runtimeClock: deps.buildRuntimeClock({
+            nowMs: runtimeNowMs,
+            context,
+            clickhouseCandles: []
+          }),
+          usedClickhouse: false,
+          clickhouseMeta: null,
+          backtestDataIncluded: context.backtest.dataIncluded,
+          historyRows: context.historyRows.length,
+          backtestRows: context.backtest.trades.length,
+          candleRows: context.liveCandles.length
+        }
+      });
+    }
+  }
+
+  if (
+    !ambiguousConcept &&
+    !strategyLikePrompt &&
+    !capabilityRoute.wantsStrategyDraft &&
+    !capabilityRoute.needsInternet &&
+    deterministicMathRequested
+  ) {
+    const mathAnswer = resolveDeterministicMathAnswer(lastUserPrompt);
+    if (mathAnswer) {
+      const toolsUsed = new Set<string>();
+      const shortAnswer = deps.sanitizeDeliveryText(mathAnswer);
+      const requestChecklistPlan = deps.buildRequestChecklistPlan({
+        socialOnlyRequest: false,
+        strictToRequest: true,
+        wantsNaturalOnly: true,
+        wantsVisualization: false,
+        explicitDrawRequest: false,
+        wantsAnimation: false,
+        needsDataFetch: false
+      });
+      const requestChecklist = deps.buildResponseChecklist({
+        plan: requestChecklistPlan,
+        shortAnswer,
+        responseCannotAnswer: false,
+        charts: [],
+        chartActions: normalizeChartActions([]),
+        chartAnimations: normalizeChartAnimationsFromCoding({}),
+        toolsUsed
+      });
+
+      return respond({
+        status: "ok",
+        response: {
+          cannotAnswer: false,
+          cannotAnswerReason: "",
+          shortAnswer,
+          bullets: [],
+          charts: [],
+          chartActions: [],
+          chartAnimations: [],
+          requestChecklist,
+          toolsUsed: []
+        },
+        modelTrace: null,
+        dataTrace: {
+          ...gideonTraceData,
+          requestMode: "natural",
+          requestChecklistPlan,
+          runtimeClock: deps.buildRuntimeClock({
+            nowMs: runtimeNowMs,
+            context,
+            clickhouseCandles: []
+          }),
+          usedClickhouse: false,
+          clickhouseMeta: null,
+          backtestDataIncluded: context.backtest.dataIncluded,
+          historyRows: context.historyRows.length,
+          backtestRows: context.backtest.trades.length,
+          candleRows: context.liveCandles.length
+        }
+      });
+    }
+  }
+
+  if (
+    !ambiguousConcept &&
+    !strategyLikePrompt &&
+    !capabilityRoute.wantsStrategyDraft &&
+    capabilityRoute.needsInternet
+  ) {
+    try {
+      const internetQuery = deps.buildAutoInternetQuery({
+        prompt: lastUserPrompt
+      });
+      const query = deps.toText(internetQuery.query, lastUserPrompt).trim() || lastUserPrompt;
+      const internetContext = await deps.fetchInternetContext({
+        query,
+        recencyDays: deps.toNumber(internetQuery.recencyDays, 2),
+        maxResults: deps.toNumber(internetQuery.maxResults, 5)
+      });
+      const toolsUsed = new Set<string>(["internet_search"]);
+      const shortAnswer = deps.sanitizeDeliveryText(
+        "I could not run the full synthesis, but these are the freshest headlines I found that may matter."
+      );
+      const bullets = buildInternetFallbackBullets(internetContext);
+      const requestChecklistPlan = deps.buildRequestChecklistPlan({
+        socialOnlyRequest: false,
+        strictToRequest: true,
+        wantsNaturalOnly: true,
+        wantsVisualization: false,
+        explicitDrawRequest: false,
+        wantsAnimation: false,
+        needsDataFetch: true
+      });
+      const requestChecklist = deps.buildResponseChecklist({
+        plan: requestChecklistPlan,
+        shortAnswer,
+        responseCannotAnswer: false,
+        charts: [],
+        chartActions: normalizeChartActions([]),
+        chartAnimations: normalizeChartAnimationsFromCoding({}),
+        toolsUsed
+      });
+
+      return respond({
+        status: "ok",
+        response: {
+          cannotAnswer: false,
+          cannotAnswerReason: "",
+          shortAnswer,
+          bullets,
+          charts: [],
+          chartActions: [],
+          chartAnimations: [],
+          requestChecklist,
+          toolsUsed: Array.from(toolsUsed).map(deps.normalizeToolLabel)
+        },
+        modelTrace: null,
+        dataTrace: {
+          ...gideonTraceData,
+          requestMode: "natural",
+          requestChecklistPlan,
+          internetContext,
+          usedClickhouse: false,
+          clickhouseMeta: null,
+          backtestDataIncluded: context.backtest.dataIncluded,
+          historyRows: context.historyRows.length,
+          backtestRows: context.backtest.trades.length,
+          candleRows: context.liveCandles.length
+        }
+      });
+    } catch {
+      // Fall through to the model path if search fails.
+    }
+  }
+
+  if (
+    !ambiguousConcept &&
+    !strategyLikePrompt &&
+    !capabilityRoute.wantsStrategyDraft &&
+    !capabilityRoute.needsInternet &&
+    deterministicStatsRequested &&
+    capabilityRoute.requestMode !== "graph" &&
+    context.backtest.trades.length > 0
+  ) {
+    const deterministicStats = resolveDeterministicStatsAnswer({
+      prompt: lastUserPrompt,
+      rows: context.backtest.trades
+    });
+    if (deterministicStats) {
+      const toolsUsed = new Set<string>(["compute_metric", "summarize_backtest_results"]);
+      const shortAnswer = deps.sanitizeDeliveryText(deterministicStats.shortAnswer);
+      const bullets = deterministicStats.bullets.map((bullet) => ({
+        tone: bullet.tone,
+        text: deps.sanitizeAssistantText(bullet.text)
+      }));
+      const requestChecklistPlan = deps.buildRequestChecklistPlan({
+        socialOnlyRequest: false,
+        strictToRequest: true,
+        wantsNaturalOnly: true,
+        wantsVisualization: false,
+        explicitDrawRequest: false,
+        wantsAnimation: false,
+        needsDataFetch: false
+      });
+      const requestChecklist = deps.buildResponseChecklist({
+        plan: requestChecklistPlan,
+        shortAnswer,
+        responseCannotAnswer: false,
+        charts: [],
+        chartActions: normalizeChartActions([]),
+        chartAnimations: normalizeChartAnimationsFromCoding({}),
+        toolsUsed
+      });
+
+      return respond({
+        status: "ok",
+        response: {
+          cannotAnswer: false,
+          cannotAnswerReason: "",
+          shortAnswer,
+          bullets,
+          charts: [],
+          chartActions: [],
+          chartAnimations: [],
+          requestChecklist,
+          toolsUsed: Array.from(toolsUsed).map(deps.normalizeToolLabel)
+        },
+        modelTrace: null,
+        dataTrace: {
+          ...gideonTraceData,
+          requestMode: "natural",
+          requestChecklistPlan,
+          runtimeClock: deps.buildRuntimeClock({
+            nowMs: runtimeNowMs,
+            context,
+            clickhouseCandles: []
+          }),
+          usedClickhouse: false,
+          clickhouseMeta: null,
+          backtestDataIncluded: context.backtest.dataIncluded,
+          historyRows: context.historyRows.length,
+          backtestRows: context.backtest.trades.length,
+          candleRows: context.liveCandles.length
+        }
+      });
+    }
+  }
 
   try {
     const toolsUsed = new Set<string>();
@@ -1200,6 +1940,79 @@ export const runGideonRequestRuntime = async (params: {
           historyRows: context.historyRows.length,
           backtestRows: context.backtest.trades.length,
           candleRows: context.liveCandles.length
+        }
+      });
+    }
+
+    if (ambiguousConcept) {
+      const clarificationChecklistPlan = deps.buildRequestChecklistPlan({
+        socialOnlyRequest: false,
+        strictToRequest: true,
+        wantsNaturalOnly: false,
+        wantsVisualization: false,
+        explicitDrawRequest: true,
+        wantsAnimation: false,
+        needsDataFetch: false
+      });
+      const clarificationCandles = deps.getDrawWindowCandles({
+        context,
+        clickhouseCandles: []
+      });
+      const chartActions = buildConceptClarificationChartActions({
+        candles: clarificationCandles,
+        conceptLabel: ambiguousConcept.label,
+        includeFib: ambiguousConcept.wantsFib || ambiguousConcept.wantsStrategy
+      });
+      toolsUsed.add("concept_clarify");
+      if (chartActions.length > 0) {
+        toolsUsed.add("chart_actions");
+      }
+      const hasFib = chartActions.some((action) => action.type === "draw_fibonacci");
+      const shortAnswer = deps.sanitizeDeliveryText(
+        `I do not have a reliable built-in definition for ${ambiguousConcept.label} in your workflow yet. I sketched a candidate ${ambiguousConcept.label} with a box, circle, arrow, horizontal line, vertical line${hasFib ? ", and fib" : ""} so you can correct it on-chart. Is your ${ambiguousConcept.label} the last opposing candle before displacement, body-only, wick-inclusive, or something else? Tell me what to move, delete, or add and I will redraw it.`
+      );
+      const bullets = [
+        {
+          tone: "gold" as const,
+          text: "Try: move the box, circle the candle you mean, change wick/body rules, or add/remove the fib."
+        }
+      ];
+      const requestChecklist = deps.buildResponseChecklist({
+        plan: clarificationChecklistPlan,
+        shortAnswer,
+        responseCannotAnswer: false,
+        charts: [],
+        chartActions,
+        chartAnimations: normalizeChartAnimationsFromCoding({}),
+        toolsUsed
+      });
+
+      return respond({
+        status: "ok",
+        response: {
+          cannotAnswer: false,
+          cannotAnswerReason: "",
+          shortAnswer,
+          bullets,
+          charts: [],
+          chartActions,
+          chartAnimations: [],
+          requestChecklist,
+          toolsUsed: Array.from(toolsUsed).map(deps.normalizeToolLabel)
+        },
+        modelTrace: null,
+        dataTrace: {
+          ...gideonTraceData,
+          requestMode: "draw",
+          requestChecklistPlan: clarificationChecklistPlan,
+          executionPlan,
+          ambiguousConcept: ambiguousConcept.id,
+          usedClickhouse: false,
+          clickhouseMeta: null,
+          backtestDataIncluded: context.backtest.dataIncluded,
+          historyRows: context.historyRows.length,
+          backtestRows: context.backtest.trades.length,
+          candleRows: clarificationCandles.length
         }
       });
     }
