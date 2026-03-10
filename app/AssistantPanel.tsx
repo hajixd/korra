@@ -27,6 +27,7 @@ import {
   YAxis
 } from "recharts";
 import AssistantChartAnimationModal from "./AssistantChartAnimationModal";
+import GideonWorkView from "./GideonWorkView";
 import {
   type AssistantChartAnimation,
   resolveGraphTemplate
@@ -419,6 +420,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
   const [isPending, setIsPending] = useState(false);
   const [thinkingStage, setThinkingStage] = useState("Intent Parsing");
   const [activeAnimation, setActiveAnimation] = useState<AssistantChartAnimation | null>(null);
+  const [showWorkView, setShowWorkView] = useState(false);
   const [detailsExpandedByMessageId, setDetailsExpandedByMessageId] = useState<
     Record<string, boolean>
   >({});
@@ -465,6 +467,22 @@ export default function AssistantPanel(props: AssistantPanelProps) {
   }, [messages, isPending]);
 
   const backtestSummary = useMemo(() => summarizeTrades(backtestTrades), [backtestTrades]);
+  const latestUserPrompt = useMemo(
+    () =>
+      [...messages]
+        .reverse()
+        .find((message) => message.role === "user")
+        ?.content ?? "",
+    [messages]
+  );
+  const latestAssistantMessage = useMemo(
+    () =>
+      [...messages]
+        .reverse()
+        .find((message) => message.role === "assistant"),
+    [messages]
+  );
+  const latestStagePlan = useMemo(() => inferThinkingStages(latestUserPrompt), [latestUserPrompt]);
 
   const resetAssistantThread = useCallback(() => {
     setMessages([
@@ -479,6 +497,7 @@ export default function AssistantPanel(props: AssistantPanelProps) {
     setThinkingStage("Intent Parsing");
     setIsPending(false);
     setActiveAnimation(null);
+    setShowWorkView(false);
     setDetailsExpandedByMessageId({});
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(ASSISTANT_THREAD_STORAGE_KEY);
@@ -970,14 +989,23 @@ export default function AssistantPanel(props: AssistantPanelProps) {
         <div>
           <h2>Gideon</h2>
         </div>
-        <button
-          type="button"
-          className="panel-action-btn ai-reset-btn"
-          onClick={resetAssistantThread}
-          disabled={isPending}
-        >
-          Reset
-        </button>
+        <div className="ai-head-actions">
+          <button
+            type="button"
+            className={`panel-action-btn ai-workview-btn${showWorkView ? " open" : ""}${isPending ? " live" : ""}`}
+            onClick={() => setShowWorkView((current) => !current)}
+          >
+            {showWorkView ? "Hide View" : "View Working"}
+          </button>
+          <button
+            type="button"
+            className="panel-action-btn ai-reset-btn"
+            onClick={resetAssistantThread}
+            disabled={isPending}
+          >
+            Reset
+          </button>
+        </div>
       </div>
 
       <div
@@ -1232,6 +1260,27 @@ export default function AssistantPanel(props: AssistantPanelProps) {
           </button>
         </div>
       </form>
+
+      <GideonWorkView
+        open={showWorkView}
+        onClose={() => setShowWorkView(false)}
+        isPending={isPending}
+        thinkingStage={thinkingStage}
+        stagePlan={latestStagePlan}
+        latestPrompt={latestUserPrompt}
+        latestResponse={latestAssistantMessage?.content ?? ""}
+        latestTools={latestAssistantMessage?.toolsUsed ?? []}
+        latestChartCount={latestAssistantMessage?.charts?.length ?? 0}
+        latestAnimationCount={latestAssistantMessage?.chartAnimations?.length ?? 0}
+        latestChecklistCount={latestAssistantMessage?.requestChecklist?.length ?? 0}
+        latestHasStrategyDraft={Boolean(latestAssistantMessage?.strategyDraft)}
+        latestCannotAnswer={Boolean(latestAssistantMessage?.cannotAnswer)}
+        symbol={symbol}
+        timeframe={timeframe}
+        candleCount={selectedCandles.length}
+        historyCount={historyRows.length}
+        actionCount={actionRows.length}
+      />
 
       <AssistantChartAnimationModal
         open={activeAnimation !== null}

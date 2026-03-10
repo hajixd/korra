@@ -5373,10 +5373,13 @@ button {
 }
 
 .ai-tab-shell {
+  position: relative;
+  isolation: isolate;
   min-height: 0;
   height: 100%;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background:
     radial-gradient(120% 70% at 20% 0%, rgba(45, 108, 255, 0.08), transparent 52%),
     radial-gradient(130% 80% at 80% 0%, rgba(19, 201, 143, 0.06), transparent 55%),
@@ -5404,14 +5407,51 @@ button {
   gap: 0.56rem;
 }
 
+.ai-head-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.42rem;
+}
+
 .ai-reset-btn {
   min-width: 84px;
   justify-content: center;
 }
 
+.ai-workview-btn {
+  min-width: 128px;
+  justify-content: center;
+}
+
+.ai-workview-btn.live {
+  border-color: rgba(19, 201, 143, 0.42);
+  background:
+    linear-gradient(120deg, rgba(14, 47, 34, 0.92), rgba(18, 63, 45, 0.96), rgba(14, 47, 34, 0.92));
+  background-size: 220% 100%;
+  color: #dff8ea;
+  animation: ai-workview-live 1.3s linear infinite;
+}
+
+.ai-workview-btn.open {
+  border-color: rgba(143, 173, 232, 0.62);
+  background: rgba(29, 47, 79, 0.88);
+  color: #ebf3ff;
+}
+
 .ai-reset-btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+@keyframes ai-workview-live {
+  0% {
+    background-position: 0% 0%;
+  }
+  100% {
+    background-position: 220% 0%;
+  }
 }
 
 .ai-thread {
