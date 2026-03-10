@@ -52,14 +52,10 @@ import {
 } from "./tools/chartActions";
 import { normalizeChartActions } from "../lib/assistant-tools";
 import {
+  parseStrategyModelCatalogEntry,
   STRATEGY_MODEL_CATALOG,
   resolveStrategyRuntimeModelProfile,
-  type StrategyModelCatalogEntry,
-  type StrategyBacktestCheck,
-  type StrategyBacktestCondition,
-  type StrategyBacktestDirectionalChecks,
-  type StrategyBacktestLiteral,
-  type StrategyBacktestSpec
+  type StrategyModelCatalogEntry
 } from "../lib/strategyCatalog";
 import {
   buildStrategyBacktestSurfaceSummary,
@@ -1261,12 +1257,16 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
   backtestTrades: HistoryItem[];
   baselineMainStatsTrades: HistoryItem[];
   selectedBacktestDateKey: string;
+  aiMode: BacktestSettingsSnapshot["aiMode"];
+  confidenceGateDisabled: boolean;
   confidenceResolver: (trade: HistoryItem) => number;
 }): BacktestAnalyticsServerResponse => {
   const {
     backtestTrades,
     baselineMainStatsTrades,
     selectedBacktestDateKey,
+    aiMode,
+    confidenceGateDisabled,
     confidenceResolver
   } = params;
   const backtestSummary = summarizeBacktestTradesFallback(backtestTrades, confidenceResolver);
@@ -1319,6 +1319,11 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
     baselineMainStatsTrades.length > 0
       ? backtestSummary.averageConfidence - baselineMainStatsSummary.averageConfidence
       : null;
+  const canComputeAiDeltas =
+    aiMode !== "off" &&
+    !confidenceGateDisabled &&
+    baselineMainStatsTrades.length >= 5 &&
+    backtestTrades.length >= 5;
 
   return {
     ...EMPTY_BACKTEST_ANALYTICS_RESPONSE,
@@ -1330,10 +1335,10 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
     mainStatsMonthRows: computeMainStatsMonthRowsFallback(backtestTrades),
     mainStatsAiEfficiency: null,
     mainStatsAiEffectivenessPct:
-      baselineMainStatsTrades.length > 0
+      canComputeAiDeltas
         ? mainStatsSummary.winRate - baselineMainStatsSummary.winRate
         : null,
-    mainStatsAiEfficacyPct: confidenceDiff,
+    mainStatsAiEfficacyPct: canComputeAiDeltas ? confidenceDiff : null,
     availableBacktestMonths: monthKeys,
     calendarActivityEntries: Array.from(dayMap.entries()),
     selectedBacktestDayTrades,
@@ -2463,209 +2468,6 @@ const getNextAiFeatureLevel = (level: AiFeatureLevel): AiFeatureLevel => {
   return ((level + 1) % 5) as AiFeatureLevel;
 };
 
-const sanitizeStrategyTextList = (value: unknown): string[] => {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((item) => (typeof item === "string" ? item.trim() : ""))
-    .filter((item) => item.length > 0);
-};
-
-const isPlainRecord = (value: unknown): value is Record<string, unknown> => {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-};
-
-const isStrategyBacktestLiteral = (value: unknown): value is StrategyBacktestLiteral => {
-  return (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  );
-};
-
-const parseStrategyBacktestCondition = (value: unknown): StrategyBacktestCondition | null => {
-  if (!isPlainRecord(value)) {
-    return null;
-  }
-
-  if (typeof value.feature === "string" && value.feature.trim().length > 0) {
-    return {
-      feature: value.feature.trim()
-    };
-  }
-
-  if ("not" in value) {
-    const parsed = parseStrategyBacktestCondition(value.not);
-    return parsed ? { not: parsed } : null;
-  }
-
-  if ("all" in value && Array.isArray(value.all)) {
-    const parsed = value.all.map((item) => parseStrategyBacktestCondition(item));
-    return parsed.every((item) => item !== null)
-      ? { all: parsed as StrategyBacktestCondition[] }
-      : null;
-  }
-
-  if ("any" in value && Array.isArray(value.any)) {
-    const parsed = value.any.map((item) => parseStrategyBacktestCondition(item));
-    return parsed.every((item) => item !== null)
-      ? { any: parsed as StrategyBacktestCondition[] }
-      : null;
-  }
-
-  if ("eq" in value && Array.isArray(value.eq) && value.eq.length === 2) {
-    const [feature, literal] = value.eq;
-    if (typeof feature === "string" && feature.trim().length > 0 && isStrategyBacktestLiteral(literal)) {
-      return {
-        eq: [feature.trim(), literal]
-      };
-    }
-  }
-
-  if ("neq" in value && Array.isArray(value.neq) && value.neq.length === 2) {
-    const [feature, literal] = value.neq;
-    if (typeof feature === "string" && feature.trim().length > 0 && isStrategyBacktestLiteral(literal)) {
-      return {
-        neq: [feature.trim(), literal]
-      };
-    }
-  }
-
-  return null;
-};
-
-const parseStrategyBacktestChecks = (value: unknown): StrategyBacktestCheck[] | null => {
-  if (!Array.isArray(value)) {
-    return null;
-  }
-
-  const checks: StrategyBacktestCheck[] = [];
-
-  for (const item of value) {
-    if (!isPlainRecord(item)) {
-      return null;
-    }
-
-    const label = typeof item.label === "string" ? item.label.trim() : "";
-    const when = parseStrategyBacktestCondition(item.when);
-
-    if (!label || !when) {
-      return null;
-    }
-
-    checks.push({ label, when });
-  }
-
-  return checks;
-};
-
-const parseStrategyBacktestDirectionalChecks = (
-  value: unknown
-): StrategyBacktestDirectionalChecks | null => {
-  if (!isPlainRecord(value)) {
-    return null;
-  }
-
-  const checks = parseStrategyBacktestChecks(value.checks);
-  return checks ? { checks } : null;
-};
-
-const parseStrategyBacktestSpec = (value: unknown): StrategyBacktestSpec | null => {
-  if (!isPlainRecord(value) || !isPlainRecord(value.entry)) {
-    return null;
-  }
-
-  const long = parseStrategyBacktestDirectionalChecks(value.entry.long);
-  const short = parseStrategyBacktestDirectionalChecks(value.entry.short);
-
-  if (!long || !short) {
-    return null;
-  }
-
-  let exit: StrategyBacktestSpec["exit"];
-  if (value.exit != null) {
-    if (!isPlainRecord(value.exit)) {
-      return null;
-    }
-
-    const parsedLongExit =
-      value.exit.long == null ? undefined : parseStrategyBacktestDirectionalChecks(value.exit.long);
-    const parsedShortExit =
-      value.exit.short == null ? undefined : parseStrategyBacktestDirectionalChecks(value.exit.short);
-
-    if ((value.exit.long != null && !parsedLongExit) || (value.exit.short != null && !parsedShortExit)) {
-      return null;
-    }
-
-    exit = {
-      long: parsedLongExit ?? undefined,
-      short: parsedShortExit ?? undefined
-    };
-  }
-
-  const source = typeof value.source === "string" ? value.source.trim() : undefined;
-
-  return {
-    source,
-    entry: {
-      long,
-      short
-    },
-    exit
-  };
-};
-
-const parseStrategyModelCatalogEntry = (value: unknown): StrategyModelCatalogEntry | null => {
-  if (!isPlainRecord(value)) {
-    return null;
-  }
-
-  const record = value;
-  const entryRecord = isPlainRecord(record.entry) ? record.entry : {};
-  const exitRecord = isPlainRecord(record.exit) ? record.exit : {};
-  const id = typeof record.id === "string" ? record.id.trim() : "";
-  const name = typeof record.name === "string" ? record.name.trim() : "";
-  const description = typeof record.description === "string" ? record.description.trim() : "";
-  const backtest = record.backtest == null ? undefined : parseStrategyBacktestSpec(record.backtest);
-
-  if (!id || !name || (record.backtest != null && !backtest)) {
-    return null;
-  }
-
-  const entry = {
-    context: sanitizeStrategyTextList(entryRecord.context),
-    setup: sanitizeStrategyTextList(entryRecord.setup),
-    trigger: sanitizeStrategyTextList(entryRecord.trigger),
-    confirmation: sanitizeStrategyTextList(entryRecord.confirmation),
-    invalidation: sanitizeStrategyTextList(entryRecord.invalidation),
-    noTrade: sanitizeStrategyTextList(entryRecord.noTrade)
-  };
-  const exit = {
-    stopLoss: sanitizeStrategyTextList(exitRecord.stopLoss),
-    takeProfit: sanitizeStrategyTextList(exitRecord.takeProfit),
-    timeExit: sanitizeStrategyTextList(exitRecord.timeExit),
-    earlyExit: sanitizeStrategyTextList(exitRecord.earlyExit)
-  };
-  const hasEntryText = Object.values(entry).some((items) => items.length > 0);
-
-  if (!hasEntryText && !backtest) {
-    return null;
-  }
-
-  return {
-    id,
-    name,
-    aliases: sanitizeStrategyTextList(record.aliases),
-    description,
-    entry,
-    exit,
-    ...(backtest ? { backtest } : {})
-  };
-};
-
 const splitDirectionalStrategyText = (values: readonly string[]) => {
   const buy: string[] = [];
   const sell: string[] = [];
@@ -2695,12 +2497,12 @@ const splitDirectionalStrategyText = (values: readonly string[]) => {
 const buildFallbackModelSurfaceSummary = (
   model: StrategyModelCatalogEntry
 ): StrategyBacktestSurfaceSummary => {
-  const entry = splitDirectionalStrategyText(sanitizeStrategyTextList(model.entry.trigger));
+  const entry = splitDirectionalStrategyText(model.entry.trigger);
   const exit = splitDirectionalStrategyText([
-    ...sanitizeStrategyTextList(model.exit.stopLoss),
-    ...sanitizeStrategyTextList(model.exit.takeProfit),
-    ...sanitizeStrategyTextList(model.exit.timeExit),
-    ...sanitizeStrategyTextList(model.exit.earlyExit)
+    ...model.exit.stopLoss,
+    ...model.exit.takeProfit,
+    ...model.exit.timeExit,
+    ...model.exit.earlyExit
   ]);
 
   return {
@@ -4952,6 +4754,42 @@ const filterTradesBySessionBuckets = (
       settings.enabledBacktestHours.includes(entryHour)
     );
   });
+};
+
+const filterHistoryRowsLocally = (params: {
+  sourceTrades: HistoryItem[];
+  settings: BacktestFilterSettings;
+  confidenceGateDisabled: boolean;
+  effectiveConfidenceThreshold: number;
+  confidenceResolver: (trade: HistoryItem) => number;
+}) => {
+  const {
+    sourceTrades,
+    settings,
+    confidenceGateDisabled,
+    effectiveConfidenceThreshold,
+    confidenceResolver
+  } = params;
+  const dateFilteredTrades = filterTradesByDateRange(
+    sourceTrades,
+    settings.statsDateStart,
+    settings.statsDateEnd
+  );
+  const timeFilteredTrades = filterTradesBySessionBuckets(dateFilteredTrades, {
+    enabledBacktestWeekdays: settings.enabledBacktestWeekdays,
+    enabledBacktestSessions: settings.enabledBacktestSessions,
+    enabledBacktestMonths: settings.enabledBacktestMonths,
+    enabledBacktestHours: settings.enabledBacktestHours
+  });
+  const filteredTrades = confidenceGateDisabled
+    ? timeFilteredTrades
+    : timeFilteredTrades.filter(
+        (trade) => confidenceResolver(trade) * 100 >= effectiveConfidenceThreshold
+      );
+
+  return [...filteredTrades].sort(
+    (left, right) => Number(right.exitTime) - Number(left.exitTime) || right.id.localeCompare(left.id)
+  );
 };
 
 const formatMinutesCompact = (minutes: number): string => {
@@ -7410,7 +7248,6 @@ const doesBacktestHistoryGenerationInputChange = (
   if (previous.symbol !== next.symbol) return true;
   if (previous.timeframe !== next.timeframe) return true;
   if (previous.minutePreciseEnabled !== next.minutePreciseEnabled) return true;
-  if (previous.aiFilterEnabled !== next.aiFilterEnabled) return true;
   if (!areAiModelStatesEqual(previous.aiModelStates, next.aiModelStates)) return true;
   if (previous.dollarsPerMove !== next.dollarsPerMove) return true;
   if (previous.tpDollars !== next.tpDollars) return true;
@@ -10895,6 +10732,32 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     usesChartPanelLiveSimulationForHistory
       ? chartPanelReplayRows
       : backtestSourceTrades;
+  const activePanelSourceTrades =
+    usesChartPanelLiveSimulationForActive
+      ? chartPanelReplayRows
+      : backtestSourceTrades;
+  const activePanelBacktestFilterSettings: BacktestFilterSettings =
+    usesChartPanelLiveSimulationForActive
+      ? chartPanelFilterSettings
+      : appliedBacktestSettings;
+  const activePanelConfidenceGateDisabled =
+    usesChartPanelLiveSimulationForActive
+      ? chartPanelConfidenceGateDisabled
+      : appliedConfidenceGateDisabled;
+  const activePanelEffectiveConfidenceThreshold =
+    usesChartPanelLiveSimulationForActive
+      ? chartPanelEffectiveConfidenceThreshold
+      : appliedEffectiveConfidenceThreshold;
+  const shouldSendActivePanelOverrides =
+    usesChartPanelLiveSimulationForActive !== usesChartPanelLiveSimulationForHistory;
+  const shouldComputePanelAnalyticsOnServer =
+    (panelSourceTrades.length > 0 || activePanelSourceTrades.length > 0) &&
+    (
+      (panelBacktestFilterSettings.aiMode !== "off" &&
+        panelBacktestFilterSettings.antiCheatEnabled) ||
+      (activePanelBacktestFilterSettings.aiMode !== "off" &&
+        activePanelBacktestFilterSettings.antiCheatEnabled)
+    );
   const aiLibraryDefaultsById = useMemo(() => {
     const next: Record<string, Record<string, AiLibrarySettingValue>> = {};
     for (const [libraryId, definition] of Object.entries(aiLibraryDefById)) {
@@ -10911,11 +10774,42 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     activePanelHistoryRows: []
   });
   const [panelAnalyticsStatus, setPanelAnalyticsStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const fallbackChartPanelHistoryRows = useMemo(() => {
+    return filterHistoryRowsLocally({
+      sourceTrades: panelSourceTrades,
+      settings: panelBacktestFilterSettings,
+      confidenceGateDisabled: panelConfidenceGateDisabled,
+      effectiveConfidenceThreshold: panelEffectiveConfidenceThreshold,
+      confidenceResolver: getTradeConfidenceScore
+    });
+  }, [
+    panelSourceTrades,
+    panelBacktestFilterSettings,
+    panelConfidenceGateDisabled,
+    panelEffectiveConfidenceThreshold
+  ]);
+  const fallbackActivePanelHistoryRows = useMemo(() => {
+    return filterHistoryRowsLocally({
+      sourceTrades: activePanelSourceTrades,
+      settings: activePanelBacktestFilterSettings,
+      confidenceGateDisabled: activePanelConfidenceGateDisabled,
+      effectiveConfidenceThreshold: activePanelEffectiveConfidenceThreshold,
+      confidenceResolver: getTradeConfidenceScore
+    });
+  }, [
+    activePanelSourceTrades,
+    activePanelBacktestFilterSettings,
+    activePanelConfidenceGateDisabled,
+    activePanelEffectiveConfidenceThreshold
+  ]);
   useEffect(() => {
+    if (!shouldComputePanelAnalyticsOnServer) {
+      setPanelAnalyticsStatus("idle");
+      return;
+    }
+
     const controller = new AbortController();
     let cancelled = false;
-    const shouldSendActivePanelOverrides =
-      usesChartPanelLiveSimulationForActive !== usesChartPanelLiveSimulationForHistory;
     setPanelAnalyticsStatus("loading");
 
     computePanelAnalyticsOnServer(
@@ -10926,18 +10820,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         panelEffectiveConfidenceThreshold,
         ...(shouldSendActivePanelOverrides
           ? {
-              activePanelSourceTrades: usesChartPanelLiveSimulationForActive
-                ? chartPanelReplayRows
-                : backtestSourceTrades,
-              activePanelBacktestFilterSettings: usesChartPanelLiveSimulationForActive
-                ? chartPanelFilterSettings
-                : appliedBacktestSettings,
-              activePanelConfidenceGateDisabled: usesChartPanelLiveSimulationForActive
-                ? chartPanelConfidenceGateDisabled
-                : appliedConfidenceGateDisabled,
-              activePanelEffectiveConfidenceThreshold: usesChartPanelLiveSimulationForActive
-                ? chartPanelEffectiveConfidenceThreshold
-                : appliedEffectiveConfidenceThreshold
+              activePanelSourceTrades,
+              activePanelBacktestFilterSettings,
+              activePanelConfidenceGateDisabled,
+              activePanelEffectiveConfidenceThreshold
             }
           : {}),
         aiLibraryDefaultsById
@@ -10963,38 +10849,54 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       controller.abort();
     };
   }, [
+    activePanelBacktestFilterSettings,
+    activePanelConfidenceGateDisabled,
+    activePanelEffectiveConfidenceThreshold,
+    activePanelSourceTrades,
     aiLibraryDefaultsById,
-    panelSourceTrades,
-    panelBacktestFilterSettings,
-    panelConfidenceGateDisabled,
-    panelEffectiveConfidenceThreshold,
-    usesChartPanelLiveSimulationForActive,
-    usesChartPanelLiveSimulationForHistory,
-    chartPanelReplayRows,
-    backtestSourceTrades,
-    chartPanelFilterSettings,
     appliedBacktestSettings,
     chartPanelConfidenceGateDisabled,
     appliedConfidenceGateDisabled,
     chartPanelEffectiveConfidenceThreshold,
-    appliedEffectiveConfidenceThreshold
+    appliedEffectiveConfidenceThreshold,
+    panelBacktestFilterSettings,
+    panelConfidenceGateDisabled,
+    panelEffectiveConfidenceThreshold,
+    panelSourceTrades,
+    shouldComputePanelAnalyticsOnServer,
+    shouldSendActivePanelOverrides
   ]);
   const antiCheatBacktestContext = useMemo(() => {
+    if (!shouldComputePanelAnalyticsOnServer || panelAnalyticsStatus !== "ready") {
+      return {
+        dateFilteredTrades: [] as HistoryItem[],
+        libraryCandidateTrades: [] as HistoryItem[],
+        timeFilteredTrades: [] as HistoryItem[],
+        confidenceById: new Map<string, number>()
+      };
+    }
+
     return {
       dateFilteredTrades: panelAnalyticsData.dateFilteredTrades,
       libraryCandidateTrades: panelAnalyticsData.libraryCandidateTrades,
       timeFilteredTrades: panelAnalyticsData.timeFilteredTrades,
       confidenceById: new Map<string, number>(panelAnalyticsData.confidenceByIdEntries)
     };
-  }, [panelAnalyticsData]);
+  }, [panelAnalyticsData, panelAnalyticsStatus, shouldComputePanelAnalyticsOnServer]);
   const getEffectiveTradeConfidenceScore = useCallback(
     (trade: HistoryItem) => {
       return antiCheatBacktestContext.confidenceById.get(trade.id) ?? getTradeConfidenceScore(trade);
     },
     [antiCheatBacktestContext]
   );
-  const chartPanelHistoryRows = panelAnalyticsData.chartPanelHistoryRows;
-  const activePanelHistoryRows = panelAnalyticsData.activePanelHistoryRows;
+  const chartPanelHistoryRows =
+    shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus === "ready"
+      ? panelAnalyticsData.chartPanelHistoryRows
+      : fallbackChartPanelHistoryRows;
+  const activePanelHistoryRows =
+    shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus === "ready"
+      ? panelAnalyticsData.activePanelHistoryRows
+      : fallbackActivePanelHistoryRows;
 
   const activeTrade = useMemo<ActiveTrade | null>(() => {
     if (activePanelHistoryRows.length === 0) {
@@ -12044,6 +11946,26 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     } finally {
       event.target.value = "";
     }
+  }, []);
+
+  const handleImportAssistantStrategyModel = useCallback((draftJson: Record<string, unknown>) => {
+    const parsedModel = parseStrategyModelCatalogEntry(draftJson);
+
+    if (!parsedModel) {
+      setModelsSurfaceNotice("Gideon returned an invalid model JSON.");
+      setModelsSurfaceNoticeTone("error");
+      return;
+    }
+
+    startTransition(() => {
+      setUploadedStrategyModels((current) => {
+        const next = new Map(current.map((model) => [model.id, model] as const));
+        next.set(parsedModel.id, parsedModel);
+        return Array.from(next.values());
+      });
+      setModelsSurfaceNotice(`Added ${parsedModel.name} to Models.`);
+      setModelsSurfaceNoticeTone("success");
+    });
   }, []);
 
   const handleDownloadStrategyModel = useCallback((model: StrategyModelCatalogEntry) => {
@@ -13867,33 +13789,47 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   ]);
 
   const backtestDateFilteredTrades = useMemo(() => {
-    return panelAnalyticsStatus === "ready"
+    return shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus === "ready"
       ? antiCheatBacktestContext.dateFilteredTrades
       : fallbackBacktestDateFilteredTrades;
-  }, [antiCheatBacktestContext.dateFilteredTrades, fallbackBacktestDateFilteredTrades, panelAnalyticsStatus]);
+  }, [
+    antiCheatBacktestContext.dateFilteredTrades,
+    fallbackBacktestDateFilteredTrades,
+    panelAnalyticsStatus,
+    shouldComputePanelAnalyticsOnServer
+  ]);
 
   const backtestTimeFilteredTrades = useMemo(() => {
-    return panelAnalyticsStatus === "ready"
+    return shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus === "ready"
       ? antiCheatBacktestContext.timeFilteredTrades
       : fallbackBacktestTimeFilteredTrades;
-  }, [antiCheatBacktestContext.timeFilteredTrades, fallbackBacktestTimeFilteredTrades, panelAnalyticsStatus]);
+  }, [
+    antiCheatBacktestContext.timeFilteredTrades,
+    fallbackBacktestTimeFilteredTrades,
+    panelAnalyticsStatus,
+    shouldComputePanelAnalyticsOnServer
+  ]);
 
   const backtestLibraryCandidateTrades = useMemo(() => {
-    return panelAnalyticsStatus === "ready"
+    return shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus === "ready"
       ? antiCheatBacktestContext.libraryCandidateTrades
       : fallbackBacktestTimeFilteredTrades;
   }, [
     antiCheatBacktestContext.libraryCandidateTrades,
     fallbackBacktestTimeFilteredTrades,
-    panelAnalyticsStatus
+    panelAnalyticsStatus,
+    shouldComputePanelAnalyticsOnServer
   ]);
 
   const backtestTrades = useMemo(() => {
     return backtestTimeFilteredTrades.filter((trade) => {
-      const confidence = getEffectiveTradeConfidenceScore(trade) * 100;
+      if (appliedConfidenceGateDisabled) {
+        return true;
+      }
+
       return (
-        appliedConfidenceGateDisabled ||
-        confidence >= appliedEffectiveConfidenceThreshold
+        getEffectiveTradeConfidenceScore(trade) * 100 >=
+        appliedEffectiveConfidenceThreshold
       );
     });
   }, [
@@ -13917,6 +13853,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     isBacktestAnalyticsVisible && deferredBacktestTab === "entryExit";
   const isPropFirmBacktestTabActive =
     isBacktestAnalyticsVisible && deferredBacktestTab === "propFirm";
+  const shouldComputeBacktestAnalyticsOnServer =
+    isBacktestAnalyticsVisible &&
+    (
+      isCalendarBacktestTabActive ||
+      isPerformanceStatsBacktestTabActive ||
+      isEntryExitBacktestTabActive ||
+      isClusterBacktestTabActive ||
+      (deferredBacktestTab === "mainStats" && appliedBacktestSettings.aiMode !== "off")
+    );
   const shouldComputeAiLibraryInsights =
     isBacktestAnalyticsVisible &&
     (deferredBacktestTab === "mainSettings" || deferredBacktestTab === "cluster");
@@ -13938,13 +13883,33 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     [backtestTimeFilteredTrades]
   );
   const backtestAnalyticsConfidenceEntries = useMemo(
-    () => (panelAnalyticsStatus === "ready" ? panelAnalyticsData.confidenceByIdEntries : []),
-    [panelAnalyticsData.confidenceByIdEntries, panelAnalyticsStatus]
+    () =>
+      shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus === "ready"
+        ? panelAnalyticsData.confidenceByIdEntries
+        : [],
+    [panelAnalyticsData.confidenceByIdEntries, panelAnalyticsStatus, shouldComputePanelAnalyticsOnServer]
   );
   const [backtestAnalyticsData, setBacktestAnalyticsData] =
     useState<BacktestAnalyticsServerResponse>(EMPTY_BACKTEST_ANALYTICS_RESPONSE);
   useEffect(() => {
     if (!isBacktestAnalyticsVisible || !backtestHasRun || !backtestHistorySeedReady) {
+      return;
+    }
+
+    if (
+      !shouldComputeBacktestAnalyticsOnServer ||
+      (backtestTrades.length === 0 && baselineMainStatsTrades.length === 0)
+    ) {
+      setBacktestAnalyticsData(
+        buildBacktestAnalyticsFallbackResponse({
+          backtestTrades,
+          baselineMainStatsTrades,
+          selectedBacktestDateKey,
+          aiMode: appliedBacktestSettings.aiMode,
+          confidenceGateDisabled: appliedConfidenceGateDisabled,
+          confidenceResolver: getEffectiveTradeConfidenceScore
+        })
+      );
       return;
     }
 
@@ -13982,6 +13947,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             backtestTrades,
             baselineMainStatsTrades,
             selectedBacktestDateKey,
+            aiMode: appliedBacktestSettings.aiMode,
+            confidenceGateDisabled: appliedConfidenceGateDisabled,
             confidenceResolver: getEffectiveTradeConfidenceScore
           })
         );
@@ -14006,7 +13973,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     isPerformanceStatsBacktestTabActive,
     backtestAnalyticsConfidenceEntries,
     performanceStatsModel,
-    selectedBacktestDateKey
+    selectedBacktestDateKey,
+    shouldComputeBacktestAnalyticsOnServer
   ]);
 
   const backtestSummary = backtestAnalyticsData.backtestSummary;
@@ -17643,6 +17611,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               backtestTimeframe={appliedBacktestSettings.timeframe}
               backtestTrades={backtestTrades}
               onRunChartActions={runAssistantChartActions}
+              onImportStrategyModel={handleImportAssistantStrategyModel}
             />
           </section>
         ) : null}

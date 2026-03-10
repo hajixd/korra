@@ -110,6 +110,7 @@ type AssistantChecklistItem = {
 };
 
 type AssistantStrategyDraft = {
+  status: "clarify" | "ready";
   name: string;
   matchedModelId: string;
   matchedModelName: string;
@@ -119,6 +120,7 @@ type AssistantStrategyDraft = {
   invalidationSignals: string[];
   exitChecklist: string[];
   missingDetails: string[];
+  clarifyingQuestions: string[];
   draftJson: Record<string, unknown>;
 };
 
@@ -178,6 +180,7 @@ export type AssistantPanelProps = {
   backtestTimeframe: string;
   backtestTrades: AssistantPanelTrade[];
   onRunChartActions?: (actions: Array<Record<string, unknown>>) => void;
+  onImportStrategyModel?: (draftJson: Record<string, unknown>) => void;
 };
 
 const MAX_CONTEXT_CANDLES = 500;
@@ -406,7 +409,8 @@ export default function AssistantPanel(props: AssistantPanelProps) {
     backtestHasRun,
     backtestTimeframe,
     backtestTrades,
-    onRunChartActions
+    onRunChartActions,
+    onImportStrategyModel
   } = props;
 
   const [messages, setMessages] = useState<AssistantMessage[]>(() => [buildWelcomeMessage()]);
@@ -537,6 +541,16 @@ export default function AssistantPanel(props: AssistantPanelProps) {
     ]
   );
 
+  const buildThreadState = useCallback(() => {
+    const latestDraftMessage = [...messages]
+      .reverse()
+      .find((message) => message.role === "assistant" && message.strategyDraft);
+
+    return {
+      latestDraft: latestDraftMessage?.strategyDraft ?? null
+    };
+  }, [messages]);
+
   const runAssistantRequest = useCallback(
     async (chatTurns: Array<{ role: "user" | "assistant"; content: string }>, includeBacktestData: boolean): Promise<AssistantApiResponse> => {
       const response = await fetch("/api/assistant/chat", {
@@ -546,7 +560,8 @@ export default function AssistantPanel(props: AssistantPanelProps) {
         },
         body: JSON.stringify({
           messages: chatTurns,
-          context: buildPayloadContext(includeBacktestData)
+          context: buildPayloadContext(includeBacktestData),
+          threadState: buildThreadState()
         })
       });
 
@@ -562,7 +577,42 @@ export default function AssistantPanel(props: AssistantPanelProps) {
 
       return payload;
     },
-    [backtestHasRun, buildPayloadContext]
+    [backtestHasRun, buildPayloadContext, buildThreadState]
+  );
+
+  const replayChartActions = useCallback(
+    (actions: Array<Record<string, unknown>>) => {
+      if (!Array.isArray(actions) || actions.length === 0 || typeof onRunChartActions !== "function") {
+        return;
+      }
+
+      onRunChartActions(actions);
+    },
+    [onRunChartActions]
+  );
+
+  const downloadStrategyDraft = useCallback((draft: AssistantStrategyDraft) => {
+    const blob = new Blob([JSON.stringify(draft.draftJson, null, 2)], {
+      type: "application/json"
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `${String(draft.draftJson.id || draft.matchedModelId || "strategy-draft")}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const importStrategyDraft = useCallback(
+    (draft: AssistantStrategyDraft) => {
+      if (typeof onImportStrategyModel !== "function") {
+        return;
+      }
+
+      onImportStrategyModel(draft.draftJson);
+    },
+    [onImportStrategyModel]
   );
 
   const submit = useCallback(
@@ -964,16 +1014,50 @@ export default function AssistantPanel(props: AssistantPanelProps) {
                     <strong>{message.strategyDraft.name}</strong>
                     <span>{message.strategyDraft.matchedModelName}</span>
                   </div>
-                  <span className="ai-strategy-pill">{message.strategyDraft.matchedModelId}</span>
+                  <div className="ai-strategy-pill-row">
+                    <span className="ai-strategy-pill">{message.strategyDraft.matchedModelId}</span>
+                    <span className="ai-strategy-pill">
+                      {message.strategyDraft.status === "ready" ? "Ready" : "Clarify"}
+                    </span>
+                  </div>
                 </div>
 
                 <p className="ai-strategy-summary">{boldText(message.strategyDraft.summary)}</p>
+
+                <div className="ai-strategy-actions">
+                  {message.chartActions && message.chartActions.length > 0 ? (
+                    <button
+                      type="button"
+                      className="panel-action-btn"
+                      onClick={() => replayChartActions(message.chartActions!)}
+                    >
+                      Preview on Chart
+                    </button>
+                  ) : null}
+                  {typeof onImportStrategyModel === "function" ? (
+                    <button
+                      type="button"
+                      className="panel-action-btn"
+                      onClick={() => importStrategyDraft(message.strategyDraft!)}
+                    >
+                      {message.strategyDraft.status === "ready" ? "Add to Models" : "Add Draft to Models"}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="panel-action-btn"
+                    onClick={() => downloadStrategyDraft(message.strategyDraft!)}
+                  >
+                    Download JSON
+                  </button>
+                </div>
 
                 <div className="ai-strategy-grid">
                   {renderStrategySection("Entry", message.strategyDraft.entryChecklist)}
                   {renderStrategySection("Confirmation", message.strategyDraft.confirmationSignals)}
                   {renderStrategySection("Invalidation", message.strategyDraft.invalidationSignals)}
                   {renderStrategySection("Exit", message.strategyDraft.exitChecklist)}
+                  {renderStrategySection("Clarifying Questions", message.strategyDraft.clarifyingQuestions)}
                   {renderStrategySection("Missing Details", message.strategyDraft.missingDetails)}
                 </div>
               </section>

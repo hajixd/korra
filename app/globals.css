@@ -5741,11 +5741,28 @@ button {
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
 }
 
+.ai-strategy-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.28rem;
+}
+
 .ai-strategy-summary {
   margin: 0;
   color: #dbe7f9;
   font-size: 0.7rem;
   line-height: 1.42;
+}
+
+.ai-strategy-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.ai-strategy-actions .panel-action-btn {
+  min-height: 30px;
 }
 
 .ai-strategy-grid {

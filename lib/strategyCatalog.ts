@@ -94,6 +94,11 @@ export type StrategyRuntimeModelProfile = {
   winRate: number;
 };
 
+export type StrategyBacktestFeatureGuide = {
+  feature: string;
+  description: string;
+};
+
 const MODEL_SOURCES = [
   momentumModel,
   meanReversionModel,
@@ -199,6 +204,53 @@ const MODEL_CLARIFYING_QUESTIONS: Record<StrategyModelKind, string[]> = {
   ]
 };
 
+export const STRATEGY_BACKTEST_FEATURE_GUIDE: readonly StrategyBacktestFeatureGuide[] = [
+  { feature: "upTrendBase", description: "30 EMA is above the 200 EMA." },
+  { feature: "downTrendBase", description: "30 EMA is below the 200 EMA." },
+  {
+    feature: "upPrice",
+    description: "Recent price already printed an upside impulse versus the last 6 bars."
+  },
+  {
+    feature: "downPrice",
+    description: "Recent price already printed a downside impulse versus the last 6 bars."
+  },
+  { feature: "recentUp", description: "An upside impulse printed within the last 10 bars." },
+  { feature: "recentDown", description: "A downside impulse printed within the last 10 bars." },
+  { feature: "normDown", description: "Normalized oscillator is below 40." },
+  { feature: "normUp", description: "Normalized oscillator is above 60." },
+  {
+    feature: "seasonBucket",
+    description: "Market season classification: spring, summer, fall, or winter."
+  },
+  {
+    feature: "prevSeasonBucket",
+    description: "Previous bar's market season classification."
+  },
+  { feature: "timeBucket", description: "Momentum time bucket: day or night." },
+  { feature: "prevTimeBucket", description: "Previous bar's momentum time bucket." },
+  {
+    feature: "nearSupport",
+    description: "Close is near the lower part of the recent chunk range."
+  },
+  {
+    feature: "nearResistance",
+    description: "Close is near the upper part of the recent chunk range."
+  },
+  {
+    feature: "bullishReversal",
+    description: "Latest close shows a bullish reversal versus the prior close."
+  },
+  {
+    feature: "bearishReversal",
+    description: "Latest close shows a bearish reversal versus the prior close."
+  },
+  {
+    feature: "sufficientRange",
+    description: "Recent chunk range is large enough to avoid compressed conditions."
+  }
+] as const;
+
 export const STRATEGY_MODEL_CATALOG = MODEL_SOURCES as readonly StrategyModelCatalogEntry[];
 export const DEFAULT_STRATEGY_MODEL_NAMES = STRATEGY_MODEL_CATALOG.map((entry) => entry.name);
 
@@ -288,6 +340,224 @@ const previewList = (values: readonly string[], limit = 2): string => {
   return values.slice(0, limit).join("; ");
 };
 
+const sanitizeStrategyTextList = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter((item) => item.length > 0);
+};
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> => {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+};
+
+const isStrategyBacktestLiteral = (value: unknown): value is StrategyBacktestLiteral => {
+  return (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  );
+};
+
+export const parseStrategyBacktestCondition = (
+  value: unknown
+): StrategyBacktestCondition | null => {
+  if (!isPlainRecord(value)) {
+    return null;
+  }
+
+  if (typeof value.feature === "string" && value.feature.trim().length > 0) {
+    return {
+      feature: value.feature.trim()
+    };
+  }
+
+  if ("not" in value) {
+    const parsed = parseStrategyBacktestCondition(value.not);
+    return parsed ? { not: parsed } : null;
+  }
+
+  if ("all" in value && Array.isArray(value.all)) {
+    const parsed = value.all.map((item) => parseStrategyBacktestCondition(item));
+    return parsed.every((item) => item !== null)
+      ? { all: parsed as StrategyBacktestCondition[] }
+      : null;
+  }
+
+  if ("any" in value && Array.isArray(value.any)) {
+    const parsed = value.any.map((item) => parseStrategyBacktestCondition(item));
+    return parsed.every((item) => item !== null)
+      ? { any: parsed as StrategyBacktestCondition[] }
+      : null;
+  }
+
+  if ("eq" in value && Array.isArray(value.eq) && value.eq.length === 2) {
+    const [feature, literal] = value.eq;
+    if (
+      typeof feature === "string" &&
+      feature.trim().length > 0 &&
+      isStrategyBacktestLiteral(literal)
+    ) {
+      return {
+        eq: [feature.trim(), literal]
+      };
+    }
+  }
+
+  if ("neq" in value && Array.isArray(value.neq) && value.neq.length === 2) {
+    const [feature, literal] = value.neq;
+    if (
+      typeof feature === "string" &&
+      feature.trim().length > 0 &&
+      isStrategyBacktestLiteral(literal)
+    ) {
+      return {
+        neq: [feature.trim(), literal]
+      };
+    }
+  }
+
+  return null;
+};
+
+export const parseStrategyBacktestChecks = (value: unknown): StrategyBacktestCheck[] | null => {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const checks: StrategyBacktestCheck[] = [];
+
+  for (const item of value) {
+    if (!isPlainRecord(item)) {
+      return null;
+    }
+
+    const label = typeof item.label === "string" ? item.label.trim() : "";
+    const when = parseStrategyBacktestCondition(item.when);
+
+    if (!label || !when) {
+      return null;
+    }
+
+    checks.push({ label, when });
+  }
+
+  return checks;
+};
+
+export const parseStrategyBacktestDirectionalChecks = (
+  value: unknown
+): StrategyBacktestDirectionalChecks | null => {
+  if (!isPlainRecord(value)) {
+    return null;
+  }
+
+  const checks = parseStrategyBacktestChecks(value.checks);
+  return checks ? { checks } : null;
+};
+
+export const parseStrategyBacktestSpec = (value: unknown): StrategyBacktestSpec | null => {
+  if (!isPlainRecord(value) || !isPlainRecord(value.entry)) {
+    return null;
+  }
+
+  const long = parseStrategyBacktestDirectionalChecks(value.entry.long);
+  const short = parseStrategyBacktestDirectionalChecks(value.entry.short);
+
+  if (!long || !short) {
+    return null;
+  }
+
+  let exit: StrategyBacktestSpec["exit"];
+  if (value.exit != null) {
+    if (!isPlainRecord(value.exit)) {
+      return null;
+    }
+
+    const parsedLongExit =
+      value.exit.long == null ? undefined : parseStrategyBacktestDirectionalChecks(value.exit.long);
+    const parsedShortExit =
+      value.exit.short == null ? undefined : parseStrategyBacktestDirectionalChecks(value.exit.short);
+
+    if (
+      (value.exit.long != null && !parsedLongExit) ||
+      (value.exit.short != null && !parsedShortExit)
+    ) {
+      return null;
+    }
+
+    exit = {
+      long: parsedLongExit ?? undefined,
+      short: parsedShortExit ?? undefined
+    };
+  }
+
+  const source = typeof value.source === "string" ? value.source.trim() : undefined;
+
+  return {
+    source,
+    entry: {
+      long,
+      short
+    },
+    exit
+  };
+};
+
+export const parseStrategyModelCatalogEntry = (
+  value: unknown
+): StrategyModelCatalogEntry | null => {
+  if (!isPlainRecord(value)) {
+    return null;
+  }
+
+  const record = value;
+  const entryRecord = isPlainRecord(record.entry) ? record.entry : {};
+  const exitRecord = isPlainRecord(record.exit) ? record.exit : {};
+  const id = typeof record.id === "string" ? record.id.trim() : "";
+  const name = typeof record.name === "string" ? record.name.trim() : "";
+  const description = typeof record.description === "string" ? record.description.trim() : "";
+  const backtest = record.backtest == null ? undefined : parseStrategyBacktestSpec(record.backtest);
+
+  if (!id || !name || (record.backtest != null && !backtest)) {
+    return null;
+  }
+
+  const entry = {
+    context: sanitizeStrategyTextList(entryRecord.context),
+    setup: sanitizeStrategyTextList(entryRecord.setup),
+    trigger: sanitizeStrategyTextList(entryRecord.trigger),
+    confirmation: sanitizeStrategyTextList(entryRecord.confirmation),
+    invalidation: sanitizeStrategyTextList(entryRecord.invalidation),
+    noTrade: sanitizeStrategyTextList(entryRecord.noTrade)
+  };
+  const exit = {
+    stopLoss: sanitizeStrategyTextList(exitRecord.stopLoss),
+    takeProfit: sanitizeStrategyTextList(exitRecord.takeProfit),
+    timeExit: sanitizeStrategyTextList(exitRecord.timeExit),
+    earlyExit: sanitizeStrategyTextList(exitRecord.earlyExit)
+  };
+  const hasEntryText = Object.values(entry).some((items) => items.length > 0);
+
+  if (!hasEntryText && !backtest) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    aliases: sanitizeStrategyTextList(record.aliases),
+    description,
+    entry,
+    exit,
+    ...(backtest ? { backtest } : {})
+  };
+};
+
 export const buildStrategyCatalogPromptContext = (): string => {
   return STRATEGY_MODEL_CATALOG.map((model) => {
     return [
@@ -303,4 +573,10 @@ export const buildStrategyCatalogPromptContext = (): string => {
       `Exit early: ${previewList(model.exit.earlyExit, 2)}`
     ].join("\n");
   }).join("\n\n");
+};
+
+export const buildStrategyBacktestFeaturePromptContext = (): string => {
+  return STRATEGY_BACKTEST_FEATURE_GUIDE.map(
+    (item) => `- ${item.feature}: ${item.description}`
+  ).join("\n");
 };

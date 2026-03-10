@@ -871,8 +871,12 @@ const filterHistoryRows = (params: {
         return false;
       }
 
+      if (confidenceGateDisabled) {
+        return true;
+      }
+
       const confidence = (confidenceById.get(trade.id) ?? getTradeConfidenceScore(trade)) * 100;
-      return confidenceGateDisabled || confidence >= effectiveConfidenceThreshold;
+      return confidence >= effectiveConfidenceThreshold;
     })
     .sort((a, b) => Number(b.exitTime) - Number(a.exitTime) || b.id.localeCompare(a.id));
 };

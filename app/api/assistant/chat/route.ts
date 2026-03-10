@@ -19,9 +19,12 @@ import {
 } from "../../../../lib/assistant-tools";
 import {
   STRATEGY_MODEL_CATALOG,
+  buildStrategyBacktestFeaturePromptContext,
   buildStrategyClarifyingQuestions,
   buildStrategyCatalogPromptContext,
-  resolveStrategyModelCatalogEntry
+  parseStrategyModelCatalogEntry,
+  resolveStrategyModelCatalogEntry,
+  type StrategyModelCatalogEntry
 } from "../../../../lib/strategyCatalog";
 
 type ChatTurn = {
@@ -215,6 +218,7 @@ type ChartCodingOutput = {
 };
 
 type StrategyDraft = {
+  status: "clarify" | "ready";
   name: string;
   matchedModelId: string;
   matchedModelName: string;
@@ -224,12 +228,18 @@ type StrategyDraft = {
   invalidationSignals: string[];
   exitChecklist: string[];
   missingDetails: string[];
+  clarifyingQuestions: string[];
   draftJson: Record<string, unknown>;
+};
+
+type StrategyThreadState = {
+  latestDraft: StrategyDraft | null;
 };
 
 type ChatRequestBody = {
   messages?: unknown;
   context?: unknown;
+  threadState?: unknown;
 };
 
 type ToolState = {
@@ -452,12 +462,17 @@ const INDICATOR_CODING_PROMPT = [
 
 const STRATEGY_DRAFT_PROMPT = [
   "Return only JSON with this shape:",
-  '{"name":string,"matchedModelId":string,"summary":string,"entryChecklist":[string],"confirmationSignals":[string],"invalidationSignals":[string],"exitChecklist":[string],"missingDetails":[string],"draftJson":{"name":string,"modelId":string,"thesis":string,"entry":{"context":[string],"setup":[string],"trigger":[string],"confirmation":[string],"invalidation":[string],"noTrade":[string]},"exit":{"stopLoss":[string],"takeProfit":[string],"timeExit":[string],"earlyExit":[string]},"notes":[string]}}',
-  "Turn the user's strategy description into a concrete trading playbook draft.",
+  '{"status":"clarify|ready","name":string,"matchedModelId":string,"summary":string,"entryChecklist":[string],"confirmationSignals":[string],"invalidationSignals":[string],"exitChecklist":[string],"missingDetails":[string],"clarifyingQuestions":[string],"draftJson":{"id":string,"name":string,"aliases":[string],"description":string,"entry":{"context":[string],"setup":[string],"trigger":[string],"confirmation":[string],"invalidation":[string],"noTrade":[string]},"exit":{"stopLoss":[string],"takeProfit":[string],"timeExit":[string],"earlyExit":[string]},"backtest":{"source":string,"entry":{"long":{"checks":[{"label":string,"when":condition}]},"short":{"checks":[{"label":string,"when":condition}]}},"exit":{"long":{"checks":[{"label":string,"when":condition}]},"short":{"checks":[{"label":string,"when":condition}]}}}}}',
+  "Turn the user's strategy description plus any follow-up answers into a concrete Korra model draft.",
   "Choose the closest model from the provided catalog, then tailor it to the user's wording.",
   "Cover entry and exit completely: context, setup, trigger, confirmation, invalidation, no-trade filters, stop, targets, time-based exits, and early exits.",
-  "Do not add risk management sections or extra strategy layers.",
-  "If details are missing, make conservative assumptions and list the missing details explicitly.",
+  "draftJson must be directly importable into Korra's Models tab.",
+  "Use only supported backtest feature conditions. Supported features:",
+  buildStrategyBacktestFeaturePromptContext(),
+  "Allowed condition shapes are {feature}, {not}, {all}, {any}, {eq:[feature,literal]}, and {neq:[feature,literal]}.",
+  "If an exact rule cannot be represented, map it to the closest supported feature logic and keep that approximation conservative.",
+  "Use status='clarify' when important details are still missing. Use status='ready' only when the model is specific enough to save.",
+  "Ask up to 3 direct clarifyingQuestions when status='clarify'.",
   "Keep the language direct and execution-focused.",
   "Do not include markdown or commentary outside the JSON."
 ].join("\n");
@@ -3947,35 +3962,251 @@ const normalizeTextList = (input: unknown, limit: number): string[] => {
   return values;
 };
 
-const normalizeStrategyDraft = (input: unknown): StrategyDraft | null => {
+const isPlainRecord = (input: unknown): input is Record<string, unknown> => {
+  return Boolean(input) && typeof input === "object" && !Array.isArray(input);
+};
+
+const pickFirstNonEmptyTextList = (...lists: Array<readonly string[]>): string[] => {
+  for (const list of lists) {
+    if (list.length > 0) {
+      return [...list];
+    }
+  }
+
+  return [];
+};
+
+const slugifyStrategyModelId = (value: string, fallback: string): string => {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  if (normalized.length > 0) {
+    return normalized;
+  }
+
+  return fallback;
+};
+
+const normalizeStrategyModelJson = (params: {
+  rawDraftJson: unknown;
+  previousDraftJson?: unknown;
+  matchedModel: StrategyModelCatalogEntry;
+  name: string;
+  summary: string;
+  entryChecklist: string[];
+  confirmationSignals: string[];
+  invalidationSignals: string[];
+  exitChecklist: string[];
+}): Record<string, unknown> => {
+  const {
+    rawDraftJson,
+    previousDraftJson,
+    matchedModel,
+    name,
+    summary,
+    entryChecklist,
+    confirmationSignals,
+    invalidationSignals,
+    exitChecklist
+  } = params;
+
+  const parsedRaw = parseStrategyModelCatalogEntry(rawDraftJson);
+  if (parsedRaw) {
+    return parsedRaw as Record<string, unknown>;
+  }
+
+  const rawRecord = isPlainRecord(rawDraftJson) ? rawDraftJson : {};
+  const rawEntry = isPlainRecord(rawRecord.entry) ? rawRecord.entry : {};
+  const rawExit = isPlainRecord(rawRecord.exit) ? rawRecord.exit : {};
+
+  const previousRecord = isPlainRecord(previousDraftJson) ? previousDraftJson : {};
+  const previousEntry = isPlainRecord(previousRecord.entry) ? previousRecord.entry : {};
+  const previousExit = isPlainRecord(previousRecord.exit) ? previousRecord.exit : {};
+  const backtestSource = rawRecord.backtest ?? previousRecord.backtest ?? matchedModel.backtest;
+  const resolvedBacktest =
+    parseStrategyModelCatalogEntry({
+      ...matchedModel,
+      backtest: backtestSource
+    })?.backtest ?? matchedModel.backtest;
+
+  const candidate = {
+    id: slugifyStrategyModelId(
+      toText(rawRecord.id, ""),
+      slugifyStrategyModelId(name, `${matchedModel.id}-draft`)
+    ),
+    name: sanitizeAssistantText(toText(rawRecord.name, name)),
+    aliases: normalizeTextList(rawRecord.aliases, 8),
+    description: sanitizeAssistantText(toText(rawRecord.description, summary)),
+    entry: {
+      context: pickFirstNonEmptyTextList(
+        normalizeTextList(rawEntry.context, 6),
+        normalizeTextList(previousEntry.context, 6),
+        matchedModel.entry.context
+      ),
+      setup: pickFirstNonEmptyTextList(
+        normalizeTextList(rawEntry.setup, 6),
+        normalizeTextList(previousEntry.setup, 6),
+        matchedModel.entry.setup
+      ),
+      trigger: pickFirstNonEmptyTextList(
+        normalizeTextList(rawEntry.trigger, 8),
+        normalizeTextList(previousEntry.trigger, 8),
+        entryChecklist,
+        matchedModel.entry.trigger
+      ),
+      confirmation: pickFirstNonEmptyTextList(
+        normalizeTextList(rawEntry.confirmation, 6),
+        normalizeTextList(previousEntry.confirmation, 6),
+        confirmationSignals,
+        matchedModel.entry.confirmation
+      ),
+      invalidation: pickFirstNonEmptyTextList(
+        normalizeTextList(rawEntry.invalidation, 6),
+        normalizeTextList(previousEntry.invalidation, 6),
+        invalidationSignals,
+        matchedModel.entry.invalidation
+      ),
+      noTrade: pickFirstNonEmptyTextList(
+        normalizeTextList(rawEntry.noTrade, 6),
+        normalizeTextList(previousEntry.noTrade, 6),
+        matchedModel.entry.noTrade
+      )
+    },
+    exit: {
+      stopLoss: pickFirstNonEmptyTextList(
+        normalizeTextList(rawExit.stopLoss, 6),
+        normalizeTextList(previousExit.stopLoss, 6),
+        matchedModel.exit.stopLoss
+      ),
+      takeProfit: pickFirstNonEmptyTextList(
+        normalizeTextList(rawExit.takeProfit, 6),
+        normalizeTextList(previousExit.takeProfit, 6),
+        matchedModel.exit.takeProfit
+      ),
+      timeExit: pickFirstNonEmptyTextList(
+        normalizeTextList(rawExit.timeExit, 6),
+        normalizeTextList(previousExit.timeExit, 6),
+        matchedModel.exit.timeExit
+      ),
+      earlyExit: pickFirstNonEmptyTextList(
+        normalizeTextList(rawExit.earlyExit, 8),
+        normalizeTextList(previousExit.earlyExit, 8),
+        exitChecklist,
+        matchedModel.exit.earlyExit
+      )
+    },
+    ...(resolvedBacktest ? { backtest: resolvedBacktest } : {})
+  };
+
+  const parsedCandidate = parseStrategyModelCatalogEntry(candidate);
+  if (parsedCandidate) {
+    return parsedCandidate as Record<string, unknown>;
+  }
+
+  const fallback = {
+    ...matchedModel,
+    id: slugifyStrategyModelId(name, `${matchedModel.id}-draft`),
+    name,
+    aliases: normalizeTextList(rawRecord.aliases, 8),
+    description: summary
+  };
+
+  return (parseStrategyModelCatalogEntry(fallback) ?? matchedModel) as Record<string, unknown>;
+};
+
+const normalizeStrategyDraft = (
+  input: unknown,
+  previousDraft: StrategyDraft | null = null
+): StrategyDraft | null => {
   if (!input || typeof input !== "object") {
     return null;
   }
 
   const raw = input as Record<string, unknown>;
-  const matchedModelId = toText(raw.matchedModelId, "");
+  const matchedModelId = toText(raw.matchedModelId, previousDraft?.matchedModelId ?? "");
   const matchedModel = resolveStrategyModelCatalogEntry(matchedModelId);
 
   if (!matchedModel) {
     return null;
   }
 
-  const draftJson =
-    raw.draftJson && typeof raw.draftJson === "object"
-      ? (raw.draftJson as Record<string, unknown>)
-      : {};
+  const name = sanitizeAssistantText(
+    toText(raw.name, previousDraft?.name || `${matchedModel.name} Draft`)
+  );
+  const summary = sanitizeAssistantText(
+    toText(raw.summary, previousDraft?.summary || matchedModel.description)
+  );
+  const entryChecklist = pickFirstNonEmptyTextList(
+    normalizeTextList(raw.entryChecklist, 8),
+    previousDraft?.entryChecklist ?? []
+  );
+  const confirmationSignals = pickFirstNonEmptyTextList(
+    normalizeTextList(raw.confirmationSignals, 6),
+    previousDraft?.confirmationSignals ?? []
+  );
+  const invalidationSignals = pickFirstNonEmptyTextList(
+    normalizeTextList(raw.invalidationSignals, 6),
+    previousDraft?.invalidationSignals ?? []
+  );
+  const exitChecklist = pickFirstNonEmptyTextList(
+    normalizeTextList(raw.exitChecklist, 8),
+    previousDraft?.exitChecklist ?? []
+  );
+  const rawMissingDetails = normalizeTextList(raw.missingDetails, 6);
+  const rawClarifyingQuestions = normalizeTextList(raw.clarifyingQuestions, 3);
+  const missingDetails =
+    raw.status === "ready"
+      ? rawMissingDetails
+      : pickFirstNonEmptyTextList(rawMissingDetails, previousDraft?.missingDetails ?? []);
+  const clarifyingQuestions =
+    raw.status === "ready"
+      ? rawClarifyingQuestions
+      : pickFirstNonEmptyTextList(rawClarifyingQuestions, previousDraft?.clarifyingQuestions ?? []);
+  const status =
+    raw.status === "ready" && missingDetails.length === 0 && clarifyingQuestions.length === 0
+      ? "ready"
+      : "clarify";
+  const draftJson = normalizeStrategyModelJson({
+    rawDraftJson: raw.draftJson,
+    previousDraftJson: previousDraft?.draftJson,
+    matchedModel,
+    name,
+    summary,
+    entryChecklist,
+    confirmationSignals,
+    invalidationSignals,
+    exitChecklist
+  });
 
   return {
-    name: sanitizeAssistantText(toText(raw.name, matchedModel.name)),
+    status,
+    name,
     matchedModelId: matchedModel.id,
     matchedModelName: matchedModel.name,
-    summary: sanitizeAssistantText(toText(raw.summary, matchedModel.description)),
-    entryChecklist: normalizeTextList(raw.entryChecklist, 8),
-    confirmationSignals: normalizeTextList(raw.confirmationSignals, 6),
-    invalidationSignals: normalizeTextList(raw.invalidationSignals, 6),
-    exitChecklist: normalizeTextList(raw.exitChecklist, 8),
-    missingDetails: normalizeTextList(raw.missingDetails, 6),
+    summary,
+    entryChecklist,
+    confirmationSignals,
+    invalidationSignals,
+    exitChecklist,
+    missingDetails,
+    clarifyingQuestions,
     draftJson
+  };
+};
+
+const normalizeStrategyThreadState = (input: unknown): StrategyThreadState => {
+  if (!isPlainRecord(input)) {
+    return {
+      latestDraft: null
+    };
+  }
+
+  return {
+    latestDraft: normalizeStrategyDraft(input.latestDraft)
   };
 };
 
@@ -4005,6 +4236,55 @@ const isStrategyDraftRequest = (prompt: string): boolean => {
   }
 
   return false;
+};
+
+const isStrategyDraftFollowUp = (
+  prompt: string,
+  strategyThreadState: StrategyThreadState
+): boolean => {
+  if (isStrategyDraftRequest(prompt)) {
+    return true;
+  }
+
+  if (!strategyThreadState.latestDraft) {
+    return false;
+  }
+
+  const trimmed = prompt.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (
+    /\b(change|update|adjust|revise|instead|make it|set|switch|use)\b/i.test(trimmed) &&
+    /\b(timeframe|session|entry|exit|stop|target|confirmation|invalidate|wick|close|level|zone|range|retest|breakout|pullback|reclaim|rejection|sweep|bars?|minutes?|hours?)\b/i.test(
+      trimmed
+    )
+  ) {
+    return true;
+  }
+
+  if (strategyThreadState.latestDraft.status !== "clarify") {
+    return false;
+  }
+
+  if (/^(yes|yeah|yep|no|nah|sort of|kind of|like that|close|not exactly)\b/i.test(trimmed)) {
+    return true;
+  }
+
+  if (countStrategyRuleTerms(prompt) >= 1) {
+    return true;
+  }
+
+  if (
+    /\b(timeframe|session|entry|exit|stop|target|confirmation|invalidate|wick|close|level|zone|range|retest|breakout|pullback|reclaim|rejection|sweep|bars?|minutes?|hours?)\b/i.test(
+      prompt
+    )
+  ) {
+    return true;
+  }
+
+  return trimmed.length <= 240;
 };
 
 const resolveHeuristicStrategyMatch = (prompt: string) => {
@@ -4049,61 +4329,93 @@ const resolveHeuristicStrategyMatch = (prompt: string) => {
   return fallbackModel ? { model: fallbackModel } : null;
 };
 
-const buildFallbackStrategyDraft = (prompt: string): StrategyDraft | null => {
-  const matched = resolveHeuristicStrategyMatch(prompt);
+const buildFallbackStrategyDraft = (
+  prompt: string,
+  previousDraft: StrategyDraft | null = null
+): StrategyDraft | null => {
+  const matched = resolveHeuristicStrategyMatch(
+    previousDraft?.matchedModelId ? `${previousDraft.matchedModelId}\n${prompt}` : prompt
+  );
   if (!matched?.model) {
     return null;
   }
 
   const { model } = matched;
-  const notes = normalizeTextList([prompt, model.description], 6);
+  const name = previousDraft?.name ?? `${model.name} Draft`;
+  const summary = previousDraft?.summary ?? model.description;
+  const entryChecklist = pickFirstNonEmptyTextList(
+    previousDraft?.entryChecklist ?? [],
+    [...model.entry.context, ...model.entry.setup, ...model.entry.trigger, ...model.entry.noTrade].slice(0, 8)
+  );
+  const confirmationSignals = pickFirstNonEmptyTextList(
+    previousDraft?.confirmationSignals ?? [],
+    model.entry.confirmation.slice(0, 6)
+  );
+  const invalidationSignals = pickFirstNonEmptyTextList(
+    previousDraft?.invalidationSignals ?? [],
+    model.entry.invalidation.slice(0, 6)
+  );
+  const exitChecklist = pickFirstNonEmptyTextList(
+    previousDraft?.exitChecklist ?? [],
+    [...model.exit.stopLoss, ...model.exit.takeProfit, ...model.exit.timeExit, ...model.exit.earlyExit].slice(0, 8)
+  );
+  const clarifyingQuestions = pickFirstNonEmptyTextList(
+    previousDraft?.clarifyingQuestions ?? [],
+    buildStrategyClarifyingQuestions(model.id).slice(0, 3)
+  );
+  const missingDetails = pickFirstNonEmptyTextList(
+    previousDraft?.missingDetails ?? [],
+    clarifyingQuestions
+  );
+  const draftJson = normalizeStrategyModelJson({
+    rawDraftJson: previousDraft?.draftJson,
+    previousDraftJson: previousDraft?.draftJson,
+    matchedModel: model,
+    name,
+    summary,
+    entryChecklist,
+    confirmationSignals,
+    invalidationSignals,
+    exitChecklist
+  });
 
   return {
-    name: `${model.name} Draft`,
+    status: missingDetails.length === 0 && clarifyingQuestions.length === 0 ? "ready" : "clarify",
+    name,
     matchedModelId: model.id,
     matchedModelName: model.name,
-    summary: model.description,
-    entryChecklist: [
-      ...model.entry.context,
-      ...model.entry.setup,
-      ...model.entry.trigger,
-      ...model.entry.noTrade
-    ].slice(0, 8),
-    confirmationSignals: model.entry.confirmation.slice(0, 6),
-    invalidationSignals: model.entry.invalidation.slice(0, 6),
-    exitChecklist: [
-      ...model.exit.stopLoss,
-      ...model.exit.takeProfit,
-      ...model.exit.timeExit,
-      ...model.exit.earlyExit
-    ].slice(0, 8),
-    missingDetails: buildStrategyClarifyingQuestions(model.id).slice(0, 3),
-    draftJson: {
-      name: `${model.name} Draft`,
-      modelId: model.id,
-      thesis: model.description,
-      entry: model.entry,
-      exit: model.exit,
-      notes
-    }
+    summary,
+    entryChecklist,
+    confirmationSignals,
+    invalidationSignals,
+    exitChecklist,
+    missingDetails,
+    clarifyingQuestions,
+    draftJson
   };
 };
 
 const executeStrategyDraftStage = async (params: {
   apiKey: string;
   baseUrl: string;
-  model: string;
+  models: NebiusModelSelection;
   turns: ChatTurn[];
   context: AssistantContext;
+  strategyThreadState: StrategyThreadState;
 }): Promise<StrategyDraft | null> => {
-  const fallback = buildFallbackStrategyDraft(getLastUserPrompt(params.turns));
-  const matched = resolveHeuristicStrategyMatch(getLastUserPrompt(params.turns));
+  const previousDraft = params.strategyThreadState.latestDraft;
+  const latestPrompt = getLastUserPrompt(params.turns);
+  const matchPrompt = previousDraft?.matchedModelId
+    ? `${previousDraft.matchedModelId}\n${latestPrompt}`
+    : latestPrompt;
+  const fallback = buildFallbackStrategyDraft(latestPrompt, previousDraft);
+  const matched = resolveHeuristicStrategyMatch(matchPrompt);
 
   try {
     const completion = await nebiusChatCompletion({
       apiKey: params.apiKey,
       baseUrl: params.baseUrl,
-      model: params.model,
+      model: params.models.coding,
       messages: [
         {
           role: "system",
@@ -4112,12 +4424,13 @@ const executeStrategyDraftStage = async (params: {
         {
           role: "user",
           content: `BUILD_STRATEGY_DRAFT_JSON:\n${JSON.stringify({
-            latestPrompt: getLastUserPrompt(params.turns),
+            latestPrompt,
             conversation: buildConversationTranscript(params.turns),
             context: {
               symbol: params.context.symbol,
               timeframe: params.context.timeframe
             },
+            priorDraft: previousDraft,
             suggestedModelId: matched?.model?.id ?? null,
             template:
               matched?.model
@@ -4140,12 +4453,177 @@ const executeStrategyDraftStage = async (params: {
     });
 
     const parsed = normalizeStrategyDraft(
-      safeJsonParse<Record<string, unknown>>(extractNebiusMessageText(completion.message.content), {})
+      safeJsonParse<Record<string, unknown>>(extractNebiusMessageText(completion.message.content), {}),
+      previousDraft
     );
 
     return parsed ?? fallback;
   } catch {
     return fallback;
+  }
+};
+
+const buildFallbackStrategyPreviewActions = (
+  strategyDraft: StrategyDraft,
+  context: AssistantContext
+) => {
+  const candles = context.liveCandles.slice(-120);
+  if (candles.length < 20) {
+    return normalizeChartActions([]);
+  }
+
+  const latest = candles[candles.length - 1]!;
+  const highs = candles.map((candle) => candle.high);
+  const lows = candles.map((candle) => candle.low);
+  const maxHigh = Math.max(...highs);
+  const minLow = Math.min(...lows);
+  const range = Math.max(0.000001, maxHigh - minLow);
+  const mid = minLow + range * 0.5;
+  const fibLow = minLow + range * 0.382;
+  const fibHigh = minLow + range * 0.618;
+
+  const actions: Array<Record<string, unknown>> = [
+    { type: "clear_annotations" },
+    { type: "move_to_date", time: latest.time },
+    {
+      type: "draw_support_resistance",
+      priceStart: minLow,
+      priceEnd: maxHigh,
+      label: "Draft Range"
+    },
+    {
+      type: "mark_candlestick",
+      time: latest.time,
+      markerShape: latest.close >= latest.open ? "arrowUp" : "arrowDown",
+      label: "Latest",
+      note: "Draft focus"
+    }
+  ];
+
+  if (strategyDraft.matchedModelId === "fibonacci") {
+    actions.push({
+      type: "draw_box",
+      timeStart: candles[0]!.time,
+      timeEnd: latest.time,
+      priceStart: fibLow,
+      priceEnd: fibHigh,
+      label: "Pullback Zone",
+      style: "dashed"
+    });
+  } else if (strategyDraft.matchedModelId === "support-resistance") {
+    actions.push({
+      type: "draw_box",
+      timeStart: candles[Math.max(0, candles.length - 30)]!.time,
+      timeEnd: latest.time,
+      priceStart: mid - range * 0.08,
+      priceEnd: mid + range * 0.08,
+      label: "Decision Zone",
+      style: "dashed"
+    });
+  } else if (strategyDraft.matchedModelId === "mean-reversion") {
+    actions.push({
+      type: "draw_box",
+      timeStart: candles[Math.max(0, candles.length - 24)]!.time,
+      timeEnd: latest.time,
+      priceStart: maxHigh - range * 0.22,
+      priceEnd: maxHigh,
+      label: "Stretch Area",
+      style: "dotted"
+    });
+  } else if (strategyDraft.matchedModelId === "momentum") {
+    actions.push({
+      type: "draw_box",
+      timeStart: candles[Math.max(0, candles.length - 24)]!.time,
+      timeEnd: latest.time,
+      priceStart: mid,
+      priceEnd: maxHigh,
+      label: "Breakout Range",
+      style: "dashed"
+    });
+  }
+
+  return normalizeChartActions(actions);
+};
+
+const executeStrategyPreviewStage = async (params: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  turns: ChatTurn[];
+  context: AssistantContext;
+  strategyDraft: StrategyDraft;
+}): Promise<{
+  chartActions: ReturnType<typeof normalizeChartActions>;
+  chartAnimations: ReturnType<typeof normalizeChartAnimationsFromCoding>;
+}> => {
+  if (params.context.liveCandles.length < 20) {
+    return {
+      chartActions: normalizeChartActions([]),
+      chartAnimations: normalizeChartAnimationsFromCoding({})
+    };
+  }
+
+  const recentWindow = params.context.liveCandles.slice(-140);
+
+  try {
+    const completion = await nebiusChatCompletion({
+      apiKey: params.apiKey,
+      baseUrl: params.baseUrl,
+      model: params.model,
+      messages: [
+        {
+          role: "system",
+          content: [
+            AI_SYSTEM_PROMPT,
+            buildCodingPrompt(),
+            "When previewing a strategy draft, annotate the current live candle chart only.",
+            "Prefer 3-6 chartActions that visually explain the setup.",
+            "Use actual candle prices and times from the provided recentWindow.",
+            "If the user did not ask for animation, leave chartAnimations empty."
+          ].join("\n")
+        },
+        {
+          role: "user",
+          content: `BUILD_STRATEGY_PREVIEW_JSON:\n${JSON.stringify({
+            latestPrompt: getLastUserPrompt(params.turns),
+            conversation: buildConversationTranscript(params.turns),
+            symbol: params.context.symbol,
+            timeframe: params.context.timeframe,
+            draft: params.strategyDraft,
+            requestedGraphType: "price_action",
+            requiredArtifacts: {
+              graphs: false,
+              drawings: true,
+              animation: false
+            },
+            recentWindow
+          })}`
+        }
+      ],
+      maxTokens: 900,
+      responseFormat: {
+        type: "json_object"
+      }
+    });
+
+    const parsed = safeJsonParse<Record<string, unknown>>(
+      extractNebiusMessageText(completion.message.content),
+      {}
+    );
+    const chartActions = normalizeChartActions(parsed.chartActions);
+
+    return {
+      chartActions:
+        chartActions.length > 0
+          ? chartActions
+          : buildFallbackStrategyPreviewActions(params.strategyDraft, params.context),
+      chartAnimations: normalizeChartAnimationsFromCoding(parsed)
+    };
+  } catch {
+    return {
+      chartActions: buildFallbackStrategyPreviewActions(params.strategyDraft, params.context),
+      chartAnimations: normalizeChartAnimationsFromCoding({})
+    };
   }
 };
 
@@ -5480,6 +5958,7 @@ export async function POST(request: Request) {
 
   const turns = normalizeChatTurns(body.messages);
   const context = normalizeContext(body.context);
+  const strategyThreadState = normalizeStrategyThreadState(body.threadState);
 
   if (turns.length === 0) {
     return NextResponse.json({ error: "At least one user message is required." }, { status: 400 });
@@ -5730,33 +6209,67 @@ export async function POST(request: Request) {
       !explicitDrawRequest &&
       !wantsVisualization &&
       !wantsAnimation &&
-      isStrategyDraftRequest(lastUserPrompt);
+      isStrategyDraftFollowUp(lastUserPrompt, strategyThreadState);
 
     if (strategyDraftRequested) {
       toolsUsed.add("strategy_catalog");
       const strategyDraft = await executeStrategyDraftStage({
         apiKey,
         baseUrl,
-        model: modelSelection.reasoning,
+        models: modelSelection,
         turns,
-        context
+        context,
+        strategyThreadState
       });
 
       if (strategyDraft) {
         toolsUsed.add("strategy_draft_builder");
-        const emptyActions = normalizeChartActions([]);
-        const emptyAnimations = normalizeChartAnimationsFromCoding({});
+        const preview = await executeStrategyPreviewStage({
+          apiKey,
+          baseUrl,
+          model: modelSelection.coding,
+          turns,
+          context,
+          strategyDraft
+        });
+        const hasPreview =
+          preview.chartActions.length > 0 || preview.chartAnimations.length > 0;
+        if (hasPreview) {
+          toolsUsed.add("strategy_preview");
+        }
+        if (preview.chartActions.length > 0) {
+          toolsUsed.add("chart_actions");
+        }
+        if (preview.chartAnimations.length > 0) {
+          toolsUsed.add("chart_animation");
+        }
+        const outstandingQuestions = pickFirstNonEmptyTextList(
+          strategyDraft.clarifyingQuestions,
+          strategyDraft.missingDetails
+        );
         const shortAnswer = sanitizeDeliveryText(
-          strategyDraft.missingDetails.length > 0
-            ? `I mapped that into a ${strategyDraft.matchedModelName} draft. Entry and exit are structured below. I still need: ${strategyDraft.missingDetails.slice(0, 2).join("; ")}.`
-            : `I mapped that into a ${strategyDraft.matchedModelName} draft. Entry and exit are structured below.`
+          strategyDraft.status === "clarify"
+            ? hasPreview
+              ? outstandingQuestions.length > 0
+                ? `I mapped that into a ${strategyDraft.matchedModelName} draft and sketched it on the chart. Like this? I still need: ${outstandingQuestions
+                    .slice(0, 2)
+                    .join("; ")}.`
+                : `I mapped that into a ${strategyDraft.matchedModelName} draft and sketched it on the chart. Like this?`
+              : outstandingQuestions.length > 0
+                ? `I mapped that into a ${strategyDraft.matchedModelName} draft. I still need: ${outstandingQuestions
+                    .slice(0, 2)
+                    .join("; ")}.`
+                : `I mapped that into a ${strategyDraft.matchedModelName} draft.`
+            : hasPreview
+              ? `I turned that into a ${strategyDraft.matchedModelName} model JSON and sketched it on the chart. Like this? You can add it to Models or download the JSON below.`
+              : `I turned that into a ${strategyDraft.matchedModelName} model JSON. You can add it to Models or download the JSON below.`
         );
         const bullets =
-          strategyDraft.missingDetails.length > 0
+          strategyDraft.status === "clarify" && outstandingQuestions.length > 0
             ? [
                 {
                   tone: "gold" as const,
-                  text: `Still needed: ${strategyDraft.missingDetails.slice(0, 2).join("; ")}`
+                  text: `Still needed: ${outstandingQuestions.slice(0, 2).join("; ")}`
                 }
               ]
             : [];
@@ -5765,8 +6278,8 @@ export async function POST(request: Request) {
           shortAnswer,
           responseCannotAnswer: false,
           charts: [],
-          chartActions: emptyActions,
-          chartAnimations: emptyAnimations,
+          chartActions: preview.chartActions,
+          chartAnimations: preview.chartAnimations,
           toolsUsed
         });
 
@@ -5778,8 +6291,8 @@ export async function POST(request: Request) {
             shortAnswer,
             bullets,
             charts: [],
-            chartActions: [],
-            chartAnimations: [],
+            chartActions: preview.chartActions,
+            chartAnimations: preview.chartAnimations,
             requestChecklist,
             toolsUsed: Array.from(toolsUsed).map(normalizeToolLabel),
             strategyDraft
