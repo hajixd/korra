@@ -62,6 +62,7 @@ type OverlayState = {
 const LIGHTWEIGHT_CHART_SOLID_BACKGROUND: ColorType = "solid" as ColorType;
 const toChartTime = (timestampMs: number): UTCTimestamp =>
   Math.trunc(timestampMs / 1000) as UTCTimestamp;
+const roundCoord = (value: number): number => Math.round(value * 10) / 10;
 
 export default function AssistantInlinePriceActionChart(
   props: AssistantInlinePriceActionChartProps
@@ -150,11 +151,11 @@ export default function AssistantInlinePriceActionChart(
 
           return {
             id: `${chartId}-zone-${index}`,
-            x: Math.min(x1!, x2!),
-            y: Math.min(y1!, y2!),
-            width: Math.max(Math.abs(x2! - x1!), 6),
-            height: Math.max(Math.abs(y2! - y1!), 6),
-            midY: Number(midY!),
+            x: roundCoord(Math.min(x1!, x2!)),
+            y: roundCoord(Math.min(y1!, y2!)),
+            width: roundCoord(Math.max(Math.abs(x2! - x1!), 6)),
+            height: roundCoord(Math.max(Math.abs(y2! - y1!), 6)),
+            midY: roundCoord(Number(midY!)),
             direction: zone.direction,
             label: zone.label
           } satisfies ZoneOverlay;
@@ -298,6 +299,7 @@ export default function AssistantInlinePriceActionChart(
       candleSeries.setMarkers(seriesMarkers);
 
       chart.timeScale().fitContent();
+      window.setTimeout(scheduleOverlaySync, 0);
 
       const resizeObserver = new ResizeObserver((entries) => {
         const entry = entries[0];
@@ -362,7 +364,6 @@ export default function AssistantInlinePriceActionChart(
       }))
     );
     candleSeries.setMarkers(seriesMarkers);
-    chart.timeScale().fitContent();
     syncOverlay();
   }, [seriesMarkers, sortedRows, syncOverlay]);
 
