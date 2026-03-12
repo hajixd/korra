@@ -20727,6 +20727,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       aiDomains={appliedBacktestSettings.selectedAiDomains}
                       kEntry={appliedBacktestSettings.kEntry}
                       knnVoteMode={appliedBacktestSettings.knnVoteMode}
+                      allowTradeNeighborFallback
                       hdbDomainDistinction="conceptual"
                       hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}
                       hdbMinSamples={appliedBacktestSettings.hdbMinSamples}

@@ -9377,6 +9377,7 @@ export function ClusterMap({
   statsDateStart,
   statsDateEnd,
   antiCheatEnabled = false,
+  allowTradeNeighborFallback = false,
   headless = false,
 }) {
   const disabled = false;
@@ -14818,18 +14819,62 @@ export function ClusterMap({
     if (payloadList.length) return payloadList;
 
     const kind = String((selectedNode as any)?.kind || "").toLowerCase();
+    const isTradeLike = kind === "trade" || kind === "potential";
     const allowFallback =
-      kind === "library" || kind === "ghost" || kind === "close";
+      kind === "library" ||
+      kind === "ghost" ||
+      kind === "close" ||
+      (allowTradeNeighborFallback && isTradeLike);
     if (!allowFallback) return [];
 
     if (!sourceCoord) return [];
     const fallbackRows: any[] = [];
+    const enforceDir =
+      !!allowTradeNeighborFallback && !!activeModSet?.has("Direction");
+    const enforceModel =
+      !!allowTradeNeighborFallback && !!activeModSet?.has("Model");
+    const selectedDir = Number(
+      (selectedNode as any)?.dir ?? (selectedNode as any)?.direction
+    );
+    const selectedModel = normalizeClusterMapToken(
+      (selectedNode as any)?.entryModel ??
+        (selectedNode as any)?.chunkType ??
+        (selectedNode as any)?.model ??
+        (selectedNode as any)?.origModel ??
+        ""
+    );
+    const selectedChrono =
+      allowTradeNeighborFallback && isTradeLike
+        ? nodeChronologyValue(selectedNode)
+        : null;
 
     for (const node of nodeById.values()) {
       if (!node) continue;
       const nodeId = normalizeClusterMapToken((node as any)?.id || "");
       if (sourceId && nodeId && nodeId === sourceId) continue;
       if (!sourceId && node === selectedNode) continue;
+      if (allowTradeNeighborFallback && isTradeLike) {
+        if (enforceDir && Number.isFinite(selectedDir)) {
+          const nodeDir = Number(
+            (node as any)?.dir ?? (node as any)?.direction
+          );
+          if (Number.isFinite(nodeDir) && nodeDir !== selectedDir) continue;
+        }
+        if (enforceModel && selectedModel) {
+          const nodeModel = normalizeClusterMapToken(
+            (node as any)?.entryModel ??
+              (node as any)?.chunkType ??
+              (node as any)?.model ??
+              (node as any)?.origModel ??
+              ""
+          );
+          if (nodeModel && nodeModel !== selectedModel) continue;
+        }
+        if (selectedChrono != null) {
+          const nodeChrono = nodeChronologyValue(node);
+          if (nodeChrono != null && nodeChrono > selectedChrono) continue;
+        }
+      }
       const coord =
         (nodeId && nodeCoordById.get(nodeId)) ||
         nodeCoordsForClusterMapKnn(node, dim);
@@ -14875,7 +14920,15 @@ export function ClusterMap({
     return pool
       .sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity))
       .slice(0, kLimit);
-  }, [selectedNode, effectiveNeighborK, neighborAlias, nodeById]);
+  }, [
+    selectedNode,
+    effectiveNeighborK,
+    neighborAlias,
+    nodeById,
+    allowTradeNeighborFallback,
+    activeModSet,
+    nodeChronologyValue,
+  ]);
 
   const selectedNeighborConfidence = useMemo(() => {
     if (aiMethod === "hdbscan") return null;
