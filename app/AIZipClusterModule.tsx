@@ -14828,401 +14828,439 @@ export function ClusterMap({
     Math.min(36, Math.floor(Number(kEntry) || 0))
   );
 
-  const selectedNeighborList = useMemo(() => {
-    if (!selectedNode) return [];
-    const kLimit = Math.max(
-      0,
-      Math.min(36, Math.floor(Number(effectiveNeighborK) || 0))
-    );
-    if (!kLimit) return [];
-
-    const { aliasToIds, nodeCoordById, dim } = neighborAlias;
-    const sourceId = normalizeClusterMapToken((selectedNode as any)?.id || "");
-    const sourceCoord =
-      (sourceId && nodeCoordById.get(sourceId)) ||
-      nodeCoordsForClusterMapKnn(selectedNode, dim);
-
-    const nbsRaw =
-      (selectedNode as any)?.entryNeighbors ??
-      (selectedNode as any)?.neighbors ??
-      (selectedNode as any)?.kNeighbors ??
-      [];
-
-    const pickFromAlias = (token: string): string | null => {
-      const ids = aliasToIds.get(token);
-      if (!ids || ids.size <= 0) return null;
-      if (ids.size === 1) return ids.values().next().value ?? null;
-      if (!sourceCoord) return ids.values().next().value ?? null;
-      let bestId: string | null = null;
-      let bestD = Infinity;
-      for (const id of ids) {
-        const c = nodeCoordById.get(id);
-        if (!c) continue;
-        const dx = sourceCoord.x - c.x;
-        const dy = sourceCoord.y - c.y;
-        const dz = dim === "3d" ? sourceCoord.z - c.z : 0;
-        const d = dx * dx + dy * dy + dz * dz;
-        if (d < bestD) {
-          bestD = d;
-          bestId = id;
-        }
-      }
-      return bestId ?? ids.values().next().value ?? null;
-    };
-
-    const resolveNeighborId = (nb: any): string | null => {
-      const tr = (nb as any)?.t ?? null;
-      const rawCandidates = [
-        (nb as any)?.targetId,
-        (nb as any)?.nodeId,
-        (nb as any)?.id,
-        (nb as any)?.metaId,
-        (nb as any)?.uid,
-        (nb as any)?.metaUid,
-        (nb as any)?.tradeUid,
-        (nb as any)?.metaTradeUid,
-        (nb as any)?.labelUid,
-        (nb as any)?.closestClusterUid,
-        (tr as any)?.id,
-        (tr as any)?.uid,
-        (tr as any)?.tradeUid,
-        (tr as any)?.tradeId,
-        (tr as any)?.metaUid,
-        (tr as any)?.metaTradeUid,
-        (tr as any)?.metaId,
-      ];
-
-      for (const raw of rawCandidates) {
-        const t = normalizeClusterMapToken(raw);
-        if (!t) continue;
-        if (nodeByIdAll.has(t)) return t;
-        const hit = pickFromAlias(t);
-        if (hit) return hit;
-      }
-
-      const timeTok = normalizeClusterMapToken(
-        (nb as any)?.metaTime ??
-          (nb as any)?.time ??
-          (nb as any)?.entryTime ??
-          (tr as any)?.entryTime ??
-          (tr as any)?.time
+  const buildNeighborListForNode = React.useCallback(
+    (node: any) => {
+      if (!node) return [];
+      const kLimit = Math.max(
+        0,
+        Math.min(36, Math.floor(Number(effectiveNeighborK) || 0))
       );
-      if (!timeTok) return null;
+      if (!kLimit) return [];
 
-      const modelTok = normalizeClusterMapToken(
-        (nb as any)?.model ??
-          (nb as any)?.metaModel ??
-          (tr as any)?.model ??
-          (selectedNode as any)?.entryModel ??
-          (selectedNode as any)?.chunkType
-      );
-      const dirRaw = Number(
-        (nb as any)?.dir ??
-          (tr as any)?.dir ??
-          (tr as any)?.direction ??
-          (selectedNode as any)?.dir ??
-          (selectedNode as any)?.direction
-      );
-      const fallbackKeys: string[] = [];
-      if (modelTok && Number.isFinite(dirRaw))
-        fallbackKeys.push(`tmd:${timeTok}|${modelTok}|${String(dirRaw)}`);
-      if (modelTok) fallbackKeys.push(`tm:${timeTok}|${modelTok}`);
-      if (Number.isFinite(dirRaw))
-        fallbackKeys.push(`td:${timeTok}|${String(dirRaw)}`);
-      fallbackKeys.push(`t:${timeTok}`);
-      for (const key of fallbackKeys) {
-        const hit = pickFromAlias(key);
-        if (hit) return hit;
-      }
-      return null;
-    };
-
-    const pickRawId = (nb: any) => {
-      const tr = (nb as any)?.t ?? {};
-      const rawCandidates = [
-        (nb as any)?.metaUid,
-        (nb as any)?.uid,
-        (nb as any)?.metaId,
-        (nb as any)?.id,
-        (nb as any)?.nodeId,
-        (nb as any)?.targetId,
-        (nb as any)?.tradeUid,
-        (nb as any)?.metaTradeUid,
-        (tr as any)?.uid,
-        (tr as any)?.tradeUid,
-        (tr as any)?.id,
-        (tr as any)?.tradeId,
-        (tr as any)?.metaUid,
-        (tr as any)?.metaId,
-      ];
-      for (const raw of rawCandidates) {
-        if (raw == null) continue;
-        const s = String(raw).trim();
-        if (s) return s;
-      }
-      return "";
-    };
-
-    const buildFromPayload = (raw: any[]) => {
-      if (!Array.isArray(raw) || raw.length === 0) return [];
-      const candidates = raw
-        .slice()
-        .sort((a: any, b: any) => {
-          const da = Number.isFinite(Number((a as any)?.d))
-            ? Number((a as any)?.d)
-            : Infinity;
-          const db = Number.isFinite(Number((b as any)?.d))
-            ? Number((b as any)?.d)
-            : Infinity;
-          return da - db;
-        })
-        .map((nb: any, idx: number) => {
-          const resolvedId = resolveNeighborId(nb);
-          const rawFallback = pickRawId(nb);
-          const node =
-            resolvedId != null ? (nodeByIdAll as any).get(resolvedId) : null;
-          if (entryNeighborsOnly) {
-            if (!resolvedId) return null;
-            if (!node) return null;
-            const kind = String((node as any)?.kind || "").toLowerCase();
-            if (kind !== "library") return null;
-          }
-          const tr = (nb as any)?.t ?? null;
-          let displayId = node
-            ? displayIdForNode(node)
-            : tr
-            ? displayIdForNode(tr)
-            : "—";
-          if (!displayId || displayId === "—") {
-            displayId = rawFallback ? displayIdFromRaw(rawFallback) : "—";
-          }
-
-          const pnlVal = (() => {
-            const v =
-              (nb as any)?.metaPnl != null
-                ? Number((nb as any).metaPnl)
-                : tr?.isOpen
-                ? Number(tr.unrealizedPnl ?? NaN)
-                : Number(tr?.pnl ?? NaN);
-            if (Number.isFinite(v)) return v;
-            if (node) {
-              const nv =
-                (node as any).isOpen && typeof (node as any).unrealizedPnl === "number"
-                  ? Number((node as any).unrealizedPnl)
-                  : typeof (node as any).pnl === "number"
-                  ? Number((node as any).pnl)
-                  : null;
-              if (Number.isFinite(nv as any)) return nv as any;
-            }
-            return null;
-          })();
-
-          const outcomeStr = String(
-            (nb as any)?.metaOutcome ?? tr?.result ?? ""
-          ).toUpperCase();
-          const labelRaw = Number(
-            (nb as any)?.label ?? (nb as any)?.metaLabel ?? tr?.label ?? NaN
-          );
-          const label = Number.isFinite(labelRaw) ? labelRaw : null;
-          const hasOutcomeSignal =
-            !!outcomeStr ||
-            label != null ||
-            (pnlVal != null && Number.isFinite(pnlVal));
-          const isWinFromPayload =
-            outcomeStr === "TP" ||
-            outcomeStr === "WIN" ||
-            outcomeStr.includes("WIN") ||
-            label === 1 ||
-            (pnlVal != null && pnlVal >= 0);
-          const isLossFromPayload =
-            outcomeStr === "SL" ||
-            outcomeStr === "LOSS" ||
-            outcomeStr.includes("LOSS") ||
-            label === -1 ||
-            (pnlVal != null && pnlVal < 0);
-          const nodeWin =
-            typeof (node as any)?.win === "boolean" ? (node as any).win : null;
-          const isWin = hasOutcomeSignal ? isWinFromPayload : nodeWin === true;
-          const isLoss = hasOutcomeSignal ? isLossFromPayload : nodeWin === false;
-          const tone = isWin ? "green" : isLoss ? "red" : "neutral";
-
-          const dist = (() => {
-            const d0 = Number((nb as any)?.d);
-            if (Number.isFinite(d0)) return d0;
-            if (!sourceCoord) return Infinity;
-            const dstId = resolvedId;
-            const dstCoord = dstId ? nodeCoordById.get(dstId) : null;
-            if (!dstCoord) return Infinity;
-            const dx = sourceCoord.x - dstCoord.x;
-            const dy = sourceCoord.y - dstCoord.y;
-            const dz = dim === "3d" ? sourceCoord.z - dstCoord.z : 0;
-            return Math.sqrt(dx * dx + dy * dy + dz * dz);
-          })();
-
-          return {
-            key:
-              resolvedId ||
-              rawFallback ||
-              `neighbor-${String(idx + 1).padStart(2, "0")}`,
-            id: resolvedId,
-            displayId,
-            dist,
-            tone,
-            isWin,
-            isLoss,
-          };
-        })
-        .filter((row) => !!row);
-
-      const seen = new Set<string>();
-      const ordered = candidates
-        .filter((row) => {
-          if (!row) return false;
-          const dedupeKey = String(row.id || row.displayId || row.key || "");
-          if (!dedupeKey) return false;
-          if (seen.has(dedupeKey)) return false;
-          if (sourceId && row.id && row.id === sourceId) return false;
-          seen.add(dedupeKey);
-          return true;
-        })
-        .sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity));
-
-      return ordered.slice(0, kLimit);
-    };
-
-    const payloadList = buildFromPayload(nbsRaw as any[]);
-    if (payloadList.length) return payloadList;
-
-    const kind = String((selectedNode as any)?.kind || "").toLowerCase();
-    const isTradeLike = kind === "trade" || kind === "potential";
-    const allowFallback =
-      kind === "library" ||
-      kind === "ghost" ||
-      kind === "close" ||
-      (!entryNeighborsOnly && allowTradeNeighborFallback && isTradeLike);
-    if (!allowFallback) return [];
-
-    if (!sourceCoord) return [];
-    const fallbackRows: any[] = [];
-    const enforceDir =
-      !!allowTradeNeighborFallback && !!activeModSet?.has("Direction");
-    const enforceModel =
-      !!allowTradeNeighborFallback && !!activeModSet?.has("Model");
-    const selectedDir = Number(
-      (selectedNode as any)?.dir ?? (selectedNode as any)?.direction
-    );
-    const selectedModel = normalizeClusterMapToken(
-      (selectedNode as any)?.entryModel ??
-        (selectedNode as any)?.chunkType ??
-        (selectedNode as any)?.model ??
-        (selectedNode as any)?.origModel ??
-        ""
-    );
-    const selectedChrono =
-      allowTradeNeighborFallback && isTradeLike
-        ? nodeChronologyValue(selectedNode)
-        : null;
-
-    for (const node of nodeByIdAll.values()) {
-      if (!node) continue;
-      const nodeId = normalizeClusterMapToken((node as any)?.id || "");
-      if (sourceId && nodeId && nodeId === sourceId) continue;
-      if (!sourceId && node === selectedNode) continue;
-      if (allowTradeNeighborFallback && isTradeLike) {
-        if (enforceDir && Number.isFinite(selectedDir)) {
-          const nodeDir = Number(
-            (node as any)?.dir ?? (node as any)?.direction
-          );
-          if (Number.isFinite(nodeDir) && nodeDir !== selectedDir) continue;
-        }
-        if (enforceModel && selectedModel) {
-          const nodeModel = normalizeClusterMapToken(
-            (node as any)?.entryModel ??
-              (node as any)?.chunkType ??
-              (node as any)?.model ??
-              (node as any)?.origModel ??
-              ""
-          );
-          if (nodeModel && nodeModel !== selectedModel) continue;
-        }
-        if (selectedChrono != null) {
-          const nodeChrono = nodeChronologyValue(node);
-          if (nodeChrono != null && nodeChrono > selectedChrono) continue;
-        }
-      }
-      const coord =
-        (nodeId && nodeCoordById.get(nodeId)) ||
+      const { aliasToIds, nodeCoordById, dim } = neighborAlias;
+      const sourceId = normalizeClusterMapToken((node as any)?.id || "");
+      const sourceCoord =
+        (sourceId && nodeCoordById.get(sourceId)) ||
         nodeCoordsForClusterMapKnn(node, dim);
-      if (!coord) continue;
-      const dx = sourceCoord.x - coord.x;
-      const dy = sourceCoord.y - coord.y;
-      const dz = dim === "3d" ? sourceCoord.z - coord.z : 0;
-      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      let displayId = displayIdForNode(node);
-      if (!displayId || displayId === "—") {
-        displayId = displayIdFromRaw(String((node as any).id ?? "")) || "—";
-      }
+
+      const nbsRaw =
+        (node as any)?.entryNeighbors ??
+        (node as any)?.neighbors ??
+        (node as any)?.kNeighbors ??
+        [];
+
+      const pickFromAlias = (token: string): string | null => {
+        const ids = aliasToIds.get(token);
+        if (!ids || ids.size <= 0) return null;
+        if (ids.size === 1) return ids.values().next().value ?? null;
+        if (!sourceCoord) return ids.values().next().value ?? null;
+        let bestId: string | null = null;
+        let bestD = Infinity;
+        for (const id of ids) {
+          const c = nodeCoordById.get(id);
+          if (!c) continue;
+          const dx = sourceCoord.x - c.x;
+          const dy = sourceCoord.y - c.y;
+          const dz = dim === "3d" ? sourceCoord.z - c.z : 0;
+          const d = dx * dx + dy * dy + dz * dz;
+          if (d < bestD) {
+            bestD = d;
+            bestId = id;
+          }
+        }
+        return bestId ?? ids.values().next().value ?? null;
+      };
+
+      const resolveNeighborId = (nb: any): string | null => {
+        const tr = (nb as any)?.t ?? null;
+        const rawCandidates = [
+          (nb as any)?.targetId,
+          (nb as any)?.nodeId,
+          (nb as any)?.id,
+          (nb as any)?.metaId,
+          (nb as any)?.uid,
+          (nb as any)?.metaUid,
+          (nb as any)?.tradeUid,
+          (nb as any)?.metaTradeUid,
+          (nb as any)?.labelUid,
+          (nb as any)?.closestClusterUid,
+          (tr as any)?.id,
+          (tr as any)?.uid,
+          (tr as any)?.tradeUid,
+          (tr as any)?.tradeId,
+          (tr as any)?.metaUid,
+          (tr as any)?.metaTradeUid,
+          (tr as any)?.metaId,
+        ];
+
+        for (const raw of rawCandidates) {
+          const t = normalizeClusterMapToken(raw);
+          if (!t) continue;
+          if (nodeByIdAll.has(t)) return t;
+          const hit = pickFromAlias(t);
+          if (hit) return hit;
+        }
+
+        const timeTok = normalizeClusterMapToken(
+          (nb as any)?.metaTime ??
+            (nb as any)?.time ??
+            (nb as any)?.entryTime ??
+            (tr as any)?.entryTime ??
+            (tr as any)?.time
+        );
+        if (!timeTok) return null;
+
+        const modelTok = normalizeClusterMapToken(
+          (nb as any)?.model ??
+            (nb as any)?.metaModel ??
+            (tr as any)?.model ??
+            (node as any)?.entryModel ??
+            (node as any)?.chunkType
+        );
+        const dirRaw = Number(
+          (nb as any)?.dir ??
+            (tr as any)?.dir ??
+            (tr as any)?.direction ??
+            (node as any)?.dir ??
+            (node as any)?.direction
+        );
+        const fallbackKeys: string[] = [];
+        if (modelTok && Number.isFinite(dirRaw))
+          fallbackKeys.push(`tmd:${timeTok}|${modelTok}|${String(dirRaw)}`);
+        if (modelTok) fallbackKeys.push(`tm:${timeTok}|${modelTok}`);
+        if (Number.isFinite(dirRaw))
+          fallbackKeys.push(`td:${timeTok}|${String(dirRaw)}`);
+        fallbackKeys.push(`t:${timeTok}`);
+        for (const key of fallbackKeys) {
+          const hit = pickFromAlias(key);
+          if (hit) return hit;
+        }
+        return null;
+      };
+
+      const pickRawId = (nb: any) => {
+        const tr = (nb as any)?.t ?? {};
+        const rawCandidates = [
+          (nb as any)?.metaUid,
+          (nb as any)?.uid,
+          (nb as any)?.metaId,
+          (nb as any)?.id,
+          (nb as any)?.nodeId,
+          (nb as any)?.targetId,
+          (nb as any)?.tradeUid,
+          (nb as any)?.metaTradeUid,
+          (tr as any)?.uid,
+          (tr as any)?.tradeUid,
+          (tr as any)?.id,
+          (tr as any)?.tradeId,
+          (tr as any)?.metaUid,
+          (tr as any)?.metaId,
+        ];
+        for (const raw of rawCandidates) {
+          if (raw == null) continue;
+          const s = String(raw).trim();
+          if (s) return s;
+        }
+        return "";
+      };
+
+      const buildFromPayload = (raw: any[]) => {
+        if (!Array.isArray(raw) || raw.length === 0) return [];
+        const candidates = raw
+          .slice()
+          .sort((a: any, b: any) => {
+            const da = Number.isFinite(Number((a as any)?.d))
+              ? Number((a as any)?.d)
+              : Infinity;
+            const db = Number.isFinite(Number((b as any)?.d))
+              ? Number((b as any)?.d)
+              : Infinity;
+            return da - db;
+          })
+          .map((nb: any, idx: number) => {
+            const resolvedId = resolveNeighborId(nb);
+            const rawFallback = pickRawId(nb);
+            const hitNode =
+              resolvedId != null ? (nodeByIdAll as any).get(resolvedId) : null;
+            if (entryNeighborsOnly) {
+              if (!resolvedId) return null;
+              if (!hitNode) return null;
+              const kind = String((hitNode as any)?.kind || "").toLowerCase();
+              if (kind !== "library") return null;
+            }
+            const tr = (nb as any)?.t ?? null;
+            let displayId = hitNode
+              ? displayIdForNode(hitNode)
+              : tr
+              ? displayIdForNode(tr)
+              : "—";
+            if (!displayId || displayId === "—") {
+              displayId = rawFallback ? displayIdFromRaw(rawFallback) : "—";
+            }
+
+            const pnlVal = (() => {
+              const v =
+                (nb as any)?.metaPnl != null
+                  ? Number((nb as any).metaPnl)
+                  : tr?.isOpen
+                  ? Number(tr.unrealizedPnl ?? NaN)
+                  : Number(tr?.pnl ?? NaN);
+              if (Number.isFinite(v)) return v;
+              if (hitNode) {
+                const nv =
+                  (hitNode as any).isOpen &&
+                  typeof (hitNode as any).unrealizedPnl === "number"
+                    ? Number((hitNode as any).unrealizedPnl)
+                    : typeof (hitNode as any).pnl === "number"
+                    ? Number((hitNode as any).pnl)
+                    : null;
+                if (Number.isFinite(nv as any)) return nv as any;
+              }
+              return null;
+            })();
+
+            const outcomeStr = String(
+              (nb as any)?.metaOutcome ?? tr?.result ?? ""
+            ).toUpperCase();
+            const labelRaw = Number(
+              (nb as any)?.label ?? (nb as any)?.metaLabel ?? tr?.label ?? NaN
+            );
+            const label = Number.isFinite(labelRaw) ? labelRaw : null;
+            const hasOutcomeSignal =
+              !!outcomeStr ||
+              label != null ||
+              (pnlVal != null && Number.isFinite(pnlVal));
+            const isWinFromPayload =
+              outcomeStr === "TP" ||
+              outcomeStr === "WIN" ||
+              outcomeStr.includes("WIN") ||
+              label === 1 ||
+              (pnlVal != null && pnlVal >= 0);
+            const isLossFromPayload =
+              outcomeStr === "SL" ||
+              outcomeStr === "LOSS" ||
+              outcomeStr.includes("LOSS") ||
+              label === -1 ||
+              (pnlVal != null && pnlVal < 0);
+            const nodeWin =
+              typeof (hitNode as any)?.win === "boolean"
+                ? (hitNode as any).win
+                : null;
+            const isWin = hasOutcomeSignal ? isWinFromPayload : nodeWin === true;
+            const isLoss = hasOutcomeSignal
+              ? isLossFromPayload
+              : nodeWin === false;
+            const tone = isWin ? "green" : isLoss ? "red" : "neutral";
+
+            const dist = (() => {
+              const d0 = Number((nb as any)?.d);
+              if (Number.isFinite(d0)) return d0;
+              if (!sourceCoord) return Infinity;
+              const dstId = resolvedId;
+              const dstCoord = dstId ? nodeCoordById.get(dstId) : null;
+              if (!dstCoord) return Infinity;
+              const dx = sourceCoord.x - dstCoord.x;
+              const dy = sourceCoord.y - dstCoord.y;
+              const dz = dim === "3d" ? sourceCoord.z - dstCoord.z : 0;
+              return Math.sqrt(dx * dx + dy * dy + dz * dz);
+            })();
+
+            return {
+              key:
+                resolvedId ||
+                rawFallback ||
+                `neighbor-${String(idx + 1).padStart(2, "0")}`,
+              id: resolvedId,
+              displayId,
+              dist,
+              tone,
+              isWin,
+              isLoss,
+            };
+          })
+          .filter((row) => !!row);
+
+        const seen = new Set<string>();
+        const ordered = candidates
+          .filter((row) => {
+            if (!row) return false;
+            const dedupeKey = String(row.id || row.displayId || row.key || "");
+            if (!dedupeKey) return false;
+            if (seen.has(dedupeKey)) return false;
+            if (sourceId && row.id && row.id === sourceId) return false;
+            seen.add(dedupeKey);
+            return true;
+          })
+          .sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity));
+
+        return ordered.slice(0, kLimit);
+      };
+
+      const payloadList = buildFromPayload(nbsRaw as any[]);
+      if (payloadList.length) return payloadList;
+
       const kind = String((node as any)?.kind || "").toLowerCase();
-      const isLib =
+      const isTradeLike = kind === "trade" || kind === "potential";
+      const allowFallback =
         kind === "library" ||
-        String((node as any).id || "").startsWith("lib|");
-      const nodeWin =
-        typeof (node as any)?.win === "boolean" ? (node as any).win : null;
-      const pnlVal =
-        typeof (node as any)?.pnl === "number"
-          ? Number((node as any).pnl)
-          : typeof (node as any)?.unrealizedPnl === "number"
-          ? Number((node as any).unrealizedPnl)
+        kind === "ghost" ||
+        kind === "close" ||
+        (!entryNeighborsOnly && allowTradeNeighborFallback && isTradeLike);
+      if (!allowFallback) return [];
+
+      if (!sourceCoord) return [];
+      const fallbackRows: any[] = [];
+      const enforceDir =
+        !!allowTradeNeighborFallback && !!activeModSet?.has("Direction");
+      const enforceModel =
+        !!allowTradeNeighborFallback && !!activeModSet?.has("Model");
+      const selectedDir = Number(
+        (node as any)?.dir ?? (node as any)?.direction
+      );
+      const selectedModel = normalizeClusterMapToken(
+        (node as any)?.entryModel ??
+          (node as any)?.chunkType ??
+          (node as any)?.model ??
+          (node as any)?.origModel ??
+          ""
+      );
+      const selectedChrono =
+        allowTradeNeighborFallback && isTradeLike
+          ? nodeChronologyValue(node)
           : null;
-      const isWin = nodeWin === true || (pnlVal != null && pnlVal >= 0);
-      const isLoss = nodeWin === false || (pnlVal != null && pnlVal < 0);
-      const tone = isWin ? "green" : isLoss ? "red" : "neutral";
-      fallbackRows.push({
-        key: nodeId || String((node as any).id || ""),
-        id: nodeId || String((node as any).id || ""),
-        displayId,
-        dist,
-        isLib,
-        tone,
-        isWin,
-        isLoss,
-      });
-    }
 
-    if (!fallbackRows.length) return [];
-    const libRows = fallbackRows.filter((row) => row.isLib);
-    const pool = libRows.length ? libRows : fallbackRows;
-    return pool
-      .sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity))
-      .slice(0, kLimit);
-  }, [
-    selectedNode,
-    effectiveNeighborK,
-    neighborAlias,
-    nodeByIdAll,
-    allowTradeNeighborFallback,
-    entryNeighborsOnly,
-    activeModSet,
-    nodeChronologyValue,
-  ]);
+      for (const candidate of nodeByIdAll.values()) {
+        if (!candidate) continue;
+        const nodeId = normalizeClusterMapToken((candidate as any)?.id || "");
+        if (sourceId && nodeId && nodeId === sourceId) continue;
+        if (!sourceId && candidate === node) continue;
+        if (allowTradeNeighborFallback && isTradeLike) {
+          if (enforceDir && Number.isFinite(selectedDir)) {
+            const nodeDir = Number(
+              (candidate as any)?.dir ?? (candidate as any)?.direction
+            );
+            if (Number.isFinite(nodeDir) && nodeDir !== selectedDir) continue;
+          }
+          if (enforceModel && selectedModel) {
+            const nodeModel = normalizeClusterMapToken(
+              (candidate as any)?.entryModel ??
+                (candidate as any)?.chunkType ??
+                (candidate as any)?.model ??
+                (candidate as any)?.origModel ??
+                ""
+            );
+            if (nodeModel && nodeModel !== selectedModel) continue;
+          }
+          if (selectedChrono != null) {
+            const nodeChrono = nodeChronologyValue(candidate);
+            if (nodeChrono != null && nodeChrono > selectedChrono) continue;
+          }
+        }
+        const coord =
+          (nodeId && nodeCoordById.get(nodeId)) ||
+          nodeCoordsForClusterMapKnn(candidate, dim);
+        if (!coord) continue;
+        const dx = sourceCoord.x - coord.x;
+        const dy = sourceCoord.y - coord.y;
+        const dz = dim === "3d" ? sourceCoord.z - coord.z : 0;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        let displayId = displayIdForNode(candidate);
+        if (!displayId || displayId === "—") {
+          displayId =
+            displayIdFromRaw(String((candidate as any).id ?? "")) || "—";
+        }
+        const kind = String((candidate as any)?.kind || "").toLowerCase();
+        const isLib =
+          kind === "library" ||
+          String((candidate as any).id || "").startsWith("lib|");
+        const nodeWin =
+          typeof (candidate as any)?.win === "boolean"
+            ? (candidate as any).win
+            : null;
+        const pnlVal =
+          typeof (candidate as any)?.pnl === "number"
+            ? Number((candidate as any).pnl)
+            : typeof (candidate as any)?.unrealizedPnl === "number"
+            ? Number((candidate as any).unrealizedPnl)
+            : null;
+        const isWin = nodeWin === true || (pnlVal != null && pnlVal >= 0);
+        const isLoss = nodeWin === false || (pnlVal != null && pnlVal < 0);
+        const tone = isWin ? "green" : isLoss ? "red" : "neutral";
+        fallbackRows.push({
+          key: nodeId || String((candidate as any).id || ""),
+          id: nodeId || String((candidate as any).id || ""),
+          displayId,
+          dist,
+          isLib,
+          tone,
+          isWin,
+          isLoss,
+        });
+      }
 
-  const selectedNeighborConfidence = useMemo(() => {
-    if (aiMethod === "hdbscan") return null;
-    if (!selectedNeighborList || selectedNeighborList.length === 0) return null;
-    let win = 0;
-    let loss = 0;
-    const useDistance = String(knnVoteMode || "distance") === "distance";
-    for (const row of selectedNeighborList as any[]) {
-      if (!row) continue;
-      const w = useDistance
-        ? 1 / (Number(row.dist ?? 0) + AI_EPS)
-        : 1;
-      if (row.isWin) win += w;
-      else if (row.isLoss) loss += w;
-    }
-    if (win <= 0 && loss <= 0) return null;
-    return clamp(win / (win + loss + AI_EPS), 0, 1);
-  }, [aiMethod, knnVoteMode, selectedNeighborList]);
+      if (!fallbackRows.length) return [];
+      const libRows = fallbackRows.filter((row) => row.isLib);
+      const pool = libRows.length ? libRows : fallbackRows;
+      return pool
+        .sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity))
+        .slice(0, kLimit);
+    },
+    [
+      effectiveNeighborK,
+      neighborAlias,
+      nodeByIdAll,
+      allowTradeNeighborFallback,
+      entryNeighborsOnly,
+      activeModSet,
+      nodeChronologyValue,
+    ]
+  );
+
+  const selectedNeighborList = useMemo(
+    () => buildNeighborListForNode(selectedNode),
+    [buildNeighborListForNode, selectedNode]
+  );
+
+  const computeNeighborConfidence = React.useCallback(
+    (rows: any[]) => {
+      if (aiMethod === "hdbscan") return null;
+      if (!rows || rows.length === 0) return null;
+      let win = 0;
+      let loss = 0;
+      const useDistance = String(knnVoteMode || "distance") === "distance";
+      for (const row of rows as any[]) {
+        if (!row) continue;
+        const w = useDistance
+          ? 1 / (Number(row.dist ?? 0) + AI_EPS)
+          : 1;
+        if (row.isWin) win += w;
+        else if (row.isLoss) loss += w;
+      }
+      if (win <= 0 && loss <= 0) return null;
+      return clamp(win / (win + loss + AI_EPS), 0, 1);
+    },
+    [aiMethod, knnVoteMode]
+  );
+
+  const resolveNonHdbConfidence = React.useCallback(
+    (node: any, neighborConf: number | null) => {
+      if (!node) return null;
+      if (neighborConf != null) return neighborConf;
+      const c0 = hdbConfidenceForNode(node);
+      const g0 = gateConfidenceForNode(node);
+      const v =
+        c0 > 0 || g0 == null || !Number.isFinite(Number(g0))
+          ? c0
+          : Number(g0);
+      return Number.isFinite(Number(v)) ? v : null;
+    },
+    [hdbConfidenceForNode, gateConfidenceForNode]
+  );
+
+  const selectedNeighborConfidence = useMemo(
+    () => computeNeighborConfidence(selectedNeighborList),
+    [computeNeighborConfidence, selectedNeighborList]
+  );
 
   // User-facing selection stats should reflect exactly what the map is showing.
   // In HDBSCAN mode this includes post-hoc promotion/demotion.
@@ -16327,6 +16365,22 @@ export function ClusterMap({
         if (n) {
           const lines = [];
           const kind = String((n as any).kind ?? "").toLowerCase();
+          const wantsNeighborConfidence =
+            aiMethod !== "hdbscan" && kind !== "potential";
+          const neighborRows = wantsNeighborConfidence
+            ? buildNeighborListForNode(n)
+            : [];
+          const neighborConf = wantsNeighborConfidence
+            ? computeNeighborConfidence(neighborRows)
+            : null;
+          const displayConf = wantsNeighborConfidence
+            ? resolveNonHdbConfidence(n, neighborConf)
+            : null;
+          const displayGate = wantsNeighborConfidence
+            ? entryNeighborsOnly && neighborConf != null
+              ? neighborConf
+              : gateConfidenceForNode(n)
+            : null;
           if (kind === "potential") {
             lines.push(
               `Potential · ${n.dir === 1 ? "Buy" : "Sell"} · ${n.chunkType}`
@@ -16352,9 +16406,11 @@ export function ClusterMap({
             );
             lines.push(`ID: ${displayIdForNode(n)}`);
             if (aiMethod !== "hdbscan") {
-              const gate = gateConfidenceForNode(n);
-              if (typeof gate === "number" && Number.isFinite(gate)) {
-                lines.push(`Gate: ${Math.round(gate * 100)}%`);
+              if (
+                typeof displayGate === "number" &&
+                Number.isFinite(displayGate)
+              ) {
+                lines.push(`Gate: ${Math.round(displayGate * 100)}%`);
               }
             }
 
@@ -16368,8 +16424,12 @@ export function ClusterMap({
                   : "Cluster WR";
               lines.push(`${label}: ${Math.round(wr * 100)}%`);
             } else {
-              const c = hdbConfidenceForNode(n);
-              lines.push(`Confidence: ${Math.round(c * 100)}%`);
+              if (
+                displayConf != null &&
+                Number.isFinite(Number(displayConf))
+              ) {
+                lines.push(`Confidence: ${Math.round(displayConf * 100)}%`);
+              }
             }
 
             const mods = hdbDomainsForNode(n);
@@ -16407,30 +16467,33 @@ export function ClusterMap({
               lines.push(`Entry via: ${aLab}`);
             }
             {
-              const conf = hdbConfidenceForNode(n);
-              if (typeof conf === "number" && Number.isFinite(conf)) {
-                if (aiMethod !== "hdbscan") {
-                  const gate = gateConfidenceForNode(n);
-                  if (typeof gate === "number" && Number.isFinite(gate)) {
-                    lines.push(`Gate: ${Math.round(gate * 100)}%`);
-                  }
-                }
-
-                if (aiMethod === "hdbscan") {
-                  const info = hdbInfo(n);
-                  const wr = info?.wr ?? conf;
-                  const cid = info?.clusterId;
-                  const label =
-                    cid != null && Number.isFinite(cid)
-                      ? `Cluster WR (HD #${cid})`
-                      : "Cluster WR";
-                  lines.push(`${label}: ${Math.round(wr * 100)}%`);
-                } else {
-                  lines.push(`Confidence: ${Math.round(conf * 100)}%`);
-                }
-
+              if (aiMethod === "hdbscan") {
+                const info = hdbInfo(n);
+                const baseConf = hdbConfidenceForNode(n);
+                const wr = info?.wr ?? baseConf;
+                const cid = info?.clusterId;
+                const label =
+                  cid != null && Number.isFinite(cid)
+                    ? `Cluster WR (HD #${cid})`
+                    : "Cluster WR";
+                lines.push(`${label}: ${Math.round(wr * 100)}%`);
                 const mods = hdbDomainsForNode(n);
                 if (mods) lines.push(`Domains: ${mods}`);
+              } else {
+                if (
+                  typeof displayGate === "number" &&
+                  Number.isFinite(displayGate)
+                ) {
+                  lines.push(`Gate: ${Math.round(displayGate * 100)}%`);
+                }
+                if (
+                  displayConf != null &&
+                  Number.isFinite(Number(displayConf))
+                ) {
+                  lines.push(`Confidence: ${Math.round(displayConf * 100)}%`);
+                  const mods = hdbDomainsForNode(n);
+                  if (mods) lines.push(`Domains: ${mods}`);
+                }
               }
             }
             if (n.closestCluster) lines.push(`Closest: ${n.closestCluster}`);
@@ -16728,6 +16791,14 @@ export function ClusterMap({
     heatmapInterp,
     heatmapSmoothness,
     drawRenderOpts,
+    buildNeighborListForNode,
+    computeNeighborConfidence,
+    resolveNonHdbConfidence,
+    entryNeighborsOnly,
+    gateConfidenceForNode,
+    hdbConfidenceForNode,
+    hdbInfo,
+    hdbDomainsForNode,
   ]);
 
   const searchPool = useMemo(() => {
@@ -18883,15 +18954,10 @@ export function ClusterMap({
                           ? `${pct}% (HD #${cid})`
                           : `${pct}%`;
                       }
-                      const c0 = hdbConfidenceForNode(selectedNode);
-                      const g0 = gateConfidenceForNode(selectedNode);
-                      const v =
-                        aiMethod !== "hdbscan" &&
-                        selectedNeighborConfidence != null
-                          ? selectedNeighborConfidence
-                          : c0 > 0 || g0 == null || !Number.isFinite(Number(g0))
-                          ? c0
-                          : Number(g0);
+                      const v = resolveNonHdbConfidence(
+                        selectedNode,
+                        selectedNeighborConfidence
+                      );
                       return v == null ? "—" : `${Math.round(v * 100)}%`;
                     })()}
                   </div>

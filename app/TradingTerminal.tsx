@@ -7298,20 +7298,55 @@ const ChartLoadingSpinner = ({ label }: { label: string }) => {
   );
 };
 
+const stableHashToUnit = (str: string): number => {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i += 1) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 1000000) / 1000000;
+};
+
 const getAiZipTradeDisplayId = (trade: Pick<HistoryItem, "id" | "entryTime">) => {
-  const rawId = String(trade.id ?? "").trim();
+  const rawId = String(
+    (trade as any)?.uid ??
+      (trade as any)?.tradeUid ??
+      (trade as any)?.tradeId ??
+      (trade as any)?.metaUid ??
+      (trade as any)?.metaTradeUid ??
+      trade.id ??
+      ""
+  ).trim();
 
   if (!rawId) {
     return "—";
   }
 
-  const entryTime = Number(trade.entryTime);
-  const seedText = `live|${Number.isFinite(entryTime) ? Math.floor(entryTime) : "na"}|${rawId}`;
-  const shortCode = hashSeedFromText(seedText)
-    .toString(36)
-    .toUpperCase()
-    .padStart(6, "0")
-    .slice(-6);
+  const entryMs = (() => {
+    const raw = (trade as any).entryTime;
+    if (raw == null || raw === "") return null;
+    if (typeof raw === "number" && Number.isFinite(raw)) {
+      if (raw > 1e12) return Math.floor(raw);
+      if (raw > 1e9) return Math.floor(raw * 1000);
+      return Math.floor(raw);
+    }
+    const s = String(raw).trim();
+    if (!s) return null;
+    const parsed = Date.parse(s);
+    if (!Number.isNaN(parsed) && Number.isFinite(parsed)) return parsed;
+    const digits = s.replace(/[^0-9]/g, "");
+    if (!digits) return null;
+    const asNum = Number(digits);
+    if (!Number.isFinite(asNum)) return null;
+    if (asNum > 1e12) return Math.floor(asNum);
+    if (asNum > 1e9) return Math.floor(asNum * 1000);
+    return Math.floor(asNum);
+  })();
+
+  const seedText =
+    entryMs == null ? `idNoTs|${rawId}` : `idTs|${entryMs}|${rawId}`;
+  const h = Math.floor(stableHashToUnit(seedText) * 0xffffffff) >>> 0;
+  const shortCode = h.toString(36).toUpperCase().padStart(6, "0").slice(-6);
 
   return `live| ${shortCode}`;
 };
