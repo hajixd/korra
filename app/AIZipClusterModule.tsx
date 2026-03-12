@@ -10837,8 +10837,6 @@ export function ClusterMap({
         Math.min(36, Math.floor(Number(kEntry) || 0))
       );
       if (neighborK > 0) {
-        const libIdx: number[] = [];
-        const libChrono: Array<number | null> = [];
         const tradeIdx: number[] = [];
         const candidateIdx: number[] = [];
         const candidateChrono: Array<number | null> = [];
@@ -10846,7 +10844,6 @@ export function ClusterMap({
         for (let i = 0; i < goodEntries.length; i += 1) {
           const k = String((goodEntries[i] as any)?.kind || "").toLowerCase();
           if (k === "library") {
-            libIdx.push(i);
             const libNode = goodEntries[i] as any;
             const c0 =
               nodeChronologyValue(libNode) ??
@@ -10855,9 +10852,6 @@ export function ClusterMap({
                 : typeof libNode?.entryIndex === "number"
                 ? libNode.entryIndex
                 : null);
-            libChrono.push(
-              Number.isFinite(Number(c0)) ? Number(c0) : null
-            );
             candidateIdx.push(i);
             candidateChrono.push(
               Number.isFinite(Number(c0)) ? Number(c0) : null

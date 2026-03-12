@@ -8605,10 +8605,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return countConfiguredAiFeatureDimensions(aiFeatureLevels, aiFeatureModes, chunkBars);
   }, [aiFeatureLevels, aiFeatureModes, chunkBars]);
   const onlineLearningEnabled = selectedAiLibraries.includes("core");
-  const selectedAiLibraryCount = onlineLearningEnabled ? 1 : 0;
-  const showAdvancedLibraries = false;
+  const visibleAiLibraries = useMemo(
+    () => selectedAiLibraries.filter((libraryId) => libraryId !== "core"),
+    [selectedAiLibraries]
+  );
+  const selectedAiLibraryCount = visibleAiLibraries.length;
   const availableAiLibraries = useMemo(() => {
-    return aiLibraryDefs.filter((library) => !selectedAiLibraries.includes(library.id));
+    return aiLibraryDefs.filter(
+      (library) =>
+        library.id !== "core" && !selectedAiLibraries.includes(library.id)
+    );
   }, [aiLibraryDefs, selectedAiLibraries]);
   const modelsSurfaceCatalog = useMemo(() => {
     const next = new Map<string, StrategyModelCatalogEntry>();
@@ -8880,7 +8886,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const removeAiLibrary = (libraryId: string) => {
     setSelectedAiLibraries((current) => {
       const next = current.filter((id) => id !== libraryId);
-      setSelectedAiLibraryId((selectedId) => (selectedId !== libraryId ? selectedId : next[0] ?? ""));
+      const nextVisible = next.filter((id) => id !== "core");
+      setSelectedAiLibraryId((selectedId) =>
+        selectedId !== libraryId ? selectedId : nextVisible[0] ?? ""
+      );
       return next;
     });
   };
@@ -8907,6 +8916,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const nextIndex = index + direction;
 
       if (nextIndex < 0 || nextIndex >= current.length) {
+        return current;
+      }
+      if (current[nextIndex] === "core") {
         return current;
       }
 
@@ -8972,7 +8984,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [aiLibraryDefById]);
 
   useEffect(() => {
-    if (selectedAiLibraries.length === 0) {
+    if (visibleAiLibraries.length === 0) {
       if (selectedAiLibraryId !== "") {
         setSelectedAiLibraryId("");
       }
@@ -8980,10 +8992,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return;
     }
 
-    if (!selectedAiLibraries.includes(selectedAiLibraryId)) {
-      setSelectedAiLibraryId(selectedAiLibraries[0] ?? "");
+    if (!visibleAiLibraries.includes(selectedAiLibraryId)) {
+      setSelectedAiLibraryId(visibleAiLibraries[0] ?? "");
     }
-  }, [selectedAiLibraryId, selectedAiLibraries]);
+  }, [selectedAiLibraryId, visibleAiLibraries]);
 
   useEffect(() => {
     setHoveredTime(null);
@@ -19068,11 +19080,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           </button>
                           <button
                             type="button"
-                            className={`ai-zip-button toggle ${
-                              selectedAiLibraryCount > 0 ? "active success" : ""
+                            className={`ai-zip-button ${
+                              selectedAiLibraryCount > 0 ? "active" : ""
                             }`}
                             disabled={aiDisabled}
                             onClick={() => setLibrariesModalOpen(true)}
+                          >
+                            Libraries ({selectedAiLibraryCount})
+                          </button>
+                          <button
+                            type="button"
+                            className={`ai-zip-button toggle ${
+                              onlineLearningEnabled ? "active success" : ""
+                            }`}
+                            disabled={aiDisabled}
+                            onClick={toggleOnlineLearning}
                           >
                             Online Learning {onlineLearningEnabled ? "· ON" : "· OFF"}
                           </button>
@@ -19659,15 +19681,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               </AiSettingsModal>
 
               <AiSettingsModal
-                title="ONLINE LEARNING"
-                subtitle="Toggle live nodes as neighbor candidates"
-                size="wide"
+                title="LIBRARY"
+                subtitle="Available, active, and full AI.zip controls"
+                size="xwide"
                 bodyClassName="ai-zip-library-modal-body"
                 open={librariesModalOpen}
                 onClose={() => setLibrariesModalOpen(false)}
               >
-                {showAdvancedLibraries ? (
-                  <div className="ai-zip-library-layout">
+                <div className="ai-zip-library-layout">
                     <section className="ai-zip-library-column">
                       <header>
                         <strong>Available Libraries</strong>
@@ -19702,10 +19723,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         <span>Select one to edit settings.</span>
                       </header>
                       <div className="ai-zip-library-scroll">
-                        {selectedAiLibraries.length === 0 ? (
-                          <p className="ai-zip-library-empty">No active libraries selected.</p>
-                        ) : (
-                          selectedAiLibraries.map((libraryId, index) => {
+                      {visibleAiLibraries.length === 0 ? (
+                        <p className="ai-zip-library-empty">No active libraries selected.</p>
+                      ) : (
+                        visibleAiLibraries.map((libraryId, index) => {
                             const library = aiLibraryDefById[libraryId] ?? null;
 
                             if (!library) {
@@ -19740,7 +19761,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                   <button
                                     type="button"
                                     className="ai-zip-library-action"
-                                    disabled={index === selectedAiLibraries.length - 1}
+                                    disabled={index === visibleAiLibraries.length - 1}
                                     onClick={(event) => {
                                       event.stopPropagation();
                                       moveAiLibrary(libraryId, 1);
@@ -20079,33 +20100,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       </div>
                     </section>
                   </div>
-                ) : (
-                  <div style={{ display: "grid", gap: "0.75rem" }}>
-                    <div className="backtest-card" style={{ padding: "0.9rem" }}>
-                      <div className="ai-zip-section-title">Online Learning</div>
-                      <div
-                        style={{
-                          fontSize: 12,
-                          opacity: 0.75,
-                          marginTop: 6,
-                          marginBottom: 12
-                        }}
-                      >
-                        When ON, live nodes become candidates for nearest neighbors.
-                      </div>
-                      <button
-                        type="button"
-                        className={`ai-zip-button toggle ${
-                          onlineLearningEnabled ? "active success" : ""
-                        }`}
-                        disabled={aiDisabled}
-                        onClick={toggleOnlineLearning}
-                      >
-                        Online Learning {onlineLearningEnabled ? "· ON" : "· OFF"}
-                      </button>
-                    </div>
-                  </div>
-                )}
               </AiSettingsModal>
 
               {selectedSurfaceTab === "backtest" && selectedBacktestTab === "history" ? (
