@@ -6068,11 +6068,13 @@ function getKnnEdgesForClusterMap(
 
   const pickFromAlias = (
     token: string,
-    sourceCoord: { x: number; y: number; z: number } | null
+    sourceCoord: { x: number; y: number; z: number } | null,
+    opts?: { requireUnique?: boolean }
   ): string | null => {
     const ids = aliasToIds.get(token);
     if (!ids || ids.size <= 0) return null;
     if (ids.size === 1) return ids.values().next().value ?? null;
+    if (opts?.requireUnique) return null;
     if (!sourceCoord) return ids.values().next().value ?? null;
     let bestId: string | null = null;
     let bestD = Infinity;
@@ -6090,6 +6092,12 @@ function getKnnEdgesForClusterMap(
     }
     return bestId ?? ids.values().next().value ?? null;
   };
+
+  const isTimeAlias = (token: string) =>
+    token.startsWith("t:") ||
+    token.startsWith("tm:") ||
+    token.startsWith("td:") ||
+    token.startsWith("tmd:");
 
   const resolveNeighborId = (
     nb: any,
@@ -6121,7 +6129,9 @@ function getKnnEdgesForClusterMap(
       const t = normalizeClusterMapToken(raw);
       if (!t) continue;
       if (nodeById.has(t)) return t;
-      const hit = pickFromAlias(t, sourceCoord);
+      const hit = pickFromAlias(t, sourceCoord, {
+        requireUnique: isTimeAlias(t),
+      });
       if (hit) return hit;
     }
 
@@ -6155,7 +6165,7 @@ function getKnnEdgesForClusterMap(
     if (Number.isFinite(dirRaw)) fallbackKeys.push(`td:${timeTok}|${String(dirRaw)}`);
     fallbackKeys.push(`t:${timeTok}`);
     for (const key of fallbackKeys) {
-      const hit = pickFromAlias(key, sourceCoord);
+      const hit = pickFromAlias(key, sourceCoord, { requireUnique: true });
       if (hit) return hit;
     }
     return null;
@@ -11173,6 +11183,12 @@ export function ClusterMap({
     Math.max(0, Math.min(36, Math.floor(Number(K_ENTRY) || 0)))
   );
   const [knnLinkOpacity, setKnnLinkOpacity] = React.useState(0.36);
+  React.useEffect(() => {
+    const next = Math.max(0, Math.min(36, Math.floor(Number(kEntry) || 0)));
+    if (Number.isFinite(Number(kEntry))) {
+      setKnnLinkK(next);
+    }
+  }, [kEntry]);
   const effectiveNeighborK = React.useMemo(() => {
     const base = Number.isFinite(Number(kEntry)) ? Number(kEntry) : knnLinkK;
     return Math.max(0, Math.min(36, Math.floor(Number(base) || 0)));
