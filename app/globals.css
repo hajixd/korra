@@ -3429,7 +3429,7 @@ button {
   position: fixed;
   left: 50%;
   bottom: 16px;
-  z-index: 90;
+  z-index: 10000;
   transform: translateX(-50%);
   padding: 0 1rem 1rem;
   pointer-events: none;
@@ -3455,7 +3455,7 @@ button {
 .stats-refresh-loading-overlay {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 11000;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4444,7 +4444,7 @@ button {
   width: 12ch;
   box-sizing: border-box;
   font-variant-numeric: tabular-nums;
-  z-index: 4;
+  z-index: 9000;
   letter-spacing: 0.01em;
   display: none;
 }
@@ -4468,7 +4468,6 @@ button {
 }
 
 .chart-stage.chart-stage-loading .tv-chart,
-.chart-stage.chart-stage-loading .candle-countdown-overlay,
 .chart-stage.chart-stage-loading .chart-stage-actions {
   filter: blur(3px) saturate(0.82) brightness(0.72);
 }

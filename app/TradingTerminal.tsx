@@ -13528,9 +13528,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Control" || event.repeat) {
+      const isSpace =
+        event.code === "Space" || event.key === " " || event.key === "Spacebar";
+      if (!isSpace || event.repeat) {
         return;
       }
+
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          (target as any).isContentEditable)
+      ) {
+        return;
+      }
+
+      event.preventDefault();
 
       if (
         holdActive ||
@@ -13549,9 +13563,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
 
     const onKeyUp = (event: KeyboardEvent) => {
-      if (event.key !== "Control") {
+      const isSpace =
+        event.code === "Space" || event.key === " " || event.key === "Spacebar";
+      if (!isSpace) {
         return;
       }
+
+      event.preventDefault();
 
       if (holdCompleted) {
         holdCompleted = false;
@@ -14289,8 +14307,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       (deferredBacktestTab === "mainStats" && appliedBacktestSettings.aiMode !== "off")
     );
   const shouldComputeAiLibraryInsights =
-    isBacktestAnalyticsVisible &&
-    (deferredBacktestTab === "mainSettings" || deferredBacktestTab === "cluster");
+    selectedSurfaceTab === "settings" ||
+    (isBacktestAnalyticsVisible &&
+      (deferredBacktestTab === "mainSettings" || deferredBacktestTab === "cluster" || librariesModalOpen));
   const isBacktestTabDataPending = selectedBacktestTab !== deferredBacktestTab;
   const isBacktestTabHistoryPending = backtestHasRun && !backtestHistorySeedReady;
   const shouldShowBacktestInlineLoader =
@@ -14471,6 +14490,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
   }, [copytradeDashboardSeed]);
 
+  const useLiveLibrarySettings =
+    selectedSurfaceTab === "settings" ||
+    (selectedSurfaceTab === "backtest" && selectedBacktestTab === "mainSettings");
   const aiLibraryInsights = useMemo(() => {
     if (!shouldComputeAiLibraryInsights) {
       return {
@@ -14488,7 +14510,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       };
     }
 
-    if (appliedBacktestSettings.aiMode === "off") {
+    const libraryAiMode = useLiveLibrarySettings
+      ? aiMode
+      : appliedBacktestSettings.aiMode;
+    if (libraryAiMode === "off") {
       return {
         counts: {} as Record<string, number>,
         baselineWinRates: {} as Record<string, number>,
@@ -14496,9 +14521,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       };
     }
 
+    const librarySelectedAiLibraries = useLiveLibrarySettings
+      ? selectedAiLibraries
+      : appliedBacktestSettings.selectedAiLibraries;
+    const librarySelectedAiLibrarySettings = useLiveLibrarySettings
+      ? selectedAiLibrarySettings
+      : appliedBacktestSettings.selectedAiLibrarySettings;
+    const libraryAntiCheatEnabled = useLiveLibrarySettings
+      ? antiCheatEnabled
+      : appliedBacktestSettings.antiCheatEnabled;
+    const libraryValidationMode = useLiveLibrarySettings
+      ? validationMode
+      : appliedBacktestSettings.validationMode;
+
     const activeLibraryDefs =
-      (appliedBacktestSettings.selectedAiLibraries.length > 0
-        ? appliedBacktestSettings.selectedAiLibraries
+      (librarySelectedAiLibraries.length > 0
+        ? librarySelectedAiLibraries
         : ["core"])
         .map((libraryId) => aiLibraryDefById[libraryId])
         .filter((definition): definition is AiLibraryDef => Boolean(definition));
@@ -14513,8 +14551,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     const executedTradeIds = new Set(backtestTrades.map((trade) => trade.id));
     const usesSplitValidation =
-      appliedBacktestSettings.antiCheatEnabled &&
-      appliedBacktestSettings.validationMode === "split";
+      libraryAntiCheatEnabled &&
+      libraryValidationMode === "split";
     const libraryPoolSource = usesSplitValidation
       ? backtestLibraryCandidateTrades.length > 0
         ? backtestLibraryCandidateTrades
@@ -14533,7 +14571,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const getSettings = (definition: AiLibraryDef) => {
       return {
         ...definition.defaults,
-        ...(appliedBacktestSettings.selectedAiLibrarySettings[definition.id] ?? {})
+        ...(librarySelectedAiLibrarySettings[definition.id] ?? {})
       };
     };
 
@@ -14769,10 +14807,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [
     backtestHasRun,
     backtestHistorySeedReady,
-    appliedBacktestSettings.aiMode,
-    appliedBacktestSettings.antiCheatEnabled,
-    appliedBacktestSettings.selectedAiLibraries,
-    appliedBacktestSettings.selectedAiLibrarySettings,
+    aiMode,
+    antiCheatEnabled,
+    selectedAiLibraries,
+    selectedAiLibrarySettings,
     aiLibraryDefById,
     candleIndexByUnix,
     selectedChartCandles.length,
@@ -14782,7 +14820,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     backtestTrades,
     isClusterBacktestTabActive,
     shouldComputeAiLibraryInsights,
-    appliedBacktestSettings.validationMode
+    validationMode,
+    appliedBacktestSettings.aiMode,
+    appliedBacktestSettings.antiCheatEnabled,
+    appliedBacktestSettings.selectedAiLibraries,
+    appliedBacktestSettings.selectedAiLibrarySettings,
+    appliedBacktestSettings.validationMode,
+    selectedBacktestTab,
+    selectedSurfaceTab,
+    useLiveLibrarySettings,
+    librariesModalOpen
   ]);
   const aiLibraryCounts = aiLibraryInsights.counts;
   const aiLibraryBaselineWinRates = aiLibraryInsights.baselineWinRates;
@@ -15124,7 +15171,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         value: "0",
         tone: "neutral",
         valueStyle: { color: "rgba(255,255,255,0.42)" },
-        meta: "Hold CTRL for 3 seconds to run backtest"
+        meta: "Hold SPACE for 3 seconds to run backtest"
       }));
     }
 
@@ -22256,7 +22303,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         ) : (
           <div className="stats-refresh-overlay" aria-live="polite" aria-atomic="true">
             <div className="stats-refresh-card">
-              {`Hold CTRL for ${statsRefreshSecondsRemaining.toFixed(1)}s to reload all backtest data`}
+              {`Hold SPACE for ${statsRefreshSecondsRemaining.toFixed(1)}s to reload all backtest data`}
             </div>
           </div>
         )
@@ -22299,7 +22346,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         ) : (
           <div className="backtest-status-empty" aria-live="polite" aria-atomic="true">
             <strong>No backtest run yet.</strong>
-            <span>Hold CTRL for 3 seconds to run your first backtest.</span>
+            <span>Hold SPACE for 3 seconds to run your first backtest.</span>
             <span>Tips: tune Date Range, timeframe, and Minute Precise first. Chart reset shortcut: Alt+R.</span>
           </div>
         )}
