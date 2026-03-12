@@ -2087,6 +2087,13 @@ type PropFirmStats = {
   avgWinRatePass: number;
   avgWinRateFail: number;
   avgWinRateOverall: number;
+  medianTradesPass: number;
+  medianTradesFail: number;
+  medianTimePass: number;
+  medianTimeFail: number;
+  medianWinRatePass: number;
+  medianWinRateFail: number;
+  medianWinRateOverall: number;
   passCount: number;
   failCount: number;
   incompleteCount: number;
@@ -16265,6 +16272,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return avgMinutes > 0 ? avgMinutes : 1;
     };
 
+    const computeMedian = (values: number[]) => {
+      const filtered = values.filter((value) => Number.isFinite(value));
+      if (filtered.length === 0) {
+        return 0;
+      }
+
+      const sorted = [...filtered].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      if (sorted.length % 2 === 1) {
+        return sorted[mid]!;
+      }
+      return (sorted[mid - 1]! + sorted[mid]!) / 2;
+    };
+
     const avgTradeGapMinutes = computeAvgTradeGap();
     const tradePnls = backtestTrades.map((trade) => trade.pnlUsd);
 
@@ -16286,6 +16307,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       let sumWinRatePass = 0;
       let sumWinRateFail = 0;
       let sumWinRateOverall = 0;
+      const tradesPassSamples: number[] = [];
+      const tradesFailSamples: number[] = [];
+      const winRatePassSamples: number[] = [];
+      const winRateFailSamples: number[] = [];
+      const winRateOverallSamples: number[] = [];
       const finals: number[] = [];
       const sampleRuns: number[][] = [];
 
@@ -16321,15 +16347,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
         const winRate = tradeCount > 0 ? wins / tradeCount : 0;
         sumWinRateOverall += winRate;
+        winRateOverallSamples.push(winRate);
 
         if (achievedTarget) {
           passCount += 1;
           sumTradesPass += tradeCount;
           sumWinRatePass += winRate;
+          tradesPassSamples.push(tradeCount);
+          winRatePassSamples.push(winRate);
         } else if (failed) {
           failCount += 1;
           sumTradesFail += tradeCount;
           sumWinRateFail += winRate;
+          tradesFailSamples.push(tradeCount);
+          winRateFailSamples.push(winRate);
         } else {
           incompleteCount += 1;
         }
@@ -16363,6 +16394,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         return padded;
       });
 
+      const medianTradesPass = computeMedian(tradesPassSamples);
+      const medianTradesFail = computeMedian(tradesFailSamples);
+      const medianWinRatePass = computeMedian(winRatePassSamples);
+      const medianWinRateFail = computeMedian(winRateFailSamples);
+      const medianWinRateOverall = computeMedian(winRateOverallSamples);
+
       setPropResult({ probability, data: finals });
       setPropStats({
         avgTradesPass: passCount > 0 ? sumTradesPass / passCount : 0,
@@ -16372,6 +16409,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         avgWinRatePass: passCount > 0 ? sumWinRatePass / passCount : 0,
         avgWinRateFail: failCount > 0 ? sumWinRateFail / failCount : 0,
         avgWinRateOverall: sims > 0 ? sumWinRateOverall / sims : 0,
+        medianTradesPass,
+        medianTradesFail,
+        medianTimePass: 0,
+        medianTimeFail: 0,
+        medianWinRatePass,
+        medianWinRateFail,
+        medianWinRateOverall,
         passCount: passCount * scalingFactor,
         failCount: failCount * scalingFactor,
         incompleteCount: incompleteCount * scalingFactor,
@@ -16425,6 +16469,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     let sumWinRatePass = 0;
     let sumWinRateFail = 0;
     let sumWinRateOverall = 0;
+    const tradesPassSamples: number[] = [];
+    const tradesFailSamples: number[] = [];
+    const timePassSamples: number[] = [];
+    const timeFailSamples: number[] = [];
+    const winRatePassSamples: number[] = [];
+    const winRateFailSamples: number[] = [];
+    const winRateOverallSamples: number[] = [];
     const finals: number[] = [];
     const allProgress: number[][] = [];
     const allTimeProgress: number[][] = [];
@@ -16516,17 +16567,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           : tradeCount * avgTradeGapMinutes;
       const winRate = tradeCount > 0 ? wins / tradeCount : 0;
       sumWinRateOverall += winRate;
+      winRateOverallSamples.push(winRate);
 
       if (achievedTarget) {
         passCount += 1;
         sumTradesPass += tradeCount;
         sumTimePass += timeSpent;
         sumWinRatePass += winRate;
+        tradesPassSamples.push(tradeCount);
+        timePassSamples.push(timeSpent);
+        winRatePassSamples.push(winRate);
       } else if (failed) {
         failCount += 1;
         sumTradesFail += tradeCount;
         sumTimeFail += timeSpent;
         sumWinRateFail += winRate;
+        tradesFailSamples.push(tradeCount);
+        timeFailSamples.push(timeSpent);
+        winRateFailSamples.push(winRate);
       } else {
         incompleteCount += 1;
       }
@@ -16614,6 +16672,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return Math.max(currentMax, run[run.length - 1]!.x);
     }, 0);
 
+    const medianTradesPass = computeMedian(tradesPassSamples);
+    const medianTradesFail = computeMedian(tradesFailSamples);
+    const medianTimePass = computeMedian(timePassSamples);
+    const medianTimeFail = computeMedian(timeFailSamples);
+    const medianWinRatePass = computeMedian(winRatePassSamples);
+    const medianWinRateFail = computeMedian(winRateFailSamples);
+    const medianWinRateOverall = computeMedian(winRateOverallSamples);
+
     setPropResult({ probability, data: finals });
     setPropStats({
       avgTradesPass: passCount > 0 ? sumTradesPass / passCount : 0,
@@ -16626,6 +16692,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         consideredSims + incompleteCount > 0
           ? sumWinRateOverall / (consideredSims + incompleteCount)
           : 0,
+      medianTradesPass,
+      medianTradesFail,
+      medianTimePass,
+      medianTimeFail,
+      medianWinRatePass,
+      medianWinRateFail,
+      medianWinRateOverall,
       passCount,
       failCount,
       incompleteCount,
@@ -21440,6 +21513,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     <span>Avg trades to pass</span>
                                     <strong className="up">{propStats.avgTradesPass.toFixed(1)}</strong>
                                   </div>
+                                  <div className="backtest-stat-row">
+                                    <span>Median trades to pass</span>
+                                    <strong className="up">{propStats.medianTradesPass.toFixed(1)}</strong>
+                                  </div>
                                   {propProjectionMethod !== "montecarlo" ? (
                                     <div className="backtest-stat-row">
                                       <span>Avg time to pass</span>
@@ -21448,15 +21525,35 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                       </strong>
                                     </div>
                                   ) : null}
+                                  {propProjectionMethod !== "montecarlo" ? (
+                                    <div className="backtest-stat-row">
+                                      <span>Median time to pass</span>
+                                      <strong className="up">
+                                        {formatPropFirmDuration(propStats.medianTimePass)}
+                                      </strong>
+                                    </div>
+                                  ) : null}
                                   <div className="backtest-stat-row">
                                     <span>Avg trades to fail</span>
                                     <strong className="down">{propStats.avgTradesFail.toFixed(1)}</strong>
+                                  </div>
+                                  <div className="backtest-stat-row">
+                                    <span>Median trades to fail</span>
+                                    <strong className="down">{propStats.medianTradesFail.toFixed(1)}</strong>
                                   </div>
                                   {propProjectionMethod !== "montecarlo" ? (
                                     <div className="backtest-stat-row">
                                       <span>Avg time to fail</span>
                                       <strong className="down">
                                         {formatPropFirmDuration(propStats.avgTimeFail)}
+                                      </strong>
+                                    </div>
+                                  ) : null}
+                                  {propProjectionMethod !== "montecarlo" ? (
+                                    <div className="backtest-stat-row">
+                                      <span>Median time to fail</span>
+                                      <strong className="down">
+                                        {formatPropFirmDuration(propStats.medianTimeFail)}
                                       </strong>
                                     </div>
                                   ) : null}
@@ -21500,6 +21597,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     </strong>
                                   </div>
                                   <div className="backtest-stat-row">
+                                    <span>Median win rate (passes)</span>
+                                    <strong
+                                      className={propStats.medianWinRatePass >= 0.5 ? "up" : "down"}
+                                    >
+                                      {(propStats.medianWinRatePass * 100).toFixed(1)}%
+                                    </strong>
+                                  </div>
+                                  <div className="backtest-stat-row">
                                     <span>Avg win rate (fails)</span>
                                     <strong
                                       className={propStats.avgWinRateFail >= 0.5 ? "up" : "down"}
@@ -21508,11 +21613,27 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                     </strong>
                                   </div>
                                   <div className="backtest-stat-row">
+                                    <span>Median win rate (fails)</span>
+                                    <strong
+                                      className={propStats.medianWinRateFail >= 0.5 ? "up" : "down"}
+                                    >
+                                      {(propStats.medianWinRateFail * 100).toFixed(1)}%
+                                    </strong>
+                                  </div>
+                                  <div className="backtest-stat-row">
                                     <span>Avg win rate (overall)</span>
                                     <strong
                                       className={propStats.avgWinRateOverall >= 0.5 ? "up" : "down"}
                                     >
                                       {(propStats.avgWinRateOverall * 100).toFixed(1)}%
+                                    </strong>
+                                  </div>
+                                  <div className="backtest-stat-row">
+                                    <span>Median win rate (overall)</span>
+                                    <strong
+                                      className={propStats.medianWinRateOverall >= 0.5 ? "up" : "down"}
+                                    >
+                                      {(propStats.medianWinRateOverall * 100).toFixed(1)}%
                                     </strong>
                                   </div>
                                 </div>

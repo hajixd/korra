@@ -7148,10 +7148,14 @@ const injectedScript = `
       "</div>" +
       '<div class="korra-copytrade-shell__controlsGrid">' +
       '<label class="korra-copytrade-shell__controlField">' +
-      '<span class="korra-copytrade-shell__controlFieldLabel">Preset</span>' +
-      '<div class="korra-copytrade-shell__controlValue">' +
-      escapeHtml(selectedPresetName || "No preset loaded") +
-      "</div>" +
+      '<span class="korra-copytrade-shell__controlFieldLabel">Load Preset</span>' +
+      '<select class="korra-copytrade-shell__controlSelect korra-copytrade-shell__presetSelect" data-korra-preset-account-id="' +
+      escapeHtml(accountId) +
+      '"' +
+      (controlsDisabled ? ' disabled="disabled"' : "") +
+      ">" +
+      buildCopyTradePresetOptionsMarkup(selectedPresetName) +
+      "</select>" +
       "</label>" +
       "</div>" +
       feedbackMarkup +
