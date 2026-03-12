@@ -7338,7 +7338,9 @@ const injectedScript = `
           '<div class="korra-copytrade-shell__cellLabel">Trading</div>' +
           buildStatusPillMarkup(trading.label, trading.tone) +
           "</div>" +
-          '<div class="korra-copytrade-shell__rowAction">' +
+          '<div class="korra-copytrade-shell__rowAction" data-korra-action="delete-account" data-account-id="' +
+          escapeHtml(String(account.id)) +
+          '">' +
           '<button class="korra-copytrade-shell__button korra-copytrade-shell__button--danger" data-korra-action="delete-account" data-account-id="' +
           escapeHtml(String(account.id)) +
           '">Delete</button>' +
