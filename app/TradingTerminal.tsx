@@ -15863,6 +15863,387 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }));
   }, [isClusterBacktestTabActive, selectedChartCandles]);
 
+  const backtestEntryNeighborsById = useMemo(() => {
+    if (!isClusterBacktestTabActive) {
+      return new Map<string, any[]>();
+    }
+
+    if (appliedBacktestSettings.aiMode === "off") {
+      return new Map<string, any[]>();
+    }
+
+    const kEntry = clamp(
+      Math.floor(Number(appliedBacktestSettings.kEntry) || 0),
+      0,
+      500
+    );
+
+    if (kEntry <= 0) {
+      return new Map<string, any[]>();
+    }
+
+    if (backtestTimeFilteredTrades.length === 0) {
+      return new Map<string, any[]>();
+    }
+
+    const chronologicalTrades = [...backtestTimeFilteredTrades].sort(
+      (left, right) => Number(left.entryTime) - Number(right.entryTime)
+    );
+    const chronologicalIndexById = new Map<string, number>();
+    for (let index = 0; index < chronologicalTrades.length; index += 1) {
+      const trade = chronologicalTrades[index];
+      if (trade) {
+        chronologicalIndexById.set(trade.id, index);
+      }
+    }
+
+    const usesSplitValidation =
+      appliedBacktestSettings.antiCheatEnabled &&
+      appliedBacktestSettings.validationMode === "split";
+    const activeLibraryIds =
+      appliedBacktestSettings.selectedAiLibraries.length > 0
+        ? appliedBacktestSettings.selectedAiLibraries
+        : ["core"];
+
+    const getLibrarySettings = (libraryId: string) => {
+      return {
+        ...(aiLibraryDefaultsById[libraryId] ?? {}),
+        ...(appliedBacktestSettings.selectedAiLibrarySettings[libraryId] ?? {})
+      } as Record<string, AiLibrarySettingValue>;
+    };
+
+    const getLibraryWeight = (libraryId: string) => {
+      const raw = Number(getLibrarySettings(libraryId).weight ?? 100);
+      const pct = raw <= 10 ? raw * 100 : raw;
+      return clamp(pct, 0, 5000) / 100;
+    };
+
+    const getLibraryStride = (libraryId: string) => {
+      return clamp(
+        Math.floor(Number(getLibrarySettings(libraryId).stride ?? 0) || 0),
+        0,
+        5000
+      );
+    };
+
+    const getLibraryMaxSamples = (libraryId: string, fallback = 96) => {
+      return clamp(
+        Math.floor(Number(getLibrarySettings(libraryId).maxSamples ?? fallback) || fallback),
+        0,
+        100000
+      );
+    };
+
+    const getLibraryCount = (libraryId: string, fallback = 24) => {
+      return clamp(
+        Math.floor(Number(getLibrarySettings(libraryId).count ?? fallback) || fallback),
+        0,
+        100000
+      );
+    };
+
+    const getTradeRiskReward = (trade: HistoryItem) => {
+      const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
+      const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
+      return rewardDistance / riskDistance;
+    };
+
+    const getSyntheticWinProb = (trade: HistoryItem) => {
+      const session = getSessionLabel(trade.entryTime);
+      const entryHour = getTradeHour(trade.entryTime);
+      const rr = getTradeRiskReward(trade);
+      const seed = hashSeedFromText(
+        `${trade.symbol}|${trade.entrySource}|${trade.side}|${trade.entryTime}`
+      );
+      let score = 0.5 + (((seed % 1000) / 999) - 0.5) * 0.12;
+
+      if (trade.side === "Long") {
+        score += 0.015;
+      }
+
+      if (session === "London") {
+        score += 0.035;
+      } else if (session === "New York") {
+        score += 0.025;
+      } else if (session === "Tokyo") {
+        score -= 0.01;
+      }
+
+      score += Math.sin((entryHour / 24) * Math.PI * 2) * 0.035;
+      score += clamp((rr - 1.1) * 0.045, -0.08, 0.08);
+
+      return clamp(score, 0.08, 0.92);
+    };
+
+    const pickLibrarySource = (
+      libraryId: string,
+      pool: HistoryItem[],
+      currentTrade: HistoryItem
+    ) => {
+      const settings = getLibrarySettings(libraryId);
+      const normalizedId = libraryId.toLowerCase();
+      const maxSamples = getLibraryMaxSamples(libraryId, 96);
+      const stride = getLibraryStride(libraryId);
+      let source: HistoryItem[] = [];
+
+      if (normalizedId === "suppressed") {
+        source = collectCappedItems(pool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => trade.result === "Loss"
+        });
+      } else if (normalizedId === "recent") {
+        const windowTrades = clamp(
+          Math.floor(Number(settings.windowTrades ?? 150) || 150),
+          0,
+          5000
+        );
+        const startIndex = Math.max(0, pool.length - windowTrades);
+        source =
+          windowTrades > 0
+            ? collectCappedItems(pool, {
+                cap: maxSamples,
+                stride,
+                startIndex,
+                endIndex: pool.length
+              })
+            : [];
+      } else if (normalizedId === "tokyo") {
+        source = collectCappedItems(pool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => getSessionLabel(trade.entryTime) === "Tokyo"
+        });
+      } else if (normalizedId === "sydney") {
+        source = collectCappedItems(pool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => getSessionLabel(trade.entryTime) === "Sydney"
+        });
+      } else if (normalizedId === "london") {
+        source = collectCappedItems(pool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => getSessionLabel(trade.entryTime) === "London"
+        });
+      } else if (normalizedId === "newyork") {
+        source = collectCappedItems(pool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => getSessionLabel(trade.entryTime) === "New York"
+        });
+      } else if (normalizedId === "terrific") {
+        const count = getLibraryCount(libraryId, 96);
+        const effectiveCap = Math.min(maxSamples, count);
+        const capped = collectCappedItems(pool, {
+          cap: effectiveCap
+        });
+        source = applyStrideToItems(
+          [...capped].sort((left, right) => right.pnlUsd - left.pnlUsd),
+          stride
+        );
+      } else if (normalizedId === "terrible") {
+        const count = getLibraryCount(libraryId, 96);
+        const effectiveCap = Math.min(maxSamples, count);
+        const capped = collectCappedItems(pool, {
+          cap: effectiveCap
+        });
+        source = applyStrideToItems(
+          [...capped].sort((left, right) => left.pnlUsd - right.pnlUsd),
+          stride
+        );
+      } else if ((settings.kind as string | undefined) === "model_sim") {
+        const targetModel = String(settings.model ?? currentTrade.entrySource);
+        source = collectCappedItems(pool, {
+          cap: maxSamples,
+          stride,
+          predicate: (trade) => trade.entrySource === targetModel
+        });
+      } else {
+        source = collectCappedItems(pool, {
+          cap: maxSamples,
+          stride
+        });
+      }
+
+      const baselineWinRate = getOutcomeWinRatePercent(
+        source,
+        (candidate) => candidate.result === "Win"
+      );
+      const targetWinRate = resolveAiLibraryTargetWinRate(
+        settings,
+        baselineWinRate,
+        source.length
+      );
+
+      return rebalanceItemsToTargetWinRate(
+        source,
+        maxSamples,
+        targetWinRate,
+        (candidate) => candidate.result === "Win",
+        normalizedId === "terrific" || normalizedId === "terrible"
+      );
+    };
+
+    const getSimilarityWeight = (currentTrade: HistoryItem, candidateTrade: HistoryItem) => {
+      let weight = 0.35;
+
+      if (candidateTrade.side === currentTrade.side) {
+        weight += 0.18;
+      }
+
+      if (candidateTrade.entrySource === currentTrade.entrySource) {
+        weight += 0.24;
+      }
+
+      if (candidateTrade.symbol === currentTrade.symbol) {
+        weight += 0.1;
+      }
+
+      if (getSessionLabel(candidateTrade.entryTime) === getSessionLabel(currentTrade.entryTime)) {
+        weight += 0.12;
+      }
+
+      const hourGap = Math.abs(
+        getTradeHour(candidateTrade.entryTime) - getTradeHour(currentTrade.entryTime)
+      );
+
+      if (hourGap === 0) {
+        weight += 0.08;
+      } else if (hourGap <= 2) {
+        weight += 0.04;
+      }
+
+      const rrGap = Math.abs(
+        getTradeRiskReward(candidateTrade) - getTradeRiskReward(currentTrade)
+      );
+      weight *= 1 / (1 + rrGap * 0.65);
+
+      const timeGapHours = Math.abs(
+        Number(currentTrade.entryTime) - Number(candidateTrade.entryTime)
+      ) / 3600;
+      weight *= 1 / (1 + timeGapHours / 72);
+
+      return clamp(weight, 0.02, 2);
+    };
+
+    const neighborsById = new Map<string, any[]>();
+    const targetTrades = deferredBacktestAnalyticsTrades;
+
+    for (const trade of targetTrades) {
+      const tradeIndex = chronologicalIndexById.get(trade.id);
+      const basePool = usesSplitValidation
+        ? backtestLibraryCandidateTrades
+        : tradeIndex != null
+        ? chronologicalTrades.slice(0, tradeIndex)
+        : [];
+
+      if (!basePool.length) {
+        neighborsById.set(trade.id, []);
+        continue;
+      }
+
+      const candidateMap = new Map<
+        string,
+        { trade: HistoryItem; weight: number; suppressed: boolean }
+      >();
+
+      for (const libraryId of activeLibraryIds) {
+        const libraryWeight = getLibraryWeight(libraryId);
+        if (libraryWeight <= 0) {
+          continue;
+        }
+
+        const source = pickLibrarySource(libraryId, basePool, trade);
+        if (source.length === 0) {
+          continue;
+        }
+
+        const isSuppressedLibrary = libraryId.toLowerCase() === "suppressed";
+
+        for (const candidate of source) {
+          const similarityWeight = getSimilarityWeight(trade, candidate) * libraryWeight;
+          if (!(similarityWeight > 0)) {
+            continue;
+          }
+
+          const key =
+            candidate.id ||
+            `${candidate.entryTime}|${candidate.entrySource}|${candidate.side}`;
+          const existing = candidateMap.get(key);
+          if (existing) {
+            existing.weight += similarityWeight;
+            if (isSuppressedLibrary) {
+              existing.suppressed = true;
+            }
+          } else {
+            candidateMap.set(key, {
+              trade: candidate,
+              weight: similarityWeight,
+              suppressed: isSuppressedLibrary
+            });
+          }
+        }
+      }
+
+      if (candidateMap.size === 0) {
+        neighborsById.set(trade.id, []);
+        continue;
+      }
+
+      const sorted = [...candidateMap.values()].sort((left, right) => right.weight - left.weight);
+      const trimmed = sorted.slice(0, kEntry);
+      const neighborRows = trimmed.map((entry, idx) => {
+        const candidate = entry.trade;
+        const dir = candidate.side === "Long" ? 1 : -1;
+        const outcome =
+          appliedBacktestSettings.validationMode === "synthetic"
+            ? getSyntheticWinProb(candidate) >= 0.5
+              ? "Win"
+              : "Loss"
+            : candidate.result;
+
+        const weight = Math.max(1e-6, entry.weight);
+        return {
+          id: candidate.id,
+          uid: candidate.id,
+          tradeUid: candidate.id,
+          metaUid: candidate.id,
+          metaTradeUid: candidate.id,
+          metaId: candidate.id,
+          d: 1 / weight,
+          w: entry.weight,
+          dir,
+          label: outcome === "Win" ? 1 : -1,
+          metaOutcome: outcome,
+          metaPnl: candidate.pnlUsd,
+          metaTime: candidate.entryTime,
+          metaSession: getSessionLabel(candidate.entryTime),
+          metaModel: candidate.entrySource,
+          metaSuppressed: entry.suppressed,
+          rank: idx + 1,
+          t: candidate
+        };
+      });
+
+      neighborsById.set(trade.id, neighborRows);
+    }
+
+    return neighborsById;
+  }, [
+    appliedBacktestSettings.aiMode,
+    appliedBacktestSettings.antiCheatEnabled,
+    appliedBacktestSettings.kEntry,
+    appliedBacktestSettings.selectedAiLibraries,
+    appliedBacktestSettings.selectedAiLibrarySettings,
+    appliedBacktestSettings.validationMode,
+    aiLibraryDefaultsById,
+    backtestLibraryCandidateTrades,
+    backtestTimeFilteredTrades,
+    deferredBacktestAnalyticsTrades,
+    isClusterBacktestTabActive
+  ]);
+
   const aiZipClusterTrades = useMemo(() => {
     if (!isClusterBacktestTabActive) {
       return [];
@@ -15908,6 +16289,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         margin: getEffectiveTradeConfidenceScore(trade),
         side: trade.side,
         entryNeighbors:
+          backtestEntryNeighborsById.get(trade.id) ??
           (trade as any).entryNeighbors ??
           (trade as any).neighbors ??
           (trade as any).kNeighbors ??
@@ -15915,6 +16297,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       };
     });
   }, [
+    backtestEntryNeighborsById,
     candleIndexByUnix,
     deferredBacktestAnalyticsTrades,
     getEffectiveTradeConfidenceScore,
