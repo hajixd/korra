@@ -6848,8 +6848,8 @@ function drawClusterMapCanvas(
     const selectedNodeId =
       normalizeId((selectedNodeObj as any)?.id) ?? selectedRequestedId ?? null;
     const knnLinksVisible = knnLinkOpacity > 0;
-    const knnFocusActive =
-      knnLinksVisible && aiMethod2d === "knn" && selectedNodeId != null;
+    const selectionFocusActive = selectedNodeId != null;
+    const knnFocusActive = knnLinksVisible && selectedNodeId != null;
 
     let selectedNodeHdbClusterId: string | null = null;
     if (
@@ -6935,11 +6935,44 @@ function drawClusterMapCanvas(
       }
     }
 
+    const selectionFocusNodeIds = new Set<string>();
+    const selectionFocusEdgeIds = new Set<string>();
+    if (selectionFocusActive && selectedNodeId) {
+      selectionFocusNodeIds.add(selectedNodeId);
+    }
+    for (const id of knnFocusNodeIds) selectionFocusNodeIds.add(id);
+    for (const ek of knnFocusEdgeIds) selectionFocusEdgeIds.add(ek);
+
+    if (selectionFocusActive && selectedNodeId && selectedNodeObj) {
+      const selKind = String((selectedNodeObj as any).kind || "").toLowerCase();
+      if (selKind === "close") {
+        const parentId = normalizeId((selectedNodeObj as any).parentId);
+        if (parentId) {
+          selectionFocusNodeIds.add(parentId);
+          selectionFocusEdgeIds.add(edgeKey(parentId, selectedNodeId));
+        }
+      } else {
+        const closeNode = (nodes as any[]).find(
+          (n: any) =>
+            String((n as any)?.kind || "").toLowerCase() === "close" &&
+            normalizeId((n as any)?.parentId) === selectedNodeId
+        );
+        const closeId = closeNode ? normalizeId((closeNode as any).id) : null;
+        if (closeId) {
+          selectionFocusNodeIds.add(closeId);
+          selectionFocusEdgeIds.add(edgeKey(selectedNodeId, closeId));
+        }
+      }
+    }
+
+    const hasSelectionFocusSet =
+      selectionFocusActive && selectionFocusNodeIds.size > 0;
     const hasKnnFocusSet = knnFocusActive && knnFocusNodeIds.size > 0;
     const hasHdbFocusSet = hdbFocusActive && activeHdbNodeIds.size > 0;
-    const focusModeActive = hasKnnFocusSet || hasHdbFocusSet;
+    const focusModeActive = hasSelectionFocusSet || hasHdbFocusSet;
     const isNodeInFocus = (nid: string | null): boolean => {
       if (!nid) return false;
+      if (hasSelectionFocusSet) return selectionFocusNodeIds.has(nid);
       if (hasKnnFocusSet) return knnFocusNodeIds.has(nid);
       if (hasHdbFocusSet) return activeHdbNodeIds.has(nid);
       return false;
@@ -7079,9 +7112,13 @@ function drawClusterMapCanvas(
             selectedLinkEdgeKey != null &&
             selectedLinkEdgeKey === ek &&
             (selectedLinkType === "knn" || selectedLinkType === "");
-          const focusedEdge =
-            selectedEdge || (knnFocusActive && knnFocusEdgeIds.has(ek));
-          const dimEdge = knnFocusActive && !focusedEdge;
+          const focusEdgesActive = hasSelectionFocusSet;
+          const focusedEdge = selectedEdge
+            ? true
+            : focusEdgesActive
+            ? selectionFocusEdgeIds.has(ek)
+            : knnFocusActive && knnFocusEdgeIds.has(ek);
+          const dimEdge = focusEdgesActive ? !focusedEdge : knnFocusActive && !focusedEdge;
           let col = "";
           let width = 1;
 
@@ -7158,13 +7195,19 @@ function drawClusterMapCanvas(
       const isSearch = searchHighlightId === n.id;
       const nodeId = normalizeId((n as any).id);
       const isSelectedNode = selectedNodeId != null && nodeId === selectedNodeId;
+      const isSelectionFocusNode =
+        hasSelectionFocusSet && nodeId != null && selectionFocusNodeIds.has(nodeId);
+      const allowAuxFocus = !hasSelectionFocusSet;
       const isKnnNeighbor =
+        allowAuxFocus &&
         hasKnnFocusSet &&
         nodeId != null &&
         !isSelectedNode &&
         knnFocusNodeIds.has(nodeId);
-      const isHdbFocused = hasHdbFocusSet && nodeId != null && activeHdbNodeIds.has(nodeId);
-      const isFocusNode = isSearch || isSelectedNode || isKnnNeighbor || isHdbFocused;
+      const isHdbFocused =
+        allowAuxFocus && hasHdbFocusSet && nodeId != null && activeHdbNodeIds.has(nodeId);
+      const isFocusNode =
+        isSearch || isSelectionFocusNode || isKnnNeighbor || isHdbFocused;
       const dimNode = focusModeActive && !isFocusNode;
       const r = (Number(n.r) || 0) * (Number(nodeSizeMul) || 1);
       let fill: string;
@@ -7211,11 +7254,7 @@ function drawClusterMapCanvas(
         outline = "rgba(245,245,245,0.9)";
       }
       if (!isSearch && isSelectedNode) {
-        fill = "rgba(255,255,255,0.99)";
-        outline =
-          aiMethod2d === "knn"
-            ? "rgba(120,220,255,1.0)"
-            : "rgba(255,255,255,1.0)";
+        outline = "rgba(255,255,255,0.9)";
       }
 
       // Search spotlight: make the searched node unmistakable.
@@ -7228,6 +7267,7 @@ function drawClusterMapCanvas(
       if (
         !lowPowerMode &&
         !dimNode &&
+        !selectionFocusActive &&
         (isSearch ||
           isSelectedNode ||
           isKnnNeighbor ||
@@ -7258,17 +7298,18 @@ function drawClusterMapCanvas(
       }
 
       const focusScale =
-        isSelectedNode ? 1.34 : isKnnNeighbor ? 1.09 : isHdbFocused ? 1.06 : 1;
+        isSelectedNode ? 1.0 : isKnnNeighbor ? 1.05 : isHdbFocused ? 1.03 : 1;
       const baseRadius = r * (isHovered ? 1.25 : 1.0) * focusScale;
       ctx.save();
-      ctx.globalAlpha = dimNode ? 0.36 : 1;
+      const dimAlpha = selectionFocusActive ? 0.18 : 0.36;
+      ctx.globalAlpha = dimNode ? dimAlpha : 1;
       ctx.beginPath();
       ctx.arc(sx, sy, baseRadius, 0, Math.PI * 2);
       ctx.fillStyle = fill;
       ctx.fill();
       const outlineBase = lowPowerMode ? (isHovered ? 2.2 : 1.1) : isHovered ? 4 : 2;
       const focusOutlineMul =
-        isSelectedNode ? 1.85 : isKnnNeighbor ? 1.28 : isHdbFocused ? 1.2 : 1;
+        isSelectedNode ? 1.15 : isKnnNeighbor ? 1.1 : isHdbFocused ? 1.08 : 1;
       const dimOutlineMul = dimNode ? 0.82 : 1;
       ctx.lineWidth =
         outlineBase * (Number(nodeOutlineMul) || 1) * focusOutlineMul * dimOutlineMul;
@@ -7277,33 +7318,13 @@ function drawClusterMapCanvas(
       if (dimNode) {
         ctx.beginPath();
         ctx.arc(sx, sy, Math.max(2.2, baseRadius * 1.02), 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(58,58,58,0.28)";
+        ctx.fillStyle = selectionFocusActive
+          ? "rgba(58,58,58,0.18)"
+          : "rgba(58,58,58,0.28)";
         ctx.fill();
       }
       ctx.restore();
 
-      if (!dimNode && (isSelectedNode || isKnnNeighbor || isHdbFocused)) {
-        const ringR =
-          Math.max(4, r * focusScale) +
-          (isSelectedNode ? 6 : isKnnNeighbor ? 4.5 : 3.2);
-        ctx.save();
-        ctx.lineWidth = lowPowerMode ? 1.2 : 1.9;
-        ctx.strokeStyle = isSelectedNode
-          ? "rgba(255,255,255,0.95)"
-          : isKnnNeighbor
-          ? "rgba(245,245,245,0.9)"
-          : "rgba(245,245,245,0.72)";
-        if (!lowPowerMode) {
-          ctx.shadowColor = isKnnNeighbor
-            ? "rgba(255,255,255,0.34)"
-            : "rgba(255,255,255,0.36)";
-          ctx.shadowBlur = 8;
-        }
-        ctx.beginPath();
-        ctx.arc(sx, sy, ringR, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-      }
     };
 
     const bgNodes = ordered.filter((n: any) => !isTop(n));
@@ -7394,27 +7415,6 @@ function drawClusterMapCanvas(
       if (pin) {
         // Draw last so it appears above other nodes/links.
         drawOne(pin);
-
-        // Extra halo to reinforce front-most selection.
-        const { sx: psx, sy: psy } = toScreen(
-          Number((pin as any).x) || 0,
-          Number((pin as any).y) || 0
-        );
-        const pr = (Number((pin as any).r) || 0) * (Number(nodeSizeMul) || 1);
-        const rHalo = Math.max(8, pr * 2.8);
-
-        ctx.save();
-        ctx.globalAlpha = 0.9;
-        ctx.lineWidth = 2.25;
-        ctx.strokeStyle = "rgba(255,255,255,0.95)";
-        if (!lowPowerMode) {
-          ctx.shadowColor = "rgba(255,255,255,0.55)";
-          ctx.shadowBlur = 12;
-        }
-        ctx.beginPath();
-        ctx.arc(psx, psy, rHalo, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
       }
     }
 
@@ -10545,8 +10545,22 @@ export function ClusterMap({
         null;
       const sIdxNum = Number(sIdxRaw);
       const hasSIdx = Number.isFinite(sIdxNum);
+      const entryTimeFromP = (p as any).entryTime ?? (p as any).metaTime ?? "";
+      const entryMs = entryTimeFromP ? parseTradeTimeMs(entryTimeFromP) : null;
+      const inferredIdx =
+        !hasSIdx && entryMs != null
+          ? findNearestTradeIndexByTime(candles, entryMs)
+          : null;
       const sIdxClamped = hasSIdx
-        ? Math.min(Math.max(0, Math.floor(sIdxNum)), Math.max(0, candles.length - 1))
+        ? Math.min(
+            Math.max(0, Math.floor(sIdxNum)),
+            Math.max(0, candles.length - 1)
+          )
+        : inferredIdx != null
+        ? Math.min(
+            Math.max(0, Math.floor(inferredIdx)),
+            Math.max(0, candles.length - 1)
+          )
         : 0;
 
       // Require either a usable candle-based descriptor (signal index + model)
@@ -10573,8 +10587,7 @@ export function ClusterMap({
       };
 
       const entryTime =
-        (p as any).entryTime ??
-        (p as any).metaTime ??
+        entryTimeFromP ||
         candles?.[Math.min(candles.length - 1, Math.max(0, sIdxClamped + 1))]
           ?.time ??
         candles?.[sIdxClamped]?.time ??
@@ -10797,10 +10810,24 @@ export function ClusterMap({
       );
       if (neighborK > 0) {
         const libIdx: number[] = [];
+        const libChrono: Array<number | null> = [];
         const tradeIdx: number[] = [];
         for (let i = 0; i < goodEntries.length; i += 1) {
           const k = String((goodEntries[i] as any)?.kind || "").toLowerCase();
-          if (k === "library") libIdx.push(i);
+          if (k === "library") {
+            libIdx.push(i);
+            const libNode = goodEntries[i] as any;
+            const c0 =
+              nodeChronologyValue(libNode) ??
+              (typeof libNode?.signalIndex === "number"
+                ? libNode.signalIndex
+                : typeof libNode?.entryIndex === "number"
+                ? libNode.entryIndex
+                : null);
+            libChrono.push(
+              Number.isFinite(Number(c0)) ? Number(c0) : null
+            );
+          }
           else if (k === "trade") tradeIdx.push(i);
         }
 
@@ -10812,8 +10839,29 @@ export function ClusterMap({
               continue;
             }
 
+            const tradeNode = goodEntries[ti] as any;
+            const tradeChrono =
+              staticLibrariesClusters
+                ? null
+                : nodeChronologyValue(tradeNode) ??
+                  (typeof tradeNode?.signalIndex === "number"
+                    ? tradeNode.signalIndex
+                    : typeof tradeNode?.entryIndex === "number"
+                    ? tradeNode.entryIndex
+                    : null);
+
             const nearest: Array<{ idx: number; d2: number }> = [];
-            for (const li of libIdx) {
+            for (let liPos = 0; liPos < libIdx.length; liPos += 1) {
+              const li = libIdx[liPos];
+              const libTime = libChrono[liPos];
+              if (
+                !staticLibrariesClusters &&
+                tradeChrono != null &&
+                libTime != null &&
+                libTime > tradeChrono
+              ) {
+                continue;
+              }
               const u = stdData[li];
               if (!Array.isArray(u)) continue;
               const len = Math.min(v.length, u.length);
@@ -11157,6 +11205,15 @@ export function ClusterMap({
             const ny = Number((n as any).y);
             const tradeOrder = antiCheatEnabled ? nodeChronologyValue(n) : null;
             const tradeKey = antiCheatEnabled ? nodeStableKey(n) : "";
+            const timeGateTrade =
+              staticLibrariesClusters
+                ? null
+                : nodeChronologyValue(n) ??
+                  (typeof (n as any)?.signalIndex === "number"
+                    ? (n as any).signalIndex
+                    : typeof (n as any)?.entryIndex === "number"
+                    ? (n as any).entryIndex
+                    : null);
             if (!Number.isFinite(nx) || !Number.isFinite(ny)) continue;
 
             for (const l of libs) {
@@ -11168,6 +11225,17 @@ export function ClusterMap({
                   const libOrder = nodeChronologyValue(l);
                   if (libOrder === null || libOrder >= tradeOrder) continue;
                 }
+              }
+
+              if (timeGateTrade != null) {
+                const libTime =
+                  nodeChronologyValue(l) ??
+                  (typeof (l as any)?.signalIndex === "number"
+                    ? (l as any).signalIndex
+                    : typeof (l as any)?.entryIndex === "number"
+                    ? (l as any).entryIndex
+                    : null);
+                if (libTime != null && libTime > timeGateTrade) continue;
               }
 
               if (
@@ -11212,6 +11280,7 @@ export function ClusterMap({
     clusterMapView,
     lowPowerMode,
     entryNeighborsOnly,
+    staticLibrariesClusters,
     kEntry,
   ]);
 
@@ -11445,9 +11514,10 @@ export function ClusterMap({
         (n as any).kind === "library" ||
         String((n as any).id || "").startsWith("lib|");
 
-      // Timeline filter: hide future trade/potential points, but keep library points
-      // always available since they represent loaded neighbor memory.
-      if (idx < (n as any).signalIndex && !isLib) continue;
+      // Timeline filter: hide future points. Library nodes only appear after their entry
+      // unless Static Libraries & Clusters is enabled.
+      if (idx < (n as any).signalIndex && (!isLib || !staticLibrariesClusters))
+        continue;
 
       let dKind = (n as any).kind;
       let dIsOpen = (n as any).isOpen;
@@ -14831,6 +14901,13 @@ export function ClusterMap({
   const buildNeighborListForNode = React.useCallback(
     (node: any) => {
       if (!node) return [];
+      const kind = String((node as any)?.kind || "").toLowerCase();
+      const isLib =
+        kind === "library" ||
+        (node as any)?.libId != null ||
+        (node as any)?.metaLib != null ||
+        String((node as any)?.id || "").startsWith("lib|");
+      if (isLib) return [];
       const kLimit = Math.max(
         0,
         Math.min(36, Math.floor(Number(effectiveNeighborK) || 0))
@@ -16366,7 +16443,9 @@ export function ClusterMap({
           const lines = [];
           const kind = String((n as any).kind ?? "").toLowerCase();
           const wantsNeighborConfidence =
-            aiMethod !== "hdbscan" && kind !== "potential";
+            aiMethod !== "hdbscan" &&
+            kind !== "potential" &&
+            kind !== "library";
           const neighborRows = wantsNeighborConfidence
             ? buildNeighborListForNode(n)
             : [];
@@ -18779,6 +18858,12 @@ export function ClusterMap({
               groupCol,
               0.12
             )}`;
+            const isSelectedLib =
+              String((selectedNode as any)?.kind || "").toLowerCase() ===
+                "library" ||
+              (selectedNode as any)?.libId != null ||
+              (selectedNode as any)?.metaLib != null ||
+              String((selectedNode as any)?.id || "").startsWith("lib|");
 
             return (
               <div
@@ -19039,7 +19124,10 @@ export function ClusterMap({
                   >
                     <div>Nearest Neighbors</div>
                     <div style={{ ...mono(), opacity: 0.7 }}>
-                      k={selectedNeighborCap || selectedNeighborList.length || 0}
+                      k=
+                      {isSelectedLib
+                        ? 0
+                        : selectedNeighborCap || selectedNeighborList.length || 0}
                     </div>
                   </div>
                   <div
