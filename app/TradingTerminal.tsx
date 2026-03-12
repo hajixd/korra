@@ -8604,7 +8604,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const configuredAiFeatureDimensionCount = useMemo(() => {
     return countConfiguredAiFeatureDimensions(aiFeatureLevels, aiFeatureModes, chunkBars);
   }, [aiFeatureLevels, aiFeatureModes, chunkBars]);
-  const selectedAiLibraryCount = selectedAiLibraries.length;
+  const onlineLearningEnabled = selectedAiLibraries.includes("core");
+  const selectedAiLibraryCount = onlineLearningEnabled ? 1 : 0;
+  const showAdvancedLibraries = false;
   const availableAiLibraries = useMemo(() => {
     return aiLibraryDefs.filter((library) => !selectedAiLibraries.includes(library.id));
   }, [aiLibraryDefs, selectedAiLibraries]);
@@ -8882,6 +8884,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return next;
     });
   };
+
+  const toggleOnlineLearning = useCallback(() => {
+    setSelectedAiLibraries((current) => {
+      const hasCore = current.includes("core");
+      if (hasCore) {
+        return current.filter((id) => id !== "core");
+      }
+      const filtered = current.filter((id) => id !== "core");
+      return ["core", ...filtered];
+    });
+  }, []);
 
   const moveAiLibrary = (libraryId: string, direction: -1 | 1) => {
     setSelectedAiLibraries((current) => {
@@ -19055,11 +19068,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           </button>
                           <button
                             type="button"
-                            className={`ai-zip-button ${selectedAiLibraryCount > 0 ? "active" : ""}`}
+                            className={`ai-zip-button toggle ${
+                              selectedAiLibraryCount > 0 ? "active success" : ""
+                            }`}
                             disabled={aiDisabled}
                             onClick={() => setLibrariesModalOpen(true)}
                           >
-                            Libraries ({selectedAiLibraryCount})
+                            Online Learning {onlineLearningEnabled ? "· ON" : "· OFF"}
                           </button>
                           <button
                             type="button"
@@ -19644,425 +19659,453 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               </AiSettingsModal>
 
               <AiSettingsModal
-                title="LIBRARY"
-                subtitle="Available, active, and full AI.zip controls"
-                size="xwide"
+                title="ONLINE LEARNING"
+                subtitle="Toggle live nodes as neighbor candidates"
+                size="wide"
                 bodyClassName="ai-zip-library-modal-body"
                 open={librariesModalOpen}
                 onClose={() => setLibrariesModalOpen(false)}
               >
-                <div className="ai-zip-library-layout">
-                  <section className="ai-zip-library-column">
-                    <header>
-                      <strong>Available Libraries</strong>
-                      <span>Click Add to activate.</span>
-                    </header>
-                    <div className="ai-zip-library-scroll">
-                      {availableAiLibraries.length === 0 ? (
-                        <p className="ai-zip-library-empty">No more libraries available.</p>
-                      ) : (
-                        availableAiLibraries.map((library) => (
-                          <article key={library.id} className="ai-zip-library-card">
-                            <div>
-                              <h4>{library.name}</h4>
-                              <p>{library.description || "Library option."}</p>
-                            </div>
-                            <button
-                              type="button"
-                              className="ai-zip-library-action add"
-                              onClick={() => addAiLibrary(library.id)}
-                            >
-                              Add
-                            </button>
-                          </article>
-                        ))
-                      )}
-                    </div>
-                  </section>
-
-                  <section className="ai-zip-library-column">
-                    <header>
-                      <strong>Active Libraries</strong>
-                      <span>Select one to edit settings.</span>
-                    </header>
-                    <div className="ai-zip-library-scroll">
-                      {selectedAiLibraries.length === 0 ? (
-                        <p className="ai-zip-library-empty">No active libraries selected.</p>
-                      ) : (
-                        selectedAiLibraries.map((libraryId, index) => {
-                          const library = aiLibraryDefById[libraryId] ?? null;
-
-                          if (!library) {
-                            return null;
-                          }
-
-                          const isSelected = selectedAiLibraryId === libraryId;
-
-                          return (
-                            <article
-                              key={libraryId}
-                              className={`ai-zip-library-card active ${isSelected ? "selected" : ""}`}
-                              onClick={() => setSelectedAiLibraryId(libraryId)}
-                            >
+                {showAdvancedLibraries ? (
+                  <div className="ai-zip-library-layout">
+                    <section className="ai-zip-library-column">
+                      <header>
+                        <strong>Available Libraries</strong>
+                        <span>Click Add to activate.</span>
+                      </header>
+                      <div className="ai-zip-library-scroll">
+                        {availableAiLibraries.length === 0 ? (
+                          <p className="ai-zip-library-empty">No more libraries available.</p>
+                        ) : (
+                          availableAiLibraries.map((library) => (
+                            <article key={library.id} className="ai-zip-library-card">
                               <div>
                                 <h4>{library.name}</h4>
-                                <p>{library.description || "Active library option."}</p>
+                                <p>{library.description || "Library option."}</p>
                               </div>
-                              <div className="ai-zip-library-actions">
-                                <button
-                                  type="button"
-                                  className="ai-zip-library-action"
-                                  disabled={index === 0}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    moveAiLibrary(libraryId, -1);
-                                  }}
-                                  title="Move up"
-                                >
-                                  ↑
-                                </button>
-                                <button
-                                  type="button"
-                                  className="ai-zip-library-action"
-                                  disabled={index === selectedAiLibraries.length - 1}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    moveAiLibrary(libraryId, 1);
-                                  }}
-                                  title="Move down"
-                                >
-                                  ↓
-                                </button>
-                                <button
-                                  type="button"
-                                  className="ai-zip-library-action danger"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    removeAiLibrary(libraryId);
-                                  }}
-                                  title="Remove"
-                                >
-                                  ×
-                                </button>
-                              </div>
+                              <button
+                                type="button"
+                                className="ai-zip-library-action add"
+                                onClick={() => addAiLibrary(library.id)}
+                              >
+                                Add
+                              </button>
                             </article>
-                          );
-                        })
-                      )}
-                    </div>
-                  </section>
+                          ))
+                        )}
+                      </div>
+                    </section>
 
-                  <section className="ai-zip-library-column settings">
-                    <header>
-                      <strong>Settings</strong>
-                      <span>{selectedAiLibrary ? selectedAiLibrary.name : "Select an active library"}</span>
-                      {selectedAiLibrary ? (
-                        <div className="ai-zip-library-settings-meta">
-                          <span
-                            className={`ai-zip-library-status-badge ${
-                              selectedAiLibraryLoadedCount > 0 ? "loaded" : ""
-                            }`}
-                          >
-                            {selectedAiLibraryLoadedCount > 0 ? "Loaded" : "Not Loaded"}
-                          </span>
-                          <span className="ai-zip-library-neighbor-count">
-                            {selectedAiLibraryLoadedCount.toLocaleString()} neighbors
-                          </span>
-                        </div>
-                      ) : null}
-                    </header>
-                    <div className="ai-zip-library-scroll">
-                      {selectedAiLibrary && selectedAiLibraryConfig ? (
-                        <div className="ai-zip-library-detail">
-                          <div className="ai-zip-library-settings-panel">
-                            <div className="ai-zip-library-settings-title">
-                              Bulk settings (apply to many libraries)
-                            </div>
-                            <div className="ai-zip-library-settings-grid">
-                              <label className="ai-zip-library-field">
-                                <span>Scope</span>
-                                <select
-                                  value={aiBulkScope}
-                                  onChange={(event) => {
-                                    setAiBulkScope((event.target.value as "active" | "all") || "active");
-                                  }}
-                                  className="ai-zip-library-input"
-                                >
-                                  <option value="active">Active libraries only</option>
-                                  <option value="all">All libraries</option>
-                                </select>
-                              </label>
-                              <label className="ai-zip-library-field">
-                                <span>Weight (%)</span>
-                                <input
-                                  type="number"
-                                  value={aiBulkWeight}
-                                  onChange={(event) => {
-                                    setAiBulkWeight(Math.max(0, Number(event.target.value) || 0));
-                                  }}
-                                  className="ai-zip-library-input"
-                                />
-                              </label>
-                              <label className="ai-zip-library-field">
-                                <span>Stride</span>
-                                <input
-                                  type="number"
-                                  value={aiBulkStride}
-                                  onChange={(event) => {
-                                    setAiBulkStride(Math.max(0, Number(event.target.value) || 0));
-                                  }}
-                                  className="ai-zip-library-input"
-                                />
-                              </label>
-                              <label className="ai-zip-library-field">
-                                <span>Amount of Samples</span>
-                                <input
-                                  type="number"
-                                  value={aiBulkMaxSamples}
-                                  onChange={(event) => {
-                                    setAiBulkMaxSamples(Math.max(0, Number(event.target.value) || 0));
-                                  }}
-                                  className="ai-zip-library-input"
-                                />
-                              </label>
-                            </div>
-                            <button
-                              type="button"
-                              className="ai-zip-library-action primary wide"
-                              onClick={applyAiBulkLibrarySettings}
-                            >
-                              Apply to {aiBulkScope === "active" ? "active" : "all"} libraries
-                            </button>
-                          </div>
+                    <section className="ai-zip-library-column">
+                      <header>
+                        <strong>Active Libraries</strong>
+                        <span>Select one to edit settings.</span>
+                      </header>
+                      <div className="ai-zip-library-scroll">
+                        {selectedAiLibraries.length === 0 ? (
+                          <p className="ai-zip-library-empty">No active libraries selected.</p>
+                        ) : (
+                          selectedAiLibraries.map((libraryId, index) => {
+                            const library = aiLibraryDefById[libraryId] ?? null;
 
-                          {selectedAiLibrary.fields.map((field) => {
-                            const fieldValue = selectedAiLibraryConfig[field.key];
-
-                            if (field.type === "boolean") {
-                              const isEnabled = Boolean(fieldValue);
-
-                              return (
-                                <div key={field.key} className="ai-zip-library-field-block">
-                                  <div className="ai-zip-library-field-inline">
-                                    <div>
-                                      <div className="ai-zip-library-field-label">{field.label}</div>
-                                      {field.help ? (
-                                        <p className="ai-zip-library-field-help">{field.help}</p>
-                                      ) : null}
-                                    </div>
-                                    <button
-                                      type="button"
-                                      className={`ai-zip-library-action ${isEnabled ? "add" : ""}`}
-                                      onClick={() => {
-                                        updateAiLibrarySetting(
-                                          selectedAiLibrary.id,
-                                          field.key,
-                                          !isEnabled
-                                        );
-                                      }}
-                                    >
-                                      {isEnabled ? "ON" : "OFF"}
-                                    </button>
-                                  </div>
-                                </div>
-                              );
+                            if (!library) {
+                              return null;
                             }
 
-                            if (field.type === "select") {
-                              return (
-                                <label key={field.key} className="ai-zip-library-field-block">
-                                  <span className="ai-zip-library-field-label">{field.label}</span>
+                            const isSelected = selectedAiLibraryId === libraryId;
+
+                            return (
+                              <article
+                                key={libraryId}
+                                className={`ai-zip-library-card active ${isSelected ? "selected" : ""}`}
+                                onClick={() => setSelectedAiLibraryId(libraryId)}
+                              >
+                                <div>
+                                  <h4>{library.name}</h4>
+                                  <p>{library.description || "Active library option."}</p>
+                                </div>
+                                <div className="ai-zip-library-actions">
+                                  <button
+                                    type="button"
+                                    className="ai-zip-library-action"
+                                    disabled={index === 0}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      moveAiLibrary(libraryId, -1);
+                                    }}
+                                    title="Move up"
+                                  >
+                                    ↑
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="ai-zip-library-action"
+                                    disabled={index === selectedAiLibraries.length - 1}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      moveAiLibrary(libraryId, 1);
+                                    }}
+                                    title="Move down"
+                                  >
+                                    ↓
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="ai-zip-library-action danger"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      removeAiLibrary(libraryId);
+                                    }}
+                                    title="Remove"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              </article>
+                            );
+                          })
+                        )}
+                      </div>
+                    </section>
+
+                    <section className="ai-zip-library-column settings">
+                      <header>
+                        <strong>Settings</strong>
+                        <span>{selectedAiLibrary ? selectedAiLibrary.name : "Select an active library"}</span>
+                        {selectedAiLibrary ? (
+                          <div className="ai-zip-library-settings-meta">
+                            <span
+                              className={`ai-zip-library-status-badge ${
+                                selectedAiLibraryLoadedCount > 0 ? "loaded" : ""
+                              }`}
+                            >
+                              {selectedAiLibraryLoadedCount > 0 ? "Loaded" : "Not Loaded"}
+                            </span>
+                            <span className="ai-zip-library-neighbor-count">
+                              {selectedAiLibraryLoadedCount.toLocaleString()} neighbors
+                            </span>
+                          </div>
+                        ) : null}
+                      </header>
+                      <div className="ai-zip-library-scroll">
+                        {selectedAiLibrary && selectedAiLibraryConfig ? (
+                          <div className="ai-zip-library-detail">
+                            <div className="ai-zip-library-settings-panel">
+                              <div className="ai-zip-library-settings-title">
+                                Bulk settings (apply to many libraries)
+                              </div>
+                              <div className="ai-zip-library-settings-grid">
+                                <label className="ai-zip-library-field">
+                                  <span>Scope</span>
                                   <select
-                                    value={String(fieldValue ?? "")}
+                                    value={aiBulkScope}
                                     onChange={(event) => {
-                                      updateAiLibrarySetting(
-                                        selectedAiLibrary.id,
-                                        field.key,
-                                        event.target.value
-                                      );
+                                      setAiBulkScope((event.target.value as "active" | "all") || "active");
                                     }}
                                     className="ai-zip-library-input"
                                   >
-                                    {(field.options ?? []).map((option) => (
-                                      <option key={option.value} value={option.value}>
-                                        {option.label}
-                                      </option>
-                                    ))}
+                                    <option value="active">Active libraries only</option>
+                                    <option value="all">All libraries</option>
                                   </select>
-                                  {field.help ? (
-                                    <p className="ai-zip-library-field-help">{field.help}</p>
-                                  ) : null}
                                 </label>
-                              );
-                            }
-
-                            if (field.type === "text") {
-                              return (
-                                <label key={field.key} className="ai-zip-library-field-block">
-                                  <span className="ai-zip-library-field-label">{field.label}</span>
+                                <label className="ai-zip-library-field">
+                                  <span>Weight (%)</span>
                                   <input
-                                    type="text"
-                                    value={String(fieldValue ?? "")}
+                                    type="number"
+                                    value={aiBulkWeight}
                                     onChange={(event) => {
-                                      updateAiLibrarySetting(
-                                        selectedAiLibrary.id,
-                                        field.key,
-                                        event.target.value
-                                      );
+                                      setAiBulkWeight(Math.max(0, Number(event.target.value) || 0));
                                     }}
                                     className="ai-zip-library-input"
                                   />
-                                  {field.help ? (
-                                    <p className="ai-zip-library-field-help">{field.help}</p>
-                                  ) : null}
                                 </label>
-                              );
-                            }
-
-                            const min = typeof field.min === "number" ? field.min : undefined;
-                            const max = typeof field.max === "number" ? field.max : undefined;
-                            const step = typeof field.step === "number" ? field.step : 1;
-                            const parsedValue = Number(fieldValue ?? 0);
-                            const numericValue = Number.isFinite(parsedValue) ? parsedValue : 0;
-                            const isTargetWinRateField =
-                              field.key === AI_LIBRARY_TARGET_WIN_RATE_KEY;
-                            const isNaturalTargetWinRateMode =
-                              isTargetWinRateField &&
-                              selectedAiLibraryTargetWinRateMode === "natural";
-                            const displayedNumericValue = isNaturalTargetWinRateMode
-                              ? selectedAiLibraryNaturalTargetWinRate
-                              : numericValue;
-                            const canRange =
-                              min != null &&
-                              max != null &&
-                              (field.key === "maxSamples" || max - min <= 50000);
-                            const sliderPercent =
-                              min != null && max != null && max > min
-                                ? ((displayedNumericValue - min) / (max - min)) * 100
-                                : 50;
-
-                            return (
-                              <label key={field.key} className="ai-zip-library-field-block">
-                                <span className="ai-zip-library-field-label">{field.label}</span>
-                                {isTargetWinRateField ? (
-                                  <div className="ai-zip-library-actions">
-                                    <button
-                                      type="button"
-                                      className={`ai-zip-library-action ${selectedAiLibraryTargetWinRateMode === "natural" ? "primary" : ""}`}
-                                      onClick={() => {
-                                        updateAiLibrarySetting(
-                                          selectedAiLibrary.id,
-                                          AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY,
-                                          "natural"
-                                        );
-                                      }}
-                                    >
-                                      Natural
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={`ai-zip-library-action ${selectedAiLibraryTargetWinRateMode === "artificial" ? "primary" : ""}`}
-                                      onClick={() => {
-                                        updateAiLibrarySetting(
-                                          selectedAiLibrary.id,
-                                          AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY,
-                                          "artificial"
-                                        );
-                                      }}
-                                    >
-                                      Artificial
-                                    </button>
-                                  </div>
-                                ) : null}
-                                <input
-                                  type="number"
-                                  value={displayedNumericValue}
-                                  min={min}
-                                  max={max}
-                                  step={step}
-                                  disabled={isNaturalTargetWinRateMode}
-                                  onChange={(event) => {
-                                    const raw = Number(event.target.value);
-                                    const nextValue = Number.isFinite(raw) ? raw : 0;
-                                    const clampedValue =
-                                      min != null && max != null
-                                        ? clamp(nextValue, min, max)
-                                        : min != null
-                                          ? Math.max(min, nextValue)
-                                          : max != null
-                                            ? Math.min(max, nextValue)
-                                            : nextValue;
-
-                                    updateAiLibrarySetting(
-                                      selectedAiLibrary.id,
-                                      field.key,
-                                      clampedValue
-                                    );
-                                  }}
-                                  className="ai-zip-library-input"
-                                  style={
-                                    isNaturalTargetWinRateMode
-                                      ? ({
-                                          opacity: 0.55,
-                                          cursor: "not-allowed"
-                                        } as React.CSSProperties)
-                                      : undefined
-                                  }
-                                />
-                                {canRange ? (
+                                <label className="ai-zip-library-field">
+                                  <span>Stride</span>
                                   <input
-                                    type="range"
+                                    type="number"
+                                    value={aiBulkStride}
+                                    onChange={(event) => {
+                                      setAiBulkStride(Math.max(0, Number(event.target.value) || 0));
+                                    }}
+                                    className="ai-zip-library-input"
+                                  />
+                                </label>
+                                <label className="ai-zip-library-field">
+                                  <span>Amount of Samples</span>
+                                  <input
+                                    type="number"
+                                    value={aiBulkMaxSamples}
+                                    onChange={(event) => {
+                                      setAiBulkMaxSamples(Math.max(0, Number(event.target.value) || 0));
+                                    }}
+                                    className="ai-zip-library-input"
+                                  />
+                                </label>
+                              </div>
+                              <button
+                                type="button"
+                                className="ai-zip-library-action primary wide"
+                                onClick={applyAiBulkLibrarySettings}
+                              >
+                                Apply to {aiBulkScope === "active" ? "active" : "all"} libraries
+                              </button>
+                            </div>
+
+                            {selectedAiLibrary.fields.map((field) => {
+                              const fieldValue = selectedAiLibraryConfig[field.key];
+
+                              if (field.type === "boolean") {
+                                const isEnabled = Boolean(fieldValue);
+
+                                return (
+                                  <div key={field.key} className="ai-zip-library-field-block">
+                                    <div className="ai-zip-library-field-inline">
+                                      <div>
+                                        <div className="ai-zip-library-field-label">{field.label}</div>
+                                        {field.help ? (
+                                          <p className="ai-zip-library-field-help">{field.help}</p>
+                                        ) : null}
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className={`ai-zip-library-action ${isEnabled ? "add" : ""}`}
+                                        onClick={() => {
+                                          updateAiLibrarySetting(
+                                            selectedAiLibrary.id,
+                                            field.key,
+                                            !isEnabled
+                                          );
+                                        }}
+                                      >
+                                        {isEnabled ? "ON" : "OFF"}
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              }
+
+                              if (field.type === "select") {
+                                return (
+                                  <label key={field.key} className="ai-zip-library-field-block">
+                                    <span className="ai-zip-library-field-label">{field.label}</span>
+                                    <select
+                                      value={String(fieldValue ?? "")}
+                                      onChange={(event) => {
+                                        updateAiLibrarySetting(
+                                          selectedAiLibrary.id,
+                                          field.key,
+                                          event.target.value
+                                        );
+                                      }}
+                                      className="ai-zip-library-input"
+                                    >
+                                      {(field.options ?? []).map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                          {option.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    {field.help ? (
+                                      <p className="ai-zip-library-field-help">{field.help}</p>
+                                    ) : null}
+                                  </label>
+                                );
+                              }
+
+                              if (field.type === "text") {
+                                return (
+                                  <label key={field.key} className="ai-zip-library-field-block">
+                                    <span className="ai-zip-library-field-label">{field.label}</span>
+                                    <input
+                                      type="text"
+                                      value={String(fieldValue ?? "")}
+                                      onChange={(event) => {
+                                        updateAiLibrarySetting(
+                                          selectedAiLibrary.id,
+                                          field.key,
+                                          event.target.value
+                                        );
+                                      }}
+                                      className="ai-zip-library-input"
+                                    />
+                                    {field.help ? (
+                                      <p className="ai-zip-library-field-help">{field.help}</p>
+                                    ) : null}
+                                  </label>
+                                );
+                              }
+
+                              const min = typeof field.min === "number" ? field.min : undefined;
+                              const max = typeof field.max === "number" ? field.max : undefined;
+                              const step = typeof field.step === "number" ? field.step : 1;
+                              const parsedValue = Number(fieldValue ?? 0);
+                              const numericValue = Number.isFinite(parsedValue) ? parsedValue : 0;
+                              const isTargetWinRateField =
+                                field.key === AI_LIBRARY_TARGET_WIN_RATE_KEY;
+                              const isNaturalTargetWinRateMode =
+                                isTargetWinRateField &&
+                                selectedAiLibraryTargetWinRateMode === "natural";
+                              const displayedNumericValue = isNaturalTargetWinRateMode
+                                ? selectedAiLibraryNaturalTargetWinRate
+                                : numericValue;
+                              const canRange =
+                                min != null &&
+                                max != null &&
+                                (field.key === "maxSamples" || max - min <= 50000);
+                              const sliderPercent =
+                                min != null && max != null && max > min
+                                  ? ((displayedNumericValue - min) / (max - min)) * 100
+                                  : 50;
+
+                              return (
+                                <label key={field.key} className="ai-zip-library-field-block">
+                                  <span className="ai-zip-library-field-label">{field.label}</span>
+                                  {isTargetWinRateField ? (
+                                    <div className="ai-zip-library-actions">
+                                      <button
+                                        type="button"
+                                        className={`ai-zip-library-action ${selectedAiLibraryTargetWinRateMode === "natural" ? "primary" : ""}`}
+                                        onClick={() => {
+                                          updateAiLibrarySetting(
+                                            selectedAiLibrary.id,
+                                            AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY,
+                                            "natural"
+                                          );
+                                        }}
+                                      >
+                                        Natural
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className={`ai-zip-library-action ${selectedAiLibraryTargetWinRateMode === "artificial" ? "primary" : ""}`}
+                                        onClick={() => {
+                                          updateAiLibrarySetting(
+                                            selectedAiLibrary.id,
+                                            AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY,
+                                            "artificial"
+                                          );
+                                        }}
+                                      >
+                                        Artificial
+                                      </button>
+                                    </div>
+                                  ) : null}
+                                  <input
+                                    type="number"
+                                    value={displayedNumericValue}
                                     min={min}
                                     max={max}
                                     step={step}
-                                    value={displayedNumericValue}
                                     disabled={isNaturalTargetWinRateMode}
                                     onChange={(event) => {
+                                      const raw = Number(event.target.value);
+                                      const nextValue = Number.isFinite(raw) ? raw : 0;
+                                      const clampedValue =
+                                        min != null && max != null
+                                          ? clamp(nextValue, min, max)
+                                          : min != null
+                                            ? Math.max(min, nextValue)
+                                            : max != null
+                                              ? Math.min(max, nextValue)
+                                              : nextValue;
+
                                       updateAiLibrarySetting(
                                         selectedAiLibrary.id,
                                         field.key,
-                                        Number(event.target.value)
+                                        clampedValue
                                       );
                                     }}
-                                    className="backtest-slider"
+                                    className="ai-zip-library-input"
                                     style={
-                                      {
-                                        "--p": `${sliderPercent}%`,
-                                        ...(isNaturalTargetWinRateMode
-                                          ? ({
-                                              opacity: 0.4,
-                                              filter: "grayscale(0.9)",
-                                              cursor: "not-allowed"
-                                            } as React.CSSProperties)
-                                          : {})
-                                      } as React.CSSProperties
+                                      isNaturalTargetWinRateMode
+                                        ? ({
+                                            opacity: 0.55,
+                                            cursor: "not-allowed"
+                                          } as React.CSSProperties)
+                                        : undefined
                                     }
                                   />
-                                ) : null}
-                                {field.help ? (
-                                  <p className="ai-zip-library-field-help">{field.help}</p>
-                                ) : null}
-                                {isTargetWinRateField ? (
-                                  <p className="ai-zip-library-field-help">
-                                    {isNaturalTargetWinRateMode
-                                      ? selectedAiLibraryLoadedCount > 0
-                                        ? `Natural mode auto-uses ${selectedAiLibraryNaturalTargetWinRate.toFixed(
-                                            1
-                                          )}% from loaded neighbors.`
-                                        : "Natural mode locks to 50% until neighbors are loaded."
-                                      : "Artificial mode lets you set the target manually."}
-                                  </p>
-                                ) : null}
-                              </label>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <p className="ai-zip-library-empty">No library selected.</p>
-                      )}
+                                  {canRange ? (
+                                    <input
+                                      type="range"
+                                      min={min}
+                                      max={max}
+                                      step={step}
+                                      value={displayedNumericValue}
+                                      disabled={isNaturalTargetWinRateMode}
+                                      onChange={(event) => {
+                                        updateAiLibrarySetting(
+                                          selectedAiLibrary.id,
+                                          field.key,
+                                          Number(event.target.value)
+                                        );
+                                      }}
+                                      className="backtest-slider"
+                                      style={
+                                        {
+                                          "--p": `${sliderPercent}%`,
+                                          ...(isNaturalTargetWinRateMode
+                                            ? ({
+                                                opacity: 0.4,
+                                                filter: "grayscale(0.9)",
+                                                cursor: "not-allowed"
+                                              } as React.CSSProperties)
+                                            : {})
+                                        } as React.CSSProperties
+                                      }
+                                    />
+                                  ) : null}
+                                  {field.help ? (
+                                    <p className="ai-zip-library-field-help">{field.help}</p>
+                                  ) : null}
+                                  {isTargetWinRateField ? (
+                                    <p className="ai-zip-library-field-help">
+                                      {isNaturalTargetWinRateMode
+                                        ? selectedAiLibraryLoadedCount > 0
+                                          ? `Natural mode auto-uses ${selectedAiLibraryNaturalTargetWinRate.toFixed(
+                                              1
+                                            )}% from loaded neighbors.`
+                                          : "Natural mode locks to 50% until neighbors are loaded."
+                                        : "Artificial mode lets you set the target manually."}
+                                    </p>
+                                  ) : null}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="ai-zip-library-empty">No library selected.</p>
+                        )}
+                      </div>
+                    </section>
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gap: "0.75rem" }}>
+                    <div className="backtest-card" style={{ padding: "0.9rem" }}>
+                      <div className="ai-zip-section-title">Online Learning</div>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          opacity: 0.75,
+                          marginTop: 6,
+                          marginBottom: 12
+                        }}
+                      >
+                        When ON, live nodes become candidates for nearest neighbors.
+                      </div>
+                      <button
+                        type="button"
+                        className={`ai-zip-button toggle ${
+                          onlineLearningEnabled ? "active success" : ""
+                        }`}
+                        disabled={aiDisabled}
+                        onClick={toggleOnlineLearning}
+                      >
+                        Online Learning {onlineLearningEnabled ? "· ON" : "· OFF"}
+                      </button>
                     </div>
-                  </section>
-                </div>
+                  </div>
+                )}
               </AiSettingsModal>
 
               {selectedSurfaceTab === "backtest" && selectedBacktestTab === "history" ? (
@@ -20758,6 +20801,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       aiDomains={appliedBacktestSettings.selectedAiDomains}
                       kEntry={appliedBacktestSettings.kEntry}
                       knnVoteMode={appliedBacktestSettings.knnVoteMode}
+                      allowTradeNeighborFallback={appliedBacktestSettings.selectedAiLibraries.includes("core")}
                       useEntryNeighborsOnly
                       hdbDomainDistinction="conceptual"
                       hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}

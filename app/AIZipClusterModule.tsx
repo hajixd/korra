@@ -6847,6 +6847,24 @@ function drawClusterMapCanvas(
         : null;
     const selectedNodeId =
       normalizeId((selectedNodeObj as any)?.id) ?? selectedRequestedId ?? null;
+    const isBaseLibraryNode = (node: any): boolean => {
+      if (!node) return false;
+      const libKeyRaw =
+        (node as any).libId ??
+        (node as any).metaLib ??
+        (node as any).library ??
+        (node as any).metaLibrary ??
+        null;
+      const libKey = String(libKeyRaw ?? "").toLowerCase().trim();
+      if (libKey === "base") return true;
+      const idRaw = String((node as any).id ?? "").toLowerCase();
+      if (!idRaw) return false;
+      if (idRaw.startsWith("base|")) return true;
+      if (idRaw.startsWith("lib|base|")) return true;
+      return false;
+    };
+    const selectedIsBaseLibrary =
+      selectedNodeObj != null && isBaseLibraryNode(selectedNodeObj);
     const knnLinksVisible = knnLinkOpacity > 0;
     const selectionFocusActive = selectedNodeId != null;
     const knnFocusActive = knnLinksVisible && selectedNodeId != null;
@@ -7130,11 +7148,21 @@ function drawClusterMapCanvas(
             col = `rgba(110,110,110,${alpha})`;
             width = lowPowerMode ? 0.65 : 0.85;
           } else if (focusedEdge) {
-            const alpha = Math.min(0.98, 0.56 + t * 0.38);
-            const hue = 194 - t * 22;
-            const lit = 66 + t * 11;
-            col = `hsla(${hue}, 95%, ${lit}%, ${alpha})`;
-            width = (lowPowerMode ? 1.45 : 2.2) + t * (lowPowerMode ? 2 : 3.4);
+            if (selectedIsBaseLibrary && focusEdgesActive) {
+              const alpha = Math.min(0.98, 0.6 + t * 0.32);
+              const lit = 60 + t * 12;
+              col = `hsla(275, 82%, ${lit}%, ${alpha})`;
+              width =
+                (lowPowerMode ? 1.4 : 2.15) + t * (lowPowerMode ? 1.8 : 3.1);
+            } else {
+              const alpha = Math.min(0.98, 0.56 + t * 0.38);
+              const hue = 194 - t * 22;
+              const lit = 66 + t * 11;
+              col = `hsla(${hue}, 95%, ${lit}%, ${alpha})`;
+              width =
+                (lowPowerMode ? 1.45 : 2.2) +
+                t * (lowPowerMode ? 2 : 3.4);
+            }
           } else {
             const alpha = Math.min(0.94, knnLinkOpacity * (0.18 + t * 0.92));
             const width0 =
@@ -10812,6 +10840,9 @@ export function ClusterMap({
         const libIdx: number[] = [];
         const libChrono: Array<number | null> = [];
         const tradeIdx: number[] = [];
+        const candidateIdx: number[] = [];
+        const candidateChrono: Array<number | null> = [];
+        const candidateIsTrade: boolean[] = [];
         for (let i = 0; i < goodEntries.length; i += 1) {
           const k = String((goodEntries[i] as any)?.kind || "").toLowerCase();
           if (k === "library") {
@@ -10827,11 +10858,33 @@ export function ClusterMap({
             libChrono.push(
               Number.isFinite(Number(c0)) ? Number(c0) : null
             );
+            candidateIdx.push(i);
+            candidateChrono.push(
+              Number.isFinite(Number(c0)) ? Number(c0) : null
+            );
+            candidateIsTrade.push(false);
           }
-          else if (k === "trade") tradeIdx.push(i);
+          else if (k === "trade") {
+            tradeIdx.push(i);
+            if (allowTradeNeighborFallback) {
+              const tradeNode = goodEntries[i] as any;
+              const c0 =
+                nodeChronologyValue(tradeNode) ??
+                (typeof tradeNode?.signalIndex === "number"
+                  ? tradeNode.signalIndex
+                  : typeof tradeNode?.entryIndex === "number"
+                  ? tradeNode.entryIndex
+                  : null);
+              candidateIdx.push(i);
+              candidateChrono.push(
+                Number.isFinite(Number(c0)) ? Number(c0) : null
+              );
+              candidateIsTrade.push(true);
+            }
+          }
         }
 
-        if (libIdx.length > 0) {
+        if (candidateIdx.length > 0) {
           for (const ti of tradeIdx) {
             const v = stdData[ti];
             if (!Array.isArray(v)) {
@@ -10841,28 +10894,25 @@ export function ClusterMap({
 
             const tradeNode = goodEntries[ti] as any;
             const tradeChrono =
-              staticLibrariesClusters
-                ? null
-                : nodeChronologyValue(tradeNode) ??
-                  (typeof tradeNode?.signalIndex === "number"
-                    ? tradeNode.signalIndex
-                    : typeof tradeNode?.entryIndex === "number"
-                    ? tradeNode.entryIndex
-                    : null);
+              nodeChronologyValue(tradeNode) ??
+              (typeof tradeNode?.signalIndex === "number"
+                ? tradeNode.signalIndex
+                : typeof tradeNode?.entryIndex === "number"
+                ? tradeNode.entryIndex
+                : null);
 
             const nearest: Array<{ idx: number; d2: number }> = [];
-            for (let liPos = 0; liPos < libIdx.length; liPos += 1) {
-              const li = libIdx[liPos];
-              const libTime = libChrono[liPos];
-              if (
-                !staticLibrariesClusters &&
-                tradeChrono != null &&
-                libTime != null &&
-                libTime > tradeChrono
-              ) {
-                continue;
+            for (let ciPos = 0; ciPos < candidateIdx.length; ciPos += 1) {
+              const ci = candidateIdx[ciPos];
+              if (ci === ti) continue;
+              const candTime = candidateChrono[ciPos];
+              const candIsTrade = candidateIsTrade[ciPos];
+              if (tradeChrono != null && candTime != null) {
+                if (candIsTrade || !staticLibrariesClusters) {
+                  if (candTime > tradeChrono) continue;
+                }
               }
-              const u = stdData[li];
+              const u = stdData[ci];
               if (!Array.isArray(u)) continue;
               const len = Math.min(v.length, u.length);
               let d2 = 0;
@@ -10872,10 +10922,10 @@ export function ClusterMap({
               }
               if (!Number.isFinite(d2)) continue;
               if (nearest.length < neighborK) {
-                nearest.push({ idx: li, d2 });
+                nearest.push({ idx: ci, d2 });
                 nearest.sort((a, b) => b.d2 - a.d2);
               } else if (d2 < nearest[0].d2) {
-                nearest[0] = { idx: li, d2 };
+                nearest[0] = { idx: ci, d2 };
                 nearest.sort((a, b) => b.d2 - a.d2);
               }
             }
@@ -10888,22 +10938,28 @@ export function ClusterMap({
             nearest.sort((a, b) => a.d2 - b.d2);
             const neighbors = nearest
               .map((nb, rank) => {
-              const lib = goodEntries[nb.idx] as any;
+              const neighborNode = goodEntries[nb.idx] as any;
               const nodeId =
-                lib?.id ?? lib?.uid ?? lib?.metaUid ?? lib?.metaId ?? "";
+                neighborNode?.id ??
+                neighborNode?.uid ??
+                neighborNode?.metaUid ??
+                neighborNode?.metaId ??
+                "";
               if (!nodeId) {
                 return null;
               }
               const pnlVal =
-                typeof lib?.pnl === "number" ? Number(lib.pnl) : 0;
+                typeof neighborNode?.pnl === "number"
+                  ? Number(neighborNode.pnl)
+                  : 0;
               const labelVal =
-                typeof lib?.label === "number"
-                  ? Number(lib.label)
+                typeof neighborNode?.label === "number"
+                  ? Number(neighborNode.label)
                   : pnlVal >= 0
                   ? 1
                   : -1;
               const outcome =
-                lib?.result ??
+                neighborNode?.result ??
                 (labelVal > 0 ? "Win" : labelVal < 0 ? "Loss" : "");
 
               return {
@@ -10911,21 +10967,28 @@ export function ClusterMap({
                 uid: nodeId,
                 metaUid: nodeId,
                 metaId: nodeId,
-                metaLib: lib?.libId ?? lib?.metaLib ?? null,
+                metaLib: neighborNode?.libId ?? neighborNode?.metaLib ?? null,
                 d: Math.sqrt(nb.d2),
-                dir: Number(lib?.dir ?? lib?.direction ?? 0) || 0,
+                dir:
+                  Number(
+                    neighborNode?.dir ?? neighborNode?.direction ?? 0
+                  ) || 0,
                 label: labelVal,
                 metaOutcome: outcome,
                 metaPnl: pnlVal,
-                metaTime: lib?.entryTime ?? lib?.metaTime ?? null,
-                metaSession: lib?.session ?? lib?.metaSession ?? null,
+                metaTime: neighborNode?.entryTime ?? neighborNode?.metaTime ?? null,
+                metaSession:
+                  neighborNode?.session ?? neighborNode?.metaSession ?? null,
                 metaModel:
-                  lib?.entryModel ?? lib?.chunkType ?? lib?.model ?? null,
+                  neighborNode?.entryModel ??
+                  neighborNode?.chunkType ??
+                  neighborNode?.model ??
+                  null,
                 metaSuppressed: !!(
-                  lib?.metaSuppressed ?? lib?.suppressed ?? false
+                  neighborNode?.metaSuppressed ?? neighborNode?.suppressed ?? false
                 ),
                 rank: rank + 1,
-                t: lib,
+                t: neighborNode,
               };
             })
               .filter((row) => !!row);
@@ -11282,6 +11345,7 @@ export function ClusterMap({
     entryNeighborsOnly,
     staticLibrariesClusters,
     kEntry,
+    allowTradeNeighborFallback,
   ]);
 
   const tradeNodeByUidAll = useMemo(() => {
@@ -15063,7 +15127,9 @@ export function ClusterMap({
               if (!resolvedId) return null;
               if (!hitNode) return null;
               const kind = String((hitNode as any)?.kind || "").toLowerCase();
-              if (kind !== "library") return null;
+              const allowLive =
+                !!allowTradeNeighborFallback && kind === "trade";
+              if (kind !== "library" && !allowLive) return null;
             }
             const tr = (nb as any)?.t ?? null;
             let displayId = hitNode
