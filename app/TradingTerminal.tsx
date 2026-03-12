@@ -2159,6 +2159,7 @@ type AiLibraryField = {
 
 type AiLibrarySettingValue = boolean | number | string;
 type AiLibrarySettings = Record<string, Record<string, AiLibrarySettingValue>>;
+type AiLibraryRunStatus = "idle" | "loading" | "ready" | "error";
 
 type AiLibraryDef = {
   id: string;
@@ -2841,6 +2842,12 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     ]
   }
 ];
+
+const BASE_SEEDING_LIBRARY_IDS = new Set(["base", "tokyo", "sydney", "london", "newyork"]);
+
+const isBaseSeedingLibraryId = (libraryId: string): boolean => {
+  return BASE_SEEDING_LIBRARY_IDS.has(libraryId.toLowerCase());
+};
 
 const slugAiLibraryId = (value: string): string => {
   return value
@@ -7677,6 +7684,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [selectedAiLibrarySettings, setSelectedAiLibrarySettings] = useState<AiLibrarySettings>(() => {
     return buildDefaultAiLibrarySettings(aiLibraryDefs);
   });
+  const [aiLibraryRunStatus, setAiLibraryRunStatus] = useState<Record<string, AiLibraryRunStatus>>({});
+  const [aiLibraryCounts, setAiLibraryCounts] = useState<Record<string, number>>({});
+  const [aiLibraryBaselineWinRates, setAiLibraryBaselineWinRates] = useState<Record<string, number>>({});
+  const [aiLibraryPoints, setAiLibraryPoints] = useState<any[]>([]);
+  const aiLibraryPointsByIdRef = useRef<Record<string, any[]>>({});
+  const aiLibraryPoolCacheRef = useRef<Map<string, HistoryItem[]>>(new Map());
+  const aiLibraryPoolInFlightRef = useRef<Map<string, Promise<HistoryItem[]>>>(new Map());
+  const aiLibraryRunTokenRef = useRef<Record<string, number>>({});
   const [aiBulkScope, setAiBulkScope] = useState<"active" | "all">("active");
   const [aiBulkWeight, setAiBulkWeight] = useState(100);
   const [aiBulkStride, setAiBulkStride] = useState(0);
@@ -11334,6 +11349,70 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     tradeBlueprints
   ]);
 
+  const libraryTradeBlueprints = useMemo(() => {
+    return deterministicTradeBlueprints;
+  }, [deterministicTradeBlueprints]);
+
+  const libraryHistorySeriesBySymbol = useMemo(() => {
+    const next: Record<string, Candle[]> = {};
+
+    for (const blueprint of libraryTradeBlueprints) {
+      if (next[blueprint.symbol]) {
+        continue;
+      }
+
+      const key = symbolTimeframeKey(blueprint.symbol, appliedBacktestSettings.timeframe);
+      next[blueprint.symbol] = backtestSeriesMap[key] ?? seriesMap[key] ?? EMPTY_CANDLES;
+    }
+
+    return next;
+  }, [
+    appliedBacktestSettings.timeframe,
+    backtestSeriesMap,
+    libraryTradeBlueprints,
+    seriesMap
+  ]);
+
+  const libraryOneMinuteCandlesBySymbol = useMemo(() => {
+    if (appliedBacktestSettings.timeframe === "1m") {
+      return {};
+    }
+
+    const next: Record<string, Candle[]> = {};
+
+    for (const blueprint of libraryTradeBlueprints) {
+      if (next[blueprint.symbol]) {
+        continue;
+      }
+
+      const key = symbolTimeframeKey(blueprint.symbol, "1m");
+      const candles = backtestOneMinuteSeriesMap[key] ?? EMPTY_CANDLES;
+
+      if (candles.length > 0) {
+        next[blueprint.symbol] = candles;
+      }
+    }
+
+    return next;
+  }, [
+    appliedBacktestSettings.timeframe,
+    backtestOneMinuteSeriesMap,
+    libraryTradeBlueprints
+  ]);
+
+  const libraryModelNamesById = useMemo(() => {
+    const modelNamesById: Record<string, string> = {};
+
+    for (const blueprint of libraryTradeBlueprints) {
+      if (!modelNamesById[blueprint.modelId]) {
+        modelNamesById[blueprint.modelId] =
+          modelProfileById[blueprint.modelId]?.name ?? "Settings";
+      }
+    }
+
+    return modelNamesById;
+  }, [libraryTradeBlueprints, modelProfileById]);
+
   tradeBlueprintsRef.current = tradeBlueprints;
   backtestHistorySeriesBySymbolRef.current = backtestHistorySeriesBySymbol;
   backtestOneMinuteCandlesBySymbolRef.current = backtestOneMinuteCandlesBySymbol;
@@ -14306,10 +14385,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       isClusterBacktestTabActive ||
       (deferredBacktestTab === "mainStats" && appliedBacktestSettings.aiMode !== "off")
     );
-  const shouldComputeAiLibraryInsights =
-    selectedSurfaceTab === "settings" ||
-    (isBacktestAnalyticsVisible &&
-      (deferredBacktestTab === "mainSettings" || deferredBacktestTab === "cluster" || librariesModalOpen));
   const isBacktestTabDataPending = selectedBacktestTab !== deferredBacktestTab;
   const isBacktestTabHistoryPending = backtestHasRun && !backtestHistorySeedReady;
   const shouldShowBacktestInlineLoader =
@@ -14489,113 +14564,265 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       // Copy-trade hydration is additive only; ignore storage failures.
     }
   }, [copytradeDashboardSeed]);
+  const aiLibraryReadyToRun =
+    backtestHasRun &&
+    backtestHistorySeedReady &&
+    libraryTradeBlueprints.length > 0;
 
-  const useLiveLibrarySettings =
-    selectedSurfaceTab === "settings" ||
-    (selectedSurfaceTab === "backtest" && selectedBacktestTab === "mainSettings");
-  const aiLibraryInsights = useMemo(() => {
-    if (!shouldComputeAiLibraryInsights) {
-      return {
-        counts: {} as Record<string, number>,
-        baselineWinRates: {} as Record<string, number>,
-        points: [] as any[]
-      };
-    }
-
-    if (!backtestHasRun || !backtestHistorySeedReady) {
-      return {
-        counts: {} as Record<string, number>,
-        baselineWinRates: {} as Record<string, number>,
-        points: [] as any[]
-      };
-    }
-
-    const libraryAiMode = useLiveLibrarySettings
-      ? aiMode
-      : appliedBacktestSettings.aiMode;
-    if (libraryAiMode === "off") {
-      return {
-        counts: {} as Record<string, number>,
-        baselineWinRates: {} as Record<string, number>,
-        points: [] as any[]
-      };
-    }
-
-    const librarySelectedAiLibraries = useLiveLibrarySettings
-      ? selectedAiLibraries
-      : appliedBacktestSettings.selectedAiLibraries;
-    const librarySelectedAiLibrarySettings = useLiveLibrarySettings
-      ? selectedAiLibrarySettings
-      : appliedBacktestSettings.selectedAiLibrarySettings;
-    const libraryAntiCheatEnabled = useLiveLibrarySettings
-      ? antiCheatEnabled
-      : appliedBacktestSettings.antiCheatEnabled;
-    const libraryValidationMode = useLiveLibrarySettings
-      ? validationMode
-      : appliedBacktestSettings.validationMode;
-
-    const activeLibraryDefs =
-      (librarySelectedAiLibraries.length > 0
-        ? librarySelectedAiLibraries
-        : ["core"])
-        .map((libraryId) => aiLibraryDefById[libraryId])
-        .filter((definition): definition is AiLibraryDef => Boolean(definition));
-
-    if (activeLibraryDefs.length === 0) {
-      return {
-        counts: {} as Record<string, number>,
-        baselineWinRates: {} as Record<string, number>,
-        points: [] as any[]
-      };
-    }
-
-    const executedTradeIds = new Set(backtestTrades.map((trade) => trade.id));
-    const usesSplitValidation =
-      libraryAntiCheatEnabled &&
-      libraryValidationMode === "split";
-    const libraryPoolSource = usesSplitValidation
-      ? backtestLibraryCandidateTrades.length > 0
-        ? backtestLibraryCandidateTrades
-        : sharedLibraryCandidateTrades.length > 0
-          ? sharedLibraryCandidateTrades
-          : backtestTimeFilteredTrades
-      : sharedLibraryCandidateTrades.length > 0
-        ? sharedLibraryCandidateTrades
-        : backtestTimeFilteredTrades;
-    const suppressedTradePool = libraryPoolSource.filter((trade) => !executedTradeIds.has(trade.id));
-    // Keep library construction mode-agnostic: AI Filter vs AI Model should not
-    // change which historical neighbor pool is loaded, only when confidence is checked.
-    const libraryCandidatePool = libraryPoolSource;
-    const maxSignalIndex = Math.max(0, selectedChartCandles.length - 1);
-
-    const getSettings = (definition: AiLibraryDef) => {
+  const resolveLibrarySettingsSnapshot = useCallback(
+    (definition: AiLibraryDef, source?: AiLibrarySettings) => {
+      const settingsSource = source ?? selectedAiLibrarySettings;
       return {
         ...definition.defaults,
-        ...(librarySelectedAiLibrarySettings[definition.id] ?? {})
+        ...(settingsSource[definition.id] ?? {})
       };
-    };
+    },
+    [selectedAiLibrarySettings]
+  );
 
-    const getStride = (definition: AiLibraryDef) => {
+  const resolveLibraryDollarValue = useCallback(
+    (value: AiLibrarySettingValue | undefined, fallback: number) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return fallback;
+      }
+      return parsed;
+    },
+    []
+  );
+
+  const buildLibraryPoolKey = useCallback(
+    (tpDollars: number, slDollars: number) => {
+      const normalizedTp = Math.round(Number(tpDollars) || 0);
+      const normalizedSl = Math.round(Number(slDollars) || 0);
+
+      return [
+        `run:${backtestRunCount}`,
+        `tf:${appliedBacktestSettings.timeframe}`,
+        `sym:${appliedBacktestSettings.symbol}`,
+        `tp:${normalizedTp}`,
+        `sl:${normalizedSl}`,
+        `stop:${appliedBacktestSettings.stopMode}`,
+        `be:${appliedBacktestSettings.breakEvenTriggerPct}`,
+        `ts:${appliedBacktestSettings.trailingStartPct}`,
+        `td:${appliedBacktestSettings.trailingDistPct}`,
+        `mp:${appliedBacktestSettings.minutePreciseEnabled ? 1 : 0}`,
+        `bp:${libraryTradeBlueprints.length}`
+      ].join("|");
+    },
+    [
+      appliedBacktestSettings.breakEvenTriggerPct,
+      appliedBacktestSettings.minutePreciseEnabled,
+      appliedBacktestSettings.stopMode,
+      appliedBacktestSettings.symbol,
+      appliedBacktestSettings.timeframe,
+      appliedBacktestSettings.trailingDistPct,
+      appliedBacktestSettings.trailingStartPct,
+      backtestRunCount,
+      libraryTradeBlueprints.length
+    ]
+  );
+
+  const loadLibraryTradePool = useCallback(
+    async (tpDollars: number, slDollars: number): Promise<HistoryItem[]> => {
+      if (!aiLibraryReadyToRun) {
+        return [];
+      }
+
+      if (libraryTradeBlueprints.length === 0) {
+        return [];
+      }
+
+      const hasCandles = Object.values(libraryHistorySeriesBySymbol).some(
+        (candles) => candles.length > 0
+      );
+      if (!hasCandles) {
+        return [];
+      }
+
+      const normalizedTp = Number.isFinite(tpDollars) ? tpDollars : 0;
+      const normalizedSl = Number.isFinite(slDollars) ? slDollars : 0;
+      const poolKey = buildLibraryPoolKey(normalizedTp, normalizedSl);
+      const cached = aiLibraryPoolCacheRef.current.get(poolKey);
+      if (cached) {
+        return cached;
+      }
+
+      const inFlight = aiLibraryPoolInFlightRef.current.get(poolKey);
+      if (inFlight) {
+        return inFlight;
+      }
+
+      const computePromise = computeBacktestRowsOnServer({
+        blueprints: libraryTradeBlueprints,
+        candleSeriesBySymbol: libraryHistorySeriesBySymbol,
+        oneMinuteCandlesBySymbol:
+          appliedBacktestSettings.timeframe === "1m"
+            ? undefined
+            : libraryOneMinuteCandlesBySymbol,
+        minutePreciseEnabled: appliedBacktestSettings.minutePreciseEnabled,
+        modelNamesById: libraryModelNamesById,
+        tpDollars: normalizedTp,
+        slDollars: normalizedSl,
+        stopMode: appliedBacktestSettings.stopMode,
+        breakEvenTriggerPct: appliedBacktestSettings.breakEvenTriggerPct,
+        trailingStartPct: appliedBacktestSettings.trailingStartPct,
+        trailingDistPct: appliedBacktestSettings.trailingDistPct,
+        limit: libraryTradeBlueprints.length
+      })
+        .then((rows) => {
+          const ordered = [...rows].sort(
+            (left, right) =>
+              Number(left.exitTime) - Number(right.exitTime) ||
+              left.id.localeCompare(right.id)
+          );
+          aiLibraryPoolCacheRef.current.set(poolKey, ordered);
+          return ordered;
+        })
+        .finally(() => {
+          aiLibraryPoolInFlightRef.current.delete(poolKey);
+        });
+
+      aiLibraryPoolInFlightRef.current.set(poolKey, computePromise);
+
+      return computePromise;
+    },
+    [
+      aiLibraryReadyToRun,
+      appliedBacktestSettings.breakEvenTriggerPct,
+      appliedBacktestSettings.minutePreciseEnabled,
+      appliedBacktestSettings.stopMode,
+      appliedBacktestSettings.timeframe,
+      appliedBacktestSettings.trailingDistPct,
+      appliedBacktestSettings.trailingStartPct,
+      buildLibraryPoolKey,
+      libraryHistorySeriesBySymbol,
+      libraryModelNamesById,
+      libraryOneMinuteCandlesBySymbol,
+      libraryTradeBlueprints
+    ]
+  );
+
+  const filterLibraryCandidatePool = useCallback(
+    (pool: HistoryItem[]) => {
+      const dateFiltered = filterTradesByDateRange(
+        pool,
+        appliedBacktestSettings.statsDateStart,
+        appliedBacktestSettings.statsDateEnd
+      );
+
+      return filterTradesBySessionBuckets(dateFiltered, {
+        enabledBacktestWeekdays: appliedBacktestSettings.enabledBacktestWeekdays,
+        enabledBacktestSessions: appliedBacktestSettings.enabledBacktestSessions,
+        enabledBacktestMonths: appliedBacktestSettings.enabledBacktestMonths,
+        enabledBacktestHours: appliedBacktestSettings.enabledBacktestHours
+      });
+    },
+    [
+      appliedBacktestSettings.enabledBacktestHours,
+      appliedBacktestSettings.enabledBacktestMonths,
+      appliedBacktestSettings.enabledBacktestSessions,
+      appliedBacktestSettings.enabledBacktestWeekdays,
+      appliedBacktestSettings.statsDateEnd,
+      appliedBacktestSettings.statsDateStart
+    ]
+  );
+
+  const buildLibraryExecutedTradeIds = useCallback(
+    (pool: HistoryItem[]) => {
+      if (appliedConfidenceGateDisabled) {
+        return new Set(pool.map((trade) => trade.id));
+      }
+
+      const ids = new Set<string>();
+      for (const trade of pool) {
+        if (getTradeConfidenceScore(trade) * 100 >= appliedEffectiveConfidenceThreshold) {
+          ids.add(trade.id);
+        }
+      }
+      return ids;
+    },
+    [appliedConfidenceGateDisabled, appliedEffectiveConfidenceThreshold]
+  );
+
+  const applyLibraryJumpToResolution = useCallback((pool: HistoryItem[]) => {
+    if (pool.length <= 1) {
+      return pool;
+    }
+
+    const ordered = [...pool].sort(
+      (left, right) =>
+        Number(left.entryTime) - Number(right.entryTime) ||
+        Number(left.exitTime) - Number(right.exitTime) ||
+        left.id.localeCompare(right.id)
+    );
+    const selected: HistoryItem[] = [];
+    let lastExit = Number.NEGATIVE_INFINITY;
+
+    for (const trade of ordered) {
+      const entrySec = Number(trade.entryTime);
+      const exitSec = Number(trade.exitTime);
+
+      if (!Number.isFinite(entrySec) || !Number.isFinite(exitSec)) {
+        continue;
+      }
+
+      if (entrySec < lastExit) {
+        continue;
+      }
+
+      selected.push(trade);
+      lastExit = exitSec;
+    }
+
+    return selected;
+  }, []);
+
+  const maxLibrarySignalIndex = Math.max(0, selectedChartCandles.length - 1);
+
+  const resolveLibrarySignalIndex = useCallback(
+    (trade: HistoryItem, ordinal: number, total: number) => {
+      const entryIndex = candleIndexByUnix.get(Number(trade.entryTime));
+      if (typeof entryIndex === "number") {
+        return clamp(entryIndex, 0, maxLibrarySignalIndex);
+      }
+      const exitIndex = candleIndexByUnix.get(Number(trade.exitTime));
+      if (typeof exitIndex === "number") {
+        return clamp(exitIndex, 0, maxLibrarySignalIndex);
+      }
+      if (maxLibrarySignalIndex <= 0 || total <= 1) {
+        return 0;
+      }
       return clamp(
-        Math.floor(Number(getSettings(definition).stride ?? 0) || 0),
+        Math.round((ordinal / Math.max(1, total - 1)) * maxLibrarySignalIndex),
+        0,
+        maxLibrarySignalIndex
+      );
+    },
+    [candleIndexByUnix, maxLibrarySignalIndex]
+  );
+
+  const buildLibrarySnapshotFromPool = useCallback(
+    (
+      definition: AiLibraryDef,
+      settings: Record<string, AiLibrarySettingValue>,
+      libraryCandidatePool: HistoryItem[],
+      executedTradeIds: Set<string>
+    ) => {
+      const normalizedId = definition.id.toLowerCase();
+      const stride = clamp(
+        Math.floor(Number(settings.stride ?? 0) || 0),
         0,
         5000
       );
-    };
-
-    const getMaxSamples = (definition: AiLibraryDef, fallback: number) => {
-      return clamp(
-        Math.floor(Number(getSettings(definition).maxSamples ?? fallback) || fallback),
+      const maxSamples = clamp(
+        Math.floor(Number(settings.maxSamples ?? 96) || 96),
         0,
         100000
       );
-    };
-
-    const buildRawSource = (definition: AiLibraryDef) => {
-      const settings = getSettings(definition);
-      const normalizedId = definition.id.toLowerCase();
-      const maxSamples = getMaxSamples(definition, 96);
-      const stride = getStride(definition);
+      const suppressedTradePool = libraryCandidatePool.filter(
+        (trade) => !executedTradeIds.has(trade.id)
+      );
       let source: HistoryItem[] = [];
 
       if (normalizedId === "core") {
@@ -14624,30 +14851,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 endIndex: libraryCandidatePool.length
               })
             : [];
-      } else if (normalizedId === "tokyo") {
-        source = collectCappedItems(libraryCandidatePool, {
-          cap: maxSamples,
-          stride,
-          predicate: (trade) => getSessionLabel(trade.entryTime) === "Tokyo"
-        });
-      } else if (normalizedId === "sydney") {
-        source = collectCappedItems(libraryCandidatePool, {
-          cap: maxSamples,
-          stride,
-          predicate: (trade) => getSessionLabel(trade.entryTime) === "Sydney"
-        });
-      } else if (normalizedId === "london") {
-        source = collectCappedItems(libraryCandidatePool, {
-          cap: maxSamples,
-          stride,
-          predicate: (trade) => getSessionLabel(trade.entryTime) === "London"
-        });
-      } else if (normalizedId === "newyork") {
-        source = collectCappedItems(libraryCandidatePool, {
-          cap: maxSamples,
-          stride,
-          predicate: (trade) => getSessionLabel(trade.entryTime) === "New York"
-        });
       } else if (normalizedId === "terrific") {
         const count = clamp(
           Math.floor(Number(settings.count ?? 96) || 96),
@@ -14683,6 +14886,31 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           stride,
           predicate: (trade) => trade.entrySource === targetModel
         });
+      } else if (isBaseSeedingLibraryId(normalizedId)) {
+        const sessionFilter =
+          normalizedId === "tokyo"
+            ? "Tokyo"
+            : normalizedId === "sydney"
+            ? "Sydney"
+            : normalizedId === "london"
+            ? "London"
+            : normalizedId === "newyork"
+            ? "New York"
+            : null;
+        let baseSource = sessionFilter
+          ? libraryCandidatePool.filter(
+              (trade) => getSessionLabel(trade.entryTime) === sessionFilter
+            )
+          : libraryCandidatePool;
+
+        if (Boolean(settings.jumpToResolution)) {
+          baseSource = applyLibraryJumpToResolution(baseSource);
+        }
+
+        source = collectCappedItems(baseSource, {
+          cap: maxSamples,
+          stride
+        });
       } else {
         source = collectCappedItems(libraryCandidatePool, {
           cap: maxSamples,
@@ -14690,15 +14918,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         });
       }
 
-      return source;
-    };
-
-    const baselineWinRates: Record<string, number> = {};
-    const counts: Record<string, number> = {};
-    const balancedByLibrary: Record<string, HistoryItem[]> = {};
-    for (const definition of activeLibraryDefs) {
-      const source = buildRawSource(definition);
-      const settings = getSettings(definition);
       const baselineWinRate = getOutcomeWinRatePercent(
         source,
         (trade) => trade.result === "Win"
@@ -14708,7 +14927,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         baselineWinRate,
         source.length
       );
-      const maxSamples = getMaxSamples(definition, 96);
       const balanced = rebalanceItemsToTargetWinRate(
         source,
         maxSamples,
@@ -14717,53 +14935,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         definition.id === "terrific" || definition.id === "terrible"
       );
 
-      baselineWinRates[definition.id] = baselineWinRate;
-      counts[definition.id] = balanced.length;
-      balancedByLibrary[definition.id] = balanced;
-    }
+      const points: any[] = [];
 
-    if (!isClusterBacktestTabActive) {
-      return {
-        counts,
-        baselineWinRates,
-        points: [] as any[]
-      };
-    }
-
-    const resolveSignalIndex = (trade: HistoryItem, ordinal: number, total: number) => {
-      const entryIndex = candleIndexByUnix.get(Number(trade.entryTime));
-      if (typeof entryIndex === "number") {
-        return clamp(entryIndex, 0, maxSignalIndex);
-      }
-      const exitIndex = candleIndexByUnix.get(Number(trade.exitTime));
-      if (typeof exitIndex === "number") {
-        return clamp(exitIndex, 0, maxSignalIndex);
-      }
-      if (maxSignalIndex <= 0 || total <= 1) {
-        return 0;
-      }
-      return clamp(
-        Math.round((ordinal / Math.max(1, total - 1)) * maxSignalIndex),
-        0,
-        maxSignalIndex
-      );
-    };
-
-    const points: any[] = [];
-
-    for (const definition of activeLibraryDefs) {
-      const source = balancedByLibrary[definition.id] ?? [];
-      if (source.length === 0) {
-        continue;
-      }
-
-      for (let sourceIndex = 0; sourceIndex < source.length; sourceIndex += 1) {
-        const trade = source[sourceIndex]!;
+      for (let sourceIndex = 0; sourceIndex < balanced.length; sourceIndex += 1) {
+        const trade = balanced[sourceIndex]!;
         const modelName = trade.entrySource.trim() || "Momentum";
-        const signalIndex = resolveSignalIndex(trade, sourceIndex, source.length);
+        const signalIndex = resolveLibrarySignalIndex(
+          trade,
+          sourceIndex,
+          balanced.length
+        );
         const entryTimeRaw = Number(trade.entryTime);
         const entryTime =
-          Number.isFinite(entryTimeRaw) && entryTimeRaw > 0 ? entryTimeRaw : trade.entryAt || trade.time;
+          Number.isFinite(entryTimeRaw) && entryTimeRaw > 0
+            ? entryTimeRaw
+            : trade.entryAt || trade.time;
         const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
         const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
         const holdMinutes = Math.max(1, Number(trade.exitTime) - Number(trade.entryTime));
@@ -14797,43 +14983,286 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           metaTrainingOnly: true
         });
       }
+
+      return {
+        baselineWinRate,
+        count: balanced.length,
+        points
+      };
+    },
+    [applyLibraryJumpToResolution, resolveLibrarySignalIndex]
+  );
+
+  const runAiLibrary = useCallback(
+    async (libraryId: string, settingsSource?: AiLibrarySettings) => {
+      const definition = aiLibraryDefById[libraryId];
+
+      if (!definition) {
+        return;
+      }
+
+      const runToken = (aiLibraryRunTokenRef.current[libraryId] ?? 0) + 1;
+      aiLibraryRunTokenRef.current[libraryId] = runToken;
+
+      setAiLibraryRunStatus((current) => ({
+        ...current,
+        [libraryId]: "loading"
+      }));
+
+      if (!aiLibraryReadyToRun) {
+        setAiLibraryRunStatus((current) => ({
+          ...current,
+          [libraryId]: "error"
+        }));
+        return;
+      }
+
+      try {
+        const settings = resolveLibrarySettingsSnapshot(definition, settingsSource);
+        const useBase = isBaseSeedingLibraryId(definition.id);
+        const tpDollars = useBase
+          ? resolveLibraryDollarValue(settings.tpDollars, appliedBacktestSettings.tpDollars)
+          : appliedBacktestSettings.tpDollars;
+        const slDollars = useBase
+          ? resolveLibraryDollarValue(settings.slDollars, appliedBacktestSettings.slDollars)
+          : appliedBacktestSettings.slDollars;
+
+        const rawPool = await loadLibraryTradePool(tpDollars, slDollars);
+        if (aiLibraryRunTokenRef.current[libraryId] !== runToken) {
+          return;
+        }
+        const candidatePool = filterLibraryCandidatePool(rawPool);
+        const executedTradeIds = buildLibraryExecutedTradeIds(candidatePool);
+        const result = buildLibrarySnapshotFromPool(
+          definition,
+          settings,
+          candidatePool,
+          executedTradeIds
+        );
+
+        if (aiLibraryRunTokenRef.current[libraryId] !== runToken) {
+          return;
+        }
+
+        aiLibraryPointsByIdRef.current = {
+          ...aiLibraryPointsByIdRef.current,
+          [libraryId]: result.points
+        };
+        setAiLibraryPoints(Object.values(aiLibraryPointsByIdRef.current).flat());
+        setAiLibraryCounts((current) => ({
+          ...current,
+          [libraryId]: result.count
+        }));
+        setAiLibraryBaselineWinRates((current) => ({
+          ...current,
+          [libraryId]: result.baselineWinRate
+        }));
+        setAiLibraryRunStatus((current) => ({
+          ...current,
+          [libraryId]: "ready"
+        }));
+      } catch {
+        if (aiLibraryRunTokenRef.current[libraryId] !== runToken) {
+          return;
+        }
+        setAiLibraryRunStatus((current) => ({
+          ...current,
+          [libraryId]: "error"
+        }));
+      }
+    },
+    [
+      aiLibraryDefById,
+      aiLibraryReadyToRun,
+      appliedBacktestSettings.slDollars,
+      appliedBacktestSettings.tpDollars,
+      buildLibraryExecutedTradeIds,
+      buildLibrarySnapshotFromPool,
+      filterLibraryCandidatePool,
+      loadLibraryTradePool,
+      resolveLibraryDollarValue,
+      resolveLibrarySettingsSnapshot
+    ]
+  );
+
+  const runAllActiveLibraries = useCallback(
+    async (options?: { libraryIds?: string[]; settingsSource?: AiLibrarySettings }) => {
+      const sourceIds =
+        options?.libraryIds && options.libraryIds.length > 0
+          ? options.libraryIds
+          : selectedAiLibraries.length > 0
+          ? selectedAiLibraries
+          : ["core"];
+      const activeIds = sourceIds.filter((libraryId) => Boolean(aiLibraryDefById[libraryId]));
+
+      if (activeIds.length === 0) {
+        return;
+      }
+
+      const settingsSource = options?.settingsSource ?? selectedAiLibrarySettings;
+      const nextStatus: Record<string, AiLibraryRunStatus> = {};
+      const runTokens = new Map<string, number>();
+
+      for (const libraryId of activeIds) {
+        const nextToken = (aiLibraryRunTokenRef.current[libraryId] ?? 0) + 1;
+        aiLibraryRunTokenRef.current[libraryId] = nextToken;
+        runTokens.set(libraryId, nextToken);
+        nextStatus[libraryId] = "loading";
+      }
+
+      setAiLibraryRunStatus((current) => ({ ...current, ...nextStatus }));
+
+      if (!aiLibraryReadyToRun) {
+        setAiLibraryRunStatus((current) => {
+          const updated = { ...current };
+          for (const libraryId of activeIds) {
+            updated[libraryId] = "error";
+          }
+          return updated;
+        });
+        return;
+      }
+
+      const poolParamsByKey = new Map<string, { tpDollars: number; slDollars: number }>();
+      const poolKeyByLibraryId = new Map<string, string>();
+      const settingsByLibraryId = new Map<string, Record<string, AiLibrarySettingValue>>();
+
+      for (const libraryId of activeIds) {
+        const definition = aiLibraryDefById[libraryId];
+        if (!definition) {
+          continue;
+        }
+        const settings = resolveLibrarySettingsSnapshot(definition, settingsSource);
+        settingsByLibraryId.set(libraryId, settings);
+
+        const useBase = isBaseSeedingLibraryId(definition.id);
+        const tpDollars = useBase
+          ? resolveLibraryDollarValue(settings.tpDollars, appliedBacktestSettings.tpDollars)
+          : appliedBacktestSettings.tpDollars;
+        const slDollars = useBase
+          ? resolveLibraryDollarValue(settings.slDollars, appliedBacktestSettings.slDollars)
+          : appliedBacktestSettings.slDollars;
+
+        const poolKey = buildLibraryPoolKey(tpDollars, slDollars);
+        poolKeyByLibraryId.set(libraryId, poolKey);
+        if (!poolParamsByKey.has(poolKey)) {
+          poolParamsByKey.set(poolKey, { tpDollars, slDollars });
+        }
+      }
+
+      const poolSnapshots = new Map<
+        string,
+        { pool: HistoryItem[]; executedTradeIds: Set<string> }
+      >();
+      const poolErrors = new Set<string>();
+
+      for (const [poolKey, params] of poolParamsByKey.entries()) {
+        try {
+          const rawPool = await loadLibraryTradePool(params.tpDollars, params.slDollars);
+          const candidatePool = filterLibraryCandidatePool(rawPool);
+          const executedTradeIds = buildLibraryExecutedTradeIds(candidatePool);
+          poolSnapshots.set(poolKey, {
+            pool: candidatePool,
+            executedTradeIds
+          });
+        } catch {
+          poolErrors.add(poolKey);
+        }
+      }
+
+      const countsUpdate: Record<string, number> = {};
+      const baselineUpdate: Record<string, number> = {};
+      const statusUpdate: Record<string, AiLibraryRunStatus> = {};
+      const nextPointsById = { ...aiLibraryPointsByIdRef.current };
+
+      for (const libraryId of activeIds) {
+        const token = runTokens.get(libraryId);
+        if (!token || aiLibraryRunTokenRef.current[libraryId] !== token) {
+          continue;
+        }
+
+        const definition = aiLibraryDefById[libraryId];
+        const settings = settingsByLibraryId.get(libraryId);
+        const poolKey = poolKeyByLibraryId.get(libraryId);
+
+        if (!definition || !settings || !poolKey) {
+          statusUpdate[libraryId] = "error";
+          continue;
+        }
+
+        if (poolErrors.has(poolKey)) {
+          statusUpdate[libraryId] = "error";
+          continue;
+        }
+
+        const poolSnapshot = poolSnapshots.get(poolKey);
+        if (!poolSnapshot) {
+          statusUpdate[libraryId] = "error";
+          continue;
+        }
+
+        const result = buildLibrarySnapshotFromPool(
+          definition,
+          settings,
+          poolSnapshot.pool,
+          poolSnapshot.executedTradeIds
+        );
+
+        countsUpdate[libraryId] = result.count;
+        baselineUpdate[libraryId] = result.baselineWinRate;
+        nextPointsById[libraryId] = result.points;
+        statusUpdate[libraryId] = "ready";
+      }
+
+      aiLibraryPointsByIdRef.current = nextPointsById;
+      setAiLibraryPoints(Object.values(nextPointsById).flat());
+      if (Object.keys(countsUpdate).length > 0) {
+        setAiLibraryCounts((current) => ({ ...current, ...countsUpdate }));
+      }
+      if (Object.keys(baselineUpdate).length > 0) {
+        setAiLibraryBaselineWinRates((current) => ({ ...current, ...baselineUpdate }));
+      }
+      if (Object.keys(statusUpdate).length > 0) {
+        setAiLibraryRunStatus((current) => ({ ...current, ...statusUpdate }));
+      }
+    },
+    [
+      aiLibraryDefById,
+      aiLibraryReadyToRun,
+      appliedBacktestSettings.slDollars,
+      appliedBacktestSettings.tpDollars,
+      buildLibraryExecutedTradeIds,
+      buildLibraryPoolKey,
+      buildLibrarySnapshotFromPool,
+      filterLibraryCandidatePool,
+      loadLibraryTradePool,
+      resolveLibraryDollarValue,
+      resolveLibrarySettingsSnapshot,
+      selectedAiLibraries,
+      selectedAiLibrarySettings
+    ]
+  );
+
+  const runAllLibrariesRef = useRef(runAllActiveLibraries);
+  useEffect(() => {
+    runAllLibrariesRef.current = runAllActiveLibraries;
+  }, [runAllActiveLibraries]);
+
+  useEffect(() => {
+    if (!aiLibraryReadyToRun) {
+      return;
     }
 
-    return {
-      counts,
-      baselineWinRates,
-      points
-    };
+    runAllLibrariesRef.current({
+      libraryIds: appliedBacktestSettings.selectedAiLibraries,
+      settingsSource: appliedBacktestSettings.selectedAiLibrarySettings
+    });
   }, [
-    backtestHasRun,
-    backtestHistorySeedReady,
-    aiMode,
-    antiCheatEnabled,
-    selectedAiLibraries,
-    selectedAiLibrarySettings,
-    aiLibraryDefById,
-    candleIndexByUnix,
-    selectedChartCandles.length,
-    sharedLibraryCandidateTrades,
-    backtestLibraryCandidateTrades,
-    backtestTimeFilteredTrades,
-    backtestTrades,
-    isClusterBacktestTabActive,
-    shouldComputeAiLibraryInsights,
-    validationMode,
-    appliedBacktestSettings.aiMode,
-    appliedBacktestSettings.antiCheatEnabled,
+    aiLibraryReadyToRun,
     appliedBacktestSettings.selectedAiLibraries,
     appliedBacktestSettings.selectedAiLibrarySettings,
-    appliedBacktestSettings.validationMode,
-    selectedBacktestTab,
-    selectedSurfaceTab,
-    useLiveLibrarySettings,
-    librariesModalOpen
+    backtestRunCount
   ]);
-  const aiLibraryCounts = aiLibraryInsights.counts;
-  const aiLibraryBaselineWinRates = aiLibraryInsights.baselineWinRates;
-  const aiLibraryPoints = aiLibraryInsights.points;
   const aiClusterActiveLibraryIdSet = useMemo(() => {
     return new Set(
       (appliedBacktestSettings.selectedAiLibraries ?? []).map((libraryId) =>
@@ -14882,7 +15311,29 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           50
       } as Record<string, AiLibrarySettingValue>)
     : null;
+  const selectedAiLibraryRunStatus: AiLibraryRunStatus = selectedAiLibrary
+    ? aiLibraryRunStatus[selectedAiLibrary.id] ?? "idle"
+    : "idle";
   const selectedAiLibraryLoadedCount = selectedAiLibrary ? aiLibraryCounts[selectedAiLibrary.id] ?? 0 : 0;
+  const selectedAiLibraryStatusLabel =
+    selectedAiLibraryRunStatus === "loading"
+      ? "Loading"
+      : selectedAiLibraryRunStatus === "error"
+        ? "Error"
+        : selectedAiLibraryLoadedCount > 0
+          ? "Loaded"
+          : "Not Loaded";
+  const selectedAiLibraryStatusClass =
+    selectedAiLibraryRunStatus === "loading"
+      ? "loading"
+      : selectedAiLibraryRunStatus === "error"
+        ? "error"
+        : selectedAiLibraryLoadedCount > 0
+          ? "loaded"
+          : "";
+  const aiLibraryAnyLoading = useMemo(() => {
+    return Object.values(aiLibraryRunStatus).some((status) => status === "loading");
+  }, [aiLibraryRunStatus]);
   const selectedAiLibraryTargetWinRateMode: AiLibraryTargetWinRateMode = selectedAiLibraryConfig
     ? getAiLibraryTargetWinRateMode(
         selectedAiLibraryConfig[AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY]
@@ -14894,6 +15345,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         selectedAiLibraryLoadedCount
       )
     : 50;
+  const totalLoadedLibraryTrades = useMemo(() => {
+    const activeIds = appliedBacktestSettings.selectedAiLibraries ?? [];
+    if (activeIds.length === 0) {
+      return 0;
+    }
+
+    let total = 0;
+    for (const libraryId of activeIds) {
+      total += Math.max(0, Number(aiLibraryCounts[libraryId] ?? 0));
+    }
+    return total;
+  }, [aiLibraryCounts, appliedBacktestSettings.selectedAiLibraries]);
 
   const mainStatsTitle = "Main Statistics";
 
@@ -18364,7 +18827,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   <span className="backtest-toolbar-note-meta">
                     Total Live Trades: <strong>{backtestTrades.length.toLocaleString("en-US")}</strong> ·
                     {" "}Total Library Trades:{" "}
-                    <strong>{backtestLibraryCandidateTrades.length.toLocaleString("en-US")}</strong>
+                    <strong>{totalLoadedLibraryTrades.toLocaleString("en-US")}</strong>
                   </span>
                 </div>
                 </div>
@@ -19834,6 +20297,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           })
                         )}
                       </div>
+                      <button
+                        type="button"
+                        className="ai-zip-library-action primary wide"
+                        disabled={!aiLibraryReadyToRun || aiLibraryAnyLoading}
+                        onClick={() => runAllActiveLibraries()}
+                      >
+                        {aiLibraryAnyLoading ? "Running Libraries..." : "Run All Active Libraries"}
+                      </button>
                     </section>
 
                     <section className="ai-zip-library-column settings">
@@ -19843,11 +20314,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         {selectedAiLibrary ? (
                           <div className="ai-zip-library-settings-meta">
                             <span
-                              className={`ai-zip-library-status-badge ${
-                                selectedAiLibraryLoadedCount > 0 ? "loaded" : ""
-                              }`}
+                              className={`ai-zip-library-status-badge ${selectedAiLibraryStatusClass}`}
                             >
-                              {selectedAiLibraryLoadedCount > 0 ? "Loaded" : "Not Loaded"}
+                              {selectedAiLibraryStatusLabel}
                             </span>
                             <span className="ai-zip-library-neighbor-count">
                               {selectedAiLibraryLoadedCount.toLocaleString()} neighbors
@@ -20140,6 +20609,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                 </label>
                               );
                             })}
+
+                            <div className="ai-zip-library-field-block">
+                              <button
+                                type="button"
+                                className="ai-zip-library-action primary wide"
+                                disabled={!aiLibraryReadyToRun || selectedAiLibraryRunStatus === "loading"}
+                                onClick={() => runAiLibrary(selectedAiLibrary.id)}
+                              >
+                                {selectedAiLibraryRunStatus === "loading" ? "Loading Library..." : "Run Library"}
+                              </button>
+                            </div>
                           </div>
                         ) : (
                           <p className="ai-zip-library-empty">No library selected.</p>
