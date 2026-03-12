@@ -14716,6 +14716,49 @@ export function ClusterMap({
             displayId = rawFallback ? displayIdFromRaw(rawFallback) : "—";
           }
 
+          const pnlVal = (() => {
+            if (node) {
+              const v =
+                (node as any).isOpen && typeof (node as any).unrealizedPnl === "number"
+                  ? Number((node as any).unrealizedPnl)
+                  : typeof (node as any).pnl === "number"
+                  ? Number((node as any).pnl)
+                  : null;
+              if (Number.isFinite(v as any)) return v as any;
+            }
+            const v =
+              (nb as any)?.metaPnl != null
+                ? Number((nb as any).metaPnl)
+                : tr?.isOpen
+                ? Number(tr.unrealizedPnl ?? NaN)
+                : Number(tr?.pnl ?? NaN);
+            return Number.isFinite(v) ? v : null;
+          })();
+
+          const outcomeStr = String(
+            (nb as any)?.metaOutcome ?? tr?.result ?? ""
+          ).toUpperCase();
+          const label = Number(
+            (nb as any)?.label ?? (nb as any)?.metaLabel ?? tr?.label ?? NaN
+          );
+          const nodeWin =
+            typeof (node as any)?.win === "boolean" ? (node as any).win : null;
+          const isWin =
+            nodeWin === true ||
+            outcomeStr === "TP" ||
+            outcomeStr === "WIN" ||
+            outcomeStr.includes("WIN") ||
+            label === 1 ||
+            (pnlVal != null && pnlVal >= 0);
+          const isLoss =
+            nodeWin === false ||
+            outcomeStr === "SL" ||
+            outcomeStr === "LOSS" ||
+            outcomeStr.includes("LOSS") ||
+            label === -1 ||
+            (pnlVal != null && pnlVal < 0);
+          const tone = isWin ? "green" : isLoss ? "red" : "neutral";
+
           const dist = (() => {
             const d0 = Number((nb as any)?.d);
             if (Number.isFinite(d0)) return d0;
@@ -14737,6 +14780,7 @@ export function ClusterMap({
             id: resolvedId,
             displayId,
             dist,
+            tone,
           };
         });
 
@@ -14783,12 +14827,27 @@ export function ClusterMap({
       const isLib =
         kind === "library" ||
         String((node as any).id || "").startsWith("lib|");
+      const nodeWin =
+        typeof (node as any)?.win === "boolean" ? (node as any).win : null;
+      const pnlVal =
+        typeof (node as any)?.pnl === "number"
+          ? Number((node as any).pnl)
+          : typeof (node as any)?.unrealizedPnl === "number"
+          ? Number((node as any).unrealizedPnl)
+          : null;
+      const tone =
+        nodeWin === true || (pnlVal != null && pnlVal >= 0)
+          ? "green"
+          : nodeWin === false || (pnlVal != null && pnlVal < 0)
+          ? "red"
+          : "neutral";
       fallbackRows.push({
         key: nodeId || String((node as any).id || ""),
         id: nodeId || String((node as any).id || ""),
         displayId,
         dist,
         isLib,
+        tone,
       });
     }
 
@@ -18563,8 +18622,18 @@ export function ClusterMap({
                               gap: 8,
                               padding: "4px 6px",
                               borderRadius: 8,
-                              border: "1px solid rgba(255,255,255,0.08)",
-                              background: "rgba(255,255,255,0.03)",
+                              border:
+                                row.tone === "green"
+                                  ? "1px solid rgba(60,220,120,0.35)"
+                                  : row.tone === "red"
+                                  ? "1px solid rgba(230,80,80,0.35)"
+                                  : "1px solid rgba(255,255,255,0.08)",
+                              background:
+                                row.tone === "green"
+                                  ? "rgba(60,220,120,0.12)"
+                                  : row.tone === "red"
+                                  ? "rgba(230,80,80,0.12)"
+                                  : "rgba(255,255,255,0.03)",
                             }}
                           >
                             <div
@@ -27674,8 +27743,21 @@ export default function App() {
           openTrade,
         ]);
 
+        const entryNeighborsCap = useMemo(
+          () => Math.max(0, Math.min(36, Math.floor(Number(kEntry) || 0))),
+          [kEntry]
+        );
+
+        const entryNeighborsForUi = useMemo(() => {
+          if (!Array.isArray(entryNeighbors)) return [];
+          if (!entryNeighborsCap) return entryNeighbors;
+          return entryNeighbors.slice(0, entryNeighborsCap);
+        }, [entryNeighbors, entryNeighborsCap]);
+
         const entryNeighborWinStats = useMemo(() => {
-          const nbs = Array.isArray(entryNeighbors) ? entryNeighbors : [];
+          const nbs = Array.isArray(entryNeighborsForUi)
+            ? entryNeighborsForUi
+            : [];
           const denom = Math.max(1, nbs.length || 0);
           let buyWins = 0;
           let sellWins = 0;
@@ -27729,7 +27811,7 @@ export default function App() {
             sellPct,
             waitPct,
           };
-        }, [entryNeighbors]);
+        }, [entryNeighborsForUi]);
         const breakdownScrollRef = useRef<HTMLDivElement | null>(null);
         const breakdownScrollTopRef = useRef(0);
 
@@ -28103,7 +28185,9 @@ export default function App() {
                     }
                     right={
                       !isActive && !canEnterNextBar ? (
-                        <Pill tone="neutral">k={entryNeighbors.length}</Pill>
+                        <Pill tone="neutral">
+                          k={entryNeighborsForUi.length}
+                        </Pill>
                       ) : (
                         <Pill
                           tone={
@@ -28385,9 +28469,9 @@ export default function App() {
                             padding: 8,
                           }}
                         >
-                          {entryNeighbors && entryNeighbors.length ? (
+                          {entryNeighborsForUi && entryNeighborsForUi.length ? (
                             <div style={{ display: "grid", gap: 6 }}>
-                              {entryNeighbors.map((nb, idx) => {
+                              {entryNeighborsForUi.map((nb, idx) => {
                                 const nbAny: any = nb as any;
                                 const tr: any = nbAny.t || {};
 
@@ -28471,6 +28555,20 @@ export default function App() {
                                     ? "red"
                                     : "neutral";
 
+                                const rowBorder =
+                                  toneOutcome === "green"
+                                    ? "1px solid rgba(60,220,120,0.35)"
+                                    : toneOutcome === "red"
+                                    ? "1px solid rgba(230,80,80,0.35)"
+                                    : "1px solid rgba(255,255,255,0.08)";
+
+                                const rowBg =
+                                  toneOutcome === "green"
+                                    ? "rgba(60,220,120,0.12)"
+                                    : toneOutcome === "red"
+                                    ? "rgba(230,80,80,0.12)"
+                                    : "rgba(255,255,255,0.03)";
+
                                 return (
                                   <div
                                     key={`${uid}_${nb.rank}`}
@@ -28481,11 +28579,11 @@ export default function App() {
                                       gap: 10,
                                       padding: "6px 8px",
                                       borderRadius: 10,
-                                      border:
-                                        "1px solid rgba(255,255,255,0.08)",
-                                      background: suppressed
-                                        ? "rgba(250,210,70,0.08)"
-                                        : "rgba(255,255,255,0.03)",
+                                      border: rowBorder,
+                                      background: rowBg,
+                                      boxShadow: suppressed
+                                        ? "0 0 0 1px rgba(250,210,70,0.45)"
+                                        : "none",
                                     }}
                                   >
                                     <div
