@@ -10074,6 +10074,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     );
   }, [
     deepChartCandles,
+    isChartSurface,
     selectedCandles,
     selectedSurfaceTab,
     shouldHydrateBacktestChartData,
@@ -10364,7 +10365,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (!isChartSurface) {
       clearAllAiChartAnnotations();
     }
-  }, [clearAllAiChartAnnotations, selectedSurfaceTab]);
+  }, [clearAllAiChartAnnotations, isChartSurface, selectedSurfaceTab]);
 
   useEffect(() => {
     if (!isChartSurface) {
@@ -10372,6 +10373,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
     renderDynamicAssistantActions(selectedChartCandles);
   }, [
+    isChartSurface,
     renderDynamicAssistantActions,
     selectedChartCandles,
     selectedSurfaceTab
@@ -10524,7 +10526,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         current.from === nextWindow.from && current.to === nextWindow.to ? current : nextWindow
       );
     }
-  }, [selectedChartCandles.length, selectedSymbol, selectedSurfaceTab, selectedTimeframe]);
+  }, [
+    isChartSurface,
+    selectedChartCandles.length,
+    selectedSymbol,
+    selectedSurfaceTab,
+    selectedTimeframe
+  ]);
 
   const chartRenderCandles = useMemo(() => {
     if (chartRenderWindow.to < chartRenderWindow.from) {
@@ -12315,18 +12323,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     link.click();
     URL.revokeObjectURL(url);
   }, []);
-  const handleDeleteStrategyModel = useCallback(
-    (model: StrategyModelCatalogEntry) => {
-      setUploadedStrategyModels((current) => current.filter((entry) => entry.id !== model.id));
-      setModelsSurfaceNotice(`Removed ${model.name}.`);
-      setModelsSurfaceNoticeTone("success");
-      if (modelRunModalModelId === model.id) {
-        closeModelRunModal();
-      }
-    },
-    [closeModelRunModal, modelRunModalModelId]
-  );
-
   const openModelRunModal = useCallback(
     (model: StrategyModelCatalogEntry) => {
       const defaultPreset: BacktestPresetRange =
@@ -12355,6 +12351,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setModelRunError("");
     setModelRunResult(null);
   }, []);
+
+  const handleDeleteStrategyModel = useCallback(
+    (model: StrategyModelCatalogEntry) => {
+      setUploadedStrategyModels((current) => current.filter((entry) => entry.id !== model.id));
+      setModelsSurfaceNotice(`Removed ${model.name}.`);
+      setModelsSurfaceNoticeTone("success");
+      if (modelRunModalModelId === model.id) {
+        closeModelRunModal();
+      }
+    },
+    [closeModelRunModal, modelRunModalModelId]
+  );
 
   const handleRunModelBacktest = useCallback(async () => {
     if (!activeModelRunEntry) {
@@ -12676,7 +12684,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     setChartContextMenu(null);
-  }, [selectedSurfaceTab]);
+  }, [isChartSurface, selectedSurfaceTab]);
 
   useEffect(() => {
     if (!notificationsOpen || notificationItems.length === 0) {
@@ -13371,6 +13379,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [
     chartHistoryLoadingKey,
+    isChartSurface,
     resetChart,
     selectedCandles.length,
     selectedKey,
@@ -13652,7 +13661,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [panelExpanded, activePanelTab, selectedSurfaceTab]);
+  }, [panelExpanded, activePanelTab, isChartSurface, selectedSurfaceTab]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -14098,6 +14107,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     activeChartTrade,
     applyCombinedChartMarkers,
     currentSymbolHistoryRows,
+    isChartSurface,
     selectedChartCandles,
     selectedHistoryInteractionTick,
     selectedHistoryTrade,
@@ -14692,6 +14702,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     backtestHasRun,
     backtestHistorySeedReady,
     appliedBacktestSettings.aiMode,
+    appliedBacktestSettings.antiCheatEnabled,
     appliedBacktestSettings.selectedAiLibraries,
     appliedBacktestSettings.selectedAiLibrarySettings,
     aiLibraryDefById,
