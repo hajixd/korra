@@ -16127,6 +16127,33 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return clamp(weight, 0.02, 2);
     };
 
+    const libraryPointByKey = new Map<string, any>();
+    if (Array.isArray(aiClusterLibraryPoints) && aiClusterLibraryPoints.length) {
+      for (const point of aiClusterLibraryPoints as any[]) {
+        if (!point) continue;
+        const libId = String(
+          point.libId ?? point.metaLib ?? point.metaLibrary ?? ""
+        ).trim();
+        if (!libId) continue;
+        let tradeId = "";
+        const rawId = String(point.id ?? "");
+        if (rawId.startsWith("lib|")) {
+          const parts = rawId.split("|");
+          tradeId = String(parts[2] ?? "");
+        }
+        if (!tradeId) {
+          tradeId = String(
+            point.metaTradeUid ?? point.metaUid ?? point.uid ?? ""
+          );
+        }
+        if (!tradeId) continue;
+        const key = `${libId}|${tradeId}`;
+        if (!libraryPointByKey.has(key)) {
+          libraryPointByKey.set(key, point);
+        }
+      }
+    }
+
     const neighborsById = new Map<string, any[]>();
     const targetTrades = deferredBacktestAnalyticsTrades;
 
@@ -16145,7 +16172,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       const candidateMap = new Map<
         string,
-        { trade: HistoryItem; weight: number; suppressed: boolean }
+        {
+          trade: HistoryItem;
+          weight: number;
+          suppressed: boolean;
+          libId: string | null;
+          libWeight: number;
+        }
       >();
 
       for (const libraryId of activeLibraryIds) {
@@ -16173,6 +16206,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           const existing = candidateMap.get(key);
           if (existing) {
             existing.weight += similarityWeight;
+            if (similarityWeight > existing.libWeight) {
+              existing.libWeight = similarityWeight;
+              existing.libId = libraryId;
+            }
             if (isSuppressedLibrary) {
               existing.suppressed = true;
             }
@@ -16180,7 +16217,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             candidateMap.set(key, {
               trade: candidate,
               weight: similarityWeight,
-              suppressed: isSuppressedLibrary
+              suppressed: isSuppressedLibrary,
+              libId: libraryId,
+              libWeight: similarityWeight
             });
           }
         }
@@ -16203,14 +16242,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               : "Loss"
             : candidate.result;
 
+        const libId = entry.libId;
+        const libKey = libId ? `${libId}|${candidate.id}` : "";
+        const libPoint = libKey ? libraryPointByKey.get(libKey) : null;
+        const libNodeId = libPoint?.id ?? libPoint?.uid ?? null;
+        const displayLibUid =
+          libNodeId ||
+          (libId ? `lib|${libId}|${candidate.id}|${idx}` : candidate.id);
+        const nodeId = libNodeId ?? candidate.id;
+
         const weight = Math.max(1e-6, entry.weight);
         return {
-          id: candidate.id,
-          uid: candidate.id,
+          id: nodeId,
+          uid: nodeId,
           tradeUid: candidate.id,
-          metaUid: candidate.id,
+          metaUid: displayLibUid,
           metaTradeUid: candidate.id,
-          metaId: candidate.id,
+          metaId: nodeId,
+          metaLib: libId,
           d: 1 / weight,
           w: entry.weight,
           dir,
@@ -16237,6 +16286,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedBacktestSettings.selectedAiLibraries,
     appliedBacktestSettings.selectedAiLibrarySettings,
     appliedBacktestSettings.validationMode,
+    aiClusterLibraryPoints,
     aiLibraryDefaultsById,
     backtestLibraryCandidateTrades,
     backtestTimeFilteredTrades,

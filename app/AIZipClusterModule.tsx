@@ -14385,8 +14385,7 @@ export function ClusterMap({
   }, [onPostHocTrades, postHocTrades]);
 
   const mitMap = useMemo(() => {
-    // MIT: in entry-neighbor-only mode (backtest), use the stored entry neighbors.
-    // Otherwise, for each *live* trade (and suppressed trade), find the closest *library trade* in embedded 2D space.
+    // MIT: for each *live* trade (and suppressed trade), find the closest *library trade* in embedded 2D space.
     // Library trade candidates are library nodes that look like trades (have entry fields) and are not Base Seeding.
     const out = new Map<string, any>();
     const src = (timelineNodesCheat as any[]) || [];
@@ -14408,101 +14407,6 @@ export function ClusterMap({
       if (!kk) return;
       if (!out.has(kk)) out.set(kk, mit);
     };
-
-    if (entryNeighborsOnly) {
-      const nodeByKey = new Map<string, any>();
-      const addNodeKey = (k: any, n: any) => {
-        const kk = k == null ? "" : String(k);
-        if (!kk) return;
-        if (!nodeByKey.has(kk)) nodeByKey.set(kk, n);
-      };
-
-      for (const n of src) {
-        if (!n) continue;
-        addNodeKey((n as any).id, n);
-        addNodeKey((n as any).uid, n);
-        addNodeKey((n as any).tradeUid, n);
-        addNodeKey((n as any).tradeId, n);
-        addNodeKey((n as any).metaUid, n);
-        addNodeKey((n as any).metaTradeUid, n);
-        addNodeKey((n as any).metaId, n);
-        addNodeKey((n as any).metaOrigUid, n);
-        addNodeKey((n as any).metaOrigId, n);
-      }
-
-      for (const n of src) {
-        if (!n) continue;
-        if (String((n as any).kind || "").toLowerCase() !== "trade") continue;
-        const nbsRaw =
-          (n as any)?.entryNeighbors ??
-          (n as any)?.neighbors ??
-          (n as any)?.kNeighbors ??
-          [];
-        if (!Array.isArray(nbsRaw) || nbsRaw.length === 0) continue;
-
-        const nbs = nbsRaw.slice().sort((a: any, b: any) => {
-          const da = Number((a as any)?.d);
-          const db = Number((b as any)?.d);
-          const aa = Number.isFinite(da)
-            ? da
-            : Number.isFinite(Number((a as any)?.w))
-            ? 1 / Math.max(1e-9, Number((a as any)?.w))
-            : Infinity;
-          const bb = Number.isFinite(db)
-            ? db
-            : Number.isFinite(Number((b as any)?.w))
-            ? 1 / Math.max(1e-9, Number((b as any)?.w))
-            : Infinity;
-          return aa - bb;
-        });
-
-        let mitRef: any = null;
-        for (const nb of nbs as any[]) {
-          if (!nb) continue;
-          const tr = (nb as any)?.t ?? null;
-          const rawCandidates = [
-            (nb as any)?.targetId,
-            (nb as any)?.nodeId,
-            (nb as any)?.id,
-            (nb as any)?.metaId,
-            (nb as any)?.uid,
-            (nb as any)?.metaUid,
-            (nb as any)?.tradeUid,
-            (nb as any)?.metaTradeUid,
-            (nb as any)?.labelUid,
-            (nb as any)?.closestClusterUid,
-            (tr as any)?.id,
-            (tr as any)?.uid,
-            (tr as any)?.tradeUid,
-            (tr as any)?.tradeId,
-            (tr as any)?.metaUid,
-            (tr as any)?.metaTradeUid,
-            (tr as any)?.metaId,
-          ];
-
-          for (const raw of rawCandidates) {
-            if (raw == null || raw === "") continue;
-            const hit = nodeByKey.get(String(raw));
-            if (hit) {
-              mitRef = hit;
-              break;
-            }
-          }
-          if (mitRef) break;
-        }
-
-        if (!mitRef) continue;
-        addKey(stableKey(n), mitRef);
-        addKey((n as any).uid, mitRef);
-        addKey((n as any).tradeUid, mitRef);
-        addKey((n as any).tradeId, mitRef);
-        addKey((n as any).id, mitRef);
-        addKey((n as any).metaOrigUid, mitRef);
-        addKey((n as any).metaOrigId, mitRef);
-      }
-
-      return out;
-    }
 
     const libLabel = (n: any) =>
       String(
@@ -14627,7 +14531,7 @@ export function ClusterMap({
     }
 
     return out;
-  }, [entryNeighborsOnly, timelineNodesCheat]);
+  }, [timelineNodesCheat]);
 
   useEffect(() => {
     if (typeof onMitMap !== "function") return;
