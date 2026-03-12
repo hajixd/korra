@@ -10076,7 +10076,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     deepChartCandles,
     isChartSurface,
     selectedCandles,
-    selectedSurfaceTab,
     shouldHydrateBacktestChartData,
     usesDeepChartHistory
   ]);
@@ -13614,7 +13613,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     focusTradeIdRef.current = null;
   }, [
     candleIndexByUnix,
-    selectedSurfaceTab,
+    isChartSurface,
     selectedChartCandles,
     selectedHistoryInteractionTick,
     selectedHistoryTrade,
