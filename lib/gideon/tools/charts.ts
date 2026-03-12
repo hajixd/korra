@@ -24,7 +24,32 @@ export type GideonPanelChart = {
   subtitle?: string;
   mode?: "static" | "dynamic";
   data: Array<Record<string, string | number>>;
-  config?: Record<string, string | number | boolean>;
+  config?: Record<string, unknown>;
+};
+
+type CandlestickSnapshotRow = {
+  x: string;
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+};
+
+type CandlestickSnapshotZone = {
+  xStart: string;
+  xEnd: string;
+  yStart: number;
+  yEnd: number;
+  direction: "bullish" | "bearish";
+  label?: string;
+};
+
+type CandlestickSnapshotMarker = {
+  x: string;
+  y: number;
+  direction: "bullish" | "bearish";
+  label: string;
 };
 
 const STATIC_PRICE_ACTION_TEMPLATE_SET = new Set<string>([
@@ -1450,6 +1475,191 @@ const buildPriceActionChart = (
       yKeyHigh: "high",
       yKeyLow: "low"
     }
+  };
+};
+
+const buildCandlestickSnapshotRows = (
+  rows: GideonRuntimeCandle[],
+  points: number
+): CandlestickSnapshotRow[] => {
+  const sliced = takeTail(rows, points);
+  return sliced
+    .map((row) => {
+      const time = normalizeTimestampMs(toNumber(row.time, Number.NaN));
+      const open = toNumber(row.open, Number.NaN);
+      const high = toNumber(row.high, Number.NaN);
+      const low = toNumber(row.low, Number.NaN);
+      const close = toNumber(row.close, Number.NaN);
+
+      if (
+        !Number.isFinite(time) ||
+        !Number.isFinite(open) ||
+        !Number.isFinite(high) ||
+        !Number.isFinite(low) ||
+        !Number.isFinite(close)
+      ) {
+        return null;
+      }
+
+      return {
+        x: formatTimeLabel(time),
+        time,
+        open: Number(open.toFixed(4)),
+        high: Number(high.toFixed(4)),
+        low: Number(low.toFixed(4)),
+        close: Number(close.toFixed(4))
+      };
+    })
+    .filter((row): row is CandlestickSnapshotRow => row !== null);
+};
+
+const resolveNearestSnapshotRow = (
+  rows: CandlestickSnapshotRow[],
+  timeValue: number
+): CandlestickSnapshotRow | null => {
+  if (!Number.isFinite(timeValue) || rows.length === 0) {
+    return null;
+  }
+
+  const target = normalizeTimestampMs(timeValue);
+  let best = rows[0]!;
+  let bestDelta = Math.abs(best.time - target);
+
+  for (let i = 1; i < rows.length; i += 1) {
+    const row = rows[i]!;
+    const delta = Math.abs(row.time - target);
+    if (delta < bestDelta) {
+      best = row;
+      bestDelta = delta;
+    }
+  }
+
+  return best;
+};
+
+const buildSnapshotOverlayConfig = (params: {
+  actions: AssistantChartAction[];
+  rows: CandlestickSnapshotRow[];
+}): Record<string, unknown> => {
+  const { actions, rows } = params;
+  if (rows.length === 0 || actions.length === 0) {
+    return {};
+  }
+
+  const fvgZones: CandlestickSnapshotZone[] = [];
+  const entryMarkers: CandlestickSnapshotMarker[] = [];
+
+  const resolveRow = (timeValue: number | undefined) => {
+    if (!Number.isFinite(timeValue)) {
+      return null;
+    }
+    return resolveNearestSnapshotRow(rows, Number(timeValue));
+  };
+
+  const resolveMarkerDirection = (
+    action: AssistantChartAction,
+    row: CandlestickSnapshotRow | null
+  ): "bullish" | "bearish" => {
+    if (action.markerShape === "arrowDown") {
+      return "bearish";
+    }
+    if (action.markerShape === "arrowUp") {
+      return "bullish";
+    }
+    if (row) {
+      return row.close >= row.open ? "bullish" : "bearish";
+    }
+    return "bullish";
+  };
+
+  for (const action of actions) {
+    if (fvgZones.length < 6 && (action.type === "draw_fvg" || action.type === "draw_box")) {
+      const startRow = resolveRow(action.timeStart);
+      const endRow = resolveRow(action.timeEnd);
+      const priceStart = toNumber(action.priceStart, Number.NaN);
+      const priceEnd = toNumber(action.priceEnd, Number.NaN);
+      if (!startRow || !endRow || !Number.isFinite(priceStart) || !Number.isFinite(priceEnd)) {
+        continue;
+      }
+
+      fvgZones.push({
+        xStart: startRow.x,
+        xEnd: endRow.x,
+        yStart: Number(priceStart.toFixed(4)),
+        yEnd: Number(priceEnd.toFixed(4)),
+        direction: priceEnd >= priceStart ? "bullish" : "bearish",
+        label: action.label || (action.type === "draw_fvg" ? "FVG" : undefined)
+      });
+      continue;
+    }
+
+    if (entryMarkers.length < 8 && (action.type === "draw_arrow" || action.type === "mark_candlestick")) {
+      const row = resolveRow(action.time);
+      const label = (action.label || action.note || "Marker").trim();
+      const priceCandidate = Number.isFinite(action.price)
+        ? Number(action.price)
+        : row
+          ? row.close
+          : Number.NaN;
+      if (!row || !label || !Number.isFinite(priceCandidate)) {
+        continue;
+      }
+
+      entryMarkers.push({
+        x: row.x,
+        y: Number(priceCandidate.toFixed(4)),
+        direction: resolveMarkerDirection(action, row),
+        label
+      });
+    }
+  }
+
+  const config: Record<string, unknown> = {};
+  if (fvgZones.length > 0) {
+    config.fvgZones = fvgZones;
+  }
+  if (entryMarkers.length > 0) {
+    config.entryMarkers = entryMarkers;
+  }
+
+  return config;
+};
+
+export const buildDrawSnapshotChartTool = (params: {
+  runtime: GideonRuntimeContext;
+  chartActions: AssistantChartAction[];
+  candles?: GideonRuntimeCandle[] | null;
+  title?: string | null;
+  points?: number;
+}): GideonPanelChart | null => {
+  const drawCandles = selectDrawWindowCandles({
+    runtime: params.runtime,
+    candles: params.candles
+  });
+  if (drawCandles.length === 0) {
+    return null;
+  }
+
+  const points = clamp(toNumber(params.points, 140), 40, 520);
+  const rows = buildCandlestickSnapshotRows(drawCandles, points);
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const config = buildSnapshotOverlayConfig({
+    actions: params.chartActions,
+    rows
+  });
+  const title = String(params.title || "Chart Snapshot").trim() || "Chart Snapshot";
+  const subtitle = `${rows.length} candles`;
+
+  return {
+    id: `snapshot-${rows[rows.length - 1]?.time ?? "chart"}`,
+    template: "price_action",
+    title,
+    subtitle,
+    data: rows,
+    config: Object.keys(config).length > 0 ? config : undefined
   };
 };
 

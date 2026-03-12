@@ -6137,7 +6137,7 @@ const injectedScript = `
     listState.error = "";
     queueEmbeddedUiRefresh();
 
-    const promise = requestLocalJson("/api/copytrade/accounts?includeSummary=1", {
+    const promise = requestLocalJson("/api/copytrade/accounts", {
       timeoutMs: 12000
     })
       .then((payload) => {
@@ -6190,7 +6190,7 @@ const injectedScript = `
     const promise = requestLocalJson(
       "/api/copytrade/accounts/" + encodeURIComponent(String(accountId || "")) + "/dashboard",
       {
-        timeoutMs: 15000
+        timeoutMs: 30000
       }
     )
       .then((payload) => {

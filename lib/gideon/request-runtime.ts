@@ -13,6 +13,7 @@ import {
   buildChartAnimationTool,
   buildChartsFromPlansTool,
   buildDeterministicFastPath,
+  buildDrawSnapshotChartTool,
   buildPanelChartTool,
   buildStrategyPreviewChartsTool,
   runSupervisorGraph,
@@ -1262,13 +1263,34 @@ export const runGideonRequestRuntime = async (params: {
 
   if (gideonFastPath && !strategyLikePrompt && !ambiguousConcept && !mathLikePrompt) {
     const socialFastPath = gideonPlan.intent.requestKind === "social";
+    const fastPathIsDraw = gideonFastPath.kind === "chart_draw";
     const toolsUsed = new Set<string>(gideonFastPath.toolIds);
+    const fastPathChartActions = gideonFastPath.chartActions
+      ? normalizeChartActions(gideonFastPath.chartActions)
+      : [];
+    const snapshotChart =
+      fastPathIsDraw && fastPathChartActions.length > 0
+        ? buildDrawSnapshotChartTool({
+            runtime: createRouteRuntime({
+              context,
+              strategyThreadState
+            }),
+            chartActions: fastPathChartActions,
+            candles: context.liveCandles,
+            title: "Chart Snapshot",
+            points: 140
+          })
+        : null;
+    if (snapshotChart) {
+      toolsUsed.add("build_panel_chart");
+    }
+    const charts = snapshotChart ? [snapshotChart] : [];
     const requestChecklistPlan = deps.buildRequestChecklistPlan({
       socialOnlyRequest: socialFastPath,
       strictToRequest: socialFastPath ? true : gideonPlan.intent.strictScope,
-      wantsNaturalOnly: true,
-      wantsVisualization: false,
-      explicitDrawRequest: false,
+      wantsNaturalOnly: !fastPathIsDraw,
+      wantsVisualization: Boolean(snapshotChart),
+      explicitDrawRequest: fastPathIsDraw,
       wantsAnimation: false,
       needsDataFetch: false
     });
@@ -1283,16 +1305,11 @@ export const runGideonRequestRuntime = async (params: {
       plan: requestChecklistPlan,
       shortAnswer,
       responseCannotAnswer: false,
-      charts: [],
-      chartActions: gideonFastPath.chartActions
-        ? normalizeChartActions(gideonFastPath.chartActions)
-        : chartActions,
+      charts,
+      chartActions: fastPathChartActions.length > 0 ? fastPathChartActions : chartActions,
       chartAnimations,
       toolsUsed
     });
-    const fastPathChartActions = gideonFastPath.chartActions
-      ? normalizeChartActions(gideonFastPath.chartActions)
-      : [];
 
     return respond({
       status: "ok",
@@ -1301,7 +1318,7 @@ export const runGideonRequestRuntime = async (params: {
         cannotAnswerReason: "",
         shortAnswer,
         bullets,
-        charts: [],
+        charts,
         chartActions: fastPathChartActions,
         chartAnimations: [],
         requestChecklist,
@@ -1394,20 +1411,35 @@ export const runGideonRequestRuntime = async (params: {
       candles: context.liveCandles,
       prependClear: true
     }).chartActions;
+    const snapshotChart =
+      chartActions.length > 0
+        ? buildDrawSnapshotChartTool({
+            runtime: routeRuntime,
+            chartActions,
+            candles: context.liveCandles,
+            title: "Chart Snapshot",
+            points: 140
+          })
+        : null;
+    const charts = snapshotChart ? [snapshotChart] : [];
     if (chartActions.length > 0) {
       toolsUsed.add("build_chart_actions");
       toolsUsed.add("chart_actions");
     }
+    if (snapshotChart) {
+      toolsUsed.add("build_panel_chart");
+    }
+    const drawSummary = deps.summarizeDrawnActions(chartActions);
     const shortAnswer = deps.sanitizeDeliveryText(
       chartActions.length > 0
-        ? `Drew ${deps.summarizeDrawnActions(chartActions) || "the requested chart annotations"} on the main chart.`
+        ? `${snapshotChart ? "Snapshot added below. " : ""}${drawSummary || "Added the requested chart annotations."}`
         : "I could not place a chart annotation from that prompt."
     );
     const requestChecklistPlan = deps.buildRequestChecklistPlan({
       socialOnlyRequest: false,
       strictToRequest: true,
       wantsNaturalOnly: false,
-      wantsVisualization: false,
+      wantsVisualization: Boolean(snapshotChart),
       explicitDrawRequest: true,
       wantsAnimation: false,
       needsDataFetch: false
@@ -1416,7 +1448,7 @@ export const runGideonRequestRuntime = async (params: {
       plan: requestChecklistPlan,
       shortAnswer,
       responseCannotAnswer: chartActions.length === 0,
-      charts: [],
+      charts,
       chartActions,
       chartAnimations: normalizeChartAnimationsFromCoding({}),
       toolsUsed
@@ -1429,7 +1461,7 @@ export const runGideonRequestRuntime = async (params: {
         cannotAnswerReason: chartActions.length === 0 ? "No drawable instruction could be parsed." : "",
         shortAnswer,
         bullets: [],
-        charts: [],
+        charts,
         chartActions,
         chartAnimations: [],
         requestChecklist,
@@ -2793,6 +2825,26 @@ export const runGideonRequestRuntime = async (params: {
       chartAnimations = fallbackAnimation.chartAnimations;
       if (chartAnimations.length > 0) {
         toolsUsed.add("build_chart_animation");
+      }
+    }
+
+    if (charts.length === 0 && chartActions.length > 0 && explicitDrawRequest) {
+      const snapshotChart = buildDrawSnapshotChartTool({
+        runtime: routeGideonRuntime,
+        chartActions,
+        candles: drawCandles,
+        title: "Chart Snapshot",
+        points: 140
+      });
+      if (snapshotChart) {
+        charts = [snapshotChart];
+        toolsUsed.add("build_panel_chart");
+        if (!requestChecklistPlan.requiresGraph) {
+          requestChecklistPlan = {
+            ...requestChecklistPlan,
+            requiresGraph: true
+          };
+        }
       }
     }
 
