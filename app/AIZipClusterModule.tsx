@@ -10787,6 +10787,114 @@ export function ClusterMap({
     const allVectors = goodEntries.map((e) => e.v);
     const { stdData, mean, stdev } = standardiseVectors(allVectors);
 
+    // Backtest: derive nearest neighbors directly in the high-dimensional space (pre-UMAP)
+    // using library nodes as the neighbor pool.
+    if (entryNeighborsOnly) {
+      const neighborK = Math.max(
+        0,
+        Math.min(36, Math.floor(Number(kEntry) || 0))
+      );
+      if (neighborK > 0) {
+        const libIdx: number[] = [];
+        const tradeIdx: number[] = [];
+        for (let i = 0; i < goodEntries.length; i += 1) {
+          const k = String((goodEntries[i] as any)?.kind || "").toLowerCase();
+          if (k === "library") libIdx.push(i);
+          else if (k === "trade") tradeIdx.push(i);
+        }
+
+        if (libIdx.length > 0) {
+          for (const ti of tradeIdx) {
+            const v = stdData[ti];
+            if (!Array.isArray(v)) {
+              (goodEntries[ti] as any).entryNeighbors = [];
+              continue;
+            }
+
+            const nearest: Array<{ idx: number; d2: number }> = [];
+            for (const li of libIdx) {
+              const u = stdData[li];
+              if (!Array.isArray(u)) continue;
+              const len = Math.min(v.length, u.length);
+              let d2 = 0;
+              for (let j = 0; j < len; j += 1) {
+                const diff = (v[j] ?? 0) - (u[j] ?? 0);
+                d2 += diff * diff;
+              }
+              if (!Number.isFinite(d2)) continue;
+              if (nearest.length < neighborK) {
+                nearest.push({ idx: li, d2 });
+                nearest.sort((a, b) => b.d2 - a.d2);
+              } else if (d2 < nearest[0].d2) {
+                nearest[0] = { idx: li, d2 };
+                nearest.sort((a, b) => b.d2 - a.d2);
+              }
+            }
+
+            if (nearest.length === 0) {
+              (goodEntries[ti] as any).entryNeighbors = [];
+              continue;
+            }
+
+            nearest.sort((a, b) => a.d2 - b.d2);
+            const neighbors = nearest
+              .map((nb, rank) => {
+              const lib = goodEntries[nb.idx] as any;
+              const nodeId =
+                lib?.id ?? lib?.uid ?? lib?.metaUid ?? lib?.metaId ?? "";
+              if (!nodeId) {
+                return null;
+              }
+              const pnlVal =
+                typeof lib?.pnl === "number" ? Number(lib.pnl) : 0;
+              const labelVal =
+                typeof lib?.label === "number"
+                  ? Number(lib.label)
+                  : pnlVal >= 0
+                  ? 1
+                  : -1;
+              const outcome =
+                lib?.result ??
+                (labelVal > 0 ? "Win" : labelVal < 0 ? "Loss" : "");
+
+              return {
+                id: nodeId,
+                uid: nodeId,
+                metaUid: nodeId,
+                metaId: nodeId,
+                metaLib: lib?.libId ?? lib?.metaLib ?? null,
+                d: Math.sqrt(nb.d2),
+                dir: Number(lib?.dir ?? lib?.direction ?? 0) || 0,
+                label: labelVal,
+                metaOutcome: outcome,
+                metaPnl: pnlVal,
+                metaTime: lib?.entryTime ?? lib?.metaTime ?? null,
+                metaSession: lib?.session ?? lib?.metaSession ?? null,
+                metaModel:
+                  lib?.entryModel ?? lib?.chunkType ?? lib?.model ?? null,
+                metaSuppressed: !!(
+                  lib?.metaSuppressed ?? lib?.suppressed ?? false
+                ),
+                rank: rank + 1,
+                t: lib,
+              };
+            })
+              .filter((row) => !!row);
+
+            (goodEntries[ti] as any).entryNeighbors = neighbors;
+            const first = neighbors[0];
+            if (first?.id) {
+              (goodEntries[ti] as any).closestClusterUid = String(first.id);
+            }
+          }
+        } else {
+          for (const ti of tradeIdx) {
+            (goodEntries[ti] as any).entryNeighbors = [];
+          }
+        }
+      }
+    }
+
     // UMAP embedding for the Cluster Map (better preserves local neighborhood structure than PCA).
     // We keep PCA2 around for fast approximate "transform" and for initialization.
     const { pc1, pc2 } = computePCA(stdData);
@@ -11102,6 +11210,8 @@ export function ClusterMap({
     nodeStableKey,
     clusterMapView,
     lowPowerMode,
+    entryNeighborsOnly,
+    kEntry,
   ]);
 
   const tradeNodeByUidAll = useMemo(() => {
@@ -14391,6 +14501,15 @@ export function ClusterMap({
     const src = (timelineNodesCheat as any[]) || [];
     if (!src.length) return out;
 
+    const nodeById = new Map<string, any>();
+    for (const n of src) {
+      if (!n) continue;
+      const id = (n as any).id;
+      const uid = (n as any).uid ?? (n as any).metaUid;
+      if (id != null) nodeById.set(String(id), n);
+      if (uid != null) nodeById.set(String(uid), n);
+    }
+
     const stableKey = (n: any) =>
       String(
         (n as any)?.uid ??
@@ -14501,6 +14620,21 @@ export function ClusterMap({
     for (const n of targets) {
       const nx = Number((n as any).x);
       const ny = Number((n as any).y);
+
+      const directId = (n as any)?.closestClusterUid;
+      if (directId != null && directId !== "") {
+        const direct = nodeById.get(String(directId)) ?? null;
+        if (direct && isTradesLibraryCandidate(direct)) {
+          addKey(stableKey(n), direct);
+          addKey((n as any).uid, direct);
+          addKey((n as any).tradeUid, direct);
+          addKey((n as any).tradeId, direct);
+          addKey((n as any).id, direct);
+          addKey((n as any).metaOrigUid, direct);
+          addKey((n as any).metaOrigId, direct);
+          continue;
+        }
+      }
 
       let best: any = null;
       let bestD = Infinity;
