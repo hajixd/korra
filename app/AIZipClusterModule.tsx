@@ -9331,6 +9331,7 @@ export function ClusterMap({
   onMitMap,
   aiMethod,
   aiDomains,
+  kEntry,
   hdbDomainDistinction,
   hdbMinClusterSize,
   hdbMinSamples,
@@ -11135,6 +11136,10 @@ export function ClusterMap({
     Math.max(0, Math.min(36, Math.floor(Number(K_ENTRY) || 0)))
   );
   const [knnLinkOpacity, setKnnLinkOpacity] = React.useState(0.36);
+  const effectiveNeighborK = React.useMemo(() => {
+    const base = Number.isFinite(Number(kEntry)) ? Number(kEntry) : knnLinkK;
+    return Math.max(0, Math.min(36, Math.floor(Number(base) || 0)));
+  }, [kEntry, knnLinkK]);
   const showGroupOverlays = (Number(groupOverlayOpacity) || 0) > 0;
   const effectiveGroupOverlayOpacity = lowPowerModeUser ? 0 : groupOverlayOpacity;
   const suppressedLibraryActive = React.useMemo(() => {
@@ -14464,6 +14469,247 @@ export function ClusterMap({
     return m;
   }, [displayNodes]);
 
+  const neighborAlias = useMemo(() => {
+    const aliasToIds = new Map<string, Set<string>>();
+    const nodeCoordById = new Map<string, { x: number; y: number; z: number }>();
+    const dim = clusterMapView === "3d" ? "3d" : "2d";
+
+    for (const n of displayNodes as any[]) {
+      if (!n) continue;
+      const id = normalizeClusterMapToken((n as any)?.id);
+      if (!id) continue;
+      const c = nodeCoordsForClusterMapKnn(n, dim);
+      if (c) nodeCoordById.set(id, c);
+
+      addClusterMapAlias(aliasToIds, id, id);
+      addClusterMapAlias(aliasToIds, (n as any)?.uid, id);
+      addClusterMapAlias(aliasToIds, (n as any)?.tradeUid, id);
+      addClusterMapAlias(aliasToIds, (n as any)?.metaUid, id);
+      addClusterMapAlias(aliasToIds, (n as any)?.metaTradeUid, id);
+      addClusterMapAlias(aliasToIds, (n as any)?.metaOrigId, id);
+      addClusterMapAlias(aliasToIds, (n as any)?.metaOrigUid, id);
+      addClusterMapAlias(aliasToIds, (n as any)?.metaId, id);
+      addClusterMapAlias(aliasToIds, (n as any)?.parentId, id);
+      addClusterMapAlias(aliasToIds, (n as any)?.closestClusterUid, id);
+
+      const t = normalizeClusterMapToken(
+        (n as any)?.entryTime ?? (n as any)?.metaTime ?? (n as any)?.time
+      );
+      if (t) {
+        addClusterMapAlias(aliasToIds, `t:${t}`, id);
+        const model = normalizeClusterMapToken(
+          (n as any)?.entryModel ?? (n as any)?.chunkType ?? (n as any)?.model
+        );
+        const dirNum = Number((n as any)?.dir ?? (n as any)?.direction);
+        if (model) addClusterMapAlias(aliasToIds, `tm:${t}|${model}`, id);
+        if (Number.isFinite(dirNum)) {
+          addClusterMapAlias(aliasToIds, `td:${t}|${String(dirNum)}`, id);
+          if (model) {
+            addClusterMapAlias(
+              aliasToIds,
+              `tmd:${t}|${model}|${String(dirNum)}`,
+              id
+            );
+          }
+        }
+      }
+    }
+
+    return { aliasToIds, nodeCoordById, dim };
+  }, [displayNodes, clusterMapView]);
+
+  const selectedNeighborList = useMemo(() => {
+    if (!selectedNode) return [];
+    const nbsRaw =
+      (selectedNode as any)?.entryNeighbors ??
+      (selectedNode as any)?.neighbors ??
+      (selectedNode as any)?.kNeighbors ??
+      [];
+    if (!Array.isArray(nbsRaw) || nbsRaw.length === 0) return [];
+    if (!effectiveNeighborK || effectiveNeighborK <= 0) return [];
+
+    const { aliasToIds, nodeCoordById, dim } = neighborAlias;
+    const sourceId = normalizeClusterMapToken((selectedNode as any)?.id || "");
+    const sourceCoord =
+      (sourceId && nodeCoordById.get(sourceId)) ||
+      nodeCoordsForClusterMapKnn(selectedNode, dim);
+
+    const pickFromAlias = (token: string): string | null => {
+      const ids = aliasToIds.get(token);
+      if (!ids || ids.size <= 0) return null;
+      if (ids.size === 1) return ids.values().next().value ?? null;
+      if (!sourceCoord) return ids.values().next().value ?? null;
+      let bestId: string | null = null;
+      let bestD = Infinity;
+      for (const id of ids) {
+        const c = nodeCoordById.get(id);
+        if (!c) continue;
+        const dx = sourceCoord.x - c.x;
+        const dy = sourceCoord.y - c.y;
+        const dz = dim === "3d" ? sourceCoord.z - c.z : 0;
+        const d = dx * dx + dy * dy + dz * dz;
+        if (d < bestD) {
+          bestD = d;
+          bestId = id;
+        }
+      }
+      return bestId ?? ids.values().next().value ?? null;
+    };
+
+    const resolveNeighborId = (nb: any): string | null => {
+      const tr = (nb as any)?.t ?? null;
+      const rawCandidates = [
+        (nb as any)?.targetId,
+        (nb as any)?.nodeId,
+        (nb as any)?.id,
+        (nb as any)?.metaId,
+        (nb as any)?.uid,
+        (nb as any)?.metaUid,
+        (nb as any)?.tradeUid,
+        (nb as any)?.metaTradeUid,
+        (nb as any)?.labelUid,
+        (nb as any)?.closestClusterUid,
+        (tr as any)?.id,
+        (tr as any)?.uid,
+        (tr as any)?.tradeUid,
+        (tr as any)?.tradeId,
+        (tr as any)?.metaUid,
+        (tr as any)?.metaTradeUid,
+        (tr as any)?.metaId,
+      ];
+
+      for (const raw of rawCandidates) {
+        const t = normalizeClusterMapToken(raw);
+        if (!t) continue;
+        if (nodeById.has(t)) return t;
+        const hit = pickFromAlias(t);
+        if (hit) return hit;
+      }
+
+      const timeTok = normalizeClusterMapToken(
+        (nb as any)?.metaTime ??
+          (nb as any)?.time ??
+          (nb as any)?.entryTime ??
+          (tr as any)?.entryTime ??
+          (tr as any)?.time
+      );
+      if (!timeTok) return null;
+
+      const modelTok = normalizeClusterMapToken(
+        (nb as any)?.model ??
+          (nb as any)?.metaModel ??
+          (tr as any)?.model ??
+          (selectedNode as any)?.entryModel ??
+          (selectedNode as any)?.chunkType
+      );
+      const dirRaw = Number(
+        (nb as any)?.dir ??
+          (tr as any)?.dir ??
+          (tr as any)?.direction ??
+          (selectedNode as any)?.dir ??
+          (selectedNode as any)?.direction
+      );
+      const fallbackKeys: string[] = [];
+      if (modelTok && Number.isFinite(dirRaw))
+        fallbackKeys.push(`tmd:${timeTok}|${modelTok}|${String(dirRaw)}`);
+      if (modelTok) fallbackKeys.push(`tm:${timeTok}|${modelTok}`);
+      if (Number.isFinite(dirRaw)) fallbackKeys.push(`td:${timeTok}|${String(dirRaw)}`);
+      fallbackKeys.push(`t:${timeTok}`);
+      for (const key of fallbackKeys) {
+        const hit = pickFromAlias(key);
+        if (hit) return hit;
+      }
+      return null;
+    };
+
+    const pickRawId = (nb: any) => {
+      const tr = (nb as any)?.t ?? {};
+      const rawCandidates = [
+        (nb as any)?.metaUid,
+        (nb as any)?.uid,
+        (nb as any)?.metaId,
+        (nb as any)?.id,
+        (nb as any)?.nodeId,
+        (nb as any)?.targetId,
+        (nb as any)?.tradeUid,
+        (nb as any)?.metaTradeUid,
+        (tr as any)?.uid,
+        (tr as any)?.tradeUid,
+        (tr as any)?.id,
+        (tr as any)?.tradeId,
+        (tr as any)?.metaUid,
+        (tr as any)?.metaId,
+      ];
+      for (const raw of rawCandidates) {
+        if (raw == null) continue;
+        const s = String(raw).trim();
+        if (s) return s;
+      }
+      return "";
+    };
+
+    const candidates = (nbsRaw as any[])
+      .slice()
+      .sort((a: any, b: any) => {
+        const da = Number.isFinite(Number((a as any)?.d))
+          ? Number((a as any)?.d)
+          : Infinity;
+        const db = Number.isFinite(Number((b as any)?.d))
+          ? Number((b as any)?.d)
+          : Infinity;
+        return da - db;
+      })
+      .map((nb: any, idx: number) => {
+        const resolvedId = resolveNeighborId(nb);
+        const rawFallback = pickRawId(nb);
+        const node =
+          resolvedId != null ? (nodeById as any).get(resolvedId) : null;
+        const tr = (nb as any)?.t ?? null;
+        let displayId = node ? displayIdForNode(node) : tr ? displayIdForNode(tr) : "—";
+        if (!displayId || displayId === "—") {
+          displayId = rawFallback ? displayIdFromRaw(rawFallback) : "—";
+        }
+
+        const dist = (() => {
+          const d0 = Number((nb as any)?.d);
+          if (Number.isFinite(d0)) return d0;
+          if (!sourceCoord) return Infinity;
+          const dstId = resolvedId;
+          const dstCoord = dstId ? nodeCoordById.get(dstId) : null;
+          if (!dstCoord) return Infinity;
+          const dx = sourceCoord.x - dstCoord.x;
+          const dy = sourceCoord.y - dstCoord.y;
+          const dz = dim === "3d" ? sourceCoord.z - dstCoord.z : 0;
+          return Math.sqrt(dx * dx + dy * dy + dz * dz);
+        })();
+
+        return {
+          key:
+            resolvedId ||
+            rawFallback ||
+            `neighbor-${String(idx + 1).padStart(2, "0")}`,
+          id: resolvedId,
+          displayId,
+          dist,
+        };
+      });
+
+    const seen = new Set<string>();
+    const ordered = candidates
+      .filter((row) => {
+        if (!row) return false;
+        const dedupeKey = String(row.id || row.displayId || row.key || "");
+        if (!dedupeKey) return false;
+        if (seen.has(dedupeKey)) return false;
+        if (sourceId && row.id && row.id === sourceId) return false;
+        seen.add(dedupeKey);
+        return true;
+      })
+      .sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity));
+
+    return ordered.slice(0, effectiveNeighborK);
+  }, [selectedNode, effectiveNeighborK, neighborAlias, nodeById]);
+
   // User-facing selection stats should reflect exactly what the map is showing.
   // In HDBSCAN mode this includes post-hoc promotion/demotion.
   const summarizeSelectionSlice = React.useCallback((list: any[]) => {
@@ -16931,7 +17177,7 @@ export function ClusterMap({
         style={{
           marginTop: 10,
           position: "relative",
-          height: 440,
+          height: 640,
           borderRadius: 11,
           // Clear visual "armed" state while in selection mode
           border: heatmapOn
@@ -18172,6 +18418,86 @@ export function ClusterMap({
                           2
                         )}`
                       : "—"}
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 10 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 8,
+                      fontSize: 10,
+                      fontWeight: 900,
+                      letterSpacing: "0.02em",
+                      color: "rgba(255,255,255,0.70)",
+                    }}
+                  >
+                    <div>Nearest Neighbors</div>
+                    <div style={{ ...mono(), opacity: 0.7 }}>
+                      k={effectiveNeighborK || 0}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 6,
+                      maxHeight: 140,
+                      overflowY: "auto",
+                      overscrollBehavior: "contain",
+                      borderRadius: 10,
+                      border: "1px solid rgba(255,255,255,0.10)",
+                      background: "rgba(0,0,0,0.20)",
+                      padding: 6,
+                    }}
+                  >
+                    {selectedNeighborList && selectedNeighborList.length ? (
+                      <div style={{ display: "grid", gap: 6 }}>
+                        {selectedNeighborList.map((row, idx) => (
+                          <div
+                            key={String(row.key || row.id || idx)}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              padding: "4px 6px",
+                              borderRadius: 8,
+                              border: "1px solid rgba(255,255,255,0.08)",
+                              background: "rgba(255,255,255,0.03)",
+                            }}
+                          >
+                            <div
+                              style={{
+                                ...mono(),
+                                width: 18,
+                                textAlign: "right",
+                                opacity: 0.65,
+                              }}
+                            >
+                              {String(idx + 1).padStart(2, "0")}
+                            </div>
+                            <div
+                              title={row.displayId}
+                              style={{
+                                ...mono(),
+                                fontSize: 11,
+                                fontWeight: 900,
+                                opacity: 0.92,
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              {row.displayId}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 10, opacity: 0.65 }}>
+                        No neighbors available.
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -33972,6 +34298,7 @@ export default function App() {
                 potential={potential}
                 parseMode={parseMode}
                 showPotential={false}
+                kEntry={kEntry}
                 resetKey={clusterResetKey}
                 sliderValue={clusterTimelineIdx}
                 setSliderValue={setClusterTimelineIdx}
@@ -34016,6 +34343,7 @@ export default function App() {
                 potential={potential}
                 parseMode={parseMode}
                 showPotential={isAIActive}
+                kEntry={kEntry}
                 resetKey={clusterResetKey}
                 sliderValue={clusterTimelineIdx}
                 setSliderValue={setClusterTimelineIdx}
