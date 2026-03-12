@@ -15678,16 +15678,31 @@ export function ClusterMap({
     (t: any) => {
       if (!t) return 0;
 
-      if (aiMethod !== "hdbscan") {
+      const resolveExplicitConfidence = () => {
         const raw =
           (t as any).entryConfidence ??
           (t as any).aiConfidence ??
           (t as any).confidence ??
           (t as any).entryMargin ??
           (t as any).margin ??
+          (t as any).aiMargin ??
+          (t as any).hdbWinRate ??
+          (t as any).clusterWinRate ??
           null;
-        const v = raw === null || raw === undefined ? NaN : Number(raw);
-        return Number.isFinite(v) ? clamp(Math.abs(v), 0, 1) : 0;
+        let v = raw === null || raw === undefined ? NaN : Number(raw);
+        if (!Number.isFinite(v)) return null;
+        if (v > 1 && v <= 100) v = v / 100;
+        if (v >= -1 && v <= 1 && v < 0) v = (v + 1) / 2;
+        return clamp(Math.abs(v), 0, 1);
+      };
+
+      const explicit = resolveExplicitConfidence();
+      if (explicit != null) {
+        return explicit;
+      }
+
+      if (aiMethod !== "hdbscan") {
+        return 0;
       }
 
       const uid = (t as any).uid ?? (t as any).id ?? null;
@@ -23869,19 +23884,37 @@ export default function App() {
     (t: any) => {
       if (!t) return 0;
 
+      const resolveExplicitConfidence = () => {
+        const raw =
+          (t as any).entryConfidence ??
+          (t as any).aiConfidence ??
+          (t as any).confidence ??
+          (t as any).entryMargin ??
+          (t as any).margin ??
+          null;
+
+        let v = raw === null || raw === undefined ? NaN : Number(raw);
+        if (!Number.isFinite(v)) return null;
+
+        if (v > 1 && v <= 100) v = v / 100;
+        if (v >= -1 && v <= 1 && v < 0) v = (v + 1) / 2;
+
+        return clamp(Math.abs(v), 0, 1);
+      };
+
       // Confidence / margin:
       // - HDBSCAN: use cluster-group win rate stored on the trade (aiMargin). Noise => 1% (0.01).
       // - Other AI methods: fall back to existing per-trade confidence/margin fields if present.
       if (aiMethod === "hdbscan") {
+        const explicit = resolveExplicitConfidence();
+        if (explicit != null) {
+          return explicit;
+        }
+
         const raw =
           (t as any).aiMargin ??
           (t as any).hdbWinRate ??
           (t as any).clusterWinRate ??
-          (t as any).entryMargin ??
-          (t as any).entryConfidence ??
-          (t as any).aiConfidence ??
-          (t as any).confidence ??
-          (t as any).margin ??
           null;
 
         let v = raw === null || raw === undefined ? NaN : Number(raw);
@@ -23896,22 +23929,8 @@ export default function App() {
         return clamp(v, 0, 1);
       }
 
-      const raw =
-        (t as any).entryConfidence ??
-        (t as any).aiConfidence ??
-        (t as any).confidence ??
-        (t as any).entryMargin ??
-        (t as any).margin ??
-        null;
-
-      let v = raw === null || raw === undefined ? NaN : Number(raw);
-      if (!Number.isFinite(v)) return 0;
-
-      // Legacy: some kNN paths store a signed margin in [-1,1].
-      // Convert negative margins into a probability-like [0,1] score.
-      if (v >= -1 && v <= 1 && v < 0) v = (v + 1) / 2;
-
-      return clamp(Math.abs(v), 0, 1);
+      const explicit = resolveExplicitConfidence();
+      return explicit ?? 0;
     },
     [aiMethod]
   );
