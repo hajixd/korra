@@ -2240,6 +2240,9 @@ type BacktestSettingsSnapshot = {
   selectedAiDomains: string[];
   dimensionAmount: number;
   compressionMethod: AiCompressionMethod;
+  kEntry: number;
+  kExit: number;
+  knnVoteMode: KnnVoteMode;
   hdbMinClusterSize: number;
   hdbMinSamples: number;
   hdbEpsQuantile: number;
@@ -7356,6 +7359,9 @@ const doesBacktestHistoryGenerationInputChange = (
   if (previous.trailingDistPct !== next.trailingDistPct) return true;
   if (previous.maxBarsInTrade !== next.maxBarsInTrade) return true;
   if (previous.maxConcurrentTrades !== next.maxConcurrentTrades) return true;
+  if (previous.kEntry !== next.kEntry) return true;
+  if (previous.kExit !== next.kExit) return true;
+  if (previous.knnVoteMode !== next.knnVoteMode) return true;
   return false;
 };
 
@@ -7752,6 +7758,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     selectedAiDomains: [...selectedAiDomains],
     dimensionAmount,
     compressionMethod,
+    kEntry,
+    kExit,
+    knnVoteMode,
     hdbMinClusterSize,
     hdbMinSamples,
     hdbEpsQuantile,
@@ -15897,7 +15906,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         entryPrice: trade.entryPrice,
         exitPrice: trade.outcomePrice,
         margin: getEffectiveTradeConfidenceScore(trade),
-        side: trade.side
+        side: trade.side,
+        entryNeighbors:
+          (trade as any).entryNeighbors ??
+          (trade as any).neighbors ??
+          (trade as any).kNeighbors ??
+          []
       };
     });
   }, [
@@ -20711,6 +20725,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       onMitMap={() => {}}
                       aiMethod={appliedBacktestSettings.aiMode}
                       aiDomains={appliedBacktestSettings.selectedAiDomains}
+                      kEntry={appliedBacktestSettings.kEntry}
+                      knnVoteMode={appliedBacktestSettings.knnVoteMode}
                       hdbDomainDistinction="conceptual"
                       hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}
                       hdbMinSamples={appliedBacktestSettings.hdbMinSamples}

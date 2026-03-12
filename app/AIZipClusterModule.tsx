@@ -9366,6 +9366,7 @@ export function ClusterMap({
   onMitMap,
   aiMethod,
   aiDomains,
+  knnVoteMode = "distance",
   kEntry,
   hdbDomainDistinction,
   hdbMinClusterSize,
@@ -14553,6 +14554,11 @@ export function ClusterMap({
     return { aliasToIds, nodeCoordById, dim };
   }, [displayNodes, clusterMapView]);
 
+  const selectedNeighborCap = Math.max(
+    0,
+    Math.min(36, Math.floor(Number(kEntry) || 0))
+  );
+
   const selectedNeighborList = useMemo(() => {
     if (!selectedNode) return [];
     const kLimit = Math.max(
@@ -14717,46 +14723,52 @@ export function ClusterMap({
           }
 
           const pnlVal = (() => {
-            if (node) {
-              const v =
-                (node as any).isOpen && typeof (node as any).unrealizedPnl === "number"
-                  ? Number((node as any).unrealizedPnl)
-                  : typeof (node as any).pnl === "number"
-                  ? Number((node as any).pnl)
-                  : null;
-              if (Number.isFinite(v as any)) return v as any;
-            }
             const v =
               (nb as any)?.metaPnl != null
                 ? Number((nb as any).metaPnl)
                 : tr?.isOpen
                 ? Number(tr.unrealizedPnl ?? NaN)
                 : Number(tr?.pnl ?? NaN);
-            return Number.isFinite(v) ? v : null;
+            if (Number.isFinite(v)) return v;
+            if (node) {
+              const nv =
+                (node as any).isOpen && typeof (node as any).unrealizedPnl === "number"
+                  ? Number((node as any).unrealizedPnl)
+                  : typeof (node as any).pnl === "number"
+                  ? Number((node as any).pnl)
+                  : null;
+              if (Number.isFinite(nv as any)) return nv as any;
+            }
+            return null;
           })();
 
           const outcomeStr = String(
             (nb as any)?.metaOutcome ?? tr?.result ?? ""
           ).toUpperCase();
-          const label = Number(
+          const labelRaw = Number(
             (nb as any)?.label ?? (nb as any)?.metaLabel ?? tr?.label ?? NaN
           );
-          const nodeWin =
-            typeof (node as any)?.win === "boolean" ? (node as any).win : null;
-          const isWin =
-            nodeWin === true ||
+          const label = Number.isFinite(labelRaw) ? labelRaw : null;
+          const hasOutcomeSignal =
+            !!outcomeStr ||
+            label != null ||
+            (pnlVal != null && Number.isFinite(pnlVal));
+          const isWinFromPayload =
             outcomeStr === "TP" ||
             outcomeStr === "WIN" ||
             outcomeStr.includes("WIN") ||
             label === 1 ||
             (pnlVal != null && pnlVal >= 0);
-          const isLoss =
-            nodeWin === false ||
+          const isLossFromPayload =
             outcomeStr === "SL" ||
             outcomeStr === "LOSS" ||
             outcomeStr.includes("LOSS") ||
             label === -1 ||
             (pnlVal != null && pnlVal < 0);
+          const nodeWin =
+            typeof (node as any)?.win === "boolean" ? (node as any).win : null;
+          const isWin = hasOutcomeSignal ? isWinFromPayload : nodeWin === true;
+          const isLoss = hasOutcomeSignal ? isLossFromPayload : nodeWin === false;
           const tone = isWin ? "green" : isLoss ? "red" : "neutral";
 
           const dist = (() => {
@@ -14781,6 +14793,8 @@ export function ClusterMap({
             displayId,
             dist,
             tone,
+            isWin,
+            isLoss,
           };
         });
 
@@ -14802,6 +14816,11 @@ export function ClusterMap({
 
     const payloadList = buildFromPayload(nbsRaw as any[]);
     if (payloadList.length) return payloadList;
+
+    const kind = String((selectedNode as any)?.kind || "").toLowerCase();
+    const allowFallback =
+      kind === "library" || kind === "ghost" || kind === "close";
+    if (!allowFallback) return [];
 
     if (!sourceCoord) return [];
     const fallbackRows: any[] = [];
@@ -14835,12 +14854,9 @@ export function ClusterMap({
           : typeof (node as any)?.unrealizedPnl === "number"
           ? Number((node as any).unrealizedPnl)
           : null;
-      const tone =
-        nodeWin === true || (pnlVal != null && pnlVal >= 0)
-          ? "green"
-          : nodeWin === false || (pnlVal != null && pnlVal < 0)
-          ? "red"
-          : "neutral";
+      const isWin = nodeWin === true || (pnlVal != null && pnlVal >= 0);
+      const isLoss = nodeWin === false || (pnlVal != null && pnlVal < 0);
+      const tone = isWin ? "green" : isLoss ? "red" : "neutral";
       fallbackRows.push({
         key: nodeId || String((node as any).id || ""),
         id: nodeId || String((node as any).id || ""),
@@ -14848,6 +14864,8 @@ export function ClusterMap({
         dist,
         isLib,
         tone,
+        isWin,
+        isLoss,
       });
     }
 
@@ -14858,6 +14876,24 @@ export function ClusterMap({
       .sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity))
       .slice(0, kLimit);
   }, [selectedNode, effectiveNeighborK, neighborAlias, nodeById]);
+
+  const selectedNeighborConfidence = useMemo(() => {
+    if (aiMethod === "hdbscan") return null;
+    if (!selectedNeighborList || selectedNeighborList.length === 0) return null;
+    let win = 0;
+    let loss = 0;
+    const useDistance = String(knnVoteMode || "distance") === "distance";
+    for (const row of selectedNeighborList as any[]) {
+      if (!row) continue;
+      const w = useDistance
+        ? 1 / (Number(row.dist ?? 0) + AI_EPS)
+        : 1;
+      if (row.isWin) win += w;
+      else if (row.isLoss) loss += w;
+    }
+    if (win <= 0 && loss <= 0) return null;
+    return clamp(win / (win + loss + AI_EPS), 0, 1);
+  }, [aiMethod, knnVoteMode, selectedNeighborList]);
 
   // User-facing selection stats should reflect exactly what the map is showing.
   // In HDBSCAN mode this includes post-hoc promotion/demotion.
@@ -18512,7 +18548,10 @@ export function ClusterMap({
                       const c0 = hdbConfidenceForNode(selectedNode);
                       const g0 = gateConfidenceForNode(selectedNode);
                       const v =
-                        c0 > 0 || g0 == null || !Number.isFinite(Number(g0))
+                        aiMethod !== "hdbscan" &&
+                        selectedNeighborConfidence != null
+                          ? selectedNeighborConfidence
+                          : c0 > 0 || g0 == null || !Number.isFinite(Number(g0))
                           ? c0
                           : Number(g0);
                       return v == null ? "—" : `${Math.round(v * 100)}%`;
@@ -18596,7 +18635,7 @@ export function ClusterMap({
                   >
                     <div>Nearest Neighbors</div>
                     <div style={{ ...mono(), opacity: 0.7 }}>
-                      k={selectedNeighborList.length || 0}
+                      k={selectedNeighborCap || selectedNeighborList.length || 0}
                     </div>
                   </div>
                   <div
@@ -28186,7 +28225,7 @@ export default function App() {
                     right={
                       !isActive && !canEnterNextBar ? (
                         <Pill tone="neutral">
-                          k={entryNeighborsForUi.length}
+                          k={entryNeighborsCap || entryNeighborsForUi.length}
                         </Pill>
                       ) : (
                         <Pill
@@ -34500,6 +34539,7 @@ export default function App() {
                 parseMode={parseMode}
                 showPotential={false}
                 kEntry={kEntry}
+                knnVoteMode={knnVoteMode}
                 resetKey={clusterResetKey}
                 sliderValue={clusterTimelineIdx}
                 setSliderValue={setClusterTimelineIdx}
@@ -34545,6 +34585,7 @@ export default function App() {
                 parseMode={parseMode}
                 showPotential={isAIActive}
                 kEntry={kEntry}
+                knnVoteMode={knnVoteMode}
                 resetKey={clusterResetKey}
                 sliderValue={clusterTimelineIdx}
                 setSliderValue={setClusterTimelineIdx}
