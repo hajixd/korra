@@ -6006,7 +6006,8 @@ function buildLegacyKnnEdgesForClusterMap(
 function getKnnEdgesForClusterMap(
   nodes: any[],
   kRaw: number,
-  dim: "2d" | "3d"
+  dim: "2d" | "3d",
+  opts?: { allowLegacyFallback?: boolean }
 ) {
   const k = Math.max(0, Math.min(36, Math.floor(Number(kRaw) || 0)));
   if (!Array.isArray(nodes) || nodes.length < 2 || k <= 0) return [];
@@ -6016,7 +6017,10 @@ function getKnnEdgesForClusterMap(
     modeCache = new Map<string, any[]>();
     clusterMapKnnEdgeCache.set(nodes as any[], modeCache);
   }
-  const cacheKey = `causal-v3|${dim}|${k}`;
+  const allowLegacyFallback = opts?.allowLegacyFallback !== false;
+  const cacheKey = `causal-v3|${dim}|${k}|${
+    allowLegacyFallback ? "legacy" : "causal"
+  }`;
   const cached = modeCache.get(cacheKey);
   if (cached) return cached;
 
@@ -6227,7 +6231,9 @@ function getKnnEdgesForClusterMap(
   const edges =
     causalEdges.length > 0
       ? causalEdges
-      : buildLegacyKnnEdgesForClusterMap(nodes, k, dim);
+      : allowLegacyFallback
+      ? buildLegacyKnnEdgesForClusterMap(nodes, k, dim)
+      : [];
   modeCache.set(cacheKey, edges);
   return edges;
 }
@@ -6353,6 +6359,11 @@ function drawClusterMapCanvas(
     0,
     Math.min(1, Number((renderOpts as any)?.knnLinkOpacity ?? 0.34))
   );
+  const knnAllowLegacyFallback =
+    (renderOpts as any)?.knnAllowLegacyFallback !== false;
+  const knnEdgeNodes = Array.isArray((renderOpts as any)?.knnEdgeNodes)
+    ? ((renderOpts as any).knnEdgeNodes as any[])
+    : nodes;
   const aiMethod2d = String((renderOpts as any)?.aiMethod ?? "").toLowerCase();
   const selectedIdRaw = (renderOpts as any)?.selectedId;
   const normalizeId = (v: any): string | null => {
@@ -6905,7 +6916,9 @@ function drawClusterMapCanvas(
     const effectiveKnnK = knnLinkK;
     const knnEdges =
       effectiveKnnK > 0 && knnLinksVisible
-        ? getKnnEdgesForClusterMap(nodes as any[], effectiveKnnK, "2d")
+        ? getKnnEdgesForClusterMap(knnEdgeNodes as any[], effectiveKnnK, "2d", {
+            allowLegacyFallback: knnAllowLegacyFallback,
+          })
         : [];
 
     if (knnFocusActive && selectedNodeId) {
@@ -7475,6 +7488,8 @@ function drawClusterMapCanvas(
 
 function ClusterMapViewport3D({
   nodes,
+  knnEdgeNodes,
+  knnAllowLegacyFallback = true,
   selectedId,
   searchHighlightId,
   resetKey,
@@ -7497,6 +7512,8 @@ function ClusterMapViewport3D({
   selectionClearNonce,
 }: {
   nodes: any[];
+  knnEdgeNodes?: any[];
+  knnAllowLegacyFallback?: boolean;
   selectedId: string | null;
   searchHighlightId: string | null;
   resetKey: number;
@@ -8396,7 +8413,16 @@ function ClusterMapViewport3D({
       knnAlpha > 0 &&
       worldPts.length > 1
     ) {
-      const edgePairs = getKnnEdgesForClusterMap(nodes as any[], knnKInt, "3d");
+      const edgeNodes =
+        Array.isArray(knnEdgeNodes) && knnEdgeNodes.length > 0
+          ? knnEdgeNodes
+          : nodes;
+      const edgePairs = getKnnEdgesForClusterMap(
+        edgeNodes as any[],
+        knnKInt,
+        "3d",
+        { allowLegacyFallback: knnAllowLegacyFallback }
+      );
       if (edgePairs.length > 0) {
         const idToIdx = new Map<string, number>();
         for (let i = 0; i < nodeIds.length; i++) {
@@ -9185,6 +9211,8 @@ function ClusterMapViewport3D({
     nodeOutlineMul,
     knnLinkK,
     knnLinkOpacity,
+    knnAllowLegacyFallback,
+    knnEdgeNodes,
     mapSpreadMul,
     hdbOverlay,
     showGroupOverlays,
@@ -9388,6 +9416,7 @@ export function ClusterMap({
   statsDateEnd,
   antiCheatEnabled = false,
   allowTradeNeighborFallback = false,
+  useEntryNeighborsOnly = false,
   headless = false,
 }) {
   const disabled = false;
@@ -9395,6 +9424,7 @@ export function ClusterMap({
   const canvasWrapRef = useRef(null);
   const redrawRef = useRef(() => {});
   const [hoveredId, setHoveredId] = useState(null);
+  const entryNeighborsOnly = !!useEntryNeighborsOnly;
   const [selectedId, setSelectedId] = useState(null);
   const [selectedLink, setSelectedLink] = useState<any>(null);
   const [hoveredGroup, setHoveredGroup] = useState<any>(null);
@@ -11210,8 +11240,19 @@ export function ClusterMap({
       aiMethod,
       selectedId,
       selectedLink,
+      knnEdgeNodes: neighborNodes,
+      knnAllowLegacyFallback: !entryNeighborsOnly,
     }),
-    [lowPowerMode, knnLinkK, knnLinkOpacity, aiMethod, selectedId, selectedLink]
+    [
+      lowPowerMode,
+      knnLinkK,
+      knnLinkOpacity,
+      aiMethod,
+      selectedId,
+      selectedLink,
+      neighborNodes,
+      entryNeighborsOnly,
+    ]
   );
   const [nodeSizeMul, setNodeSizeMul] = React.useState(1);
   const [nodeOutlineMul, setNodeOutlineMul] = React.useState(1);
@@ -12668,62 +12709,76 @@ export function ClusterMap({
     ).trim();
   };
 
-  const displayNodesRaw = useMemo(() => {
-    const out: any[] = [];
-    const seenTradeKeys = new Set<string>();
-    for (const n of timelineNodesCheat as any[]) {
-      const categories: string[] = [];
+  const buildTimelineNodeSet = React.useCallback(
+    (applyLegend: boolean) => {
+      const out: any[] = [];
+      const seenTradeKeys = new Set<string>();
+      for (const n of timelineNodesCheat as any[]) {
+        const categories: string[] = [];
 
-      if ((n as any).kind === "library") {
-        const lk = `lib:${String((n as any).libId || "unknown")}`;
-        categories.push(lk);
-      } else if ((n as any).kind === "potential") {
-        categories.push("potential");
-      } else if ((n as any).kind === "close") {
-        categories.push("close");
-      } else {
-        if ((n as any).isOpen) {
-          categories.push("active");
+        if ((n as any).kind === "library") {
+          const lk = `lib:${String((n as any).libId || "unknown")}`;
+          categories.push(lk);
+        } else if ((n as any).kind === "potential") {
+          categories.push("potential");
+        } else if ((n as any).kind === "close") {
+          categories.push("close");
         } else {
-          categories.push((n as any).win ? "closedWin" : "closedLoss");
+          if ((n as any).isOpen) {
+            categories.push("active");
+          } else {
+            categories.push((n as any).win ? "closedWin" : "closedLoss");
+          }
         }
-      }
 
-      // Exclude phantom/library-exit trade nodes everywhere ("Library" is not a real exit).
-      // This keeps Cluster Map consistent with Trade History / stats / calendar.
-      const _exitReasonTag = String((n as any).exitReason ?? "").toLowerCase();
-      const _exitByTag = String(
-        (n as any).exitBy ?? (n as any).exitMethod ?? ""
-      ).toLowerCase();
-      if ((n as any).metaFromLibrary) continue;
-      if (
-        String((n as any).kind || "").toLowerCase() === "trade" &&
-        (_exitReasonTag === "library" || _exitByTag === "library")
-      )
-        continue;
+        // Exclude phantom/library-exit trade nodes everywhere ("Library" is not a real exit).
+        // This keeps Cluster Map consistent with Trade History / stats / calendar.
+        const _exitReasonTag = String((n as any).exitReason ?? "").toLowerCase();
+        const _exitByTag = String(
+          (n as any).exitBy ?? (n as any).exitMethod ?? ""
+        ).toLowerCase();
+        if ((n as any).metaFromLibrary) continue;
+        if (
+          String((n as any).kind || "").toLowerCase() === "trade" &&
+          (_exitReasonTag === "library" || _exitByTag === "library")
+        )
+          continue;
 
-      let visible = true;
-      for (const c of categories) {
-        if ((legendToggles as any)[c] === false) {
-          visible = false;
-          break;
+        if (applyLegend) {
+          let visible = true;
+          for (const c of categories) {
+            if ((legendToggles as any)[c] === false) {
+              visible = false;
+              break;
+            }
+          }
+          if (!visible) continue;
         }
-      }
-      if (!visible) continue;
 
-      // De-dupe trade-shaped nodes by stable trade identity so the map doesn't double-count.
-      if (String((n as any).kind || "").toLowerCase() === "trade") {
-        const k = tradeKey(n);
-        if (k) {
-          if (seenTradeKeys.has(k)) continue;
-          seenTradeKeys.add(k);
+        // De-dupe trade-shaped nodes by stable trade identity so the map doesn't double-count.
+        if (String((n as any).kind || "").toLowerCase() === "trade") {
+          const k = tradeKey(n);
+          if (k) {
+            if (seenTradeKeys.has(k)) continue;
+            seenTradeKeys.add(k);
+          }
         }
-      }
 
-      out.push(n);
-    }
-    return out;
-  }, [timelineNodesCheat, legendToggles]);
+        out.push(n);
+      }
+      return out;
+    },
+    [legendToggles, timelineNodesCheat, tradeKey]
+  );
+
+  const displayNodesRaw = useMemo(
+    () => buildTimelineNodeSet(true),
+    [buildTimelineNodeSet]
+  );
+  const neighborNodes = useMemo(
+    () => buildTimelineNodeSet(false),
+    [buildTimelineNodeSet]
+  );
   const selectedNodeRaw = useMemo(() => {
     if (!selectedId) return null;
     return displayNodesRaw.find((n) => n.id === selectedId) || null;
@@ -14522,12 +14577,21 @@ export function ClusterMap({
     return m;
   }, [displayNodes]);
 
+  const nodeByIdAll = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const n of neighborNodes as any[]) {
+      if (!n || !(n as any).id) continue;
+      m.set(String((n as any).id), n);
+    }
+    return m;
+  }, [neighborNodes]);
+
   const neighborAlias = useMemo(() => {
     const aliasToIds = new Map<string, Set<string>>();
     const nodeCoordById = new Map<string, { x: number; y: number; z: number }>();
     const dim = clusterMapView === "3d" ? "3d" : "2d";
 
-    for (const n of displayNodes as any[]) {
+    for (const n of neighborNodes as any[]) {
       if (!n) continue;
       const id = normalizeClusterMapToken((n as any)?.id);
       if (!id) continue;
@@ -14569,7 +14633,7 @@ export function ClusterMap({
     }
 
     return { aliasToIds, nodeCoordById, dim };
-  }, [displayNodes, clusterMapView]);
+  }, [neighborNodes, clusterMapView]);
 
   const selectedNeighborCap = Math.max(
     0,
@@ -14643,7 +14707,7 @@ export function ClusterMap({
       for (const raw of rawCandidates) {
         const t = normalizeClusterMapToken(raw);
         if (!t) continue;
-        if (nodeById.has(t)) return t;
+        if (nodeByIdAll.has(t)) return t;
         const hit = pickFromAlias(t);
         if (hit) return hit;
       }
@@ -14728,7 +14792,7 @@ export function ClusterMap({
           const resolvedId = resolveNeighborId(nb);
           const rawFallback = pickRawId(nb);
           const node =
-            resolvedId != null ? (nodeById as any).get(resolvedId) : null;
+            resolvedId != null ? (nodeByIdAll as any).get(resolvedId) : null;
           const tr = (nb as any)?.t ?? null;
           let displayId = node
             ? displayIdForNode(node)
@@ -14840,7 +14904,7 @@ export function ClusterMap({
       kind === "library" ||
       kind === "ghost" ||
       kind === "close" ||
-      (allowTradeNeighborFallback && isTradeLike);
+      (!entryNeighborsOnly && allowTradeNeighborFallback && isTradeLike);
     if (!allowFallback) return [];
 
     if (!sourceCoord) return [];
@@ -14864,7 +14928,7 @@ export function ClusterMap({
         ? nodeChronologyValue(selectedNode)
         : null;
 
-    for (const node of nodeById.values()) {
+    for (const node of nodeByIdAll.values()) {
       if (!node) continue;
       const nodeId = normalizeClusterMapToken((node as any)?.id || "");
       if (sourceId && nodeId && nodeId === sourceId) continue;
@@ -14940,8 +15004,9 @@ export function ClusterMap({
     selectedNode,
     effectiveNeighborK,
     neighborAlias,
-    nodeById,
+    nodeByIdAll,
     allowTradeNeighborFallback,
+    entryNeighborsOnly,
     activeModSet,
     nodeChronologyValue,
   ]);
@@ -15536,6 +15601,8 @@ export function ClusterMap({
         0,
         Math.min(1, Number((drawRenderOpts as any)?.knnLinkOpacity ?? 0.34))
       );
+      const knnAllowLegacyFallback =
+        (drawRenderOpts as any)?.knnAllowLegacyFallback !== false;
       const effectiveK = knnK;
       const tolPx = 8.5;
 
@@ -15575,7 +15642,12 @@ export function ClusterMap({
       };
 
       if (effectiveK > 0 && knnOpacity > 0) {
-        const edges = getKnnEdgesForClusterMap(displayNodes as any[], effectiveK, "2d");
+        const edges = getKnnEdgesForClusterMap(
+          neighborNodes as any[],
+          effectiveK,
+          "2d",
+          { allowLegacyFallback: knnAllowLegacyFallback }
+        );
         for (const e of edges as any[]) {
           considerLink("knn", (e as any)?.a, (e as any)?.b, Number((e as any)?.d));
         }
@@ -17475,6 +17547,8 @@ export function ClusterMap({
         ) : (
           <ClusterMapViewport3D
             nodes={displayNodes}
+            knnEdgeNodes={neighborNodes}
+            knnAllowLegacyFallback={!entryNeighborsOnly}
             selectedId={selectedId}
             searchHighlightId={searchHighlightId}
             resetKey={resetKey}
