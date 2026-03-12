@@ -1,11 +1,3 @@
-@font-face {
-  font-family: "Gideon Pixel";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/fonts/gideon/FSPixelSansUnicode-Regular.ttf") format("truetype");
-}
-
 :root {
   --bg: #080b10;
   --bg-elev: #0b1017;

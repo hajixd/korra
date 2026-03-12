@@ -109,6 +109,7 @@ const LIGHTWEIGHT_CHART_LINE_SOLID: LineStyle = 0;
 const LIGHTWEIGHT_CHART_LINE_DOTTED: LineStyle = 1;
 const LIGHTWEIGHT_CHART_LINE_SPARSE_DOTTED: LineStyle = 4;
 const SETTINGS_STORAGE_KEY = "korra-settings";
+const UI_PREFERENCES_STORAGE_KEY = "korra-ui-preferences";
 const PRESETS_STORAGE_KEY = "korra-presets";
 const UPLOADED_STRATEGY_MODELS_STORAGE_KEY = "korra-uploaded-strategy-models";
 const TERMINAL_VIEW_STATE_STORAGE_KEY = "korra-terminal-view-state";
@@ -168,6 +169,7 @@ const BACKTEST_TAB_IDS: BacktestTab[] = [
   "dimensions",
   "propFirm"
 ];
+const PANEL_TAB_IDS: PanelTab[] = ["active", "assets", "history", "actions"];
 
 const isSurfaceTab = (value: unknown): value is SurfaceTab => {
   return typeof value === "string" && SURFACE_TAB_IDS.includes(value as SurfaceTab);
@@ -177,6 +179,9 @@ const isChartSurfaceTab = (value: SurfaceTab): boolean => value === "chart";
 
 const isBacktestTab = (value: unknown): value is BacktestTab => {
   return typeof value === "string" && BACKTEST_TAB_IDS.includes(value as BacktestTab);
+};
+const isPanelTab = (value: unknown): value is PanelTab => {
+  return typeof value === "string" && PANEL_TAB_IDS.includes(value as PanelTab);
 };
 
 const applyDefaultCopytradeRoute = (parsed: URL): void => {
@@ -356,6 +361,25 @@ const WORKSPACE_PANEL_MIN_WIDTH = 350;
 const WORKSPACE_PANEL_DEFAULT_WIDTH = 430;
 const WORKSPACE_PANEL_MAX_WIDTH = 980;
 const WORKSPACE_CHART_MIN_WIDTH = 360;
+
+const resolveWorkspacePanelWidth = (value: unknown): number => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return WORKSPACE_PANEL_DEFAULT_WIDTH;
+  }
+
+  const workspaceWidth =
+    typeof window !== "undefined"
+      ? window.innerWidth
+      : WORKSPACE_PANEL_DEFAULT_WIDTH + WORKSPACE_CHART_MIN_WIDTH;
+  const maxFromWorkspace = Math.min(
+    WORKSPACE_PANEL_MAX_WIDTH,
+    workspaceWidth - WORKSPACE_CHART_MIN_WIDTH
+  );
+  const maxWidth = Math.max(WORKSPACE_PANEL_MIN_WIDTH, maxFromWorkspace);
+
+  return clamp(Math.round(numeric), WORKSPACE_PANEL_MIN_WIDTH, maxWidth);
+};
 
 const TIMEFRAME_DISPLAY_LABELS: Record<Timeframe, string> = {
   "1m": "1 Minute",
@@ -4380,12 +4404,19 @@ const fetchHistoryCandles = async (
 
 const fetchBacktestHistoryCandles = async (
   timeframe: Timeframe,
+  targetBars: number,
   recentOneMinutePromise?: Promise<Candle[]>,
   allowOneMinuteFallback = true
 ): Promise<Candle[]> => {
+  const safeTargetBars = clamp(
+    Math.floor(Number.isFinite(targetBars) ? targetBars : BACKTEST_MAX_HISTORY_CANDLES),
+    MIN_SEED_CANDLES,
+    BACKTEST_MAX_HISTORY_CANDLES
+  );
+
   return fetchHybridHistoryCandles(
     timeframe,
-    BACKTEST_MAX_HISTORY_CANDLES,
+    safeTargetBars,
     recentOneMinutePromise,
     allowOneMinuteFallback
   );
@@ -7561,6 +7592,26 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [modelsModalOpen, setModelsModalOpen] = useState(false);
   const [uploadedStrategyModels, setUploadedStrategyModels] = useState<StrategyModelCatalogEntry[]>([]);
   const [uploadedStrategyModelsReady, setUploadedStrategyModelsReady] = useState(false);
+  const settingsModelNames = useMemo(() => {
+    const names: string[] = [];
+    const seen = new Set<string>();
+    const pushName = (value: string) => {
+      const trimmed = value.trim();
+
+      if (!trimmed || seen.has(trimmed)) {
+        return;
+      }
+
+      seen.add(trimmed);
+      names.push(trimmed);
+    };
+
+    availableAiModelNames.forEach(pushName);
+    STRATEGY_MODEL_CATALOG.forEach((model) => pushName(model.name));
+    uploadedStrategyModels.forEach((model) => pushName(model.name));
+
+    return names;
+  }, [availableAiModelNames, uploadedStrategyModels]);
   const [modelsSurfaceNotice, setModelsSurfaceNotice] = useState("");
   const [modelsSurfaceNoticeTone, setModelsSurfaceNoticeTone] = useState<
     "neutral" | "success" | "error"
@@ -7568,7 +7619,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [featuresModalOpen, setFeaturesModalOpen] = useState(false);
   const [librariesModalOpen, setLibrariesModalOpen] = useState(false);
   const [aiModelStates, setAiModelStates] = useState<Record<string, AiModelState>>(() => {
-    return buildInitialAiModelStates(availableAiModelNames);
+    return buildInitialAiModelStates(settingsModelNames);
   });
   const [aiFeatureLevels, setAiFeatureLevels] = useState<Record<string, AiFeatureLevel>>(() => {
     return buildInitialAiFeatureLevels();
@@ -7741,7 +7792,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     } finally {
       setTerminalViewStateReady(true);
     }
-  }, []);
+  }, [
+    setActivePanelTab,
+    setAiZipClusterMapView,
+    setBacktestHistoryCollapsed,
+    setClusterLegendToggles,
+    setClusterViewDir,
+    setClusterViewHour,
+    setClusterViewMonth,
+    setClusterViewSession,
+    setClusterViewWeekday,
+    setIsGraphsCollapsed,
+    setPanelExpanded,
+    setPerformanceStatsCollapsed,
+    setShowActiveTradeOnChart,
+    setShowAllTradesOnChart,
+    setWorkspacePanelWidth
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !terminalViewStateReady) {
@@ -7762,8 +7829,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [selectedBacktestTab, selectedSurfaceTab, terminalViewStateReady]);
 
   useEffect(() => {
-    setAiModelStates((current) => syncAiModelStates(current, availableAiModelNames));
-  }, [availableAiModelNames]);
+    setAiModelStates((current) => syncAiModelStates(current, settingsModelNames));
+  }, [settingsModelNames]);
 
   useEffect(() => {
     if (
@@ -8436,12 +8503,51 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const selectedAsset = useMemo(() => {
     return getAssetBySymbol(selectedSymbol);
   }, [selectedSymbol]);
+  const settingsModelProfiles = useMemo(() => {
+    const next = [...modelProfiles];
+    const seen = new Set(next.map((model) => model.id));
+
+    for (const rawName of settingsModelNames) {
+      const name = rawName.trim();
+
+      if (!name) {
+        continue;
+      }
+
+      const catalogProfile = resolveStrategyRuntimeModelProfile(name);
+      const modelId = catalogProfile?.id ?? createModelId(name);
+
+      if (seen.has(modelId)) {
+        continue;
+      }
+
+      seen.add(modelId);
+      next.push(
+        catalogProfile
+          ? {
+              id: catalogProfile.id,
+              name: catalogProfile.name,
+              kind: "Model",
+              modelKind: catalogProfile.modelKind,
+              riskMin: catalogProfile.riskMin,
+              riskMax: catalogProfile.riskMax,
+              rrMin: catalogProfile.rrMin,
+              rrMax: catalogProfile.rrMax,
+              longBias: catalogProfile.longBias,
+              winRate: catalogProfile.winRate
+            }
+          : createSyntheticModelProfile(name)
+      );
+    }
+
+    return next;
+  }, [modelProfiles, settingsModelNames]);
   const modelProfileById = useMemo(() => {
-    return modelProfiles.reduce<Record<string, ModelProfile>>((accumulator, model) => {
+    return settingsModelProfiles.reduce<Record<string, ModelProfile>>((accumulator, model) => {
       accumulator[model.id] = model;
       return accumulator;
     }, {});
-  }, [modelProfiles]);
+  }, [settingsModelProfiles]);
   const aiDisabled = aiMode === "off";
   const confidenceGateDisabled = aiMode === "off";
   const effectiveConfidenceThreshold = confidenceGateDisabled ? 0 : confidenceThreshold;
@@ -8499,8 +8605,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return selectedAiLibraryId ? aiLibraryDefById[selectedAiLibraryId] ?? null : null;
   }, [aiLibraryDefById, selectedAiLibraryId]);
   const selectedBacktestModelNames = useMemo(() => {
-    return availableAiModelNames.filter((modelName) => (aiModelStates[modelName] ?? 0) > 0);
-  }, [aiModelStates, availableAiModelNames]);
+    return settingsModelNames.filter((modelName) => (aiModelStates[modelName] ?? 0) > 0);
+  }, [aiModelStates, settingsModelNames]);
   const backtestModelProfiles = useMemo(() => {
     return selectedBacktestModelNames
       .map((modelName) => modelProfileById[createModelId(modelName)] ?? null)
@@ -8569,10 +8675,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return symbolTimeframeKey(appliedBacktestSettings.symbol, appliedBacktestSettings.timeframe);
   }, [appliedBacktestSettings.symbol, appliedBacktestSettings.timeframe]);
   const appliedBacktestModelNames = useMemo(() => {
-    return availableAiModelNames.filter(
+    return settingsModelNames.filter(
       (modelName) => (appliedBacktestSettings.aiModelStates[modelName] ?? 0) > 0
     );
-  }, [appliedBacktestSettings.aiModelStates, availableAiModelNames]);
+  }, [appliedBacktestSettings.aiModelStates, settingsModelNames]);
   const appliedBacktestModelProfiles = useMemo(() => {
     return appliedBacktestModelNames
       .map((modelName) => modelProfileById[createModelId(modelName)] ?? null)
@@ -9413,6 +9519,28 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const recentOneMinutePromise = shouldLoadOneMinutePrecision
       ? fetchRecentOneMinuteCandles()
       : undefined;
+    const leadingBars = Math.max(
+      appliedBacktestSettings.chunkBars * 3,
+      appliedBacktestSettings.maxBarsInTrade + 24
+    );
+    const targetBars = estimateHistoryBarsForDateRange(
+      appliedBacktestSettings.statsDateStart,
+      appliedBacktestSettings.statsDateEnd,
+      appliedBacktestSettings.timeframe,
+      leadingBars
+    );
+    const oneMinutePaddingBars = Math.max(
+      leadingBars,
+      Math.round(leadingBars * (timeframeMinutes[appliedBacktestSettings.timeframe] ?? 1))
+    );
+    const oneMinuteTargetBars = shouldLoadOneMinutePrecision
+      ? estimateHistoryBarsForDateRange(
+          appliedBacktestSettings.statsDateStart,
+          appliedBacktestSettings.statsDateEnd,
+          "1m",
+          oneMinutePaddingBars
+        )
+      : 0;
     setStatsRefreshStatus("Loading Candle History");
 
     void (async () => {
@@ -9420,11 +9548,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         const promises: [Promise<Candle[]>, Promise<Candle[]>] = [
           fetchBacktestHistoryCandles(
             appliedBacktestSettings.timeframe,
+            targetBars,
             recentOneMinutePromise,
             allowOneMinuteFallback
           ),
           shouldLoadOneMinutePrecision
-            ? fetchHistoryApiCandles("1m", BACKTEST_ONE_MINUTE_FETCH_COUNT).catch(() => [])
+            ? fetchHistoryApiCandles("1m", oneMinuteTargetBars).catch(() => [])
             : Promise.resolve([])
         ];
 
@@ -9473,7 +9602,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [
     appliedBacktestKey,
+    appliedBacktestSettings.chunkBars,
+    appliedBacktestSettings.maxBarsInTrade,
     appliedBacktestSettings.minutePreciseEnabled,
+    appliedBacktestSettings.statsDateEnd,
+    appliedBacktestSettings.statsDateStart,
     appliedBacktestSettings.symbol,
     appliedBacktestSettings.timeframe,
     backtestHasRun,
@@ -11642,6 +11775,106 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }, 0);
   }, [notificationItems, seenNotificationSet]);
 
+  const collectUiPreferences = useCallback(() => ({
+    panelExpanded,
+    workspacePanelWidth,
+    activePanelTab,
+    showAllTradesOnChart,
+    showActiveTradeOnChart,
+    backtestHistoryCollapsed,
+    performanceStatsCollapsed,
+    isGraphsCollapsed,
+    aiZipClusterMapView,
+    clusterLegendToggles,
+    clusterViewDir,
+    clusterViewSession,
+    clusterViewMonth,
+    clusterViewWeekday,
+    clusterViewHour
+  }), [
+    activePanelTab,
+    aiZipClusterMapView,
+    backtestHistoryCollapsed,
+    clusterLegendToggles,
+    clusterViewDir,
+    clusterViewHour,
+    clusterViewMonth,
+    clusterViewSession,
+    clusterViewWeekday,
+    isGraphsCollapsed,
+    panelExpanded,
+    performanceStatsCollapsed,
+    showActiveTradeOnChart,
+    showAllTradesOnChart,
+    workspacePanelWidth
+  ]);
+
+  const applyUiPreferences = useCallback((prefs: Record<string, any>) => {
+    if (prefs.panelExpanded != null) setPanelExpanded(Boolean(prefs.panelExpanded));
+    if (prefs.workspacePanelWidth != null) {
+      setWorkspacePanelWidth(resolveWorkspacePanelWidth(prefs.workspacePanelWidth));
+    }
+    if (isPanelTab(prefs.activePanelTab)) setActivePanelTab(prefs.activePanelTab);
+    if (prefs.showAllTradesOnChart != null) {
+      setShowAllTradesOnChart(Boolean(prefs.showAllTradesOnChart));
+    }
+    if (prefs.showActiveTradeOnChart != null) {
+      setShowActiveTradeOnChart(Boolean(prefs.showActiveTradeOnChart));
+    }
+    if (prefs.backtestHistoryCollapsed != null) {
+      setBacktestHistoryCollapsed(Boolean(prefs.backtestHistoryCollapsed));
+    }
+    if (prefs.performanceStatsCollapsed != null) {
+      setPerformanceStatsCollapsed(Boolean(prefs.performanceStatsCollapsed));
+    }
+    if (prefs.isGraphsCollapsed != null) {
+      setIsGraphsCollapsed(Boolean(prefs.isGraphsCollapsed));
+    }
+    if (prefs.aiZipClusterMapView === "2d" || prefs.aiZipClusterMapView === "3d") {
+      setAiZipClusterMapView(prefs.aiZipClusterMapView);
+    }
+    if (prefs.clusterLegendToggles && typeof prefs.clusterLegendToggles === "object") {
+      const next = { ...BACKTEST_CLUSTER_LEGEND_DEFAULTS };
+      let changed = false;
+
+      for (const key of Object.keys(next)) {
+        if ((prefs.clusterLegendToggles as Record<string, unknown>)[key] != null) {
+          next[key as keyof typeof next] = Boolean(
+            (prefs.clusterLegendToggles as Record<string, unknown>)[key]
+          );
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        setClusterLegendToggles(next);
+      }
+    }
+    if (prefs.clusterViewDir === "All" || prefs.clusterViewDir === "Buy" || prefs.clusterViewDir === "Sell") {
+      setClusterViewDir(prefs.clusterViewDir);
+    }
+    if (typeof prefs.clusterViewSession === "string") setClusterViewSession(prefs.clusterViewSession);
+    if (typeof prefs.clusterViewMonth === "string") setClusterViewMonth(prefs.clusterViewMonth);
+    if (typeof prefs.clusterViewWeekday === "string") setClusterViewWeekday(prefs.clusterViewWeekday);
+    if (typeof prefs.clusterViewHour === "string") setClusterViewHour(prefs.clusterViewHour);
+  }, [
+    setActivePanelTab,
+    setAiZipClusterMapView,
+    setBacktestHistoryCollapsed,
+    setClusterLegendToggles,
+    setClusterViewDir,
+    setClusterViewHour,
+    setClusterViewMonth,
+    setClusterViewSession,
+    setClusterViewWeekday,
+    setIsGraphsCollapsed,
+    setPanelExpanded,
+    setPerformanceStatsCollapsed,
+    setShowActiveTradeOnChart,
+    setShowAllTradesOnChart,
+    setWorkspacePanelWidth
+  ]);
+
   const collectSettings = useCallback(() => ({
     selectedSymbol,
     selectedTimeframe,
@@ -11833,16 +12066,44 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   useEffect(() => {
     try {
+      const raw = localStorage.getItem(UI_PREFERENCES_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      applyUiPreferences(parsed);
+    } catch {
+      // Ignore corrupted UI preference data.
+    }
+  }, [applyUiPreferences]);
+
+  useEffect(() => {
+    try {
       localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(collectSettings()));
     } catch { /* storage full – ignore */ }
   }, [collectSettings]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(UI_PREFERENCES_STORAGE_KEY, JSON.stringify(collectUiPreferences()));
+    } catch {
+      // Ignore persistence failures (for example quota exceeded).
+    }
+  }, [collectUiPreferences]);
+
 
   const handleResetSettings = useCallback(() => {
     localStorage.removeItem(SETTINGS_STORAGE_KEY);
+    localStorage.removeItem(UI_PREFERENCES_STORAGE_KEY);
     setSelectedSymbol(futuresAssets[0].symbol);
     setSelectedTimeframe("15m");
     setSelectedBacktestTimeframe("15m");
+    setPanelExpanded(false);
+    setWorkspacePanelWidth(WORKSPACE_PANEL_DEFAULT_WIDTH);
+    setActivePanelTab("active");
+    setShowAllTradesOnChart(false);
+    setShowActiveTradeOnChart(false);
     setChartPanelLiveSimulationEnabled(false);
     setActivePanelLiveSimulationEnabled(false);
     setMinutePreciseEnabled(false);
@@ -11870,7 +12131,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setBreakEvenTriggerPct(50);
     setTrailingStartPct(50);
     setTrailingDistPct(30);
-    setAiModelStates(buildInitialAiModelStates(availableAiModelNames));
+    setAiModelStates(buildInitialAiModelStates(settingsModelNames));
     setAiFeatureLevels(buildInitialAiFeatureLevels());
     setAiFeatureModes(buildInitialAiFeatureModes());
     setSelectedAiLibraries(["core", "recent", "base"]);
@@ -11900,11 +12161,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setPropTotalMaxLoss(10_000);
     setPropProfitTarget(10_000);
     setPropProjectionMethod("montecarlo");
+    setBacktestHistoryCollapsed(false);
+    setPerformanceStatsCollapsed(false);
+    setIsGraphsCollapsed(false);
+    setAiZipClusterMapView("2d");
+    setClusterLegendToggles({ ...BACKTEST_CLUSTER_LEGEND_DEFAULTS });
+    setClusterViewDir("All");
+    setClusterViewSession("All");
+    setClusterViewMonth("All");
+    setClusterViewWeekday("All");
+    setClusterViewHour("All");
     const defaultDateRange = buildBacktestDateRangeFromPreset("pastYear");
     setStatsDatePreset("pastYear");
     setStatsDateStart(defaultDateRange.startDate);
     setStatsDateEnd(defaultDateRange.endDate);
-  }, [availableAiModelNames, aiLibraryDefs]);
+  }, [aiLibraryDefs, settingsModelNames]);
 
   const persistPresets = useCallback((presets: SavedPreset[]) => {
     setSavedPresets(presets);
@@ -19192,7 +19463,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 onClose={() => setModelsModalOpen(false)}
               >
                 <div className="ai-zip-model-grid">
-                  {availableAiModelNames.map((modelName) => {
+                  {settingsModelNames.map((modelName) => {
                     const state = aiModelStates[modelName] ?? 0;
 
                     return (
