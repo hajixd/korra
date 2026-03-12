@@ -11232,28 +11232,6 @@ export function ClusterMap({
     }
     return false;
   }, [activeLibraries]);
-  const drawRenderOpts = React.useMemo(
-    () => ({
-      lowPowerMode,
-      knnLinkK,
-      knnLinkOpacity,
-      aiMethod,
-      selectedId,
-      selectedLink,
-      knnEdgeNodes: neighborNodes,
-      knnAllowLegacyFallback: !entryNeighborsOnly,
-    }),
-    [
-      lowPowerMode,
-      knnLinkK,
-      knnLinkOpacity,
-      aiMethod,
-      selectedId,
-      selectedLink,
-      neighborNodes,
-      entryNeighborsOnly,
-    ]
-  );
   const [nodeSizeMul, setNodeSizeMul] = React.useState(1);
   const [nodeOutlineMul, setNodeOutlineMul] = React.useState(1);
   const [heatmapInterp, setHeatmapInterp] = React.useState(0.1);
@@ -14585,6 +14563,29 @@ export function ClusterMap({
     }
     return m;
   }, [neighborNodes]);
+
+  const drawRenderOpts = React.useMemo(
+    () => ({
+      lowPowerMode,
+      knnLinkK,
+      knnLinkOpacity,
+      aiMethod,
+      selectedId,
+      selectedLink,
+      knnEdgeNodes: neighborNodes,
+      knnAllowLegacyFallback: !entryNeighborsOnly,
+    }),
+    [
+      lowPowerMode,
+      knnLinkK,
+      knnLinkOpacity,
+      aiMethod,
+      selectedId,
+      selectedLink,
+      neighborNodes,
+      entryNeighborsOnly,
+    ]
+  );
 
   const neighborAlias = useMemo(() => {
     const aliasToIds = new Map<string, Set<string>>();
