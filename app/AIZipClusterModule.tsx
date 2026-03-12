@@ -6792,9 +6792,8 @@ function drawClusterMapCanvas(
     const selectedNodeId =
       normalizeId((selectedNodeObj as any)?.id) ?? selectedRequestedId ?? null;
     const knnLinksVisible = knnLinkOpacity > 0;
-    const selectionFocusActive = selectedNodeId != null;
-    const knnFocusActive = selectionFocusActive;
-    const overlayFocusDim = selectionFocusActive ? 0.25 : 1;
+    const knnFocusActive =
+      knnLinksVisible && aiMethod2d === "knn" && selectedNodeId != null;
 
     let selectedNodeHdbClusterId: string | null = null;
     if (
@@ -6907,12 +6906,9 @@ function drawClusterMapCanvas(
           hoveredGroupId != null && clusterId === hoveredGroupId;
         const emphasize = isSelectedCluster || (!activeHdbGroupId && isHoveredCluster);
         const dimCluster = activeHdbGroupId != null && !isSelectedCluster;
-        const fillAlpha =
-          (emphasize ? 0.34 : dimCluster ? 0.07 : 0.22) * overlayFocusDim;
-        const outerAlpha =
-          (emphasize ? 0.96 : dimCluster ? 0.22 : 0.72) * overlayFocusDim;
-        const innerAlpha =
-          (emphasize ? 0.56 : dimCluster ? 0.14 : 0.35) * overlayFocusDim;
+        const fillAlpha = emphasize ? 0.34 : dimCluster ? 0.07 : 0.22;
+        const outerAlpha = emphasize ? 0.96 : dimCluster ? 0.22 : 0.72;
+        const innerAlpha = emphasize ? 0.56 : dimCluster ? 0.14 : 0.35;
         const outerWidth = emphasize ? 4.8 : dimCluster ? 2 : 3.5;
         const innerWidth = emphasize ? 2.25 : 1.5;
 
@@ -7156,6 +7152,13 @@ function drawClusterMapCanvas(
       if (!isSearch && !isSelectedNode && !isKnnNeighbor && isHdbFocused) {
         outline = "rgba(245,245,245,0.9)";
       }
+      if (!isSearch && isSelectedNode) {
+        fill = "rgba(255,255,255,0.99)";
+        outline =
+          aiMethod2d === "knn"
+            ? "rgba(120,220,255,1.0)"
+            : "rgba(255,255,255,1.0)";
+      }
 
       // Search spotlight: make the searched node unmistakable.
       if (isSearch) {
@@ -7165,10 +7168,10 @@ function drawClusterMapCanvas(
 
       // Glow for potential + open trades (but not libraries)
       if (
-        !selectionFocusActive &&
         !lowPowerMode &&
         !dimNode &&
         (isSearch ||
+          isSelectedNode ||
           isKnnNeighbor ||
           isHdbFocused ||
           n.kind === "close" ||
@@ -7176,10 +7179,10 @@ function drawClusterMapCanvas(
           (n.isOpen && !isLib))
       ) {
         ctx.beginPath();
-        const glowR = r * (isKnnNeighbor ? 2.55 : 2.3);
+        const glowR = r * (isSelectedNode ? 2.95 : isKnnNeighbor ? 2.55 : 2.3);
         ctx.arc(sx, sy, glowR * (isHovered ? 1.3 : 1.0), 0, Math.PI * 2);
         let glowColor: string;
-        if (isSearch) {
+        if (isSearch || isSelectedNode) {
           glowColor = "rgba(255,255,255,0.44)";
         } else if (isKnnNeighbor) {
           glowColor = "rgba(255,255,255,0.24)";
@@ -7221,7 +7224,7 @@ function drawClusterMapCanvas(
       }
       ctx.restore();
 
-      if (!selectionFocusActive && !dimNode && (isSelectedNode || isKnnNeighbor || isHdbFocused)) {
+      if (!dimNode && (isSelectedNode || isKnnNeighbor || isHdbFocused)) {
         const ringR =
           Math.max(4, r * focusScale) +
           (isSelectedNode ? 6 : isKnnNeighbor ? 4.5 : 3.2);
@@ -7315,7 +7318,7 @@ function drawClusterMapCanvas(
 
     // Ensure the searched/selected node is rendered on top of everything.
     // This makes the white "search-selected" node visually come to the front even in dense regions.
-    const pinId = searchHighlightId || null;
+    const pinId = searchHighlightId || selectedNodeId || null;
     if (pinId != null) {
       const pid = String(pinId);
       const pin =
@@ -7334,7 +7337,7 @@ function drawClusterMapCanvas(
         // Draw last so it appears above other nodes/links.
         drawOne(pin);
 
-        // Extra halo to reinforce front-most search highlight.
+        // Extra halo to reinforce front-most selection.
         const { sx: psx, sy: psy } = toScreen(
           Number((pin as any).x) || 0,
           Number((pin as any).y) || 0
@@ -7473,7 +7476,6 @@ function ClusterMapViewport3D({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<number | null>(null);
   const renderRafRef = useRef<number | null>(null);
-  const dampingFramesRef = useRef<number>(0);
   const rendererRef = useRef<any>(null);
   const sceneRef = useRef<any>(null);
   const cameraRef = useRef<any>(null);
@@ -7536,7 +7538,8 @@ function ClusterMapViewport3D({
     shouldFrameRef.current = true;
   }, [resetKey]);
 
-  const toNodeColor = React.useCallback((n: any, _isHighlighted: boolean) => {
+  const toNodeColor = React.useCallback((n: any, isHighlighted: boolean) => {
+    if (isHighlighted) return 0xffffff;
     const kind = String((n as any)?.kind || "").toLowerCase();
     const isLib =
       kind === "library" ||
@@ -7793,16 +7796,8 @@ function ClusterMapViewport3D({
       const cam = cameraRef.current;
       const ctl = controlsRef.current;
       if (!rr || !sc || !cam || !ctl) return;
-      if (!lowPowerMode) {
-        try {
-          ctl.update();
-        } catch {}
-      }
+      if (!lowPowerMode) ctl.update();
       rr.render(sc, cam);
-      if (!lowPowerMode && dampingFramesRef.current > 0) {
-        dampingFramesRef.current -= 1;
-        requestRender();
-      }
     };
     renderNowRef.current = renderNow;
 
@@ -7937,13 +7932,19 @@ function ClusterMapViewport3D({
     window.addEventListener("resize", resize);
 
     const onControlsChange = () => {
-      if (!lowPowerMode) {
-        dampingFramesRef.current = Math.max(dampingFramesRef.current, 18);
-      }
       requestRender();
     };
     controls.addEventListener("change", onControlsChange);
-    requestRender();
+
+    if (!lowPowerMode) {
+      const animate = () => {
+        frameRef.current = requestAnimationFrame(animate);
+        renderNow();
+      };
+      animate();
+    } else {
+      requestRender();
+    }
 
     return () => {
       try {
@@ -8218,27 +8219,7 @@ function ClusterMapViewport3D({
     const sizeMul = Math.max(0.25, Math.min(4, Number(nodeSizeMul) || 1));
     const outlineMul = Math.max(0.25, Math.min(4, Number(nodeOutlineMul) || 1));
     const outlineScaleMul = 1 + 0.12 * outlineMul;
-    const selectionIdSet = new Set<string>(selectedIdsRef.current);
-    if (selectedId != null) selectionIdSet.add(String(selectedId));
-    const selectionActive = selectionIdSet.size > 0;
-    const knnKInt = Math.max(0, Math.min(36, Math.floor(Number(knnLinkK) || 0)));
-    const knnAlpha = Math.max(0, Math.min(1, Number(knnLinkOpacity ?? 0.34)));
-    const knnEdges3d =
-      knnKInt > 0 && (knnAlpha > 0 || selectionActive)
-        ? getKnnEdgesForClusterMap(nodes as any[], knnKInt, "3d")
-        : [];
-    const focusIdSet = selectionActive ? new Set(selectionIdSet) : null;
-    if (selectionActive && knnEdges3d.length && focusIdSet) {
-      for (const e of knnEdges3d as any[]) {
-        const aId = normalizeClusterMapToken((e as any)?.a);
-        const bId = normalizeClusterMapToken((e as any)?.b);
-        if (!aId || !bId) continue;
-        if (selectionIdSet.has(aId) || selectionIdSet.has(bId)) {
-          focusIdSet.add(aId);
-          focusIdSet.add(bId);
-        }
-      }
-    }
+    const selectedSet = selectedIdsRef.current;
 
     for (let i = 0; i < rawPts.length; i++) {
       const item = rawPts[i];
@@ -8269,39 +8250,32 @@ function ClusterMapViewport3D({
         0.010,
         Math.min(0.060, (Number((n as any)?.r) || 6) / 150)
       ) * sizeMul;
-      const isSelected = selectionIdSet.has(id);
-      const isSearch =
-        searchHighlightId != null && String(searchHighlightId) === id;
-      const isFocusNode =
-        !selectionActive || isSearch || (focusIdSet ? focusIdSet.has(id) : false);
-      const dimNode = selectionActive && !isFocusNode;
-      const r = isSelected || isSearch ? baseR * 1.28 : baseR;
+      const isHighlighted =
+        (selectedId != null && String(selectedId) === id) ||
+        (searchHighlightId != null && String(searchHighlightId) === id) ||
+        selectedSet.has(id);
+      const r = isHighlighted ? baseR * 1.42 : baseR;
 
       tmpObj.position.set(x, y, z);
       tmpObj.scale.setScalar(r * outlineScaleMul);
       tmpObj.updateMatrix();
       instOutlineNow.setMatrixAt(i, tmpObj.matrix);
       const dir = Number((n as any)?.dir ?? (n as any)?.direction ?? 0);
-      const outlineHex =
-        dir === 1 ? 0x1eb450 : dir === -1 ? 0xb43232 : 0x9ca3af;
+      const outlineHex = isHighlighted
+        ? 0xffffff
+        : dir === 1
+        ? 0x1eb450
+        : dir === -1
+        ? 0xb43232
+        : 0x9ca3af;
       tmpOutlineColor.setHex(outlineHex);
-      if (dimNode) {
-        tmpOutlineColor.multiplyScalar(0.25);
-      } else if (isSelected || isSearch) {
-        tmpOutlineColor.offsetHSL(0, 0, 0.18);
-      }
       instOutlineNow.setColorAt(i, tmpOutlineColor);
 
       tmpObj.position.set(x, y, z);
       tmpObj.scale.setScalar(r);
       tmpObj.updateMatrix();
       instNow.setMatrixAt(i, tmpObj.matrix);
-      tmpColor.setHex(toNodeColor(n, false));
-      if (dimNode) {
-        tmpColor.multiplyScalar(0.22);
-      } else if (isSelected || isSearch) {
-        tmpColor.offsetHSL(0, 0.02, 0.14);
-      }
+      tmpColor.setHex(toNodeColor(n, isHighlighted));
       instNow.setColorAt(i, tmpColor);
     }
 
@@ -8362,6 +8336,8 @@ function ClusterMapViewport3D({
     clearLayer(heatLayer);
 
     const heatOn = !!heatmapOn;
+    const knnKInt = Math.max(0, Math.min(36, Math.floor(Number(knnLinkK) || 0)));
+    const knnAlpha = Math.max(0, Math.min(1, Number(knnLinkOpacity ?? 0.34)));
     instNow.visible = !heatOn;
     instOutlineNow.visible = !heatOn;
     if (overlayLayer) overlayLayer.visible = !heatOn;
@@ -8375,7 +8351,7 @@ function ClusterMapViewport3D({
       knnAlpha > 0 &&
       worldPts.length > 1
     ) {
-      const edgePairs = knnEdges3d;
+      const edgePairs = getKnnEdgesForClusterMap(nodes as any[], knnKInt, "3d");
       if (edgePairs.length > 0) {
         const idToIdx = new Map<string, number>();
         for (let i = 0; i < nodeIds.length; i++) {
@@ -8465,12 +8441,6 @@ function ClusterMapViewport3D({
             const pa = worldPts[e.aI];
             const pb = worldPts[e.bI];
             if (!pa || !pb) continue;
-            const aId = nodeIds[e.aI];
-            const bId = nodeIds[e.bI];
-            const isFocusedEdge =
-              selectionActive &&
-              (selectionIdSet.has(aId) || selectionIdSet.has(bId));
-            const dimEdge = selectionActive && !isFocusedEdge;
             const dx = pb[0] - pa[0];
             const dy = pb[1] - pa[1];
             const dz = pb[2] - pa[2];
@@ -8479,10 +8449,9 @@ function ClusterMapViewport3D({
 
             const tRaw = 1 - (e.d - minD) / dDen;
             const t = Math.max(0, Math.min(1, tRaw));
-            const radiusBase =
+            const radius =
               (lowPowerMode ? 0.007 : 0.009) +
               t * (lowPowerMode ? 0.010 : 0.020);
-            const radius = dimEdge ? radiusBase * 0.55 : radiusBase;
 
             tmpEdgeObj.position.set(
               (pa[0] + pb[0]) * 0.5,
@@ -8496,11 +8465,6 @@ function ClusterMapViewport3D({
             cylInst.setMatrixAt(ei, tmpEdgeObj.matrix);
 
             edgeCol.setHSL((0.60 - t * 0.18 + 1) % 1, 0.88, 0.60 + t * 0.08);
-            if (dimEdge) {
-              edgeCol.multiplyScalar(0.18);
-            } else if (isFocusedEdge) {
-              edgeCol.offsetHSL(0, 0, 0.08);
-            }
             cylInst.setColorAt(ei, edgeCol);
 
             const off = ei * 6;
@@ -8510,14 +8474,12 @@ function ClusterMapViewport3D({
             pos[off + 3] = pb[0];
             pos[off + 4] = pb[1];
             pos[off + 5] = pb[2];
-            const baseMul = dimEdge ? 0.16 : 0.45;
-            const tipMul = dimEdge ? 0.28 : 1.12;
-            col[off + 0] = edgeCol.r * baseMul;
-            col[off + 1] = edgeCol.g * baseMul;
-            col[off + 2] = edgeCol.b * baseMul;
-            col[off + 3] = Math.min(1.6, edgeCol.r * tipMul);
-            col[off + 4] = Math.min(1.6, edgeCol.g * tipMul);
-            col[off + 5] = Math.min(1.6, edgeCol.b * tipMul);
+            col[off + 0] = edgeCol.r * 0.45;
+            col[off + 1] = edgeCol.g * 0.45;
+            col[off + 2] = edgeCol.b * 0.45;
+            col[off + 3] = Math.min(1.6, edgeCol.r * 1.12);
+            col[off + 4] = Math.min(1.6, edgeCol.g * 1.12);
+            col[off + 5] = Math.min(1.6, edgeCol.b * 1.12);
           }
 
           cylInst.instanceMatrix.needsUpdate = true;
@@ -8991,9 +8953,10 @@ function ClusterMapViewport3D({
       hdbOverlay &&
       Array.isArray((hdbOverlay as any).clusters)
     ) {
-      const overlayDim = selectionActive ? 0.25 : 1;
-      const fillAlpha =
-        Math.max(0, Math.min(1, Number(groupOverlayOpacity) || 0)) * overlayDim;
+      const fillAlpha = Math.max(
+        0,
+        Math.min(1, Number(groupOverlayOpacity) || 0)
+      );
       for (const c of (hdbOverlay as any).clusters as any[]) {
         const members = Array.isArray((c as any)?.memberNodes)
           ? ((c as any).memberNodes as any[])
@@ -9355,7 +9318,6 @@ export function ClusterMap({
   libraryCounts,
   chunkBars,
   potential,
-  openTradePotential,
   parseMode,
   showPotential,
   resetKey,
@@ -10105,14 +10067,6 @@ export function ClusterMap({
     const suppressedLibActive = actLibs.some(
       (v: string) => v.toLowerCase() === "suppressed"
     );
-    const openTradeNeighborPool = (() => {
-      const raw =
-        (openTradePotential as any)?.entryNeighbors ??
-        (openTradePotential as any)?.neighbors ??
-        (openTradePotential as any)?.kNeighbors ??
-        [];
-      return Array.isArray(raw) ? raw : [];
-    })();
     for (let i = 0; i < trades.length; i++) {
       const t = trades[i];
       const fi = t.signalIndex;
@@ -10163,14 +10117,6 @@ export function ClusterMap({
         ((t as any).chunkType && (t as any).chunkType !== "AI Model"
           ? (t as any).chunkType
           : null);
-      const tradeNeighbors =
-        (t as any).entryNeighbors ?? (t as any).neighbors ?? (t as any).kNeighbors ?? [];
-      const entryNeighbors =
-        Array.isArray(tradeNeighbors) && tradeNeighbors.length > 0
-          ? tradeNeighbors
-          : t.isOpen && openTradeNeighborPool.length > 0
-          ? openTradeNeighborPool
-          : [];
       entries.push({
         id: `trade-${t.uid ?? t.id ?? i}-${t.entryIndex}`,
         uid: t.uid || t.id || null,
@@ -10218,7 +10164,11 @@ export function ClusterMap({
         exitReason: t.exitReason,
         entryPrice: t.entryPrice,
         suppressed: !!(t as any).suppressed,
-        entryNeighbors,
+        entryNeighbors:
+          (t as any).entryNeighbors ??
+          (t as any).neighbors ??
+          (t as any).kNeighbors ??
+          [],
       });
     }
     const hasLiveOpenTrade = trades.some((t) => !!t.isOpen);
@@ -11066,7 +11016,6 @@ export function ClusterMap({
     chunkBars,
     pnlScale,
     potential,
-    openTradePotential,
     parseMode,
     showPotential,
     libraryPoints,
@@ -14505,22 +14454,6 @@ export function ClusterMap({
       (displayNodes as any[]).find((n: any) => n && n.id === selectedId) || null
     );
   }, [displayNodes, selectedId]);
-  const selectedNeighbors = useMemo(() => {
-    if (!selectedNode) return [];
-    const raw =
-      (selectedNode as any).entryNeighbors ??
-      (selectedNode as any).neighbors ??
-      (selectedNode as any).kNeighbors ??
-      [];
-    if (!Array.isArray(raw) || raw.length === 0) return [];
-    const arr = raw.slice();
-    arr.sort((a: any, b: any) => {
-      const da = Number.isFinite(Number(a?.d)) ? Number(a.d) : Infinity;
-      const db = Number.isFinite(Number(b?.d)) ? Number(b.d) : Infinity;
-      return da - db;
-    });
-    return arr;
-  }, [selectedNode]);
 
   const nodeById = useMemo(() => {
     const m = new Map<string, any>();
@@ -17996,6 +17929,59 @@ export function ClusterMap({
               0.12
             )}`;
 
+            const neighborRaw =
+              (selectedNode as any).entryNeighbors ??
+              (selectedNode as any).neighbors ??
+              (selectedNode as any).kNeighbors ??
+              [];
+            const neighborList0 = Array.isArray(neighborRaw)
+              ? neighborRaw.slice()
+              : [];
+            neighborList0.sort((a: any, b: any) => {
+              const da = Number(a?.d);
+              const db = Number(b?.d);
+              const aa = Number.isFinite(da) ? da : Infinity;
+              const bb = Number.isFinite(db) ? db : Infinity;
+              return aa - bb;
+            });
+            const kEntryInt = Math.max(0, Math.floor(Number(kEntry) || 0));
+            const neighborList =
+              kEntryInt > 0 ? neighborList0.slice(0, kEntryInt) : neighborList0;
+
+            const resolveNeighborLabel = (nb: any) => {
+              const tr = (nb as any)?.t ?? null;
+              const candidates = [
+                (nb as any)?.targetId,
+                (nb as any)?.nodeId,
+                (nb as any)?.id,
+                (nb as any)?.metaId,
+                (nb as any)?.uid,
+                (nb as any)?.metaUid,
+                (nb as any)?.tradeUid,
+                (nb as any)?.metaTradeUid,
+                (nb as any)?.labelUid,
+                (nb as any)?.closestClusterUid,
+                (tr as any)?.id,
+                (tr as any)?.uid,
+                (tr as any)?.tradeUid,
+                (tr as any)?.tradeId,
+                (tr as any)?.metaUid,
+                (tr as any)?.metaTradeUid,
+                (tr as any)?.metaId,
+              ];
+              for (const raw of candidates) {
+                const t = normalizeClusterMapToken(raw);
+                if (!t) continue;
+                const hit = (nodeById as any).get(t);
+                if (hit) return displayIdForNode(hit as any);
+              }
+              for (const raw of candidates) {
+                const t = normalizeClusterMapToken(raw);
+                if (t) return displayIdFromRaw(t);
+              }
+              return "—";
+            };
+
             return (
               <div
                 style={{
@@ -18242,13 +18228,7 @@ export function ClusterMap({
                   </div>
                 </div>
 
-                <div
-                  style={{
-                    marginTop: 10,
-                    borderTop: "1px solid rgba(255,255,255,0.08)",
-                    paddingTop: 8,
-                  }}
-                >
+                <div style={{ marginTop: 10 }}>
                   <div
                     style={{
                       display: "flex",
@@ -18257,212 +18237,77 @@ export function ClusterMap({
                       gap: 10,
                     }}
                   >
-                    <div style={{ fontSize: 11, fontWeight: 1000 }}>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 900,
+                        color: "rgba(255,255,255,0.80)",
+                      }}
+                    >
                       Nearest neighbors
                     </div>
-                    <div style={{ ...mono(), fontSize: 10, opacity: 0.7 }}>
-                      {selectedNeighbors.length.toLocaleString("en-US")} neighbors
+                    <div
+                      style={{
+                        ...mono(),
+                        fontSize: 10,
+                        opacity: 0.7,
+                      }}
+                    >
+                      k={neighborList.length}
                     </div>
                   </div>
 
                   <div
                     style={{
                       marginTop: 6,
-                      maxHeight: 200,
+                      maxHeight: 160,
                       overflowY: "auto",
-                      borderRadius: 12,
+                      borderRadius: 10,
                       border: "1px solid rgba(255,255,255,0.10)",
                       background: "rgba(0,0,0,0.18)",
-                      padding: 8,
+                      padding: 6,
                     }}
                   >
-                    {selectedNeighbors && selectedNeighbors.length ? (
-                      <div style={{ display: "grid", gap: 6 }}>
-                        {selectedNeighbors.map((nb, idx) => {
-                          const nbAny: any = nb as any;
-                          const tr: any = nbAny.t || {};
-
-                          const uid =
-                            String(
-                              nbAny.metaUid ??
-                                nbAny.uid ??
-                                nbAny.metaId ??
-                                tr.uid ??
-                                tr.id ??
-                                tr.tradeId ??
-                                tr.tradeUid ??
-                                `NB${String(nbAny.rank || 0).padStart(2, "0")}`
-                            ) || "Neighbor";
-
-                          const timeStr =
-                            nbAny.metaTime != null
-                              ? formatDateTime(nbAny.metaTime, parseMode)
-                              : tr.entryTime != null
-                              ? formatDateTime(tr.entryTime, parseMode)
-                              : "";
-
-                          const dirNum = Number(nbAny.dir ?? tr.direction ?? 0);
-                          const pnlVal = (() => {
-                            const v =
-                              nbAny.metaPnl != null
-                                ? Number(nbAny.metaPnl)
-                                : tr.isOpen
-                                ? Number(tr.unrealizedPnl ?? NaN)
-                                : Number(tr.pnl ?? NaN);
-                            return Number.isFinite(v) ? v : null;
-                          })();
-
-                          const outcomeRaw = String(
-                            nbAny.metaOutcome ??
-                              tr.result ??
-                              (nbAny.label === 1
-                                ? "Win"
-                                : nbAny.label === -1
-                                ? "Loss"
-                                : "")
-                          ).toUpperCase();
-
-                          const outcome =
-                            outcomeRaw ||
-                            (pnlVal != null
-                              ? pnlVal >= 0
-                                ? "WIN"
-                                : "LOSS"
-                              : "-");
-
-                          const suppressed = !!(
-                            nbAny.metaSuppressed ?? tr.suppressed
-                          );
-
-                          const sess =
-                            String(nbAny.metaSession ?? tr.session ?? "").trim() ||
-                            "";
-
-                          const dVal =
-                            nbAny && Number.isFinite(Number(nbAny.d))
-                              ? Number(nbAny.d)
-                              : null;
-
-                          const toneOutcome =
-                            outcome === "TP" || outcome === "WIN"
-                              ? "green"
-                              : outcome === "SL" || outcome === "LOSS"
-                              ? "red"
-                              : "neutral";
-
+                    {neighborList.length ? (
+                      <div style={{ display: "grid", gap: 4 }}>
+                        {neighborList.map((nb: any, idx: number) => {
+                          const label = resolveNeighborLabel(nb);
                           return (
                             <div
-                              key={`${uid}_${nb.rank}`}
+                              key={`${label}-${idx}`}
                               style={{
                                 display: "flex",
                                 alignItems: "center",
-                                justifyContent: "space-between",
-                                gap: 10,
-                                padding: "6px 8px",
-                                borderRadius: 10,
-                                border: "1px solid rgba(255,255,255,0.08)",
-                                background: suppressed
-                                  ? "rgba(250,210,70,0.08)"
-                                  : "rgba(255,255,255,0.03)",
+                                gap: 8,
+                                padding: "4px 6px",
+                                borderRadius: 8,
+                                border: "1px solid rgba(255,255,255,0.06)",
+                                background: "rgba(255,255,255,0.03)",
                               }}
                             >
                               <div
                                 style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 8,
-                                  flexWrap: "wrap",
+                                  ...mono(),
+                                  width: 24,
+                                  textAlign: "right",
+                                  fontSize: 10,
+                                  opacity: 0.7,
                                 }}
                               >
-                                <div
-                                  style={{
-                                    ...mono(),
-                                    width: 22,
-                                    textAlign: "right",
-                                    opacity: 0.75,
-                                  }}
-                                >
-                                  {String(idx + 1).padStart(2, "0")}
-                                </div>
-
-                                <div
-                                  title={displayIdFromRaw(uid)}
-                                  style={{
-                                    ...mono(),
-                                    fontSize: 12,
-                                    fontWeight: 1000,
-                                    opacity: 0.92,
-                                    minWidth: 120,
-                                    maxWidth: 160,
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                    whiteSpace: "nowrap",
-                                  }}
-                                >
-                                  {displayIdFromRaw(uid)}
-                                </div>
-
-                                {timeStr ? (
-                                  <div
-                                    style={{
-                                      ...mono(),
-                                      fontSize: 11,
-                                      opacity: 0.72,
-                                    }}
-                                  >
-                                    {timeStr}
-                                  </div>
-                                ) : null}
-                                {dirNum === 1 ? (
-                                  <Pill tone="green" size="sm">
-                                    LONG
-                                  </Pill>
-                                ) : dirNum === -1 ? (
-                                  <Pill tone="red" size="sm">
-                                    SHORT
-                                  </Pill>
-                                ) : null}
-
-                                <Pill tone={toneOutcome} size="sm">
-                                  {outcome}
-                                </Pill>
-
-                                {sess ? (
-                                  <Pill tone="neutral" size="sm">
-                                    {sess}
-                                  </Pill>
-                                ) : null}
-
-                                {suppressed ? (
-                                  <Pill tone="yellow" size="sm">
-                                    Suppressed
-                                  </Pill>
-                                ) : null}
+                                {String(idx + 1).padStart(2, "0")}
                               </div>
-
                               <div
                                 style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 10,
+                                  ...mono(),
+                                  fontSize: 11,
+                                  fontWeight: 900,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
                                 }}
+                                title={label}
                               >
-                                {Number.isFinite(pnlVal) ? (
-                                  <div
-                                    style={{
-                                      ...mono(),
-                                      fontSize: 12,
-                                      fontWeight: 900,
-                                      opacity: 0.92,
-                                    }}
-                                  >
-                                    {fmtUSD(pnlVal)}
-                                  </div>
-                                ) : null}
-
-                                <div style={{ ...mono(), opacity: 0.8 }}>
-                                  d={dVal != null ? dVal.toFixed(4) : "-"}
-                                </div>
+                                {label}
                               </div>
                             </div>
                           );
@@ -18471,7 +18316,7 @@ export function ClusterMap({
                     ) : (
                       <div
                         style={{
-                          fontSize: 11,
+                          fontSize: 10,
                           color: "rgba(255,255,255,0.65)",
                         }}
                       >
@@ -34276,7 +34121,6 @@ export default function App() {
                 }}
                 chunkBars={chunkBars}
                 potential={potential}
-                openTradePotential={openTradePotential}
                 parseMode={parseMode}
                 showPotential={false}
                 resetKey={clusterResetKey}
@@ -34321,7 +34165,6 @@ export default function App() {
                 }}
                 chunkBars={chunkBars}
                 potential={potential}
-                openTradePotential={openTradePotential}
                 parseMode={parseMode}
                 showPotential={isAIActive}
                 resetKey={clusterResetKey}
