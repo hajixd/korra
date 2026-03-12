@@ -8577,6 +8577,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return Array.from(next.values());
   }, [uploadedStrategyModels]);
+  const uploadedModelIdSet = useMemo(() => {
+    return new Set(uploadedStrategyModels.map((model) => model.id));
+  }, [uploadedStrategyModels]);
   const modelsSurfaceEntries = useMemo(() => {
     return modelsSurfaceCatalog.map((model) => {
       const backtestSummary =
@@ -12312,6 +12315,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     link.click();
     URL.revokeObjectURL(url);
   }, []);
+  const handleDeleteStrategyModel = useCallback(
+    (model: StrategyModelCatalogEntry) => {
+      setUploadedStrategyModels((current) => current.filter((entry) => entry.id !== model.id));
+      setModelsSurfaceNotice(`Removed ${model.name}.`);
+      setModelsSurfaceNoticeTone("success");
+      if (modelRunModalModelId === model.id) {
+        closeModelRunModal();
+      }
+    },
+    [closeModelRunModal, modelRunModalModelId]
+  );
 
   const openModelRunModal = useCallback(
     (model: StrategyModelCatalogEntry) => {
@@ -14420,8 +14434,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     const executedTradeIds = new Set(backtestTrades.map((trade) => trade.id));
-    const libraryPoolSource =
-      sharedLibraryCandidateTrades.length > 0
+    const usesSplitValidation =
+      appliedBacktestSettings.antiCheatEnabled &&
+      appliedBacktestSettings.validationMode === "split";
+    const libraryPoolSource = usesSplitValidation
+      ? backtestLibraryCandidateTrades.length > 0
+        ? backtestLibraryCandidateTrades
+        : sharedLibraryCandidateTrades.length > 0
+          ? sharedLibraryCandidateTrades
+          : backtestTimeFilteredTrades
+      : sharedLibraryCandidateTrades.length > 0
         ? sharedLibraryCandidateTrades
         : backtestTimeFilteredTrades;
     const suppressedTradePool = libraryPoolSource.filter((trade) => !executedTradeIds.has(trade.id));
@@ -14676,10 +14698,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     candleIndexByUnix,
     selectedChartCandles.length,
     sharedLibraryCandidateTrades,
+    backtestLibraryCandidateTrades,
     backtestTimeFilteredTrades,
     backtestTrades,
     isClusterBacktestTabActive,
-    shouldComputeAiLibraryInsights
+    shouldComputeAiLibraryInsights,
+    appliedBacktestSettings.validationMode
   ]);
   const aiLibraryCounts = aiLibraryInsights.counts;
   const aiLibraryBaselineWinRates = aiLibraryInsights.baselineWinRates;
@@ -18529,6 +18553,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             <h3>{model.name}</h3>
                           </div>
                         </div>
+                        {uploadedModelIdSet.has(model.id) ? (
+                          <button
+                            type="button"
+                            className="panel-action-btn models-library-delete-btn"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleDeleteStrategyModel(model);
+                            }}
+                          >
+                            Delete
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className="panel-action-btn models-library-download-btn"

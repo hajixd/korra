@@ -9,6 +9,7 @@ import React, {
   useState,
   useLayoutEffect,
   useCallback,
+  useDeferredValue,
 } from "react";
 import {
   ComposedChart,
@@ -7433,6 +7434,7 @@ function ClusterMapViewport3D({
   searchHighlightId,
   resetKey,
   lowPowerMode,
+  pointCount = 0,
   hdbOverlay,
   showGroupOverlays,
   groupOverlayOpacity,
@@ -7454,6 +7456,7 @@ function ClusterMapViewport3D({
   searchHighlightId: string | null;
   resetKey: number;
   lowPowerMode: boolean;
+  pointCount?: number;
   hdbOverlay: any;
   showGroupOverlays: boolean;
   groupOverlayOpacity: number;
@@ -7666,7 +7669,15 @@ function ClusterMapViewport3D({
     }
     setRuntimeError(null);
     const dprRaw = window.devicePixelRatio || 1;
-    renderer.setPixelRatio(lowPowerMode ? Math.min(1, dprRaw) : Math.min(2, dprRaw));
+    const safePointCount = Math.max(0, Number(pointCount) || 0);
+    const dprCap = lowPowerMode
+      ? 1
+      : safePointCount > 2400
+      ? 1.25
+      : safePointCount > 1600
+      ? 1.5
+      : 2;
+    renderer.setPixelRatio(Math.min(dprCap, dprRaw));
     renderer.outputColorSpace = (THREE as any).SRGBColorSpace;
     if ((THREE as any).NoToneMapping != null) {
       renderer.toneMapping = (THREE as any).NoToneMapping;
@@ -8081,6 +8092,26 @@ function ClusterMapViewport3D({
     requestRender,
     lowPowerMode,
   ]);
+
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    const canvas = canvasRef.current;
+    if (!renderer || !canvas) return;
+    const dprRaw = window.devicePixelRatio || 1;
+    const safePointCount = Math.max(0, Number(pointCount) || 0);
+    const dprCap = lowPowerMode
+      ? 1
+      : safePointCount > 2400
+      ? 1.25
+      : safePointCount > 1600
+      ? 1.5
+      : 2;
+    renderer.setPixelRatio(Math.min(dprCap, dprRaw));
+    const w = Math.max(1, canvas.clientWidth || 1);
+    const h = Math.max(1, canvas.clientHeight || 1);
+    renderer.setSize(w, h, false);
+    requestRender();
+  }, [lowPowerMode, pointCount, requestRender]);
 
   useEffect(() => {
     const controls = controlsRef.current;
@@ -9328,6 +9359,7 @@ export function ClusterMap({
   const [searchHighlightId, setSearchHighlightId] = useState<string | null>(
     null
   );
+  const deferredSliderValue = useDeferredValue(sliderValue);
   const searchHighlightIdRef = useRef<string | null>(null);
   useEffect(() => {
     searchHighlightIdRef.current = searchHighlightId;
@@ -9373,7 +9405,18 @@ export function ClusterMap({
       return false;
     }
   });
-  const lowPowerMode = lowPowerModeUser;
+  const pointCount = useMemo(() => {
+    const tradeCount = Array.isArray(trades) ? trades.length : 0;
+    const libCount = Array.isArray(libraryPoints) ? libraryPoints.length : 0;
+    const ghostCount = Array.isArray(ghostEntries) ? ghostEntries.length : 0;
+    return tradeCount + libCount + ghostCount;
+  }, [ghostEntries, libraryPoints, trades]);
+  const autoLowPower = useMemo(() => {
+    const threshold = clusterMapView === "3d" ? 1200 : 2400;
+    return pointCount > threshold;
+  }, [clusterMapView, pointCount]);
+  const lowPowerMode = lowPowerModeUser || autoLowPower;
+  const lowPowerLabel = lowPowerModeUser ? "ON" : autoLowPower ? "AUTO" : "OFF";
   useEffect(() => {
     try {
       localStorage.setItem(CLUSTER_MAP_LOW_POWER_KEY, lowPowerModeUser ? "1" : "0");
@@ -9392,11 +9435,11 @@ export function ClusterMap({
     pinnedRef.current = !!pinnedWorld;
   }, [pinnedWorld]);
   useEffect(() => {
-    if (!lowPowerMode) return;
+    if (!lowPowerModeUser) return;
     setHeatmapOn(false);
     setHeatHover(null);
     setPinnedHeatHover(null);
-  }, [lowPowerMode]);
+  }, [lowPowerModeUser]);
 
   // Track whether the mouse is currently over the map so WASD/arrow panning doesn't steal keys elsewhere.
   const mapFocusRef = useRef(false);
@@ -9643,7 +9686,7 @@ export function ClusterMap({
         if (isToggle3DHeat) {
           e.preventDefault();
           e.stopPropagation();
-          if (lowPowerMode) return;
+          if (lowPowerModeUser) return;
           setBoxSelectMode3d(false);
           setHeatmapOn((v) => !v);
           return;
@@ -9684,7 +9727,7 @@ export function ClusterMap({
       if (isHeatToggle && !isTyping) {
         e.preventDefault();
         e.stopPropagation();
-        if (lowPowerMode) return;
+        if (lowPowerModeUser) return;
         setHeatmapOn((v) => {
           const nv = !v;
           return nv;
@@ -10669,26 +10712,32 @@ export function ClusterMap({
     // UMAP embedding for the Cluster Map (better preserves local neighborhood structure than PCA).
     // We keep PCA2 around for fast approximate "transform" and for initialization.
     const { pc1, pc2 } = computePCA(stdData);
+    const umap2dMaxN = lowPowerMode ? 1200 : 2000;
+    const umap2dSampleN = lowPowerMode ? 900 : 1500;
+    const umap2dEpochs = lowPowerMode ? 120 : 200;
     const um = computeUMAPEmbedding2D(stdData, pc1, pc2, {
       seedKey: "cluster-map",
       nNeighbors: 18,
-      nEpochs: 200,
+      nEpochs: umap2dEpochs,
       negRate: 4,
       learningRate: 1.0,
-      maxN: 2000,
-      sampleN: 1500,
+      maxN: umap2dMaxN,
+      sampleN: umap2dSampleN,
     });
     const embedding = um.emb;
     const shouldEmbed3D = clusterMapView === "3d";
+    const umap3dMaxN = lowPowerMode ? 1500 : 2500;
+    const umap3dSampleN = lowPowerMode ? 1000 : 1600;
+    const umap3dEpochs = lowPowerMode ? 140 : 220;
     const um3 = shouldEmbed3D
       ? computeUMAPEmbedding3D(stdData, pc1, pc2, {
           seedKey: "cluster-map-3d",
           nNeighbors: 18,
-          nEpochs: 220,
+          nEpochs: umap3dEpochs,
           negRate: 4,
           learningRate: 1.0,
-          maxN: 2500,
-          sampleN: 1600,
+          maxN: umap3dMaxN,
+          sampleN: umap3dSampleN,
         })
       : null;
     const embedding3 = (um3 as any)?.emb || [];
@@ -10974,6 +11023,7 @@ export function ClusterMap({
     nodeChronologyValue,
     nodeStableKey,
     clusterMapView,
+    lowPowerMode,
   ]);
 
   const tradeNodeByUidAll = useMemo(() => {
@@ -11086,7 +11136,7 @@ export function ClusterMap({
   );
   const [knnLinkOpacity, setKnnLinkOpacity] = React.useState(0.36);
   const showGroupOverlays = (Number(groupOverlayOpacity) || 0) > 0;
-  const effectiveGroupOverlayOpacity = lowPowerMode ? 0 : groupOverlayOpacity;
+  const effectiveGroupOverlayOpacity = lowPowerModeUser ? 0 : groupOverlayOpacity;
   const suppressedLibraryActive = React.useMemo(() => {
     const libs = Array.isArray(activeLibraries) ? (activeLibraries as any[]) : [];
     for (const v of libs) {
@@ -11179,7 +11229,7 @@ export function ClusterMap({
   );
 
   const timelineNodes = useMemo(() => {
-    const idx = sliderValue;
+    const idx = deferredSliderValue;
     const out: any[] = [];
     const proj = projectionRef.current;
     const isSuppressedNode = (node: any) => {
@@ -11387,7 +11437,7 @@ export function ClusterMap({
     return out;
   }, [
     sortedNodes,
-    sliderValue,
+    deferredSliderValue,
     candles,
     chunkBarsDeb,
     pnlScale,
@@ -16703,7 +16753,7 @@ export function ClusterMap({
               }}
               title="Aggressive performance mode for weak GPUs/CPUs"
             >
-              Low-Power {lowPowerMode ? "ON" : "OFF"}
+              Low-Power {lowPowerLabel}
             </button>
 
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -16919,6 +16969,7 @@ export function ClusterMap({
             searchHighlightId={searchHighlightId}
             resetKey={resetKey}
             lowPowerMode={lowPowerMode}
+            pointCount={Array.isArray(displayNodes) ? displayNodes.length : 0}
             hdbOverlay={hdbOverlay}
             showGroupOverlays={showGroupOverlays}
             groupOverlayOpacity={effectiveGroupOverlayOpacity}

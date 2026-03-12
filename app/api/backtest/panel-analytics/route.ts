@@ -494,24 +494,45 @@ const computeAntiCheatBacktestContext = (params: {
     );
   });
 
+  const chronologicalTrades = [...timeFilteredBase].sort(
+    (left, right) => Number(left.entryTime) - Number(right.entryTime)
+  );
   const confidenceById = new Map<string, number>();
   const usesSplitValidation =
     panelBacktestFilterSettings.antiCheatEnabled &&
     panelBacktestFilterSettings.validationMode === "split";
-  const splitIndex = usesSplitValidation
-    ? Math.floor(timeFilteredBase.length * 0.5)
-    : 0;
-  const splitTrainingTrades = usesSplitValidation
-    ? timeFilteredBase.slice(0, splitIndex)
-    : timeFilteredBase;
-  const splitEvaluationTrades = usesSplitValidation
-    ? timeFilteredBase.slice(splitIndex)
-    : timeFilteredBase;
+  const resolveSplitTimestampMs = (): number | null => {
+    if (startMs !== null && endExclusiveMs !== null && endExclusiveMs > startMs) {
+      return startMs + Math.floor((endExclusiveMs - startMs) * 0.5);
+    }
+    if (chronologicalTrades.length === 0) {
+      return null;
+    }
+    const mid = chronologicalTrades[Math.floor(chronologicalTrades.length * 0.5)];
+    const entryMs = Number(mid?.entryTime) * 1000;
+    return Number.isFinite(entryMs) && entryMs > 0 ? entryMs : null;
+  };
+  const splitTimestampMs = usesSplitValidation ? resolveSplitTimestampMs() : null;
+  let splitTrainingTrades = usesSplitValidation
+    ? chronologicalTrades.filter((trade) => Number(trade.entryTime) * 1000 < (splitTimestampMs ?? 0))
+    : chronologicalTrades;
+  let splitEvaluationTrades = usesSplitValidation
+    ? chronologicalTrades.filter((trade) => Number(trade.entryTime) * 1000 >= (splitTimestampMs ?? 0))
+    : chronologicalTrades;
+  if (
+    usesSplitValidation &&
+    splitTimestampMs !== null &&
+    (splitTrainingTrades.length === 0 || splitEvaluationTrades.length === 0)
+  ) {
+    const fallbackIndex = Math.floor(chronologicalTrades.length * 0.5);
+    splitTrainingTrades = chronologicalTrades.slice(0, fallbackIndex);
+    splitEvaluationTrades = chronologicalTrades.slice(fallbackIndex);
+  }
 
   if (
     panelBacktestFilterSettings.aiMode === "off" ||
     !panelBacktestFilterSettings.antiCheatEnabled ||
-    timeFilteredBase.length === 0
+    chronologicalTrades.length === 0
   ) {
     return {
       dateFilteredTrades,
@@ -750,12 +771,12 @@ const computeAntiCheatBacktestContext = (params: {
     return clamp(weight, 0.02, 2);
   };
 
-  for (let index = 0; index < timeFilteredBase.length; index += 1) {
-    const trade = timeFilteredBase[index]!;
+  for (let index = 0; index < chronologicalTrades.length; index += 1) {
+    const trade = chronologicalTrades[index]!;
     const basePool =
       panelBacktestFilterSettings.validationMode === "split"
         ? splitTrainingTrades
-        : timeFilteredBase.slice(0, index);
+        : chronologicalTrades.slice(0, index);
 
     if (basePool.length === 0) {
       confidenceById.set(trade.id, getSyntheticWinProb(trade));
