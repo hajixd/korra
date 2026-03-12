@@ -10588,10 +10588,10 @@ export function ClusterMap({
 
       const entryTime =
         entryTimeFromP ||
-        candles?.[Math.min(candles.length - 1, Math.max(0, sIdxClamped + 1))]
+        (candles?.[Math.min(candles.length - 1, Math.max(0, sIdxClamped + 1))]
           ?.time ??
-        candles?.[sIdxClamped]?.time ??
-        "";
+          candles?.[sIdxClamped]?.time ??
+          "");
       // Try to preserve real exit info for library points when available.
       const exitIdxFromP =
         typeof (p as any).exitIndex === "number"
@@ -15176,12 +15176,12 @@ export function ClusterMap({
       const payloadList = buildFromPayload(nbsRaw as any[]);
       if (payloadList.length) return payloadList;
 
-      const kind = String((node as any)?.kind || "").toLowerCase();
-      const isTradeLike = kind === "trade" || kind === "potential";
+      const kindLocal = String((node as any)?.kind || "").toLowerCase();
+      const isTradeLike = kindLocal === "trade" || kindLocal === "potential";
       const allowFallback =
-        kind === "library" ||
-        kind === "ghost" ||
-        kind === "close" ||
+        kindLocal === "library" ||
+        kindLocal === "ghost" ||
+        kindLocal === "close" ||
         (!entryNeighborsOnly && allowTradeNeighborFallback && isTradeLike);
       if (!allowFallback) return [];
 
