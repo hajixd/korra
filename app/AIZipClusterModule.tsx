@@ -91,7 +91,15 @@ const MONTH_SHORT = [
   "Dec",
 ];
 
-const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DOW_SHORT = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
 
 const computeAIZipOnServer = async ({
   candles,
@@ -4820,7 +4828,15 @@ const DEFAULT_MONTHS = (() => {
   for (let i = 0; i < 12; i++) o[i] = true;
   return o;
 })();
-const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DOW_LABELS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
 const DEFAULT_DOWS = (() => {
   const o = {};
   for (let i = 0; i < 7; i++) o[i] = true;
@@ -5054,6 +5070,25 @@ function sessionFromTime(raw, parseMode) {
   if (h >= 5 && h < 14) return "New York";
   return "London";
 }
+const normalizeLabel = (value: any) => {
+  if (value == null) return "";
+  const s = String(value).trim();
+  if (!s) return "";
+  const low = s.toLowerCase();
+  if (low === "undefined" || low === "null" || low === "nan") return "";
+  return s;
+};
+const resolveSessionLabel = (
+  rawSession: any,
+  timeRaw: any,
+  parseMode: string,
+  fallback = "—"
+) => {
+  const direct = normalizeLabel(rawSession);
+  if (direct) return direct;
+  const inferred = normalizeLabel(sessionFromTime(timeRaw, parseMode));
+  return inferred || fallback;
+};
 function isSessionAllowed(raw, enabled, parseMode) {
   return !!enabled[sessionFromTime(raw, parseMode)];
 }
@@ -11497,7 +11532,7 @@ export function ClusterMap({
     const ctxSession =
       viewSession !== "All"
         ? String(viewSession)
-        : String(ctxNode?.session ?? sessionFromTime(ctxTime, parseMode) ?? "");
+        : resolveSessionLabel((ctxNode as any)?.session, ctxTime, parseMode, "");
 
     const ctxDir = 0;
 
@@ -11519,7 +11554,7 @@ export function ClusterMap({
       const d = parseDateFromString(t, parseMode);
       const m = {
         dir: Number(n?.dir ?? n?.direction ?? 0),
-        session: String(n?.session ?? sessionFromTime(t, parseMode) ?? ""),
+        session: resolveSessionLabel((n as any)?.session, t, parseMode, ""),
         month: d
           ? parseMode === "utc"
             ? d.getUTCMonth()
@@ -14520,19 +14555,23 @@ export function ClusterMap({
 
   const selectedNeighborList = useMemo(() => {
     if (!selectedNode) return [];
-    const nbsRaw =
-      (selectedNode as any)?.entryNeighbors ??
-      (selectedNode as any)?.neighbors ??
-      (selectedNode as any)?.kNeighbors ??
-      [];
-    if (!Array.isArray(nbsRaw) || nbsRaw.length === 0) return [];
-    if (!effectiveNeighborK || effectiveNeighborK <= 0) return [];
+    const kLimit = Math.max(
+      0,
+      Math.min(36, Math.floor(Number(effectiveNeighborK) || 0))
+    );
+    if (!kLimit) return [];
 
     const { aliasToIds, nodeCoordById, dim } = neighborAlias;
     const sourceId = normalizeClusterMapToken((selectedNode as any)?.id || "");
     const sourceCoord =
       (sourceId && nodeCoordById.get(sourceId)) ||
       nodeCoordsForClusterMapKnn(selectedNode, dim);
+
+    const nbsRaw =
+      (selectedNode as any)?.entryNeighbors ??
+      (selectedNode as any)?.neighbors ??
+      (selectedNode as any)?.kNeighbors ??
+      [];
 
     const pickFromAlias = (token: string): string | null => {
       const ids = aliasToIds.get(token);
@@ -14613,7 +14652,8 @@ export function ClusterMap({
       if (modelTok && Number.isFinite(dirRaw))
         fallbackKeys.push(`tmd:${timeTok}|${modelTok}|${String(dirRaw)}`);
       if (modelTok) fallbackKeys.push(`tm:${timeTok}|${modelTok}`);
-      if (Number.isFinite(dirRaw)) fallbackKeys.push(`td:${timeTok}|${String(dirRaw)}`);
+      if (Number.isFinite(dirRaw))
+        fallbackKeys.push(`td:${timeTok}|${String(dirRaw)}`);
       fallbackKeys.push(`t:${timeTok}`);
       for (const key of fallbackKeys) {
         const hit = pickFromAlias(key);
@@ -14648,66 +14688,116 @@ export function ClusterMap({
       return "";
     };
 
-    const candidates = (nbsRaw as any[])
-      .slice()
-      .sort((a: any, b: any) => {
-        const da = Number.isFinite(Number((a as any)?.d))
-          ? Number((a as any)?.d)
-          : Infinity;
-        const db = Number.isFinite(Number((b as any)?.d))
-          ? Number((b as any)?.d)
-          : Infinity;
-        return da - db;
-      })
-      .map((nb: any, idx: number) => {
-        const resolvedId = resolveNeighborId(nb);
-        const rawFallback = pickRawId(nb);
-        const node =
-          resolvedId != null ? (nodeById as any).get(resolvedId) : null;
-        const tr = (nb as any)?.t ?? null;
-        let displayId = node ? displayIdForNode(node) : tr ? displayIdForNode(tr) : "—";
-        if (!displayId || displayId === "—") {
-          displayId = rawFallback ? displayIdFromRaw(rawFallback) : "—";
-        }
+    const buildFromPayload = (raw: any[]) => {
+      if (!Array.isArray(raw) || raw.length === 0) return [];
+      const candidates = raw
+        .slice()
+        .sort((a: any, b: any) => {
+          const da = Number.isFinite(Number((a as any)?.d))
+            ? Number((a as any)?.d)
+            : Infinity;
+          const db = Number.isFinite(Number((b as any)?.d))
+            ? Number((b as any)?.d)
+            : Infinity;
+          return da - db;
+        })
+        .map((nb: any, idx: number) => {
+          const resolvedId = resolveNeighborId(nb);
+          const rawFallback = pickRawId(nb);
+          const node =
+            resolvedId != null ? (nodeById as any).get(resolvedId) : null;
+          const tr = (nb as any)?.t ?? null;
+          let displayId = node
+            ? displayIdForNode(node)
+            : tr
+            ? displayIdForNode(tr)
+            : "—";
+          if (!displayId || displayId === "—") {
+            displayId = rawFallback ? displayIdFromRaw(rawFallback) : "—";
+          }
 
-        const dist = (() => {
-          const d0 = Number((nb as any)?.d);
-          if (Number.isFinite(d0)) return d0;
-          if (!sourceCoord) return Infinity;
-          const dstId = resolvedId;
-          const dstCoord = dstId ? nodeCoordById.get(dstId) : null;
-          if (!dstCoord) return Infinity;
-          const dx = sourceCoord.x - dstCoord.x;
-          const dy = sourceCoord.y - dstCoord.y;
-          const dz = dim === "3d" ? sourceCoord.z - dstCoord.z : 0;
-          return Math.sqrt(dx * dx + dy * dy + dz * dz);
-        })();
+          const dist = (() => {
+            const d0 = Number((nb as any)?.d);
+            if (Number.isFinite(d0)) return d0;
+            if (!sourceCoord) return Infinity;
+            const dstId = resolvedId;
+            const dstCoord = dstId ? nodeCoordById.get(dstId) : null;
+            if (!dstCoord) return Infinity;
+            const dx = sourceCoord.x - dstCoord.x;
+            const dy = sourceCoord.y - dstCoord.y;
+            const dz = dim === "3d" ? sourceCoord.z - dstCoord.z : 0;
+            return Math.sqrt(dx * dx + dy * dy + dz * dz);
+          })();
 
-        return {
-          key:
-            resolvedId ||
-            rawFallback ||
-            `neighbor-${String(idx + 1).padStart(2, "0")}`,
-          id: resolvedId,
-          displayId,
-          dist,
-        };
+          return {
+            key:
+              resolvedId ||
+              rawFallback ||
+              `neighbor-${String(idx + 1).padStart(2, "0")}`,
+            id: resolvedId,
+            displayId,
+            dist,
+          };
+        });
+
+      const seen = new Set<string>();
+      const ordered = candidates
+        .filter((row) => {
+          if (!row) return false;
+          const dedupeKey = String(row.id || row.displayId || row.key || "");
+          if (!dedupeKey) return false;
+          if (seen.has(dedupeKey)) return false;
+          if (sourceId && row.id && row.id === sourceId) return false;
+          seen.add(dedupeKey);
+          return true;
+        })
+        .sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity));
+
+      return ordered.slice(0, kLimit);
+    };
+
+    const payloadList = buildFromPayload(nbsRaw as any[]);
+    if (payloadList.length) return payloadList;
+
+    if (!sourceCoord) return [];
+    const fallbackRows: any[] = [];
+
+    for (const node of nodeById.values()) {
+      if (!node) continue;
+      const nodeId = normalizeClusterMapToken((node as any)?.id || "");
+      if (sourceId && nodeId && nodeId === sourceId) continue;
+      if (!sourceId && node === selectedNode) continue;
+      const coord =
+        (nodeId && nodeCoordById.get(nodeId)) ||
+        nodeCoordsForClusterMapKnn(node, dim);
+      if (!coord) continue;
+      const dx = sourceCoord.x - coord.x;
+      const dy = sourceCoord.y - coord.y;
+      const dz = dim === "3d" ? sourceCoord.z - coord.z : 0;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      let displayId = displayIdForNode(node);
+      if (!displayId || displayId === "—") {
+        displayId = displayIdFromRaw(String((node as any).id ?? "")) || "—";
+      }
+      const kind = String((node as any)?.kind || "").toLowerCase();
+      const isLib =
+        kind === "library" ||
+        String((node as any).id || "").startsWith("lib|");
+      fallbackRows.push({
+        key: nodeId || String((node as any).id || ""),
+        id: nodeId || String((node as any).id || ""),
+        displayId,
+        dist,
+        isLib,
       });
+    }
 
-    const seen = new Set<string>();
-    const ordered = candidates
-      .filter((row) => {
-        if (!row) return false;
-        const dedupeKey = String(row.id || row.displayId || row.key || "");
-        if (!dedupeKey) return false;
-        if (seen.has(dedupeKey)) return false;
-        if (sourceId && row.id && row.id === sourceId) return false;
-        seen.add(dedupeKey);
-        return true;
-      })
-      .sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity));
-
-    return ordered.slice(0, effectiveNeighborK);
+    if (!fallbackRows.length) return [];
+    const libRows = fallbackRows.filter((row) => row.isLib);
+    const pool = libRows.length ? libRows : fallbackRows;
+    return pool
+      .sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity))
+      .slice(0, kLimit);
   }, [selectedNode, effectiveNeighborK, neighborAlias, nodeById]);
 
   // User-facing selection stats should reflect exactly what the map is showing.
@@ -15818,8 +15908,12 @@ export function ClusterMap({
             if (mods) lines.push(`Domains: ${mods}`);
             if (n.closestCluster) lines.push(`Closest: ${n.closestCluster}`);
           } else if (kind === "ghost") {
-            const sess =
-              n.session || sessionFromTime(n.entryTime, parseMode) || "-";
+            const sess = resolveSessionLabel(
+              (n as any).session,
+              n.entryTime,
+              parseMode,
+              "-"
+            );
             lines.push(
               `Suppressed Trade · ${n.dir === 1 ? "Buy" : "Sell"} · ${sess} · ${
                 n.chunkType
@@ -15859,8 +15953,14 @@ export function ClusterMap({
               ? "Open Trade"
               : "Trade";
             const pnl = isLiveNode ? n.pnl ?? 0 : isOpenEntry ? 0 : n.pnl ?? 0;
+            const sess = resolveSessionLabel(
+              (n as any).session,
+              n.entryTime,
+              parseMode,
+              "-"
+            );
             lines.push(
-              `${label} · ${n.dir === 1 ? "Buy" : "Sell"} · ${n.session} · ${
+              `${label} · ${n.dir === 1 ? "Buy" : "Sell"} · ${sess} · ${
                 n.chunkType
               }`
             );
@@ -18079,10 +18179,11 @@ export function ClusterMap({
             const entryDowKey =
               typeof entryDow === "number" ? DOW_SHORT[entryDow] : "—";
 
-            const sessionLabel =
-              selectedNode.session ||
-              sessionFromTime(entryTimeRaw, parseMode) ||
-              "—";
+            const sessionLabel = resolveSessionLabel(
+              (selectedNode as any).session,
+              entryTimeRaw,
+              parseMode
+            );
             const durEndRaw = (selectedNode as any).isOpen
               ? candles?.[sliderValue]?.time ??
                 candles?.[candles.length - 1]?.time ??
@@ -18436,7 +18537,7 @@ export function ClusterMap({
                   >
                     <div>Nearest Neighbors</div>
                     <div style={{ ...mono(), opacity: 0.7 }}>
-                      k={effectiveNeighborK || 0}
+                      k={selectedNeighborList.length || 0}
                     </div>
                   </div>
                   <div
@@ -27936,9 +28037,12 @@ export default function App() {
                     <Row
                       k="Session"
                       v={
-                        (p?.session ||
-                          sessionFromTime(lastC?.time, parseMode) ||
-                          "-") + ""
+                        resolveSessionLabel(
+                          (p as any)?.session,
+                          lastC?.time,
+                          parseMode,
+                          "-"
+                        )
                       }
                       tone="neutral"
                     />
@@ -28351,10 +28455,9 @@ export default function App() {
                                   nbAny.metaSuppressed ?? tr.suppressed
                                 );
 
-                                const sess =
-                                  String(
-                                    nbAny.metaSession ?? tr.session ?? ""
-                                  ).trim() || "";
+                                const sess = normalizeLabel(
+                                  nbAny.metaSession ?? tr.session
+                                );
 
                                 const dVal =
                                   nbAny && Number.isFinite(Number(nbAny.d))
@@ -33983,7 +34086,7 @@ export default function App() {
               className="grid grid-cols-7 gap-2 text-xs mb-2 text-neutral-400"
               style={{ display: isCalendarCollapsed ? "none" : undefined }}
             >
-              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+              {DOW_LABELS.map((d) => (
                 <div key={d} className="text-center">
                   {d}
                 </div>
