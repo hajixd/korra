@@ -10425,6 +10425,7 @@ export function ClusterMap({
     const libraryPointsForMap: any[] = (() => {
       const src = Array.isArray(libraryPoints) ? (libraryPoints as any[]) : [];
       if (src.length > 0) return src;
+      if (entryNeighborsOnly) return src;
 
       const byLib = Object.entries((libraryCounts as any) || {}).filter(
         ([, v]) => Number(v || 0) > 0
@@ -14527,6 +14528,58 @@ export function ClusterMap({
       if (!out.has(kk)) out.set(kk, mit);
     };
 
+    if (entryNeighborsOnly) {
+      const isLibraryNode = (n: any) =>
+        String((n as any)?.kind || "").toLowerCase() === "library";
+
+      for (const n of src) {
+        if (!n) continue;
+        if (String((n as any).kind || "").toLowerCase() !== "trade") continue;
+        const nbsRaw =
+          (n as any)?.entryNeighbors ??
+          (n as any)?.neighbors ??
+          (n as any)?.kNeighbors ??
+          [];
+        if (!Array.isArray(nbsRaw) || nbsRaw.length === 0) continue;
+
+        const nbs = nbsRaw.slice().sort((a: any, b: any) => {
+          const da = Number((a as any)?.d);
+          const db = Number((b as any)?.d);
+          const aa = Number.isFinite(da) ? da : Infinity;
+          const bb = Number.isFinite(db) ? db : Infinity;
+          return aa - bb;
+        });
+
+        let mitRef: any = null;
+        for (const nb of nbs as any[]) {
+          if (!nb) continue;
+          const rawId =
+            (nb as any)?.id ??
+            (nb as any)?.uid ??
+            (nb as any)?.metaUid ??
+            (nb as any)?.metaId ??
+            null;
+          if (rawId == null || rawId === "") continue;
+          const hit = nodeById.get(String(rawId)) ?? null;
+          if (hit && isLibraryNode(hit)) {
+            mitRef = hit;
+            break;
+          }
+        }
+
+        if (!mitRef) continue;
+        addKey(stableKey(n), mitRef);
+        addKey((n as any).uid, mitRef);
+        addKey((n as any).tradeUid, mitRef);
+        addKey((n as any).tradeId, mitRef);
+        addKey((n as any).id, mitRef);
+        addKey((n as any).metaOrigUid, mitRef);
+        addKey((n as any).metaOrigId, mitRef);
+      }
+
+      return out;
+    }
+
     const libLabel = (n: any) =>
       String(
         (n as any)?.library ??
@@ -14665,7 +14718,7 @@ export function ClusterMap({
     }
 
     return out;
-  }, [timelineNodesCheat]);
+  }, [entryNeighborsOnly, timelineNodesCheat]);
 
   useEffect(() => {
     if (typeof onMitMap !== "function") return;
@@ -14928,6 +14981,12 @@ export function ClusterMap({
           const rawFallback = pickRawId(nb);
           const node =
             resolvedId != null ? (nodeByIdAll as any).get(resolvedId) : null;
+          if (entryNeighborsOnly) {
+            if (!resolvedId) return null;
+            if (!node) return null;
+            const kind = String((node as any)?.kind || "").toLowerCase();
+            if (kind !== "library") return null;
+          }
           const tr = (nb as any)?.t ?? null;
           let displayId = node
             ? displayIdForNode(node)
@@ -15012,7 +15071,8 @@ export function ClusterMap({
             isWin,
             isLoss,
           };
-        });
+        })
+        .filter((row) => !!row);
 
       const seen = new Set<string>();
       const ordered = candidates
