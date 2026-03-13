@@ -9434,10 +9434,6 @@ export function ClusterMap({
   aiDomains,
   knnVoteMode = "distance",
   kEntry,
-  distanceMetric = "euclidean",
-  neighborSpace = "high",
-  dimensionAmount,
-  compressionMethod,
   hdbDomainDistinction,
   hdbMinClusterSize,
   hdbMinSamples,
@@ -10832,288 +10828,177 @@ export function ClusterMap({
 
     const allVectors = goodEntries.map((e) => e.v);
     const { stdData, mean, stdev } = standardiseVectors(allVectors);
-    const neighborSpaceMode = (() => {
-      const raw = String(neighborSpace || "high").toLowerCase();
-      if (raw === "2d" || raw === "3d") return raw;
-      if (raw.includes("compressed") || raw.includes("post")) return "compressed";
-      return "high";
-    })();
-    const distanceMetricMode = (() => {
-      const raw = String(distanceMetric || "euclidean").toLowerCase();
-      if (raw === "cosine" || raw === "manhattan" || raw === "chebyshev") return raw;
-      return "euclidean";
-    })();
-    const buildCompressedVectors = () => {
-      const dim = stdData?.[0]?.length ?? 0;
-      if (dim <= 0) return stdData;
-      const target =
-        Math.min(
-          dim,
-          Math.max(2, Math.floor(Number(dimensionAmount || dim) || dim))
-        ) || dim;
-      if (target >= dim) return stdData;
 
-      const method = String(compressionMethod || "").toLowerCase();
-      let indices: number[] = [];
-      if (method === "subsample") {
-        if (target <= 1) {
-          indices = [0];
-        } else {
-          indices = Array.from({ length: target }, (_, i) =>
-            Math.round((i * (dim - 1)) / Math.max(1, target - 1))
-          );
-        }
-      } else {
-        const vari = new Array(dim).fill(0);
-        const meanVec = new Array(dim).fill(0);
-        for (const v of allVectors) {
-          for (let j = 0; j < dim; j += 1) {
-            meanVec[j] += Number(v?.[j] ?? 0);
-          }
-        }
-        const denom = Math.max(1, allVectors.length);
-        for (let j = 0; j < dim; j += 1) {
-          meanVec[j] /= denom;
-        }
-        for (const v of allVectors) {
-          for (let j = 0; j < dim; j += 1) {
-            const d = Number(v?.[j] ?? 0) - meanVec[j];
-            vari[j] += d * d;
-          }
-        }
-        for (let j = 0; j < dim; j += 1) {
-          vari[j] /= Math.max(1, allVectors.length - 1);
-        }
-        indices = Array.from({ length: dim }, (_, i) => i);
-        indices.sort((a, b) => vari[b] - vari[a]);
-        indices = indices.slice(0, target);
-      }
-
-      const indexSet = new Set(indices);
-      const ordered = indices.filter((idx) => indexSet.has(idx));
-      return stdData.map((vec) => ordered.map((idx) => vec?.[idx] ?? 0));
-    };
-    const computeEntryNeighbors = (vectors: number[][]) => {
-      if (!entryNeighborsOnly) return;
-      if (!Array.isArray(vectors) || vectors.length !== goodEntries.length) {
-        return;
-      }
+    // Backtest: derive nearest neighbors directly in the high-dimensional space (pre-UMAP)
+    // using library nodes as the neighbor pool.
+    if (entryNeighborsOnly) {
       const neighborK = Math.max(
         0,
         Math.min(36, Math.floor(Number(kEntry) || 0))
       );
-      if (neighborK <= 0) {
-        return;
-      }
-
-      const norms =
-        distanceMetricMode === "cosine"
-          ? vectors.map((vec) => {
-              let sum = 0;
-              for (let j = 0; j < vec.length; j += 1) {
-                const v = Number(vec[j] ?? 0);
-                sum += v * v;
-              }
-              return Math.sqrt(sum);
-            })
-          : null;
-
-      const tradeIdx: number[] = [];
-      const candidateIdx: number[] = [];
-      const candidateChrono: Array<number | null> = [];
-      const candidateIsTrade: boolean[] = [];
-      for (let i = 0; i < goodEntries.length; i += 1) {
-        const k = String((goodEntries[i] as any)?.kind || "").toLowerCase();
-        if (k === "library") {
-          const libNode = goodEntries[i] as any;
-          const c0 =
-            nodeChronologyValue(libNode) ??
-            (typeof libNode?.signalIndex === "number"
-              ? libNode.signalIndex
-              : typeof libNode?.entryIndex === "number"
-              ? libNode.entryIndex
-              : null);
-          candidateIdx.push(i);
-          candidateChrono.push(
-            Number.isFinite(Number(c0)) ? Number(c0) : null
-          );
-          candidateIsTrade.push(false);
-        } else if (k === "trade") {
-          tradeIdx.push(i);
-          if (allowTradeNeighborFallback) {
-            const tradeNode = goodEntries[i] as any;
+      if (neighborK > 0) {
+        const tradeIdx: number[] = [];
+        const candidateIdx: number[] = [];
+        const candidateChrono: Array<number | null> = [];
+        const candidateIsTrade: boolean[] = [];
+        for (let i = 0; i < goodEntries.length; i += 1) {
+          const k = String((goodEntries[i] as any)?.kind || "").toLowerCase();
+          if (k === "library") {
+            const libNode = goodEntries[i] as any;
             const c0 =
+              nodeChronologyValue(libNode) ??
+              (typeof libNode?.signalIndex === "number"
+                ? libNode.signalIndex
+                : typeof libNode?.entryIndex === "number"
+                ? libNode.entryIndex
+                : null);
+            candidateIdx.push(i);
+            candidateChrono.push(
+              Number.isFinite(Number(c0)) ? Number(c0) : null
+            );
+            candidateIsTrade.push(false);
+          }
+          else if (k === "trade") {
+            tradeIdx.push(i);
+            if (allowTradeNeighborFallback) {
+              const tradeNode = goodEntries[i] as any;
+              const c0 =
+                nodeChronologyValue(tradeNode) ??
+                (typeof tradeNode?.signalIndex === "number"
+                  ? tradeNode.signalIndex
+                  : typeof tradeNode?.entryIndex === "number"
+                  ? tradeNode.entryIndex
+                  : null);
+              candidateIdx.push(i);
+              candidateChrono.push(
+                Number.isFinite(Number(c0)) ? Number(c0) : null
+              );
+              candidateIsTrade.push(true);
+            }
+          }
+        }
+
+        if (candidateIdx.length > 0) {
+          for (const ti of tradeIdx) {
+            const v = stdData[ti];
+            if (!Array.isArray(v)) {
+              (goodEntries[ti] as any).entryNeighbors = [];
+              continue;
+            }
+
+            const tradeNode = goodEntries[ti] as any;
+            const tradeChrono =
               nodeChronologyValue(tradeNode) ??
               (typeof tradeNode?.signalIndex === "number"
                 ? tradeNode.signalIndex
                 : typeof tradeNode?.entryIndex === "number"
                 ? tradeNode.entryIndex
                 : null);
-            candidateIdx.push(i);
-            candidateChrono.push(
-              Number.isFinite(Number(c0)) ? Number(c0) : null
-            );
-            candidateIsTrade.push(true);
-          }
-        }
-      }
 
-      if (candidateIdx.length === 0) {
-        for (const ti of tradeIdx) {
-          (goodEntries[ti] as any).entryNeighbors = [];
-        }
-        return;
-      }
+            const nearest: Array<{ idx: number; d2: number }> = [];
+            for (let ciPos = 0; ciPos < candidateIdx.length; ciPos += 1) {
+              const ci = candidateIdx[ciPos];
+              if (ci === ti) continue;
+              const candTime = candidateChrono[ciPos];
+              const candIsTrade = candidateIsTrade[ciPos];
+              if (tradeChrono != null && candTime != null) {
+                if (candIsTrade || !staticLibrariesClusters) {
+                  if (candTime > tradeChrono) continue;
+                }
+              }
+              const u = stdData[ci];
+              if (!Array.isArray(u)) continue;
+              const len = Math.min(v.length, u.length);
+              let d2 = 0;
+              for (let j = 0; j < len; j += 1) {
+                const diff = (v[j] ?? 0) - (u[j] ?? 0);
+                d2 += diff * diff;
+              }
+              if (!Number.isFinite(d2)) continue;
+              if (nearest.length < neighborK) {
+                nearest.push({ idx: ci, d2 });
+                nearest.sort((a, b) => b.d2 - a.d2);
+              } else if (d2 < nearest[0].d2) {
+                nearest[0] = { idx: ci, d2 };
+                nearest.sort((a, b) => b.d2 - a.d2);
+              }
+            }
 
-      const distanceFor = (v: number[], u: number[], vi: number, ui: number) => {
-        const len = Math.min(v.length, u.length);
-        if (distanceMetricMode === "cosine") {
-          const nv = norms?.[vi] ?? 0;
-          const nu = norms?.[ui] ?? 0;
-          if (!(nv > 0) || !(nu > 0)) return 1;
-          let dot = 0;
-          for (let j = 0; j < len; j += 1) {
-            dot += (v[j] ?? 0) * (u[j] ?? 0);
-          }
-          const cos = dot / (nv * nu);
-          return 1 - clamp(cos, -1, 1);
-        }
-        if (distanceMetricMode === "manhattan") {
-          let sum = 0;
-          for (let j = 0; j < len; j += 1) {
-            sum += Math.abs((v[j] ?? 0) - (u[j] ?? 0));
-          }
-          return sum;
-        }
-        if (distanceMetricMode === "chebyshev") {
-          let max = 0;
-          for (let j = 0; j < len; j += 1) {
-            const diff = Math.abs((v[j] ?? 0) - (u[j] ?? 0));
-            if (diff > max) max = diff;
-          }
-          return max;
-        }
-        let sum = 0;
-        for (let j = 0; j < len; j += 1) {
-          const diff = (v[j] ?? 0) - (u[j] ?? 0);
-          sum += diff * diff;
-        }
-        return Math.sqrt(sum);
-      };
+            if (nearest.length === 0) {
+              (goodEntries[ti] as any).entryNeighbors = [];
+              continue;
+            }
 
-      for (const ti of tradeIdx) {
-        const v = vectors[ti];
-        if (!Array.isArray(v)) {
-          (goodEntries[ti] as any).entryNeighbors = [];
-          continue;
-        }
+            nearest.sort((a, b) => a.d2 - b.d2);
+            const neighbors = nearest
+              .map((nb, rank) => {
+              const neighborNode = goodEntries[nb.idx] as any;
+              const nodeId =
+                neighborNode?.id ??
+                neighborNode?.uid ??
+                neighborNode?.metaUid ??
+                neighborNode?.metaId ??
+                "";
+              if (!nodeId) {
+                return null;
+              }
+              const pnlVal =
+                typeof neighborNode?.pnl === "number"
+                  ? Number(neighborNode.pnl)
+                  : 0;
+              const labelVal =
+                typeof neighborNode?.label === "number"
+                  ? Number(neighborNode.label)
+                  : pnlVal >= 0
+                  ? 1
+                  : -1;
+              const outcome =
+                neighborNode?.result ??
+                (labelVal > 0 ? "Win" : labelVal < 0 ? "Loss" : "");
 
-        const tradeNode = goodEntries[ti] as any;
-        const tradeChrono =
-          nodeChronologyValue(tradeNode) ??
-          (typeof tradeNode?.signalIndex === "number"
-            ? tradeNode.signalIndex
-            : typeof tradeNode?.entryIndex === "number"
-            ? tradeNode.entryIndex
-            : null);
+              return {
+                id: nodeId,
+                uid: nodeId,
+                metaUid: nodeId,
+                metaId: nodeId,
+                metaLib: neighborNode?.libId ?? neighborNode?.metaLib ?? null,
+                d: Math.sqrt(nb.d2),
+                dir:
+                  Number(
+                    neighborNode?.dir ?? neighborNode?.direction ?? 0
+                  ) || 0,
+                label: labelVal,
+                metaOutcome: outcome,
+                metaPnl: pnlVal,
+                metaTime: neighborNode?.entryTime ?? neighborNode?.metaTime ?? null,
+                metaSession:
+                  neighborNode?.session ?? neighborNode?.metaSession ?? null,
+                metaModel:
+                  neighborNode?.entryModel ??
+                  neighborNode?.chunkType ??
+                  neighborNode?.model ??
+                  null,
+                metaSuppressed: !!(
+                  neighborNode?.metaSuppressed ?? neighborNode?.suppressed ?? false
+                ),
+                rank: rank + 1,
+                t: neighborNode,
+              };
+            })
+              .filter((row) => !!row);
 
-        const nearest: Array<{ idx: number; d: number }> = [];
-        for (let ciPos = 0; ciPos < candidateIdx.length; ciPos += 1) {
-          const ci = candidateIdx[ciPos];
-          if (ci === ti) continue;
-          const candTime = candidateChrono[ciPos];
-          const candIsTrade = candidateIsTrade[ciPos];
-          if (tradeChrono != null && candTime != null) {
-            if (candIsTrade || !staticLibrariesClusters) {
-              if (candTime > tradeChrono) continue;
+            (goodEntries[ti] as any).entryNeighbors = neighbors;
+            const first = neighbors[0];
+            if (first?.id) {
+              (goodEntries[ti] as any).closestClusterUid = String(first.id);
             }
           }
-          const u = vectors[ci];
-          if (!Array.isArray(u)) continue;
-          const dist = distanceFor(v, u, ti, ci);
-          if (!Number.isFinite(dist)) continue;
-          if (nearest.length < neighborK) {
-            nearest.push({ idx: ci, d: dist });
-            nearest.sort((a, b) => b.d - a.d);
-          } else if (dist < nearest[0].d) {
-            nearest[0] = { idx: ci, d: dist };
-            nearest.sort((a, b) => b.d - a.d);
+        } else {
+          for (const ti of tradeIdx) {
+            (goodEntries[ti] as any).entryNeighbors = [];
           }
         }
-
-        if (nearest.length === 0) {
-          (goodEntries[ti] as any).entryNeighbors = [];
-          continue;
-        }
-
-        nearest.sort((a, b) => a.d - b.d);
-        const neighbors = nearest
-          .map((nb, rank) => {
-            const neighborNode = goodEntries[nb.idx] as any;
-            const nodeId =
-              neighborNode?.id ??
-              neighborNode?.uid ??
-              neighborNode?.metaUid ??
-              neighborNode?.metaId ??
-              "";
-            if (!nodeId) {
-              return null;
-            }
-            const pnlVal =
-              typeof neighborNode?.pnl === "number"
-                ? Number(neighborNode.pnl)
-                : 0;
-            const labelVal =
-              typeof neighborNode?.label === "number"
-                ? Number(neighborNode.label)
-                : pnlVal >= 0
-                ? 1
-                : -1;
-            const outcome =
-              neighborNode?.result ??
-              (labelVal > 0 ? "Win" : labelVal < 0 ? "Loss" : "");
-
-            return {
-              id: nodeId,
-              uid: nodeId,
-              metaUid: nodeId,
-              metaId: nodeId,
-              metaLib: neighborNode?.libId ?? neighborNode?.metaLib ?? null,
-              d: nb.d,
-              dir:
-                Number(neighborNode?.dir ?? neighborNode?.direction ?? 0) || 0,
-              label: labelVal,
-              metaOutcome: outcome,
-              metaPnl: pnlVal,
-              metaTime: neighborNode?.entryTime ?? neighborNode?.metaTime ?? null,
-              metaSession:
-                neighborNode?.session ?? neighborNode?.metaSession ?? null,
-              metaModel:
-                neighborNode?.entryModel ??
-                neighborNode?.chunkType ??
-                neighborNode?.model ??
-                null,
-              metaSuppressed: !!(
-                neighborNode?.metaSuppressed ?? neighborNode?.suppressed ?? false
-              ),
-              rank: rank + 1,
-              t: neighborNode,
-            };
-          })
-          .filter((row) => !!row);
-
-        (goodEntries[ti] as any).entryNeighbors = neighbors;
-        const first = neighbors[0];
-        if (first?.id) {
-          (goodEntries[ti] as any).closestClusterUid = String(first.id);
-        }
       }
-    };
-
-    if (entryNeighborsOnly && (neighborSpaceMode === "high" || neighborSpaceMode === "compressed")) {
-      const vectors =
-        neighborSpaceMode === "compressed" ? buildCompressedVectors() : stdData;
-      computeEntryNeighbors(vectors);
     }
 
     // UMAP embedding for the Cluster Map (better preserves local neighborhood structure than PCA).
@@ -11148,33 +11033,6 @@ export function ClusterMap({
         })
       : null;
     const embedding3 = (um3 as any)?.emb || [];
-
-    if (entryNeighborsOnly && (neighborSpaceMode === "2d" || neighborSpaceMode === "3d")) {
-      const baseVectors =
-        neighborSpaceMode === "3d"
-          ? goodEntries.map((_, idx) => {
-              const p3: any = embedding3[idx];
-              const x = Number((p3 as any)?.x);
-              const y = Number((p3 as any)?.y);
-              const z = Number((p3 as any)?.z);
-              return [
-                Number.isFinite(x) ? x : 0,
-                Number.isFinite(y) ? y : 0,
-                Number.isFinite(z) ? z : 0,
-              ];
-            })
-          : goodEntries.map((_, idx) => {
-              const p: any = embedding[idx];
-              const x = Number((p as any)?.x);
-              const y = Number((p as any)?.y);
-              return [
-                Number.isFinite(x) ? x : 0,
-                Number.isFinite(y) ? y : 0,
-              ];
-            });
-      const { stdData: embedStd } = standardiseVectors(baseVectors);
-      computeEntryNeighbors(embedStd);
-    }
 
     let minX = Infinity,
       maxX = -Infinity,
@@ -11481,10 +11339,6 @@ export function ClusterMap({
     entryNeighborsOnly,
     staticLibrariesClusters,
     kEntry,
-    distanceMetric,
-    neighborSpace,
-    dimensionAmount,
-    compressionMethod,
     allowTradeNeighborFallback,
   ]);
 
