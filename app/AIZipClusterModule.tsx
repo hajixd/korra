@@ -23903,30 +23903,29 @@ export default function App() {
       };
 
       // Confidence / margin:
-      // - HDBSCAN: use cluster-group win rate stored on the trade (aiMargin). Noise => 1% (0.01).
+      // - HDBSCAN: use cluster-group win rate stamped on the trade (hdbWinRate/aiMargin/etc).
       // - Other AI methods: fall back to existing per-trade confidence/margin fields if present.
       if (aiMethod === "hdbscan") {
-        const explicit = resolveExplicitConfidence();
-        if (explicit != null) {
-          return explicit;
-        }
-
         const raw =
-          (t as any).aiMargin ??
           (t as any).hdbWinRate ??
+          (t as any).aiMargin ??
           (t as any).clusterWinRate ??
+          (t as any).confidence ??
           null;
 
         let v = raw === null || raw === undefined ? NaN : Number(raw);
-        if (!Number.isFinite(v)) return 0;
+        if (Number.isFinite(v)) {
+          // Accept either [0,1] or [0,100] style.
+          if (v > 1 && v <= 100) v = v / 100;
 
-        // Accept either [0,1] or [0,100] style.
-        if (v > 1 && v <= 100) v = v / 100;
+          // Legacy signed margin [-1,1]
+          if (v >= -1 && v <= 1 && v < 0) v = (v + 1) / 2;
 
-        // Legacy signed margin [-1,1]
-        if (v >= -1 && v <= 1 && v < 0) v = (v + 1) / 2;
+          return clamp(v, 0, 1);
+        }
 
-        return clamp(v, 0, 1);
+        const explicit = resolveExplicitConfidence();
+        return explicit ?? 0;
       }
 
       const explicit = resolveExplicitConfidence();
@@ -34490,7 +34489,11 @@ export default function App() {
                       <th style={th}>Duration</th>
                       <th style={th}>Exit By</th>
                       <th style={th}>PnL ($)</th>
-                      <th style={th}>Confidence</th>
+                      <th style={th}>
+                        {aiMethod === "hdbscan"
+                          ? "Cluster WR"
+                          : "Confidence"}
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -35008,7 +35011,10 @@ export default function App() {
                                   <div>Entry Model: {t.chunkType}</div>
                                   <div>Exit Reason: {t.exitReason ?? "-"}</div>
                                   <div>
-                                    Confidence:{" "}
+                                    {aiMethod === "hdbscan"
+                                      ? "Cluster WR"
+                                      : "Confidence"}
+                                    :{" "}
                                     {`${Math.round(
                                       effectiveTradeConfidence(t) * 100
                                     )}%`}
