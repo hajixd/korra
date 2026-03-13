@@ -14850,12 +14850,6 @@ export function ClusterMap({
         (node as any)?.metaLib != null ||
         String((node as any)?.id || "").startsWith("lib|");
       if (isLib) return [];
-      const kLimit = Math.max(
-        0,
-        Math.min(36, Math.floor(Number(effectiveNeighborK) || 0))
-      );
-      if (!kLimit) return [];
-
       const { aliasToIds, nodeCoordById, dim } = neighborAlias;
       const sourceId = normalizeClusterMapToken((node as any)?.id || "");
       const sourceCoord =
@@ -14867,6 +14861,16 @@ export function ClusterMap({
         (node as any)?.neighbors ??
         (node as any)?.kNeighbors ??
         [];
+      const kLimit = Math.max(
+        0,
+        Math.min(
+          36,
+          Math.floor(
+            Number(entryNeighborsOnly ? nbsRaw.length : effectiveNeighborK) || 0
+          )
+        )
+      );
+      if (!kLimit) return [];
 
       const pickFromAlias = (token: string): string | null => {
         const ids = aliasToIds.get(token);
