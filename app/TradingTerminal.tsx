@@ -2130,6 +2130,7 @@ type PropFirmStats = {
 
 type AiValidationMode = "off" | "split" | "online" | "synthetic";
 type AiDistanceMetric = "euclidean" | "cosine" | "manhattan" | "chebyshev";
+type AiNeighborSpace = "high" | "compressed" | "3d" | "2d";
 type AiCompressionMethod = "pca" | "jl" | "hash" | "variance" | "subsample";
 type KnnVoteMode = "distance" | "majority";
 
@@ -2242,7 +2243,9 @@ type BacktestSettingsSnapshot = {
   selectedAiLibraries: string[];
   selectedAiLibrarySettings: AiLibrarySettings;
   chunkBars: number;
+  distanceMetric: AiDistanceMetric;
   selectedAiDomains: string[];
+  neighborSpace: AiNeighborSpace;
   dimensionAmount: number;
   compressionMethod: AiCompressionMethod;
   kEntry: number;
@@ -7362,6 +7365,56 @@ const getAiZipTradeDisplayId = (trade: Pick<HistoryItem, "id" | "entryTime">) =>
   return `live| ${shortCode}`;
 };
 
+const resolveTradeKeyCandidates = (trade: any): string[] => {
+  const rawValues = [
+    trade?.uid,
+    trade?.tradeUid,
+    trade?.tradeId,
+    trade?.metaUid,
+    trade?.metaTradeUid,
+    trade?.metaOrigUid,
+    trade?.metaOrigId,
+    trade?.id
+  ];
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  for (const value of rawValues) {
+    const key = String(value ?? "").trim();
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(key);
+  }
+
+  return out;
+};
+
+const resolvePostHocConfidenceValue = (trade: any): number | null => {
+  const raw =
+    trade?.aiMargin ??
+    trade?.hdbWinRate ??
+    trade?.clusterWinRate ??
+    trade?.entryMargin ??
+    trade?.entryConfidence ??
+    trade?.aiConfidence ??
+    trade?.confidence ??
+    trade?.margin ??
+    null;
+
+  if (raw == null) {
+    return null;
+  }
+
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+
+  return clamp(Math.abs(value), 0, 1);
+};
+
 const cloneAiLibrarySettings = (settings: AiLibrarySettings): AiLibrarySettings => {
   const next: AiLibrarySettings = {};
 
@@ -7407,6 +7460,8 @@ const doesBacktestHistoryGenerationInputChange = (
   if (previous.maxConcurrentTrades !== next.maxConcurrentTrades) return true;
   if (previous.kEntry !== next.kEntry) return true;
   if (previous.kExit !== next.kExit) return true;
+  if (previous.distanceMetric !== next.distanceMetric) return true;
+  if (previous.neighborSpace !== next.neighborSpace) return true;
   if (previous.knnVoteMode !== next.knnVoteMode) return true;
   return false;
 };
@@ -7608,6 +7663,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [aiZipClusterMapView, setAiZipClusterMapView] = useState<"2d" | "3d">("2d");
   const [aiZipClusterResetKey, setAiZipClusterResetKey] = useState(0);
   const [aiZipClusterTimelineIdx, setAiZipClusterTimelineIdx] = useState(0);
+  const [aiClusterPostHocConfidenceById, setAiClusterPostHocConfidenceById] = useState<
+    Map<string, number>
+  >(() => new Map());
   const [enabledBacktestWeekdays, setEnabledBacktestWeekdays] = useState<string[]>([
     ...backtestWeekdayLabels
   ]);
@@ -7703,6 +7761,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [aiBulkMaxSamples, setAiBulkMaxSamples] = useState(10000);
   const [chunkBars, setChunkBars] = useState(24);
   const [distanceMetric, setDistanceMetric] = useState<AiDistanceMetric>("euclidean");
+  const [neighborSpace, setNeighborSpace] = useState<AiNeighborSpace>("high");
   const [selectedAiDomains, setSelectedAiDomains] = useState<string[]>([
     "Direction",
     "Model"
@@ -7810,7 +7869,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     selectedAiLibraries: [...selectedAiLibraries],
     selectedAiLibrarySettings: cloneAiLibrarySettings(selectedAiLibrarySettings),
     chunkBars,
+    distanceMetric,
     selectedAiDomains: [...selectedAiDomains],
+    neighborSpace,
     dimensionAmount,
     compressionMethod,
     kEntry,
@@ -8625,15 +8686,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return countConfiguredAiFeatureDimensions(aiFeatureLevels, aiFeatureModes, chunkBars);
   }, [aiFeatureLevels, aiFeatureModes, chunkBars]);
   const onlineLearningEnabled = selectedAiLibraries.includes("core");
+  const ghostLearningEnabled = selectedAiLibraries.includes("suppressed");
   const visibleAiLibraries = useMemo(
-    () => selectedAiLibraries.filter((libraryId) => libraryId !== "core"),
+    () =>
+      selectedAiLibraries.filter(
+        (libraryId) => libraryId !== "core" && libraryId !== "suppressed"
+      ),
     [selectedAiLibraries]
   );
   const selectedAiLibraryCount = visibleAiLibraries.length;
   const availableAiLibraries = useMemo(() => {
     return aiLibraryDefs.filter(
       (library) =>
-        library.id !== "core" && !selectedAiLibraries.includes(library.id)
+        library.id !== "core" &&
+        library.id !== "suppressed" &&
+        !selectedAiLibraries.includes(library.id)
     );
   }, [aiLibraryDefs, selectedAiLibraries]);
   const modelsSurfaceCatalog = useMemo(() => {
@@ -8906,7 +8973,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const removeAiLibrary = (libraryId: string) => {
     setSelectedAiLibraries((current) => {
       const next = current.filter((id) => id !== libraryId);
-      const nextVisible = next.filter((id) => id !== "core");
+      const nextVisible = next.filter((id) => id !== "core" && id !== "suppressed");
       setSelectedAiLibraryId((selectedId) =>
         selectedId !== libraryId ? selectedId : nextVisible[0] ?? ""
       );
@@ -8922,6 +8989,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
       const filtered = current.filter((id) => id !== "core");
       return ["core", ...filtered];
+    });
+  }, []);
+
+  const toggleGhostLearning = useCallback(() => {
+    setSelectedAiLibraries((current) => {
+      const hasGhost = current.includes("suppressed");
+      if (hasGhost) {
+        return current.filter((id) => id !== "suppressed");
+      }
+      const filtered = current.filter((id) => id !== "suppressed");
+      return [...filtered, "suppressed"];
     });
   }, []);
 
@@ -11181,11 +11259,53 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       confidenceById: new Map<string, number>(panelAnalyticsData.confidenceByIdEntries)
     };
   }, [panelAnalyticsData, panelAnalyticsStatus, shouldComputePanelAnalyticsOnServer]);
+  useEffect(() => {
+    setAiClusterPostHocConfidenceById(new Map());
+  }, [backtestRunCount]);
+  const handleClusterPostHocTrades = useCallback((postHocTrades: any[]) => {
+    const next = new Map<string, number>();
+
+    if (Array.isArray(postHocTrades)) {
+      for (const trade of postHocTrades) {
+        const confidence = resolvePostHocConfidenceValue(trade);
+        if (confidence == null) {
+          continue;
+        }
+
+        const keys = resolveTradeKeyCandidates(trade);
+        for (const key of keys) {
+          next.set(key, confidence);
+        }
+      }
+    }
+
+    setAiClusterPostHocConfidenceById(next);
+  }, []);
+  const resolvePostHocConfidenceForTrade = useCallback(
+    (trade: HistoryItem): number | null => {
+      const keys = resolveTradeKeyCandidates(trade);
+      for (const key of keys) {
+        const value = aiClusterPostHocConfidenceById.get(key);
+        if (value != null) {
+          return value;
+        }
+      }
+      return null;
+    },
+    [aiClusterPostHocConfidenceById]
+  );
   const getEffectiveTradeConfidenceScore = useCallback(
     (trade: HistoryItem) => {
-      return antiCheatBacktestContext.confidenceById.get(trade.id) ?? getTradeConfidenceScore(trade);
+      const postHocValue = resolvePostHocConfidenceForTrade(trade);
+      if (postHocValue != null) {
+        return postHocValue;
+      }
+      return (
+        antiCheatBacktestContext.confidenceById.get(trade.id) ??
+        getTradeConfidenceScore(trade)
+      );
     },
-    [antiCheatBacktestContext]
+    [antiCheatBacktestContext, resolvePostHocConfidenceForTrade]
   );
   const chartPanelHistoryRows =
     shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus === "ready"
@@ -12018,6 +12138,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     chunkBars,
     distanceMetric,
     selectedAiDomains,
+    neighborSpace,
     dimensionAmount,
     compressionMethod,
     kEntry,
@@ -12048,7 +12169,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     trailingDistPct, aiModelStates, aiFeatureLevels, aiFeatureModes,
     selectedAiLibraries, selectedAiLibrarySettings, selectedAiLibraryId, aiBulkScope,
     aiBulkWeight, aiBulkStride, aiBulkMaxSamples, chunkBars, distanceMetric,
-    selectedAiDomains, dimensionAmount, compressionMethod,
+    selectedAiDomains, neighborSpace, dimensionAmount, compressionMethod,
     kEntry, kExit, knnVoteMode, hdbMinClusterSize, hdbMinSamples, hdbEpsQuantile,
     hdbSampleCap, antiCheatEnabled, validationMode, realismLevel, propInitialBalance,
     propDailyMaxLoss, propTotalMaxLoss, propProfitTarget, propProjectionMethod,
@@ -12111,6 +12232,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (s.aiBulkMaxSamples != null) setAiBulkMaxSamples(s.aiBulkMaxSamples);
     if (s.chunkBars != null) setChunkBars(s.chunkBars);
     if (s.distanceMetric != null) setDistanceMetric(s.distanceMetric);
+    if (s.neighborSpace != null) {
+      const v = String(s.neighborSpace || "").toLowerCase();
+      if (v === "high" || v === "compressed" || v === "3d" || v === "2d") {
+        setNeighborSpace(v as AiNeighborSpace);
+      }
+    }
     if (s.selectedAiDomains != null) setSelectedAiDomains(s.selectedAiDomains);
     if (s.dimensionAmount != null) setDimensionAmount(s.dimensionAmount);
     if (s.compressionMethod != null) setCompressionMethod(s.compressionMethod);
@@ -12242,6 +12369,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setAiBulkMaxSamples(10000);
     setChunkBars(24);
     setDistanceMetric("euclidean");
+    setNeighborSpace("high");
     setSelectedAiDomains(["Direction", "Model"]);
     setDimensionAmount(32);
     setCompressionMethod("jl");
@@ -19787,6 +19915,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           <button
                             type="button"
                             className={`ai-zip-button toggle ${
+                              staticLibrariesClusters ? "active success" : ""
+                            }`}
+                            disabled={aiDisabled}
+                            onClick={() => setStaticLibrariesClusters((value) => !value)}
+                          >
+                            Static Libraries {staticLibrariesClusters ? "· ON" : "· OFF"}
+                          </button>
+                          <button
+                            type="button"
+                            className={`ai-zip-button toggle ${
                               onlineLearningEnabled ? "active success" : ""
                             }`}
                             disabled={aiDisabled}
@@ -19797,12 +19935,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           <button
                             type="button"
                             className={`ai-zip-button toggle ${
-                              staticLibrariesClusters ? "active success" : ""
+                              ghostLearningEnabled ? "active success" : ""
                             }`}
                             disabled={aiDisabled}
-                            onClick={() => setStaticLibrariesClusters((value) => !value)}
+                            onClick={toggleGhostLearning}
                           >
-                            Static Library &amp; Clusters {staticLibrariesClusters ? "· ON" : "· OFF"}
+                            Ghost Learning {ghostLearningEnabled ? "· ON" : "· OFF"}
                           </button>
                         </div>
 
@@ -19849,6 +19987,30 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="backtest-card" style={{ padding: "0.85rem" }}>
                       <div className="ai-zip-section-title">Dimensionality</div>
                       <div style={{ display: "grid", gap: "0.55rem" }}>
+                        <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
+                          <div className="ai-zip-label">Calculation Space</div>
+                          <div className="ai-zip-toggle-grid tiles compact">
+                            {[
+                              { value: "high", label: "High Dimensional Space" },
+                              { value: "compressed", label: "Post-Compressed Space" },
+                              { value: "3d", label: "3 Dimensions" },
+                              { value: "2d", label: "2 Dimensions" }
+                            ].map((option) => (
+                              <button
+                                key={option.value}
+                                type="button"
+                                className={`ai-zip-button pill ${
+                                  neighborSpace === option.value ? "active" : ""
+                                }`}
+                                disabled={aiDisabled}
+                                onClick={() => setNeighborSpace(option.value as AiNeighborSpace)}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
                         <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
                           <span className="ai-zip-label">Distance Metric</span>
                           <select
@@ -21501,12 +21663,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       onToggleClusterMapView={() =>
                         setAiZipClusterMapView((current) => (current === "3d" ? "2d" : "3d"))
                       }
-                      onPostHocTrades={() => {}}
+                      onPostHocTrades={handleClusterPostHocTrades}
                       onPostHocProgress={() => {}}
                       onMitMap={() => {}}
                       aiMethod={appliedBacktestSettings.aiMode}
                       aiDomains={appliedBacktestSettings.selectedAiDomains}
                       kEntry={appliedBacktestSettings.kEntry}
+                      distanceMetric={appliedBacktestSettings.distanceMetric}
+                      neighborSpace={appliedBacktestSettings.neighborSpace}
+                      dimensionAmount={appliedBacktestSettings.dimensionAmount}
+                      compressionMethod={appliedBacktestSettings.compressionMethod}
                       knnVoteMode={appliedBacktestSettings.knnVoteMode}
                       allowTradeNeighborFallback={appliedBacktestSettings.selectedAiLibraries.includes("core")}
                       useEntryNeighborsOnly
