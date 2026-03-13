@@ -23880,6 +23880,93 @@ export default function App() {
       });
     return { all: pts };
   }, [uiTrades, calStartDate, calEndDate, candles.length]);
+  const resolveNeighborConfidence = React.useCallback(
+    (t: any) => {
+      if (!t) return null;
+      const raw =
+        (t as any).entryNeighbors ??
+        (t as any).neighbors ??
+        (t as any).kNeighbors ??
+        null;
+      if (!Array.isArray(raw) || raw.length === 0) return null;
+
+      const useDistance = String(knnVoteMode || "distance") === "distance";
+      let win = 0;
+      let loss = 0;
+
+      for (const nb of raw as any[]) {
+        if (!nb) continue;
+
+        const outcomeStr = String(
+          (nb as any)?.metaOutcome ??
+            (nb as any)?.outcome ??
+            (nb as any)?.result ??
+            (nb as any)?.metaResult ??
+            ""
+        ).toUpperCase();
+        const labelRaw = Number(
+          (nb as any)?.label ??
+            (nb as any)?.metaLabel ??
+            (nb as any)?.outcomeLabel ??
+            (nb as any)?.metaOutcomeLabel ??
+            (nb as any)?.t?.label ??
+            NaN
+        );
+        const label = Number.isFinite(labelRaw) ? labelRaw : null;
+        const pnlRaw =
+          (nb as any)?.metaPnl ??
+          (nb as any)?.pnl ??
+          (nb as any)?.profit ??
+          (nb as any)?.netPnl ??
+          (nb as any)?.pnlUsd ??
+          (nb as any)?.t?.pnl ??
+          (nb as any)?.t?.unrealizedPnl ??
+          null;
+        const pnlVal =
+          pnlRaw == null || pnlRaw === "" ? NaN : Number(pnlRaw);
+
+        const hasOutcomeSignal =
+          !!outcomeStr ||
+          label != null ||
+          (Number.isFinite(pnlVal) ? true : false);
+        const isWinFromPayload =
+          outcomeStr === "TP" ||
+          outcomeStr === "WIN" ||
+          outcomeStr.includes("WIN") ||
+          label === 1 ||
+          (Number.isFinite(pnlVal) && pnlVal >= 0);
+        const isLossFromPayload =
+          outcomeStr === "SL" ||
+          outcomeStr === "LOSS" ||
+          outcomeStr.includes("LOSS") ||
+          label === -1 ||
+          (Number.isFinite(pnlVal) && pnlVal < 0);
+        const nodeWin =
+          typeof (nb as any)?.t?.win === "boolean"
+            ? (nb as any).t.win
+            : null;
+        const isWin = hasOutcomeSignal ? isWinFromPayload : nodeWin === true;
+        const isLoss = hasOutcomeSignal ? isLossFromPayload : nodeWin === false;
+        if (!isWin && !isLoss) continue;
+
+        const distRaw = Number(
+          (nb as any)?.d ??
+            (nb as any)?.dist ??
+            (nb as any)?.distance ??
+            (nb as any)?.metaDist ??
+            NaN
+        );
+        const dist = Number.isFinite(distRaw) ? distRaw : Infinity;
+        const w = useDistance ? 1 / (dist + AI_EPS) : 1;
+        if (isWin) win += w;
+        else if (isLoss) loss += w;
+      }
+
+      if (win <= 0 && loss <= 0) return null;
+      return clamp(win / (win + loss + AI_EPS), 0, 1);
+    },
+    [knnVoteMode]
+  );
   const effectiveTradeConfidence = React.useCallback(
     (t: any) => {
       if (!t) return 0;
@@ -23928,10 +24015,13 @@ export default function App() {
         return explicit ?? 0;
       }
 
+      const neighborConf = resolveNeighborConfidence(t);
+      if (neighborConf != null) return neighborConf;
+
       const explicit = resolveExplicitConfidence();
       return explicit ?? 0;
     },
-    [aiMethod]
+    [aiMethod, resolveNeighborConfidence]
   );
 
   const scatterData = useMemo(() => {
