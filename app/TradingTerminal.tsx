@@ -11947,7 +11947,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               : mappedRows.length;
           const finalizedRows = mappedRows
             .slice()
-            .sort((left, right) => Number(right.exitTime) - Number(left.exitTime))
+            .sort(
+              (left: HistoryItem, right: HistoryItem) =>
+                Number(right.exitTime) - Number(left.exitTime)
+            )
             .slice(0, Math.max(0, limit));
 
           commitFinalizingPhase(finalizedRows);
