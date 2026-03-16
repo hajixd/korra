@@ -441,7 +441,6 @@ type HistoryItem = {
   stopPrice: number;
   outcomePrice: number;
   units: number;
-  entryNeighbors?: any[];
 };
 
 type ServerTradePayload = {
@@ -541,40 +540,6 @@ const computeBacktestRowsOnServer = async (
     // Prevent false "0 trades" outcomes when the server compute path fails.
     return computeBacktestRowsLocally(payload);
   }
-};
-
-const computeAIZipOnServer = async ({
-  candles,
-  settings,
-  signal,
-  timeoutMs = 150000
-}: {
-  candles: any[];
-  settings: Record<string, any>;
-  signal?: AbortSignal;
-  timeoutMs?: number;
-}) => {
-  const response = await fetch("/api/aizip/compute", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      candles,
-      settings,
-      timeoutMs
-    }),
-    cache: "no-store",
-    signal
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `AIZip server compute failed (${response.status}).`);
-  }
-
-  const payload = await response.json();
-  return payload && typeof payload === "object" ? payload : { res: {} };
 };
 
 type PanelAnalyticsServerPayload = {
@@ -1089,8 +1054,7 @@ const summarizeBacktestTradesFallback = (
     maxWin = Math.max(maxWin, trade.pnlUsd);
     maxLoss = Math.min(maxLoss, trade.pnlUsd);
     totalHoldMinutes += holdMinutes;
-    const confidence = confidenceResolver(trade);
-    totalConfidence += (Number.isFinite(confidence) ? confidence : 0) * 100;
+    totalConfidence += confidenceResolver(trade) * 100;
     estimatedPeakTotal += Math.max(Math.max(trade.pnlUsd, 0), targetPotentialUsd);
     estimatedDrawdownTotal += Math.max(Math.abs(Math.min(trade.pnlUsd, 0)), stopPotentialUsd);
     estimatedProfitMinutes += holdMinutes * favorableShare;
@@ -1470,8 +1434,7 @@ const buildCopytradeTradeDetail = (
   const adjustedCost = roundCopytradeMetric(Math.abs(trade.entryPrice * trade.units));
   const adjustedProceeds = roundCopytradeMetric(Math.abs(trade.outcomePrice * trade.units));
   const holdTimeSeconds = Math.max(0, Number(trade.exitTime) - Number(trade.entryTime));
-  const rawConfidence = confidenceResolver(trade);
-  const zellaScore = roundCopytradeMetric(Number.isFinite(rawConfidence) ? rawConfidence : 0);
+  const zellaScore = roundCopytradeMetric(confidenceResolver(trade));
 
   return {
     id: trade.id,
@@ -2169,7 +2132,6 @@ type AiValidationMode = "off" | "split" | "online" | "synthetic";
 type AiDistanceMetric = "euclidean" | "cosine" | "manhattan" | "chebyshev";
 type AiCompressionMethod = "pca" | "jl" | "hash" | "variance" | "subsample";
 type KnnVoteMode = "distance" | "majority";
-type KnnNeighborSpace = "high" | "post" | "3d" | "2d";
 
 type AiModelState = 0 | 1 | 2;
 type AiFeatureLevel = 0 | 1 | 2 | 3 | 4;
@@ -2265,12 +2227,6 @@ type BacktestSettingsSnapshot = {
   aiMode: "off" | "knn" | "hdbscan";
   aiFilterEnabled: boolean;
   confidenceThreshold: number;
-  aiExitStrictness: number;
-  aiExitLossTolerance: number;
-  aiExitWinTolerance: number;
-  useMitExit: boolean;
-  complexity: number;
-  volatilityPercentile: number;
   tpDollars: number;
   slDollars: number;
   dollarsPerMove: number;
@@ -2286,22 +2242,18 @@ type BacktestSettingsSnapshot = {
   selectedAiLibraries: string[];
   selectedAiLibrarySettings: AiLibrarySettings;
   chunkBars: number;
-  distanceMetric: AiDistanceMetric;
   selectedAiDomains: string[];
   dimensionAmount: number;
   compressionMethod: AiCompressionMethod;
   kEntry: number;
   kExit: number;
   knnVoteMode: KnnVoteMode;
-  knnNeighborSpace: KnnNeighborSpace;
   hdbMinClusterSize: number;
   hdbMinSamples: number;
   hdbEpsQuantile: number;
-  hdbSampleCap: number;
   staticLibrariesClusters: boolean;
   antiCheatEnabled: boolean;
   validationMode: AiValidationMode;
-  realismLevel: number;
 };
 type BacktestFilterSettings = Pick<
   BacktestSettingsSnapshot,
@@ -4884,11 +4836,7 @@ const filterHistoryRowsLocally = (params: {
   const filteredTrades = confidenceGateDisabled
     ? timeFilteredTrades
     : timeFilteredTrades.filter(
-        (trade) => {
-          const confidence = confidenceResolver(trade);
-          const normalizedConfidence = Number.isFinite(confidence) ? confidence : 0;
-          return normalizedConfidence * 100 >= effectiveConfidenceThreshold;
-        }
+        (trade) => confidenceResolver(trade) * 100 >= effectiveConfidenceThreshold
       );
 
   return [...filteredTrades].sort(
@@ -7447,34 +7395,7 @@ const doesBacktestHistoryGenerationInputChange = (
   if (previous.symbol !== next.symbol) return true;
   if (previous.timeframe !== next.timeframe) return true;
   if (previous.minutePreciseEnabled !== next.minutePreciseEnabled) return true;
-  if (previous.aiMode !== next.aiMode) return true;
-  if (previous.aiFilterEnabled !== next.aiFilterEnabled) return true;
-  if (previous.confidenceThreshold !== next.confidenceThreshold) return true;
-  if (previous.aiExitStrictness !== next.aiExitStrictness) return true;
-  if (previous.aiExitLossTolerance !== next.aiExitLossTolerance) return true;
-  if (previous.aiExitWinTolerance !== next.aiExitWinTolerance) return true;
-  if (previous.useMitExit !== next.useMitExit) return true;
-  if (previous.complexity !== next.complexity) return true;
-  if (previous.volatilityPercentile !== next.volatilityPercentile) return true;
   if (!areAiModelStatesEqual(previous.aiModelStates, next.aiModelStates)) return true;
-  if (JSON.stringify(previous.aiFeatureLevels) !== JSON.stringify(next.aiFeatureLevels)) {
-    return true;
-  }
-  if (JSON.stringify(previous.aiFeatureModes) !== JSON.stringify(next.aiFeatureModes)) {
-    return true;
-  }
-  if (JSON.stringify(previous.selectedAiDomains) !== JSON.stringify(next.selectedAiDomains)) {
-    return true;
-  }
-  if (JSON.stringify(previous.selectedAiLibraries) !== JSON.stringify(next.selectedAiLibraries)) {
-    return true;
-  }
-  if (
-    JSON.stringify(previous.selectedAiLibrarySettings) !==
-    JSON.stringify(next.selectedAiLibrarySettings)
-  ) {
-    return true;
-  }
   if (previous.dollarsPerMove !== next.dollarsPerMove) return true;
   if (previous.tpDollars !== next.tpDollars) return true;
   if (previous.slDollars !== next.slDollars) return true;
@@ -7484,21 +7405,9 @@ const doesBacktestHistoryGenerationInputChange = (
   if (previous.trailingDistPct !== next.trailingDistPct) return true;
   if (previous.maxBarsInTrade !== next.maxBarsInTrade) return true;
   if (previous.maxConcurrentTrades !== next.maxConcurrentTrades) return true;
-  if (previous.chunkBars !== next.chunkBars) return true;
-  if (previous.distanceMetric !== next.distanceMetric) return true;
-  if (previous.knnNeighborSpace !== next.knnNeighborSpace) return true;
-  if (previous.dimensionAmount !== next.dimensionAmount) return true;
-  if (previous.compressionMethod !== next.compressionMethod) return true;
   if (previous.kEntry !== next.kEntry) return true;
   if (previous.kExit !== next.kExit) return true;
   if (previous.knnVoteMode !== next.knnVoteMode) return true;
-  if (previous.hdbMinClusterSize !== next.hdbMinClusterSize) return true;
-  if (previous.hdbMinSamples !== next.hdbMinSamples) return true;
-  if (previous.hdbEpsQuantile !== next.hdbEpsQuantile) return true;
-  if (previous.hdbSampleCap !== next.hdbSampleCap) return true;
-  if (previous.staticLibrariesClusters !== next.staticLibrariesClusters) return true;
-  if (previous.antiCheatEnabled !== next.antiCheatEnabled) return true;
-  if (previous.validationMode !== next.validationMode) return true;
   return false;
 };
 
@@ -7794,7 +7703,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [aiBulkMaxSamples, setAiBulkMaxSamples] = useState(10000);
   const [chunkBars, setChunkBars] = useState(24);
   const [distanceMetric, setDistanceMetric] = useState<AiDistanceMetric>("euclidean");
-  const [knnNeighborSpace, setKnnNeighborSpace] = useState<KnnNeighborSpace>("post");
   const [selectedAiDomains, setSelectedAiDomains] = useState<string[]>([
     "Direction",
     "Model"
@@ -7803,7 +7711,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>("jl");
   const [kEntry, setKEntry] = useState(12);
   const [kExit, setKExit] = useState(9);
-  const [knnVoteMode, setKnnVoteMode] = useState<KnnVoteMode>("majority");
+  const [knnVoteMode, setKnnVoteMode] = useState<KnnVoteMode>("distance");
   const [hdbMinClusterSize, setHdbMinClusterSize] = useState(35);
   const [hdbMinSamples, setHdbMinSamples] = useState(12);
   const [hdbEpsQuantile, setHdbEpsQuantile] = useState(0.85);
@@ -7887,12 +7795,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     aiMode,
     aiFilterEnabled,
     confidenceThreshold,
-    aiExitStrictness,
-    aiExitLossTolerance,
-    aiExitWinTolerance,
-    useMitExit,
-    complexity,
-    volatilityPercentile,
     tpDollars,
     slDollars,
     dollarsPerMove,
@@ -7908,22 +7810,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     selectedAiLibraries: [...selectedAiLibraries],
     selectedAiLibrarySettings: cloneAiLibrarySettings(selectedAiLibrarySettings),
     chunkBars,
-    distanceMetric,
     selectedAiDomains: [...selectedAiDomains],
     dimensionAmount,
     compressionMethod,
     kEntry,
     kExit,
     knnVoteMode,
-    knnNeighborSpace,
     hdbMinClusterSize,
     hdbMinSamples,
     hdbEpsQuantile,
-    hdbSampleCap,
     staticLibrariesClusters,
     antiCheatEnabled,
-    validationMode,
-    realismLevel
+    validationMode
   });
   const [appliedBacktestSettings, setAppliedBacktestSettings] = useState<BacktestSettingsSnapshot>(
     () => buildCurrentBacktestSettingsSnapshot()
@@ -8082,7 +7980,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const statsRefreshProgressRef = useRef(0);
   const statsRefreshLoadingDisplayProgressRef = useRef(0);
   const liveBacktestSettingsRef = useRef<BacktestSettingsSnapshot>(appliedBacktestSettings);
-  const appliedBacktestSettingsRef = useRef<BacktestSettingsSnapshot>(appliedBacktestSettings);
   const tradeBlueprintsRef = useRef<TradeBlueprint[]>([]);
   const backtestHistorySeriesBySymbolRef = useRef<Record<string, Candle[]>>({});
   const backtestOneMinuteCandlesBySymbolRef = useRef<Record<string, Candle[]>>({});
@@ -10895,10 +10792,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   ]);
 
   const [historyRows, setHistoryRows] = useState<HistoryItem[]>([]);
-  const [backtestAiZipLibraryPoints, setBacktestAiZipLibraryPoints] = useState<any[]>([]);
-  const [backtestAiZipLibraryCounts, setBacktestAiZipLibraryCounts] = useState<Record<string, number>>({});
-  const [backtestAiZipGhostEntries, setBacktestAiZipGhostEntries] = useState<any[]>([]);
-  const [backtestAiZipOpenTrades, setBacktestAiZipOpenTrades] = useState<any[]>([]);
   const boundedHistoryRows = useMemo(() => {
     return applyHistoryCollectionPnlBounds(
       historyRows,
@@ -11288,60 +11181,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       confidenceById: new Map<string, number>(panelAnalyticsData.confidenceByIdEntries)
     };
   }, [panelAnalyticsData, panelAnalyticsStatus, shouldComputePanelAnalyticsOnServer]);
-  const resolveNeighborConfidence = useCallback((neighbors?: any[]) => {
-    if (!Array.isArray(neighbors) || neighbors.length === 0) {
-      return Number.NaN;
-    }
-
-    let win = 0;
-    let loss = 0;
-
-    for (const nb of neighbors) {
-      if (!nb) continue;
-      const labelRaw = Number((nb as any).label ?? (nb as any).metaLabel ?? NaN);
-      if (labelRaw === 1) {
-        win += 1;
-        continue;
-      }
-      if (labelRaw === -1) {
-        loss += 1;
-        continue;
-      }
-
-      const outcome = String(
-        (nb as any).metaOutcome ?? (nb as any).outcome ?? ""
-      ).toUpperCase();
-      if (outcome === "TP" || outcome === "WIN" || outcome.includes("WIN")) {
-        win += 1;
-        continue;
-      }
-      if (outcome === "SL" || outcome === "LOSS" || outcome.includes("LOSS")) {
-        loss += 1;
-        continue;
-      }
-
-      const pnl = Number((nb as any).metaPnl ?? (nb as any).pnl ?? NaN);
-      if (Number.isFinite(pnl)) {
-        if (pnl >= 0) win += 1;
-        else loss += 1;
-      }
-    }
-
-    if (win <= 0 && loss <= 0) {
-      return Number.NaN;
-    }
-
-    return clamp(win / (win + loss + 1e-8), 0, 1);
-  }, []);
   const getEffectiveTradeConfidenceScore = useCallback(
     (trade: HistoryItem) => {
-      if (appliedBacktestSettings.aiMode !== "off") {
-        return resolveNeighborConfidence(trade.entryNeighbors);
-      }
-
       return antiCheatBacktestContext.confidenceById.get(trade.id) ?? getTradeConfidenceScore(trade);
     },
-    [antiCheatBacktestContext, appliedBacktestSettings.aiMode, resolveNeighborConfidence]
+    [antiCheatBacktestContext]
   );
   const chartPanelHistoryRows =
     shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus === "ready"
@@ -11529,7 +11373,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   appliedBacktestStatsDateEndRef.current = appliedBacktestSettings.statsDateEnd;
   appliedBacktestSelectedAiLibraryCountRef.current =
     appliedBacktestSettings.selectedAiLibraries.length;
-  appliedBacktestSettingsRef.current = appliedBacktestSettings;
 
   useEffect(() => {
     if (!backtestHasRun || !backtestHistorySeedReady) {
@@ -11559,8 +11402,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         appliedBacktestSelectedAiLibraryCountRef.current > 0);
     const statsDateStartSnapshot = appliedBacktestStatsDateStartRef.current;
     const statsDateEndSnapshot = appliedBacktestStatsDateEndRef.current;
-    const settingsSnapshot = appliedBacktestSettingsRef.current;
-    const shouldUseAiZip = settingsSnapshot.aiMode !== "off";
 
     const modelNamesById: Record<string, string> = {};
 
@@ -11576,13 +11417,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       fallbackEndMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000;
     const normalizedTimelineStartMs = normalizeTimestampMs(backtestBlueprintRangeSnapshot.startMs);
     const normalizedTimelineEndMs = normalizeTimestampMs(backtestBlueprintRangeSnapshot.endMs);
-    let timelineStartMs = Number.isFinite(normalizedTimelineStartMs)
+    const timelineStartMs = Number.isFinite(normalizedTimelineStartMs)
       ? normalizedTimelineStartMs
       : fallbackStartMs;
-    let timelineEndMsRaw = Number.isFinite(normalizedTimelineEndMs)
+    const timelineEndMsRaw = Number.isFinite(normalizedTimelineEndMs)
       ? normalizedTimelineEndMs
       : fallbackEndMs;
-    let timelineEndMs = Math.max(timelineStartMs + 60_000, timelineEndMsRaw);
+    const timelineEndMs = Math.max(timelineStartMs + 60_000, timelineEndMsRaw);
     const chronologicalTradeBlueprints = [...tradeBlueprintsSnapshot].sort(
       (left, right) =>
         left.exitMs - right.exitMs ||
@@ -11591,26 +11432,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     );
     const lastChronologicalBlueprint =
       chronologicalTradeBlueprints[chronologicalTradeBlueprints.length - 1] ?? null;
-    let analysisEndMsRaw = lastChronologicalBlueprint
+    const analysisEndMsRaw = lastChronologicalBlueprint
       ? Math.max(lastChronologicalBlueprint.entryMs, lastChronologicalBlueprint.exitMs)
       : timelineEndMs;
-    const aiZipCandlesRaw = shouldUseAiZip
-      ? backtestHistorySeriesBySymbolSnapshot[settingsSnapshot.symbol] ??
-        Object.values(backtestHistorySeriesBySymbolSnapshot).find((list) => list.length > 0) ??
-        []
-      : [];
-    if (shouldUseAiZip && aiZipCandlesRaw.length > 0) {
-      const firstMs = Number(aiZipCandlesRaw[0].time) * 1000;
-      const lastMs = Number(aiZipCandlesRaw[aiZipCandlesRaw.length - 1].time) * 1000;
-      if (Number.isFinite(firstMs)) {
-        timelineStartMs = firstMs;
-      }
-      if (Number.isFinite(lastMs)) {
-        timelineEndMsRaw = lastMs;
-        timelineEndMs = Math.max(timelineStartMs + 60_000, lastMs);
-        analysisEndMsRaw = timelineEndMs;
-      }
-    }
     const filterStartMs = statsDateStartSnapshot
       ? new Date(statsDateStartSnapshot).getTime()
       : NaN;
@@ -11630,22 +11454,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     );
     setStatsRefreshTimelineRangeValue(analysisStartMs, analysisEndMs);
 
-    if (!shouldUseAiZip && (tradeBlueprintsSnapshot.length === 0 || backtestTargetTradesSnapshot <= 0)) {
+    if (tradeBlueprintsSnapshot.length === 0 || backtestTargetTradesSnapshot <= 0) {
       setStatsRefreshStatus("No Trades In Selected Range");
       startTransition(() => {
         setHistoryRows([]);
       });
-      return;
-    }
-    if (shouldUseAiZip && aiZipCandlesRaw.length === 0) {
-      setStatsRefreshStatus("No Candle Data");
-      startTransition(() => {
-        setHistoryRows([]);
-      });
-      setBacktestAiZipLibraryPoints([]);
-      setBacktestAiZipLibraryCounts({});
-      setBacktestAiZipGhostEntries([]);
-      setBacktestAiZipOpenTrades([]);
       return;
     }
 
@@ -11721,12 +11534,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       setStatsRefreshStatus("Finalizing Statistics");
       setLoadingProgressFromRatio(1);
-      if (shouldUseAiZip) {
-        setBacktestAiZipLibraryPoints([]);
-        setBacktestAiZipLibraryCounts({});
-        setBacktestAiZipGhostEntries([]);
-        setBacktestAiZipOpenTrades([]);
-      }
       commitRows([]);
     };
 
@@ -11743,271 +11550,61 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       failWithEmptyRows();
     }, 90_000);
 
-    const commitFinalizingPhase = (rows: HistoryItem[]) => {
-      if (cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
-        return;
-      }
-
-      setLoadingProgressFromRatio(1);
-      const finalizeNow = () => {
-        if (cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
+    computeBacktestRowsOnServer(
+      {
+        blueprints: chronologicalTradeBlueprints,
+        candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
+        oneMinuteCandlesBySymbol: backtestOneMinuteCandlesBySymbolSnapshot,
+        modelNamesById,
+        tpDollars: tpDollarsSnapshot,
+        slDollars: slDollarsSnapshot,
+        stopMode: stopModeSnapshot,
+        breakEvenTriggerPct: breakEvenTriggerPctSnapshot,
+        trailingStartPct: trailingStartPctSnapshot,
+        trailingDistPct: trailingDistPctSnapshot,
+        minutePreciseEnabled: minutePreciseEnabledSnapshot,
+        limit: backtestTargetTradesSnapshot
+      },
+      requestController.signal
+    )
+      .then((finalizedRows) => {
+        if (
+          cancelled ||
+          settled ||
+          requestController.signal.aborted ||
+          backtestHistoryJobIdRef.current !== nextJobId
+        ) {
           return;
         }
 
-        setStatsRefreshStatus("Finalizing Statistics");
-        commitRows(rows);
-      };
+        setLoadingProgressFromRatio(1);
+        const commitFinalizingPhase = () => {
+          if (cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
+            return;
+          }
 
-      if (hasAiLibraryPass) {
-        setStatsRefreshStatus("Loading AI Libraries");
-        clearPhaseTransitionTimeout();
-        phaseTransitionTimeoutId = window.setTimeout(() => {
-          finalizeNow();
-        }, getStatsRefreshPhaseDurationMs("Loading AI Libraries"));
-        return;
-      }
+          setStatsRefreshStatus("Finalizing Statistics");
+          commitRows(finalizedRows);
+        };
 
-      finalizeNow();
-    };
+        if (hasAiLibraryPass) {
+          setStatsRefreshStatus("Loading AI Libraries");
+          clearPhaseTransitionTimeout();
+          phaseTransitionTimeoutId = window.setTimeout(() => {
+            commitFinalizingPhase();
+          }, getStatsRefreshPhaseDurationMs("Loading AI Libraries"));
+          return;
+        }
 
-    if (shouldUseAiZip) {
-      const aiZipCandles = aiZipCandlesRaw.map((candle) => ({
-        open: candle.open,
-        high: candle.high,
-        low: candle.low,
-        close: candle.close,
-        time: Number(candle.time)
-      }));
-      const aiZipSettings = {
-        parseMode: "utc",
-        chunkBars: settingsSnapshot.chunkBars,
-        checkEveryBar:
-          settingsSnapshot.aiMode !== "off" && !settingsSnapshot.aiFilterEnabled,
-        useAI: settingsSnapshot.aiMode !== "off" && settingsSnapshot.aiFilterEnabled,
-        aiMethod: settingsSnapshot.aiMode,
-        hdbMinClusterSize: settingsSnapshot.hdbMinClusterSize,
-        hdbMinSamples: settingsSnapshot.hdbMinSamples,
-        hdbEpsQuantile: settingsSnapshot.hdbEpsQuantile,
-        hdbSampleCap: settingsSnapshot.hdbSampleCap,
-        hdbDomainDistinction: "conceptual",
-        confidenceThreshold: settingsSnapshot.confidenceThreshold,
-        aiExitStrict: settingsSnapshot.aiExitStrictness,
-        aiExitLossTol: settingsSnapshot.aiExitLossTolerance,
-        aiExitWinTol: settingsSnapshot.aiExitWinTolerance,
-        tpDollars: settingsSnapshot.tpDollars,
-        slDollars: settingsSnapshot.slDollars,
-        dollarsPerMove: settingsSnapshot.dollarsPerMove,
-        maxConcurrentTrades: settingsSnapshot.maxConcurrentTrades,
-        maxBarsInTrade: settingsSnapshot.maxBarsInTrade,
-        stopMode: settingsSnapshot.stopMode,
-        breakEvenOn: settingsSnapshot.stopMode === 1,
-        breakEvenTriggerPct: settingsSnapshot.breakEvenTriggerPct,
-        trailingOn: settingsSnapshot.stopMode === 2,
-        trailingStartPct: settingsSnapshot.trailingStartPct,
-        trailingDistPct: settingsSnapshot.trailingDistPct,
-        enabledSessions: settingsSnapshot.enabledBacktestSessions,
-        modelStates: settingsSnapshot.aiModelStates,
-        featureLevels: settingsSnapshot.aiFeatureLevels,
-        featureModes: settingsSnapshot.aiFeatureModes,
-        antiCheatEnabled: settingsSnapshot.antiCheatEnabled,
-        validationMode: settingsSnapshot.validationMode,
-        useMimExit: settingsSnapshot.useMitExit,
-        complexity: settingsSnapshot.complexity,
-        kEntry: settingsSnapshot.kEntry,
-        kExit: settingsSnapshot.kExit,
-        knnVoteMode: settingsSnapshot.knnVoteMode,
-        knnNeighborSpace: settingsSnapshot.knnNeighborSpace,
-        volatilityPercentile: settingsSnapshot.volatilityPercentile,
-        dimStyle: "manual",
-        dimManualAmount: settingsSnapshot.dimensionAmount,
-        compressionMethod: settingsSnapshot.compressionMethod,
-        distanceMetric: settingsSnapshot.distanceMetric,
-        domains: settingsSnapshot.selectedAiDomains,
-        realismLevel: settingsSnapshot.realismLevel,
-        staticLibrariesClusters: settingsSnapshot.staticLibrariesClusters,
-        aiLibrariesActive: settingsSnapshot.selectedAiLibraries,
-        aiLibrariesSettings: settingsSnapshot.selectedAiLibrarySettings
-      };
-
-      computeAIZipOnServer({
-        candles: aiZipCandles,
-        settings: aiZipSettings,
-        signal: requestController.signal
+        commitFinalizingPhase();
       })
-        .then((payload) => {
-          if (
-            cancelled ||
-            settled ||
-            requestController.signal.aborted ||
-            backtestHistoryJobIdRef.current !== nextJobId
-          ) {
-            return;
-          }
+      .catch(() => {
+        if (cancelled || requestController.signal.aborted) {
+          return;
+        }
 
-          const res = (payload as any)?.res || {};
-          setBacktestAiZipLibraryCounts(res.libraryCounts ?? {});
-          setBacktestAiZipLibraryPoints(res.libraryPoints ?? []);
-          setBacktestAiZipGhostEntries(res.ghostEntries ?? []);
-
-          const rawTrades = Array.isArray(res.trades) ? res.trades : [];
-          const openTrades = rawTrades.filter((trade: any) => trade?.isOpen);
-          setBacktestAiZipOpenTrades(openTrades);
-
-          const idCounts = new Map<string, number>();
-          const toNum = (value: any) => {
-            const parsed = Number(value);
-            return Number.isFinite(parsed) ? parsed : null;
-          };
-          const normalizeId = (raw: any, idx: number) => {
-            const base = String(raw ?? "").trim() || `trade-${idx + 1}`;
-            const count = (idCounts.get(base) || 0) + 1;
-            idCounts.set(base, count);
-            return count > 1 ? `${base}-${count}` : base;
-          };
-          const units = Math.max(1, Number(settingsSnapshot.dollarsPerMove) || 1);
-
-          const mappedRows = rawTrades
-            .filter((trade: any) => trade && !trade.isOpen)
-            .map((trade: any, idx: number) => {
-              const entryTimeSec = toNum(trade.entryTime);
-              const exitTimeSec = toNum(trade.exitTime);
-              if (entryTimeSec == null || exitTimeSec == null) {
-                return null;
-              }
-
-              const dirRaw = toNum(trade.direction ?? trade.dir) ?? 1;
-              const dir = dirRaw >= 0 ? 1 : -1;
-              const side: TradeSide = dir === 1 ? "Long" : "Short";
-              const entryPrice = toNum(trade.entryPrice) ?? 0;
-              let exitPrice = toNum(trade.exitPrice);
-              const tpPrice = toNum(trade.tpPrice) ?? entryPrice;
-              const slPrice = toNum(trade.slPrice) ?? entryPrice;
-              const pnl = toNum(trade.pnl);
-
-              if (exitPrice == null && pnl != null && entryPrice && dir) {
-                exitPrice = entryPrice + pnl / (dir * units);
-              }
-
-              const result: TradeResult =
-                pnl != null ? (pnl >= 0 ? "Win" : "Loss") : "Loss";
-              const outcomePrice = exitPrice ?? entryPrice;
-              const pnlUsd =
-                pnl != null
-                  ? pnl
-                  : side === "Long"
-                  ? (outcomePrice - entryPrice) * units
-                  : (entryPrice - outcomePrice) * units;
-              const pnlPct =
-                entryPrice > 0
-                  ? side === "Long"
-                    ? ((outcomePrice - entryPrice) / entryPrice) * 100
-                    : ((entryPrice - outcomePrice) / entryPrice) * 100
-                  : 0;
-
-              const id = normalizeId(
-                trade.uid ?? trade.tradeUid ?? trade.tradeId ?? trade.id,
-                idx
-              );
-              const entryAt = formatDateTime(entryTimeSec * 1000);
-              const exitAt = formatDateTime(exitTimeSec * 1000);
-
-              return {
-                id,
-                symbol: settingsSnapshot.symbol,
-                side,
-                result,
-                entrySource:
-                  trade.chunkType ??
-                  trade.entryModel ??
-                  trade.model ??
-                  "AI",
-                exitReason: trade.exitReason ?? trade.result ?? "None",
-                pnlPct,
-                pnlUsd,
-                time: exitAt,
-                entryAt,
-                exitAt,
-                entryTime: entryTimeSec as UTCTimestamp,
-                exitTime: exitTimeSec as UTCTimestamp,
-                entryPrice,
-                targetPrice: tpPrice,
-                stopPrice: slPrice,
-                outcomePrice,
-                units,
-                entryNeighbors: Array.isArray(trade.entryNeighbors)
-                  ? trade.entryNeighbors
-                  : []
-              } as HistoryItem;
-            })
-            .filter((row: HistoryItem | null): row is HistoryItem => !!row);
-
-          const limit =
-            backtestTargetTradesSnapshot > 0
-              ? backtestTargetTradesSnapshot
-              : mappedRows.length;
-          const finalizedRows = mappedRows
-            .slice()
-            .sort(
-              (left: HistoryItem, right: HistoryItem) =>
-                Number(right.exitTime) - Number(left.exitTime)
-            )
-            .slice(0, Math.max(0, limit));
-
-          commitFinalizingPhase(finalizedRows);
-        })
-        .catch(() => {
-          if (cancelled || requestController.signal.aborted) {
-            return;
-          }
-
-          setBacktestAiZipLibraryPoints([]);
-          setBacktestAiZipLibraryCounts({});
-          setBacktestAiZipGhostEntries([]);
-          setBacktestAiZipOpenTrades([]);
-          failWithEmptyRows();
-        });
-    } else {
-      setBacktestAiZipLibraryPoints([]);
-      setBacktestAiZipLibraryCounts({});
-      setBacktestAiZipGhostEntries([]);
-      setBacktestAiZipOpenTrades([]);
-      computeBacktestRowsOnServer(
-        {
-          blueprints: chronologicalTradeBlueprints,
-          candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
-          oneMinuteCandlesBySymbol: backtestOneMinuteCandlesBySymbolSnapshot,
-          modelNamesById,
-          tpDollars: tpDollarsSnapshot,
-          slDollars: slDollarsSnapshot,
-          stopMode: stopModeSnapshot,
-          breakEvenTriggerPct: breakEvenTriggerPctSnapshot,
-          trailingStartPct: trailingStartPctSnapshot,
-          trailingDistPct: trailingDistPctSnapshot,
-          minutePreciseEnabled: minutePreciseEnabledSnapshot,
-          limit: backtestTargetTradesSnapshot
-        },
-        requestController.signal
-      )
-        .then((finalizedRows) => {
-          if (
-            cancelled ||
-            settled ||
-            requestController.signal.aborted ||
-            backtestHistoryJobIdRef.current !== nextJobId
-          ) {
-            return;
-          }
-
-          commitFinalizingPhase(finalizedRows);
-        })
-        .catch(() => {
-          if (cancelled || requestController.signal.aborted) {
-            return;
-          }
-
-          failWithEmptyRows();
-        });
-    }
+        failWithEmptyRows();
+      });
 
     return () => {
       cancelled = true;
@@ -12109,7 +11706,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       entryReason: trade.entrySource,
       exitReason: getBacktestExitLabel(trade),
       confidence: getEffectiveTradeConfidenceScore(trade),
-      entryNeighbors: trade.entryNeighbors ?? [],
       entryIndex: entryIndex >= 0 ? entryIndex : undefined,
       exitIndex: exitIndex >= 0 ? exitIndex : undefined
     });
@@ -12421,7 +12017,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     aiBulkMaxSamples,
     chunkBars,
     distanceMetric,
-    knnNeighborSpace,
     selectedAiDomains,
     dimensionAmount,
     compressionMethod,
@@ -12452,7 +12047,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     dollarsPerMove, maxBarsInTrade, maxConcurrentTrades, stopMode, breakEvenTriggerPct, trailingStartPct,
     trailingDistPct, aiModelStates, aiFeatureLevels, aiFeatureModes,
     selectedAiLibraries, selectedAiLibrarySettings, selectedAiLibraryId, aiBulkScope,
-    aiBulkWeight, aiBulkStride, aiBulkMaxSamples, chunkBars, distanceMetric, knnNeighborSpace,
+    aiBulkWeight, aiBulkStride, aiBulkMaxSamples, chunkBars, distanceMetric,
     selectedAiDomains, dimensionAmount, compressionMethod,
     kEntry, kExit, knnVoteMode, hdbMinClusterSize, hdbMinSamples, hdbEpsQuantile,
     hdbSampleCap, antiCheatEnabled, validationMode, realismLevel, propInitialBalance,
@@ -12516,20 +12111,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (s.aiBulkMaxSamples != null) setAiBulkMaxSamples(s.aiBulkMaxSamples);
     if (s.chunkBars != null) setChunkBars(s.chunkBars);
     if (s.distanceMetric != null) setDistanceMetric(s.distanceMetric);
-    if (
-      s.knnNeighborSpace === "high" ||
-      s.knnNeighborSpace === "post" ||
-      s.knnNeighborSpace === "3d" ||
-      s.knnNeighborSpace === "2d"
-    ) {
-      setKnnNeighborSpace(s.knnNeighborSpace);
-    }
     if (s.selectedAiDomains != null) setSelectedAiDomains(s.selectedAiDomains);
     if (s.dimensionAmount != null) setDimensionAmount(s.dimensionAmount);
     if (s.compressionMethod != null) setCompressionMethod(s.compressionMethod);
     if (s.kEntry != null) setKEntry(s.kEntry);
     if (s.kExit != null) setKExit(s.kExit);
-    if (s.knnVoteMode != null) setKnnVoteMode("majority");
+    if (s.knnVoteMode != null) setKnnVoteMode(s.knnVoteMode);
     if (s.hdbMinClusterSize != null) setHdbMinClusterSize(s.hdbMinClusterSize);
     if (s.hdbMinSamples != null) setHdbMinSamples(s.hdbMinSamples);
     if (s.hdbEpsQuantile != null) setHdbEpsQuantile(s.hdbEpsQuantile);
@@ -14704,9 +14291,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         return true;
       }
 
-      const confidence = getEffectiveTradeConfidenceScore(trade);
-      const normalizedConfidence = Number.isFinite(confidence) ? confidence : 0;
-      return normalizedConfidence * 100 >= appliedEffectiveConfidenceThreshold;
+      return (
+        getEffectiveTradeConfidenceScore(trade) * 100 >=
+        appliedEffectiveConfidenceThreshold
+      );
     });
   }, [
     appliedConfidenceGateDisabled,
@@ -15857,7 +15445,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     });
   }, [
     aiLibraryReadyToRun,
-    appliedBacktestSettings,
     appliedBacktestSettings.selectedAiLibraries,
     appliedBacktestSettings.selectedAiLibrarySettings,
     backtestRunCount
@@ -15897,53 +15484,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
     return filtered;
   }, [aiClusterActiveLibraryIdSet, aiLibraryCounts]);
-  const aiZipClusterLibraryPoints = useMemo(() => {
-    if (appliedBacktestSettings.aiMode === "off" || backtestAiZipLibraryPoints.length === 0) {
-      return aiClusterLibraryPoints;
-    }
-    if (aiClusterActiveLibraryIdSet.size === 0) {
-      return [] as any[];
-    }
-
-    return (backtestAiZipLibraryPoints as any[]).filter((point) => {
-      const libraryId = String(point?.libId ?? point?.metaLib ?? "").trim();
-      return libraryId.length > 0 && aiClusterActiveLibraryIdSet.has(libraryId);
-    });
-  }, [
-    appliedBacktestSettings.aiMode,
-    backtestAiZipLibraryPoints,
-    aiClusterActiveLibraryIdSet,
-    aiClusterLibraryPoints
-  ]);
-  const aiZipClusterLibraryCounts = useMemo(() => {
-    if (appliedBacktestSettings.aiMode === "off") {
-      return aiClusterLibraryCounts;
-    }
-    if (aiClusterActiveLibraryIdSet.size === 0) {
-      return {} as Record<string, number>;
-    }
-    if (!backtestAiZipLibraryCounts || Object.keys(backtestAiZipLibraryCounts).length === 0) {
-      return aiClusterLibraryCounts;
-    }
-
-    const filtered: Record<string, number> = {};
-    for (const [libraryId, rawCount] of Object.entries(backtestAiZipLibraryCounts ?? {})) {
-      const normalizedLibraryId = String(libraryId).trim();
-      if (!normalizedLibraryId || !aiClusterActiveLibraryIdSet.has(normalizedLibraryId)) {
-        continue;
-      }
-      const count = Math.max(0, Number(rawCount) || 0);
-      if (count > 0) {
-        filtered[normalizedLibraryId] = count;
-      }
-    }
-    return filtered;
-  }, [
-    appliedBacktestSettings.aiMode,
-    backtestAiZipLibraryCounts,
-    aiClusterActiveLibraryIdSet,
-    aiClusterLibraryCounts
-  ]);
   const selectedAiLibraryConfig: Record<string, AiLibrarySettingValue> | null = selectedAiLibrary
     ? ({
         ...selectedAiLibrary.defaults,
@@ -17086,35 +16626,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     const maxIndex = Math.max(0, selectedChartCandles.length - 1);
 
-    const mapHistoryTrade = (trade: HistoryItem, index: number) => {
+    return deferredBacktestAnalyticsTrades.map((trade, index) => {
       const fallbackIndex =
         maxIndex > 0
-          ? Math.round(
-              (index / Math.max(1, deferredBacktestAnalyticsTrades.length - 1)) *
-                maxIndex
-            )
+          ? Math.round((index / Math.max(1, deferredBacktestAnalyticsTrades.length - 1)) * maxIndex)
           : 0;
-      const entryIndex = clamp(
-        candleIndexByUnix.get(Number(trade.entryTime)) ?? fallbackIndex,
-        0,
-        maxIndex
-      );
+      const entryIndex = clamp(candleIndexByUnix.get(Number(trade.entryTime)) ?? fallbackIndex, 0, maxIndex);
       const exitIndex = clamp(
         candleIndexByUnix.get(Number(trade.exitTime)) ??
-          Math.min(
-            maxIndex,
-            entryIndex +
-              Math.max(
-                1,
-                Math.floor(
-                  (Number(trade.exitTime) - Number(trade.entryTime)) / 60
-                )
-              )
-          ),
+          Math.min(maxIndex, entryIndex + Math.max(1, Math.floor((Number(trade.exitTime) - Number(trade.entryTime)) / 60))),
         0,
         maxIndex
       );
-      const confidence = getEffectiveTradeConfidenceScore(trade);
 
       return {
         id: trade.id,
@@ -17138,87 +16661,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         exitReason: getBacktestExitLabel(trade),
         entryPrice: trade.entryPrice,
         exitPrice: trade.outcomePrice,
-        margin: Number.isFinite(confidence) ? confidence : null,
+        margin: getEffectiveTradeConfidenceScore(trade),
         side: trade.side,
-        entryNeighbors: trade.entryNeighbors ?? []
-      };
-    };
-
-    const baseTrades = deferredBacktestAnalyticsTrades.map(mapHistoryTrade);
-
-    const openTrades = backtestAiZipOpenTrades.map((trade: any, index: number) => {
-      const fallbackIndex =
-        maxIndex > 0
-          ? Math.round(
-              (index / Math.max(1, backtestAiZipOpenTrades.length - 1)) *
-                maxIndex
-            )
-          : 0;
-      const entryTime = Number(
-        trade?.entryTime ?? trade?.metaTime ?? trade?.time ?? NaN
-      );
-      const exitTime = Number(trade?.exitTime ?? entryTime ?? NaN);
-      const entryIndex = clamp(
-        candleIndexByUnix.get(entryTime) ?? fallbackIndex,
-        0,
-        maxIndex
-      );
-      const exitIndex = clamp(
-        Number.isFinite(exitTime)
-          ? candleIndexByUnix.get(exitTime) ?? maxIndex
-          : maxIndex,
-        0,
-        maxIndex
-      );
-      const dirRaw = Number(trade?.direction ?? trade?.dir ?? 1);
-      const dir = dirRaw >= 0 ? 1 : -1;
-      const side: TradeSide = dir === 1 ? "Long" : "Short";
-      const pnl = Number(
-        trade?.unrealizedPnl ?? trade?.pnl ?? trade?.realizedPnl ?? 0
-      );
-      const entryNeighbors = Array.isArray(trade?.entryNeighbors)
-        ? trade.entryNeighbors
-        : [];
-      const confidence = resolveNeighborConfidence(entryNeighbors);
-
-      return {
-        id: String(trade?.uid ?? trade?.tradeUid ?? trade?.id ?? `open-${index}`),
-        uid: String(trade?.uid ?? trade?.tradeUid ?? trade?.id ?? `open-${index}`),
-        kind: "trade",
-        dir,
-        direction: dir,
-        result: trade?.result ?? (pnl >= 0 ? "TP" : "SL"),
-        pnl: Number.isFinite(pnl) ? pnl : 0,
-        unrealizedPnl: Number.isFinite(pnl) ? pnl : 0,
-        isOpen: true,
-        win: pnl >= 0,
-        entryTime: Number.isFinite(entryTime) ? entryTime : null,
-        exitTime: Number.isFinite(exitTime) ? exitTime : null,
-        signalIndex: entryIndex,
-        entryIndex,
-        exitIndex,
-        entryModel:
-          trade?.entryModel ?? trade?.model ?? trade?.chunkType ?? "AI Model",
-        chunkType: trade?.chunkType ?? trade?.entryModel ?? "AI Model",
-        model: trade?.entryModel ?? trade?.model ?? "AI Model",
-        exitReason: trade?.exitReason ?? "None",
-        entryPrice: trade?.entryPrice ?? null,
-        exitPrice: trade?.exitPrice ?? null,
-        margin: Number.isFinite(confidence) ? confidence : null,
-        side,
-        entryNeighbors
+        entryNeighbors: []
       };
     });
-
-    return [...baseTrades, ...openTrades];
   }, [
     candleIndexByUnix,
     deferredBacktestAnalyticsTrades,
     getEffectiveTradeConfidenceScore,
     isClusterBacktestTabActive,
-    selectedChartCandles.length,
-    backtestAiZipOpenTrades,
-    resolveNeighborConfidence
+    selectedChartCandles.length
   ]);
 
   useEffect(() => {
@@ -20397,22 +19850,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <div className="ai-zip-section-title">Dimensionality</div>
                       <div style={{ display: "grid", gap: "0.55rem" }}>
                         <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
-                          <span className="ai-zip-label">Neighbor Space</span>
-                          <select
-                            value={knnNeighborSpace}
-                            disabled={aiDisabled}
-                            onChange={(event) => {
-                              setKnnNeighborSpace(event.target.value as KnnNeighborSpace);
-                            }}
-                            className="ai-zip-input"
-                          >
-                            <option value="high">High Dimensional Space</option>
-                            <option value="post">Post-Compressed Space</option>
-                            <option value="3d">3 Dimensions</option>
-                            <option value="2d">2 Dimensions</option>
-                          </select>
-                        </label>
-                        <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
                           <span className="ai-zip-label">Distance Metric</span>
                           <select
                             value={distanceMetric}
@@ -20823,9 +20260,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         <span className="ai-zip-label">kNN Voting</span>
                         <select
                           value={knnVoteMode}
-                          disabled
+                          disabled={aiDisabled}
+                          onChange={(event) => {
+                            setKnnVoteMode(event.target.value as KnnVoteMode);
+                          }}
                           className="ai-zip-input"
                         >
+                          <option value="distance">Distance-weighted</option>
                           <option value="majority">Majority vote</option>
                         </select>
                       </label>
@@ -21722,13 +21163,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                         )}`}
                                       </td>
                                       <td style={cell(10)}>
-                                        {(() => {
-                                          const confidence =
-                                            getEffectiveTradeConfidenceScore(trade);
-                                          return Number.isFinite(confidence)
-                                            ? `${Math.round(confidence * 100)}%`
-                                            : "—";
-                                        })()}
+                                        {`${Math.round(getEffectiveTradeConfidenceScore(trade) * 100)}%`}
                                       </td>
                                     </tr>
                                   );
@@ -22016,16 +21451,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                                       <div>Session: {getSessionLabel(trade.entryTime)}</div>
                                       <div>Entry Model: {trade.entrySource}</div>
                                       <div>Exit Reason: {getBacktestExitLabel(trade)}</div>
-                                      <div>
-                                        Confidence:{" "}
-                                        {(() => {
-                                          const confidence =
-                                            getEffectiveTradeConfidenceScore(trade);
-                                          return Number.isFinite(confidence)
-                                            ? `${(confidence * 100).toFixed(0)}%`
-                                            : "—";
-                                        })()}
-                                      </div>
+                                      <div>Confidence: {(getEffectiveTradeConfidenceScore(trade) * 100).toFixed(0)}%</div>
                                     </div>
                                   </div>
 
@@ -22059,10 +21485,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <AIZipClusterMap
                       candles={aiZipClusterCandles}
                       trades={aiZipClusterTrades}
-                      ghostEntries={backtestAiZipGhostEntries}
-                      libraryPoints={aiZipClusterLibraryPoints}
+                      ghostEntries={[]}
+                      libraryPoints={aiClusterLibraryPoints}
                       activeLibraries={appliedBacktestSettings.selectedAiLibraries}
-                      libraryCounts={aiZipClusterLibraryCounts}
+                      libraryCounts={aiClusterLibraryCounts}
                       chunkBars={appliedBacktestSettings.chunkBars}
                       potential={null}
                       parseMode="utc"
@@ -22082,9 +21508,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       aiDomains={appliedBacktestSettings.selectedAiDomains}
                       kEntry={appliedBacktestSettings.kEntry}
                       knnVoteMode={appliedBacktestSettings.knnVoteMode}
-                      knnNeighborSpace={appliedBacktestSettings.knnNeighborSpace}
-                      distanceMetric={appliedBacktestSettings.distanceMetric}
-                      allowTradeNeighborFallback={false}
+                      allowTradeNeighborFallback={appliedBacktestSettings.selectedAiLibraries.includes("core")}
                       useEntryNeighborsOnly
                       hdbDomainDistinction="conceptual"
                       hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}

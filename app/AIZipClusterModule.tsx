@@ -3517,6 +3517,79 @@ function l2Dist(a, b) {
   }
   return Math.sqrt(s);
 }
+function vectorDistance(a, b, metric, varArr) {
+  const m = String(metric || "euclidean").toLowerCase();
+  if (m === "cosine") {
+    let dot = 0;
+    let na = 0;
+    let nb = 0;
+    for (let i = 0; i < a.length; i++) {
+      const av = a[i];
+      const bv = b[i];
+      dot += av * bv;
+      na += av * av;
+      nb += bv * bv;
+    }
+    if (na <= 0 || nb <= 0) return Infinity;
+    const denom = Math.sqrt(na) * Math.sqrt(nb);
+    if (!Number.isFinite(denom) || denom <= 0) return Infinity;
+    const cos = dot / denom;
+    return 1 - cos;
+  }
+  if (m === "manhattan") {
+    let s = 0;
+    for (let i = 0; i < a.length; i++) {
+      s += Math.abs(a[i] - b[i]);
+    }
+    return s;
+  }
+  if (m === "chebyshev") {
+    let mx = 0;
+    for (let i = 0; i < a.length; i++) {
+      const d = Math.abs(a[i] - b[i]);
+      if (d > mx) mx = d;
+    }
+    return mx;
+  }
+  if (m === "mahalanobis") {
+    let s = 0;
+    for (let i = 0; i < a.length; i++) {
+      const v =
+        varArr && Number.isFinite(varArr[i]) && varArr[i] > 0
+          ? varArr[i]
+          : 1;
+      const d = a[i] - b[i];
+      s += (d * d) / v;
+    }
+    return Math.sqrt(s);
+  }
+  return l2Dist(a, b);
+}
+function computeVarianceVecs(vecs) {
+  if (!Array.isArray(vecs) || vecs.length === 0) return null;
+  const dim = vecs[0].length;
+  const mean = new Array(dim).fill(0);
+  const vari = new Array(dim).fill(0);
+  let n = 0;
+  for (const v of vecs) {
+    if (!Array.isArray(v) || v.length !== dim) continue;
+    n++;
+    for (let i = 0; i < dim; i++) mean[i] += v[i] || 0;
+  }
+  if (!n) return null;
+  for (let i = 0; i < dim; i++) mean[i] /= n;
+  for (const v of vecs) {
+    if (!Array.isArray(v) || v.length !== dim) continue;
+    for (let i = 0; i < dim; i++) {
+      const d = (v[i] || 0) - mean[i];
+      vari[i] += d * d;
+    }
+  }
+  for (let i = 0; i < dim; i++) {
+    vari[i] = Math.max(AI_EPS, vari[i] / Math.max(1, n - 1));
+  }
+  return vari;
+}
 function knnBruteforce(X, k) {
   const n = X.length;
   const nbrIdx = new Array(n);
@@ -10194,6 +10267,57 @@ export function ClusterMap({
   }, [trades]);
   const nodes = useMemo(() => {
     if (candles.length === 0) return [];
+    const knnSpaceKey = normalizeKnnNeighborSpace(knnNeighborSpace);
+    const knnActive = aiMethod === "knn";
+    const neighborK = Math.max(0, Math.min(36, Math.floor(Number(kEntry) || 0)));
+
+    const matchesDomains = (src: any, cand: any) => {
+      if (!activeModSet || activeModSet.size === 0) return true;
+      if (activeModSet.has("Direction")) {
+        const sd = Number(src?.dir ?? src?.direction ?? 0);
+        const cd = Number(cand?.dir ?? cand?.direction ?? 0);
+        if (!Number.isFinite(sd) || !Number.isFinite(cd) || sd !== cd)
+          return false;
+      }
+      if (activeModSet.has("Model")) {
+        const sm = normalizeClusterMapToken(
+          src?.entryModel ?? src?.chunkType ?? src?.model ?? src?.origModel ?? ""
+        );
+        const cm = normalizeClusterMapToken(
+          cand?.entryModel ??
+            cand?.chunkType ??
+            cand?.model ??
+            cand?.origModel ??
+            ""
+        );
+        if (!sm || !cm || sm !== cm) return false;
+      }
+      if (activeModSet.has("Session")) {
+        const ss = String(src?.session ?? src?.metaSession ?? "");
+        const cs = String(cand?.session ?? cand?.metaSession ?? "");
+        if (!ss || !cs || ss !== cs) return false;
+      }
+      if (activeModSet.has("Month")) {
+        const sm = src?.monthKey ?? src?.month ?? null;
+        const cm = cand?.monthKey ?? cand?.month ?? null;
+        if (sm == null || cm == null || String(sm) !== String(cm))
+          return false;
+      }
+      if (activeModSet.has("Weekday")) {
+        const sd = src?.dowKey ?? src?.dow ?? null;
+        const cd = cand?.dowKey ?? cand?.dow ?? null;
+        if (sd == null || cd == null || String(sd) !== String(cd))
+          return false;
+      }
+      if (activeModSet.has("Hour")) {
+        const sh = src?.hour ?? null;
+        const ch = cand?.hour ?? null;
+        if (!Number.isFinite(Number(sh)) || !Number.isFinite(Number(ch)))
+          return false;
+        if (Number(sh) !== Number(ch)) return false;
+      }
+      return true;
+    };
     const entries = [];
     const actLibs = Array.isArray(activeLibraries)
       ? activeLibraries.map((v: any) => String(v))
@@ -10856,6 +10980,180 @@ export function ClusterMap({
 
     const allVectors = goodEntries.map((e) => e.v);
     const { stdData, mean, stdev } = standardiseVectors(allVectors);
+    const metricKey = String(distanceMetric || "euclidean").toLowerCase();
+    const hdVarArr =
+      metricKey === "mahalanobis" ? computeVarianceVecs(stdData) : null;
+
+    const assignKnnNeighbors = (
+      getVec: (idx: number) => number[] | null,
+      varArr: number[] | null
+    ) => {
+      const tradeIdx: number[] = [];
+      const candidateIdx: number[] = [];
+      const candidateChrono: Array<number | null> = [];
+      const candidateIsTrade: boolean[] = [];
+
+      for (let i = 0; i < goodEntries.length; i += 1) {
+        const k = String((goodEntries[i] as any)?.kind || "").toLowerCase();
+        if (k === "library") {
+          const libNode = goodEntries[i] as any;
+          const c0 =
+            nodeChronologyValue(libNode) ??
+            (typeof libNode?.signalIndex === "number"
+              ? libNode.signalIndex
+              : typeof libNode?.entryIndex === "number"
+              ? libNode.entryIndex
+              : null);
+          candidateIdx.push(i);
+          candidateChrono.push(
+            Number.isFinite(Number(c0)) ? Number(c0) : null
+          );
+          candidateIsTrade.push(false);
+        }
+        else if (k === "trade") {
+          tradeIdx.push(i);
+          if (allowTradeNeighborFallback) {
+            const tradeNode = goodEntries[i] as any;
+            const c0 =
+              nodeChronologyValue(tradeNode) ??
+              (typeof tradeNode?.signalIndex === "number"
+                ? tradeNode.signalIndex
+                : typeof tradeNode?.entryIndex === "number"
+                ? tradeNode.entryIndex
+                : null);
+            candidateIdx.push(i);
+            candidateChrono.push(
+              Number.isFinite(Number(c0)) ? Number(c0) : null
+            );
+            candidateIsTrade.push(true);
+          }
+        }
+      }
+
+      if (tradeIdx.length === 0) return;
+      if (neighborK <= 0 || candidateIdx.length === 0) {
+        for (const ti of tradeIdx) {
+          (goodEntries[ti] as any).entryNeighbors = [];
+        }
+        return;
+      }
+
+      for (const ti of tradeIdx) {
+        const v = getVec(ti);
+        if (!Array.isArray(v)) {
+          (goodEntries[ti] as any).entryNeighbors = [];
+          continue;
+        }
+
+        const tradeNode = goodEntries[ti] as any;
+        const tradeChrono =
+          nodeChronologyValue(tradeNode) ??
+          (typeof tradeNode?.signalIndex === "number"
+            ? tradeNode.signalIndex
+            : typeof tradeNode?.entryIndex === "number"
+            ? tradeNode.entryIndex
+            : null);
+
+        const nearest: Array<{ idx: number; d: number }> = [];
+        for (let ciPos = 0; ciPos < candidateIdx.length; ciPos += 1) {
+          const ci = candidateIdx[ciPos];
+          if (ci === ti) continue;
+          const candNode = goodEntries[ci] as any;
+          if (!matchesDomains(tradeNode, candNode)) continue;
+          const candTime = candidateChrono[ciPos];
+          const candIsTrade = candidateIsTrade[ciPos];
+          if (tradeChrono != null && candTime != null) {
+            if (candIsTrade || !staticLibrariesClusters) {
+              if (candTime > tradeChrono) continue;
+            }
+          }
+          const u = getVec(ci);
+          if (!Array.isArray(u)) continue;
+          const d = vectorDistance(v, u, distanceMetric, varArr);
+          if (!Number.isFinite(d)) continue;
+          if (nearest.length < neighborK) {
+            nearest.push({ idx: ci, d });
+            nearest.sort((a, b) => b.d - a.d);
+          } else if (d < nearest[0].d) {
+            nearest[0] = { idx: ci, d };
+            nearest.sort((a, b) => b.d - a.d);
+          }
+        }
+
+        if (nearest.length === 0) {
+          (goodEntries[ti] as any).entryNeighbors = [];
+          continue;
+        }
+
+        nearest.sort((a, b) => a.d - b.d);
+        const neighbors = nearest
+          .map((nb, rank) => {
+            const neighborNode = goodEntries[nb.idx] as any;
+            const nodeId =
+              neighborNode?.id ??
+              neighborNode?.uid ??
+              neighborNode?.metaUid ??
+              neighborNode?.metaId ??
+              "";
+            if (!nodeId) {
+              return null;
+            }
+            const pnlVal =
+              typeof neighborNode?.pnl === "number"
+                ? Number(neighborNode.pnl)
+                : 0;
+            const labelVal =
+              typeof neighborNode?.label === "number"
+                ? Number(neighborNode.label)
+                : pnlVal >= 0
+                ? 1
+                : -1;
+            const outcome =
+              neighborNode?.result ??
+              (labelVal > 0 ? "Win" : labelVal < 0 ? "Loss" : "");
+
+            return {
+              id: nodeId,
+              uid: nodeId,
+              metaUid: nodeId,
+              metaId: nodeId,
+              metaLib: neighborNode?.libId ?? neighborNode?.metaLib ?? null,
+              d: nb.d,
+              dir:
+                Number(neighborNode?.dir ?? neighborNode?.direction ?? 0) || 0,
+              label: labelVal,
+              metaOutcome: outcome,
+              metaPnl: pnlVal,
+              metaTime: neighborNode?.entryTime ?? neighborNode?.metaTime ?? null,
+              metaSession:
+                neighborNode?.session ?? neighborNode?.metaSession ?? null,
+              metaModel:
+                neighborNode?.entryModel ??
+                neighborNode?.chunkType ??
+                neighborNode?.model ??
+                null,
+              metaSuppressed: !!(
+                neighborNode?.metaSuppressed ??
+                neighborNode?.suppressed ?? false
+              ),
+              rank: rank + 1,
+              t: neighborNode,
+            };
+          })
+          .filter((row) => !!row);
+
+        (goodEntries[ti] as any).entryNeighbors = neighbors;
+        const first = neighbors[0];
+        if (first?.id) {
+          (goodEntries[ti] as any).closestClusterUid = String(first.id);
+        }
+      }
+    };
+
+    if (knnActive && knnSpaceKey === "high") {
+      assignKnnNeighbors((idx) => stdData[idx], hdVarArr);
+    }
+
     // UMAP embedding for the Cluster Map (better preserves local neighborhood structure than PCA).
     // We keep PCA2 around for fast approximate "transform" and for initialization.
     const { pc1, pc2 } = computePCA(stdData);
@@ -10872,7 +11170,8 @@ export function ClusterMap({
       sampleN: umap2dSampleN,
     });
     const embedding = um.emb;
-    const shouldEmbed3D = clusterMapView === "3d";
+    const shouldEmbed3D =
+      clusterMapView === "3d" || (knnActive && knnSpaceKey === "3d");
     const umap3dMaxN = lowPowerMode ? 1500 : 2500;
     const umap3dSampleN = lowPowerMode ? 1000 : 1600;
     const umap3dEpochs = lowPowerMode ? 140 : 220;
@@ -10993,6 +11292,12 @@ export function ClusterMap({
         }
       | null
     > = new Array(goodEntries.length).fill(null);
+    const vec2ByIdx: Array<number[] | null> = new Array(
+      goodEntries.length
+    ).fill(null);
+    const vec3ByIdx: Array<number[] | null> = new Array(
+      goodEntries.length
+    ).fill(null);
 
     for (let i = 0; i < goodEntries.length; i++) {
       const e: any = goodEntries[i];
@@ -11027,6 +11332,17 @@ export function ClusterMap({
           jz;
 
       coordByIdx[i] = { x: x2, y: y2, x3, y3, z3, r };
+      vec2ByIdx[i] = [x2, y2];
+      vec3ByIdx[i] = [x3, y3, z3];
+    }
+
+    if (knnActive && (knnSpaceKey === "2d" || knnSpaceKey === "3d")) {
+      const pool = knnSpaceKey === "2d" ? vec2ByIdx : vec3ByIdx;
+      const varArr =
+        metricKey === "mahalanobis"
+          ? computeVarianceVecs(pool.filter((v) => Array.isArray(v)))
+          : null;
+      assignKnnNeighbors((idx) => pool[idx], varArr);
     }
 
     const out: any[] = [];
@@ -14850,6 +15166,12 @@ export function ClusterMap({
         (node as any)?.metaLib != null ||
         String((node as any)?.id || "").startsWith("lib|");
       if (isLib) return [];
+      const kLimit = Math.max(
+        0,
+        Math.min(36, Math.floor(Number(effectiveNeighborK) || 0))
+      );
+      if (!kLimit) return [];
+
       const { aliasToIds, nodeCoordById, dim } = neighborAlias;
       const sourceId = normalizeClusterMapToken((node as any)?.id || "");
       const sourceCoord =
@@ -14861,16 +15183,6 @@ export function ClusterMap({
         (node as any)?.neighbors ??
         (node as any)?.kNeighbors ??
         [];
-      const kLimit = Math.max(
-        0,
-        Math.min(
-          36,
-          Math.floor(
-            Number(entryNeighborsOnly ? nbsRaw.length : effectiveNeighborK) || 0
-          )
-        )
-      );
-      if (!kLimit) return [];
 
       const pickFromAlias = (token: string): string | null => {
         const ids = aliasToIds.get(token);
@@ -15005,6 +15317,14 @@ export function ClusterMap({
             const rawFallback = pickRawId(nb);
             const hitNode =
               resolvedId != null ? (nodeByIdAll as any).get(resolvedId) : null;
+            if (entryNeighborsOnly) {
+              if (!resolvedId) return null;
+              if (!hitNode) return null;
+              const kind = String((hitNode as any)?.kind || "").toLowerCase();
+              const allowLive =
+                !!allowTradeNeighborFallback && kind === "trade";
+              if (kind !== "library" && !allowLive) return null;
+            }
             const tr = (nb as any)?.t ?? null;
             let displayId = hitNode
               ? displayIdForNode(hitNode)
@@ -15115,12 +15435,122 @@ export function ClusterMap({
 
       const payloadList = buildFromPayload(nbsRaw as any[]);
       if (payloadList.length) return payloadList;
-      return [];
+      if (aiMethod !== "hdbscan") return [];
+
+      const kindLocal = String((node as any)?.kind || "").toLowerCase();
+      const isTradeLike = kindLocal === "trade" || kindLocal === "potential";
+      const allowFallback =
+        kindLocal === "library" ||
+        kindLocal === "ghost" ||
+        kindLocal === "close" ||
+        (!entryNeighborsOnly && allowTradeNeighborFallback && isTradeLike);
+      if (!allowFallback) return [];
+
+      if (!sourceCoord) return [];
+      const fallbackRows: any[] = [];
+      const enforceDir =
+        !!allowTradeNeighborFallback && !!activeModSet?.has("Direction");
+      const enforceModel =
+        !!allowTradeNeighborFallback && !!activeModSet?.has("Model");
+      const selectedDir = Number(
+        (node as any)?.dir ?? (node as any)?.direction
+      );
+      const selectedModel = normalizeClusterMapToken(
+        (node as any)?.entryModel ??
+          (node as any)?.chunkType ??
+          (node as any)?.model ??
+          (node as any)?.origModel ??
+          ""
+      );
+      const selectedChrono =
+        allowTradeNeighborFallback && isTradeLike
+          ? nodeChronologyValue(node)
+          : null;
+
+      for (const candidate of nodeByIdAll.values()) {
+        if (!candidate) continue;
+        const nodeId = normalizeClusterMapToken((candidate as any)?.id || "");
+        if (sourceId && nodeId && nodeId === sourceId) continue;
+        if (!sourceId && candidate === node) continue;
+        if (allowTradeNeighborFallback && isTradeLike) {
+          if (enforceDir && Number.isFinite(selectedDir)) {
+            const nodeDir = Number(
+              (candidate as any)?.dir ?? (candidate as any)?.direction
+            );
+            if (Number.isFinite(nodeDir) && nodeDir !== selectedDir) continue;
+          }
+          if (enforceModel && selectedModel) {
+            const nodeModel = normalizeClusterMapToken(
+              (candidate as any)?.entryModel ??
+                (candidate as any)?.chunkType ??
+                (candidate as any)?.model ??
+                (candidate as any)?.origModel ??
+                ""
+            );
+            if (nodeModel && nodeModel !== selectedModel) continue;
+          }
+          if (selectedChrono != null) {
+            const nodeChrono = nodeChronologyValue(candidate);
+            if (nodeChrono != null && nodeChrono > selectedChrono) continue;
+          }
+        }
+        const coord =
+          (nodeId && nodeCoordById.get(nodeId)) ||
+          nodeCoordsForClusterMapKnn(candidate, dim);
+        if (!coord) continue;
+        const dx = sourceCoord.x - coord.x;
+        const dy = sourceCoord.y - coord.y;
+        const dz = dim === "3d" ? sourceCoord.z - coord.z : 0;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        let displayId = displayIdForNode(candidate);
+        if (!displayId || displayId === "—") {
+          displayId =
+            displayIdFromRaw(String((candidate as any).id ?? "")) || "—";
+        }
+        const kind = String((candidate as any)?.kind || "").toLowerCase();
+        const isLib =
+          kind === "library" ||
+          String((candidate as any).id || "").startsWith("lib|");
+        const nodeWin =
+          typeof (candidate as any)?.win === "boolean"
+            ? (candidate as any).win
+            : null;
+        const pnlVal =
+          typeof (candidate as any)?.pnl === "number"
+            ? Number((candidate as any).pnl)
+            : typeof (candidate as any)?.unrealizedPnl === "number"
+            ? Number((candidate as any).unrealizedPnl)
+            : null;
+        const isWin = nodeWin === true || (pnlVal != null && pnlVal >= 0);
+        const isLoss = nodeWin === false || (pnlVal != null && pnlVal < 0);
+        const tone = isWin ? "green" : isLoss ? "red" : "neutral";
+        fallbackRows.push({
+          key: nodeId || String((candidate as any).id || ""),
+          id: nodeId || String((candidate as any).id || ""),
+          displayId,
+          dist,
+          isLib,
+          tone,
+          isWin,
+          isLoss,
+        });
+      }
+
+      if (!fallbackRows.length) return [];
+      const libRows = fallbackRows.filter((row) => row.isLib);
+      const pool = libRows.length ? libRows : fallbackRows;
+      return pool
+        .sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity))
+        .slice(0, kLimit);
     },
     [
       effectiveNeighborK,
       neighborAlias,
       nodeByIdAll,
+      allowTradeNeighborFallback,
+      entryNeighborsOnly,
+      activeModSet,
+      nodeChronologyValue,
     ]
   );
 
@@ -23460,6 +23890,30 @@ export default function App() {
       : normalizedAllTrades;
   }, [aiMethod, normalizedAllTrades, normalizedPostHocTrades]);
 
+  const postHocTradeByKey = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const t of (postHocTrades as any[]) || []) {
+      if (!t) continue;
+      const keys = [
+        (t as any).uid,
+        (t as any).tradeUid,
+        (t as any).tradeId,
+        (t as any).id,
+        (t as any).metaOrigUid,
+        (t as any).metaOrigId,
+        (t as any).metaUid,
+        (t as any).metaTradeUid,
+      ];
+      for (const k of keys) {
+        if (k == null) continue;
+        const s = String(k).trim();
+        if (!s) continue;
+        if (!m.has(s)) m.set(s, t);
+      }
+    }
+    return m;
+  }, [postHocTrades]);
+
   const applyAntiCheat = React.useCallback(
     (tradesList) => {
       if (!tradesList || tradesList.length === 0) return [];
@@ -23669,7 +24123,31 @@ export default function App() {
         return raw as any[];
       };
 
-      const raw = pickNeighbors(t);
+      let raw: any[] | null = null;
+
+      if (aiMethod === "knn") {
+        const keys = [
+          (t as any).uid,
+          (t as any).tradeUid,
+          (t as any).tradeId,
+          (t as any).id,
+          (t as any).metaOrigUid,
+          (t as any).metaOrigId,
+          (t as any).metaUid,
+          (t as any).metaTradeUid,
+        ];
+        for (const k of keys) {
+          if (k == null) continue;
+          const s = String(k).trim();
+          if (!s) continue;
+          const hit = postHocTradeByKey.get(s);
+          if (!hit) continue;
+          raw = pickNeighbors(hit);
+          if (raw) break;
+        }
+      } else {
+        raw = pickNeighbors(t);
+      }
 
       if (!Array.isArray(raw) || raw.length === 0) return null;
       const neighborK = Math.max(
@@ -23754,7 +24232,7 @@ export default function App() {
       if (win <= 0 && loss <= 0) return null;
       return clamp(win / (win + loss + AI_EPS), 0, 1);
     },
-    [kEntry]
+    [aiMethod, postHocTradeByKey, kEntry]
   );
   const effectiveTradeConfidence = React.useCallback(
     (t: any) => {
@@ -32023,52 +32501,52 @@ export default function App() {
               >
                 <div style={{ ...ui.label, marginBottom: 8 }}>Embedding</div>
 
-                <div>
-                  <div style={ui.label}>Chunk Size (bars)</div>
-                  <input
-                    type="number"
-                    value={chunkBars}
-                    disabled={aiAllOff}
-                    onChange={(e) =>
-                      setChunkBars(Math.max(2, Number(e.target.value) || 2))
-                    }
-                    style={{
-                      ...ui.input,
-                      opacity: aiAllOff ? 0.6 : 1,
-                      cursor: aiAllOff ? "not-allowed" : "text",
-                    }}
-                  />
-                </div>
+                <div style={ui.row2}>
+                  <div>
+                    <div style={ui.label}>Chunk Size (bars)</div>
+                    <input
+                      type="number"
+                      value={chunkBars}
+                      disabled={aiAllOff}
+                      onChange={(e) =>
+                        setChunkBars(Math.max(2, Number(e.target.value) || 2))
+                      }
+                      style={{
+                        ...ui.input,
+                        opacity: aiAllOff ? 0.6 : 1,
+                        cursor: aiAllOff ? "not-allowed" : "text",
+                      }}
+                    />
+                  </div>
 
-                <div style={{ height: 8 }} />
-
-                <div>
-                  <div style={ui.label}>Dimensionality</div>
-                  <select
-                    value={knnNeighborSpace}
-                    onChange={(e) =>
-                      setKnnNeighborSpace(
-                        normalizeKnnNeighborSpace(e.target.value)
-                      )
-                    }
-                    disabled={aiAllOff}
-                    style={{
-                      width: "100%",
-                      padding: "8px 10px",
-                      borderRadius: 12,
-                      border: "1px solid rgba(255,255,255,0.14)",
-                      background: "rgba(0,0,0,0.35)",
-                      color: "rgba(255,255,255,0.92)",
-                      fontSize: 12,
-                      outline: "none",
-                      cursor: aiAllOff ? "not-allowed" : "pointer",
-                    }}
-                  >
-                    <option value="high">High Dimensional Space</option>
-                    <option value="post">Post-Compressed Space</option>
-                    <option value="3d">3 Dimensions</option>
-                    <option value="2d">2 Dimensions</option>
-                  </select>
+                  <div>
+                    <div style={ui.label}>Dimensionality</div>
+                    <select
+                      value={knnNeighborSpace}
+                      onChange={(e) =>
+                        setKnnNeighborSpace(
+                          normalizeKnnNeighborSpace(e.target.value)
+                        )
+                      }
+                      disabled={aiAllOff}
+                      style={{
+                        width: "100%",
+                        padding: "8px 10px",
+                        borderRadius: 12,
+                        border: "1px solid rgba(255,255,255,0.14)",
+                        background: "rgba(0,0,0,0.35)",
+                        color: "rgba(255,255,255,0.92)",
+                        fontSize: 12,
+                        outline: "none",
+                        cursor: aiAllOff ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      <option value="high">High Dimensional Space</option>
+                      <option value="post">Post-Compressed Space</option>
+                      <option value="3d">3 Dimensions</option>
+                      <option value="2d">2 Dimensions</option>
+                    </select>
+                  </div>
                 </div>
 
                 <div style={{ height: 8 }} />
@@ -35030,7 +35508,6 @@ export default function App() {
                 knnVoteMode={knnVoteMode}
                 knnNeighborSpace={knnNeighborSpace}
                 distanceMetric={distanceMetric}
-                useEntryNeighborsOnly
                 resetKey={clusterResetKey}
                 sliderValue={clusterTimelineIdx}
                 setSliderValue={setClusterTimelineIdx}
@@ -35078,7 +35555,6 @@ export default function App() {
                 knnVoteMode={knnVoteMode}
                 knnNeighborSpace={knnNeighborSpace}
                 distanceMetric={distanceMetric}
-                useEntryNeighborsOnly
                 resetKey={clusterResetKey}
                 sliderValue={clusterTimelineIdx}
                 setSliderValue={setClusterTimelineIdx}
