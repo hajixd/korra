@@ -7317,6 +7317,12 @@ function drawClusterMapCanvas(
         isSearch || isSelectionFocusNode || isKnnNeighbor || isHdbFocused;
       const dimNode = focusModeActive && !isFocusNode;
       const r = (Number(n.r) || 0) * (Number(nodeSizeMul) || 1);
+      const libKey = isLib
+        ? String((n as any).libId ?? (n as any).metaLib ?? (n as any).id ?? "")
+        : "";
+      const libColor = isLib ? colorForLibrary(libKey || "library") : "";
+      const libraryOutcomeColor =
+        n.win ?? false ? "rgba(60,220,120,0.98)" : "rgba(230,80,80,0.98)";
       let fill: string;
       let outline: string;
 
@@ -7327,14 +7333,9 @@ function drawClusterMapCanvas(
         fill = "rgba(200,140,255,0.95)";
         outline = n.dir === 1 ? "rgba(30,180,80,1.0)" : "rgba(180,50,50,1.0)";
       } else if (isLib) {
-        const win = n.win ?? false ? true : false;
-        const libKey = String(
-          (n as any).libId ?? (n as any).metaLib ?? (n as any).id ?? ""
-        );
         const isSupp = libKey.toLowerCase() === "suppressed";
-        const a = isSupp ? 0.5 : 0.9; // suppressed library = ghost-like
-        fill = win ? "rgba(60,220,120," + a + ")" : "rgba(230,80,80," + a + ")";
-        outline = n.dir === 1 ? "rgba(30,180,80,1.0)" : "rgba(180,50,50,1.0)";
+        fill = cssColorWithAlpha(libColor, isSupp ? 0.42 : 0.92);
+        outline = cssColorWithAlpha(libColor, 1);
       } else if (kind === "ghost") {
         if (ghostColored) {
           if (n.isOpen) {
@@ -7379,6 +7380,7 @@ function drawClusterMapCanvas(
           isSelectedNode ||
           isKnnNeighbor ||
           isHdbFocused ||
+          (isLib && isHovered) ||
           n.kind === "close" ||
           n.kind === "potential" ||
           (n.isOpen && !isLib))
@@ -7393,6 +7395,8 @@ function drawClusterMapCanvas(
           glowColor = "rgba(255,255,255,0.24)";
         } else if (isHdbFocused) {
           glowColor = "rgba(240,240,255,0.33)";
+        } else if (isLib) {
+          glowColor = cssColorWithAlpha(libColor, 0.34);
         } else if (kind === "potential") {
           glowColor = "rgba(200,140,255,0.45)";
         } else if (kind === "close") {
@@ -7410,25 +7414,62 @@ function drawClusterMapCanvas(
       ctx.save();
       const dimAlpha = selectionFocusActive ? 0.18 : 0.36;
       ctx.globalAlpha = dimNode ? dimAlpha : 1;
-      ctx.beginPath();
-      ctx.arc(sx, sy, baseRadius, 0, Math.PI * 2);
-      ctx.fillStyle = fill;
-      ctx.fill();
       const outlineBase = lowPowerMode ? (isHovered ? 2.2 : 1.1) : isHovered ? 4 : 2;
       const focusOutlineMul =
         isSelectedNode ? 1.15 : isKnnNeighbor ? 1.1 : isHdbFocused ? 1.08 : 1;
       const dimOutlineMul = dimNode ? 0.82 : 1;
-      ctx.lineWidth =
+      const strokeWidth =
         outlineBase * (Number(nodeOutlineMul) || 1) * focusOutlineMul * dimOutlineMul;
-      ctx.strokeStyle = outline;
-      ctx.stroke();
-      if (dimNode) {
+      ctx.lineWidth = strokeWidth;
+      if (isLib && !isSearch) {
+        const diamondR = baseRadius * 0.94;
+        ctx.translate(sx, sy);
+        ctx.rotate(Math.PI / 4);
         ctx.beginPath();
-        ctx.arc(sx, sy, Math.max(2.2, baseRadius * 1.02), 0, Math.PI * 2);
-        ctx.fillStyle = selectionFocusActive
-          ? "rgba(58,58,58,0.18)"
-          : "rgba(58,58,58,0.28)";
+        ctx.rect(-diamondR, -diamondR, diamondR * 2, diamondR * 2);
+        ctx.fillStyle = fill;
         ctx.fill();
+        ctx.strokeStyle = outline;
+        ctx.stroke();
+        ctx.rotate(-Math.PI / 4);
+        ctx.translate(-sx, -sy);
+
+        ctx.beginPath();
+        ctx.arc(sx, sy, Math.max(2.2, baseRadius * 0.34), 0, Math.PI * 2);
+        ctx.fillStyle = libraryOutcomeColor;
+        ctx.fill();
+        ctx.lineWidth = Math.max(1.2, strokeWidth * 0.42);
+        ctx.strokeStyle = "rgba(255,255,255,0.92)";
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        ctx.arc(sx, sy, baseRadius, 0, Math.PI * 2);
+        ctx.fillStyle = fill;
+        ctx.fill();
+        ctx.strokeStyle = outline;
+        ctx.stroke();
+      }
+      if (dimNode) {
+        if (isLib && !isSearch) {
+          const dimR = Math.max(2.2, baseRadius * 1.06);
+          ctx.save();
+          ctx.translate(sx, sy);
+          ctx.rotate(Math.PI / 4);
+          ctx.beginPath();
+          ctx.rect(-dimR, -dimR, dimR * 2, dimR * 2);
+          ctx.fillStyle = selectionFocusActive
+            ? "rgba(58,58,58,0.18)"
+            : "rgba(58,58,58,0.28)";
+          ctx.fill();
+          ctx.restore();
+        } else {
+          ctx.beginPath();
+          ctx.arc(sx, sy, Math.max(2.2, baseRadius * 1.02), 0, Math.PI * 2);
+          ctx.fillStyle = selectionFocusActive
+            ? "rgba(58,58,58,0.18)"
+            : "rgba(58,58,58,0.28)";
+          ctx.fill();
+        }
       }
       ctx.restore();
 
@@ -7722,10 +7763,12 @@ function ClusterMapViewport3D({
       return ghostPnl >= 0 ? 0x3cdc78 : 0xe65050;
     }
     if (isLib) {
-      const libKey = String((n as any)?.libId ?? (n as any)?.metaLib ?? "").toLowerCase();
-      if (libKey === "suppressed") {
-        const suppPnl = Number((n as any)?.pnl ?? (n as any)?.unrealizedPnl ?? 0);
-        return suppPnl >= 0 ? 0x3cdc78 : 0xe65050;
+      if (THREE) {
+        const libKey = String(
+          (n as any)?.libId ?? (n as any)?.metaLib ?? (n as any)?.id ?? "library"
+        );
+        const c = new (THREE as any).Color(colorForLibrary(libKey));
+        return c.getHex();
       }
     }
     if ((n as any)?.isOpen && kind === "trade" && !isLib) return 0x00d2ff;
@@ -8430,13 +8473,20 @@ function ClusterMapViewport3D({
       tmpObj.updateMatrix();
       instOutlineNow.setMatrixAt(i, tmpObj.matrix);
       const dir = Number((n as any)?.dir ?? (n as any)?.direction ?? 0);
-      const outlineHex = isHighlighted
-        ? 0xffffff
-        : dir === 1
-        ? 0x1eb450
-        : dir === -1
-        ? 0xb43232
-        : 0x9ca3af;
+      const isLib =
+        String((n as any)?.kind || "").toLowerCase() === "library" ||
+        (n as any)?.libId != null ||
+        String((n as any)?.id || "").startsWith("lib|");
+      let outlineHex = isHighlighted ? 0xffffff : 0x9ca3af;
+      if (!isHighlighted && isLib && THREE) {
+        const libKey = String(
+          (n as any)?.libId ?? (n as any)?.metaLib ?? (n as any)?.id ?? "library"
+        );
+        outlineHex = new (THREE as any).Color(colorForLibrary(libKey)).getHex();
+      } else if (!isHighlighted) {
+        outlineHex =
+          dir === 1 ? 0x1eb450 : dir === -1 ? 0xb43232 : 0x9ca3af;
+      }
       tmpOutlineColor.setHex(outlineHex);
       instOutlineNow.setColorAt(i, tmpOutlineColor);
 
@@ -10183,6 +10233,14 @@ export function ClusterMap({
     }
     return c;
   }, [libraryPoints]);
+  const libraryPointDiagnosticsRef = useRef<any>({
+    inputCount: 0,
+    usedSyntheticFallback: false,
+    skippedMissingVectorOrDescriptor: 0,
+    skippedSuppressedInactive: 0,
+    createdCount: 0,
+    createdByLibrary: {},
+  });
 
   const passesViewFilter = React.useCallback(
     (dirRaw: any, timeRaw: any, modelRaw?: any) => {
@@ -10570,6 +10628,15 @@ export function ClusterMap({
       }
     }
 
+    const libraryNodeDiagnostics: any = {
+      inputCount: Array.isArray(libraryPoints) ? libraryPoints.length : 0,
+      usedSyntheticFallback: false,
+      skippedMissingVectorOrDescriptor: 0,
+      skippedSuppressedInactive: 0,
+      createdCount: 0,
+      createdByLibrary: {},
+    };
+
     const libraryPointsForMap: any[] = (() => {
       const src = Array.isArray(libraryPoints) ? (libraryPoints as any[]) : [];
       if (src.length > 0) return src;
@@ -10625,6 +10692,7 @@ export function ClusterMap({
       const scale = requested > hardCap ? hardCap / requested : 1;
 
       const out: any[] = [];
+      libraryNodeDiagnostics.usedSyntheticFallback = true;
       let aPos = 0;
       let seq = 0;
       for (const [libIdRaw, cntRaw] of byLib) {
@@ -10715,12 +10783,18 @@ export function ClusterMap({
       // or a direct vector payload from the neighbor store.
       const hasDirectVector = Array.isArray(rawVec) && rawVec.length >= 2;
       const canBuildFromCandle = hasSIdx && !!modelKey && modelKey !== "-";
-      if (!hasDirectVector && !canBuildFromCandle) continue;
+      if (!hasDirectVector && !canBuildFromCandle) {
+        libraryNodeDiagnostics.skippedMissingVectorOrDescriptor += 1;
+        continue;
+      }
 
       const libId = String((p as any).libId ?? (p as any).metaLib ?? "unknown");
 
       const isSuppLib = libId.toLowerCase() === "suppressed";
-      if (isSuppLib && !suppressedLibActive) continue;
+      if (isSuppLib && !suppressedLibActive) {
+        libraryNodeDiagnostics.skippedSuppressedInactive += 1;
+        continue;
+      }
 
       const dir = Number((p as any).dir ?? (p as any).direction ?? 0) || 0;
       const pnl = Number((p as any).pnl ?? (p as any).metaPnl ?? 0) || 0;
@@ -10890,9 +10964,15 @@ export function ClusterMap({
         entryPrice: (p as any).entryPrice ?? null,
         suppressed: false,
       });
+      libraryNodeDiagnostics.createdCount += 1;
+      libraryNodeDiagnostics.createdByLibrary[libId] =
+        (Number(libraryNodeDiagnostics.createdByLibrary[libId]) || 0) + 1;
     }
 
-    if (entries.length === 0) return [];
+    if (entries.length === 0) {
+      libraryPointDiagnosticsRef.current = libraryNodeDiagnostics;
+      return [];
+    }
 
     // Skip any nodes whose CHUNK vector contains non‑finite values (no PCA2 fallback).
     for (const e of entries as any[]) {
@@ -10914,7 +10994,10 @@ export function ClusterMap({
     let goodEntries: any[] = (entries as any[]).filter(
       (e) => !(e as any).badVec
     );
-    if (goodEntries.length === 0) return [];
+    if (goodEntries.length === 0) {
+      libraryPointDiagnosticsRef.current = libraryNodeDiagnostics;
+      return [];
+    }
 
     // Ensure cluster vectors are aligned across model types:
     // pad the CHUNK portion (everything except the last 6 meta features) so dimensions line up.
@@ -11176,6 +11259,7 @@ export function ClusterMap({
       });
     }
 
+    libraryPointDiagnosticsRef.current = libraryNodeDiagnostics;
     return out;
   }, [
     candles,
@@ -14345,6 +14429,77 @@ export function ClusterMap({
     }
     return out;
   }, [timelineNodesCheat, legendToggles]);
+  const libraryPointDiagnosticKeyRef = useRef<string>("");
+  useEffect(() => {
+    const inputCount = Array.isArray(libraryPoints) ? libraryPoints.length : 0;
+    const activeLibraryCount = Array.isArray(activeLibraries)
+      ? activeLibraries.length
+      : 0;
+    const libNodeCount = ((nodes as any[]) || []).filter(
+      (n: any) => String((n as any)?.kind || "").toLowerCase() === "library"
+    ).length;
+    const timelineLibraryCount = ((timelineNodesCheat as any[]) || []).filter(
+      (n: any) => String((n as any)?.kind || "").toLowerCase() === "library"
+    ).length;
+    const displayLibraryCount = ((displayNodes as any[]) || []).filter(
+      (n: any) => String((n as any)?.kind || "").toLowerCase() === "library"
+    ).length;
+
+    const diagnostics = libraryPointDiagnosticsRef.current || {};
+    const codes: string[] = [];
+    if (activeLibraryCount > 0 && inputCount === 0) {
+      codes.push("ACTIVE_LIBRARIES_WITHOUT_INPUT_POINTS");
+    }
+    if (inputCount > 0 && libNodeCount === 0) {
+      codes.push("INPUT_POINTS_DROPPED_DURING_NODE_BUILD");
+    }
+    if (libNodeCount > 0 && timelineLibraryCount === 0) {
+      codes.push("TIMELINE_FILTER_REMOVED_LIBRARY_POINTS");
+    }
+    if (timelineLibraryCount > 0 && displayLibraryCount === 0) {
+      codes.push("DISPLAY_FILTER_REMOVED_LIBRARY_POINTS");
+    }
+    if (
+      Number(diagnostics.skippedMissingVectorOrDescriptor || 0) > 0 &&
+      libNodeCount < inputCount
+    ) {
+      codes.push("LIBRARY_POINTS_MISSING_VECTOR_OR_DESCRIPTOR");
+    }
+    if (
+      Number(diagnostics.skippedSuppressedInactive || 0) > 0 &&
+      timelineLibraryCount < libNodeCount
+    ) {
+      codes.push("SUPPRESSED_LIBRARY_POINTS_HIDDEN");
+    }
+
+    if (codes.length === 0) return;
+
+    const signature = JSON.stringify({
+      codes,
+      inputCount,
+      libNodeCount,
+      timelineLibraryCount,
+      displayLibraryCount,
+      createdCount: Number(diagnostics.createdCount || 0),
+      usedSyntheticFallback: Boolean(diagnostics.usedSyntheticFallback),
+    });
+    if (libraryPointDiagnosticKeyRef.current === signature) return;
+    libraryPointDiagnosticKeyRef.current = signature;
+
+    console.error(
+      `[AIZip][LibraryPointDiagnostics] ${codes.join(", ")}`,
+      {
+        activeLibraries: Array.isArray(activeLibraries)
+          ? activeLibraries.map((libraryId) => String(libraryId))
+          : [],
+        inputCount,
+        nodeCount: libNodeCount,
+        timelineCount: timelineLibraryCount,
+        displayCount: displayLibraryCount,
+        details: diagnostics,
+      }
+    );
+  }, [activeLibraries, displayNodes, libraryPoints, nodes, timelineNodesCheat]);
 
   // Spatial hash for 2D hit-testing (pointer move/click): keeps picking near O(k) instead of O(n).
   const displayNodePickIndex = useMemo(() => {
