@@ -11205,11 +11205,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const shouldSendActivePanelOverrides =
     usesChartPanelLiveSimulationForActive !== usesChartPanelLiveSimulationForHistory;
   const shouldComputePanelAnalyticsOnServer =
-    (panelSourceTrades.length > 0 || activePanelSourceTrades.length > 0) &&
-    (
-      panelBacktestFilterSettings.aiMode !== "off" ||
-      activePanelBacktestFilterSettings.aiMode !== "off"
-    );
+    panelBacktestFilterSettings.aiMode !== "off" ||
+    activePanelBacktestFilterSettings.aiMode !== "off";
   const aiLibraryDefaultsById = useMemo(() => {
     const next: Record<string, Record<string, AiLibrarySettingValue>> = {};
     for (const [libraryId, definition] of Object.entries(aiLibraryDefById)) {
