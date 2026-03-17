@@ -1,5 +1,46 @@
 export type BacktestHistoryTradeResult = "Win" | "Loss";
 export type BacktestHistoryTradeSide = "Long" | "Short";
+export type BacktestTradeAiMode = "off" | "knn" | "hdbscan";
+
+export type BacktestEntryNeighborTradeRef = {
+  id?: string;
+  uid?: string;
+  tradeUid?: string;
+  direction?: number;
+  entryTime?: number;
+  pnl?: number;
+  result?: string;
+  session?: string;
+  entryModel?: string;
+  chunkType?: string;
+  model?: string;
+  side?: BacktestHistoryTradeSide;
+};
+
+export type BacktestEntryNeighbor = {
+  uid?: string | null;
+  metaUid?: string | null;
+  metaTime?: number | null;
+  metaPnl?: number | null;
+  metaOutcome?: string | null;
+  metaSession?: string | null;
+  dir?: number | null;
+  label?: number | null;
+  d?: number | null;
+  w?: number | null;
+  t?: BacktestEntryNeighborTradeRef;
+};
+
+export type BacktestTradeAiEntryMeta = {
+  entryConfidence?: number | null;
+  confidence?: number | null;
+  entryMargin?: number | null;
+  margin?: number | null;
+  aiConfidence?: number | null;
+  aiMode?: BacktestTradeAiMode | null;
+  closestClusterUid?: string | null;
+  entryNeighbors?: BacktestEntryNeighbor[];
+};
 
 export type BacktestHistoryCandle = {
   open: number;
@@ -28,7 +69,7 @@ export type BacktestHistoryRow = {
   stopPrice: number;
   outcomePrice: number;
   units: number;
-};
+} & BacktestTradeAiEntryMeta;
 
 export type BacktestHistoryTradeBlueprint = {
   id: string;
@@ -41,7 +82,7 @@ export type BacktestHistoryTradeBlueprint = {
   riskPct: number;
   rr: number;
   units: number;
-};
+} & BacktestTradeAiEntryMeta;
 
 export type BacktestHistoryWorkerRequest = {
   requestId: number;
@@ -633,7 +674,29 @@ export const computeBacktestHistoryRowsChunk = ({
         units,
         entryAt: formatDateTime(resolvedEntryTimeMs),
         exitAt: formatDateTime(resolvedExitTimeMs),
-        time: formatDateTime(resolvedExitTimeMs)
+        time: formatDateTime(resolvedExitTimeMs),
+        entryConfidence: blueprint.entryConfidence ?? null,
+        confidence:
+          blueprint.confidence ??
+          blueprint.entryConfidence ??
+          null,
+        entryMargin:
+          blueprint.entryMargin ??
+          blueprint.entryConfidence ??
+          blueprint.confidence ??
+          null,
+        margin:
+          blueprint.margin ??
+          blueprint.entryMargin ??
+          blueprint.entryConfidence ??
+          blueprint.confidence ??
+          null,
+        aiConfidence: blueprint.aiConfidence ?? null,
+        aiMode: blueprint.aiMode ?? null,
+        closestClusterUid: blueprint.closestClusterUid ?? null,
+        entryNeighbors: Array.isArray(blueprint.entryNeighbors)
+          ? blueprint.entryNeighbors.slice()
+          : []
       });
     } finally {
       if (onProgress) {

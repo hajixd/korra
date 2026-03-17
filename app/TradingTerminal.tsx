@@ -34,8 +34,10 @@ import type {
 import {
   computeBacktestHistoryRowsChunk,
   finalizeBacktestHistoryRows,
+  type BacktestEntryNeighbor,
   type BacktestHistoryRow,
-  type BacktestHistoryComputeRequest
+  type BacktestHistoryComputeRequest,
+  type BacktestTradeAiEntryMeta
 } from "./backtestHistoryShared";
 import {
   COPYTRADE_BACKTEST_STATE_KEY,
@@ -441,7 +443,7 @@ type HistoryItem = {
   stopPrice: number;
   outcomePrice: number;
   units: number;
-};
+} & BacktestTradeAiEntryMeta;
 
 type ServerTradePayload = {
   id: string;
@@ -459,7 +461,7 @@ type ServerTradePayload = {
   stopPrice: number;
   outcomePrice: number;
   units: number;
-};
+} & BacktestTradeAiEntryMeta;
 
 const normalizeBacktestHistoryRows = (rows: BacktestHistoryRow[]): HistoryItem[] => {
   return rows.map((row) => ({
@@ -467,6 +469,115 @@ const normalizeBacktestHistoryRows = (rows: BacktestHistoryRow[]): HistoryItem[]
     entryTime: row.entryTime as UTCTimestamp,
     exitTime: row.exitTime as UTCTimestamp
   }));
+};
+
+const cloneTradeEntryNeighbors = (value: unknown): BacktestEntryNeighbor[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const out: BacktestEntryNeighbor[] = [];
+
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+
+    const row = item as Record<string, unknown>;
+    const rawTradeRef =
+      row.t && typeof row.t === "object" && !Array.isArray(row.t)
+        ? (row.t as Record<string, unknown>)
+        : null;
+    const uid =
+      row.metaUid ??
+      row.uid ??
+      rawTradeRef?.uid ??
+      rawTradeRef?.tradeUid ??
+      rawTradeRef?.id ??
+      null;
+    const dir = Number(row.dir ?? rawTradeRef?.direction ?? NaN);
+    const label = Number(row.label ?? NaN);
+    const d = Number(row.d ?? NaN);
+    const w = Number(row.w ?? NaN);
+    const metaTime = Number(row.metaTime ?? rawTradeRef?.entryTime ?? NaN);
+    const metaPnl = Number(row.metaPnl ?? rawTradeRef?.pnl ?? NaN);
+
+    out.push({
+      uid: uid == null ? null : String(uid),
+      metaUid: uid == null ? null : String(uid),
+      metaTime: Number.isFinite(metaTime) ? metaTime : null,
+      metaPnl: Number.isFinite(metaPnl) ? metaPnl : null,
+      metaOutcome:
+        rawTradeRef?.result != null
+          ? String(rawTradeRef.result)
+          : row.metaOutcome != null
+            ? String(row.metaOutcome)
+            : null,
+      metaSession:
+        rawTradeRef?.session != null
+          ? String(rawTradeRef.session)
+          : row.metaSession != null
+            ? String(row.metaSession)
+            : null,
+      dir: Number.isFinite(dir) ? dir : null,
+      label: Number.isFinite(label) ? label : null,
+      d: Number.isFinite(d) ? d : null,
+      w: Number.isFinite(w) ? w : null,
+      t: rawTradeRef
+        ? {
+            id: rawTradeRef.id != null ? String(rawTradeRef.id) : undefined,
+            uid:
+              rawTradeRef.uid != null
+                ? String(rawTradeRef.uid)
+                : uid == null
+                  ? undefined
+                  : String(uid),
+            tradeUid:
+              rawTradeRef.tradeUid != null
+                ? String(rawTradeRef.tradeUid)
+                : uid == null
+                  ? undefined
+                  : String(uid),
+            direction: Number.isFinite(Number(rawTradeRef.direction))
+              ? Number(rawTradeRef.direction)
+              : Number.isFinite(dir)
+                ? dir
+                : undefined,
+            entryTime: Number.isFinite(Number(rawTradeRef.entryTime))
+              ? Number(rawTradeRef.entryTime)
+              : Number.isFinite(metaTime)
+                ? metaTime
+                : undefined,
+            pnl: Number.isFinite(Number(rawTradeRef.pnl))
+              ? Number(rawTradeRef.pnl)
+              : Number.isFinite(metaPnl)
+                ? metaPnl
+                : undefined,
+            result: rawTradeRef.result != null ? String(rawTradeRef.result) : undefined,
+            session: rawTradeRef.session != null ? String(rawTradeRef.session) : undefined,
+            entryModel:
+              rawTradeRef.entryModel != null ? String(rawTradeRef.entryModel) : undefined,
+            chunkType:
+              rawTradeRef.chunkType != null ? String(rawTradeRef.chunkType) : undefined,
+            model: rawTradeRef.model != null ? String(rawTradeRef.model) : undefined,
+            side:
+              rawTradeRef.side === "Short"
+                ? "Short"
+                : rawTradeRef.side === "Long"
+                  ? "Long"
+                  : undefined
+          }
+        : uid == null
+          ? undefined
+          : {
+              id: String(uid),
+              uid: String(uid),
+              tradeUid: String(uid)
+            }
+    });
+  }
+
+  return out;
 };
 
 const toServerTradePayload = (trade: HistoryItem): ServerTradePayload => ({
@@ -484,7 +595,28 @@ const toServerTradePayload = (trade: HistoryItem): ServerTradePayload => ({
   targetPrice: trade.targetPrice,
   stopPrice: trade.stopPrice,
   outcomePrice: trade.outcomePrice,
-  units: trade.units
+  units: trade.units,
+  entryConfidence: trade.entryConfidence ?? null,
+  confidence: trade.confidence ?? trade.entryConfidence ?? null,
+  entryMargin:
+    trade.entryMargin ??
+    trade.entryConfidence ??
+    trade.confidence ??
+    null,
+  margin:
+    trade.margin ??
+    trade.entryMargin ??
+    trade.entryConfidence ??
+    trade.confidence ??
+    null,
+  aiConfidence: trade.aiConfidence ?? null,
+  aiMode:
+    trade.aiMode === "knn" || trade.aiMode === "hdbscan" || trade.aiMode === "off"
+      ? trade.aiMode
+      : null,
+  closestClusterUid:
+    trade.closestClusterUid == null ? null : String(trade.closestClusterUid),
+  entryNeighbors: cloneTradeEntryNeighbors(trade.entryNeighbors)
 });
 
 const computeBacktestRowsLocally = (
@@ -16717,23 +16849,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           (trade as any).confidence ??
           null,
         margin: getEffectiveTradeConfidenceScore(trade),
+        aiMode:
+          (trade as any).aiMode === "knn" || (trade as any).aiMode === "hdbscan"
+            ? (trade as any).aiMode
+            : null,
         side: trade.side,
         closestClusterUid: (trade as any).closestClusterUid ?? null,
-        entryNeighbors:
-          (trade as any).entryNeighbors ??
-          (trade as any).neighbors ??
-          (trade as any).kNeighbors ??
-          [],
-        neighbors:
-          (trade as any).neighbors ??
-          (trade as any).entryNeighbors ??
-          (trade as any).kNeighbors ??
-          [],
-        kNeighbors:
-          (trade as any).kNeighbors ??
-          (trade as any).entryNeighbors ??
-          (trade as any).neighbors ??
-          [],
+        entryNeighbors: Array.isArray((trade as any).entryNeighbors)
+          ? ((trade as any).entryNeighbors as any[])
+          : [],
       };
     });
   }, [

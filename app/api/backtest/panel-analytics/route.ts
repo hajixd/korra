@@ -1,4 +1,9 @@
 import { NextResponse } from "next/server";
+import type {
+  BacktestEntryNeighbor,
+  BacktestTradeAiEntryMeta,
+  BacktestTradeAiMode
+} from "../../../backtestHistoryShared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +26,16 @@ type HistoryItem = {
   stopPrice: number;
   outcomePrice: number;
   units: number;
+} & BacktestTradeAiEntryMeta;
+
+type TradeAiEntrySnapshot = {
+  entryConfidence: number;
+  confidence: number;
+  entryMargin: number;
+  margin: number;
+  aiMode: Exclude<BacktestTradeAiMode, "off">;
+  closestClusterUid: string | null;
+  entryNeighbors: BacktestEntryNeighbor[];
 };
 
 type BacktestFilterSettings = {
@@ -335,6 +350,194 @@ const toNumeric = (value: unknown, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const normalizeTradeAiMode = (value: unknown): BacktestTradeAiMode | null => {
+  return value === "knn" || value === "hdbscan" || value === "off" ? value : null;
+};
+
+const cloneEntryNeighbors = (value: unknown): BacktestEntryNeighbor[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const out: BacktestEntryNeighbor[] = [];
+
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+
+    const row = item as Record<string, unknown>;
+    const tradeRef =
+      row.t && typeof row.t === "object" && !Array.isArray(row.t)
+        ? (row.t as Record<string, unknown>)
+        : null;
+    const uid =
+      row.metaUid ??
+      row.uid ??
+      tradeRef?.uid ??
+      tradeRef?.tradeUid ??
+      tradeRef?.id ??
+      null;
+    const dir = Number(row.dir ?? tradeRef?.direction ?? NaN);
+    const label = Number(row.label ?? NaN);
+    const d = Number(row.d ?? NaN);
+    const w = Number(row.w ?? NaN);
+    const metaTime = Number(row.metaTime ?? tradeRef?.entryTime ?? NaN);
+    const metaPnl = Number(row.metaPnl ?? tradeRef?.pnl ?? NaN);
+
+    out.push({
+      uid: uid == null ? null : String(uid),
+      metaUid: uid == null ? null : String(uid),
+      metaTime: Number.isFinite(metaTime) ? metaTime : null,
+      metaPnl: Number.isFinite(metaPnl) ? metaPnl : null,
+      metaOutcome:
+        tradeRef?.result != null
+          ? String(tradeRef.result)
+          : row.metaOutcome != null
+            ? String(row.metaOutcome)
+            : null,
+      metaSession:
+        tradeRef?.session != null
+          ? String(tradeRef.session)
+          : row.metaSession != null
+            ? String(row.metaSession)
+            : null,
+      dir: Number.isFinite(dir) ? dir : null,
+      label: Number.isFinite(label) ? label : null,
+      d: Number.isFinite(d) ? d : null,
+      w: Number.isFinite(w) ? w : null,
+      t: tradeRef
+        ? {
+            id: tradeRef.id != null ? String(tradeRef.id) : undefined,
+            uid:
+              tradeRef.uid != null
+                ? String(tradeRef.uid)
+                : uid == null
+                  ? undefined
+                  : String(uid),
+            tradeUid:
+              tradeRef.tradeUid != null
+                ? String(tradeRef.tradeUid)
+                : uid == null
+                  ? undefined
+                  : String(uid),
+            direction: Number.isFinite(Number(tradeRef.direction))
+              ? Number(tradeRef.direction)
+              : Number.isFinite(dir)
+                ? dir
+                : undefined,
+            entryTime: Number.isFinite(Number(tradeRef.entryTime))
+              ? Number(tradeRef.entryTime)
+              : Number.isFinite(metaTime)
+                ? metaTime
+                : undefined,
+            pnl: Number.isFinite(Number(tradeRef.pnl))
+              ? Number(tradeRef.pnl)
+              : Number.isFinite(metaPnl)
+                ? metaPnl
+                : undefined,
+            result: tradeRef.result != null ? String(tradeRef.result) : undefined,
+            session: tradeRef.session != null ? String(tradeRef.session) : undefined,
+            entryModel:
+              tradeRef.entryModel != null ? String(tradeRef.entryModel) : undefined,
+            chunkType:
+              tradeRef.chunkType != null ? String(tradeRef.chunkType) : undefined,
+            model: tradeRef.model != null ? String(tradeRef.model) : undefined,
+            side:
+              tradeRef.side === "Short"
+                ? "Short"
+                : tradeRef.side === "Long"
+                  ? "Long"
+                  : undefined
+          }
+        : uid == null
+          ? undefined
+          : {
+              id: String(uid),
+              uid: String(uid),
+              tradeUid: String(uid)
+            }
+    });
+  }
+
+  return out;
+};
+
+const buildTradeEntryNeighbor = (
+  candidateTrade: HistoryItem,
+  similarity: number,
+  weight: number
+): BacktestEntryNeighbor => {
+  const candidateId = String(candidateTrade.id ?? "").trim();
+  const dir = candidateTrade.side === "Short" ? -1 : 1;
+
+  return {
+    uid: candidateId || null,
+    metaUid: candidateId || null,
+    metaTime: Number(candidateTrade.entryTime),
+    metaPnl: Number(candidateTrade.pnlUsd),
+    metaOutcome: candidateTrade.result,
+    metaSession: getSessionLabel(candidateTrade.entryTime),
+    dir,
+    label: candidateTrade.result === "Win" ? 1 : -1,
+    d: similarity > 0 ? 1 / similarity : Number.MAX_SAFE_INTEGER,
+    w: weight,
+    t: {
+      id: candidateId || undefined,
+      uid: candidateId || undefined,
+      tradeUid: candidateId || undefined,
+      direction: dir,
+      entryTime: Number(candidateTrade.entryTime),
+      pnl: Number(candidateTrade.pnlUsd),
+      result: candidateTrade.result,
+      session: getSessionLabel(candidateTrade.entryTime),
+      entryModel: candidateTrade.entrySource,
+      chunkType: candidateTrade.entrySource,
+      model: candidateTrade.entrySource,
+      side: candidateTrade.side
+    }
+  };
+};
+
+const applyTradeAiEntrySnapshot = (
+  trade: HistoryItem,
+  snapshot: TradeAiEntrySnapshot | undefined,
+  fallbackAiMode: BacktestTradeAiMode | null
+): HistoryItem => {
+  const preservedNeighbors = cloneEntryNeighbors(trade.entryNeighbors);
+  const effectiveAiMode =
+    snapshot?.aiMode ??
+    (trade.aiMode === "knn" || trade.aiMode === "hdbscan" || trade.aiMode === "off"
+      ? trade.aiMode
+      : fallbackAiMode);
+
+  if (!snapshot) {
+    return effectiveAiMode == null
+      ? {
+          ...trade,
+          entryNeighbors: preservedNeighbors
+        }
+      : {
+          ...trade,
+          aiMode: effectiveAiMode,
+          entryNeighbors: preservedNeighbors
+        };
+  }
+
+  const entryNeighbors = cloneEntryNeighbors(snapshot.entryNeighbors);
+
+  return {
+    ...trade,
+    entryConfidence: snapshot.entryConfidence,
+    confidence: snapshot.confidence,
+    entryMargin: snapshot.entryMargin,
+    margin: snapshot.margin,
+    aiMode: snapshot.aiMode,
+    closestClusterUid: snapshot.closestClusterUid,
+    entryNeighbors
+  };
+};
+
 const normalizeTrade = (value: unknown): HistoryItem | null => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -361,7 +564,38 @@ const normalizeTrade = (value: unknown): HistoryItem | null => {
     targetPrice: Math.max(0.000001, toNumeric(row.targetPrice)),
     stopPrice: Math.max(0.000001, toNumeric(row.stopPrice)),
     outcomePrice: Math.max(0.000001, toNumeric(row.outcomePrice)),
-    units: Math.max(0.000001, Math.abs(toNumeric(row.units, 1)) || 1)
+    units: Math.max(0.000001, Math.abs(toNumeric(row.units, 1)) || 1),
+    entryConfidence:
+      row.entryConfidence == null ? null : toNumeric(row.entryConfidence),
+    confidence:
+      row.confidence == null
+        ? row.entryConfidence == null
+          ? null
+          : toNumeric(row.entryConfidence)
+        : toNumeric(row.confidence),
+    entryMargin:
+      row.entryMargin == null
+        ? row.entryConfidence == null
+          ? row.confidence == null
+            ? null
+            : toNumeric(row.confidence)
+          : toNumeric(row.entryConfidence)
+        : toNumeric(row.entryMargin),
+    margin:
+      row.margin == null
+        ? row.entryMargin == null
+          ? row.entryConfidence == null
+            ? row.confidence == null
+              ? null
+              : toNumeric(row.confidence)
+            : toNumeric(row.entryConfidence)
+          : toNumeric(row.entryMargin)
+        : toNumeric(row.margin),
+    aiConfidence: row.aiConfidence == null ? null : toNumeric(row.aiConfidence),
+    aiMode: normalizeTradeAiMode(row.aiMode),
+    closestClusterUid:
+      row.closestClusterUid == null ? null : String(row.closestClusterUid),
+    entryNeighbors: cloneEntryNeighbors(row.entryNeighbors)
   };
 };
 
@@ -498,6 +732,7 @@ const computeAntiCheatBacktestContext = (params: {
     (left, right) => Number(left.entryTime) - Number(right.entryTime)
   );
   const confidenceById = new Map<string, number>();
+  const aiEntrySnapshotById = new Map<string, TradeAiEntrySnapshot>();
   const usesSplitValidation =
     panelBacktestFilterSettings.antiCheatEnabled &&
     panelBacktestFilterSettings.validationMode === "split";
@@ -538,14 +773,16 @@ const computeAntiCheatBacktestContext = (params: {
       dateFilteredTrades,
       libraryCandidateTrades: splitTrainingTrades,
       timeFilteredTrades: splitEvaluationTrades,
-      confidenceById
+      confidenceById,
+      aiEntrySnapshotById
     };
   }
 
+  const activeAiMode = panelBacktestFilterSettings.aiMode;
   const activeLibraryIds =
     panelBacktestFilterSettings.selectedAiLibraries.length > 0
       ? panelBacktestFilterSettings.selectedAiLibraries
-      : [];
+      : ["trades"];
   const timeFilteredTrades = splitEvaluationTrades;
 
   const getLibrarySettings = (libraryId: string) => {
@@ -771,6 +1008,16 @@ const computeAntiCheatBacktestContext = (params: {
     return clamp(weight, 0.02, 2);
   };
 
+  const hydrateTradesWithSnapshots = (trades: HistoryItem[]) => {
+    return trades.map((trade) =>
+      applyTradeAiEntrySnapshot(
+        trade,
+        aiEntrySnapshotById.get(trade.id),
+        activeAiMode
+      )
+    );
+  };
+
   for (let index = 0; index < chronologicalTrades.length; index += 1) {
     const trade = chronologicalTrades[index]!;
     const basePool =
@@ -779,7 +1026,17 @@ const computeAntiCheatBacktestContext = (params: {
         : chronologicalTrades.slice(0, index);
 
     if (basePool.length === 0) {
-      confidenceById.set(trade.id, getSyntheticWinProb(trade));
+      const confidence = getSyntheticWinProb(trade);
+      confidenceById.set(trade.id, confidence);
+      aiEntrySnapshotById.set(trade.id, {
+        entryConfidence: confidence,
+        confidence,
+        entryMargin: confidence,
+        margin: confidence,
+        aiMode: activeAiMode,
+        closestClusterUid: null,
+        entryNeighbors: []
+      });
       continue;
     }
 
@@ -790,6 +1047,14 @@ const computeAntiCheatBacktestContext = (params: {
     let weightedTotal = 0;
     let similarityTotal = 0;
     let sampleCount = 0;
+    const neighborAggregate = new Map<
+      string,
+      {
+        trade: HistoryItem;
+        score: number;
+        bestSimilarity: number;
+      }
+    >();
 
     for (const libraryId of activeLibraryIds) {
       const libraryWeight = getLibraryWeight(libraryId);
@@ -801,7 +1066,8 @@ const computeAntiCheatBacktestContext = (params: {
       const source = pickLibrarySource(libraryId, basePool, trade);
 
       for (const candidate of source) {
-        const similarityWeight = getSimilarityWeight(trade, candidate) * libraryWeight;
+        const rawSimilarity = getSimilarityWeight(trade, candidate);
+        const similarityWeight = rawSimilarity * libraryWeight;
         const outcome =
           panelBacktestFilterSettings.validationMode === "synthetic"
             ? getSyntheticWinProb(candidate)
@@ -813,14 +1079,40 @@ const computeAntiCheatBacktestContext = (params: {
         weightedTotal += similarityWeight;
         similarityTotal += similarityWeight;
         sampleCount += 1;
+
+        const candidateId = String(candidate.id ?? "").trim();
+        if (!candidateId) {
+          continue;
+        }
+
+        const existing = neighborAggregate.get(candidateId);
+        if (existing) {
+          existing.score += similarityWeight;
+          if (rawSimilarity > existing.bestSimilarity) {
+            existing.bestSimilarity = rawSimilarity;
+          }
+        } else {
+          neighborAggregate.set(candidateId, {
+            trade: candidate,
+            score: similarityWeight,
+            bestSimilarity: rawSimilarity
+          });
+        }
       }
     }
 
     if (sampleCount === 0 || weightedTotal <= 0) {
-      confidenceById.set(
-        trade.id,
-        clamp(0.5 + (baselineWinRate - 0.5) * 0.2, 0.18, 0.82)
-      );
+      const confidence = clamp(0.5 + (baselineWinRate - 0.5) * 0.2, 0.18, 0.82);
+      confidenceById.set(trade.id, confidence);
+      aiEntrySnapshotById.set(trade.id, {
+        entryConfidence: confidence,
+        confidence,
+        entryMargin: confidence,
+        margin: confidence,
+        aiMode: activeAiMode,
+        closestClusterUid: null,
+        entryNeighbors: []
+      });
       continue;
     }
 
@@ -832,15 +1124,38 @@ const computeAntiCheatBacktestContext = (params: {
       coverage * (0.2 + matchStrength * 0.8) * (0.35 + labelVariance * 0.65);
     const confidence =
       baselineWinRate + (weightedWinRate - baselineWinRate) * shrink;
+    const normalizedConfidence = clamp(confidence, 0.02, 0.98);
+    const rankedNeighbors = [...neighborAggregate.values()]
+      .sort(
+        (left, right) =>
+          right.score - left.score ||
+          right.bestSimilarity - left.bestSimilarity ||
+          Number(right.trade.entryTime) - Number(left.trade.entryTime) ||
+          left.trade.id.localeCompare(right.trade.id)
+      )
+      .map((entry) => buildTradeEntryNeighbor(entry.trade, entry.bestSimilarity, entry.score));
 
-    confidenceById.set(trade.id, clamp(confidence, 0.02, 0.98));
+    confidenceById.set(trade.id, normalizedConfidence);
+    aiEntrySnapshotById.set(trade.id, {
+      entryConfidence: normalizedConfidence,
+      confidence: normalizedConfidence,
+      entryMargin: normalizedConfidence,
+      margin: normalizedConfidence,
+      aiMode: activeAiMode,
+      closestClusterUid:
+        rankedNeighbors.length > 0
+          ? String(rankedNeighbors[0]?.metaUid ?? rankedNeighbors[0]?.uid ?? "").trim() || null
+          : null,
+      entryNeighbors: rankedNeighbors
+    });
   }
 
   return {
-    dateFilteredTrades,
-    libraryCandidateTrades: splitTrainingTrades,
-    timeFilteredTrades,
-    confidenceById
+    dateFilteredTrades: hydrateTradesWithSnapshots(dateFilteredTrades),
+    libraryCandidateTrades: hydrateTradesWithSnapshots(splitTrainingTrades),
+    timeFilteredTrades: hydrateTradesWithSnapshots(timeFilteredTrades),
+    confidenceById,
+    aiEntrySnapshotById
   };
 };
 
@@ -848,6 +1163,7 @@ const filterHistoryRows = (params: {
   sourceTrades: HistoryItem[];
   settings: BacktestFilterSettings;
   confidenceById: Map<string, number>;
+  aiEntrySnapshotById: Map<string, TradeAiEntrySnapshot>;
   confidenceGateDisabled: boolean;
   effectiveConfidenceThreshold: number;
 }) => {
@@ -855,6 +1171,7 @@ const filterHistoryRows = (params: {
     sourceTrades,
     settings,
     confidenceById,
+    aiEntrySnapshotById,
     confidenceGateDisabled,
     effectiveConfidenceThreshold
   } = params;
@@ -899,6 +1216,13 @@ const filterHistoryRows = (params: {
       const confidence = (confidenceById.get(trade.id) ?? getTradeConfidenceScore(trade)) * 100;
       return confidence >= effectiveConfidenceThreshold;
     })
+    .map((trade) =>
+      applyTradeAiEntrySnapshot(
+        trade,
+        aiEntrySnapshotById.get(trade.id),
+        settings.aiMode === "off" ? null : settings.aiMode
+      )
+    )
     .sort((a, b) => Number(b.exitTime) - Number(a.exitTime) || b.id.localeCompare(a.id));
 };
 
@@ -952,6 +1276,7 @@ export async function POST(request: Request) {
     sourceTrades: antiCheatBacktestContext.timeFilteredTrades,
     settings: panelBacktestFilterSettings,
     confidenceById: antiCheatBacktestContext.confidenceById,
+    aiEntrySnapshotById: antiCheatBacktestContext.aiEntrySnapshotById,
     confidenceGateDisabled: panelConfidenceGateDisabled,
     effectiveConfidenceThreshold: panelEffectiveConfidenceThreshold
   });
@@ -960,6 +1285,7 @@ export async function POST(request: Request) {
     sourceTrades: activePanelSourceTrades,
     settings: activePanelBacktestFilterSettings,
     confidenceById: antiCheatBacktestContext.confidenceById,
+    aiEntrySnapshotById: antiCheatBacktestContext.aiEntrySnapshotById,
     confidenceGateDisabled: activePanelConfidenceGateDisabled,
     effectiveConfidenceThreshold: activePanelEffectiveConfidenceThreshold
   });
