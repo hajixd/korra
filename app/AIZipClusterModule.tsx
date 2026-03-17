@@ -11553,6 +11553,118 @@ export function ClusterMap({
     return m;
   }, [nodes]);
 
+  const tradePayloadByKey = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const t of (trades as any[]) || []) {
+      if (!t) continue;
+      const keys = [
+        (t as any).uid,
+        (t as any).tradeUid,
+        (t as any).tradeId,
+        (t as any).id,
+        (t as any).metaOrigUid,
+        (t as any).metaOrigId,
+        (t as any).metaUid,
+        (t as any).metaTradeUid,
+      ];
+      for (const k of keys) {
+        if (k == null) continue;
+        const s = String(k).trim();
+        if (!s) continue;
+        if (!m.has(s)) m.set(s, t);
+      }
+    }
+    return m;
+  }, [trades]);
+
+  const pickNeighborPayload = React.useCallback((src: any): any[] | null => {
+    if (!src) return null;
+    const raw =
+      (src as any).entryNeighbors ??
+      (src as any).neighbors ??
+      (src as any).kNeighbors ??
+      null;
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+    return raw as any[];
+  }, []);
+
+  const resolveTradePayloadForNode = React.useCallback(
+    (node: any) => {
+      if (!node) return null;
+      const keys = [
+        (node as any).uid,
+        (node as any).tradeUid,
+        (node as any).tradeId,
+        (node as any).id,
+        (node as any).metaOrigUid,
+        (node as any).metaOrigId,
+        (node as any).metaUid,
+        (node as any).metaTradeUid,
+      ];
+      for (const k of keys) {
+        if (k == null) continue;
+        const s = String(k).trim();
+        if (!s) continue;
+        const directHit = tradePayloadByKey.get(s);
+        if (directHit) return directHit;
+      }
+
+      const uid =
+        (node as any).uid ??
+        (node as any).tradeUid ??
+        (node as any).metaOrigUid ??
+        (node as any).metaUid ??
+        null;
+      if (uid != null) {
+        const hit = (tradeNodeByUidAll as any).get(String(uid));
+        if (hit) return hit;
+      }
+
+      return null;
+    },
+    [tradePayloadByKey, tradeNodeByUidAll]
+  );
+
+  const resolveNodeNeighborPayload = React.useCallback(
+    (node: any): any[] => {
+      const direct = pickNeighborPayload(node);
+      if (direct) return direct;
+      const canonical = resolveTradePayloadForNode(node);
+      const fallback = pickNeighborPayload(canonical);
+      return fallback || [];
+    },
+    [pickNeighborPayload, resolveTradePayloadForNode]
+  );
+
+  const pickNeighborRawId = React.useCallback((nb: any): string => {
+    const tr = (nb as any)?.t ?? {};
+    const rawCandidates = [
+      (nb as any)?.targetId,
+      (nb as any)?.nodeId,
+      (nb as any)?.id,
+      (nb as any)?.metaId,
+      (nb as any)?.uid,
+      (nb as any)?.metaUid,
+      (nb as any)?.tradeUid,
+      (nb as any)?.metaTradeUid,
+      (nb as any)?.labelUid,
+      (nb as any)?.closestClusterUid,
+      (tr as any)?.id,
+      (tr as any)?.uid,
+      (tr as any)?.tradeUid,
+      (tr as any)?.tradeId,
+      (tr as any)?.metaUid,
+      (tr as any)?.metaTradeUid,
+      (tr as any)?.metaId,
+    ];
+    for (const raw of rawCandidates) {
+      if (raw == null) continue;
+      const s = String(raw).trim();
+      if (s) return s;
+    }
+    return "";
+  }, []);
+
   const viewNodes = useMemo(() => {
     // Apply the Cluster Map dropdown filters (Direction/Session/Month/Weekday/Hour) to the plotted nodes.
     // This was previously missing, which made the dropdowns appear "stuck".
@@ -14863,11 +14975,7 @@ export function ClusterMap({
       for (const n of src) {
         if (!n) continue;
         if (String((n as any).kind || "").toLowerCase() !== "trade") continue;
-        const nbsRaw =
-          (n as any)?.entryNeighbors ??
-          (n as any)?.neighbors ??
-          (n as any)?.kNeighbors ??
-          [];
+        const nbsRaw = resolveNodeNeighborPayload(n);
         if (!Array.isArray(nbsRaw) || nbsRaw.length === 0) continue;
 
         const nbs = nbsRaw.slice().sort((a: any, b: any) => {
@@ -14881,12 +14989,7 @@ export function ClusterMap({
         let mitRef: any = null;
         for (const nb of nbs as any[]) {
           if (!nb) continue;
-          const rawId =
-            (nb as any)?.id ??
-            (nb as any)?.uid ??
-            (nb as any)?.metaUid ??
-            (nb as any)?.metaId ??
-            null;
+          const rawId = pickNeighborRawId(nb);
           if (rawId == null || rawId === "") continue;
           const hit = nodeById.get(String(rawId)) ?? null;
           if (hit && isLibraryNode(hit)) {
@@ -15046,7 +15149,7 @@ export function ClusterMap({
     }
 
     return out;
-  }, [entryNeighborsOnly, timelineNodesCheat]);
+  }, [entryNeighborsOnly, timelineNodesCheat, resolveNodeNeighborPayload, pickNeighborRawId]);
 
   useEffect(() => {
     if (typeof onMitMap !== "function") return;
@@ -15178,11 +15281,7 @@ export function ClusterMap({
         (sourceId && nodeCoordById.get(sourceId)) ||
         nodeCoordsForClusterMapKnn(node, dim);
 
-      const nbsRaw =
-        (node as any)?.entryNeighbors ??
-        (node as any)?.neighbors ??
-        (node as any)?.kNeighbors ??
-        [];
+      const nbsRaw = resolveNodeNeighborPayload(node);
 
       const pickFromAlias = (token: string): string | null => {
         const ids = aliasToIds.get(token);
@@ -15543,6 +15642,7 @@ export function ClusterMap({
       entryNeighborsOnly,
       activeModSet,
       nodeChronologyValue,
+      resolveNodeNeighborPayload,
     ]
   );
 
@@ -19353,8 +19453,26 @@ export function ClusterMap({
                           (selectedNode as any)?.tradeId ??
                           ""
                       );
+                      const tradePayload =
+                        resolveTradePayloadForNode(selectedNode as any) || null;
                       const mitRef = key ? (mitMap as any).get(key) : null;
-                      return mitRef ? displayIdForNode(mitRef as any) : "—";
+                      if (mitRef) return displayIdForNode(mitRef as any);
+                      const rawMitId = String(
+                        (selectedNode as any)?.closestClusterUid ??
+                          (tradePayload as any)?.closestClusterUid ??
+                          pickNeighborRawId(
+                            resolveNodeNeighborPayload(selectedNode as any)?.[0]
+                          ) ??
+                          ""
+                      ).trim();
+                      if (!rawMitId) return "—";
+                      const rawMitRef =
+                        (nodeByIdAll as any).get(rawMitId) ??
+                        (nodeById as any).get(rawMitId) ??
+                        null;
+                      return rawMitRef
+                        ? displayIdForNode(rawMitRef as any)
+                        : displayIdFromRaw(rawMitId);
                     })()}
                   </div>
 
@@ -23920,6 +24038,120 @@ export default function App() {
     return m;
   }, [postHocTrades]);
 
+  const tradePayloadByKey = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const t of (trades as any[]) || []) {
+      if (!t) continue;
+      const keys = [
+        (t as any).uid,
+        (t as any).tradeUid,
+        (t as any).tradeId,
+        (t as any).id,
+        (t as any).metaOrigUid,
+        (t as any).metaOrigId,
+        (t as any).metaUid,
+        (t as any).metaTradeUid,
+      ];
+      for (const k of keys) {
+        if (k == null) continue;
+        const s = String(k).trim();
+        if (!s) continue;
+        if (!m.has(s)) m.set(s, t);
+      }
+    }
+    return m;
+  }, [trades]);
+
+  const pickNeighborPayload = React.useCallback((src: any): any[] | null => {
+    if (!src) return null;
+    const raw =
+      (src as any).entryNeighbors ??
+      (src as any).neighbors ??
+      (src as any).kNeighbors ??
+      null;
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+    return raw as any[];
+  }, []);
+
+  const resolveTradePayloadForNode = React.useCallback(
+    (node: any) => {
+      if (!node) return null;
+      const keys = [
+        (node as any).uid,
+        (node as any).tradeUid,
+        (node as any).tradeId,
+        (node as any).id,
+        (node as any).metaOrigUid,
+        (node as any).metaOrigId,
+        (node as any).metaUid,
+        (node as any).metaTradeUid,
+      ];
+      for (const k of keys) {
+        if (k == null) continue;
+        const s = String(k).trim();
+        if (!s) continue;
+        const directHit = tradePayloadByKey.get(s);
+        if (directHit) return directHit;
+        const postHocHit = postHocTradeByKey.get(s);
+        if (postHocHit) return postHocHit;
+      }
+
+      const uid =
+        (node as any).uid ??
+        (node as any).tradeUid ??
+        (node as any).metaOrigUid ??
+        (node as any).metaUid ??
+        null;
+      if (uid != null) {
+        const hit = (tradeNodeByUidAll as any).get(String(uid));
+        if (hit) return hit;
+      }
+
+      return null;
+    },
+    [tradePayloadByKey, postHocTradeByKey, tradeNodeByUidAll]
+  );
+
+  const resolveNodeNeighborPayload = React.useCallback(
+    (node: any): any[] => {
+      const direct = pickNeighborPayload(node);
+      if (direct) return direct;
+      const canonical = resolveTradePayloadForNode(node);
+      const fallback = pickNeighborPayload(canonical);
+      return fallback || [];
+    },
+    [pickNeighborPayload, resolveTradePayloadForNode]
+  );
+
+  const pickNeighborRawId = React.useCallback((nb: any): string => {
+    const tr = (nb as any)?.t ?? {};
+    const rawCandidates = [
+      (nb as any)?.targetId,
+      (nb as any)?.nodeId,
+      (nb as any)?.id,
+      (nb as any)?.metaId,
+      (nb as any)?.uid,
+      (nb as any)?.metaUid,
+      (nb as any)?.tradeUid,
+      (nb as any)?.metaTradeUid,
+      (nb as any)?.labelUid,
+      (nb as any)?.closestClusterUid,
+      (tr as any)?.id,
+      (tr as any)?.uid,
+      (tr as any)?.tradeUid,
+      (tr as any)?.tradeId,
+      (tr as any)?.metaUid,
+      (tr as any)?.metaTradeUid,
+      (tr as any)?.metaId,
+    ];
+    for (const raw of rawCandidates) {
+      if (raw == null) continue;
+      const s = String(raw).trim();
+      if (s) return s;
+    }
+    return "";
+  }, []);
+
   const applyAntiCheat = React.useCallback(
     (tradesList) => {
       if (!tradesList || tradesList.length === 0) return [];
@@ -24118,43 +24350,7 @@ export default function App() {
   const resolveNeighborConfidence = React.useCallback(
     (t: any) => {
       if (!t) return null;
-      const pickNeighbors = (src: any) => {
-        if (!src) return null;
-        const raw =
-          (src as any).entryNeighbors ??
-          (src as any).neighbors ??
-          (src as any).kNeighbors ??
-          null;
-        if (!Array.isArray(raw) || raw.length === 0) return null;
-        return raw as any[];
-      };
-
-      let raw: any[] | null = null;
-
-      if (aiMethod === "knn") {
-        const keys = [
-          (t as any).uid,
-          (t as any).tradeUid,
-          (t as any).tradeId,
-          (t as any).id,
-          (t as any).metaOrigUid,
-          (t as any).metaOrigId,
-          (t as any).metaUid,
-          (t as any).metaTradeUid,
-        ];
-        for (const k of keys) {
-          if (k == null) continue;
-          const s = String(k).trim();
-          if (!s) continue;
-          const hit = postHocTradeByKey.get(s);
-          if (!hit) continue;
-          raw = pickNeighbors(hit);
-          if (raw) break;
-        }
-      } else {
-        raw = pickNeighbors(t);
-      }
-
+      const raw = resolveNodeNeighborPayload(t);
       if (!Array.isArray(raw) || raw.length === 0) return null;
       const neighborK = Math.max(
         0,
@@ -24238,7 +24434,7 @@ export default function App() {
       if (win <= 0 && loss <= 0) return null;
       return clamp(win / (win + loss + AI_EPS), 0, 1);
     },
-    [aiMethod, postHocTradeByKey, kEntry]
+    [resolveNodeNeighborPayload, kEntry]
   );
   const effectiveTradeConfidence = React.useCallback(
     (t: any) => {

@@ -16682,6 +16682,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return {
         id: trade.id,
         uid: trade.id,
+        tradeUid: trade.id,
         kind: "trade",
         dir: trade.side === "Long" ? 1 : -1,
         direction: trade.side === "Long" ? 1 : -1,
@@ -16701,9 +16702,38 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         exitReason: getBacktestExitLabel(trade),
         entryPrice: trade.entryPrice,
         exitPrice: trade.outcomePrice,
+        entryConfidence:
+          (trade as any).entryConfidence ??
+          (trade as any).confidence ??
+          getEffectiveTradeConfidenceScore(trade),
+        aiConfidence: (trade as any).aiConfidence ?? null,
+        confidence:
+          (trade as any).confidence ??
+          (trade as any).entryConfidence ??
+          null,
+        entryMargin:
+          (trade as any).entryMargin ??
+          (trade as any).entryConfidence ??
+          (trade as any).confidence ??
+          null,
         margin: getEffectiveTradeConfidenceScore(trade),
         side: trade.side,
-        entryNeighbors: []
+        closestClusterUid: (trade as any).closestClusterUid ?? null,
+        entryNeighbors:
+          (trade as any).entryNeighbors ??
+          (trade as any).neighbors ??
+          (trade as any).kNeighbors ??
+          [],
+        neighbors:
+          (trade as any).neighbors ??
+          (trade as any).entryNeighbors ??
+          (trade as any).kNeighbors ??
+          [],
+        kNeighbors:
+          (trade as any).kNeighbors ??
+          (trade as any).entryNeighbors ??
+          (trade as any).neighbors ??
+          [],
       };
     });
   }, [
