@@ -15317,14 +15317,6 @@ export function ClusterMap({
             const rawFallback = pickRawId(nb);
             const hitNode =
               resolvedId != null ? (nodeByIdAll as any).get(resolvedId) : null;
-            if (entryNeighborsOnly) {
-              if (!resolvedId) return null;
-              if (!hitNode) return null;
-              const kind = String((hitNode as any)?.kind || "").toLowerCase();
-              const allowLive =
-                !!allowTradeNeighborFallback && kind === "trade";
-              if (kind !== "library" && !allowLive) return null;
-            }
             const tr = (nb as any)?.t ?? null;
             let displayId = hitNode
               ? displayIdForNode(hitNode)
@@ -15579,6 +15571,21 @@ export function ClusterMap({
   const resolveNonHdbConfidence = React.useCallback(
     (node: any, neighborConf: number | null) => {
       if (!node) return null;
+      const raw =
+        (node as any)?.entryConfidence ??
+        (node as any)?.aiConfidence ??
+        (node as any)?.confidence ??
+        (node as any)?.entryMargin ??
+        (node as any)?.aiMargin ??
+        (node as any)?.potentialMargin ??
+        (node as any)?.margin ??
+        null;
+      let v = raw === null || raw === undefined ? NaN : Number(raw);
+      if (Number.isFinite(v)) {
+        if (v > 1 && v <= 100) v = v / 100;
+        if (v >= -1 && v <= 1 && v < 0) v = (v + 1) / 2;
+        return clamp(Math.abs(v), 0, 1);
+      }
       return neighborConf ?? null;
     },
     []
@@ -21650,19 +21657,20 @@ export default function App() {
         seen.add(id);
         cleaned.push(id);
       }
-      const withCoreFirst = ["core", ...cleaned.filter((x) => x !== "core")];
-      setAiActiveLibraries(withCoreFirst);
+      const normalized =
+        cleaned.length === 1 && cleaned[0] === "core" ? [] : cleaned;
+      setAiActiveLibraries(normalized);
       const selRaw = (data as any).aiSelectedLibrary;
       if (typeof selRaw === "string") {
         const sel = String(selRaw);
-        setAiSelectedLibrary(withCoreFirst.includes(sel) ? sel : "core");
+        setAiSelectedLibrary(normalized.includes(sel) ? sel : normalized[0] || "");
       } else {
         setAiSelectedLibrary((prev: any) =>
-          withCoreFirst.includes(String(prev || "")) ? prev : "core"
+          normalized.includes(String(prev || "")) ? prev : normalized[0] || ""
         );
       }
     } else if (typeof (data as any).aiSelectedLibrary === "string") {
-      setAiSelectedLibrary(String((data as any).aiSelectedLibrary || "core"));
+      setAiSelectedLibrary(String((data as any).aiSelectedLibrary || ""));
     }
 
     if (
@@ -21837,9 +21845,9 @@ export default function App() {
     setEnabledHours({ ...DEFAULT_HOURS });
 
     // Reset library manager settings
-    setAiActiveLibraries(["core"]);
+    setAiActiveLibraries([]);
     setAiLibrarySettings({ ...DEFAULT_AI_LIBRARY_SETTINGS });
-    setAiSelectedLibrary("core");
+    setAiSelectedLibrary("");
     setAiBulkScope("active");
     setAiBulkWeight(100);
     setAiBulkStride(0);
@@ -22695,13 +22703,11 @@ export default function App() {
   const [modelsModalOpen, setModelsModalOpen] = useState(false);
   const [featuresModalOpen, setFeaturesModalOpen] = useState(false);
   const [methodSettingsOpen, setMethodSettingsOpen] = useState(false);
-  const [aiActiveLibraries, setAiActiveLibraries] = useState<string[]>([
-    "core",
-  ]);
+  const [aiActiveLibraries, setAiActiveLibraries] = useState<string[]>([]);
   const [aiLibrarySettings, setAiLibrarySettings] = useState<
     Record<string, any>
   >(() => ({ ...DEFAULT_AI_LIBRARY_SETTINGS }));
-  const [aiSelectedLibrary, setAiSelectedLibrary] = useState<string>("core");
+  const [aiSelectedLibrary, setAiSelectedLibrary] = useState<string>("");
   const [aiLibraryCounts, setAiLibraryCounts] = useState<
     Record<string, number>
   >({});
@@ -22813,14 +22819,14 @@ export default function App() {
       ) {
         return current;
       }
-      return filtered.length ? filtered : ["core"];
+      return filtered;
     });
   }, []);
 
   useEffect(() => {
     // Keep selected library valid.
     if (!aiActiveLibraries.includes(aiSelectedLibrary)) {
-      setAiSelectedLibrary(aiActiveLibraries[0] || "core");
+      setAiSelectedLibrary(aiActiveLibraries[0] || "");
     }
   }, [aiActiveLibraries, aiSelectedLibrary]);
 

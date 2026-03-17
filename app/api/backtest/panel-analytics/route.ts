@@ -545,7 +545,7 @@ const computeAntiCheatBacktestContext = (params: {
   const activeLibraryIds =
     panelBacktestFilterSettings.selectedAiLibraries.length > 0
       ? panelBacktestFilterSettings.selectedAiLibraries
-      : ["core"];
+      : [];
   const timeFilteredTrades = splitEvaluationTrades;
 
   const getLibrarySettings = (libraryId: string) => {

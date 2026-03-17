@@ -7535,6 +7535,34 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return accumulator;
     }, {});
   }, [aiLibraryDefs]);
+  const normalizeSelectedAiLibraries = useCallback((value: unknown): string[] => {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const seen = new Set<string>();
+    const cleaned: string[] = [];
+
+    for (const libraryId of value) {
+      const id = String(libraryId ?? "").trim();
+
+      if (id.length === 0 || !aiLibraryDefById[id] || seen.has(id)) {
+        continue;
+      }
+
+      seen.add(id);
+      cleaned.push(id);
+    }
+
+    const isLegacyDefault =
+      cleaned.length === 3 &&
+      cleaned[0] === "core" &&
+      cleaned[1] === "recent" &&
+      cleaned[2] === "base";
+    const isLegacyCoreOnly = cleaned.length === 1 && cleaned[0] === "core";
+
+    return isLegacyDefault || isLegacyCoreOnly ? [] : cleaned;
+  }, [aiLibraryDefById]);
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
   const [selectedBacktestTimeframe, setSelectedBacktestTimeframe] = useState<Timeframe>("15m");
@@ -7679,12 +7707,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [aiFeatureModes, setAiFeatureModes] = useState<Record<string, AiFeatureMode>>(() => {
     return buildInitialAiFeatureModes();
   });
-  const [selectedAiLibraries, setSelectedAiLibraries] = useState<string[]>([
-    "core",
-    "recent",
-    "base"
-  ]);
-  const [selectedAiLibraryId, setSelectedAiLibraryId] = useState("core");
+  const [selectedAiLibraries, setSelectedAiLibraries] = useState<string[]>([]);
+  const [selectedAiLibraryId, setSelectedAiLibraryId] = useState("");
   const [selectedAiLibrarySettings, setSelectedAiLibrarySettings] = useState<AiLibrarySettings>(() => {
     return buildDefaultAiLibrarySettings(aiLibraryDefs);
   });
@@ -8999,7 +9023,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         return current;
       }
 
-      return filtered.length > 0 ? filtered : ["core"];
+      return filtered;
     });
   }, [aiLibraryDefById]);
 
@@ -12102,9 +12126,27 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (s.aiModelStates != null) setAiModelStates(s.aiModelStates);
     if (s.aiFeatureLevels != null) setAiFeatureLevels(s.aiFeatureLevels);
     if (s.aiFeatureModes != null) setAiFeatureModes(s.aiFeatureModes);
-    if (s.selectedAiLibraries != null) setSelectedAiLibraries(s.selectedAiLibraries);
+    const nextSelectedAiLibraries =
+      s.selectedAiLibraries != null
+        ? normalizeSelectedAiLibraries(s.selectedAiLibraries)
+        : null;
+    if (nextSelectedAiLibraries != null) {
+      setSelectedAiLibraries(nextSelectedAiLibraries);
+    }
     if (s.selectedAiLibrarySettings != null) setSelectedAiLibrarySettings(s.selectedAiLibrarySettings);
-    if (s.selectedAiLibraryId != null) setSelectedAiLibraryId(s.selectedAiLibraryId);
+    if (nextSelectedAiLibraries != null) {
+      setSelectedAiLibraryId((current) => {
+        const rawId =
+          s.selectedAiLibraryId != null
+            ? String(s.selectedAiLibraryId ?? "")
+            : String(current ?? "");
+        return nextSelectedAiLibraries.includes(rawId)
+          ? rawId
+          : nextSelectedAiLibraries[0] ?? "";
+      });
+    } else if (s.selectedAiLibraryId != null) {
+      setSelectedAiLibraryId(String(s.selectedAiLibraryId ?? ""));
+    }
     if (s.aiBulkScope != null) setAiBulkScope(s.aiBulkScope);
     if (s.aiBulkWeight != null) setAiBulkWeight(s.aiBulkWeight);
     if (s.aiBulkStride != null) setAiBulkStride(s.aiBulkStride);
@@ -12132,7 +12174,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (isBacktestDatePreset(s.statsDatePreset)) setStatsDatePreset(s.statsDatePreset);
     if (s.statsDateStart != null) setStatsDateStart(s.statsDateStart);
     if (s.statsDateEnd != null) setStatsDateEnd(s.statsDateEnd);
-  }, []);
+  }, [normalizeSelectedAiLibraries]);
 
   useEffect(() => {
     try {
@@ -12233,8 +12275,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setAiModelStates(buildInitialAiModelStates(settingsModelNames));
     setAiFeatureLevels(buildInitialAiFeatureLevels());
     setAiFeatureModes(buildInitialAiFeatureModes());
-    setSelectedAiLibraries(["core", "recent", "base"]);
-    setSelectedAiLibraryId("core");
+    setSelectedAiLibraries([]);
+    setSelectedAiLibraryId("");
     setSelectedAiLibrarySettings(buildDefaultAiLibrarySettings(aiLibraryDefs));
     setAiBulkScope("active");
     setAiBulkWeight(100);
@@ -15268,9 +15310,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const sourceIds =
         options?.libraryIds && options.libraryIds.length > 0
           ? options.libraryIds
-          : selectedAiLibraries.length > 0
-          ? selectedAiLibraries
-          : ["core"];
+          : selectedAiLibraries;
       const activeIds = sourceIds.filter((libraryId) => Boolean(aiLibraryDefById[libraryId]));
 
       if (activeIds.length === 0) {
