@@ -11207,10 +11207,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const shouldComputePanelAnalyticsOnServer =
     (panelSourceTrades.length > 0 || activePanelSourceTrades.length > 0) &&
     (
-      (panelBacktestFilterSettings.aiMode !== "off" &&
-        panelBacktestFilterSettings.antiCheatEnabled) ||
-      (activePanelBacktestFilterSettings.aiMode !== "off" &&
-        activePanelBacktestFilterSettings.antiCheatEnabled)
+      panelBacktestFilterSettings.aiMode !== "off" ||
+      activePanelBacktestFilterSettings.aiMode !== "off"
     );
   const aiLibraryDefaultsById = useMemo(() => {
     const next: Record<string, Record<string, AiLibrarySettingValue>> = {};
@@ -14517,6 +14515,81 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     () => backtestTimeFilteredTrades,
     [backtestTimeFilteredTrades]
   );
+  const backtestSourceDiagnosticsKeyRef = useRef("");
+  useEffect(() => {
+    if (!isClusterBacktestTabActive || appliedBacktestSettings.aiMode === "off") {
+      return;
+    }
+
+    const trades = panelAnalyticsData.timeFilteredTrades;
+    const tradesWithEntryNeighbors = trades.reduce((count, trade) => {
+      return count + (Array.isArray((trade as any).entryNeighbors) && (trade as any).entryNeighbors.length > 0 ? 1 : 0);
+    }, 0);
+    const tradesWithClosestClusterUid = trades.reduce((count, trade) => {
+      return count + (String((trade as any).closestClusterUid ?? "").trim() ? 1 : 0);
+    }, 0);
+    const codes: string[] = [];
+
+    if (!shouldComputePanelAnalyticsOnServer) {
+      codes.push("PANEL_ANALYTICS_SKIPPED");
+    } else if (panelAnalyticsStatus === "error") {
+      codes.push("PANEL_ANALYTICS_SERVER_ERROR");
+    } else if (panelAnalyticsStatus === "ready" && trades.length > 0) {
+      if (tradesWithEntryNeighbors === 0) {
+        codes.push("PANEL_ANALYTICS_READY_BUT_NO_ENTRY_NEIGHBORS");
+      }
+      if (tradesWithClosestClusterUid === 0) {
+        codes.push("PANEL_ANALYTICS_READY_BUT_NO_CLOSEST_CLUSTER_UID");
+      }
+    }
+
+    if (codes.length === 0) {
+      return;
+    }
+
+    const summary = {
+      aiMode: appliedBacktestSettings.aiMode,
+      antiCheatEnabled: appliedBacktestSettings.antiCheatEnabled,
+      selectedAiLibraries: [...appliedBacktestSettings.selectedAiLibraries],
+      shouldComputePanelAnalyticsOnServer,
+      panelAnalyticsStatus,
+      panelSourceTrades: panelSourceTrades.length,
+      activePanelSourceTrades: activePanelSourceTrades.length,
+      timeFilteredTrades: trades.length,
+      tradesWithEntryNeighbors,
+      tradesWithClosestClusterUid
+    };
+    const key = JSON.stringify({
+      codes,
+      panelAnalyticsStatus,
+      shouldComputePanelAnalyticsOnServer,
+      panelSourceTrades: panelSourceTrades.length,
+      activePanelSourceTrades: activePanelSourceTrades.length,
+      timeFilteredTrades: trades.length,
+      tradesWithEntryNeighbors,
+      tradesWithClosestClusterUid
+    });
+
+    if (backtestSourceDiagnosticsKeyRef.current === key) {
+      return;
+    }
+    backtestSourceDiagnosticsKeyRef.current = key;
+
+    console.error(
+      `[AIZip][BacktestSourceDiagnostics] ${codes.join(", ")}`,
+      summary
+    );
+  }, [
+    activePanelSourceTrades.length,
+    appliedBacktestSettings.aiMode,
+    appliedBacktestSettings.antiCheatEnabled,
+    appliedBacktestSettings.selectedAiLibraries,
+    isClusterBacktestTabActive,
+    panelAnalyticsData.timeFilteredTrades,
+    panelAnalyticsStatus,
+    panelSourceTrades.length,
+    shouldComputePanelAnalyticsOnServer
+  ]);
   const backtestAnalyticsConfidenceEntries = useMemo(
     () =>
       shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus === "ready"

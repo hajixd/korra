@@ -766,7 +766,6 @@ const computeAntiCheatBacktestContext = (params: {
 
   if (
     panelBacktestFilterSettings.aiMode === "off" ||
-    !panelBacktestFilterSettings.antiCheatEnabled ||
     chronologicalTrades.length === 0
   ) {
     return {
