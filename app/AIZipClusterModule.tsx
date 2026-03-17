@@ -15064,8 +15064,12 @@ export function ClusterMap({
     selectionDiagnosticKeyRef.current = signature;
 
     const selectedDisplayId = displayIdForNode(selectedNode as any);
-    console.groupCollapsed(
-      `[AIZip][SelectionDiagnostics] ${selectedDisplayId || selectedId}`
+    const selectionLabel = selectedDisplayId || String(selectedId);
+    console.error(
+      `[AIZip][SelectionDiagnostics] ${selectionLabel} :: ${codes.join(", ")}`
+    );
+    console.group(
+      `[AIZip][SelectionDiagnostics][details] ${selectionLabel}`
     );
     console.warn("codes", codes);
     console.log("selectedNodeSummary", {
@@ -24502,7 +24506,10 @@ export default function App() {
               ) {
                 diagnosticCodes.push("AI_LIBRARIES_EMPTY");
               }
-              console.groupCollapsed("[AIZip][WorkerPayloadDiagnostics]");
+              console.error(
+                `[AIZip][WorkerPayloadDiagnostics] ${diagnosticCodes.join(", ")}`
+              );
+              console.group("[AIZip][WorkerPayloadDiagnostics][details]");
               console.warn("codes", diagnosticCodes);
               console.log("summary", entryPayloadSummary);
               console.log("aiMethod", aiMethod);
