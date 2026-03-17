@@ -8853,6 +8853,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [aiFeatureLevels, aiFeatureModes, chunkBars]);
   const onlineLearningEnabled = selectedAiLibraries.includes("core");
   const ghostLearningEnabled = selectedAiLibraries.includes("suppressed");
+  const canRunAiLibraries = useCallback(
+    (libraryIds: readonly string[] | null | undefined) => {
+      const ids = Array.isArray(libraryIds) ? libraryIds : [];
+      if (ids.some((libraryId) => isBaseSeedingLibraryId(String(libraryId)))) {
+        return true;
+      }
+      return selectedAiModelCount > 0;
+    },
+    [selectedAiModelCount]
+  );
+  const aiLibraryReadyToRun = useMemo(() => {
+    return canRunAiLibraries(selectedAiLibraries);
+  }, [canRunAiLibraries, selectedAiLibraries]);
+  const appliedAiLibraryReadyToRun = useMemo(() => {
+    return canRunAiLibraries(appliedBacktestSettings.selectedAiLibraries ?? []);
+  }, [appliedBacktestSettings.selectedAiLibraries, canRunAiLibraries]);
   const visibleAiLibraries = useMemo(
     () =>
       selectedAiLibraries.filter(
@@ -14889,8 +14905,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       // Copy-trade hydration is additive only; ignore storage failures.
     }
   }, [copytradeDashboardSeed]);
-  const aiLibraryReadyToRun = selectedAiModelCount > 0;
-
   const resolveLibrarySettingsSnapshot = useCallback(
     (definition: AiLibraryDef, source?: AiLibrarySettings) => {
       const settingsSource = source ?? selectedAiLibrarySettings;
@@ -15768,7 +15782,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         [libraryId]: "loading"
       }));
 
-      if (!aiLibraryReadyToRun) {
+      if (!canRunAiLibraries([definition.id])) {
         setAiLibraryRunStatus((current) => ({
           ...current,
           [libraryId]: "idle"
@@ -15849,7 +15863,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     },
     [
       aiLibraryDefById,
-      aiLibraryReadyToRun,
+      canRunAiLibraries,
       buildLibraryExecutedTradeIds,
       buildLibrarySnapshotFromPool,
       filterLibraryCandidatePool,
@@ -15891,7 +15905,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       setAiLibraryRunStatus((current) => ({ ...current, ...nextStatus }));
 
-      if (!aiLibraryReadyToRun) {
+      if (!canRunAiLibraries(activeIds)) {
         setAiLibraryRunStatus((current) => {
           const updated = { ...current };
           for (const libraryId of activeIds) {
@@ -16029,7 +16043,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     },
     [
       aiLibraryDefById,
-      aiLibraryReadyToRun,
+      canRunAiLibraries,
       buildLibraryExecutedTradeIds,
       buildSeedLibraryPoolKey,
       buildLibraryPoolKey,
@@ -16051,7 +16065,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [runAllActiveLibraries]);
 
   useEffect(() => {
-    if (!aiLibraryReadyToRun) {
+    if (!appliedAiLibraryReadyToRun) {
       return;
     }
 
@@ -16061,7 +16075,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       backtestSettings: appliedBacktestSettings
     });
   }, [
-    aiLibraryReadyToRun,
+    appliedAiLibraryReadyToRun,
     appliedBacktestSettings.selectedAiLibraries,
     appliedBacktestSettings.selectedAiLibrarySettings,
     backtestRunCount
@@ -16101,6 +16115,74 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
     return filtered;
   }, [aiClusterActiveLibraryIdSet, aiLibraryCounts]);
+  const aiLibraryDiagnosticsKeyRef = useRef<string>("");
+  useEffect(() => {
+    const appliedLibraryIds = (appliedBacktestSettings.selectedAiLibraries ?? []).map(
+      (libraryId) => String(libraryId).trim()
+    ).filter(Boolean);
+    if (appliedLibraryIds.length === 0) {
+      aiLibraryDiagnosticsKeyRef.current = "";
+      return;
+    }
+
+    const totalAppliedCount = appliedLibraryIds.reduce((sum, libraryId) => {
+      return sum + Math.max(0, Number(aiLibraryCounts[libraryId] ?? 0));
+    }, 0);
+    const pointCount = Array.isArray(aiClusterLibraryPoints)
+      ? aiClusterLibraryPoints.length
+      : 0;
+    const statuses = appliedLibraryIds.reduce<Record<string, AiLibraryRunStatus>>(
+      (accumulator, libraryId) => {
+        accumulator[libraryId] = aiLibraryRunStatus[libraryId] ?? "idle";
+        return accumulator;
+      },
+      {}
+    );
+
+    const codes: string[] = [];
+    if (!appliedAiLibraryReadyToRun) {
+      codes.push("APPLIED_LIBRARIES_BLOCKED_BY_READINESS_GATE");
+    }
+    if (appliedAiLibraryReadyToRun && totalAppliedCount === 0) {
+      codes.push("APPLIED_LIBRARIES_PRODUCED_ZERO_COUNTS");
+    }
+    if (appliedAiLibraryReadyToRun && pointCount === 0) {
+      codes.push("APPLIED_LIBRARIES_PRODUCED_ZERO_POINTS");
+    }
+    if (appliedLibraryIds.some((libraryId) => statuses[libraryId] === "error")) {
+      codes.push("APPLIED_LIBRARY_RUN_ERROR");
+    }
+    if (codes.length === 0) return;
+
+    const signature = JSON.stringify({
+      codes,
+      appliedLibraryIds,
+      totalAppliedCount,
+      pointCount,
+      statuses,
+    });
+    if (aiLibraryDiagnosticsKeyRef.current === signature) return;
+    aiLibraryDiagnosticsKeyRef.current = signature;
+
+    console.error(
+      `[AIZip][AiLibraryDiagnostics] ${codes.join(", ")}`,
+      {
+        appliedLibraryIds,
+        selectedAiModelCount,
+        appliedAiLibraryReadyToRun,
+        totalAppliedCount,
+        pointCount,
+        statuses,
+      }
+    );
+  }, [
+    aiClusterLibraryPoints,
+    aiLibraryCounts,
+    aiLibraryRunStatus,
+    appliedAiLibraryReadyToRun,
+    appliedBacktestSettings.selectedAiLibraries,
+    selectedAiModelCount,
+  ]);
   const selectedAiLibraryConfig: Record<string, AiLibrarySettingValue> | null = selectedAiLibrary
     ? ({
         ...selectedAiLibrary.defaults,
