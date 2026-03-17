@@ -2264,6 +2264,7 @@ type AiValidationMode = "off" | "split" | "online" | "synthetic";
 type AiDistanceMetric = "euclidean" | "cosine" | "manhattan" | "chebyshev";
 type AiCompressionMethod = "pca" | "jl" | "hash" | "variance" | "subsample";
 type KnnVoteMode = "distance" | "majority";
+type KnnNeighborSpace = "high" | "post" | "3d" | "2d";
 
 type AiModelState = 0 | 1 | 2;
 type AiFeatureLevel = 0 | 1 | 2 | 3 | 4;
@@ -2374,6 +2375,8 @@ type BacktestSettingsSnapshot = {
   selectedAiLibraries: string[];
   selectedAiLibrarySettings: AiLibrarySettings;
   chunkBars: number;
+  distanceMetric: AiDistanceMetric;
+  knnNeighborSpace: KnnNeighborSpace;
   selectedAiDomains: string[];
   dimensionAmount: number;
   compressionMethod: AiCompressionMethod;
@@ -2400,6 +2403,8 @@ type BacktestFilterSettings = Pick<
   | "validationMode"
   | "selectedAiLibraries"
   | "selectedAiLibrarySettings"
+  | "distanceMetric"
+  | "knnNeighborSpace"
 >;
 
 type AiSettingsModalProps = {
@@ -3289,6 +3294,15 @@ const AI_DOMAIN_OPTIONS = [
   "Weekday",
   "Hour"
 ] as const;
+const KNN_NEIGHBOR_SPACE_OPTIONS: Array<{
+  value: KnnNeighborSpace;
+  label: string;
+}> = [
+  { value: "high", label: "High Dimensional Space" },
+  { value: "post", label: "Post-Compressed Space" },
+  { value: "3d", label: "3 Dimensions" },
+  { value: "2d", label: "2 Dimensions" }
+];
 
 const AI_VALIDATION_ORDER: AiValidationMode[] = ["off", "split", "online", "synthetic"];
 const AI_VALIDATION_LABELS: Record<AiValidationMode, string> = {
@@ -7537,6 +7551,8 @@ const doesBacktestHistoryGenerationInputChange = (
   if (previous.trailingDistPct !== next.trailingDistPct) return true;
   if (previous.maxBarsInTrade !== next.maxBarsInTrade) return true;
   if (previous.maxConcurrentTrades !== next.maxConcurrentTrades) return true;
+  if (previous.distanceMetric !== next.distanceMetric) return true;
+  if (previous.knnNeighborSpace !== next.knnNeighborSpace) return true;
   if (previous.kEntry !== next.kEntry) return true;
   if (previous.kExit !== next.kExit) return true;
   if (previous.knnVoteMode !== next.knnVoteMode) return true;
@@ -7859,6 +7875,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [aiBulkMaxSamples, setAiBulkMaxSamples] = useState(10000);
   const [chunkBars, setChunkBars] = useState(24);
   const [distanceMetric, setDistanceMetric] = useState<AiDistanceMetric>("euclidean");
+  const [knnNeighborSpace, setKnnNeighborSpace] = useState<KnnNeighborSpace>("post");
   const [selectedAiDomains, setSelectedAiDomains] = useState<string[]>([
     "Direction",
     "Model"
@@ -7966,6 +7983,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     selectedAiLibraries: [...selectedAiLibraries],
     selectedAiLibrarySettings: cloneAiLibrarySettings(selectedAiLibrarySettings),
     chunkBars,
+    distanceMetric,
+    knnNeighborSpace,
     selectedAiDomains: [...selectedAiDomains],
     dimensionAmount,
     compressionMethod,
@@ -8781,15 +8800,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return countConfiguredAiFeatureDimensions(aiFeatureLevels, aiFeatureModes, chunkBars);
   }, [aiFeatureLevels, aiFeatureModes, chunkBars]);
   const onlineLearningEnabled = selectedAiLibraries.includes("core");
+  const ghostLearningEnabled = selectedAiLibraries.includes("suppressed");
   const visibleAiLibraries = useMemo(
-    () => selectedAiLibraries.filter((libraryId) => libraryId !== "core"),
+    () =>
+      selectedAiLibraries.filter(
+        (libraryId) => libraryId !== "core" && libraryId !== "suppressed"
+      ),
     [selectedAiLibraries]
   );
   const selectedAiLibraryCount = visibleAiLibraries.length;
   const availableAiLibraries = useMemo(() => {
     return aiLibraryDefs.filter(
       (library) =>
-        library.id !== "core" && !selectedAiLibraries.includes(library.id)
+        library.id !== "core" &&
+        library.id !== "suppressed" &&
+        !selectedAiLibraries.includes(library.id)
     );
   }, [aiLibraryDefs, selectedAiLibraries]);
   const modelsSurfaceCatalog = useMemo(() => {
@@ -9062,7 +9087,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const removeAiLibrary = (libraryId: string) => {
     setSelectedAiLibraries((current) => {
       const next = current.filter((id) => id !== libraryId);
-      const nextVisible = next.filter((id) => id !== "core");
+      const nextVisible = next.filter(
+        (id) => id !== "core" && id !== "suppressed"
+      );
       setSelectedAiLibraryId((selectedId) =>
         selectedId !== libraryId ? selectedId : nextVisible[0] ?? ""
       );
@@ -9078,6 +9105,26 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
       const filtered = current.filter((id) => id !== "core");
       return ["core", ...filtered];
+    });
+  }, []);
+
+  const toggleGhostLearning = useCallback(() => {
+    setSelectedAiLibraries((current) => {
+      const hasGhost = current.includes("suppressed");
+      if (hasGhost) {
+        return current.filter((id) => id !== "suppressed");
+      }
+
+      const withoutGhost = current.filter((id) => id !== "suppressed");
+      const coreIndex = withoutGhost.indexOf("core");
+
+      if (coreIndex >= 0) {
+        const next = [...withoutGhost];
+        next.splice(coreIndex + 1, 0, "suppressed");
+        return next;
+      }
+
+      return ["suppressed", ...withoutGhost];
     });
   }, []);
 
@@ -10992,15 +11039,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       antiCheatEnabled,
       validationMode,
       selectedAiLibraries: [...selectedAiLibraries],
-      selectedAiLibrarySettings: cloneAiLibrarySettings(selectedAiLibrarySettings)
+      selectedAiLibrarySettings: cloneAiLibrarySettings(selectedAiLibrarySettings),
+      distanceMetric,
+      knnNeighborSpace
     }),
     [
       antiCheatEnabled,
       aiMode,
+      distanceMetric,
       enabledBacktestHours,
       enabledBacktestMonths,
       enabledBacktestSessions,
       enabledBacktestWeekdays,
+      knnNeighborSpace,
       selectedAiLibraries,
       selectedAiLibrarySettings,
       statsDateEnd,
@@ -12168,6 +12219,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     aiBulkMaxSamples,
     chunkBars,
     distanceMetric,
+    knnNeighborSpace,
     selectedAiDomains,
     dimensionAmount,
     compressionMethod,
@@ -12198,7 +12250,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     dollarsPerMove, maxBarsInTrade, maxConcurrentTrades, stopMode, breakEvenTriggerPct, trailingStartPct,
     trailingDistPct, aiModelStates, aiFeatureLevels, aiFeatureModes,
     selectedAiLibraries, selectedAiLibrarySettings, selectedAiLibraryId, aiBulkScope,
-    aiBulkWeight, aiBulkStride, aiBulkMaxSamples, chunkBars, distanceMetric,
+    aiBulkWeight, aiBulkStride, aiBulkMaxSamples, chunkBars, distanceMetric, knnNeighborSpace,
     selectedAiDomains, dimensionAmount, compressionMethod,
     kEntry, kExit, knnVoteMode, hdbMinClusterSize, hdbMinSamples, hdbEpsQuantile,
     hdbSampleCap, antiCheatEnabled, validationMode, realismLevel, propInitialBalance,
@@ -12280,6 +12332,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (s.aiBulkMaxSamples != null) setAiBulkMaxSamples(s.aiBulkMaxSamples);
     if (s.chunkBars != null) setChunkBars(s.chunkBars);
     if (s.distanceMetric != null) setDistanceMetric(s.distanceMetric);
+    if (s.knnNeighborSpace != null) setKnnNeighborSpace(s.knnNeighborSpace);
     if (s.selectedAiDomains != null) setSelectedAiDomains(s.selectedAiDomains);
     if (s.dimensionAmount != null) setDimensionAmount(s.dimensionAmount);
     if (s.compressionMethod != null) setCompressionMethod(s.compressionMethod);
@@ -12411,6 +12464,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setAiBulkMaxSamples(10000);
     setChunkBars(24);
     setDistanceMetric("euclidean");
+    setKnnNeighborSpace("post");
     setSelectedAiDomains(["Direction", "Model"]);
     setDimensionAmount(32);
     setCompressionMethod("jl");
@@ -20051,6 +20105,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           <button
                             type="button"
                             className={`ai-zip-button toggle ${
+                              staticLibrariesClusters ? "active success" : ""
+                            }`}
+                            disabled={aiDisabled}
+                            onClick={() => setStaticLibrariesClusters((value) => !value)}
+                          >
+                            Static Libraries {staticLibrariesClusters ? "· ON" : "· OFF"}
+                          </button>
+                          <button
+                            type="button"
+                            className={`ai-zip-button toggle ${
                               onlineLearningEnabled ? "active success" : ""
                             }`}
                             disabled={aiDisabled}
@@ -20061,12 +20125,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           <button
                             type="button"
                             className={`ai-zip-button toggle ${
-                              staticLibrariesClusters ? "active success" : ""
+                              ghostLearningEnabled ? "active success" : ""
                             }`}
                             disabled={aiDisabled}
-                            onClick={() => setStaticLibrariesClusters((value) => !value)}
+                            onClick={toggleGhostLearning}
                           >
-                            Static Library &amp; Clusters {staticLibrariesClusters ? "· ON" : "· OFF"}
+                            Ghost Learning {ghostLearningEnabled ? "· ON" : "· OFF"}
                           </button>
                         </div>
 
@@ -20113,6 +20177,25 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <div className="backtest-card" style={{ padding: "0.85rem" }}>
                       <div className="ai-zip-section-title">Dimensionality</div>
                       <div style={{ display: "grid", gap: "0.55rem" }}>
+                        <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
+                          <div className="ai-zip-label">Neighbor Calculation Space</div>
+                          <div className="ai-zip-toggle-grid tiles compact">
+                            {KNN_NEIGHBOR_SPACE_OPTIONS.map((option) => (
+                              <button
+                                key={option.value}
+                                type="button"
+                                className={`ai-zip-button pill ${
+                                  knnNeighborSpace === option.value ? "active" : ""
+                                }`}
+                                disabled={aiDisabled}
+                                onClick={() => setKnnNeighborSpace(option.value)}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
                         <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
                           <span className="ai-zip-label">Distance Metric</span>
                           <select
@@ -21770,6 +21853,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       onMitMap={() => {}}
                       aiMethod={appliedBacktestSettings.aiMode}
                       aiDomains={appliedBacktestSettings.selectedAiDomains}
+                      knnNeighborSpace={appliedBacktestSettings.knnNeighborSpace}
+                      distanceMetric={appliedBacktestSettings.distanceMetric}
                       kEntry={appliedBacktestSettings.kEntry}
                       knnVoteMode={appliedBacktestSettings.knnVoteMode}
                       allowTradeNeighborFallback={appliedBacktestSettings.selectedAiLibraries.includes("core")}
