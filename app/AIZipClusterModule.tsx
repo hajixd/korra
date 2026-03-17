@@ -11197,12 +11197,61 @@ export function ClusterMap({
     return m;
   }, [nodes]);
 
+  const tradeSourceByKey = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const t of (trades as any[]) || []) {
+      if (!t) continue;
+      const keys = [
+        (t as any).uid,
+        (t as any).tradeUid,
+        (t as any).tradeId,
+        (t as any).id,
+        (t as any).metaOrigUid,
+        (t as any).metaOrigId,
+        (t as any).metaUid,
+        (t as any).metaTradeUid,
+      ];
+      for (const key of keys) {
+        if (key == null) continue;
+        const s = String(key).trim();
+        if (!s || m.has(s)) continue;
+        m.set(s, t);
+      }
+    }
+    return m;
+  }, [trades]);
+
   const pickNeighborPayload = React.useCallback((src: any): any[] | null => {
     if (!src) return null;
     const raw = (src as any).entryNeighbors ?? null;
     if (!Array.isArray(raw) || raw.length === 0) return null;
     return raw as any[];
   }, []);
+
+  const resolveSourceTradeForNode = React.useCallback(
+    (node: any) => {
+      if (!node) return null;
+      const keys = [
+        (node as any).uid,
+        (node as any).tradeUid,
+        (node as any).tradeId,
+        (node as any).id,
+        (node as any).metaOrigUid,
+        (node as any).metaOrigId,
+        (node as any).metaUid,
+        (node as any).metaTradeUid,
+      ];
+      for (const key of keys) {
+        if (key == null) continue;
+        const s = String(key).trim();
+        if (!s) continue;
+        const hit = tradeSourceByKey.get(s);
+        if (hit) return hit;
+      }
+      return null;
+    },
+    [tradeSourceByKey]
+  );
 
   const viewNodes = useMemo(() => {
     // Apply the Cluster Map dropdown filters (Direction/Session/Month/Weekday/Hour) to the plotted nodes.
@@ -14922,6 +14971,158 @@ export function ClusterMap({
     () => computeNeighborConfidence(selectedNeighborList),
     [computeNeighborConfidence, selectedNeighborList]
   );
+
+  const selectionDiagnosticKeyRef = useRef("");
+
+  useEffect(() => {
+    if (!selectedNode) return;
+
+    const kind = String((selectedNode as any)?.kind || "").toLowerCase();
+    const isSuppressedLibrary =
+      kind === "library" &&
+      (!!(selectedNode as any)?.suppressed ||
+        !!(selectedNode as any)?.metaSuppressed ||
+        String(
+          (selectedNode as any)?.libId ??
+            (selectedNode as any)?.metaLib ??
+            (selectedNode as any)?.library ??
+            (selectedNode as any)?.metaLibrary ??
+            ""
+        )
+          .toLowerCase()
+          .trim() === "suppressed");
+    if (kind !== "trade" && !isSuppressedLibrary) return;
+
+    const sourceTrade = resolveSourceTradeForNode(selectedNode);
+    const nodeNeighbors = Array.isArray((selectedNode as any)?.entryNeighbors)
+      ? ((selectedNode as any).entryNeighbors as any[])
+      : [];
+    const sourceNeighbors = Array.isArray((sourceTrade as any)?.entryNeighbors)
+      ? (((sourceTrade as any).entryNeighbors as any[]) || [])
+      : [];
+    const countNeighborIds = (rows: any[]) =>
+      rows.filter((row) => {
+        const rawCandidates = [
+          (row as any)?.id,
+          (row as any)?.uid,
+          (row as any)?.metaUid,
+          (row as any)?.metaId,
+          (row as any)?.tradeUid,
+          (row as any)?.metaTradeUid,
+          (row as any)?.labelUid,
+        ];
+        return rawCandidates.some((raw) => {
+          if (raw == null) return false;
+          return String(raw).trim().length > 0;
+        });
+      }).length;
+
+    const nodeMitUid = String(
+      (selectedNode as any)?.closestClusterUid ?? ""
+    ).trim();
+    const sourceMitUid = String(
+      (sourceTrade as any)?.closestClusterUid ?? ""
+    ).trim();
+    const effectiveMitUid = nodeMitUid || sourceMitUid;
+    const resolvedMitNode = effectiveMitUid
+      ? (nodeByIdAll as any).get(effectiveMitUid) ??
+        (nodeById as any).get(effectiveMitUid) ??
+        null
+      : null;
+
+    const codes: string[] = [];
+    if (!sourceTrade) codes.push("SOURCE_TRADE_NOT_FOUND");
+    if (sourceTrade && sourceNeighbors.length === 0)
+      codes.push("SOURCE_TRADE_MISSING_ENTRY_NEIGHBORS");
+    if (sourceTrade && !sourceMitUid)
+      codes.push("SOURCE_TRADE_MISSING_CLOSEST_CLUSTER_UID");
+    if (nodeNeighbors.length === 0) codes.push("MAP_NODE_MISSING_ENTRY_NEIGHBORS");
+    if (!nodeMitUid) codes.push("MAP_NODE_MISSING_CLOSEST_CLUSTER_UID");
+    if (sourceNeighbors.length > 0 && countNeighborIds(sourceNeighbors) === 0) {
+      codes.push("SOURCE_TRADE_ENTRY_NEIGHBORS_MISSING_IDS");
+    }
+    if (nodeNeighbors.length > 0 && countNeighborIds(nodeNeighbors) === 0) {
+      codes.push("MAP_NODE_ENTRY_NEIGHBORS_MISSING_IDS");
+    }
+    if (nodeNeighbors.length > 0 && selectedNeighborList.length === 0) {
+      codes.push("ENTRY_NEIGHBORS_PRESENT_BUT_SELECTED_LIST_EMPTY");
+    }
+    if (effectiveMitUid && !resolvedMitNode) {
+      codes.push("CLOSEST_CLUSTER_UID_PRESENT_BUT_NODE_NOT_FOUND");
+    }
+    if (codes.length === 0) return;
+
+    const signature = JSON.stringify({
+      selectedId,
+      codes,
+      nodeNeighborCount: nodeNeighbors.length,
+      sourceNeighborCount: sourceNeighbors.length,
+      selectedNeighborCount: selectedNeighborList.length,
+      effectiveMitUid,
+    });
+    if (selectionDiagnosticKeyRef.current === signature) return;
+    selectionDiagnosticKeyRef.current = signature;
+
+    const selectedDisplayId = displayIdForNode(selectedNode as any);
+    console.groupCollapsed(
+      `[AIZip][SelectionDiagnostics] ${selectedDisplayId || selectedId}`
+    );
+    console.warn("codes", codes);
+    console.log("selectedNodeSummary", {
+      id: (selectedNode as any)?.id ?? null,
+      uid: (selectedNode as any)?.uid ?? null,
+      tradeUid: (selectedNode as any)?.tradeUid ?? null,
+      kind,
+      aiMode: (selectedNode as any)?.aiMode ?? null,
+      chunkType: (selectedNode as any)?.chunkType ?? null,
+      entryConfidence:
+        (selectedNode as any)?.entryConfidence ??
+        (selectedNode as any)?.confidence ??
+        null,
+      closestClusterUid: nodeMitUid || null,
+      entryNeighborCount: nodeNeighbors.length,
+      entryNeighborIds: countNeighborIds(nodeNeighbors),
+    });
+    console.log(
+      "sourceTradeSummary",
+      sourceTrade
+        ? {
+            id: (sourceTrade as any)?.id ?? null,
+            uid: (sourceTrade as any)?.uid ?? null,
+            tradeUid: (sourceTrade as any)?.tradeUid ?? null,
+            aiMode: (sourceTrade as any)?.aiMode ?? null,
+            chunkType: (sourceTrade as any)?.chunkType ?? null,
+            entryConfidence:
+              (sourceTrade as any)?.entryConfidence ??
+              (sourceTrade as any)?.confidence ??
+              null,
+            closestClusterUid: sourceMitUid || null,
+            entryNeighborCount: sourceNeighbors.length,
+            entryNeighborIds: countNeighborIds(sourceNeighbors),
+          }
+        : null
+    );
+    console.log("nodeEntryNeighborsSample", nodeNeighbors.slice(0, 3));
+    console.log("sourceTradeEntryNeighborsSample", sourceNeighbors.slice(0, 3));
+    console.log("selectedNeighborListSample", selectedNeighborList.slice(0, 3));
+    console.log("mitResolution", {
+      selectedNodeClosestClusterUid: nodeMitUid || null,
+      sourceTradeClosestClusterUid: sourceMitUid || null,
+      effectiveClosestClusterUid: effectiveMitUid || null,
+      resolvedMitNodeId:
+        (resolvedMitNode as any)?.id ??
+        (resolvedMitNode as any)?.uid ??
+        null,
+    });
+    console.groupEnd();
+  }, [
+    selectedId,
+    selectedNode,
+    selectedNeighborList,
+    nodeByIdAll,
+    nodeById,
+    resolveSourceTradeForNode,
+  ]);
 
   // User-facing selection stats should reflect exactly what the map is showing.
   // In HDBSCAN mode this includes post-hoc promotion/demotion.
@@ -24151,6 +24352,172 @@ export default function App() {
               return { ...(t || {}), uid, uidRaw, __rawIndex: i };
             }
           );
+          try {
+            const summarizeStoredEntryPayload = (rows: any[]) => {
+              const summary = {
+                totalTrades: rows.length,
+                aiModelTrades: 0,
+                tradesWithEntryNeighbors: 0,
+                tradesMissingEntryNeighbors: 0,
+                tradesWithClosestClusterUid: 0,
+                tradesMissingClosestClusterUid: 0,
+                aiModelTradesMissingEntryNeighbors: 0,
+                aiModelTradesMissingClosestClusterUid: 0,
+                tradesWithConfidenceButNoEntryNeighbors: 0,
+                tradesWithEntryNeighborsButNoNeighborIds: 0,
+                sampleTrades: [] as any[],
+              };
+
+              const hasNeighborId = (rows0: any[]) =>
+                rows0.some((row) => {
+                  const rawCandidates = [
+                    (row as any)?.id,
+                    (row as any)?.uid,
+                    (row as any)?.metaUid,
+                    (row as any)?.metaId,
+                    (row as any)?.tradeUid,
+                    (row as any)?.metaTradeUid,
+                    (row as any)?.labelUid,
+                  ];
+                  return rawCandidates.some((raw) => {
+                    if (raw == null) return false;
+                    return String(raw).trim().length > 0;
+                  });
+                });
+
+              for (const trade of rows) {
+                if (!trade) continue;
+                const neighbors = Array.isArray((trade as any).entryNeighbors)
+                  ? ((trade as any).entryNeighbors as any[])
+                  : [];
+                const closestClusterUid = String(
+                  (trade as any).closestClusterUid ?? ""
+                ).trim();
+                const confidenceRaw =
+                  (trade as any).entryConfidence ??
+                  (trade as any).confidence ??
+                  (trade as any).entryMargin ??
+                  (trade as any).margin ??
+                  null;
+                const confidence =
+                  confidenceRaw == null ? NaN : Number(confidenceRaw);
+                const aiModelTrade =
+                  String((trade as any).aiMode ?? "").toLowerCase() === "model" ||
+                  String((trade as any).chunkType ?? "") === "AI Model";
+
+                if (aiModelTrade) summary.aiModelTrades += 1;
+                if (neighbors.length > 0) summary.tradesWithEntryNeighbors += 1;
+                else summary.tradesMissingEntryNeighbors += 1;
+                if (closestClusterUid) summary.tradesWithClosestClusterUid += 1;
+                else summary.tradesMissingClosestClusterUid += 1;
+                if (aiModelTrade && neighbors.length === 0) {
+                  summary.aiModelTradesMissingEntryNeighbors += 1;
+                }
+                if (aiModelTrade && !closestClusterUid) {
+                  summary.aiModelTradesMissingClosestClusterUid += 1;
+                }
+                if (Number.isFinite(confidence) && neighbors.length === 0) {
+                  summary.tradesWithConfidenceButNoEntryNeighbors += 1;
+                }
+                if (neighbors.length > 0 && !hasNeighborId(neighbors)) {
+                  summary.tradesWithEntryNeighborsButNoNeighborIds += 1;
+                }
+
+                const shouldSample =
+                  summary.sampleTrades.length < 6 &&
+                  (neighbors.length === 0 ||
+                    !closestClusterUid ||
+                    (neighbors.length > 0 && !hasNeighborId(neighbors)));
+                if (shouldSample) {
+                  summary.sampleTrades.push({
+                    id:
+                      (trade as any).uid ??
+                      (trade as any).tradeUid ??
+                      (trade as any).id ??
+                      null,
+                    aiMode: (trade as any).aiMode ?? null,
+                    chunkType: (trade as any).chunkType ?? null,
+                    entryConfidence:
+                      (trade as any).entryConfidence ??
+                      (trade as any).confidence ??
+                      null,
+                    closestClusterUid: closestClusterUid || null,
+                    entryNeighborCount: neighbors.length,
+                    firstNeighbor:
+                      neighbors.length > 0
+                        ? {
+                            id: (neighbors[0] as any)?.id ?? null,
+                            uid: (neighbors[0] as any)?.uid ?? null,
+                            metaUid: (neighbors[0] as any)?.metaUid ?? null,
+                            metaId: (neighbors[0] as any)?.metaId ?? null,
+                            labelUid: (neighbors[0] as any)?.labelUid ?? null,
+                          }
+                        : null,
+                  });
+                }
+              }
+
+              return summary;
+            };
+
+            const entryPayloadSummary = summarizeStoredEntryPayload(rawTrades);
+            const diagnosticCodes: string[] = [];
+            if (!Array.isArray(rawTrades0)) {
+              diagnosticCodes.push("WORKER_RESPONSE_TRADES_NOT_ARRAY");
+            }
+            if (entryPayloadSummary.totalTrades === 0) {
+              diagnosticCodes.push("WORKER_RESPONSE_NO_TRADES");
+            }
+            if (
+              entryPayloadSummary.aiModelTrades > 0 &&
+              entryPayloadSummary.aiModelTradesMissingEntryNeighbors ===
+                entryPayloadSummary.aiModelTrades
+            ) {
+              diagnosticCodes.push("ALL_AI_MODEL_TRADES_MISSING_ENTRY_NEIGHBORS");
+            }
+            if (
+              entryPayloadSummary.aiModelTrades > 0 &&
+              entryPayloadSummary.aiModelTradesMissingClosestClusterUid ===
+                entryPayloadSummary.aiModelTrades
+            ) {
+              diagnosticCodes.push(
+                "ALL_AI_MODEL_TRADES_MISSING_CLOSEST_CLUSTER_UID"
+              );
+            }
+            if (entryPayloadSummary.tradesWithConfidenceButNoEntryNeighbors > 0) {
+              diagnosticCodes.push("CONFIDENCE_PRESENT_WITHOUT_ENTRY_NEIGHBORS");
+            }
+            if (
+              entryPayloadSummary.tradesWithEntryNeighborsButNoNeighborIds > 0
+            ) {
+              diagnosticCodes.push("ENTRY_NEIGHBORS_PRESENT_BUT_IDS_MISSING");
+            }
+            if (
+              diagnosticCodes.length > 0 ||
+              (Array.isArray(aiActiveLibraries) && aiActiveLibraries.length === 0)
+            ) {
+              if (
+                Array.isArray(aiActiveLibraries) &&
+                aiActiveLibraries.length === 0
+              ) {
+                diagnosticCodes.push("AI_LIBRARIES_EMPTY");
+              }
+              console.groupCollapsed("[AIZip][WorkerPayloadDiagnostics]");
+              console.warn("codes", diagnosticCodes);
+              console.log("summary", entryPayloadSummary);
+              console.log("aiMethod", aiMethod);
+              console.log("checkEveryBar", checkEveryBar);
+              console.log("useAI", useAI);
+              console.log("activeLibraries", aiActiveLibraries);
+              console.log("potential", (res as any)?.potential ?? null);
+              console.groupEnd();
+            }
+          } catch (diagnosticError) {
+            console.warn(
+              "[AIZip][WorkerPayloadDiagnostics] failed to summarize worker response",
+              diagnosticError
+            );
+          }
           setAllTrades(rawTrades);
           setPotential(
             res && (res as any).potential ? (res as any).potential : null
