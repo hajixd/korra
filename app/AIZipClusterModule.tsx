@@ -6237,40 +6237,6 @@ function getKnnEdgesForClusterMap(
       });
       if (hit) return hit;
     }
-
-    const timeTok = normalizeClusterMapToken(
-      (nb as any)?.metaTime ??
-        (nb as any)?.time ??
-        (nb as any)?.entryTime ??
-        (tr as any)?.entryTime ??
-        (tr as any)?.time
-    );
-    if (!timeTok) return null;
-
-    const modelTok = normalizeClusterMapToken(
-      (nb as any)?.model ??
-        (nb as any)?.metaModel ??
-        (tr as any)?.model ??
-        (sourceNode as any)?.entryModel ??
-        (sourceNode as any)?.chunkType
-    );
-    const dirRaw = Number(
-      (nb as any)?.dir ??
-        (tr as any)?.dir ??
-        (tr as any)?.direction ??
-        (sourceNode as any)?.dir ??
-        (sourceNode as any)?.direction
-    );
-    const fallbackKeys: string[] = [];
-    if (modelTok && Number.isFinite(dirRaw))
-      fallbackKeys.push(`tmd:${timeTok}|${modelTok}|${String(dirRaw)}`);
-    if (modelTok) fallbackKeys.push(`tm:${timeTok}|${modelTok}`);
-    if (Number.isFinite(dirRaw)) fallbackKeys.push(`td:${timeTok}|${String(dirRaw)}`);
-    fallbackKeys.push(`t:${timeTok}`);
-    for (const key of fallbackKeys) {
-      const hit = pickFromAlias(key, sourceCoord, { requireUnique: true });
-      if (hit) return hit;
-    }
     return null;
   };
 
@@ -6281,11 +6247,7 @@ function getKnnEdgesForClusterMap(
     if (!srcId) continue;
     const srcCoord = nodeCoordById.get(srcId) || null;
     if (!srcCoord) continue;
-    const nbsRaw =
-      (src as any)?.entryNeighbors ??
-      (src as any)?.neighbors ??
-      (src as any)?.kNeighbors ??
-      null;
+    const nbsRaw = (src as any)?.entryNeighbors ?? null;
     if (!Array.isArray(nbsRaw) || nbsRaw.length <= 0) continue;
 
     const nbs = nbsRaw.slice().sort((a: any, b: any) => {
@@ -10422,11 +10384,7 @@ export function ClusterMap({
         exitReason: t.exitReason,
         entryPrice: t.entryPrice,
         suppressed: !!(t as any).suppressed,
-        entryNeighbors:
-          (t as any).entryNeighbors ??
-          (t as any).neighbors ??
-          (t as any).kNeighbors ??
-          [],
+        entryNeighbors: (t as any).entryNeighbors ?? [],
       });
     }
     const hasLiveOpenTrade = trades.some((t) => !!t.isOpen);
@@ -10484,11 +10442,7 @@ export function ClusterMap({
           potentialMargin: potential.margin,
           entryTime: tRaw,
           chunkType: potential.model,
-          entryNeighbors:
-            (potential as any).entryNeighbors ??
-            (potential as any).neighbors ??
-            (potential as any).kNeighbors ??
-            [],
+          entryNeighbors: (potential as any).entryNeighbors ?? [],
         });
       }
     }
@@ -10589,11 +10543,7 @@ export function ClusterMap({
           dir: g.dir,
           entryTime: g.entryTime,
           aiMode: (g as any).aiMode ?? null,
-          entryNeighbors:
-            (g as any).entryNeighbors ??
-            (g as any).neighbors ??
-            (g as any).kNeighbors ??
-            [],
+          entryNeighbors: (g as any).entryNeighbors ?? [],
           closestClusterUid:
             (g as any).labelUid ?? (g as any).closestClusterUid ?? null,
           closestCluster: (g as any).label ?? undefined,
@@ -10980,179 +10930,6 @@ export function ClusterMap({
 
     const allVectors = goodEntries.map((e) => e.v);
     const { stdData, mean, stdev } = standardiseVectors(allVectors);
-    const metricKey = String(distanceMetric || "euclidean").toLowerCase();
-    const hdVarArr =
-      metricKey === "mahalanobis" ? computeVarianceVecs(stdData) : null;
-
-    const assignKnnNeighbors = (
-      getVec: (idx: number) => number[] | null,
-      varArr: number[] | null
-    ) => {
-      const tradeIdx: number[] = [];
-      const candidateIdx: number[] = [];
-      const candidateChrono: Array<number | null> = [];
-      const candidateIsTrade: boolean[] = [];
-
-      for (let i = 0; i < goodEntries.length; i += 1) {
-        const k = String((goodEntries[i] as any)?.kind || "").toLowerCase();
-        if (k === "library") {
-          const libNode = goodEntries[i] as any;
-          const c0 =
-            nodeChronologyValue(libNode) ??
-            (typeof libNode?.signalIndex === "number"
-              ? libNode.signalIndex
-              : typeof libNode?.entryIndex === "number"
-              ? libNode.entryIndex
-              : null);
-          candidateIdx.push(i);
-          candidateChrono.push(
-            Number.isFinite(Number(c0)) ? Number(c0) : null
-          );
-          candidateIsTrade.push(false);
-        }
-        else if (k === "trade") {
-          tradeIdx.push(i);
-          if (allowTradeNeighborFallback) {
-            const tradeNode = goodEntries[i] as any;
-            const c0 =
-              nodeChronologyValue(tradeNode) ??
-              (typeof tradeNode?.signalIndex === "number"
-                ? tradeNode.signalIndex
-                : typeof tradeNode?.entryIndex === "number"
-                ? tradeNode.entryIndex
-                : null);
-            candidateIdx.push(i);
-            candidateChrono.push(
-              Number.isFinite(Number(c0)) ? Number(c0) : null
-            );
-            candidateIsTrade.push(true);
-          }
-        }
-      }
-
-      if (tradeIdx.length === 0) return;
-      if (neighborK <= 0 || candidateIdx.length === 0) {
-        for (const ti of tradeIdx) {
-          (goodEntries[ti] as any).entryNeighbors = [];
-        }
-        return;
-      }
-
-      for (const ti of tradeIdx) {
-        const v = getVec(ti);
-        if (!Array.isArray(v)) {
-          (goodEntries[ti] as any).entryNeighbors = [];
-          continue;
-        }
-
-        const tradeNode = goodEntries[ti] as any;
-        const tradeChrono =
-          nodeChronologyValue(tradeNode) ??
-          (typeof tradeNode?.signalIndex === "number"
-            ? tradeNode.signalIndex
-            : typeof tradeNode?.entryIndex === "number"
-            ? tradeNode.entryIndex
-            : null);
-
-        const nearest: Array<{ idx: number; d: number }> = [];
-        for (let ciPos = 0; ciPos < candidateIdx.length; ciPos += 1) {
-          const ci = candidateIdx[ciPos];
-          if (ci === ti) continue;
-          const candNode = goodEntries[ci] as any;
-          if (!matchesDomains(tradeNode, candNode)) continue;
-          const candTime = candidateChrono[ciPos];
-          const candIsTrade = candidateIsTrade[ciPos];
-          if (tradeChrono != null && candTime != null) {
-            if (candIsTrade || !staticLibrariesClusters) {
-              if (candTime > tradeChrono) continue;
-            }
-          }
-          const u = getVec(ci);
-          if (!Array.isArray(u)) continue;
-          const d = vectorDistance(v, u, distanceMetric, varArr);
-          if (!Number.isFinite(d)) continue;
-          if (nearest.length < neighborK) {
-            nearest.push({ idx: ci, d });
-            nearest.sort((a, b) => b.d - a.d);
-          } else if (d < nearest[0].d) {
-            nearest[0] = { idx: ci, d };
-            nearest.sort((a, b) => b.d - a.d);
-          }
-        }
-
-        if (nearest.length === 0) {
-          (goodEntries[ti] as any).entryNeighbors = [];
-          continue;
-        }
-
-        nearest.sort((a, b) => a.d - b.d);
-        const neighbors = nearest
-          .map((nb, rank) => {
-            const neighborNode = goodEntries[nb.idx] as any;
-            const nodeId =
-              neighborNode?.id ??
-              neighborNode?.uid ??
-              neighborNode?.metaUid ??
-              neighborNode?.metaId ??
-              "";
-            if (!nodeId) {
-              return null;
-            }
-            const pnlVal =
-              typeof neighborNode?.pnl === "number"
-                ? Number(neighborNode.pnl)
-                : 0;
-            const labelVal =
-              typeof neighborNode?.label === "number"
-                ? Number(neighborNode.label)
-                : pnlVal >= 0
-                ? 1
-                : -1;
-            const outcome =
-              neighborNode?.result ??
-              (labelVal > 0 ? "Win" : labelVal < 0 ? "Loss" : "");
-
-            return {
-              id: nodeId,
-              uid: nodeId,
-              metaUid: nodeId,
-              metaId: nodeId,
-              metaLib: neighborNode?.libId ?? neighborNode?.metaLib ?? null,
-              d: nb.d,
-              dir:
-                Number(neighborNode?.dir ?? neighborNode?.direction ?? 0) || 0,
-              label: labelVal,
-              metaOutcome: outcome,
-              metaPnl: pnlVal,
-              metaTime: neighborNode?.entryTime ?? neighborNode?.metaTime ?? null,
-              metaSession:
-                neighborNode?.session ?? neighborNode?.metaSession ?? null,
-              metaModel:
-                neighborNode?.entryModel ??
-                neighborNode?.chunkType ??
-                neighborNode?.model ??
-                null,
-              metaSuppressed: !!(
-                neighborNode?.metaSuppressed ??
-                neighborNode?.suppressed ?? false
-              ),
-              rank: rank + 1,
-              t: neighborNode,
-            };
-          })
-          .filter((row) => !!row);
-
-        (goodEntries[ti] as any).entryNeighbors = neighbors;
-        const first = neighbors[0];
-        if (first?.id) {
-          (goodEntries[ti] as any).closestClusterUid = String(first.id);
-        }
-      }
-    };
-
-    if (knnActive && knnSpaceKey === "high") {
-      assignKnnNeighbors((idx) => stdData[idx], hdVarArr);
-    }
 
     // UMAP embedding for the Cluster Map (better preserves local neighborhood structure than PCA).
     // We keep PCA2 around for fast approximate "transform" and for initialization.
@@ -11336,15 +11113,6 @@ export function ClusterMap({
       vec3ByIdx[i] = [x3, y3, z3];
     }
 
-    if (knnActive && (knnSpaceKey === "2d" || knnSpaceKey === "3d")) {
-      const pool = knnSpaceKey === "2d" ? vec2ByIdx : vec3ByIdx;
-      const varArr =
-        metricKey === "mahalanobis"
-          ? computeVarianceVecs(pool.filter((v) => Array.isArray(v)))
-          : null;
-      assignKnnNeighbors((idx) => pool[idx], varArr);
-    }
-
     const out: any[] = [];
     for (let i = 0; i < goodEntries.length; i++) {
       const e: any = goodEntries[i];
@@ -11386,133 +11154,9 @@ export function ClusterMap({
         entryIndex: e.entryIndex,
         exitIndex: e.exitIndex,
         entryPrice: e.entryPrice,
-        entryNeighbors:
-          (e as any).entryNeighbors ??
-          (e as any).neighbors ??
-          (e as any).kNeighbors ??
-          [],
-        neighbors:
-          (e as any).neighbors ??
-          (e as any).entryNeighbors ??
-          (e as any).kNeighbors ??
-          [],
-        kNeighbors:
-          (e as any).kNeighbors ??
-          (e as any).entryNeighbors ??
-          (e as any).neighbors ??
-          [],
+        entryNeighbors: (e as any).entryNeighbors ?? [],
       });
     }
-
-    // MIT: always point to the closest available *library* neighbor (in the embedded 2D space).
-    // This keeps "MIT ID" consistent even if the underlying trade didn't come with a precomputed closestClusterUid.
-    // IMPORTANT: trades may have a "library" string like "Trades" — that must NOT qualify them as MIT candidates.
-    try {
-      const isLibraryLike = (n: any) => {
-        if (!n) return false;
-        const kind = String(n?.kind || "").toLowerCase();
-
-        // Explicit library kind is always allowed.
-        if (kind === "library") return true;
-
-        // Stable library-point id prefix.
-        const id0 = String((n as any).id ?? "");
-        if (id0.startsWith("lib|")) return true;
-
-        // Never treat trades as library nodes.
-        if (kind === "trade") return false;
-
-        // Some library points come through without kind, but with libId/metaLib/metaLibrary markers.
-        const lid0 =
-          (n as any).libId ??
-          (n as any).metaLib ??
-          (n as any).metaLibrary ??
-          null;
-
-        return lid0 != null;
-      };
-
-      // Prefer the canonical libraryPoints pool (even if libraries aren't currently visible),
-      // otherwise fall back to whatever library nodes happen to be in this timeline slice.
-      const libs: any[] =
-        Array.isArray(libraryPoints) && libraryPoints.length
-          ? (libraryPoints as any[]).filter(isLibraryLike)
-          : (out as any[]).filter(isLibraryLike);
-
-      if (libs && libs.length) {
-        for (const n of out) {
-          if (!n) continue;
-          if (String((n as any).kind || "").toLowerCase() !== "trade") continue;
-
-          // If it's already a library id, keep it. Otherwise compute from libraries.
-          const cur = (n as any).closestClusterUid;
-          const curStr = cur == null ? "" : String(cur);
-          const alreadyLib =
-            curStr.startsWith("lib|") ||
-            isLibraryLike({ id: curStr, kind: "library" });
-
-          if (!alreadyLib) {
-            let best: any = null;
-            let bestD = Infinity;
-            const nx = Number((n as any).x);
-            const ny = Number((n as any).y);
-            const tradeOrder = antiCheatEnabled ? nodeChronologyValue(n) : null;
-            const tradeKey = antiCheatEnabled ? nodeStableKey(n) : "";
-            const timeGateTrade =
-              staticLibrariesClusters
-                ? null
-                : nodeChronologyValue(n) ??
-                  (typeof (n as any)?.signalIndex === "number"
-                    ? (n as any).signalIndex
-                    : typeof (n as any)?.entryIndex === "number"
-                    ? (n as any).entryIndex
-                    : null);
-            if (!Number.isFinite(nx) || !Number.isFinite(ny)) continue;
-
-            for (const l of libs) {
-              if (antiCheatEnabled) {
-                const libKey = nodeStableKey(l);
-                if (tradeKey && libKey && tradeKey === libKey) continue;
-
-                if (tradeOrder !== null) {
-                  const libOrder = nodeChronologyValue(l);
-                  if (libOrder === null || libOrder >= tradeOrder) continue;
-                }
-              }
-
-              if (timeGateTrade != null) {
-                const libTime =
-                  nodeChronologyValue(l) ??
-                  (typeof (l as any)?.signalIndex === "number"
-                    ? (l as any).signalIndex
-                    : typeof (l as any)?.entryIndex === "number"
-                    ? (l as any).entryIndex
-                    : null);
-                if (libTime != null && libTime > timeGateTrade) continue;
-              }
-
-              if (
-                !Number.isFinite((l as any)?.x) ||
-                !Number.isFinite((l as any)?.y)
-              )
-                continue;
-              const dx0 = nx - Number((l as any).x);
-              const dy0 = ny - Number((l as any).y);
-              const d2 = dx0 * dx0 + dy0 * dy0;
-              if (d2 < bestD) {
-                bestD = d2;
-                best = l;
-              }
-            }
-
-            if (best) {
-              (n as any).closestClusterUid =
-                (best as any).uid ?? (best as any).id ?? null;
-            }
-          }
-        }
-      }
-    } catch (_e) {}
 
     return out;
   }, [
@@ -11553,116 +11197,11 @@ export function ClusterMap({
     return m;
   }, [nodes]);
 
-  const tradePayloadByKey = useMemo(() => {
-    const m = new Map<string, any>();
-    for (const t of (trades as any[]) || []) {
-      if (!t) continue;
-      const keys = [
-        (t as any).uid,
-        (t as any).tradeUid,
-        (t as any).tradeId,
-        (t as any).id,
-        (t as any).metaOrigUid,
-        (t as any).metaOrigId,
-        (t as any).metaUid,
-        (t as any).metaTradeUid,
-      ];
-      for (const k of keys) {
-        if (k == null) continue;
-        const s = String(k).trim();
-        if (!s) continue;
-        if (!m.has(s)) m.set(s, t);
-      }
-    }
-    return m;
-  }, [trades]);
-
   const pickNeighborPayload = React.useCallback((src: any): any[] | null => {
     if (!src) return null;
-    const raw =
-      (src as any).entryNeighbors ??
-      (src as any).neighbors ??
-      (src as any).kNeighbors ??
-      null;
+    const raw = (src as any).entryNeighbors ?? null;
     if (!Array.isArray(raw) || raw.length === 0) return null;
     return raw as any[];
-  }, []);
-
-  const resolveTradePayloadForNode = React.useCallback(
-    (node: any) => {
-      if (!node) return null;
-      const keys = [
-        (node as any).uid,
-        (node as any).tradeUid,
-        (node as any).tradeId,
-        (node as any).id,
-        (node as any).metaOrigUid,
-        (node as any).metaOrigId,
-        (node as any).metaUid,
-        (node as any).metaTradeUid,
-      ];
-      for (const k of keys) {
-        if (k == null) continue;
-        const s = String(k).trim();
-        if (!s) continue;
-        const directHit = tradePayloadByKey.get(s);
-        if (directHit) return directHit;
-      }
-
-      const uid =
-        (node as any).uid ??
-        (node as any).tradeUid ??
-        (node as any).metaOrigUid ??
-        (node as any).metaUid ??
-        null;
-      if (uid != null) {
-        const hit = (tradeNodeByUidAll as any).get(String(uid));
-        if (hit) return hit;
-      }
-
-      return null;
-    },
-    [tradePayloadByKey, tradeNodeByUidAll]
-  );
-
-  const resolveNodeNeighborPayload = React.useCallback(
-    (node: any): any[] => {
-      const direct = pickNeighborPayload(node);
-      if (direct) return direct;
-      const canonical = resolveTradePayloadForNode(node);
-      const fallback = pickNeighborPayload(canonical);
-      return fallback || [];
-    },
-    [pickNeighborPayload, resolveTradePayloadForNode]
-  );
-
-  const pickNeighborRawId = React.useCallback((nb: any): string => {
-    const tr = (nb as any)?.t ?? {};
-    const rawCandidates = [
-      (nb as any)?.targetId,
-      (nb as any)?.nodeId,
-      (nb as any)?.id,
-      (nb as any)?.metaId,
-      (nb as any)?.uid,
-      (nb as any)?.metaUid,
-      (nb as any)?.tradeUid,
-      (nb as any)?.metaTradeUid,
-      (nb as any)?.labelUid,
-      (nb as any)?.closestClusterUid,
-      (tr as any)?.id,
-      (tr as any)?.uid,
-      (tr as any)?.tradeUid,
-      (tr as any)?.tradeId,
-      (tr as any)?.metaUid,
-      (tr as any)?.metaTradeUid,
-      (tr as any)?.metaId,
-    ];
-    for (const raw of rawCandidates) {
-      if (raw == null) continue;
-      const s = String(raw).trim();
-      if (s) return s;
-    }
-    return "";
   }, []);
 
   const viewNodes = useMemo(() => {
@@ -12948,11 +12487,7 @@ export function ClusterMap({
             entryModel: (n as any).entryModel ?? null,
             exitModel: (n as any).exitModel ?? null,
             chunkType: (n as any).chunkType ?? (n as any).model ?? null,
-            entryNeighbors:
-              (n as any).entryNeighbors ??
-              (n as any).neighbors ??
-              (n as any).kNeighbors ??
-              [],
+            entryNeighbors: (n as any).entryNeighbors ?? [],
             // Preserve exitReason exactly as-is. We do NOT relabel anything as "Model".
             exitReason: (n as any).exitReason ?? null,
             entryPrice: (n as any).entryPrice ?? null,
@@ -14936,8 +14471,6 @@ export function ClusterMap({
   }, [onPostHocTrades, postHocTrades]);
 
   const mitMap = useMemo(() => {
-    // MIT: for each *live* trade (and suppressed trade), find the closest *library trade* in embedded 2D space.
-    // Library trade candidates are library nodes that look like trades (have entry fields) and are not Base Seeding.
     const out = new Map<string, any>();
     const src = (timelineNodesCheat as any[]) || [];
     if (!src.length) return out;
@@ -14968,188 +14501,28 @@ export function ClusterMap({
       if (!out.has(kk)) out.set(kk, mit);
     };
 
-    if (entryNeighborsOnly) {
-      const isLibraryNode = (n: any) =>
-        String((n as any)?.kind || "").toLowerCase() === "library";
-
-      for (const n of src) {
-        if (!n) continue;
-        if (String((n as any).kind || "").toLowerCase() !== "trade") continue;
-        const nbsRaw = resolveNodeNeighborPayload(n);
-        if (!Array.isArray(nbsRaw) || nbsRaw.length === 0) continue;
-
-        const nbs = nbsRaw.slice().sort((a: any, b: any) => {
-          const da = Number((a as any)?.d);
-          const db = Number((b as any)?.d);
-          const aa = Number.isFinite(da) ? da : Infinity;
-          const bb = Number.isFinite(db) ? db : Infinity;
-          return aa - bb;
-        });
-
-        let mitRef: any = null;
-        for (const nb of nbs as any[]) {
-          if (!nb) continue;
-          const rawId = pickNeighborRawId(nb);
-          if (rawId == null || rawId === "") continue;
-          const hit = nodeById.get(String(rawId)) ?? null;
-          if (hit && isLibraryNode(hit)) {
-            mitRef = hit;
-            break;
-          }
-        }
-
-        if (!mitRef) continue;
-        addKey(stableKey(n), mitRef);
-        addKey((n as any).uid, mitRef);
-        addKey((n as any).tradeUid, mitRef);
-        addKey((n as any).tradeId, mitRef);
-        addKey((n as any).id, mitRef);
-        addKey((n as any).metaOrigUid, mitRef);
-        addKey((n as any).metaOrigId, mitRef);
-      }
-
-      return out;
-    }
-
-    const libLabel = (n: any) =>
-      String(
-        (n as any)?.library ??
-          (n as any)?.libraryName ??
-          (n as any)?.libId ??
-          (n as any)?.metaLibId ??
-          (n as any)?.metaLibrary ??
-          ""
-      )
-        .toLowerCase()
-        .trim();
-
-    const looksTradeLike = (n: any) =>
-      n &&
-      ((n as any).entryIndex != null ||
-        (n as any).entryTime != null ||
-        (n as any).entryTs != null ||
-        (n as any).entryTimestamp != null ||
-        (n as any).entryDate != null);
-
-    const isTradesLibraryCandidate = (n: any) => {
-      if (!n) return false;
-      if (String((n as any).kind || "").toLowerCase() !== "library")
-        return false;
-
-      const x = Number((n as any).x);
-      const y = Number((n as any).y);
-      if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
-
-      const lib = libLabel(n);
-
-      // Never allow Base Seeding.
-      if (
-        lib.includes("base seeding") ||
-        lib.includes("baseseed") ||
-        lib.includes("base_seed")
-      )
-        return false;
-
-      // Prefer explicit Trades library labeling if present...
-      if (lib === "trades" || lib.includes("trades") || lib.includes("trade"))
-        return looksTradeLike(n);
-
-      // ...but if the dataset doesn't label it cleanly, fall back to any non-base library point that looks like a trade.
-      return looksTradeLike(n);
-    };
-
-    // Candidate MIT library trades (unfiltered; relies on the embedded pool that includes positions).
-    const libsPreferred = src.filter(isTradesLibraryCandidate);
-    const libsFallback = src.filter(
-      (n: any) =>
-        String((n as any).kind || "").toLowerCase() === "library" &&
-        looksTradeLike(n) &&
-        Number.isFinite(Number((n as any).x)) &&
-        Number.isFinite(Number((n as any).y)) &&
-        !libLabel(n).includes("base seeding") &&
-        !libLabel(n).includes("baseseed") &&
-        !libLabel(n).includes("base_seed")
-    );
-    const libs = libsPreferred.length ? libsPreferred : libsFallback;
-    if (!libs.length) return out;
-
-    const isSuppressedTrade = (n: any) => {
-      if (!n) return false;
-      if (String((n as any).kind || "").toLowerCase() !== "library")
-        return false;
-      return Boolean(
-        (n as any).suppressed ||
-          (n as any).metaSuppressed ||
-          (n as any).metaIsSuppressedTrade ||
-          (n as any).metaSuppressedTrade
-      );
-    };
-
-    const isLiveTrade = (n: any) => {
-      if (!n) return false;
-      if (String((n as any).kind || "").toLowerCase() !== "trade") return false;
-      const sc = String(
-        (n as any).scope ?? (n as any).metaScope ?? "live"
-      ).toLowerCase();
-      return sc === "live";
-    };
-
-    const targets = src.filter((n: any) => {
-      if (!(isLiveTrade(n) || isSuppressedTrade(n))) return false;
-      const x = Number((n as any).x);
-      const y = Number((n as any).y);
-      return Number.isFinite(x) && Number.isFinite(y);
-    });
-
-    for (const n of targets) {
-      const nx = Number((n as any).x);
-      const ny = Number((n as any).y);
+    for (const n of src) {
+      if (!n) continue;
+      const kind = String((n as any).kind || "").toLowerCase();
+      if (kind !== "trade" && kind !== "library") continue;
 
       const directId = (n as any)?.closestClusterUid;
-      if (directId != null && directId !== "") {
-        const direct = nodeById.get(String(directId)) ?? null;
-        if (direct && isTradesLibraryCandidate(direct)) {
-          addKey(stableKey(n), direct);
-          addKey((n as any).uid, direct);
-          addKey((n as any).tradeUid, direct);
-          addKey((n as any).tradeId, direct);
-          addKey((n as any).id, direct);
-          addKey((n as any).metaOrigUid, direct);
-          addKey((n as any).metaOrigId, direct);
-          continue;
-        }
-      }
+      if (directId == null || directId === "") continue;
 
-      let best: any = null;
-      let bestD = Infinity;
+      const direct = nodeById.get(String(directId)) ?? null;
+      if (!direct) continue;
 
-      for (const c of libs) {
-        const cx = Number((c as any).x);
-        const cy = Number((c as any).y);
-        if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
-        const dx = nx - cx;
-        const dy = ny - cy;
-        const d2 = dx * dx + dy * dy;
-        if (d2 < bestD) {
-          bestD = d2;
-          best = c;
-        }
-      }
-
-      if (!best) continue;
-
-      // Map all stable ids for lookup consistency.
-      addKey(stableKey(n), best);
-      addKey((n as any).uid, best);
-      addKey((n as any).tradeUid, best);
-      addKey((n as any).tradeId, best);
-      addKey((n as any).id, best);
-      addKey((n as any).metaOrigUid, best);
-      addKey((n as any).metaOrigId, best);
+      addKey(stableKey(n), direct);
+      addKey((n as any).uid, direct);
+      addKey((n as any).tradeUid, direct);
+      addKey((n as any).tradeId, direct);
+      addKey((n as any).id, direct);
+      addKey((n as any).metaOrigUid, direct);
+      addKey((n as any).metaOrigId, direct);
     }
 
     return out;
-  }, [entryNeighborsOnly, timelineNodesCheat, resolveNodeNeighborPayload, pickNeighborRawId]);
+  }, [timelineNodesCheat]);
 
   useEffect(() => {
     if (typeof onMitMap !== "function") return;
@@ -15281,7 +14654,7 @@ export function ClusterMap({
         (sourceId && nodeCoordById.get(sourceId)) ||
         nodeCoordsForClusterMapKnn(node, dim);
 
-      const nbsRaw = resolveNodeNeighborPayload(node);
+      const nbsRaw = pickNeighborPayload(node);
 
       const pickFromAlias = (token: string): string | null => {
         const ids = aliasToIds.get(token);
@@ -15332,41 +14705,6 @@ export function ClusterMap({
           if (!t) continue;
           if (nodeByIdAll.has(t)) return t;
           const hit = pickFromAlias(t);
-          if (hit) return hit;
-        }
-
-        const timeTok = normalizeClusterMapToken(
-          (nb as any)?.metaTime ??
-            (nb as any)?.time ??
-            (nb as any)?.entryTime ??
-            (tr as any)?.entryTime ??
-            (tr as any)?.time
-        );
-        if (!timeTok) return null;
-
-        const modelTok = normalizeClusterMapToken(
-          (nb as any)?.model ??
-            (nb as any)?.metaModel ??
-            (tr as any)?.model ??
-            (node as any)?.entryModel ??
-            (node as any)?.chunkType
-        );
-        const dirRaw = Number(
-          (nb as any)?.dir ??
-            (tr as any)?.dir ??
-            (tr as any)?.direction ??
-            (node as any)?.dir ??
-            (node as any)?.direction
-        );
-        const fallbackKeys: string[] = [];
-        if (modelTok && Number.isFinite(dirRaw))
-          fallbackKeys.push(`tmd:${timeTok}|${modelTok}|${String(dirRaw)}`);
-        if (modelTok) fallbackKeys.push(`tm:${timeTok}|${modelTok}`);
-        if (Number.isFinite(dirRaw))
-          fallbackKeys.push(`td:${timeTok}|${String(dirRaw)}`);
-        fallbackKeys.push(`t:${timeTok}`);
-        for (const key of fallbackKeys) {
-          const hit = pickFromAlias(key);
           if (hit) return hit;
         }
         return null;
@@ -15525,124 +14863,13 @@ export function ClusterMap({
       };
 
       const payloadList = buildFromPayload(nbsRaw as any[]);
-      if (payloadList.length) return payloadList;
-      if (aiMethod !== "hdbscan") return [];
-
-      const kindLocal = String((node as any)?.kind || "").toLowerCase();
-      const isTradeLike = kindLocal === "trade" || kindLocal === "potential";
-      const allowFallback =
-        kindLocal === "library" ||
-        kindLocal === "ghost" ||
-        kindLocal === "close" ||
-        (!entryNeighborsOnly && allowTradeNeighborFallback && isTradeLike);
-      if (!allowFallback) return [];
-
-      if (!sourceCoord) return [];
-      const fallbackRows: any[] = [];
-      const enforceDir =
-        !!allowTradeNeighborFallback && !!activeModSet?.has("Direction");
-      const enforceModel =
-        !!allowTradeNeighborFallback && !!activeModSet?.has("Model");
-      const selectedDir = Number(
-        (node as any)?.dir ?? (node as any)?.direction
-      );
-      const selectedModel = normalizeClusterMapToken(
-        (node as any)?.entryModel ??
-          (node as any)?.chunkType ??
-          (node as any)?.model ??
-          (node as any)?.origModel ??
-          ""
-      );
-      const selectedChrono =
-        allowTradeNeighborFallback && isTradeLike
-          ? nodeChronologyValue(node)
-          : null;
-
-      for (const candidate of nodeByIdAll.values()) {
-        if (!candidate) continue;
-        const nodeId = normalizeClusterMapToken((candidate as any)?.id || "");
-        if (sourceId && nodeId && nodeId === sourceId) continue;
-        if (!sourceId && candidate === node) continue;
-        if (allowTradeNeighborFallback && isTradeLike) {
-          if (enforceDir && Number.isFinite(selectedDir)) {
-            const nodeDir = Number(
-              (candidate as any)?.dir ?? (candidate as any)?.direction
-            );
-            if (Number.isFinite(nodeDir) && nodeDir !== selectedDir) continue;
-          }
-          if (enforceModel && selectedModel) {
-            const nodeModel = normalizeClusterMapToken(
-              (candidate as any)?.entryModel ??
-                (candidate as any)?.chunkType ??
-                (candidate as any)?.model ??
-                (candidate as any)?.origModel ??
-                ""
-            );
-            if (nodeModel && nodeModel !== selectedModel) continue;
-          }
-          if (selectedChrono != null) {
-            const nodeChrono = nodeChronologyValue(candidate);
-            if (nodeChrono != null && nodeChrono > selectedChrono) continue;
-          }
-        }
-        const coord =
-          (nodeId && nodeCoordById.get(nodeId)) ||
-          nodeCoordsForClusterMapKnn(candidate, dim);
-        if (!coord) continue;
-        const dx = sourceCoord.x - coord.x;
-        const dy = sourceCoord.y - coord.y;
-        const dz = dim === "3d" ? sourceCoord.z - coord.z : 0;
-        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        let displayId = displayIdForNode(candidate);
-        if (!displayId || displayId === "—") {
-          displayId =
-            displayIdFromRaw(String((candidate as any).id ?? "")) || "—";
-        }
-        const kind = String((candidate as any)?.kind || "").toLowerCase();
-        const isLib =
-          kind === "library" ||
-          String((candidate as any).id || "").startsWith("lib|");
-        const nodeWin =
-          typeof (candidate as any)?.win === "boolean"
-            ? (candidate as any).win
-            : null;
-        const pnlVal =
-          typeof (candidate as any)?.pnl === "number"
-            ? Number((candidate as any).pnl)
-            : typeof (candidate as any)?.unrealizedPnl === "number"
-            ? Number((candidate as any).unrealizedPnl)
-            : null;
-        const isWin = nodeWin === true || (pnlVal != null && pnlVal >= 0);
-        const isLoss = nodeWin === false || (pnlVal != null && pnlVal < 0);
-        const tone = isWin ? "green" : isLoss ? "red" : "neutral";
-        fallbackRows.push({
-          key: nodeId || String((candidate as any).id || ""),
-          id: nodeId || String((candidate as any).id || ""),
-          displayId,
-          dist,
-          isLib,
-          tone,
-          isWin,
-          isLoss,
-        });
-      }
-
-      if (!fallbackRows.length) return [];
-      const libRows = fallbackRows.filter((row) => row.isLib);
-      const pool = libRows.length ? libRows : fallbackRows;
-      return pool
-        .sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity))
-        .slice(0, kLimit);
+      return payloadList.length ? payloadList : [];
     },
     [
       effectiveNeighborK,
       neighborAlias,
       nodeByIdAll,
-      allowTradeNeighborFallback,
-      entryNeighborsOnly,
-      activeModSet,
-      nodeChronologyValue,
-      resolveNodeNeighborPayload,
+      pickNeighborPayload,
     ]
   );
 
@@ -19453,17 +18680,10 @@ export function ClusterMap({
                           (selectedNode as any)?.tradeId ??
                           ""
                       );
-                      const tradePayload =
-                        resolveTradePayloadForNode(selectedNode as any) || null;
                       const mitRef = key ? (mitMap as any).get(key) : null;
                       if (mitRef) return displayIdForNode(mitRef as any);
                       const rawMitId = String(
-                        (selectedNode as any)?.closestClusterUid ??
-                          (tradePayload as any)?.closestClusterUid ??
-                          pickNeighborRawId(
-                            resolveNodeNeighborPayload(selectedNode as any)?.[0]
-                          ) ??
-                          ""
+                        (selectedNode as any)?.closestClusterUid ?? ""
                       ).trim();
                       if (!rawMitId) return "—";
                       const rawMitRef =
@@ -24014,142 +23234,11 @@ export default function App() {
       : normalizedAllTrades;
   }, [aiMethod, normalizedAllTrades, normalizedPostHocTrades]);
 
-  const postHocTradeByKey = useMemo(() => {
-    const m = new Map<string, any>();
-    for (const t of (postHocTrades as any[]) || []) {
-      if (!t) continue;
-      const keys = [
-        (t as any).uid,
-        (t as any).tradeUid,
-        (t as any).tradeId,
-        (t as any).id,
-        (t as any).metaOrigUid,
-        (t as any).metaOrigId,
-        (t as any).metaUid,
-        (t as any).metaTradeUid,
-      ];
-      for (const k of keys) {
-        if (k == null) continue;
-        const s = String(k).trim();
-        if (!s) continue;
-        if (!m.has(s)) m.set(s, t);
-      }
-    }
-    return m;
-  }, [postHocTrades]);
-
-  const tradePayloadByKey = useMemo(() => {
-    const m = new Map<string, any>();
-    for (const t of (trades as any[]) || []) {
-      if (!t) continue;
-      const keys = [
-        (t as any).uid,
-        (t as any).tradeUid,
-        (t as any).tradeId,
-        (t as any).id,
-        (t as any).metaOrigUid,
-        (t as any).metaOrigId,
-        (t as any).metaUid,
-        (t as any).metaTradeUid,
-      ];
-      for (const k of keys) {
-        if (k == null) continue;
-        const s = String(k).trim();
-        if (!s) continue;
-        if (!m.has(s)) m.set(s, t);
-      }
-    }
-    return m;
-  }, [trades]);
-
   const pickNeighborPayload = React.useCallback((src: any): any[] | null => {
     if (!src) return null;
-    const raw =
-      (src as any).entryNeighbors ??
-      (src as any).neighbors ??
-      (src as any).kNeighbors ??
-      null;
+    const raw = (src as any).entryNeighbors ?? null;
     if (!Array.isArray(raw) || raw.length === 0) return null;
     return raw as any[];
-  }, []);
-
-  const resolveTradePayloadForNode = React.useCallback(
-    (node: any) => {
-      if (!node) return null;
-      const keys = [
-        (node as any).uid,
-        (node as any).tradeUid,
-        (node as any).tradeId,
-        (node as any).id,
-        (node as any).metaOrigUid,
-        (node as any).metaOrigId,
-        (node as any).metaUid,
-        (node as any).metaTradeUid,
-      ];
-      for (const k of keys) {
-        if (k == null) continue;
-        const s = String(k).trim();
-        if (!s) continue;
-        const directHit = tradePayloadByKey.get(s);
-        if (directHit) return directHit;
-        const postHocHit = postHocTradeByKey.get(s);
-        if (postHocHit) return postHocHit;
-      }
-
-      const uid =
-        (node as any).uid ??
-        (node as any).tradeUid ??
-        (node as any).metaOrigUid ??
-        (node as any).metaUid ??
-        null;
-      if (uid != null) {
-        const hit = (tradeNodeByUidAll as any).get(String(uid));
-        if (hit) return hit;
-      }
-
-      return null;
-    },
-    [tradePayloadByKey, postHocTradeByKey, tradeNodeByUidAll]
-  );
-
-  const resolveNodeNeighborPayload = React.useCallback(
-    (node: any): any[] => {
-      const direct = pickNeighborPayload(node);
-      if (direct) return direct;
-      const canonical = resolveTradePayloadForNode(node);
-      const fallback = pickNeighborPayload(canonical);
-      return fallback || [];
-    },
-    [pickNeighborPayload, resolveTradePayloadForNode]
-  );
-
-  const pickNeighborRawId = React.useCallback((nb: any): string => {
-    const tr = (nb as any)?.t ?? {};
-    const rawCandidates = [
-      (nb as any)?.targetId,
-      (nb as any)?.nodeId,
-      (nb as any)?.id,
-      (nb as any)?.metaId,
-      (nb as any)?.uid,
-      (nb as any)?.metaUid,
-      (nb as any)?.tradeUid,
-      (nb as any)?.metaTradeUid,
-      (nb as any)?.labelUid,
-      (nb as any)?.closestClusterUid,
-      (tr as any)?.id,
-      (tr as any)?.uid,
-      (tr as any)?.tradeUid,
-      (tr as any)?.tradeId,
-      (tr as any)?.metaUid,
-      (tr as any)?.metaTradeUid,
-      (tr as any)?.metaId,
-    ];
-    for (const raw of rawCandidates) {
-      if (raw == null) continue;
-      const s = String(raw).trim();
-      if (s) return s;
-    }
-    return "";
   }, []);
 
   const applyAntiCheat = React.useCallback(
@@ -24350,7 +23439,7 @@ export default function App() {
   const resolveNeighborConfidence = React.useCallback(
     (t: any) => {
       if (!t) return null;
-      const raw = resolveNodeNeighborPayload(t);
+      const raw = pickNeighborPayload(t);
       if (!Array.isArray(raw) || raw.length === 0) return null;
       const neighborK = Math.max(
         0,
@@ -24434,7 +23523,7 @@ export default function App() {
       if (win <= 0 && loss <= 0) return null;
       return clamp(win / (win + loss + AI_EPS), 0, 1);
     },
-    [resolveNodeNeighborPayload, kEntry]
+    [pickNeighborPayload, kEntry]
   );
   const effectiveTradeConfidence = React.useCallback(
     (t: any) => {
@@ -25322,8 +24411,7 @@ export default function App() {
       return bx - ax;
     });
   }, [uiTrades]);
-  // MIT: computed in ClusterMap as the closest *library* neighbor for each live trade.
-  // We receive a precomputed Map keyed by trade uid/id -> library node.
+  // MIT: keyed by trade uid/id -> resolved node for the trade's stored closestClusterUid.
   const mitRefByTradeId = mitByTradeKey;
   // Trade History (virtualized for performance)
   const [tradeHistoryQuery, setTradeHistoryQuery] = useState("");
@@ -28872,9 +27960,7 @@ export default function App() {
 
         const entryNeighbors = useMemo(() => {
           const src: any = isActive ? openTradePotential : potential;
-          const nbs0Raw =
-            (src && (src.entryNeighbors || src.neighbors || src.kNeighbors)) ||
-            [];
+          const nbs0Raw = (src && src.entryNeighbors) || [];
 
           // lock on entry so the list doesn't jump around while you scroll
           if (isActive && activeTradeKey) {
