@@ -4194,7 +4194,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
-      jumpToResolution: true,
+      jumpToResolution: false,
     },
     fields: [
       {
@@ -4257,7 +4257,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
-      jumpToResolution: true,
+      jumpToResolution: false,
     },
     fields: [
       { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
@@ -4285,7 +4285,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
-      jumpToResolution: true,
+      jumpToResolution: false,
     },
     fields: [
       { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
@@ -4313,7 +4313,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
-      jumpToResolution: true,
+      jumpToResolution: false,
     },
     fields: [
       { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
@@ -4341,7 +4341,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
-      jumpToResolution: true,
+      jumpToResolution: false,
     },
     fields: [
       { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
@@ -14740,14 +14740,18 @@ export function ClusterMap({
           (nb as any)?.metaTradeUid,
           (nb as any)?.labelUid,
           (nb as any)?.closestClusterUid,
-          (tr as any)?.id,
-          (tr as any)?.uid,
-          (tr as any)?.tradeUid,
-          (tr as any)?.tradeId,
-          (tr as any)?.metaUid,
-          (tr as any)?.metaTradeUid,
-          (tr as any)?.metaId,
         ];
+        if (allowTradeNeighborFallback) {
+          rawCandidates.push(
+            (tr as any)?.id,
+            (tr as any)?.uid,
+            (tr as any)?.tradeUid,
+            (tr as any)?.tradeId,
+            (tr as any)?.metaUid,
+            (tr as any)?.metaTradeUid,
+            (tr as any)?.metaId
+          );
+        }
 
         for (const raw of rawCandidates) {
           const t = normalizeClusterMapToken(raw);
@@ -14770,13 +14774,17 @@ export function ClusterMap({
           (nb as any)?.targetId,
           (nb as any)?.tradeUid,
           (nb as any)?.metaTradeUid,
-          (tr as any)?.uid,
-          (tr as any)?.tradeUid,
-          (tr as any)?.id,
-          (tr as any)?.tradeId,
-          (tr as any)?.metaUid,
-          (tr as any)?.metaId,
         ];
+        if (allowTradeNeighborFallback) {
+          rawCandidates.push(
+            (tr as any)?.uid,
+            (tr as any)?.tradeUid,
+            (tr as any)?.id,
+            (tr as any)?.tradeId,
+            (tr as any)?.metaUid,
+            (tr as any)?.metaId
+          );
+        }
         for (const raw of rawCandidates) {
           if (raw == null) continue;
           const s = String(raw).trim();
@@ -14804,10 +14812,19 @@ export function ClusterMap({
             const hitNode =
               resolvedId != null ? (nodeByIdAll as any).get(resolvedId) : null;
             const tr = (nb as any)?.t ?? null;
-            let displayId = hitNode
+            const rawDisplayId = rawFallback
+              ? displayIdFromRaw(rawFallback)
+              : "—";
+            let displayId = allowTradeNeighborFallback
+              ? hitNode
+                ? displayIdForNode(hitNode)
+                : tr
+                ? displayIdForNode(tr)
+                : rawDisplayId
+              : rawDisplayId !== "—"
+              ? rawDisplayId
+              : hitNode
               ? displayIdForNode(hitNode)
-              : tr
-              ? displayIdForNode(tr)
               : "—";
             if (!displayId || displayId === "—") {
               displayId = rawFallback ? displayIdFromRaw(rawFallback) : "—";
@@ -14885,7 +14902,7 @@ export function ClusterMap({
                 resolvedId ||
                 rawFallback ||
                 `neighbor-${String(idx + 1).padStart(2, "0")}`,
-              id: resolvedId,
+              id: resolvedId ?? rawFallback ?? null,
               displayId,
               dist,
               tone,
@@ -14915,6 +14932,7 @@ export function ClusterMap({
       return payloadList.length ? payloadList : [];
     },
     [
+      allowTradeNeighborFallback,
       effectiveNeighborK,
       neighborAlias,
       nodeByIdAll,

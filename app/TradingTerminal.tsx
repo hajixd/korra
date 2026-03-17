@@ -2779,7 +2779,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
-      jumpToResolution: true
+      jumpToResolution: false
     },
     fields: [
       { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
@@ -2828,7 +2828,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
-      jumpToResolution: true
+      jumpToResolution: false
     },
     fields: [
       { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
@@ -2856,7 +2856,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
-      jumpToResolution: true
+      jumpToResolution: false
     },
     fields: [
       { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
@@ -2884,7 +2884,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
-      jumpToResolution: true
+      jumpToResolution: false
     },
     fields: [
       { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
@@ -2912,7 +2912,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
-      jumpToResolution: true
+      jumpToResolution: false
     },
     fields: [
       { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
@@ -2985,6 +2985,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
 ];
 
 const BASE_SEEDING_LIBRARY_IDS = new Set(["base", "tokyo", "sydney", "london", "newyork"]);
+const AI_LIBRARY_SEED_LOOKAHEAD_BARS = 96;
 
 const isBaseSeedingLibraryId = (libraryId: string): boolean => {
   return BASE_SEEDING_LIBRARY_IDS.has(libraryId.toLowerCase());
@@ -9015,6 +9016,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           next[definition.id] = { ...definition.defaults };
           changed = true;
         }
+      }
+
+      for (const libraryId of BASE_SEEDING_LIBRARY_IDS) {
+        const currentSettings = next[libraryId];
+        if (!currentSettings || currentSettings.jumpToResolution !== true) {
+          continue;
+        }
+
+        next[libraryId] = {
+          ...currentSettings,
+          jumpToResolution: false
+        };
+        changed = true;
       }
 
       return changed ? next : current;
@@ -15051,6 +15065,216 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     [buildLibraryModelSelectionKey]
   );
 
+  const buildSeedLibraryPoolKey = useCallback(
+    (
+      settings: BacktestSettingsSnapshot,
+      tpDollars: number,
+      slDollars: number
+    ) => {
+      return `seed|${buildLibraryPoolKey(settings, tpDollars, slDollars)}`;
+    },
+    [buildLibraryPoolKey]
+  );
+
+  const loadSeededLibraryTradePool = useCallback(
+    async (
+      settings: BacktestSettingsSnapshot,
+      tpDollars: number,
+      slDollars: number
+    ): Promise<HistoryItem[]> => {
+      const normalizedTp = Number.isFinite(tpDollars) ? tpDollars : 0;
+      const normalizedSl = Number.isFinite(slDollars) ? slDollars : 0;
+      const poolKey = buildSeedLibraryPoolKey(settings, normalizedTp, normalizedSl);
+      const cached = aiLibraryPoolCacheRef.current.get(poolKey);
+      if (cached) {
+        return cached;
+      }
+
+      const inFlight = aiLibraryPoolInFlightRef.current.get(poolKey);
+      if (inFlight) {
+        return inFlight;
+      }
+
+      const computePromise = (async () => {
+        const { candleSeriesBySymbol } = await ensureLibraryHistorySeed(settings);
+        const candles = candleSeriesBySymbol[settings.symbol] ?? EMPTY_CANDLES;
+
+        if (candles.length < 3) {
+          aiLibraryPoolCacheRef.current.set(poolKey, []);
+          return [];
+        }
+
+        const selectedModels = resolveLibraryModelProfiles(settings);
+        if (selectedModels.length === 0) {
+          aiLibraryPoolCacheRef.current.set(poolKey, []);
+          return [];
+        }
+
+        const unitsPerMove = Math.max(
+          1,
+          Number.isFinite(settings.dollarsPerMove)
+            ? settings.dollarsPerMove
+            : 1
+        );
+        const tpDistance =
+          normalizedTp > 0
+            ? Math.max(0.000001, normalizedTp / unitsPerMove)
+            : 0;
+        const slDistance =
+          normalizedSl > 0
+            ? Math.max(0.000001, normalizedSl / unitsPerMove)
+            : 0;
+        const maxLookahead = Math.max(2, AI_LIBRARY_SEED_LOOKAHEAD_BARS);
+        const startIndex = Math.max(2, Math.trunc(settings.chunkBars));
+        const maxSignalIndex = candles.length - 2 - maxLookahead;
+
+        if (!(tpDistance > 0) || !(slDistance > 0) || maxSignalIndex < startIndex) {
+          aiLibraryPoolCacheRef.current.set(poolKey, []);
+          return [];
+        }
+
+        const formattedTimeCache = new Map<number, string>();
+        const formatSeedTime = (timestampSeconds: number) => {
+          const normalized = Math.floor(timestampSeconds);
+          const cachedLabel = formattedTimeCache.get(normalized);
+          if (cachedLabel) {
+            return cachedLabel;
+          }
+          const nextLabel = formatDateTime(normalized * 1000);
+          formattedTimeCache.set(normalized, nextLabel);
+          return nextLabel;
+        };
+
+        const rows: HistoryItem[] = [];
+
+        for (const model of selectedModels) {
+          const modelName = model.name?.trim() || "Momentum";
+
+          for (let signalIndex = startIndex; signalIndex <= maxSignalIndex; signalIndex += 1) {
+            const entryIndex = signalIndex + 1;
+            const entryCandle = candles[entryIndex];
+            if (!entryCandle || !Number.isFinite(entryCandle.open)) {
+              continue;
+            }
+
+            const entryTime = Number(entryCandle.time);
+            if (!Number.isFinite(entryTime)) {
+              continue;
+            }
+
+            for (const direction of [1, -1] as const) {
+              const entryPrice = Math.max(0.000001, entryCandle.open);
+              const targetPrice =
+                direction === 1 ? entryPrice + tpDistance : entryPrice - tpDistance;
+              const stopPrice =
+                direction === 1 ? entryPrice - slDistance : entryPrice + slDistance;
+              const endIndex = Math.min(candles.length - 1, entryIndex + maxLookahead);
+              let exitIndex = endIndex;
+              let result: TradeResult | null = null;
+
+              for (let candleIndex = entryIndex; candleIndex <= endIndex; candleIndex += 1) {
+                const candle = candles[candleIndex];
+                if (!candle) {
+                  continue;
+                }
+
+                const tpHit =
+                  direction === 1
+                    ? candle.high >= targetPrice
+                    : candle.low <= targetPrice;
+                const slHit =
+                  direction === 1
+                    ? candle.low <= stopPrice
+                    : candle.high >= stopPrice;
+
+                if (tpHit && slHit) {
+                  exitIndex = candleIndex;
+                  result = "Loss";
+                  break;
+                }
+                if (slHit) {
+                  exitIndex = candleIndex;
+                  result = "Loss";
+                  break;
+                }
+                if (tpHit) {
+                  exitIndex = candleIndex;
+                  result = "Win";
+                  break;
+                }
+              }
+
+              if (result == null) {
+                const lastCandle = candles[endIndex];
+                if (!lastCandle || !Number.isFinite(lastCandle.close)) {
+                  continue;
+                }
+                result =
+                  (lastCandle.close - entryPrice) * direction >= 0 ? "Win" : "Loss";
+              }
+
+              const exitTimeRaw = Number(candles[exitIndex]?.time ?? entryTime);
+              const exitTime = Number.isFinite(exitTimeRaw) ? exitTimeRaw : entryTime;
+              const outcomePrice = result === "Win" ? targetPrice : stopPrice;
+              const pnlUsd = result === "Win" ? normalizedTp : -normalizedSl;
+              const pnlPct =
+                entryPrice > 0
+                  ? direction === 1
+                    ? ((outcomePrice - entryPrice) / entryPrice) * 100
+                    : ((entryPrice - outcomePrice) / entryPrice) * 100
+                  : 0;
+              const side: TradeSide = direction === 1 ? "Long" : "Short";
+              const entryLabel = formatSeedTime(entryTime);
+              const exitLabel = formatSeedTime(exitTime);
+
+              rows.push({
+                id: `${model.id}-seed-${String(signalIndex).padStart(6, "0")}-${
+                  direction === 1 ? "long" : "short"
+                }`,
+                symbol: settings.symbol,
+                side,
+                result,
+                entrySource: modelName,
+                exitReason: result === "Win" ? "TP" : "SL",
+                pnlPct,
+                pnlUsd,
+                time: entryLabel,
+                entryAt: entryLabel,
+                exitAt: exitLabel,
+                entryTime: entryTime as UTCTimestamp,
+                exitTime: exitTime as UTCTimestamp,
+                entryPrice,
+                targetPrice,
+                stopPrice,
+                outcomePrice,
+                units: unitsPerMove
+              });
+            }
+          }
+        }
+
+        const ordered = [...rows].sort(
+          (left, right) =>
+            Number(left.exitTime) - Number(right.exitTime) ||
+            left.id.localeCompare(right.id)
+        );
+        aiLibraryPoolCacheRef.current.set(poolKey, ordered);
+        return ordered;
+      })().finally(() => {
+        aiLibraryPoolInFlightRef.current.delete(poolKey);
+      });
+
+      aiLibraryPoolInFlightRef.current.set(poolKey, computePromise);
+
+      return computePromise;
+    },
+    [
+      buildSeedLibraryPoolKey,
+      ensureLibraryHistorySeed,
+      resolveLibraryModelProfiles
+    ]
+  );
+
   const loadLibraryTradePool = useCallback(
     async (
       settings: BacktestSettingsSnapshot,
@@ -15493,11 +15717,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           ? resolveLibraryDollarValue(settings.slDollars, settingsSnapshot.slDollars)
           : settingsSnapshot.slDollars;
 
-        const rawPool = await loadLibraryTradePool(
-          settingsSnapshot,
-          tpDollars,
-          slDollars
-        );
+        const rawPool = useBase
+          ? await loadSeededLibraryTradePool(
+              settingsSnapshot,
+              tpDollars,
+              slDollars
+            )
+          : await loadLibraryTradePool(
+              settingsSnapshot,
+              tpDollars,
+              slDollars
+            );
         if (aiLibraryRunTokenRef.current[libraryId] !== runToken) {
           return;
         }
@@ -15550,6 +15780,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       buildLibraryExecutedTradeIds,
       buildLibrarySnapshotFromPool,
       filterLibraryCandidatePool,
+      loadSeededLibraryTradePool,
       loadLibraryTradePool,
       resolveLibraryBacktestSnapshot,
       resolveLibraryDollarValue,
@@ -15598,7 +15829,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         return;
       }
 
-      const poolParamsByKey = new Map<string, { tpDollars: number; slDollars: number }>();
+      const poolParamsByKey = new Map<
+        string,
+        { tpDollars: number; slDollars: number; useSeedPool: boolean }
+      >();
       const poolKeyByLibraryId = new Map<string, string>();
       const settingsByLibraryId = new Map<string, Record<string, AiLibrarySettingValue>>();
 
@@ -15618,10 +15852,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           ? resolveLibraryDollarValue(settings.slDollars, settingsSnapshot.slDollars)
           : settingsSnapshot.slDollars;
 
-        const poolKey = buildLibraryPoolKey(settingsSnapshot, tpDollars, slDollars);
+        const poolKey = useBase
+          ? buildSeedLibraryPoolKey(settingsSnapshot, tpDollars, slDollars)
+          : buildLibraryPoolKey(settingsSnapshot, tpDollars, slDollars);
         poolKeyByLibraryId.set(libraryId, poolKey);
         if (!poolParamsByKey.has(poolKey)) {
-          poolParamsByKey.set(poolKey, { tpDollars, slDollars });
+          poolParamsByKey.set(poolKey, {
+            tpDollars,
+            slDollars,
+            useSeedPool: useBase
+          });
         }
       }
 
@@ -15633,11 +15873,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       for (const [poolKey, params] of poolParamsByKey.entries()) {
         try {
-          const rawPool = await loadLibraryTradePool(
-            settingsSnapshot,
-            params.tpDollars,
-            params.slDollars
-          );
+          const rawPool = params.useSeedPool
+            ? await loadSeededLibraryTradePool(
+                settingsSnapshot,
+                params.tpDollars,
+                params.slDollars
+              )
+            : await loadLibraryTradePool(
+                settingsSnapshot,
+                params.tpDollars,
+                params.slDollars
+              );
           const candidatePool = filterLibraryCandidatePool(rawPool, settingsSnapshot);
           const executedTradeIds = buildLibraryExecutedTradeIds(
             candidatePool,
@@ -15712,9 +15958,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       aiLibraryDefById,
       aiLibraryReadyToRun,
       buildLibraryExecutedTradeIds,
+      buildSeedLibraryPoolKey,
       buildLibraryPoolKey,
       buildLibrarySnapshotFromPool,
       filterLibraryCandidatePool,
+      loadSeededLibraryTradePool,
       loadLibraryTradePool,
       resolveLibraryBacktestSnapshot,
       resolveLibraryDollarValue,

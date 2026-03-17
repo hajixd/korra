@@ -38,6 +38,14 @@ type TradeAiEntrySnapshot = {
   entryNeighbors: BacktestEntryNeighbor[];
 };
 
+type LibraryNeighborAggregateEntry = {
+  trade: HistoryItem;
+  libraryId: string;
+  sourceIndex: number;
+  score: number;
+  bestSimilarity: number;
+};
+
 type BacktestFilterSettings = {
   statsDateStart: string;
   statsDateEnd: string;
@@ -463,17 +471,38 @@ const cloneEntryNeighbors = (value: unknown): BacktestEntryNeighbor[] => {
   return out;
 };
 
+const buildLibraryNeighborUid = (
+  libraryId: string,
+  candidateTrade: HistoryItem,
+  sourceIndex: number
+): string | null => {
+  const candidateId = String(candidateTrade.id ?? "").trim();
+  if (!candidateId) {
+    return null;
+  }
+
+  const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
+  if (!normalizedLibraryId || normalizedLibraryId === "trades") {
+    return candidateId;
+  }
+
+  return `lib|${normalizedLibraryId}|${candidateId}|${Math.max(0, Math.floor(sourceIndex) || 0)}`;
+};
+
 const buildTradeEntryNeighbor = (
   candidateTrade: HistoryItem,
   similarity: number,
-  weight: number
+  weight: number,
+  libraryId: string,
+  sourceIndex: number
 ): BacktestEntryNeighbor => {
   const candidateId = String(candidateTrade.id ?? "").trim();
+  const neighborUid = buildLibraryNeighborUid(libraryId, candidateTrade, sourceIndex);
   const dir = candidateTrade.side === "Short" ? -1 : 1;
 
   return {
-    uid: candidateId || null,
-    metaUid: candidateId || null,
+    uid: neighborUid,
+    metaUid: neighborUid,
     metaTime: Number(candidateTrade.entryTime),
     metaPnl: Number(candidateTrade.pnlUsd),
     metaOutcome: candidateTrade.result,
@@ -781,7 +810,7 @@ const computeAntiCheatBacktestContext = (params: {
   const activeLibraryIds =
     panelBacktestFilterSettings.selectedAiLibraries.length > 0
       ? panelBacktestFilterSettings.selectedAiLibraries
-      : ["trades"];
+      : [];
   const timeFilteredTrades = splitEvaluationTrades;
 
   const getLibrarySettings = (libraryId: string) => {
@@ -956,13 +985,19 @@ const computeAntiCheatBacktestContext = (params: {
       source.length
     );
 
-    return rebalanceItemsToTargetWinRate(
+    const balanced = rebalanceItemsToTargetWinRate(
       source,
       maxSamples,
       targetWinRate,
       (candidate) => candidate.result === "Win",
       normalizedId === "terrific" || normalizedId === "terrible"
     );
+
+    return balanced.map((trade, sourceIndex) => ({
+      trade,
+      libraryId,
+      sourceIndex
+    }));
   };
 
   const getSimilarityWeight = (currentTrade: HistoryItem, candidateTrade: HistoryItem) => {
@@ -1046,14 +1081,7 @@ const computeAntiCheatBacktestContext = (params: {
     let weightedTotal = 0;
     let similarityTotal = 0;
     let sampleCount = 0;
-    const neighborAggregate = new Map<
-      string,
-      {
-        trade: HistoryItem;
-        score: number;
-        bestSimilarity: number;
-      }
-    >();
+    const neighborAggregate = new Map<string, LibraryNeighborAggregateEntry>();
 
     for (const libraryId of activeLibraryIds) {
       const libraryWeight = getLibraryWeight(libraryId);
@@ -1064,7 +1092,8 @@ const computeAntiCheatBacktestContext = (params: {
 
       const source = pickLibrarySource(libraryId, basePool, trade);
 
-      for (const candidate of source) {
+      for (const candidateEntry of source) {
+        const { trade: candidate, sourceIndex } = candidateEntry;
         const rawSimilarity = getSimilarityWeight(trade, candidate);
         const similarityWeight = rawSimilarity * libraryWeight;
         const outcome =
@@ -1079,20 +1108,26 @@ const computeAntiCheatBacktestContext = (params: {
         similarityTotal += similarityWeight;
         sampleCount += 1;
 
-        const candidateId = String(candidate.id ?? "").trim();
-        if (!candidateId) {
+        const neighborUid = buildLibraryNeighborUid(
+          libraryId,
+          candidate,
+          sourceIndex
+        );
+        if (!neighborUid) {
           continue;
         }
 
-        const existing = neighborAggregate.get(candidateId);
+        const existing = neighborAggregate.get(neighborUid);
         if (existing) {
           existing.score += similarityWeight;
           if (rawSimilarity > existing.bestSimilarity) {
             existing.bestSimilarity = rawSimilarity;
           }
         } else {
-          neighborAggregate.set(candidateId, {
+          neighborAggregate.set(neighborUid, {
             trade: candidate,
+            libraryId,
+            sourceIndex,
             score: similarityWeight,
             bestSimilarity: rawSimilarity
           });
@@ -1132,7 +1167,15 @@ const computeAntiCheatBacktestContext = (params: {
           Number(right.trade.entryTime) - Number(left.trade.entryTime) ||
           left.trade.id.localeCompare(right.trade.id)
       )
-      .map((entry) => buildTradeEntryNeighbor(entry.trade, entry.bestSimilarity, entry.score));
+      .map((entry) =>
+        buildTradeEntryNeighbor(
+          entry.trade,
+          entry.bestSimilarity,
+          entry.score,
+          entry.libraryId,
+          entry.sourceIndex
+        )
+      );
 
     confidenceById.set(trade.id, normalizedConfidence);
     aiEntrySnapshotById.set(trade.id, {
