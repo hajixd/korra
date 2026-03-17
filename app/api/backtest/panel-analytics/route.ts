@@ -38,10 +38,39 @@ type TradeAiEntrySnapshot = {
   entryNeighbors: BacktestEntryNeighbor[];
 };
 
-type LibraryNeighborAggregateEntry = {
-  trade: HistoryItem;
+type LibraryPointPayload = {
+  id?: string;
+  uid?: string;
+  libId?: string;
+  model?: string | null;
+  metaModel?: string | null;
+  entryTime?: number | null;
+  metaTime?: number | null;
+  pnl?: number | null;
+  metaPnl?: number | null;
+  result?: string | null;
+  metaOutcome?: string | null;
+  metaSession?: string | null;
+  dir?: number | null;
+  label?: number | null;
+};
+
+type LibrarySourceCandidate = {
+  uid: string;
   libraryId: string;
   sourceIndex: number;
+  direction: number | null;
+  entryTime: number | null;
+  pnlUsd: number | null;
+  result: string | null;
+  session: string | null;
+  entryModel: string | null;
+  label: number | null;
+  trade: HistoryItem | null;
+};
+
+type LibraryNeighborAggregateEntry = {
+  candidate: LibrarySourceCandidate;
   score: number;
   bestSimilarity: number;
 };
@@ -489,41 +518,126 @@ const buildLibraryNeighborUid = (
   return `lib|${normalizedLibraryId}|${candidateId}|${Math.max(0, Math.floor(sourceIndex) || 0)}`;
 };
 
-const buildTradeEntryNeighbor = (
-  candidateTrade: HistoryItem,
-  similarity: number,
-  weight: number,
+const normalizeOutcomeLabel = (value: unknown): "Win" | "Loss" | null => {
+  const raw = String(value ?? "").trim().toUpperCase();
+  if (!raw) {
+    return null;
+  }
+  if (raw === "WIN" || raw === "TP") {
+    return "Win";
+  }
+  if (raw === "LOSS" || raw === "SL") {
+    return "Loss";
+  }
+  return null;
+};
+
+const buildTradeSourceCandidate = (
   libraryId: string,
+  trade: HistoryItem,
   sourceIndex: number
-): BacktestEntryNeighbor => {
-  const candidateId = String(candidateTrade.id ?? "").trim();
-  const neighborUid = buildLibraryNeighborUid(libraryId, candidateTrade, sourceIndex);
-  const dir = candidateTrade.side === "Short" ? -1 : 1;
+): LibrarySourceCandidate | null => {
+  const uid = buildLibraryNeighborUid(libraryId, trade, sourceIndex);
+  if (!uid) {
+    return null;
+  }
 
   return {
-    uid: neighborUid,
-    metaUid: neighborUid,
-    metaTime: Number(candidateTrade.entryTime),
-    metaPnl: Number(candidateTrade.pnlUsd),
-    metaOutcome: candidateTrade.result,
-    metaSession: getSessionLabel(candidateTrade.entryTime),
+    uid,
+    libraryId,
+    sourceIndex,
+    direction: trade.side === "Short" ? -1 : 1,
+    entryTime: Number.isFinite(Number(trade.entryTime)) ? Number(trade.entryTime) : null,
+    pnlUsd: Number.isFinite(Number(trade.pnlUsd)) ? Number(trade.pnlUsd) : null,
+    result: normalizeOutcomeLabel(trade.result),
+    session: getSessionLabel(trade.entryTime),
+    entryModel: trade.entrySource || null,
+    label: trade.result === "Win" ? 1 : trade.result === "Loss" ? -1 : null,
+    trade
+  };
+};
+
+const buildLibraryPointSourceCandidate = (
+  point: LibraryPointPayload,
+  sourceIndex: number
+): LibrarySourceCandidate | null => {
+  const uid = String(point.uid ?? point.id ?? "").trim();
+  const libraryId = String(point.libId ?? "").trim().toLowerCase();
+  if (!uid || !libraryId) {
+    return null;
+  }
+
+  const entryTimeRaw = Number(point.metaTime ?? point.entryTime ?? NaN);
+  const entryTime = Number.isFinite(entryTimeRaw) ? entryTimeRaw : null;
+  const pnlRaw = Number(point.metaPnl ?? point.pnl ?? NaN);
+  const pnlUsd = Number.isFinite(pnlRaw) ? pnlRaw : null;
+  const directionRaw = Number(point.dir ?? NaN);
+  const labelRaw = Number(point.label ?? NaN);
+  const normalizedOutcome =
+    normalizeOutcomeLabel(point.metaOutcome ?? point.result) ??
+    (Number.isFinite(labelRaw) ? (labelRaw >= 0 ? "Win" : "Loss") : null) ??
+    (pnlUsd == null ? null : pnlUsd >= 0 ? "Win" : "Loss");
+
+  return {
+    uid,
+    libraryId,
+    sourceIndex,
+    direction: Number.isFinite(directionRaw) ? directionRaw : null,
+    entryTime,
+    pnlUsd,
+    result: normalizedOutcome,
+    session:
+      point.metaSession != null && String(point.metaSession).trim()
+        ? String(point.metaSession)
+        : entryTime == null
+          ? null
+          : getSessionLabel(entryTime),
+    entryModel:
+      point.metaModel != null && String(point.metaModel).trim()
+        ? String(point.metaModel)
+        : point.model != null && String(point.model).trim()
+          ? String(point.model)
+          : null,
+    label: Number.isFinite(labelRaw) ? labelRaw : normalizedOutcome === "Win" ? 1 : normalizedOutcome === "Loss" ? -1 : null,
+    trade: null
+  };
+};
+
+const buildEntryNeighbor = (
+  candidate: LibrarySourceCandidate,
+  similarity: number,
+  weight: number
+): BacktestEntryNeighbor => {
+  const dir =
+    Number.isFinite(Number(candidate.direction)) ? Number(candidate.direction) : null;
+  const trade = candidate.trade;
+  const fallbackSide =
+    dir === -1 ? "Short" : dir === 1 ? "Long" : undefined;
+
+  return {
+    uid: candidate.uid,
+    metaUid: candidate.uid,
+    metaTime: candidate.entryTime,
+    metaPnl: candidate.pnlUsd,
+    metaOutcome: candidate.result,
+    metaSession: candidate.session,
     dir,
-    label: candidateTrade.result === "Win" ? 1 : -1,
+    label: candidate.label,
     d: similarity > 0 ? 1 / similarity : Number.MAX_SAFE_INTEGER,
     w: weight,
     t: {
-      id: candidateId || undefined,
-      uid: candidateId || undefined,
-      tradeUid: candidateId || undefined,
-      direction: dir,
-      entryTime: Number(candidateTrade.entryTime),
-      pnl: Number(candidateTrade.pnlUsd),
-      result: candidateTrade.result,
-      session: getSessionLabel(candidateTrade.entryTime),
-      entryModel: candidateTrade.entrySource,
-      chunkType: candidateTrade.entrySource,
-      model: candidateTrade.entrySource,
-      side: candidateTrade.side
+      id: trade?.id ?? candidate.uid,
+      uid: trade?.id ?? candidate.uid,
+      tradeUid: trade?.id ?? candidate.uid,
+      direction: dir ?? undefined,
+      entryTime: candidate.entryTime ?? undefined,
+      pnl: candidate.pnlUsd ?? undefined,
+      result: candidate.result ?? undefined,
+      session: candidate.session ?? undefined,
+      entryModel: candidate.entryModel ?? undefined,
+      chunkType: candidate.entryModel ?? undefined,
+      model: candidate.entryModel ?? undefined,
+      side: trade?.side ?? fallbackSide
     }
   };
 };
@@ -645,6 +759,46 @@ const normalizeTrades = (value: unknown): HistoryItem[] => {
   return rows;
 };
 
+const normalizeLibraryPoints = (value: unknown): LibraryPointPayload[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const rows: LibraryPointPayload[] = [];
+
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+
+    const row = item as Record<string, unknown>;
+    const uid = String(row.uid ?? row.id ?? "").trim();
+    const libId = String(row.libId ?? "").trim().toLowerCase();
+    if (!uid || !libId) {
+      continue;
+    }
+
+    rows.push({
+      id: row.id != null ? String(row.id) : undefined,
+      uid,
+      libId,
+      model: row.model != null ? String(row.model) : null,
+      metaModel: row.metaModel != null ? String(row.metaModel) : null,
+      entryTime: row.entryTime == null ? null : Number(row.entryTime),
+      metaTime: row.metaTime == null ? null : Number(row.metaTime),
+      pnl: row.pnl == null ? null : Number(row.pnl),
+      metaPnl: row.metaPnl == null ? null : Number(row.metaPnl),
+      result: row.result != null ? String(row.result) : null,
+      metaOutcome: row.metaOutcome != null ? String(row.metaOutcome) : null,
+      metaSession: row.metaSession != null ? String(row.metaSession) : null,
+      dir: row.dir == null ? null : Number(row.dir),
+      label: row.label == null ? null : Number(row.label)
+    });
+  }
+
+  return rows;
+};
+
 const normalizeFilterSettings = (value: unknown): BacktestFilterSettings => {
   const row =
     value && typeof value === "object" && !Array.isArray(value)
@@ -719,10 +873,16 @@ const normalizeAiLibraryDefaultsById = (
 
 const computeAntiCheatBacktestContext = (params: {
   panelSourceTrades: HistoryItem[];
+  panelLibraryPoints: LibraryPointPayload[];
   panelBacktestFilterSettings: BacktestFilterSettings;
   aiLibraryDefaultsById: Record<string, Record<string, AiLibrarySettingValue>>;
 }) => {
-  const { panelSourceTrades, panelBacktestFilterSettings, aiLibraryDefaultsById } = params;
+  const {
+    panelSourceTrades,
+    panelLibraryPoints,
+    panelBacktestFilterSettings,
+    aiLibraryDefaultsById
+  } = params;
   const startMs = getUtcDayStartMs(panelBacktestFilterSettings.statsDateStart);
   const endExclusiveMs = getUtcDayEndExclusiveMs(panelBacktestFilterSettings.statsDateEnd);
   const dateFilteredTrades = panelSourceTrades.filter((trade) => {
@@ -812,6 +972,23 @@ const computeAntiCheatBacktestContext = (params: {
       ? panelBacktestFilterSettings.selectedAiLibraries
       : [];
   const timeFilteredTrades = splitEvaluationTrades;
+  const libraryPointsById = panelLibraryPoints.reduce<Map<string, LibrarySourceCandidate[]>>(
+    (accumulator, point) => {
+      const candidate = buildLibraryPointSourceCandidate(point, 0);
+      if (!candidate) {
+        return accumulator;
+      }
+      const key = candidate.libraryId;
+      const list = accumulator.get(key) ?? [];
+      list.push({
+        ...candidate,
+        sourceIndex: list.length
+      });
+      accumulator.set(key, list);
+      return accumulator;
+    },
+    new Map<string, LibrarySourceCandidate[]>()
+  );
 
   const getLibrarySettings = (libraryId: string) => {
     const defaults = aiLibraryDefaultsById[libraryId] ?? {};
@@ -891,6 +1068,18 @@ const computeAntiCheatBacktestContext = (params: {
   ) => {
     const settings = getLibrarySettings(libraryId);
     const normalizedId = libraryId.toLowerCase();
+    const canonicalPoints = libraryPointsById.get(normalizedId);
+    if (canonicalPoints && canonicalPoints.length > 0) {
+      return canonicalPoints.map((candidate, sourceIndex) => ({
+        candidate: {
+          ...candidate,
+          sourceIndex
+        },
+        libraryId,
+        sourceIndex
+      }));
+    }
+
     const maxSamples = getLibraryMaxSamples(libraryId, 96);
     const stride = getLibraryStride(libraryId);
     let source: HistoryItem[] = [];
@@ -993,35 +1182,71 @@ const computeAntiCheatBacktestContext = (params: {
       normalizedId === "terrific" || normalizedId === "terrible"
     );
 
-    return balanced.map((trade, sourceIndex) => ({
-      trade,
-      libraryId,
-      sourceIndex
-    }));
+    return balanced
+      .map((trade, sourceIndex) => ({
+        candidate: buildTradeSourceCandidate(libraryId, trade, sourceIndex),
+        libraryId,
+        sourceIndex
+      }))
+      .filter(
+        (
+          entry
+        ): entry is {
+          candidate: LibrarySourceCandidate;
+          libraryId: string;
+          sourceIndex: number;
+        } => entry.candidate !== null
+      );
   };
 
-  const getSimilarityWeight = (currentTrade: HistoryItem, candidateTrade: HistoryItem) => {
-    let weight = 0.35;
+  const getCandidateOutcomeScore = (candidate: LibrarySourceCandidate) => {
+    if (candidate.result === "Win") {
+      return 1;
+    }
+    if (candidate.result === "Loss") {
+      return 0;
+    }
+    if (candidate.label === 1) {
+      return 1;
+    }
+    if (candidate.label === -1) {
+      return 0;
+    }
+    if (candidate.pnlUsd != null) {
+      return candidate.pnlUsd >= 0 ? 1 : 0;
+    }
+    return 0;
+  };
 
-    if (candidateTrade.side === currentTrade.side) {
+  const getSimilarityWeight = (currentTrade: HistoryItem, candidate: LibrarySourceCandidate) => {
+    let weight = 0.35;
+    const currentDirection = currentTrade.side === "Short" ? -1 : 1;
+
+    if (candidate.direction === currentDirection) {
       weight += 0.18;
     }
 
-    if (candidateTrade.entrySource === currentTrade.entrySource) {
+    if (candidate.entryModel && candidate.entryModel === currentTrade.entrySource) {
       weight += 0.24;
     }
 
-    if (candidateTrade.symbol === currentTrade.symbol) {
+    if (candidate.trade?.symbol === currentTrade.symbol) {
       weight += 0.1;
     }
 
-    if (getSessionLabel(candidateTrade.entryTime) === getSessionLabel(currentTrade.entryTime)) {
+    const candidateSession =
+      candidate.session ??
+      (candidate.entryTime == null ? null : getSessionLabel(candidate.entryTime));
+    if (candidateSession === getSessionLabel(currentTrade.entryTime)) {
       weight += 0.12;
     }
 
-    const hourGap = Math.abs(
-      getTradeHour(candidateTrade.entryTime) - getTradeHour(currentTrade.entryTime)
-    );
+    const candidateHour =
+      candidate.entryTime == null ? null : getTradeHour(candidate.entryTime);
+    const hourGap =
+      candidateHour == null
+        ? Number.POSITIVE_INFINITY
+        : Math.abs(candidateHour - getTradeHour(currentTrade.entryTime));
 
     if (hourGap === 0) {
       weight += 0.08;
@@ -1029,15 +1254,19 @@ const computeAntiCheatBacktestContext = (params: {
       weight += 0.04;
     }
 
-    const rrGap = Math.abs(
-      getTradeRiskReward(candidateTrade) - getTradeRiskReward(currentTrade)
-    );
-    weight *= 1 / (1 + rrGap * 0.65);
+    if (candidate.trade) {
+      const rrGap = Math.abs(
+        getTradeRiskReward(candidate.trade) - getTradeRiskReward(currentTrade)
+      );
+      weight *= 1 / (1 + rrGap * 0.65);
+    }
 
-    const timeGapHours = Math.abs(
-      Number(currentTrade.entryTime) - Number(candidateTrade.entryTime)
-    ) / 3600;
-    weight *= 1 / (1 + timeGapHours / 72);
+    if (candidate.entryTime != null) {
+      const timeGapHours = Math.abs(
+        Number(currentTrade.entryTime) - Number(candidate.entryTime)
+      ) / 3600;
+      weight *= 1 / (1 + timeGapHours / 72);
+    }
 
     return clamp(weight, 0.02, 2);
   };
@@ -1093,26 +1322,20 @@ const computeAntiCheatBacktestContext = (params: {
       const source = pickLibrarySource(libraryId, basePool, trade);
 
       for (const candidateEntry of source) {
-        const { trade: candidate, sourceIndex } = candidateEntry;
+        const { candidate, sourceIndex } = candidateEntry;
         const rawSimilarity = getSimilarityWeight(trade, candidate);
         const similarityWeight = rawSimilarity * libraryWeight;
         const outcome =
-          panelBacktestFilterSettings.validationMode === "synthetic"
-            ? getSyntheticWinProb(candidate)
-            : candidate.result === "Win"
-              ? 1
-              : 0;
+          panelBacktestFilterSettings.validationMode === "synthetic" && candidate.trade
+            ? getSyntheticWinProb(candidate.trade)
+            : getCandidateOutcomeScore(candidate);
 
         weightedWins += similarityWeight * outcome;
         weightedTotal += similarityWeight;
         similarityTotal += similarityWeight;
         sampleCount += 1;
 
-        const neighborUid = buildLibraryNeighborUid(
-          libraryId,
-          candidate,
-          sourceIndex
-        );
+        const neighborUid = candidate.uid;
         if (!neighborUid) {
           continue;
         }
@@ -1125,9 +1348,7 @@ const computeAntiCheatBacktestContext = (params: {
           }
         } else {
           neighborAggregate.set(neighborUid, {
-            trade: candidate,
-            libraryId,
-            sourceIndex,
+            candidate,
             score: similarityWeight,
             bestSimilarity: rawSimilarity
           });
@@ -1164,17 +1385,11 @@ const computeAntiCheatBacktestContext = (params: {
         (left, right) =>
           right.score - left.score ||
           right.bestSimilarity - left.bestSimilarity ||
-          Number(right.trade.entryTime) - Number(left.trade.entryTime) ||
-          left.trade.id.localeCompare(right.trade.id)
+          Number(right.candidate.entryTime ?? 0) - Number(left.candidate.entryTime ?? 0) ||
+          left.candidate.uid.localeCompare(right.candidate.uid)
       )
       .map((entry) =>
-        buildTradeEntryNeighbor(
-          entry.trade,
-          entry.bestSimilarity,
-          entry.score,
-          entry.libraryId,
-          entry.sourceIndex
-        )
+        buildEntryNeighbor(entry.candidate, entry.bestSimilarity, entry.score)
       );
 
     confidenceById.set(trade.id, normalizedConfidence);
@@ -1287,6 +1502,7 @@ export async function POST(request: Request) {
   }
 
   const panelSourceTrades = normalizeTrades(body.panelSourceTrades);
+  const panelLibraryPoints = normalizeLibraryPoints(body.panelLibraryPoints);
   const panelBacktestFilterSettings = normalizeFilterSettings(body.panelBacktestFilterSettings);
   const panelConfidenceGateDisabled = body.panelConfidenceGateDisabled === true;
   const panelEffectiveConfidenceThreshold = toNumeric(body.panelEffectiveConfidenceThreshold);
@@ -1310,6 +1526,7 @@ export async function POST(request: Request) {
 
   const antiCheatBacktestContext = computeAntiCheatBacktestContext({
     panelSourceTrades,
+    panelLibraryPoints,
     panelBacktestFilterSettings,
     aiLibraryDefaultsById
   });

@@ -463,6 +463,23 @@ type ServerTradePayload = {
   units: number;
 } & BacktestTradeAiEntryMeta;
 
+type ServerLibraryPointPayload = {
+  id?: string;
+  uid?: string;
+  libId?: string;
+  model?: string | null;
+  metaModel?: string | null;
+  entryTime?: number | null;
+  metaTime?: number | null;
+  pnl?: number | null;
+  metaPnl?: number | null;
+  result?: string | null;
+  metaOutcome?: string | null;
+  metaSession?: string | null;
+  dir?: number | null;
+  label?: number | null;
+};
+
 const normalizeBacktestHistoryRows = (rows: BacktestHistoryRow[]): HistoryItem[] => {
   return rows.map((row) => ({
     ...row,
@@ -619,6 +636,33 @@ const toServerTradePayload = (trade: HistoryItem): ServerTradePayload => ({
   entryNeighbors: cloneTradeEntryNeighbors(trade.entryNeighbors)
 });
 
+const toServerLibraryPointPayload = (point: any): ServerLibraryPointPayload => ({
+  id: point?.id != null ? String(point.id) : undefined,
+  uid:
+    point?.uid != null
+      ? String(point.uid)
+      : point?.id != null
+        ? String(point.id)
+        : undefined,
+  libId:
+    point?.libId != null
+      ? String(point.libId)
+      : point?.metaLib != null
+        ? String(point.metaLib)
+        : undefined,
+  model: point?.model != null ? String(point.model) : null,
+  metaModel: point?.metaModel != null ? String(point.metaModel) : null,
+  entryTime: point?.entryTime == null ? null : Number(point.entryTime),
+  metaTime: point?.metaTime == null ? null : Number(point.metaTime),
+  pnl: point?.pnl == null ? null : Number(point.pnl),
+  metaPnl: point?.metaPnl == null ? null : Number(point.metaPnl),
+  result: point?.result != null ? String(point.result) : null,
+  metaOutcome: point?.metaOutcome != null ? String(point.metaOutcome) : null,
+  metaSession: point?.metaSession != null ? String(point.metaSession) : null,
+  dir: point?.dir == null ? null : Number(point.dir),
+  label: point?.label == null ? null : Number(point.label)
+});
+
 const computeBacktestRowsLocally = (
   payload: BacktestHistoryComputeRequest
 ): HistoryItem[] => {
@@ -679,6 +723,7 @@ type PanelAnalyticsServerPayload = {
   panelBacktestFilterSettings: BacktestFilterSettings;
   panelConfidenceGateDisabled: boolean;
   panelEffectiveConfidenceThreshold: number;
+  panelLibraryPoints?: ServerLibraryPointPayload[];
   activePanelSourceTrades?: HistoryItem[];
   activePanelBacktestFilterSettings?: BacktestFilterSettings;
   activePanelConfidenceGateDisabled?: boolean;
@@ -706,6 +751,12 @@ const computePanelAnalyticsOnServer = async (
     panelEffectiveConfidenceThreshold: payload.panelEffectiveConfidenceThreshold,
     aiLibraryDefaultsById: payload.aiLibraryDefaultsById
   };
+
+  if (payload.panelLibraryPoints) {
+    requestBody.panelLibraryPoints = payload.panelLibraryPoints.map(
+      toServerLibraryPointPayload
+    );
+  }
 
   if (payload.activePanelSourceTrades) {
     requestBody.activePanelSourceTrades = payload.activePanelSourceTrades.map(toServerTradePayload);
@@ -11316,6 +11367,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     activePanelConfidenceGateDisabled,
     activePanelEffectiveConfidenceThreshold
   ]);
+  const panelAnalyticsLibraryIdSet = useMemo(() => {
+    return new Set(
+      (appliedBacktestSettings.selectedAiLibraries ?? []).map((libraryId) =>
+        String(libraryId).trim()
+      )
+    );
+  }, [appliedBacktestSettings.selectedAiLibraries]);
+  const panelAnalyticsLibraryPoints = useMemo(() => {
+    if (panelAnalyticsLibraryIdSet.size === 0) {
+      return [] as any[];
+    }
+
+    return (aiLibraryPoints as any[]).filter((point) => {
+      const libraryId = String(point?.libId ?? point?.metaLib ?? "").trim();
+      return libraryId.length > 0 && panelAnalyticsLibraryIdSet.has(libraryId);
+    });
+  }, [aiLibraryPoints, panelAnalyticsLibraryIdSet]);
   useEffect(() => {
     if (!shouldComputePanelAnalyticsOnServer) {
       setPanelAnalyticsStatus("idle");
@@ -11340,6 +11408,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               activePanelEffectiveConfidenceThreshold
             }
           : {}),
+        panelLibraryPoints: panelAnalyticsLibraryPoints,
         aiLibraryDefaultsById
       },
       controller.signal
@@ -11368,6 +11437,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     activePanelEffectiveConfidenceThreshold,
     activePanelSourceTrades,
     aiLibraryDefaultsById,
+    aiLibraryPoints,
     appliedBacktestSettings,
     chartPanelConfidenceGateDisabled,
     appliedConfidenceGateDisabled,
@@ -11376,6 +11446,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     panelBacktestFilterSettings,
     panelConfidenceGateDisabled,
     panelEffectiveConfidenceThreshold,
+    panelAnalyticsLibraryIdSet,
+    panelAnalyticsLibraryPoints,
     panelSourceTrades,
     shouldComputePanelAnalyticsOnServer,
     shouldSendActivePanelOverrides
@@ -15071,9 +15143,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       tpDollars: number,
       slDollars: number
     ) => {
-      return `seed|${buildLibraryPoolKey(settings, tpDollars, slDollars)}`;
+      const normalizedTp = Math.round(Number(tpDollars) || 0);
+      const normalizedSl = Math.round(Number(slDollars) || 0);
+      const normalizedUnits = Math.round(Number(settings.dollarsPerMove) || 0);
+      return [
+        "seed",
+        `tf:${settings.timeframe}`,
+        `sym:${settings.symbol}`,
+        `tp:${normalizedTp}`,
+        `sl:${normalizedSl}`,
+        `bars:${settings.chunkBars}`,
+        `dpm:${normalizedUnits}`
+      ].join("|");
     },
-    [buildLibraryPoolKey]
+    []
   );
 
   const loadSeededLibraryTradePool = useCallback(
@@ -15100,12 +15183,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         const candles = candleSeriesBySymbol[settings.symbol] ?? EMPTY_CANDLES;
 
         if (candles.length < 3) {
-          aiLibraryPoolCacheRef.current.set(poolKey, []);
-          return [];
-        }
-
-        const selectedModels = resolveLibraryModelProfiles(settings);
-        if (selectedModels.length === 0) {
           aiLibraryPoolCacheRef.current.set(poolKey, []);
           return [];
         }
@@ -15146,110 +15223,105 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         };
 
         const rows: HistoryItem[] = [];
+        for (let signalIndex = startIndex; signalIndex <= maxSignalIndex; signalIndex += 1) {
+          const entryIndex = signalIndex + 1;
+          const entryCandle = candles[entryIndex];
+          if (!entryCandle || !Number.isFinite(entryCandle.open)) {
+            continue;
+          }
 
-        for (const model of selectedModels) {
-          const modelName = model.name?.trim() || "Momentum";
+          const entryTime = Number(entryCandle.time);
+          if (!Number.isFinite(entryTime)) {
+            continue;
+          }
 
-          for (let signalIndex = startIndex; signalIndex <= maxSignalIndex; signalIndex += 1) {
-            const entryIndex = signalIndex + 1;
-            const entryCandle = candles[entryIndex];
-            if (!entryCandle || !Number.isFinite(entryCandle.open)) {
-              continue;
-            }
+          for (const direction of [1, -1] as const) {
+            const entryPrice = Math.max(0.000001, entryCandle.open);
+            const targetPrice =
+              direction === 1 ? entryPrice + tpDistance : entryPrice - tpDistance;
+            const stopPrice =
+              direction === 1 ? entryPrice - slDistance : entryPrice + slDistance;
+            const endIndex = Math.min(candles.length - 1, entryIndex + maxLookahead);
+            let exitIndex = endIndex;
+            let result: TradeResult | null = null;
 
-            const entryTime = Number(entryCandle.time);
-            if (!Number.isFinite(entryTime)) {
-              continue;
-            }
-
-            for (const direction of [1, -1] as const) {
-              const entryPrice = Math.max(0.000001, entryCandle.open);
-              const targetPrice =
-                direction === 1 ? entryPrice + tpDistance : entryPrice - tpDistance;
-              const stopPrice =
-                direction === 1 ? entryPrice - slDistance : entryPrice + slDistance;
-              const endIndex = Math.min(candles.length - 1, entryIndex + maxLookahead);
-              let exitIndex = endIndex;
-              let result: TradeResult | null = null;
-
-              for (let candleIndex = entryIndex; candleIndex <= endIndex; candleIndex += 1) {
-                const candle = candles[candleIndex];
-                if (!candle) {
-                  continue;
-                }
-
-                const tpHit =
-                  direction === 1
-                    ? candle.high >= targetPrice
-                    : candle.low <= targetPrice;
-                const slHit =
-                  direction === 1
-                    ? candle.low <= stopPrice
-                    : candle.high >= stopPrice;
-
-                if (tpHit && slHit) {
-                  exitIndex = candleIndex;
-                  result = "Loss";
-                  break;
-                }
-                if (slHit) {
-                  exitIndex = candleIndex;
-                  result = "Loss";
-                  break;
-                }
-                if (tpHit) {
-                  exitIndex = candleIndex;
-                  result = "Win";
-                  break;
-                }
+            for (let candleIndex = entryIndex; candleIndex <= endIndex; candleIndex += 1) {
+              const candle = candles[candleIndex];
+              if (!candle) {
+                continue;
               }
 
-              if (result == null) {
-                const lastCandle = candles[endIndex];
-                if (!lastCandle || !Number.isFinite(lastCandle.close)) {
-                  continue;
-                }
-                result =
-                  (lastCandle.close - entryPrice) * direction >= 0 ? "Win" : "Loss";
+              const tpHit =
+                direction === 1
+                  ? candle.high >= targetPrice
+                  : candle.low <= targetPrice;
+              const slHit =
+                direction === 1
+                  ? candle.low <= stopPrice
+                  : candle.high >= stopPrice;
+
+              if (tpHit && slHit) {
+                exitIndex = candleIndex;
+                result = "Loss";
+                break;
               }
-
-              const exitTimeRaw = Number(candles[exitIndex]?.time ?? entryTime);
-              const exitTime = Number.isFinite(exitTimeRaw) ? exitTimeRaw : entryTime;
-              const outcomePrice = result === "Win" ? targetPrice : stopPrice;
-              const pnlUsd = result === "Win" ? normalizedTp : -normalizedSl;
-              const pnlPct =
-                entryPrice > 0
-                  ? direction === 1
-                    ? ((outcomePrice - entryPrice) / entryPrice) * 100
-                    : ((entryPrice - outcomePrice) / entryPrice) * 100
-                  : 0;
-              const side: TradeSide = direction === 1 ? "Long" : "Short";
-              const entryLabel = formatSeedTime(entryTime);
-              const exitLabel = formatSeedTime(exitTime);
-
-              rows.push({
-                id: `${model.id}-seed-${String(signalIndex).padStart(6, "0")}-${
-                  direction === 1 ? "long" : "short"
-                }`,
-                symbol: settings.symbol,
-                side,
-                result,
-                entrySource: modelName,
-                exitReason: result === "Win" ? "TP" : "SL",
-                pnlPct,
-                pnlUsd,
-                time: entryLabel,
-                entryAt: entryLabel,
-                exitAt: exitLabel,
-                entryTime: entryTime as UTCTimestamp,
-                exitTime: exitTime as UTCTimestamp,
-                entryPrice,
-                targetPrice,
-                stopPrice,
-                outcomePrice,
-                units: unitsPerMove
-              });
+              if (slHit) {
+                exitIndex = candleIndex;
+                result = "Loss";
+                break;
+              }
+              if (tpHit) {
+                exitIndex = candleIndex;
+                result = "Win";
+                break;
+              }
             }
+
+            if (result == null) {
+              const lastCandle = candles[endIndex];
+              if (!lastCandle || !Number.isFinite(lastCandle.close)) {
+                continue;
+              }
+              result =
+                (lastCandle.close - entryPrice) * direction >= 0 ? "Win" : "Loss";
+            }
+
+            const exitTimeRaw = Number(candles[exitIndex]?.time ?? entryTime);
+            const exitTime = Number.isFinite(exitTimeRaw) ? exitTimeRaw : entryTime;
+            const outcomePrice = result === "Win" ? targetPrice : stopPrice;
+            const pnlUsd = result === "Win" ? normalizedTp : -normalizedSl;
+            const pnlPct =
+              entryPrice > 0
+                ? direction === 1
+                  ? ((outcomePrice - entryPrice) / entryPrice) * 100
+                  : ((entryPrice - outcomePrice) / entryPrice) * 100
+                : 0;
+            const side: TradeSide = direction === 1 ? "Long" : "Short";
+            const entryLabel = formatSeedTime(entryTime);
+            const exitLabel = formatSeedTime(exitTime);
+
+            rows.push({
+              id: `seed-${String(signalIndex).padStart(6, "0")}-${
+                direction === 1 ? "long" : "short"
+              }`,
+              symbol: settings.symbol,
+              side,
+              result,
+              entrySource: "Base Seeding",
+              exitReason: result === "Win" ? "TP" : "SL",
+              pnlPct,
+              pnlUsd,
+              time: entryLabel,
+              entryAt: entryLabel,
+              exitAt: exitLabel,
+              entryTime: entryTime as UTCTimestamp,
+              exitTime: exitTime as UTCTimestamp,
+              entryPrice,
+              targetPrice,
+              stopPrice,
+              outcomePrice,
+              units: unitsPerMove
+            });
           }
         }
 
@@ -15270,8 +15342,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     },
     [
       buildSeedLibraryPoolKey,
-      ensureLibraryHistorySeed,
-      resolveLibraryModelProfiles
+      ensureLibraryHistorySeed
     ]
   );
 
@@ -15653,9 +15724,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           metaSignalIndex: signalIndex,
           entryTime,
           metaTime: entryTime,
+          metaSession: getSessionLabel(entryTime as UTCTimestamp),
           dir: trade.side === "Long" ? 1 : -1,
           label: trade.result === "Win" ? 1 : -1,
           result: trade.result === "Win" ? "TP" : "SL",
+          metaOutcome: trade.result === "Win" ? "Win" : "Loss",
           pnl: trade.pnlUsd,
           metaPnl: trade.pnlUsd,
           v: shapeVector,

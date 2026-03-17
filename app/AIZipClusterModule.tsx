@@ -5448,6 +5448,24 @@ function buildChunkVector(candles, endIndex, chunkBars, chunkType, parseMode) {
     vec.push(rangeNorm, trendNorm, bull / bars, bear / bars);
     return vec;
   }
+  if (chunkType === "Base Seeding") {
+    const vec = [];
+    for (let i = 0; i < bars; i++) {
+      const ro = (opens[i] - baseClose) / denom;
+      const rc = (closes[i] - baseClose) / denom;
+      const rh = (highs[i] - baseClose) / denom;
+      const rl = (lows[i] - baseClose) / denom;
+      vec.push(ro, rc, rh, rl);
+    }
+    let bull = 0;
+    let bear = 0;
+    for (let i = 0; i < bars; i++) {
+      if (closes[i] > opens[i]) bull++;
+      else if (closes[i] < opens[i]) bear++;
+    }
+    vec.push(rangeNorm, trendNorm, bull / bars, bear / bars);
+    return vec;
+  }
   if (chunkType === "Mean Reversion") {
     const m = sma(closes);
     const s = Math.max(std(closes), AI_EPS);
