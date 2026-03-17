@@ -16065,6 +16065,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [runAllActiveLibraries]);
 
   useEffect(() => {
+    if (!backtestHasRun || !backtestHistorySeedReady) {
+      return;
+    }
     if (!appliedAiLibraryReadyToRun) {
       return;
     }
@@ -16075,6 +16078,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       backtestSettings: appliedBacktestSettings
     });
   }, [
+    backtestHasRun,
+    backtestHistorySeedReady,
     appliedAiLibraryReadyToRun,
     appliedBacktestSettings.selectedAiLibraries,
     appliedBacktestSettings.selectedAiLibrarySettings,
@@ -16124,6 +16129,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       aiLibraryDiagnosticsKeyRef.current = "";
       return;
     }
+    if (!backtestHasRun || !backtestHistorySeedReady) {
+      aiLibraryDiagnosticsKeyRef.current = "";
+      return;
+    }
 
     const totalAppliedCount = appliedLibraryIds.reduce((sum, libraryId) => {
       return sum + Math.max(0, Number(aiLibraryCounts[libraryId] ?? 0));
@@ -16170,6 +16179,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         appliedLibraryIds,
         selectedAiModelCount,
         appliedAiLibraryReadyToRun,
+        backtestHasRun,
+        backtestHistorySeedReady,
         totalAppliedCount,
         pointCount,
         statuses,
@@ -16181,6 +16192,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     aiLibraryRunStatus,
     appliedAiLibraryReadyToRun,
     appliedBacktestSettings.selectedAiLibraries,
+    backtestHasRun,
+    backtestHistorySeedReady,
     selectedAiModelCount,
   ]);
   const selectedAiLibraryConfig: Record<string, AiLibrarySettingValue> | null = selectedAiLibrary
