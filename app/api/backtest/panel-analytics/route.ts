@@ -10,6 +10,8 @@ export const dynamic = "force-dynamic";
 
 type AiLibrarySettingValue = boolean | number | string;
 type AiLibrarySettings = Record<string, Record<string, AiLibrarySettingValue>>;
+type AiDistanceMetric = "euclidean" | "cosine" | "manhattan" | "chebyshev";
+type KnnNeighborSpace = "high" | "post" | "3d" | "2d";
 
 type HistoryItem = {
   id: string;
@@ -26,6 +28,7 @@ type HistoryItem = {
   stopPrice: number;
   outcomePrice: number;
   units: number;
+  neighborVector?: number[] | null;
 } & BacktestTradeAiEntryMeta;
 
 type TradeAiEntrySnapshot = {
@@ -53,6 +56,7 @@ type LibraryPointPayload = {
   metaSession?: string | null;
   dir?: number | null;
   label?: number | null;
+  v?: number[] | null;
 };
 
 type LibrarySourceCandidate = {
@@ -67,6 +71,7 @@ type LibrarySourceCandidate = {
   entryModel: string | null;
   label: number | null;
   trade: HistoryItem | null;
+  vector: number[] | null;
 };
 
 type LibraryNeighborAggregateEntry = {
@@ -87,6 +92,8 @@ type BacktestFilterSettings = {
   validationMode: "off" | "split" | "online" | "synthetic";
   selectedAiLibraries: string[];
   selectedAiLibrarySettings: AiLibrarySettings;
+  distanceMetric: AiDistanceMetric;
+  knnNeighborSpace: KnnNeighborSpace;
 };
 
 type PanelAnalyticsResponseBody = {
@@ -103,6 +110,194 @@ const AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY = "targetWinRateMode";
 
 const clamp = (value: number, min: number, max: number): number => {
   return Math.min(max, Math.max(min, value));
+};
+
+const AI_EPS = 1e-8;
+
+const isFiniteNumber = (value: unknown): value is number => {
+  return typeof value === "number" && Number.isFinite(value);
+};
+
+const toFiniteVector = (value: unknown): number[] | null => {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const vector = value
+    .map((entry) => Number(entry))
+    .filter((entry) => Number.isFinite(entry));
+
+  return vector.length > 0 ? vector : null;
+};
+
+const dotProduct = (left: number[], right: number[]) => {
+  let total = 0;
+  const dim = Math.min(left.length, right.length);
+  for (let index = 0; index < dim; index += 1) {
+    total += left[index]! * right[index]!;
+  }
+  return total;
+};
+
+const vectorNorm = (value: number[]) => {
+  return Math.sqrt(Math.max(AI_EPS, dotProduct(value, value)));
+};
+
+const matrixVector = (matrix: number[][], vector: number[]) => {
+  return matrix.map((row) => dotProduct(row, vector));
+};
+
+const randomNormal = (seedFactory: () => number) => {
+  let u = 0;
+  let v = 0;
+  while (u <= AI_EPS) {
+    u = seedFactory();
+  }
+  while (v <= AI_EPS) {
+    v = seedFactory();
+  }
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+};
+
+const createSeededRng = (seed: number) => {
+  let state = (seed >>> 0) || 1;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+type PcaBasis = {
+  mean: number[];
+  components: number[][];
+};
+
+const fitPcaBasis = (vectors: number[][], outDim: number, cacheKey: string): PcaBasis | null => {
+  if (vectors.length === 0 || outDim <= 0) {
+    return null;
+  }
+
+  const inDim = vectors[0]?.length ?? 0;
+  if (inDim <= 0) {
+    return null;
+  }
+
+  const mean = new Array(inDim).fill(0);
+  for (const vector of vectors) {
+    if (vector.length !== inDim) {
+      return null;
+    }
+    for (let index = 0; index < inDim; index += 1) {
+      mean[index] += vector[index]!;
+    }
+  }
+  for (let index = 0; index < inDim; index += 1) {
+    mean[index] /= Math.max(1, vectors.length);
+  }
+
+  const covariance = Array.from({ length: inDim }, () => new Array(inDim).fill(0));
+  for (const vector of vectors) {
+    for (let left = 0; left < inDim; left += 1) {
+      const leftValue = vector[left]! - mean[left]!;
+      for (let right = 0; right < inDim; right += 1) {
+        covariance[left]![right] += leftValue * (vector[right]! - mean[right]!);
+      }
+    }
+  }
+  const denominator = Math.max(1, vectors.length - 1);
+  for (let left = 0; left < inDim; left += 1) {
+    for (let right = 0; right < inDim; right += 1) {
+      covariance[left]![right] /= denominator;
+    }
+  }
+
+  const rng = createSeededRng(hashSeedFromText(cacheKey));
+  const work = covariance.map((row) => row.slice());
+  const components: number[][] = [];
+  const targetDim = Math.min(outDim, inDim);
+
+  for (let componentIndex = 0; componentIndex < targetDim; componentIndex += 1) {
+    let vector = Array.from({ length: inDim }, () => randomNormal(rng));
+    let currentNorm = vectorNorm(vector);
+    vector = vector.map((entry) => entry / currentNorm);
+
+    for (let iteration = 0; iteration < 12; iteration += 1) {
+      const next = matrixVector(work, vector);
+      currentNorm = vectorNorm(next);
+      vector = next.map((entry) => entry / currentNorm);
+    }
+
+    const projected = matrixVector(work, vector);
+    const eigenValue = dotProduct(vector, projected);
+    components.push(vector.slice());
+
+    for (let left = 0; left < inDim; left += 1) {
+      for (let right = 0; right < inDim; right += 1) {
+        work[left]![right] -= eigenValue * vector[left]! * vector[right]!;
+      }
+    }
+  }
+
+  return components.length > 0 ? { mean, components } : null;
+};
+
+const applyPcaBasis = (basis: PcaBasis, vector: number[]) => {
+  const centered = vector.map((entry, index) => entry - (basis.mean[index] ?? 0));
+  return basis.components.map((component) => dotProduct(component, centered));
+};
+
+const computeVectorVariance = (vectors: number[][]): number[] | null => {
+  if (vectors.length === 0) {
+    return null;
+  }
+
+  const dim = vectors[0]?.length ?? 0;
+  if (dim <= 0) {
+    return null;
+  }
+
+  const mean = new Array(dim).fill(0);
+  const variance = new Array(dim).fill(0);
+
+  for (const vector of vectors) {
+    if (vector.length !== dim) {
+      return null;
+    }
+    for (let index = 0; index < dim; index += 1) {
+      mean[index] += vector[index]!;
+    }
+  }
+
+  for (let index = 0; index < dim; index += 1) {
+    mean[index] /= Math.max(1, vectors.length);
+  }
+
+  for (const vector of vectors) {
+    for (let index = 0; index < dim; index += 1) {
+      const delta = vector[index]! - mean[index]!;
+      variance[index] += delta * delta;
+    }
+  }
+
+  for (let index = 0; index < dim; index += 1) {
+    variance[index] = Math.max(AI_EPS, variance[index]! / Math.max(1, vectors.length - 1));
+  }
+
+  return variance;
+};
+
+const normalizeDistanceMetric = (value: unknown): AiDistanceMetric => {
+  return value === "cosine" ||
+    value === "manhattan" ||
+    value === "chebyshev"
+    ? value
+    : "euclidean";
+};
+
+const normalizeKnnNeighborSpace = (value: unknown): KnnNeighborSpace => {
+  return value === "high" || value === "3d" || value === "2d" ? value : "post";
 };
 
 const hashSeedFromText = (seedText: string): number => {
@@ -176,6 +371,72 @@ const getSessionLabel = (timestampSeconds: number): string => {
   }
 
   return "London";
+};
+
+const getTradeRiskReward = (trade: HistoryItem) => {
+  const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
+  const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
+  return rewardDistance / riskDistance;
+};
+
+const buildTradeNeighborVector = (trade: HistoryItem): number[] => {
+  const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
+  const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
+  const holdMinutes = Math.max(1, Number(trade.exitTime) - Number(trade.entryTime));
+  const entryTime = Number(trade.entryTime);
+
+  return [
+    trade.side === "Long" ? 1 : -1,
+    clamp(Number(trade.pnlPct) / 100, -8, 8),
+    clamp(Number(trade.pnlUsd) / 1000, -8, 8),
+    clamp(rewardDistance / riskDistance, 0, 12),
+    clamp(holdMinutes / 60, 0, 96),
+    (((entryTime % 86_400) + 86_400) % 86_400) / 86_400
+  ];
+};
+
+const getVectorDistance = (
+  left: number[],
+  right: number[],
+  metric: AiDistanceMetric,
+  _variance: number[] | null
+) => {
+  const dim = Math.min(left.length, right.length);
+  if (dim <= 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  if (metric === "cosine") {
+    const dot = dotProduct(left, right);
+    const denom = vectorNorm(left) * vectorNorm(right);
+    if (!Number.isFinite(denom) || denom <= 0) {
+      return Number.POSITIVE_INFINITY;
+    }
+    return 1 - dot / denom;
+  }
+
+  if (metric === "manhattan") {
+    let total = 0;
+    for (let index = 0; index < dim; index += 1) {
+      total += Math.abs(left[index]! - right[index]!);
+    }
+    return total;
+  }
+
+  if (metric === "chebyshev") {
+    let maxDistance = 0;
+    for (let index = 0; index < dim; index += 1) {
+      maxDistance = Math.max(maxDistance, Math.abs(left[index]! - right[index]!));
+    }
+    return maxDistance;
+  }
+
+  let total = 0;
+  for (let index = 0; index < dim; index += 1) {
+    const delta = left[index]! - right[index]!;
+    total += delta * delta;
+  }
+  return Math.sqrt(total);
 };
 
 const getAiLibraryTargetWinRateMode = (
@@ -369,6 +630,138 @@ const applyStrideToItems = <T,>(items: readonly T[], strideRaw: number): T[] => 
   return out;
 };
 
+type PreparedCandidateVectorSpace = {
+  candidates: Array<number[] | null>;
+  queryVector: number[] | null;
+  variance: number[] | null;
+};
+
+const prepareCandidateVectorSpace = (
+  currentTrade: HistoryItem,
+  source: Array<{ candidate: LibrarySourceCandidate; sourceIndex: number; libraryId: string }>,
+  settings: BacktestFilterSettings
+): PreparedCandidateVectorSpace => {
+  const space = normalizeKnnNeighborSpace(settings.knnNeighborSpace);
+  const rawQueryVector = currentTrade.neighborVector ?? buildTradeNeighborVector(currentTrade);
+  const rawCandidateVectors = source.map((entry) => entry.candidate.vector);
+  const usableVectors = rawCandidateVectors.filter(
+    (vector): vector is number[] => Array.isArray(vector) && vector.length > 0
+  );
+
+  if (usableVectors.length === 0) {
+    return {
+      candidates: rawCandidateVectors.map(() => null),
+      queryVector: rawQueryVector,
+      variance: null
+    };
+  }
+
+  const baseDim = usableVectors[0]!.length;
+  const compatibleVectors = usableVectors.filter((vector) => vector.length === baseDim);
+  if (compatibleVectors.length === 0) {
+    return {
+      candidates: rawCandidateVectors.map(() => null),
+      queryVector: rawQueryVector,
+      variance: null
+    };
+  }
+
+  if (space === "high") {
+    const candidates = rawCandidateVectors.map((vector) =>
+      Array.isArray(vector) && vector.length === baseDim ? vector : null
+    );
+    return {
+      candidates,
+      queryVector: rawQueryVector.length === baseDim ? rawQueryVector : null,
+      variance: computeVectorVariance(compatibleVectors)
+    };
+  }
+
+  const mean = new Array(baseDim).fill(0);
+  const std = new Array(baseDim).fill(0);
+
+  for (const vector of compatibleVectors) {
+    for (let index = 0; index < baseDim; index += 1) {
+      mean[index] += vector[index]!;
+    }
+  }
+  for (let index = 0; index < baseDim; index += 1) {
+    mean[index] /= Math.max(1, compatibleVectors.length);
+  }
+  for (const vector of compatibleVectors) {
+    for (let index = 0; index < baseDim; index += 1) {
+      const delta = vector[index]! - mean[index]!;
+      std[index] += delta * delta;
+    }
+  }
+  for (let index = 0; index < baseDim; index += 1) {
+    std[index] = Math.sqrt(Math.max(AI_EPS, std[index]! / Math.max(1, compatibleVectors.length)));
+  }
+
+  const standardize = (vector: number[]) =>
+    vector.map((entry, index) => (entry - mean[index]!) / Math.max(AI_EPS, std[index]!));
+
+  const standardizedCandidates = rawCandidateVectors.map((vector) =>
+    Array.isArray(vector) && vector.length === baseDim ? standardize(vector) : null
+  );
+  let standardizedQuery =
+    rawQueryVector.length === baseDim ? standardize(rawQueryVector) : null;
+
+  if (space === "post") {
+    const usableStandardized = standardizedCandidates.filter(
+      (vector): vector is number[] => Array.isArray(vector) && vector.length === baseDim
+    );
+    return {
+      candidates: standardizedCandidates,
+      queryVector: standardizedQuery,
+      variance: computeVectorVariance(usableStandardized)
+    };
+  }
+
+  const targetDim = space === "2d" ? 2 : 3;
+  const pcaSource = standardizedCandidates.filter(
+    (vector): vector is number[] => Array.isArray(vector) && vector.length === baseDim
+  );
+
+  if (pcaSource.length < targetDim + 1) {
+    return {
+      candidates: standardizedCandidates,
+      queryVector: standardizedQuery,
+      variance: computeVectorVariance(pcaSource)
+    };
+  }
+
+  const basis = fitPcaBasis(
+    pcaSource,
+    targetDim,
+    `${space}|${source.length}|${source[0]?.candidate.uid ?? "none"}|${source[source.length - 1]?.candidate.uid ?? "none"}`
+  );
+  if (!basis) {
+    return {
+      candidates: standardizedCandidates,
+      queryVector: standardizedQuery,
+      variance: computeVectorVariance(pcaSource)
+    };
+  }
+
+  const projectedCandidates = standardizedCandidates.map((vector) =>
+    Array.isArray(vector) && vector.length === baseDim ? applyPcaBasis(basis, vector) : null
+  );
+  standardizedQuery =
+    standardizedQuery && standardizedQuery.length === baseDim
+      ? applyPcaBasis(basis, standardizedQuery)
+      : null;
+  const projectedUsable = projectedCandidates.filter(
+    (vector): vector is number[] => Array.isArray(vector) && vector.length === targetDim
+  );
+
+  return {
+    candidates: projectedCandidates,
+    queryVector: standardizedQuery,
+    variance: computeVectorVariance(projectedUsable)
+  };
+};
+
 const getTradeConfidenceScore = (trade: HistoryItem): number => {
   const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
   const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
@@ -511,7 +904,11 @@ const buildLibraryNeighborUid = (
   }
 
   const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
-  if (!normalizedLibraryId || normalizedLibraryId === "trades") {
+  if (
+    !normalizedLibraryId ||
+    normalizedLibraryId === "trades" ||
+    normalizedLibraryId === "core"
+  ) {
     return candidateId;
   }
 
@@ -553,7 +950,8 @@ const buildTradeSourceCandidate = (
     session: getSessionLabel(trade.entryTime),
     entryModel: trade.entrySource || null,
     label: trade.result === "Win" ? 1 : trade.result === "Loss" ? -1 : null,
-    trade
+    trade,
+    vector: trade.neighborVector ?? buildTradeNeighborVector(trade)
   };
 };
 
@@ -599,7 +997,8 @@ const buildLibraryPointSourceCandidate = (
           ? String(point.model)
           : null,
     label: Number.isFinite(labelRaw) ? labelRaw : normalizedOutcome === "Win" ? 1 : normalizedOutcome === "Loss" ? -1 : null,
-    trade: null
+    trade: null,
+    vector: toFiniteVector(point.v)
   };
 };
 
@@ -658,11 +1057,13 @@ const applyTradeAiEntrySnapshot = (
     return effectiveAiMode == null
       ? {
           ...trade,
+          closestClusterUid: trade.closestClusterUid ?? null,
           entryNeighbors: preservedNeighbors
         }
       : {
           ...trade,
           aiMode: effectiveAiMode,
+          closestClusterUid: trade.closestClusterUid ?? null,
           entryNeighbors: preservedNeighbors
         };
   }
@@ -738,7 +1139,8 @@ const normalizeTrade = (value: unknown): HistoryItem | null => {
     aiMode: normalizeTradeAiMode(row.aiMode),
     closestClusterUid:
       row.closestClusterUid == null ? null : String(row.closestClusterUid),
-    entryNeighbors: cloneEntryNeighbors(row.entryNeighbors)
+    entryNeighbors: cloneEntryNeighbors(row.entryNeighbors),
+    neighborVector: toFiniteVector(row.neighborVector ?? row.v)
   };
 };
 
@@ -792,7 +1194,8 @@ const normalizeLibraryPoints = (value: unknown): LibraryPointPayload[] => {
       metaOutcome: row.metaOutcome != null ? String(row.metaOutcome) : null,
       metaSession: row.metaSession != null ? String(row.metaSession) : null,
       dir: row.dir == null ? null : Number(row.dir),
-      label: row.label == null ? null : Number(row.label)
+      label: row.label == null ? null : Number(row.label),
+      v: toFiniteVector(row.v)
     });
   }
 
@@ -836,7 +1239,9 @@ const normalizeFilterSettings = (value: unknown): BacktestFilterSettings => {
       typeof row.selectedAiLibrarySettings === "object" &&
       !Array.isArray(row.selectedAiLibrarySettings)
         ? (row.selectedAiLibrarySettings as AiLibrarySettings)
-        : {}
+        : {},
+    distanceMetric: normalizeDistanceMetric(row.distanceMetric),
+    knnNeighborSpace: normalizeKnnNeighborSpace(row.knnNeighborSpace)
   };
 };
 
@@ -1080,89 +1485,16 @@ const computeAntiCheatBacktestContext = (params: {
       }));
     }
 
+    if (normalizedId !== "core") {
+      return [];
+    }
+
     const maxSamples = getLibraryMaxSamples(libraryId, 96);
     const stride = getLibraryStride(libraryId);
-    let source: HistoryItem[] = [];
-
-    if (normalizedId === "suppressed") {
-      source = collectCappedItems(pool, {
-        cap: maxSamples,
-        stride,
-        predicate: (trade) => trade.result === "Loss"
-      });
-    } else if (normalizedId === "recent") {
-      const windowTrades = clamp(
-        Math.floor(Number(settings.windowTrades ?? 150) || 150),
-        0,
-        5000
-      );
-      const startIndex = Math.max(0, pool.length - windowTrades);
-      source =
-        windowTrades > 0
-          ? collectCappedItems(pool, {
-              cap: maxSamples,
-              stride,
-              startIndex,
-              endIndex: pool.length
-            })
-          : [];
-    } else if (normalizedId === "tokyo") {
-      source = collectCappedItems(pool, {
-        cap: maxSamples,
-        stride,
-        predicate: (trade) => getSessionLabel(trade.entryTime) === "Tokyo"
-      });
-    } else if (normalizedId === "sydney") {
-      source = collectCappedItems(pool, {
-        cap: maxSamples,
-        stride,
-        predicate: (trade) => getSessionLabel(trade.entryTime) === "Sydney"
-      });
-    } else if (normalizedId === "london") {
-      source = collectCappedItems(pool, {
-        cap: maxSamples,
-        stride,
-        predicate: (trade) => getSessionLabel(trade.entryTime) === "London"
-      });
-    } else if (normalizedId === "newyork") {
-      source = collectCappedItems(pool, {
-        cap: maxSamples,
-        stride,
-        predicate: (trade) => getSessionLabel(trade.entryTime) === "New York"
-      });
-    } else if (normalizedId === "terrific") {
-      const count = getLibraryCount(libraryId, 96);
-      const effectiveCap = Math.min(maxSamples, count);
-      const capped = collectCappedItems(pool, {
-        cap: effectiveCap
-      });
-      source = applyStrideToItems(
-        [...capped].sort((left, right) => right.pnlUsd - left.pnlUsd),
-        stride
-      );
-    } else if (normalizedId === "terrible") {
-      const count = getLibraryCount(libraryId, 96);
-      const effectiveCap = Math.min(maxSamples, count);
-      const capped = collectCappedItems(pool, {
-        cap: effectiveCap
-      });
-      source = applyStrideToItems(
-        [...capped].sort((left, right) => left.pnlUsd - right.pnlUsd),
-        stride
-      );
-    } else if ((settings.kind as string | undefined) === "model_sim") {
-      const targetModel = String(settings.model ?? currentTrade.entrySource);
-      source = collectCappedItems(pool, {
-        cap: maxSamples,
-        stride,
-        predicate: (trade) => trade.entrySource === targetModel
-      });
-    } else {
-      source = collectCappedItems(pool, {
-        cap: maxSamples,
-        stride
-      });
-    }
+    const source = collectCappedItems(pool, {
+      cap: maxSamples,
+      stride
+    });
 
     const baselineWinRate = getOutcomeWinRatePercent(
       source,
@@ -1179,7 +1511,7 @@ const computeAntiCheatBacktestContext = (params: {
       maxSamples,
       targetWinRate,
       (candidate) => candidate.result === "Win",
-      normalizedId === "terrific" || normalizedId === "terrible"
+      false
     );
 
     return balanced
@@ -1271,6 +1603,79 @@ const computeAntiCheatBacktestContext = (params: {
     return clamp(weight, 0.02, 2);
   };
 
+  const getVectorSimilarityWeight = (
+    currentTrade: HistoryItem,
+    candidate: LibrarySourceCandidate,
+    queryVector: number[] | null,
+    candidateVector: number[] | null,
+    variance: number[] | null
+  ) => {
+    if (!queryVector || !candidateVector || queryVector.length !== candidateVector.length) {
+      return 0;
+    }
+
+    const distance = getVectorDistance(
+      queryVector,
+      candidateVector,
+      panelBacktestFilterSettings.distanceMetric,
+      variance
+    );
+    if (!Number.isFinite(distance)) {
+      return 0;
+    }
+
+    let weight = 1 / (1 + Math.max(0, distance));
+    const currentDirection = currentTrade.side === "Short" ? -1 : 1;
+
+    if (candidate.direction === currentDirection) {
+      weight *= 1.15;
+    }
+
+    if (candidate.entryModel && candidate.entryModel === currentTrade.entrySource) {
+      weight *= 1.18;
+    }
+
+    if (candidate.trade?.symbol === currentTrade.symbol) {
+      weight *= 1.06;
+    }
+
+    const candidateSession =
+      candidate.session ??
+      (candidate.entryTime == null ? null : getSessionLabel(candidate.entryTime));
+    if (candidateSession === getSessionLabel(currentTrade.entryTime)) {
+      weight *= 1.08;
+    }
+
+    const candidateHour =
+      candidate.entryTime == null ? null : getTradeHour(candidate.entryTime);
+    const hourGap =
+      candidateHour == null
+        ? Number.POSITIVE_INFINITY
+        : Math.abs(candidateHour - getTradeHour(currentTrade.entryTime));
+
+    if (hourGap === 0) {
+      weight *= 1.06;
+    } else if (hourGap <= 2) {
+      weight *= 1.03;
+    }
+
+    if (candidate.trade) {
+      const rrGap = Math.abs(
+        getTradeRiskReward(candidate.trade) - getTradeRiskReward(currentTrade)
+      );
+      weight *= 1 / (1 + rrGap * 0.65);
+    }
+
+    if (candidate.entryTime != null) {
+      const timeGapHours = Math.abs(
+        Number(currentTrade.entryTime) - Number(candidate.entryTime)
+      ) / 3600;
+      weight *= 1 / (1 + timeGapHours / 72);
+    }
+
+    return clamp(weight, 0.02, 2);
+  };
+
   const hydrateTradesWithSnapshots = (trades: HistoryItem[]) => {
     return trades.map((trade) =>
       applyTradeAiEntrySnapshot(
@@ -1320,11 +1725,29 @@ const computeAntiCheatBacktestContext = (params: {
       }
 
       const source = pickLibrarySource(libraryId, basePool, trade);
+      const preparedVectorSpace = prepareCandidateVectorSpace(
+        trade,
+        source,
+        panelBacktestFilterSettings
+      );
 
-      for (const candidateEntry of source) {
+      for (let candidateIndex = 0; candidateIndex < source.length; candidateIndex += 1) {
+        const candidateEntry = source[candidateIndex]!;
         const { candidate, sourceIndex } = candidateEntry;
-        const rawSimilarity = getSimilarityWeight(trade, candidate);
+        const candidateVector = preparedVectorSpace.candidates[candidateIndex] ?? null;
+        const rawSimilarity = candidateVector
+          ? getVectorSimilarityWeight(
+              trade,
+              candidate,
+              preparedVectorSpace.queryVector,
+              candidateVector,
+              preparedVectorSpace.variance
+            )
+          : getSimilarityWeight(trade, candidate);
         const similarityWeight = rawSimilarity * libraryWeight;
+        if (!(similarityWeight > 0)) {
+          continue;
+        }
         const outcome =
           panelBacktestFilterSettings.validationMode === "synthetic" && candidate.trade
             ? getSyntheticWinProb(candidate.trade)

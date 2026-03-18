@@ -478,6 +478,7 @@ type ServerLibraryPointPayload = {
   metaSession?: string | null;
   dir?: number | null;
   label?: number | null;
+  v?: number[] | null;
 };
 
 const normalizeBacktestHistoryRows = (rows: BacktestHistoryRow[]): HistoryItem[] => {
@@ -660,7 +661,12 @@ const toServerLibraryPointPayload = (point: any): ServerLibraryPointPayload => (
   metaOutcome: point?.metaOutcome != null ? String(point.metaOutcome) : null,
   metaSession: point?.metaSession != null ? String(point.metaSession) : null,
   dir: point?.dir == null ? null : Number(point.dir),
-  label: point?.label == null ? null : Number(point.label)
+  label: point?.label == null ? null : Number(point.label),
+  v: Array.isArray(point?.v)
+    ? point.v
+        .map((value: unknown) => Number(value))
+        .filter((value: number) => Number.isFinite(value))
+    : null
 });
 
 const computeBacktestRowsLocally = (
@@ -4518,6 +4524,18 @@ const fetchHistoryApiCandles = async (timeframe: Timeframe, count: number): Prom
   const payload = await response.json();
 
   return normalizeMarketCandles(payload.candles || []);
+};
+
+const pickLongestCandleSeries = (...series: Array<Candle[] | undefined | null>): Candle[] => {
+  let best = EMPTY_CANDLES;
+
+  for (const candles of series) {
+    if (Array.isArray(candles) && candles.length > best.length) {
+      best = candles;
+    }
+  }
+
+  return best;
 };
 
 const fetchRecentOneMinuteCandles = async (
@@ -9892,6 +9910,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       appliedBacktestSettings.minutePreciseEnabled && !isAlreadyOneMinute;
     const allowOneMinuteFallback =
       appliedBacktestSettings.minutePreciseEnabled || isAlreadyOneMinute;
+    const chartFallbackCandles =
+      appliedBacktestSettings.symbol === selectedSymbol &&
+      appliedBacktestSettings.timeframe === selectedBacktestTimeframe
+        ? selectedChartCandlesRef.current ?? EMPTY_CANDLES
+        : EMPTY_CANDLES;
+    const existingCandles = pickLongestCandleSeries(
+      backtestSeriesMap[key],
+      seriesMap[key],
+      chartFallbackCandles
+    );
+    const existingOneMinute = shouldLoadOneMinutePrecision
+      ? pickLongestCandleSeries(
+          backtestOneMinuteSeriesMap[oneMinuteKey],
+          seriesMap[oneMinuteKey]
+        )
+      : EMPTY_CANDLES;
     const recentOneMinutePromise = shouldLoadOneMinutePrecision
       ? fetchRecentOneMinuteCandles()
       : undefined;
@@ -9917,27 +9951,73 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           oneMinutePaddingBars
         )
       : 0;
+    const hasDateRange = Boolean(
+      appliedBacktestSettings.statsDateStart && appliedBacktestSettings.statsDateEnd
+    );
+    const needsHistory =
+      existingCandles.length < MIN_SEED_CANDLES ||
+      existingCandles.length < targetBars ||
+      (hasDateRange &&
+        !candlesCoverDateRange(
+          existingCandles,
+          appliedBacktestSettings.timeframe,
+          appliedBacktestSettings.statsDateStart,
+          appliedBacktestSettings.statsDateEnd,
+          leadingBars
+        ));
+    const needsOneMinute =
+      shouldLoadOneMinutePrecision &&
+      (existingOneMinute.length < MIN_SEED_CANDLES ||
+        existingOneMinute.length < oneMinuteTargetBars);
+
+    if (!needsHistory && !needsOneMinute) {
+      if ((backtestSeriesMap[key]?.length ?? 0) < existingCandles.length) {
+        setBacktestSeriesMap((prev) => ({
+          ...prev,
+          [key]: existingCandles
+        }));
+      }
+      if (
+        shouldLoadOneMinutePrecision &&
+        existingOneMinute.length > 0 &&
+        (backtestOneMinuteSeriesMap[oneMinuteKey]?.length ?? 0) < existingOneMinute.length
+      ) {
+        setBacktestOneMinuteSeriesMap((prev) => ({
+          ...prev,
+          [oneMinuteKey]: existingOneMinute
+        }));
+      }
+      setStatsRefreshStatus("Preparing Backtest Replay");
+      setBacktestHistorySeedReady(true);
+      return;
+    }
+
     setStatsRefreshStatus("Loading Candle History");
 
     void (async () => {
       try {
         const promises: [Promise<Candle[]>, Promise<Candle[]>] = [
-          fetchBacktestHistoryCandles(
-            appliedBacktestSettings.timeframe,
-            targetBars,
-            recentOneMinutePromise,
-            allowOneMinuteFallback
-          ),
+          needsHistory
+            ? fetchBacktestHistoryCandles(
+                appliedBacktestSettings.timeframe,
+                targetBars,
+                recentOneMinutePromise,
+                allowOneMinuteFallback
+              )
+            : Promise.resolve(existingCandles),
           shouldLoadOneMinutePrecision
-            ? fetchHistoryApiCandles("1m", oneMinuteTargetBars).catch(() => [])
+            ? needsOneMinute
+              ? fetchHistoryApiCandles("1m", oneMinuteTargetBars).catch(() => [])
+              : Promise.resolve(existingOneMinute)
             : Promise.resolve([])
         ];
 
         const [deepHistoryCandles, oneMinuteCandles] = await Promise.all(promises);
-        let replaySeedCandles = deepHistoryCandles;
+        let replaySeedCandles = pickLongestCandleSeries(
+          deepHistoryCandles,
+          existingCandles
+        );
 
-        // If deep-history fetch fails or returns too little data, fall back to
-        // chart-sized history so replay generation does not collapse to zero trades.
         if (replaySeedCandles.length < MIN_SEED_CANDLES) {
           const fallbackHistoryCandles = await fetchHistoryCandles(
             appliedBacktestSettings.timeframe,
@@ -9945,26 +10025,42 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             allowOneMinuteFallback
           ).catch(() => []);
 
-          if (fallbackHistoryCandles.length >= MIN_SEED_CANDLES) {
-            replaySeedCandles = fallbackHistoryCandles;
-          }
+          replaySeedCandles = pickLongestCandleSeries(
+            fallbackHistoryCandles,
+            replaySeedCandles,
+            chartFallbackCandles
+          );
         }
 
-        if (!cancelled && replaySeedCandles.length >= MIN_SEED_CANDLES) {
+        if (!cancelled && replaySeedCandles.length >= 3) {
           setBacktestSeriesMap((prev) => ({
             ...prev,
             [key]: replaySeedCandles
           }));
         }
 
-        if (!cancelled && shouldLoadOneMinutePrecision && oneMinuteCandles.length > 0) {
+        const resolvedOneMinute = pickLongestCandleSeries(
+          oneMinuteCandles,
+          existingOneMinute
+        );
+
+        if (!cancelled && shouldLoadOneMinutePrecision && resolvedOneMinute.length > 0) {
           setBacktestOneMinuteSeriesMap((prev) => ({
             ...prev,
-            [oneMinuteKey]: oneMinuteCandles
+            [oneMinuteKey]: resolvedOneMinute
           }));
         }
       } catch {
         // Backtest falls back to chart history if deep history cannot load.
+        if (!cancelled) {
+          const fallbackCandles = pickLongestCandleSeries(chartFallbackCandles, existingCandles);
+          if (fallbackCandles.length >= 3) {
+            setBacktestSeriesMap((prev) => ({
+              ...prev,
+              [key]: fallbackCandles
+            }));
+          }
+        }
       } finally {
         if (!cancelled) {
           setStatsRefreshStatus("Preparing Backtest Replay");
@@ -9985,10 +10081,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedBacktestSettings.statsDateStart,
     appliedBacktestSettings.symbol,
     appliedBacktestSettings.timeframe,
+    backtestOneMinuteSeriesMap,
     backtestHasRun,
     backtestHistorySeedReady,
+    backtestSeriesMap,
     backtestRefreshNowMs,
     backtestRunCount,
+    selectedBacktestTimeframe,
+    selectedSymbol,
+    seriesMap,
     shouldSkipBacktestHistoryFetch
   ]);
 
@@ -14990,9 +15091,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           )
         : 0;
 
-      const existingCandles = backtestSeriesMap[key] ?? seriesMap[key] ?? EMPTY_CANDLES;
+      const chartFallbackCandles =
+        symbol === selectedSymbol && timeframe === selectedBacktestTimeframe
+          ? selectedChartCandlesRef.current ?? EMPTY_CANDLES
+          : EMPTY_CANDLES;
+      const existingCandles = pickLongestCandleSeries(
+        backtestSeriesMap[key],
+        seriesMap[key],
+        chartFallbackCandles
+      );
       const existingOneMinute = shouldLoadOneMinutePrecision
-        ? backtestOneMinuteSeriesMap[oneMinuteKey] ?? EMPTY_CANDLES
+        ? pickLongestCandleSeries(
+            backtestOneMinuteSeriesMap[oneMinuteKey],
+            seriesMap[oneMinuteKey]
+          )
         : EMPTY_CANDLES;
       const hasDateRange = Boolean(settings.statsDateStart && settings.statsDateEnd);
       const needsHistory =
@@ -15060,7 +15172,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           ];
 
           const [deepHistoryCandles, oneMinuteCandles] = await Promise.all(promises);
-          let seedCandles = deepHistoryCandles;
+          let seedCandles = pickLongestCandleSeries(
+            deepHistoryCandles,
+            existingCandles
+          );
 
           if (seedCandles.length < MIN_SEED_CANDLES) {
             const fallbackHistoryCandles = await fetchHistoryCandles(
@@ -15069,12 +15184,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               allowOneMinuteFallback
             ).catch(() => []);
 
-            if (fallbackHistoryCandles.length >= MIN_SEED_CANDLES) {
-              seedCandles = fallbackHistoryCandles;
-            }
+            seedCandles = pickLongestCandleSeries(
+              fallbackHistoryCandles,
+              seedCandles,
+              chartFallbackCandles
+            );
           }
 
-          if (seedCandles.length >= MIN_SEED_CANDLES) {
+          if (seedCandles.length >= 3) {
             resolvedCandles = seedCandles;
             if (seedCandles.length > (backtestSeriesMap[key]?.length ?? 0)) {
               setBacktestSeriesMap((prev) => ({
@@ -15084,12 +15201,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             }
           }
 
-          if (shouldLoadOneMinutePrecision && oneMinuteCandles.length > 0) {
-            resolvedOneMinute = oneMinuteCandles;
-            if (oneMinuteCandles.length > (backtestOneMinuteSeriesMap[oneMinuteKey]?.length ?? 0)) {
+          const resolvedNextOneMinute = pickLongestCandleSeries(
+            oneMinuteCandles,
+            existingOneMinute
+          );
+          if (shouldLoadOneMinutePrecision && resolvedNextOneMinute.length > 0) {
+            resolvedOneMinute = resolvedNextOneMinute;
+            if (
+              resolvedNextOneMinute.length >
+              (backtestOneMinuteSeriesMap[oneMinuteKey]?.length ?? 0)
+            ) {
               setBacktestOneMinuteSeriesMap((prev) => ({
                 ...prev,
-                [oneMinuteKey]: oneMinuteCandles
+                [oneMinuteKey]: resolvedNextOneMinute
               }));
             }
           }
@@ -15115,6 +15239,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     [
       backtestOneMinuteSeriesMap,
       backtestSeriesMap,
+      selectedBacktestTimeframe,
+      selectedSymbol,
       seriesMap,
       setBacktestOneMinuteSeriesMap,
       setBacktestSeriesMap
