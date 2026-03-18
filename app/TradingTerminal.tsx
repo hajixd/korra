@@ -15369,7 +15369,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         const candles = candleSeriesBySymbol[settings.symbol] ?? EMPTY_CANDLES;
 
         if (candles.length < 3) {
-          aiLibraryPoolCacheRef.current.set(poolKey, []);
           return [];
         }
 
@@ -15392,7 +15391,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         const maxSignalIndex = candles.length - 2 - maxLookahead;
 
         if (!(tpDistance > 0) || !(slDistance > 0) || maxSignalIndex < startIndex) {
-          aiLibraryPoolCacheRef.current.set(poolKey, []);
           return [];
         }
 
@@ -15416,10 +15414,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             continue;
           }
 
-          const entryTime = Number(entryCandle.time);
-          if (!Number.isFinite(entryTime)) {
+          const entryTimeMs = Number(entryCandle.time);
+          if (!Number.isFinite(entryTimeMs)) {
             continue;
           }
+          const entryTime = toUtcTimestamp(entryTimeMs);
 
           for (const direction of [1, -1] as const) {
             const entryPrice = Math.max(0.000001, entryCandle.open);
@@ -15472,8 +15471,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 (lastCandle.close - entryPrice) * direction >= 0 ? "Win" : "Loss";
             }
 
-            const exitTimeRaw = Number(candles[exitIndex]?.time ?? entryTime);
-            const exitTime = Number.isFinite(exitTimeRaw) ? exitTimeRaw : entryTime;
+            const exitTimeRawMs = Number(candles[exitIndex]?.time ?? entryTimeMs);
+            const exitTime = Number.isFinite(exitTimeRawMs)
+              ? toUtcTimestamp(exitTimeRawMs)
+              : entryTime;
             const outcomePrice = result === "Win" ? targetPrice : stopPrice;
             const pnlUsd = result === "Win" ? normalizedTp : -normalizedSl;
             const pnlPct =
@@ -15500,8 +15501,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               time: entryLabel,
               entryAt: entryLabel,
               exitAt: exitLabel,
-              entryTime: entryTime as UTCTimestamp,
-              exitTime: exitTime as UTCTimestamp,
+              entryTime,
+              exitTime,
               entryPrice,
               targetPrice,
               stopPrice,
@@ -15557,13 +15558,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         const candles = candleSeriesBySymbol[settings.symbol] ?? EMPTY_CANDLES;
 
         if (candles.length < 3) {
-          aiLibraryPoolCacheRef.current.set(poolKey, []);
           return [];
         }
 
         const selectedModels = resolveLibraryModelProfiles(settings);
         if (selectedModels.length === 0) {
-          aiLibraryPoolCacheRef.current.set(poolKey, []);
           return [];
         }
 
@@ -15590,7 +15589,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         });
 
         if (blueprints.length === 0) {
-          aiLibraryPoolCacheRef.current.set(poolKey, []);
           return [];
         }
 
@@ -15889,7 +15887,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             : trade.entryAt || trade.time;
         const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
         const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
-        const holdMinutes = Math.max(1, Number(trade.exitTime) - Number(trade.entryTime));
+        const holdMinutes = Math.max(
+          1,
+          (Number(trade.exitTime) - Number(trade.entryTime)) / 60
+        );
         const shapeVector = [
           trade.side === "Long" ? 1 : -1,
           clamp(Number(trade.pnlPct) / 100, -8, 8),
@@ -16235,6 +16236,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   useEffect(() => {
     runAllLibrariesRef.current = runAllActiveLibraries;
   }, [runAllActiveLibraries]);
+
+  useEffect(() => {
+    aiLibraryPoolCacheRef.current.clear();
+    aiLibraryPoolInFlightRef.current.clear();
+    aiLibraryHistoryInFlightRef.current.clear();
+  }, [backtestRunCount]);
 
   useEffect(() => {
     if (!backtestHasRun || !backtestHistorySeedReady) {
@@ -21734,7 +21741,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             <div className="ai-zip-library-field-block">
                               <button
                                 type="button"
-                                className="ai-zip-library-action primary wide"
+                                className="ai-zip-library-action primary compact"
                                 disabled={!aiLibraryReadyToRun || selectedAiLibraryRunStatus === "loading"}
                                 onClick={() => runAiLibrary(selectedAiLibrary.id)}
                               >
