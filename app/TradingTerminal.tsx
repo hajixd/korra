@@ -63,6 +63,23 @@ import {
   buildStrategyBacktestSurfaceSummary,
   buildStrategyReplayTradeBlueprints
 } from "../lib/strategyModelBacktest";
+import {
+  AIZIP_BACKTEST_HISTORY_FETCH_TIMEOUT_MS,
+  BASE_SEEDING_LIBRARY_IDS,
+  buildSeededLibraryTradePoolFromCandles,
+  canRunAizipLibrariesForSettings,
+  countEnabledAizipModels,
+  doesAizipHistorySeedSettingsChange,
+  getVisibleAizipLibraryIds,
+  getMinimumAizipSeedBars,
+  hasUsableAizipSeedCandles,
+  isBaseSeedingLibraryId,
+  isGhostLearningLibraryId,
+  isOnlineLearningLibraryId,
+  isVisibleAizipLibraryId,
+  shouldSkipAizipBacktestHistoryFetch,
+  usesAizipEveryCandleMode
+} from "./aizipRuntime";
 
 const loadRecharts = () => import("recharts");
 let lightweightChartsPromise: Promise<typeof import("lightweight-charts")> | null = null;
@@ -3041,13 +3058,6 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
   }
 ];
 
-const BASE_SEEDING_LIBRARY_IDS = new Set(["base", "tokyo", "sydney", "london", "newyork"]);
-const AI_LIBRARY_SEED_LOOKAHEAD_BARS = 96;
-
-const isBaseSeedingLibraryId = (libraryId: string): boolean => {
-  return BASE_SEEDING_LIBRARY_IDS.has(libraryId.toLowerCase());
-};
-
 const slugAiLibraryId = (value: string): string => {
   return value
     .toLowerCase()
@@ -4705,7 +4715,7 @@ const fetchBacktestHistoryCandles = async (
 const XAUUSD_PAIR = "XAU_USD";
 const MIN_SEED_CANDLES = 40;
 const CLIENT_CANDLE_FETCH_TIMEOUT_MS = 3500;
-const BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS = 1500;
+const BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS = AIZIP_BACKTEST_HISTORY_FETCH_TIMEOUT_MS;
 const CLICKHOUSE_MAX_HISTORY_CANDLES = 300_000;
 const MARKET_MAX_HISTORY_CANDLES = 25_000;
 const LIVE_MARKET_SYNC_LIMIT = 160;
@@ -8293,9 +8303,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const appliedBacktestTrailingStartPctRef = useRef(50);
   const appliedBacktestTrailingDistPctRef = useRef(30);
   const appliedBacktestMinutePreciseEnabledRef = useRef(false);
-  const appliedBacktestAiModeRef = useRef<BacktestSettingsSnapshot["aiMode"]>("off");
-  const appliedBacktestAntiCheatEnabledRef = useRef(false);
-  const appliedBacktestSelectedAiLibraryCountRef = useRef(0);
+  const appliedBacktestSettingsRef = useRef<BacktestSettingsSnapshot>(appliedBacktestSettings);
   const appliedBacktestStatsDateStartRef = useRef("");
   const appliedBacktestStatsDateEndRef = useRef("");
   const chartSizeRef = useRef({ width: 0, height: 0 });
@@ -8322,6 +8330,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const seriesMapRef = useRef(seriesMap);
   const backtestSeriesMapRef = useRef(backtestSeriesMap);
   const backtestOneMinuteSeriesMapRef = useRef(backtestOneMinuteSeriesMap);
+  const appliedBacktestSeedCandlesRef = useRef<Candle[]>(EMPTY_CANDLES);
+  const appliedBacktestFallbackCandlesRef = useRef<Candle[]>(EMPTY_CANDLES);
+  const appliedBacktestSeedOneMinuteCandlesRef = useRef<Candle[]>(EMPTY_CANDLES);
+  const appliedBacktestFallbackOneMinuteCandlesRef = useRef<Candle[]>(EMPTY_CANDLES);
   const selectedChartCandlesRef = useRef<Candle[]>([]);
   const statsDatePresetDdRef = useRef<HTMLDivElement>(null);
   const statsTimeframeDdRef = useRef<HTMLDivElement>(null);
@@ -8618,8 +8630,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const needsHistorySeedReload =
       forceFullReload ||
       !hasBacktestRun ||
-      previousSettings.symbol !== nextSettings.symbol ||
-      previousSettings.timeframe !== nextSettings.timeframe;
+      doesAizipHistorySeedSettingsChange(previousSettings, nextSettings);
     const nextRefreshMs = floorToTimeframe(Date.now(), "1m");
 
     clearStatsRefreshResetTimeout();
@@ -8627,7 +8638,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (needsHistoryRecompute) {
       const loadingLibraries =
         nextSettings.aiMode !== "off" &&
-        (nextSettings.antiCheatEnabled || nextSettings.selectedAiLibraries.length > 0);
+        (nextSettings.antiCheatEnabled ||
+          canRunAizipLibrariesForSettings({
+            libraryIds: nextSettings.selectedAiLibraries,
+            aiModelStates: nextSettings.aiModelStates
+          }));
       setBacktestRunCount((current) => current + 1);
       setBacktestRefreshNowMs(nextRefreshMs);
       setBacktestHistorySeedReady(!needsHistorySeedReload);
@@ -8916,45 +8931,52 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const confidenceGateDisabled = aiMode === "off";
   const effectiveConfidenceThreshold = confidenceGateDisabled ? 0 : confidenceThreshold;
   const selectedAiModelCount = useMemo(() => {
-    return Object.values(aiModelStates).filter((state) => state > 0).length;
+    return countEnabledAizipModels(aiModelStates);
   }, [aiModelStates]);
+  const appliedSelectedAiModelCount = useMemo(() => {
+    return countEnabledAizipModels(appliedBacktestSettings.aiModelStates);
+  }, [appliedBacktestSettings.aiModelStates]);
   const selectedAiFeatureCount = useMemo(() => {
     return AI_FEATURE_OPTIONS.filter((feature) => (aiFeatureLevels[feature.id] ?? 0) > 0).length;
   }, [aiFeatureLevels]);
   const configuredAiFeatureDimensionCount = useMemo(() => {
     return countConfiguredAiFeatureDimensions(aiFeatureLevels, aiFeatureModes, chunkBars);
   }, [aiFeatureLevels, aiFeatureModes, chunkBars]);
-  const onlineLearningEnabled = selectedAiLibraries.includes("core");
-  const ghostLearningEnabled = selectedAiLibraries.includes("suppressed");
-  const canRunAiLibraries = useCallback(
-    (libraryIds: readonly string[] | null | undefined) => {
-      const ids = Array.isArray(libraryIds) ? libraryIds : [];
-      if (ids.some((libraryId) => isBaseSeedingLibraryId(String(libraryId)))) {
-        return true;
-      }
-      return selectedAiModelCount > 0;
+  const onlineLearningEnabled = useMemo(() => {
+    return selectedAiLibraries.some((libraryId) => isOnlineLearningLibraryId(libraryId));
+  }, [selectedAiLibraries]);
+  const ghostLearningEnabled = useMemo(() => {
+    return selectedAiLibraries.some((libraryId) => isGhostLearningLibraryId(libraryId));
+  }, [selectedAiLibraries]);
+  const canRunAiLibrariesForSnapshot = useCallback(
+    (
+      libraryIds: readonly string[] | null | undefined,
+      settingsSnapshot?: BacktestSettingsSnapshot | null
+    ) => {
+      return canRunAizipLibrariesForSettings({
+        libraryIds,
+        aiModelStates: settingsSnapshot?.aiModelStates ?? aiModelStates
+      });
     },
-    [selectedAiModelCount]
+    [aiModelStates]
   );
   const aiLibraryReadyToRun = useMemo(() => {
-    return canRunAiLibraries(selectedAiLibraries);
-  }, [canRunAiLibraries, selectedAiLibraries]);
+    return canRunAiLibrariesForSnapshot(selectedAiLibraries);
+  }, [canRunAiLibrariesForSnapshot, selectedAiLibraries]);
   const appliedAiLibraryReadyToRun = useMemo(() => {
-    return canRunAiLibraries(appliedBacktestSettings.selectedAiLibraries ?? []);
-  }, [appliedBacktestSettings.selectedAiLibraries, canRunAiLibraries]);
-  const visibleAiLibraries = useMemo(
-    () =>
-      selectedAiLibraries.filter(
-        (libraryId) => libraryId !== "core" && libraryId !== "suppressed"
-      ),
-    [selectedAiLibraries]
-  );
+    return canRunAiLibrariesForSnapshot(
+      appliedBacktestSettings.selectedAiLibraries ?? [],
+      appliedBacktestSettings
+    );
+  }, [appliedBacktestSettings, canRunAiLibrariesForSnapshot]);
+  const visibleAiLibraries = useMemo(() => {
+    return getVisibleAizipLibraryIds(selectedAiLibraries);
+  }, [selectedAiLibraries]);
   const selectedAiLibraryCount = visibleAiLibraries.length;
   const availableAiLibraries = useMemo(() => {
     return aiLibraryDefs.filter(
       (library) =>
-        library.id !== "core" &&
-        library.id !== "suppressed" &&
+        isVisibleAizipLibraryId(library.id) &&
         !selectedAiLibraries.includes(library.id)
     );
   }, [aiLibraryDefs, selectedAiLibraries]);
@@ -9071,6 +9093,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const appliedBacktestKey = useMemo(() => {
     return symbolTimeframeKey(appliedBacktestSettings.symbol, appliedBacktestSettings.timeframe);
   }, [appliedBacktestSettings.symbol, appliedBacktestSettings.timeframe]);
+  const appliedBacktestOneMinuteKey = useMemo(() => {
+    return symbolTimeframeKey(appliedBacktestSettings.symbol, "1m");
+  }, [appliedBacktestSettings.symbol]);
+  const appliedBacktestSeedCandles = backtestSeriesMap[appliedBacktestKey] ?? EMPTY_CANDLES;
+  const appliedBacktestFallbackCandles = seriesMap[appliedBacktestKey] ?? EMPTY_CANDLES;
+  const appliedBacktestSeedOneMinuteCandles =
+    backtestOneMinuteSeriesMap[appliedBacktestOneMinuteKey] ?? EMPTY_CANDLES;
+  const appliedBacktestFallbackOneMinuteCandles =
+    seriesMap[appliedBacktestOneMinuteKey] ?? EMPTY_CANDLES;
+  appliedBacktestSettingsRef.current = appliedBacktestSettings;
+  appliedBacktestSeedCandlesRef.current = appliedBacktestSeedCandles;
+  appliedBacktestFallbackCandlesRef.current = appliedBacktestFallbackCandles;
+  appliedBacktestSeedOneMinuteCandlesRef.current = appliedBacktestSeedOneMinuteCandles;
+  appliedBacktestFallbackOneMinuteCandlesRef.current = appliedBacktestFallbackOneMinuteCandles;
   const appliedBacktestModelNames = useMemo(() => {
     return settingsModelNames.filter(
       (modelName) => (appliedBacktestSettings.aiModelStates[modelName] ?? 0) > 0
@@ -9100,11 +9136,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const appliedEffectiveConfidenceThreshold = appliedConfidenceGateDisabled
     ? 0
     : appliedBacktestSettings.confidenceThreshold;
-  const appliedAiModelEveryCandleMode =
-    appliedBacktestSettings.aiMode !== "off" && !appliedBacktestSettings.aiFilterEnabled;
-  const shouldSkipBacktestHistoryFetch =
-    !appliedBacktestSettings.antiCheatEnabled &&
-    appliedBacktestModelProfiles.length === 0;
+  const appliedAiModelEveryCandleMode = usesAizipEveryCandleMode(
+    appliedBacktestSettings.aiMode,
+    appliedBacktestSettings.aiFilterEnabled
+  );
+  const shouldSkipBacktestHistoryFetch = shouldSkipAizipBacktestHistoryFetch({
+    antiCheatEnabled: appliedBacktestSettings.antiCheatEnabled,
+    selectedModelCount: appliedBacktestModelProfiles.length,
+    selectedAiLibraries: appliedBacktestSettings.selectedAiLibraries
+  });
   const selectedKey = symbolTimeframeKey(selectedSymbol, selectedTimeframe);
   const isChartSurface = isChartSurfaceTab(selectedSurfaceTab);
 
@@ -9241,9 +9281,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const removeAiLibrary = (libraryId: string) => {
     setSelectedAiLibraries((current) => {
       const next = current.filter((id) => id !== libraryId);
-      const nextVisible = next.filter(
-        (id) => id !== "core" && id !== "suppressed"
-      );
+      const nextVisible = getVisibleAizipLibraryIds(next);
       setSelectedAiLibraryId((selectedId) =>
         selectedId !== libraryId ? selectedId : nextVisible[0] ?? ""
       );
@@ -9253,24 +9291,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   const toggleOnlineLearning = useCallback(() => {
     setSelectedAiLibraries((current) => {
-      const hasCore = current.includes("core");
+      const hasCore = current.some((libraryId) => isOnlineLearningLibraryId(libraryId));
       if (hasCore) {
-        return current.filter((id) => id !== "core");
+        return current.filter((id) => !isOnlineLearningLibraryId(id));
       }
-      const filtered = current.filter((id) => id !== "core");
+      const filtered = current.filter((id) => !isOnlineLearningLibraryId(id));
       return ["core", ...filtered];
     });
   }, []);
 
   const toggleGhostLearning = useCallback(() => {
     setSelectedAiLibraries((current) => {
-      const hasGhost = current.includes("suppressed");
+      const hasGhost = current.some((libraryId) => isGhostLearningLibraryId(libraryId));
       if (hasGhost) {
-        return current.filter((id) => id !== "suppressed");
+        return current.filter((id) => !isGhostLearningLibraryId(id));
       }
 
-      const withoutGhost = current.filter((id) => id !== "suppressed");
-      const coreIndex = withoutGhost.indexOf("core");
+      const withoutGhost = current.filter((id) => !isGhostLearningLibraryId(id));
+      const coreIndex = withoutGhost.findIndex((id) => isOnlineLearningLibraryId(id));
 
       if (coreIndex >= 0) {
         const next = [...withoutGhost];
@@ -9931,7 +9969,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     const key = appliedBacktestKey;
-    const oneMinuteKey = symbolTimeframeKey(appliedBacktestSettings.symbol, "1m");
+    const oneMinuteKey = appliedBacktestOneMinuteKey;
 
     if (backtestHistorySeedReady) {
       return;
@@ -9963,27 +10001,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const isAlreadyOneMinute = appliedBacktestSettings.timeframe === "1m";
     const shouldLoadOneMinutePrecision =
       appliedBacktestSettings.minutePreciseEnabled && !isAlreadyOneMinute;
-    const allowOneMinuteFallback =
-      appliedBacktestSettings.minutePreciseEnabled || isAlreadyOneMinute;
-    const chartFallbackCandles =
-      appliedBacktestSettings.symbol === selectedSymbol &&
-      appliedBacktestSettings.timeframe === selectedBacktestTimeframe
-        ? selectedChartCandlesRef.current ?? EMPTY_CANDLES
-        : EMPTY_CANDLES;
+    // Seed candles should degrade gracefully even when minute-precise replay is off.
+    const allowOneMinuteFallback = true;
     const existingCandles = pickLongestCandleSeries(
-      backtestSeriesMapRef.current[key],
-      seriesMapRef.current[key],
-      chartFallbackCandles
+      appliedBacktestSeedCandlesRef.current,
+      appliedBacktestFallbackCandlesRef.current
     );
     const existingOneMinute = shouldLoadOneMinutePrecision
       ? pickLongestCandleSeries(
-          backtestOneMinuteSeriesMapRef.current[oneMinuteKey],
-          seriesMapRef.current[oneMinuteKey]
+          appliedBacktestSeedOneMinuteCandlesRef.current,
+          appliedBacktestFallbackOneMinuteCandlesRef.current
         )
       : EMPTY_CANDLES;
     const recentOneMinutePromise = shouldLoadOneMinutePrecision
       ? fetchRecentOneMinuteCandles(undefined, BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS)
       : undefined;
+    const minimumReplaySeedBars = getMinimumAizipSeedBars(appliedBacktestSettings.chunkBars);
     const leadingBars = Math.max(
       appliedBacktestSettings.chunkBars * 3,
       appliedBacktestSettings.maxBarsInTrade + 24
@@ -10050,6 +10083,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setStatsRefreshStatus("Loading Candle History");
 
     void (async () => {
+      let resolvedReplaySeedCandles = existingCandles;
+
       try {
         const promises: [Promise<Candle[]>, Promise<Candle[]>] = [
           needsHistory
@@ -10080,11 +10115,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         if (replaySeedCandles.length < MIN_SEED_CANDLES) {
           replaySeedCandles = pickLongestCandleSeries(
             replaySeedCandles,
-            chartFallbackCandles
+            appliedBacktestFallbackCandlesRef.current
           );
         }
+        resolvedReplaySeedCandles = replaySeedCandles;
 
-        if (!cancelled && replaySeedCandles.length >= 3) {
+        if (!cancelled && hasUsableAizipSeedCandles(replaySeedCandles, minimumReplaySeedBars)) {
           setBacktestSeriesMap((prev) => ({
             ...prev,
             [key]: replaySeedCandles
@@ -10105,8 +10141,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       } catch {
         // Backtest falls back to chart history if deep history cannot load.
         if (!cancelled) {
-          const fallbackCandles = pickLongestCandleSeries(chartFallbackCandles, existingCandles);
-          if (fallbackCandles.length >= 3) {
+          const fallbackCandles = pickLongestCandleSeries(
+            appliedBacktestFallbackCandlesRef.current,
+            existingCandles
+          );
+          resolvedReplaySeedCandles = fallbackCandles;
+          if (hasUsableAizipSeedCandles(fallbackCandles, minimumReplaySeedBars)) {
             setBacktestSeriesMap((prev) => ({
               ...prev,
               [key]: fallbackCandles
@@ -10115,8 +10155,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         }
       } finally {
         if (!cancelled) {
-          setStatsRefreshStatus("Preparing Backtest Replay");
-          setBacktestHistorySeedReady(true);
+          if (hasUsableAizipSeedCandles(resolvedReplaySeedCandles, minimumReplaySeedBars)) {
+            setStatsRefreshStatus("Preparing Backtest Replay");
+            setBacktestHistorySeedReady(true);
+          } else {
+            setStatsRefreshStatus("Loading Candle History");
+          }
         }
       }
     })();
@@ -10133,12 +10177,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedBacktestSettings.statsDateStart,
     appliedBacktestSettings.symbol,
     appliedBacktestSettings.timeframe,
+    appliedBacktestFallbackCandles.length,
+    appliedBacktestFallbackOneMinuteCandles.length,
     backtestHasRun,
     backtestHistorySeedReady,
     backtestRefreshNowMs,
     backtestRunCount,
-    selectedBacktestTimeframe,
-    selectedSymbol,
+    appliedBacktestOneMinuteKey,
+    appliedBacktestSeedCandles.length,
+    appliedBacktestSeedOneMinuteCandles.length,
     shouldSkipBacktestHistoryFetch
   ]);
 
@@ -11824,12 +11871,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   appliedBacktestTrailingStartPctRef.current = appliedBacktestSettings.trailingStartPct;
   appliedBacktestTrailingDistPctRef.current = appliedBacktestSettings.trailingDistPct;
   appliedBacktestMinutePreciseEnabledRef.current = appliedBacktestSettings.minutePreciseEnabled;
-  appliedBacktestAiModeRef.current = appliedBacktestSettings.aiMode;
-  appliedBacktestAntiCheatEnabledRef.current = appliedBacktestSettings.antiCheatEnabled;
   appliedBacktestStatsDateStartRef.current = appliedBacktestSettings.statsDateStart;
   appliedBacktestStatsDateEndRef.current = appliedBacktestSettings.statsDateEnd;
-  appliedBacktestSelectedAiLibraryCountRef.current =
-    appliedBacktestSettings.selectedAiLibraries.length;
 
   useEffect(() => {
     if (!backtestHasRun || !backtestHistorySeedReady) {
@@ -11853,10 +11896,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const trailingStartPctSnapshot = appliedBacktestTrailingStartPctRef.current;
     const trailingDistPctSnapshot = appliedBacktestTrailingDistPctRef.current;
     const minutePreciseEnabledSnapshot = appliedBacktestMinutePreciseEnabledRef.current;
+    const appliedSettingsSnapshot = appliedBacktestSettingsRef.current;
     const hasAiLibraryPass =
-      appliedBacktestAiModeRef.current !== "off" &&
-      (appliedBacktestAntiCheatEnabledRef.current ||
-        appliedBacktestSelectedAiLibraryCountRef.current > 0);
+      appliedSettingsSnapshot.aiMode !== "off" &&
+      (appliedSettingsSnapshot.antiCheatEnabled ||
+        canRunAizipLibrariesForSettings({
+          libraryIds: appliedSettingsSnapshot.selectedAiLibraries,
+          aiModelStates: appliedSettingsSnapshot.aiModelStates
+        }));
     const statsDateStartSnapshot = appliedBacktestStatsDateStartRef.current;
     const statsDateEndSnapshot = appliedBacktestStatsDateEndRef.current;
 
@@ -15122,7 +15169,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const oneMinuteKey = symbolTimeframeKey(symbol, "1m");
       const isAlreadyOneMinute = timeframe === "1m";
       const shouldLoadOneMinutePrecision = settings.minutePreciseEnabled && !isAlreadyOneMinute;
-      const allowOneMinuteFallback = settings.minutePreciseEnabled || isAlreadyOneMinute;
+      // Library seeding should prefer some candle coverage over collapsing to zero.
+      const allowOneMinuteFallback = true;
       const leadingBars = Math.max(settings.chunkBars * 3, settings.maxBarsInTrade + 24);
       const targetBars = estimateHistoryBarsForDateRange(
         settings.statsDateStart,
@@ -15142,15 +15190,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             oneMinutePaddingBars
           )
         : 0;
+      const minimumSeedBars = getMinimumAizipSeedBars(settings.chunkBars);
 
-      const chartFallbackCandles =
-        symbol === selectedSymbol && timeframe === selectedBacktestTimeframe
-          ? selectedChartCandlesRef.current ?? EMPTY_CANDLES
-          : EMPTY_CANDLES;
       const existingCandles = pickLongestCandleSeries(
         backtestSeriesMapRef.current[key],
-        seriesMapRef.current[key],
-        chartFallbackCandles
+        seriesMapRef.current[key]
       );
       const existingOneMinute = shouldLoadOneMinutePrecision
         ? pickLongestCandleSeries(
@@ -15233,14 +15277,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             existingCandles
           );
 
-          if (seedCandles.length < MIN_SEED_CANDLES) {
-            seedCandles = pickLongestCandleSeries(
-              seedCandles,
-              chartFallbackCandles
-            );
-          }
-
-          if (seedCandles.length >= 3) {
+          if (hasUsableAizipSeedCandles(seedCandles, minimumSeedBars)) {
             resolvedCandles = seedCandles;
             if (seedCandles.length > (backtestSeriesMapRef.current[key]?.length ?? 0)) {
               setBacktestSeriesMap((prev) => ({
@@ -15286,8 +15323,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return loadPromise;
     },
     [
-      selectedBacktestTimeframe,
-      selectedSymbol,
       setBacktestOneMinuteSeriesMap,
       setBacktestSeriesMap
     ]
@@ -15367,30 +15402,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const computePromise = (async () => {
         const { candleSeriesBySymbol } = await ensureLibraryHistorySeed(settings);
         const candles = candleSeriesBySymbol[settings.symbol] ?? EMPTY_CANDLES;
+        const minimumSeedBars = getMinimumAizipSeedBars(settings.chunkBars);
 
-        if (candles.length < 3) {
-          return [];
-        }
-
-        const unitsPerMove = Math.max(
-          1,
-          Number.isFinite(settings.dollarsPerMove)
-            ? settings.dollarsPerMove
-            : 1
-        );
-        const tpDistance =
-          normalizedTp > 0
-            ? Math.max(0.000001, normalizedTp / unitsPerMove)
-            : 0;
-        const slDistance =
-          normalizedSl > 0
-            ? Math.max(0.000001, normalizedSl / unitsPerMove)
-            : 0;
-        const maxLookahead = Math.max(2, AI_LIBRARY_SEED_LOOKAHEAD_BARS);
-        const startIndex = Math.max(2, Math.trunc(settings.chunkBars));
-        const maxSignalIndex = candles.length - 2 - maxLookahead;
-
-        if (!(tpDistance > 0) || !(slDistance > 0) || maxSignalIndex < startIndex) {
+        if (!hasUsableAizipSeedCandles(candles, minimumSeedBars)) {
           return [];
         }
 
@@ -15405,118 +15419,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           formattedTimeCache.set(normalized, nextLabel);
           return nextLabel;
         };
-
-        const rows: HistoryItem[] = [];
-        for (let signalIndex = startIndex; signalIndex <= maxSignalIndex; signalIndex += 1) {
-          const entryIndex = signalIndex + 1;
-          const entryCandle = candles[entryIndex];
-          if (!entryCandle || !Number.isFinite(entryCandle.open)) {
-            continue;
-          }
-
-          const entryTimeMs = Number(entryCandle.time);
-          if (!Number.isFinite(entryTimeMs)) {
-            continue;
-          }
-          const entryTime = toUtcTimestamp(entryTimeMs);
-
-          for (const direction of [1, -1] as const) {
-            const entryPrice = Math.max(0.000001, entryCandle.open);
-            const targetPrice =
-              direction === 1 ? entryPrice + tpDistance : entryPrice - tpDistance;
-            const stopPrice =
-              direction === 1 ? entryPrice - slDistance : entryPrice + slDistance;
-            const endIndex = Math.min(candles.length - 1, entryIndex + maxLookahead);
-            let exitIndex = endIndex;
-            let result: TradeResult | null = null;
-
-            for (let candleIndex = entryIndex; candleIndex <= endIndex; candleIndex += 1) {
-              const candle = candles[candleIndex];
-              if (!candle) {
-                continue;
-              }
-
-              const tpHit =
-                direction === 1
-                  ? candle.high >= targetPrice
-                  : candle.low <= targetPrice;
-              const slHit =
-                direction === 1
-                  ? candle.low <= stopPrice
-                  : candle.high >= stopPrice;
-
-              if (tpHit && slHit) {
-                exitIndex = candleIndex;
-                result = "Loss";
-                break;
-              }
-              if (slHit) {
-                exitIndex = candleIndex;
-                result = "Loss";
-                break;
-              }
-              if (tpHit) {
-                exitIndex = candleIndex;
-                result = "Win";
-                break;
-              }
-            }
-
-            if (result == null) {
-              const lastCandle = candles[endIndex];
-              if (!lastCandle || !Number.isFinite(lastCandle.close)) {
-                continue;
-              }
-              result =
-                (lastCandle.close - entryPrice) * direction >= 0 ? "Win" : "Loss";
-            }
-
-            const exitTimeRawMs = Number(candles[exitIndex]?.time ?? entryTimeMs);
-            const exitTime = Number.isFinite(exitTimeRawMs)
-              ? toUtcTimestamp(exitTimeRawMs)
-              : entryTime;
-            const outcomePrice = result === "Win" ? targetPrice : stopPrice;
-            const pnlUsd = result === "Win" ? normalizedTp : -normalizedSl;
-            const pnlPct =
-              entryPrice > 0
-                ? direction === 1
-                  ? ((outcomePrice - entryPrice) / entryPrice) * 100
-                  : ((entryPrice - outcomePrice) / entryPrice) * 100
-                : 0;
-            const side: TradeSide = direction === 1 ? "Long" : "Short";
-            const entryLabel = formatSeedTime(entryTime);
-            const exitLabel = formatSeedTime(exitTime);
-
-            rows.push({
-              id: `seed-${String(signalIndex).padStart(6, "0")}-${
-                direction === 1 ? "long" : "short"
-              }`,
-              symbol: settings.symbol,
-              side,
-              result,
-              entrySource: "Base Seeding",
-              exitReason: result === "Win" ? "TP" : "SL",
-              pnlPct,
-              pnlUsd,
-              time: entryLabel,
-              entryAt: entryLabel,
-              exitAt: exitLabel,
-              entryTime,
-              exitTime,
-              entryPrice,
-              targetPrice,
-              stopPrice,
-              outcomePrice,
-              units: unitsPerMove
-            });
-          }
-        }
-
-        const ordered = [...rows].sort(
-          (left, right) =>
-            Number(left.exitTime) - Number(right.exitTime) ||
-            left.id.localeCompare(right.id)
-        );
+        const ordered = buildSeededLibraryTradePoolFromCandles({
+          candles,
+          symbol: settings.symbol,
+          unitsPerMove: settings.dollarsPerMove,
+          tpDollars: normalizedTp,
+          slDollars: normalizedSl,
+          chunkBars: settings.chunkBars,
+          formatTimestamp: formatSeedTime
+        }) as HistoryItem[];
         aiLibraryPoolCacheRef.current.set(poolKey, ordered);
         return ordered;
       })().finally(() => {
@@ -15556,8 +15467,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         const { candleSeriesBySymbol, oneMinuteCandlesBySymbol } =
           await ensureLibraryHistorySeed(settings);
         const candles = candleSeriesBySymbol[settings.symbol] ?? EMPTY_CANDLES;
+        const minimumSeedBars = getMinimumAizipSeedBars(settings.chunkBars);
 
-        if (candles.length < 3) {
+        if (!hasUsableAizipSeedCandles(candles, minimumSeedBars)) {
           return [];
         }
 
@@ -15955,7 +15867,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         [libraryId]: "loading"
       }));
 
-      if (!canRunAiLibraries([definition.id])) {
+      const settingsSnapshot = resolveLibraryBacktestSnapshot(options?.backtestSettings);
+
+      if (
+        !canRunAizipLibrariesForSettings({
+          libraryIds: [definition.id],
+          aiModelStates: settingsSnapshot.aiModelStates
+        })
+      ) {
         setAiLibraryRunStatus((current) => ({
           ...current,
           [libraryId]: "idle"
@@ -15964,7 +15883,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       try {
-        const settingsSnapshot = resolveLibraryBacktestSnapshot(options?.backtestSettings);
         const settings = resolveLibrarySettingsSnapshot(
           definition,
           options?.settingsSource
@@ -16036,7 +15954,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     },
     [
       aiLibraryDefById,
-      canRunAiLibraries,
       buildLibraryExecutedTradeIds,
       buildLibrarySnapshotFromPool,
       filterLibraryCandidatePool,
@@ -16078,7 +15995,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       setAiLibraryRunStatus((current) => ({ ...current, ...nextStatus }));
 
-      if (!canRunAiLibraries(activeIds)) {
+      if (
+        !canRunAizipLibrariesForSettings({
+          libraryIds: activeIds,
+          aiModelStates: settingsSnapshot.aiModelStates
+        })
+      ) {
         setAiLibraryRunStatus((current) => {
           const updated = { ...current };
           for (const libraryId of activeIds) {
@@ -16216,7 +16138,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     },
     [
       aiLibraryDefById,
-      canRunAiLibraries,
       buildLibraryExecutedTradeIds,
       buildSeedLibraryPoolKey,
       buildLibraryPoolKey,
@@ -16251,17 +16172,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return;
     }
 
+    const appliedSettingsSnapshot = appliedBacktestSettingsRef.current;
     runAllLibrariesRef.current({
-      libraryIds: appliedBacktestSettings.selectedAiLibraries,
-      settingsSource: appliedBacktestSettings.selectedAiLibrarySettings,
-      backtestSettings: appliedBacktestSettings
+      libraryIds: appliedSettingsSnapshot.selectedAiLibraries,
+      settingsSource: appliedSettingsSnapshot.selectedAiLibrarySettings,
+      backtestSettings: appliedSettingsSnapshot
     });
   }, [
     backtestHasRun,
     backtestHistorySeedReady,
     appliedAiLibraryReadyToRun,
-    appliedBacktestSettings.selectedAiLibraries,
-    appliedBacktestSettings.selectedAiLibrarySettings,
     backtestRunCount
   ]);
   const aiClusterActiveLibraryIdSet = useMemo(() => {
@@ -16356,7 +16276,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       `[AIZip][AiLibraryDiagnostics] ${codes.join(", ")}`,
       {
         appliedLibraryIds,
-        selectedAiModelCount,
+        appliedSelectedAiModelCount,
         appliedAiLibraryReadyToRun,
         backtestHasRun,
         backtestHistorySeedReady,
@@ -16373,7 +16293,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedBacktestSettings.selectedAiLibraries,
     backtestHasRun,
     backtestHistorySeedReady,
-    selectedAiModelCount,
+    appliedSelectedAiModelCount,
   ]);
   const selectedAiLibraryConfig: Record<string, AiLibrarySettingValue> | null = selectedAiLibrary
     ? ({
@@ -16600,7 +16520,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const appliedAntiCheat = applied.antiCheatEnabled;
     const appliedStaticLibClusters = applied.staticLibrariesClusters;
     const appliedLibCount = applied.selectedAiLibraries.length;
-    const appliedModelCount = Object.values(applied.aiModelStates).filter((s) => s > 0).length;
+    const appliedModelCount = countEnabledAizipModels(applied.aiModelStates);
     const appliedFeatureCount = Object.values(applied.aiFeatureLevels).filter((l) => l > 0).length;
     const appliedDimCount = countConfiguredAiFeatureDimensions(applied.aiFeatureLevels, applied.aiFeatureModes, applied.chunkBars);
 
@@ -20526,17 +20446,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
                         <button
                           type="button"
-                          className={`ai-zip-button toggle ${
-                            aiMode !== "off" && useMitExit ? "active" : ""
-                          }`}
-                          disabled={aiMode === "off"}
-                          onClick={() => setUseMitExit((value) => !value)}
-                        >
-                          MIT Exit {useMitExit ? "· ON" : "· OFF"}
-                        </button>
-
-                        <button
-                          type="button"
                           className="ai-zip-button"
                           disabled={aiDisabled}
                           onClick={() => setMethodSettingsOpen(true)}
@@ -20567,103 +20476,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           />
                           <div className="ai-zip-note">{effectiveConfidenceThreshold}</div>
                         </div>
-
-                        <div className={`ai-zip-control ${aiMode === "off" ? "disabled" : ""}`}>
-                          <div className="ai-zip-label">AI Exit Strictness</div>
-                          <input
-                            type="range"
-                            min={0}
-                            max={100}
-                            step={1}
-                            value={aiExitStrictness}
-                            disabled={aiMode === "off"}
-                            onChange={(event) => {
-                              setAiExitStrictness(clamp(Number(event.target.value) || 0, 0, 100));
-                            }}
-                            className="backtest-slider"
-                            style={{ "--p": `${aiExitStrictness}%` } as React.CSSProperties}
-                          />
-                          <div className="ai-zip-note">
-                            {aiExitStrictness === 0
-                              ? "0 (OFF)"
-                              : `${aiExitStrictness} (1 = lenient · 100 = strict)`}
-                          </div>
-                        </div>
-
-                        <div
-                          className={`ai-zip-control ${aiExitStrictness === 0 ? "disabled" : ""}`}
-                        >
-                          <div className="ai-zip-label">Win Tolerance</div>
-                          <input
-                            type="range"
-                            min={-100}
-                            max={100}
-                            step={1}
-                            value={aiExitWinTolerance}
-                            disabled={aiExitStrictness === 0}
-                            onChange={(event) => {
-                              setAiExitWinTolerance(
-                                clamp(Number(event.target.value) || 0, -100, 100)
-                              );
-                            }}
-                            className="backtest-slider"
-                            style={{ "--p": `${((aiExitWinTolerance + 100) / 200) * 100}%` } as React.CSSProperties}
-                          />
-                          <div className="ai-zip-note">
-                            {aiExitStrictness === 0
-                              ? "Set AI Exit Strictness > 0 to enable"
-                              : `${aiExitWinTolerance} (0 = neutral)`}
-                          </div>
-                        </div>
-
-                        <div
-                          className={`ai-zip-control ${aiExitStrictness === 0 ? "disabled" : ""}`}
-                        >
-                          <div className="ai-zip-label">Loss Tolerance</div>
-                          <input
-                            type="range"
-                            min={-100}
-                            max={100}
-                            step={1}
-                            value={aiExitLossTolerance}
-                            disabled={aiExitStrictness === 0}
-                            onChange={(event) => {
-                              setAiExitLossTolerance(
-                                clamp(Number(event.target.value) || 0, -100, 100)
-                              );
-                            }}
-                            className="backtest-slider"
-                            style={{ "--p": `${((aiExitLossTolerance + 100) / 200) * 100}%` } as React.CSSProperties}
-                          />
-                          <div className="ai-zip-note">
-                            {aiExitStrictness === 0
-                              ? "Set AI Exit Strictness > 0 to enable"
-                              : `${aiExitLossTolerance} (0 = neutral)`}
-                          </div>
-                        </div>
-
-                        <div className={`ai-zip-control ${aiMode === "off" ? "disabled" : ""}`}>
-                          <div className="ai-zip-label">Volatility Filter (keep top)</div>
-                          <input
-                            type="range"
-                            min={0}
-                            max={99}
-                            step={1}
-                            value={volatilityPercentile}
-                            disabled={aiMode === "off"}
-                            onChange={(event) => {
-                              setVolatilityPercentile(
-                                clamp(Number(event.target.value) || 0, 0, 99)
-                              );
-                            }}
-                            className="backtest-slider"
-                            style={{ "--p": `${(volatilityPercentile / 99) * 100}%` } as React.CSSProperties}
-                          />
-                          <div className="ai-zip-note">
-                            {volatilityPercentile === 0
-                              ? "0 (OFF)"
-                              : `Keep top ${volatilityPercentile}%`}
-                          </div>
+                        <div className="ai-zip-note">
+                          The active backtest surface applies the confidence gate plus data,
+                          dimensionality, and library settings below. Exit-tuning and
+                          volatility-only controls remain out of this applied pipeline for now,
+                          so they were removed here to keep the surface honest.
                         </div>
                       </div>
                     </div>
@@ -21139,23 +20956,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             onChange={(event) => {
                               setHdbEpsQuantile(
                                 clamp(Number(event.target.value) || 0.5, 0.5, 0.99)
-                              );
-                            }}
-                            className="ai-zip-input"
-                          />
-                        </label>
-                        <label className="ai-zip-field">
-                          <span className="ai-zip-label">Sample Cap</span>
-                          <input
-                            type="number"
-                            min={200}
-                            max={200000}
-                            step={100}
-                            value={hdbSampleCap}
-                            disabled={aiDisabled}
-                            onChange={(event) => {
-                              setHdbSampleCap(
-                                clamp(Math.floor(Number(event.target.value) || 200), 200, 200000)
                               );
                             }}
                             className="ai-zip-input"
