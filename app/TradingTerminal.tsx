@@ -4486,44 +4486,72 @@ const mergeHistoricalAndRecentCandles = (
   return mergeRecentCandles(historical, recent, maxBars);
 };
 
-const fetchMarketCandles = async (timeframe: Timeframe, limit: number): Promise<Candle[]> => {
+const fetchMarketCandles = async (
+  timeframe: Timeframe,
+  limit: number,
+  timeoutMs = CLIENT_CANDLE_FETCH_TIMEOUT_MS
+): Promise<Candle[]> => {
   const params = new URLSearchParams({
     pair: XAUUSD_PAIR,
     timeframe: marketTimeframeMap[timeframe],
     limit: String(Math.min(limit, MARKET_MAX_HISTORY_CANDLES))
   });
 
-  const response = await fetch(`/api/market/candles?${params.toString()}`, {
-    cache: "no-store"
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!response.ok) {
+  try {
+    const response = await fetch(`/api/market/candles?${params.toString()}`, {
+      cache: "no-store",
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const payload = await response.json();
+
+    return normalizeMarketCandles(payload.candles || []);
+  } catch {
     return [];
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const payload = await response.json();
-
-  return normalizeMarketCandles(payload.candles || []);
 };
 
-const fetchHistoryApiCandles = async (timeframe: Timeframe, count: number): Promise<Candle[]> => {
+const fetchHistoryApiCandles = async (
+  timeframe: Timeframe,
+  count: number,
+  timeoutMs = CLIENT_CANDLE_FETCH_TIMEOUT_MS
+): Promise<Candle[]> => {
   const params = new URLSearchParams({
     pair: XAUUSD_PAIR,
     timeframe: marketTimeframeMap[timeframe],
     count: String(count)
   });
 
-  const response = await fetch(`/api/history/candles?${params.toString()}`, {
-    cache: "no-store"
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!response.ok) {
+  try {
+    const response = await fetch(`/api/history/candles?${params.toString()}`, {
+      cache: "no-store",
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const payload = await response.json();
+
+    return normalizeMarketCandles(payload.candles || []);
+  } catch {
     return [];
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const payload = await response.json();
-
-  return normalizeMarketCandles(payload.candles || []);
 };
 
 const pickLongestCandleSeries = (...series: Array<Candle[] | undefined | null>): Candle[] => {
@@ -4539,7 +4567,8 @@ const pickLongestCandleSeries = (...series: Array<Candle[] | undefined | null>):
 };
 
 const fetchRecentOneMinuteCandles = async (
-  recentOneMinutePromise?: Promise<Candle[]>
+  recentOneMinutePromise?: Promise<Candle[]>,
+  timeoutMs = CLIENT_CANDLE_FETCH_TIMEOUT_MS
 ): Promise<Candle[]> => {
   if (recentOneMinutePromise) {
     try {
@@ -4550,7 +4579,11 @@ const fetchRecentOneMinuteCandles = async (
   }
 
   try {
-    const recentCandles = await fetchHistoryApiCandles("1m", RECENT_ONE_MINUTE_FETCH_COUNT);
+    const recentCandles = await fetchHistoryApiCandles(
+      "1m",
+      RECENT_ONE_MINUTE_FETCH_COUNT,
+      timeoutMs
+    );
     return trimRecentOneMinuteCandles(recentCandles);
   } catch {
     return [];
@@ -4561,14 +4594,24 @@ const fetchHybridHistoryCandles = async (
   timeframe: Timeframe,
   targetBars: number,
   recentOneMinutePromise?: Promise<Candle[]>,
-  allowOneMinuteFallback = true
+  allowOneMinuteFallback = true,
+  timeoutMs = CLIENT_CANDLE_FETCH_TIMEOUT_MS
 ): Promise<Candle[]> => {
   try {
-    // Always seed from ClickHouse/history first before blending in recent market candles.
-    const historyCandles = await fetchHistoryApiCandles(
+    const historyPromise = fetchHistoryApiCandles(
       timeframe,
-      Math.min(targetBars, CLICKHOUSE_MAX_HISTORY_CANDLES)
+      Math.min(targetBars, CLICKHOUSE_MAX_HISTORY_CANDLES),
+      timeoutMs
     );
+    const recentTimeframePromise =
+      timeframe === "1m"
+        ? Promise.resolve([] as Candle[])
+        : fetchMarketCandles(
+            timeframe,
+            Math.min(targetBars, MARKET_MAX_HISTORY_CANDLES),
+            timeoutMs
+          ).catch(() => []);
+    const historyCandles = await historyPromise;
 
     if (timeframe === "1m") {
       if (historyCandles.length >= MIN_SEED_CANDLES) {
@@ -4579,14 +4622,14 @@ const fetchHybridHistoryCandles = async (
         return historyCandles.slice(-targetBars);
       }
 
-      const recentOneMinuteCandles = await fetchRecentOneMinuteCandles(recentOneMinutePromise);
+      const recentOneMinuteCandles = await fetchRecentOneMinuteCandles(
+        recentOneMinutePromise,
+        timeoutMs
+      );
       return recentOneMinuteCandles.slice(-targetBars);
     }
 
-    const recentTimeframeCandles = await fetchMarketCandles(
-      timeframe,
-      Math.min(targetBars, MARKET_MAX_HISTORY_CANDLES)
-    ).catch(() => []);
+    const recentTimeframeCandles = await recentTimeframePromise;
 
     if (historyCandles.length >= MIN_SEED_CANDLES) {
       return mergeHistoricalAndRecentCandles(historyCandles, recentTimeframeCandles, targetBars);
@@ -4613,7 +4656,10 @@ const fetchHybridHistoryCandles = async (
     return [];
   }
 
-  const recentOneMinuteCandles = await fetchRecentOneMinuteCandles(recentOneMinutePromise);
+  const recentOneMinuteCandles = await fetchRecentOneMinuteCandles(
+    recentOneMinutePromise,
+    timeoutMs
+  );
   const recentTimeframeCandles = aggregateCandlesToTimeframe(recentOneMinuteCandles, timeframe);
   return recentTimeframeCandles.slice(-targetBars);
 };
@@ -4621,14 +4667,16 @@ const fetchHybridHistoryCandles = async (
 const fetchHistoryCandles = async (
   timeframe: Timeframe,
   recentOneMinutePromise?: Promise<Candle[]>,
-  allowOneMinuteFallback = true
+  allowOneMinuteFallback = true,
+  timeoutMs = CLIENT_CANDLE_FETCH_TIMEOUT_MS
 ): Promise<Candle[]> => {
   const targetBars = chartHistoryCountByTimeframe[timeframe];
   return fetchHybridHistoryCandles(
     timeframe,
     targetBars,
     recentOneMinutePromise,
-    allowOneMinuteFallback
+    allowOneMinuteFallback,
+    timeoutMs
   );
 };
 
@@ -4636,7 +4684,8 @@ const fetchBacktestHistoryCandles = async (
   timeframe: Timeframe,
   targetBars: number,
   recentOneMinutePromise?: Promise<Candle[]>,
-  allowOneMinuteFallback = true
+  allowOneMinuteFallback = true,
+  timeoutMs = BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS
 ): Promise<Candle[]> => {
   const safeTargetBars = clamp(
     Math.floor(Number.isFinite(targetBars) ? targetBars : BACKTEST_MAX_HISTORY_CANDLES),
@@ -4648,12 +4697,15 @@ const fetchBacktestHistoryCandles = async (
     timeframe,
     safeTargetBars,
     recentOneMinutePromise,
-    allowOneMinuteFallback
+    allowOneMinuteFallback,
+    timeoutMs
   );
 };
 
 const XAUUSD_PAIR = "XAU_USD";
 const MIN_SEED_CANDLES = 40;
+const CLIENT_CANDLE_FETCH_TIMEOUT_MS = 3500;
+const BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS = 1500;
 const CLICKHOUSE_MAX_HISTORY_CANDLES = 300_000;
 const MARKET_MAX_HISTORY_CANDLES = 25_000;
 const LIVE_MARKET_SYNC_LIMIT = 160;
@@ -8267,6 +8319,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const chartDataLengthRef = useRef(0);
   const chartLastBarTimeRef = useRef(0);
   const chartViewCenterTimeMsRef = useRef<number | null>(null);
+  const seriesMapRef = useRef(seriesMap);
+  const backtestSeriesMapRef = useRef(backtestSeriesMap);
+  const backtestOneMinuteSeriesMapRef = useRef(backtestOneMinuteSeriesMap);
   const selectedChartCandlesRef = useRef<Candle[]>([]);
   const statsDatePresetDdRef = useRef<HTMLDivElement>(null);
   const statsTimeframeDdRef = useRef<HTMLDivElement>(null);
@@ -9916,18 +9971,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         ? selectedChartCandlesRef.current ?? EMPTY_CANDLES
         : EMPTY_CANDLES;
     const existingCandles = pickLongestCandleSeries(
-      backtestSeriesMap[key],
-      seriesMap[key],
+      backtestSeriesMapRef.current[key],
+      seriesMapRef.current[key],
       chartFallbackCandles
     );
     const existingOneMinute = shouldLoadOneMinutePrecision
       ? pickLongestCandleSeries(
-          backtestOneMinuteSeriesMap[oneMinuteKey],
-          seriesMap[oneMinuteKey]
+          backtestOneMinuteSeriesMapRef.current[oneMinuteKey],
+          seriesMapRef.current[oneMinuteKey]
         )
       : EMPTY_CANDLES;
     const recentOneMinutePromise = shouldLoadOneMinutePrecision
-      ? fetchRecentOneMinuteCandles()
+      ? fetchRecentOneMinuteCandles(undefined, BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS)
       : undefined;
     const leadingBars = Math.max(
       appliedBacktestSettings.chunkBars * 3,
@@ -9971,7 +10026,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         existingOneMinute.length < oneMinuteTargetBars);
 
     if (!needsHistory && !needsOneMinute) {
-      if ((backtestSeriesMap[key]?.length ?? 0) < existingCandles.length) {
+      if ((backtestSeriesMapRef.current[key]?.length ?? 0) < existingCandles.length) {
         setBacktestSeriesMap((prev) => ({
           ...prev,
           [key]: existingCandles
@@ -9980,7 +10035,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       if (
         shouldLoadOneMinutePrecision &&
         existingOneMinute.length > 0 &&
-        (backtestOneMinuteSeriesMap[oneMinuteKey]?.length ?? 0) < existingOneMinute.length
+        (backtestOneMinuteSeriesMapRef.current[oneMinuteKey]?.length ?? 0) < existingOneMinute.length
       ) {
         setBacktestOneMinuteSeriesMap((prev) => ({
           ...prev,
@@ -10007,7 +10062,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             : Promise.resolve(existingCandles),
           shouldLoadOneMinutePrecision
             ? needsOneMinute
-              ? fetchHistoryApiCandles("1m", oneMinuteTargetBars).catch(() => [])
+              ? fetchHistoryApiCandles(
+                  "1m",
+                  oneMinuteTargetBars,
+                  BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS
+                ).catch(() => [])
               : Promise.resolve(existingOneMinute)
             : Promise.resolve([])
         ];
@@ -10019,14 +10078,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         );
 
         if (replaySeedCandles.length < MIN_SEED_CANDLES) {
-          const fallbackHistoryCandles = await fetchHistoryCandles(
-            appliedBacktestSettings.timeframe,
-            recentOneMinutePromise,
-            allowOneMinuteFallback
-          ).catch(() => []);
-
           replaySeedCandles = pickLongestCandleSeries(
-            fallbackHistoryCandles,
             replaySeedCandles,
             chartFallbackCandles
           );
@@ -10081,15 +10133,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedBacktestSettings.statsDateStart,
     appliedBacktestSettings.symbol,
     appliedBacktestSettings.timeframe,
-    backtestOneMinuteSeriesMap,
     backtestHasRun,
     backtestHistorySeedReady,
-    backtestSeriesMap,
     backtestRefreshNowMs,
     backtestRunCount,
     selectedBacktestTimeframe,
     selectedSymbol,
-    seriesMap,
     shouldSkipBacktestHistoryFetch
   ]);
 
@@ -10554,6 +10603,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     usesDeepChartHistory
   ]);
 
+  seriesMapRef.current = seriesMap;
+  backtestSeriesMapRef.current = backtestSeriesMap;
+  backtestOneMinuteSeriesMapRef.current = backtestOneMinuteSeriesMap;
   selectedChartCandlesRef.current = selectedChartCandles;
 
   const gaplessTimeMap = useMemo(() => {
@@ -15096,14 +15148,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           ? selectedChartCandlesRef.current ?? EMPTY_CANDLES
           : EMPTY_CANDLES;
       const existingCandles = pickLongestCandleSeries(
-        backtestSeriesMap[key],
-        seriesMap[key],
+        backtestSeriesMapRef.current[key],
+        seriesMapRef.current[key],
         chartFallbackCandles
       );
       const existingOneMinute = shouldLoadOneMinutePrecision
         ? pickLongestCandleSeries(
-            backtestOneMinuteSeriesMap[oneMinuteKey],
-            seriesMap[oneMinuteKey]
+            backtestOneMinuteSeriesMapRef.current[oneMinuteKey],
+            seriesMapRef.current[oneMinuteKey]
           )
         : EMPTY_CANDLES;
       const hasDateRange = Boolean(settings.statsDateStart && settings.statsDateEnd);
@@ -15151,7 +15203,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         let resolvedCandles = existingCandles;
         let resolvedOneMinute = existingOneMinute;
         const recentOneMinutePromise = shouldLoadOneMinutePrecision
-          ? fetchRecentOneMinuteCandles()
+          ? fetchRecentOneMinuteCandles(undefined, BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS)
           : undefined;
 
         if (needsHistory || needsOneMinute) {
@@ -15166,7 +15218,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               : Promise.resolve(existingCandles),
             shouldLoadOneMinutePrecision
               ? needsOneMinute
-                ? fetchHistoryApiCandles("1m", oneMinuteTargetBars).catch(() => [])
+                ? fetchHistoryApiCandles(
+                    "1m",
+                    oneMinuteTargetBars,
+                    BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS
+                  ).catch(() => [])
                 : Promise.resolve(existingOneMinute)
               : Promise.resolve([])
           ];
@@ -15178,14 +15234,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           );
 
           if (seedCandles.length < MIN_SEED_CANDLES) {
-            const fallbackHistoryCandles = await fetchHistoryCandles(
-              timeframe,
-              recentOneMinutePromise,
-              allowOneMinuteFallback
-            ).catch(() => []);
-
             seedCandles = pickLongestCandleSeries(
-              fallbackHistoryCandles,
               seedCandles,
               chartFallbackCandles
             );
@@ -15193,7 +15242,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
           if (seedCandles.length >= 3) {
             resolvedCandles = seedCandles;
-            if (seedCandles.length > (backtestSeriesMap[key]?.length ?? 0)) {
+            if (seedCandles.length > (backtestSeriesMapRef.current[key]?.length ?? 0)) {
               setBacktestSeriesMap((prev) => ({
                 ...prev,
                 [key]: seedCandles
@@ -15209,7 +15258,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             resolvedOneMinute = resolvedNextOneMinute;
             if (
               resolvedNextOneMinute.length >
-              (backtestOneMinuteSeriesMap[oneMinuteKey]?.length ?? 0)
+              (backtestOneMinuteSeriesMapRef.current[oneMinuteKey]?.length ?? 0)
             ) {
               setBacktestOneMinuteSeriesMap((prev) => ({
                 ...prev,
@@ -15237,11 +15286,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return loadPromise;
     },
     [
-      backtestOneMinuteSeriesMap,
-      backtestSeriesMap,
       selectedBacktestTimeframe,
       selectedSymbol,
-      seriesMap,
       setBacktestOneMinuteSeriesMap,
       setBacktestSeriesMap
     ]

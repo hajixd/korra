@@ -7,6 +7,7 @@ const DEFAULT_TABLE = "candles";
 const DEFAULT_LIMIT = 2500;
 const MIN_LIMIT = 10;
 const MAX_LIMIT = 300000;
+const CLICKHOUSE_TIMEOUT_MS = 10000;
 const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const PAIR_RE = /^[A-Z0-9]{2,20}_[A-Z0-9]{2,20}$/;
 const TIMEZONE_RE = /^[A-Za-z0-9_/\-+]+$/;
@@ -37,6 +38,37 @@ const toBoolean = (value: unknown) => {
     return normalized === "1" || normalized === "true" || normalized === "t";
   }
   return false;
+};
+
+const buildEmptyCandlesResponse = (params: {
+  pair: string;
+  timeframe: string;
+  count: number;
+  start: string | null;
+  end: string | null;
+  details: string;
+}) => {
+  const { pair, timeframe, count, start, end, details } = params;
+  return NextResponse.json(
+    {
+      pair,
+      timeframe,
+      start,
+      end,
+      count: 0,
+      requestedCount: count,
+      candles: [],
+      source: "history-fallback",
+      error: details
+    },
+    {
+      status: 200,
+      headers: {
+        "Cache-Control": "no-store",
+        "X-Korra-History-Source": "empty-fallback"
+      }
+    }
+  );
 };
 
 export async function GET(request: Request) {
@@ -70,22 +102,34 @@ export async function GET(request: Request) {
   const timezone = process.env.CLICKHOUSE_TIMEZONE || DEFAULT_TIMEZONE;
 
   if (!host || !user || !password) {
-    return NextResponse.json(
-      { error: "Missing ClickHouse connection env vars." },
-      { status: 500 }
-    );
+    return buildEmptyCandlesResponse({
+      pair,
+      timeframe,
+      count,
+      start,
+      end,
+      details: "Missing ClickHouse connection env vars."
+    });
   }
   if (!IDENTIFIER_RE.test(database) || !IDENTIFIER_RE.test(table)) {
-    return NextResponse.json(
-      { error: "Invalid ClickHouse database/table name in env vars." },
-      { status: 500 }
-    );
+    return buildEmptyCandlesResponse({
+      pair,
+      timeframe,
+      count,
+      start,
+      end,
+      details: "Invalid ClickHouse database/table name in env vars."
+    });
   }
   if (!TIMEZONE_RE.test(timezone)) {
-    return NextResponse.json(
-      { error: "Invalid ClickHouse timezone in env vars." },
-      { status: 500 }
-    );
+    return buildEmptyCandlesResponse({
+      pair,
+      timeframe,
+      count,
+      start,
+      end,
+      details: "Invalid ClickHouse timezone in env vars."
+    });
   }
 
   const startFilter = start
@@ -123,6 +167,8 @@ ${startFilter}${endFilter}
 
   try {
     const normalizedHost = host.replace(/\/+$/, "");
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), CLICKHOUSE_TIMEOUT_MS);
     const response = await fetch(`${normalizedHost}/`, {
       method: "POST",
       headers: {
@@ -130,15 +176,22 @@ ${startFilter}${endFilter}
         Authorization: `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}`
       },
       body: query,
-      cache: "no-store"
+      cache: "no-store",
+      signal: controller.signal
+    }).finally(() => {
+      clearTimeout(timeoutId);
     });
 
     if (!response.ok) {
       const text = await response.text();
-      return NextResponse.json(
-        { error: `ClickHouse error ${response.status}: ${text}` },
-        { status: response.status }
-      );
+      return buildEmptyCandlesResponse({
+        pair,
+        timeframe,
+        count,
+        start,
+        end,
+        details: `ClickHouse error ${response.status}: ${text}`
+      });
     }
 
     const payload = await response.json();
@@ -179,9 +232,16 @@ ${startFilter}${endFilter}
       candles
     });
   } catch (error) {
-    return NextResponse.json(
-      { error: (error as Error).message || "Unknown error" },
-      { status: 500 }
-    );
+    return buildEmptyCandlesResponse({
+      pair,
+      timeframe,
+      count,
+      start,
+      end,
+      details:
+        error instanceof Error && error.name === "AbortError"
+          ? "ClickHouse request timed out."
+          : (error as Error).message || "Unknown error"
+    });
   }
 }
