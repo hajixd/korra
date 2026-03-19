@@ -4904,6 +4904,18 @@ const fetchHybridHistoryCandles = async (
     }
 
     if (coverageWindow?.strictCoverage) {
+      if (
+        candlesReachDateRangeStart(
+          historyCandles,
+          timeframe,
+          coverageWindow.startYmd,
+          coverageWindow.leadingBars ?? 0
+        ) &&
+        coveredHistoryCandles.length >= MIN_SEED_CANDLES
+      ) {
+        return coveredHistoryCandles.slice(-targetBars);
+      }
+
       return [];
     }
 
@@ -5315,6 +5327,28 @@ const candlesCoverDateRange = (
   const lastTime = candles[candles.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
 
   return firstTime <= startMs - paddingMs && lastTime >= endExclusiveMs - getTimeframeMs(timeframe);
+};
+
+const candlesReachDateRangeStart = (
+  candles: Candle[],
+  timeframe: Timeframe,
+  startYmd: string,
+  leadingBars = 0
+): boolean => {
+  if (candles.length < 3) {
+    return false;
+  }
+
+  const startMs = getUtcDayStartMsFromYmd(startYmd);
+
+  if (startMs === null) {
+    return false;
+  }
+
+  const paddingMs = Math.max(0, Math.floor(leadingBars)) * getTimeframeMs(timeframe);
+  const firstTime = candles[0]?.time ?? Number.POSITIVE_INFINITY;
+
+  return firstTime <= startMs - paddingMs;
 };
 
 const filterCandlesToDateRange = (
@@ -10555,11 +10589,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           );
           if (
             hasDateRange &&
-            !candlesCoverDateRange(
+            !candlesReachDateRangeStart(
               fallbackCandles,
               appliedBacktestSettings.timeframe,
               appliedBacktestSettings.statsDateStart,
-              appliedBacktestSettings.statsDateEnd,
               leadingBars
             )
           ) {
@@ -10575,17 +10608,36 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         }
       } finally {
         if (!cancelled) {
-          const hasCoveredReplaySeedCandles =
+          const hasReplaySeedRangeStart =
+            !hasDateRange ||
+            candlesReachDateRangeStart(
+              resolvedReplaySeedCandles,
+              appliedBacktestSettings.timeframe,
+              appliedBacktestSettings.statsDateStart,
+              leadingBars
+            );
+          const hasReplaySeedCandles =
             hasUsableAizipSeedCandles(resolvedReplaySeedCandles, minimumReplaySeedBars) &&
-            (!hasDateRange ||
-              candlesCoverDateRange(
+            hasReplaySeedRangeStart;
+          if (hasReplaySeedCandles) {
+            if (
+              hasDateRange &&
+              !candlesCoverDateRange(
                 resolvedReplaySeedCandles,
                 appliedBacktestSettings.timeframe,
                 appliedBacktestSettings.statsDateStart,
                 appliedBacktestSettings.statsDateEnd,
                 leadingBars
-              ));
-          if (hasCoveredReplaySeedCandles) {
+              )
+            ) {
+              const availableLastTime =
+                resolvedReplaySeedCandles[resolvedReplaySeedCandles.length - 1]?.time ?? null;
+              console.warn("[BacktestHistory] Requested range exceeds available history coverage.", {
+                requestedStart: appliedBacktestSettings.statsDateStart,
+                requestedEnd: appliedBacktestSettings.statsDateEnd,
+                availableEnd: availableLastTime == null ? null : new Date(availableLastTime).toISOString()
+              });
+            }
             setStatsRefreshStatus("Preparing Backtest Replay");
             setBacktestHistorySeedReady(true);
           } else {
@@ -15943,11 +15995,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
         if (
           hasDateRange &&
-          !candlesCoverDateRange(
+          !candlesReachDateRangeStart(
             resolvedCandles,
             timeframe,
             settings.statsDateStart,
-            settings.statsDateEnd,
             leadingBars
           )
         ) {
