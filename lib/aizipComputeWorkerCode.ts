@@ -93,7 +93,6 @@ export const AIZIP_COMPUTE_WORKER_CODE = String.raw`
 
   let FEATURE_LEVELS = {};
   let FEATURE_MODES = {};
-  let KNN_VOTE_MODE = "distance";
   let KNN_NEIGHBOR_SPACE = "post";
   let DIST_METRIC = "euclidean";
   let LIB_VAR = {};
@@ -1232,10 +1231,10 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
   }
 
   function voteWeightForNeighbor(point, distance){
+    void distance;
     const base = pointVoteBaseWeight(point);
     if(!(base > 0)) return 0;
-    if(KNN_VOTE_MODE === "majority") return base;
-    return base * (1 / (1 + Math.max(0, Number(distance) || 0)));
+    return base;
   }
 
   function knnMargin(points, q, k, dirFilter, excludeTime, modelKey, qMeta, queryDir){
@@ -2783,7 +2782,6 @@ const _nA = candles.length;
     HDB_DOMAIN_DISTINCTION =
       settings.hdbDomainDistinction === "conceptual" ? "conceptual" : "real";
 
-    KNN_VOTE_MODE = (settings.knnVoteMode === "majority") ? "majority" : "distance";
     const knnSpaceRaw = settings.knnNeighborSpace;
     KNN_NEIGHBOR_SPACE = (knnSpaceRaw === "high" || knnSpaceRaw === "2d" || knnSpaceRaw === "3d") ? knnSpaceRaw : "post";
     DIST_METRIC = (settings.distanceMetric === "cosine" || settings.distanceMetric === "manhattan" || settings.distanceMetric === "chebyshev" || settings.distanceMetric === "mahalanobis")

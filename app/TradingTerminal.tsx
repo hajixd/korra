@@ -8504,7 +8504,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>("jl");
   const [kEntry, setKEntry] = useState(12);
   const [kExit, setKExit] = useState(9);
-  const [knnVoteMode, setKnnVoteMode] = useState<KnnVoteMode>("distance");
+  const [knnVoteMode, setKnnVoteMode] = useState<KnnVoteMode>("majority");
   const [hdbMinClusterSize, setHdbMinClusterSize] = useState(35);
   const [hdbMinSamples, setHdbMinSamples] = useState(12);
   const [hdbEpsQuantile, setHdbEpsQuantile] = useState(0.85);
@@ -13345,7 +13345,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (s.compressionMethod != null) setCompressionMethod(s.compressionMethod);
     if (s.kEntry != null) setKEntry(s.kEntry);
     if (s.kExit != null) setKExit(s.kExit);
-    if (s.knnVoteMode != null) setKnnVoteMode(s.knnVoteMode);
+    if (s.knnVoteMode != null) setKnnVoteMode("majority");
     if (s.hdbMinClusterSize != null) setHdbMinClusterSize(s.hdbMinClusterSize);
     if (s.hdbMinSamples != null) setHdbMinSamples(s.hdbMinSamples);
     if (s.hdbEpsQuantile != null) setHdbEpsQuantile(s.hdbEpsQuantile);
@@ -13477,7 +13477,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setCompressionMethod("jl");
     setKEntry(12);
     setKExit(9);
-    setKnnVoteMode("distance");
+    setKnnVoteMode("majority");
     setHdbMinClusterSize(35);
     setHdbMinSamples(12);
     setHdbEpsQuantile(0.85);
@@ -22044,18 +22044,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         <span className="ai-zip-label">kNN Voting</span>
                         <select
                           value={knnVoteMode}
-                          disabled={aiDisabled}
-                          onChange={(event) => {
-                            setKnnVoteMode(event.target.value as KnnVoteMode);
-                          }}
+                          disabled
                           className="ai-zip-input"
                         >
-                          <option value="distance">Distance-weighted</option>
                           <option value="majority">Majority vote</option>
                         </select>
                       </label>
                       <div className="ai-zip-note">
-                        These settings control how many neighbors are used and how votes are scored.
+                        These settings control how many neighbors are used. Voting is locked to majority.
                       </div>
                     </>
                   )}

@@ -26,7 +26,7 @@ const baseFilterSettings = (overrides?: Record<string, unknown>) => ({
   knnNeighborSpace: "high",
   selectedAiDomains: [],
   kEntry: 12,
-  knnVoteMode: "distance",
+  knnVoteMode: "majority",
   ...(overrides ?? {})
 });
 
@@ -488,7 +488,7 @@ test("panel analytics confidence honors kEntry instead of scoring every candidat
   assertApprox(Number(stampedTrade.entryConfidence), 1);
 });
 
-test("panel analytics honors knn vote mode when scoring confidence", async () => {
+test("panel analytics coerces legacy distance vote mode to majority confidence", async () => {
   const trades = [
     makeTrade({
       id: "live-1",
@@ -543,7 +543,7 @@ test("panel analytics honors knn vote mode when scoring confidence", async () =>
     }
   });
 
-  const distancePayload = await postPanelAnalytics({
+  const legacyDistancePayload = await postPanelAnalytics({
     panelSourceTrades: trades,
     panelLibraryPoints: libraryPoints,
     panelBacktestFilterSettings: baseFilterSettings({
@@ -559,13 +559,12 @@ test("panel analytics honors knn vote mode when scoring confidence", async () =>
   });
 
   const majorityConfidence = Number(majorityPayload.timeFilteredTrades[1]?.entryConfidence);
-  const distanceConfidence = Number(distancePayload.timeFilteredTrades[1]?.entryConfidence);
+  const legacyDistanceConfidence = Number(
+    legacyDistancePayload.timeFilteredTrades[1]?.entryConfidence
+  );
 
   assertApprox(majorityConfidence, 0.5);
-  assert.ok(
-    distanceConfidence > majorityConfidence,
-    `expected distance vote confidence ${distanceConfidence} to exceed majority ${majorityConfidence}`
-  );
+  assertApprox(legacyDistanceConfidence, majorityConfidence);
 });
 
 test("panel analytics honors selected AI domains when filtering neighbors", async () => {

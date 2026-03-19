@@ -314,7 +314,8 @@ const normalizeKnnNeighborSpace = (value: unknown): KnnNeighborSpace => {
 };
 
 const normalizeKnnVoteMode = (value: unknown): KnnVoteMode => {
-  return value === "majority" ? "majority" : "distance";
+  void value;
+  return "majority";
 };
 
 const hashSeedFromText = (seedText: string): number => {
@@ -513,19 +514,10 @@ const candidatePassesAiDomains = (
   return true;
 };
 
-const computeNeighborVoteWeight = (
-  distance: number,
-  baseWeight: number,
-  voteMode: KnnVoteMode
-) => {
+const computeNeighborVoteWeight = (baseWeight: number) => {
   const resolvedBaseWeight =
     Number.isFinite(baseWeight) && baseWeight > 0 ? baseWeight : 1;
-
-  if (voteMode === "majority") {
-    return resolvedBaseWeight;
-  }
-
-  return resolvedBaseWeight * (1 / (1 + Math.max(0, distance)));
+  return resolvedBaseWeight;
 };
 
 const getVectorDistance = (
@@ -1978,11 +1970,7 @@ const computeAntiCheatBacktestContext = (params: {
         const rawOutcomeScore = resolveCandidateOutcomeScore(candidate);
         const outcomeScore = resolveEffectiveOutcomeScore(candidate, trade, rawOutcomeScore);
         const effectiveLabel = resolveEffectiveOutcomeLabel(candidate, trade, outcomeScore);
-        const voteWeight = computeNeighborVoteWeight(
-          distance,
-          libraryWeight,
-          panelBacktestFilterSettings.knnVoteMode
-        );
+        const voteWeight = computeNeighborVoteWeight(libraryWeight);
         if (!(voteWeight > 0)) {
           continue;
         }
