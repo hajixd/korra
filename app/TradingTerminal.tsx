@@ -8986,6 +8986,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       appliedBacktestSettings
     );
   }, [appliedBacktestSettings, canRunAiLibrariesForSnapshot]);
+  const appliedAiLibraryRunInputsSignature = useMemo(() => {
+    return serializeBacktestSettingsSnapshot(appliedBacktestSettings);
+  }, [appliedBacktestSettings]);
   const visibleAiLibraries = useMemo(() => {
     return getVisibleAizipLibraryIds(selectedAiLibraries);
   }, [selectedAiLibraries]);
@@ -9107,6 +9110,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [backtestModelProfiles, backtestModelSelectionSummary]);
   const backtestHasRun = backtestRunCount > 0;
+  const liveAiLibraryRunInputsSignature = serializeBacktestSettingsSnapshot(
+    liveBacktestSettingsRef.current
+  );
+  const manualLibraryRunUsesAppliedSnapshot =
+    backtestHasRun &&
+    liveAiLibraryRunInputsSignature === appliedAiLibraryRunInputsSignature;
+  const effectiveAiLibraryReadyToRun = manualLibraryRunUsesAppliedSnapshot
+    ? appliedAiLibraryReadyToRun
+    : aiLibraryReadyToRun;
+  const effectiveAiLibraryRunLibraryIds = manualLibraryRunUsesAppliedSnapshot
+    ? appliedBacktestSettings.selectedAiLibraries
+    : selectedAiLibraries;
+  const effectiveAiLibraryRunSettingsSource = manualLibraryRunUsesAppliedSnapshot
+    ? appliedBacktestSettings.selectedAiLibrarySettings
+    : selectedAiLibrarySettings;
+  const effectiveAiLibraryRunBacktestSettings = manualLibraryRunUsesAppliedSnapshot
+    ? appliedBacktestSettings
+    : liveBacktestSettingsRef.current;
   const appliedBacktestKey = useMemo(() => {
     return symbolTimeframeKey(appliedBacktestSettings.symbol, appliedBacktestSettings.timeframe);
   }, [appliedBacktestSettings.symbol, appliedBacktestSettings.timeframe]);
@@ -15508,7 +15529,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           chunkBars: settings.chunkBars,
           formatTimestamp: formatSeedTime
         }) as HistoryItem[];
-        aiLibraryPoolCacheRef.current.set(poolKey, ordered);
+        if (ordered.length > 0) {
+          aiLibraryPoolCacheRef.current.set(poolKey, ordered);
+        }
         return ordered;
       })().finally(() => {
         aiLibraryPoolInFlightRef.current.delete(poolKey);
@@ -15614,7 +15637,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             Number(left.exitTime) - Number(right.exitTime) ||
             left.id.localeCompare(right.id)
         );
-        aiLibraryPoolCacheRef.current.set(poolKey, ordered);
+        if (ordered.length > 0) {
+          aiLibraryPoolCacheRef.current.set(poolKey, ordered);
+        }
         return ordered;
       })().finally(() => {
         aiLibraryPoolInFlightRef.current.delete(poolKey);
@@ -16262,6 +16287,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     backtestHasRun,
     backtestHistorySeedReady,
     appliedAiLibraryReadyToRun,
+    appliedAiLibraryRunInputsSignature,
     backtestRunCount
   ]);
   const aiClusterActiveLibraryIdSet = useMemo(() => {
@@ -21313,8 +21339,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       <button
                         type="button"
                         className="ai-zip-library-action primary wide"
-                        disabled={!aiLibraryReadyToRun || aiLibraryAnyLoading}
-                        onClick={() => runAllActiveLibraries()}
+                        disabled={!effectiveAiLibraryReadyToRun || aiLibraryAnyLoading}
+                        onClick={() =>
+                          runAllActiveLibraries({
+                            libraryIds: effectiveAiLibraryRunLibraryIds,
+                            settingsSource: effectiveAiLibraryRunSettingsSource,
+                            backtestSettings: effectiveAiLibraryRunBacktestSettings
+                          })
+                        }
                       >
                         {aiLibraryAnyLoading ? "Running Libraries..." : "Run All Active Libraries"}
                       </button>
@@ -21627,8 +21659,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                               <button
                                 type="button"
                                 className="ai-zip-library-action primary compact"
-                                disabled={!aiLibraryReadyToRun || selectedAiLibraryRunStatus === "loading"}
-                                onClick={() => runAiLibrary(selectedAiLibrary.id)}
+                                disabled={
+                                  !effectiveAiLibraryReadyToRun ||
+                                  selectedAiLibraryRunStatus === "loading"
+                                }
+                                onClick={() =>
+                                  runAiLibrary(selectedAiLibrary.id, {
+                                    settingsSource: effectiveAiLibraryRunSettingsSource,
+                                    backtestSettings: effectiveAiLibraryRunBacktestSettings
+                                  })
+                                }
                               >
                                 {selectedAiLibraryRunStatus === "loading" ? "Loading Library..." : "Run Library"}
                               </button>
