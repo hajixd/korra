@@ -4592,13 +4592,23 @@ const fetchMarketCandles = async (
 const fetchHistoryApiCandles = async (
   timeframe: Timeframe,
   count: number,
-  timeoutMs = CLIENT_CANDLE_FETCH_TIMEOUT_MS
+  timeoutMs = CLIENT_CANDLE_FETCH_TIMEOUT_MS,
+  options?: {
+    startIso?: string;
+    endIso?: string;
+  }
 ): Promise<Candle[]> => {
   const params = new URLSearchParams({
     pair: XAUUSD_PAIR,
     timeframe: marketTimeframeMap[timeframe],
     count: String(count)
   });
+  if (options?.startIso) {
+    params.set("start", options.startIso);
+  }
+  if (options?.endIso) {
+    params.set("end", options.endIso);
+  }
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -4687,16 +4697,25 @@ const fetchHybridHistoryCandles = async (
   targetBars: number,
   recentOneMinutePromise?: Promise<Candle[]>,
   allowOneMinuteFallback = true,
-  timeoutMs = CLIENT_CANDLE_FETCH_TIMEOUT_MS
+  timeoutMs = CLIENT_CANDLE_FETCH_TIMEOUT_MS,
+  options?: {
+    requestWindow?: {
+      startIso?: string;
+      endIso?: string;
+    };
+  }
 ): Promise<Candle[]> => {
+  const isRangeScoped =
+    Boolean(options?.requestWindow?.startIso) || Boolean(options?.requestWindow?.endIso);
   try {
     const historyPromise = fetchHistoryApiCandles(
       timeframe,
       Math.min(targetBars, CLICKHOUSE_MAX_HISTORY_CANDLES),
-      timeoutMs
+      timeoutMs,
+      options?.requestWindow
     );
     const recentTimeframePromise =
-      timeframe === "1m"
+      timeframe === "1m" || isRangeScoped
         ? Promise.resolve([] as Candle[])
         : fetchMarketCandles(
             timeframe,
@@ -4706,7 +4725,7 @@ const fetchHybridHistoryCandles = async (
     const historyCandles = await historyPromise;
 
     if (timeframe === "1m") {
-      if (historyCandles.length >= MIN_SEED_CANDLES) {
+      if (isRangeScoped || historyCandles.length >= MIN_SEED_CANDLES) {
         return historyCandles.slice(-targetBars);
       }
 
@@ -4722,6 +4741,10 @@ const fetchHybridHistoryCandles = async (
     }
 
     const recentTimeframeCandles = await recentTimeframePromise;
+
+    if (isRangeScoped) {
+      return historyCandles.slice(-targetBars);
+    }
 
     if (historyCandles.length >= MIN_SEED_CANDLES) {
       return mergeHistoricalAndRecentCandles(historyCandles, recentTimeframeCandles, targetBars);
@@ -4777,7 +4800,13 @@ const fetchBacktestHistoryCandles = async (
   targetBars: number,
   recentOneMinutePromise?: Promise<Candle[]>,
   allowOneMinuteFallback = true,
-  timeoutMs = BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS
+  timeoutMs = BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
+  options?: {
+    requestWindow?: {
+      startIso?: string;
+      endIso?: string;
+    };
+  }
 ): Promise<Candle[]> => {
   const safeTargetBars = clamp(
     Math.floor(Number.isFinite(targetBars) ? targetBars : BACKTEST_MAX_HISTORY_CANDLES),
@@ -4790,7 +4819,8 @@ const fetchBacktestHistoryCandles = async (
     safeTargetBars,
     recentOneMinutePromise,
     allowOneMinuteFallback,
-    timeoutMs
+    timeoutMs,
+    options
   );
 };
 
@@ -5050,6 +5080,30 @@ const getUtcDayEndExclusiveMsFromYmd = (ymd: string): number | null => {
   }
 
   return startMs + 86_400_000;
+};
+
+const buildHistoryApiRequestWindow = (params: {
+  timeframe: Timeframe;
+  startYmd: string;
+  endYmd: string;
+  leadingBars?: number;
+}) => {
+  const { timeframe, startYmd, endYmd, leadingBars = 0 } = params;
+  const startMs = getUtcDayStartMsFromYmd(startYmd);
+  const endExclusiveMs = getUtcDayEndExclusiveMsFromYmd(endYmd);
+
+  if (startMs === null || endExclusiveMs === null || endExclusiveMs <= startMs) {
+    return null;
+  }
+
+  const paddedStartMs =
+    startMs - Math.max(0, Math.floor(leadingBars)) * getTimeframeMs(timeframe);
+  const safeEndMs = Math.max(paddedStartMs, endExclusiveMs - 1);
+
+  return {
+    startIso: new Date(paddedStartMs).toISOString(),
+    endIso: new Date(safeEndMs).toISOString()
+  };
 };
 
 const estimateHistoryBarsForDateRange = (
@@ -10103,8 +10157,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const isAlreadyOneMinute = appliedBacktestSettings.timeframe === "1m";
     const shouldLoadOneMinutePrecision =
       appliedBacktestSettings.minutePreciseEnabled && !isAlreadyOneMinute;
-    // Seed candles should degrade gracefully even when minute-precise replay is off.
-    const allowOneMinuteFallback = true;
     const existingCandles = pickLongestCandleSeries(
       appliedBacktestSeedCandlesRef.current,
       appliedBacktestFallbackCandlesRef.current
@@ -10144,6 +10196,25 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const hasDateRange = Boolean(
       appliedBacktestSettings.statsDateStart && appliedBacktestSettings.statsDateEnd
     );
+    const historyRequestWindow = hasDateRange
+      ? buildHistoryApiRequestWindow({
+          timeframe: appliedBacktestSettings.timeframe,
+          startYmd: appliedBacktestSettings.statsDateStart,
+          endYmd: appliedBacktestSettings.statsDateEnd,
+          leadingBars
+        })
+      : null;
+    const oneMinuteHistoryRequestWindow =
+      shouldLoadOneMinutePrecision && hasDateRange
+        ? buildHistoryApiRequestWindow({
+            timeframe: "1m",
+            startYmd: appliedBacktestSettings.statsDateStart,
+            endYmd: appliedBacktestSettings.statsDateEnd,
+            leadingBars: oneMinutePaddingBars
+          })
+        : null;
+    // A requested historical date range should not silently degrade to a recent fragment.
+    const allowOneMinuteFallback = !hasDateRange;
     const needsHistory =
       existingCandles.length < MIN_SEED_CANDLES ||
       existingCandles.length < targetBars ||
@@ -10194,7 +10265,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 appliedBacktestSettings.timeframe,
                 targetBars,
                 recentOneMinutePromise,
-                allowOneMinuteFallback
+                allowOneMinuteFallback,
+                BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
+                historyRequestWindow ? { requestWindow: historyRequestWindow } : undefined
               )
             : Promise.resolve(existingCandles),
           shouldLoadOneMinutePrecision
@@ -10202,7 +10275,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               ? fetchHistoryApiCandles(
                   "1m",
                   oneMinuteTargetBars,
-                  BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS
+                  BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
+                  oneMinuteHistoryRequestWindow ?? undefined
                 ).catch(() => [])
               : Promise.resolve(existingOneMinute)
             : Promise.resolve([])
@@ -10243,10 +10317,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       } catch {
         // Backtest falls back to chart history if deep history cannot load.
         if (!cancelled) {
-          const fallbackCandles = pickLongestCandleSeries(
+          let fallbackCandles = pickLongestCandleSeries(
             appliedBacktestFallbackCandlesRef.current,
             existingCandles
           );
+          if (
+            hasDateRange &&
+            !candlesCoverDateRange(
+              fallbackCandles,
+              appliedBacktestSettings.timeframe,
+              appliedBacktestSettings.statsDateStart,
+              appliedBacktestSettings.statsDateEnd,
+              leadingBars
+            )
+          ) {
+            fallbackCandles = EMPTY_CANDLES;
+          }
           resolvedReplaySeedCandles = fallbackCandles;
           if (hasUsableAizipSeedCandles(fallbackCandles, minimumReplaySeedBars)) {
             setBacktestSeriesMap((prev) => ({
@@ -10257,7 +10343,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         }
       } finally {
         if (!cancelled) {
-          if (hasUsableAizipSeedCandles(resolvedReplaySeedCandles, minimumReplaySeedBars)) {
+          const hasCoveredReplaySeedCandles =
+            hasUsableAizipSeedCandles(resolvedReplaySeedCandles, minimumReplaySeedBars) &&
+            (!hasDateRange ||
+              candlesCoverDateRange(
+                resolvedReplaySeedCandles,
+                appliedBacktestSettings.timeframe,
+                appliedBacktestSettings.statsDateStart,
+                appliedBacktestSettings.statsDateEnd,
+                leadingBars
+              ));
+          if (hasCoveredReplaySeedCandles) {
             setStatsRefreshStatus("Preparing Backtest Replay");
             setBacktestHistorySeedReady(true);
           } else {
@@ -11722,6 +11818,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return libraryId.length > 0 && panelAnalyticsLibraryIdSet.has(libraryId);
     });
   }, [aiLibraryPoints, panelAnalyticsLibraryIdSet]);
+  const panelAnalyticsCanonicalLibraryPointIdSet = useMemo(() => {
+    return new Set(
+      panelAnalyticsLibraryPoints
+        .map((point) => String(point?.libId ?? point?.metaLib ?? "").trim().toLowerCase())
+        .filter((libraryId) => libraryId.length > 0)
+    );
+  }, [panelAnalyticsLibraryPoints]);
   const panelAnalyticsLibrarySourcesSettled = useMemo(() => {
     if (panelAnalyticsCanonicalLibraryIds.length === 0) {
       return true;
@@ -11732,6 +11835,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return status === "ready" || status === "error";
     });
   }, [aiLibraryRunStatus, panelAnalyticsCanonicalLibraryIds]);
+  const panelAnalyticsCanonicalLibrariesMissingPoints = useMemo(() => {
+    if (!panelAnalyticsLibrarySourcesSettled || panelAnalyticsCanonicalLibraryIds.length === 0) {
+      return false;
+    }
+
+    return panelAnalyticsCanonicalLibraryIds.some((libraryId) => {
+      const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
+      if (!normalizedLibraryId) {
+        return false;
+      }
+      return !panelAnalyticsCanonicalLibraryPointIdSet.has(normalizedLibraryId);
+    });
+  }, [
+    panelAnalyticsCanonicalLibraryIds,
+    panelAnalyticsCanonicalLibraryPointIdSet,
+    panelAnalyticsLibrarySourcesSettled
+  ]);
   useEffect(() => {
     if (!shouldComputePanelAnalyticsOnServer) {
       setPanelAnalyticsStatus("idle");
@@ -11740,6 +11860,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     if (!panelAnalyticsLibrarySourcesSettled) {
       setPanelAnalyticsStatus("loading");
+      return;
+    }
+
+    if (panelAnalyticsCanonicalLibrariesMissingPoints) {
+      setPanelAnalyticsStatus("error");
       return;
     }
 
@@ -11800,6 +11925,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     panelConfidenceGateDisabled,
     panelEffectiveConfidenceThreshold,
     panelAnalyticsLibraryIdSet,
+    panelAnalyticsCanonicalLibrariesMissingPoints,
     panelAnalyticsLibraryPoints,
     panelAnalyticsLibrarySourcesSettled,
     panelSourceTrades,
@@ -13205,6 +13331,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         modelRunTimeframe,
         leadingBars
       );
+      const historyRequestWindow =
+        startDate && endDate
+          ? buildHistoryApiRequestWindow({
+              timeframe: modelRunTimeframe,
+              startYmd: startDate,
+              endYmd: endDate,
+              leadingBars
+            })
+          : null;
       let candles = pickLongestCandleSeries(
         backtestSeriesMap[candleKey],
         seriesMap[candleKey]
@@ -13214,7 +13349,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         candles.length < MIN_SEED_CANDLES ||
         !candlesCoverDateRange(candles, modelRunTimeframe, startDate, endDate, leadingBars)
       ) {
-        candles = await fetchHybridHistoryCandles(modelRunTimeframe, targetBars);
+        candles = await fetchHybridHistoryCandles(
+          modelRunTimeframe,
+          targetBars,
+          undefined,
+          !historyRequestWindow,
+          CLIENT_CANDLE_FETCH_TIMEOUT_MS,
+          historyRequestWindow ? { requestWindow: historyRequestWindow } : undefined
+        );
 
         if (candles.length >= MIN_SEED_CANDLES && candles.length > (seriesMap[candleKey]?.length ?? 0)) {
           setSeriesMap((current) => ({
@@ -15080,6 +15222,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     if (!shouldComputePanelAnalyticsOnServer) {
       codes.push("PANEL_ANALYTICS_SKIPPED");
+    } else if (panelAnalyticsCanonicalLibrariesMissingPoints) {
+      codes.push("PANEL_ANALYTICS_SKIPPED_MISSING_CANONICAL_LIBRARY_POINTS");
     } else if (panelAnalyticsStatus === "error") {
       codes.push("PANEL_ANALYTICS_SERVER_ERROR");
     } else if (panelAnalyticsStatus === "ready" && trades.length > 0) {
@@ -15100,6 +15244,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       antiCheatEnabled: appliedBacktestSettings.antiCheatEnabled,
       selectedAiLibraries: [...appliedBacktestSettings.selectedAiLibraries],
       shouldComputePanelAnalyticsOnServer,
+      panelAnalyticsCanonicalLibrariesMissingPoints,
       panelAnalyticsStatus,
       panelSourceTrades: panelSourceTrades.length,
       activePanelSourceTrades: activePanelSourceTrades.length,
@@ -15111,6 +15256,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       codes,
       panelAnalyticsStatus,
       shouldComputePanelAnalyticsOnServer,
+      panelAnalyticsCanonicalLibrariesMissingPoints,
       panelSourceTrades: panelSourceTrades.length,
       activePanelSourceTrades: activePanelSourceTrades.length,
       timeFilteredTrades: trades.length,
@@ -15135,6 +15281,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     isClusterBacktestTabActive,
     panelAnalyticsData.timeFilteredTrades,
     panelAnalyticsStatus,
+    panelAnalyticsCanonicalLibrariesMissingPoints,
     panelSourceTrades.length,
     shouldComputePanelAnalyticsOnServer
   ]);
@@ -15364,8 +15511,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       const oneMinuteKey = symbolTimeframeKey(symbol, "1m");
       const isAlreadyOneMinute = timeframe === "1m";
       const shouldLoadOneMinutePrecision = settings.minutePreciseEnabled && !isAlreadyOneMinute;
-      // Library seeding should prefer some candle coverage over collapsing to zero.
-      const allowOneMinuteFallback = true;
       const leadingBars = Math.max(settings.chunkBars * 3, settings.maxBarsInTrade + 24);
       const targetBars = estimateHistoryBarsForDateRange(
         settings.statsDateStart,
@@ -15398,6 +15543,25 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           )
         : EMPTY_CANDLES;
       const hasDateRange = Boolean(settings.statsDateStart && settings.statsDateEnd);
+      const historyRequestWindow = hasDateRange
+        ? buildHistoryApiRequestWindow({
+            timeframe,
+            startYmd: settings.statsDateStart,
+            endYmd: settings.statsDateEnd,
+            leadingBars
+          })
+        : null;
+      const oneMinuteHistoryRequestWindow =
+        shouldLoadOneMinutePrecision && hasDateRange
+          ? buildHistoryApiRequestWindow({
+              timeframe: "1m",
+              startYmd: settings.statsDateStart,
+              endYmd: settings.statsDateEnd,
+              leadingBars: oneMinutePaddingBars
+            })
+          : null;
+      // If a specific date range was requested, only exact range history counts as valid seed data.
+      const allowOneMinuteFallback = !hasDateRange;
       const needsHistory =
         existingCandles.length < MIN_SEED_CANDLES ||
         existingCandles.length < targetBars ||
@@ -15452,7 +15616,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   timeframe,
                   targetBars,
                   recentOneMinutePromise,
-                  allowOneMinuteFallback
+                  allowOneMinuteFallback,
+                  BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
+                  historyRequestWindow ? { requestWindow: historyRequestWindow } : undefined
                 )
               : Promise.resolve(existingCandles),
             shouldLoadOneMinutePrecision
@@ -15460,7 +15626,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 ? fetchHistoryApiCandles(
                     "1m",
                     oneMinuteTargetBars,
-                    BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS
+                    BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
+                    oneMinuteHistoryRequestWindow ?? undefined
                   ).catch(() => [])
                 : Promise.resolve(existingOneMinute)
               : Promise.resolve([])
@@ -15498,6 +15665,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               }));
             }
           }
+        }
+
+        if (
+          hasDateRange &&
+          !candlesCoverDateRange(
+            resolvedCandles,
+            timeframe,
+            settings.statsDateStart,
+            settings.statsDateEnd,
+            leadingBars
+          )
+        ) {
+          resolvedCandles = EMPTY_CANDLES;
         }
 
         return {
