@@ -153,6 +153,42 @@ test("core library uses live trades and keeps MIT aligned to neighbor #1", async
   assert.equal(String(firstNeighborUid).startsWith("lib|"), false);
 });
 
+test("core library excludes the selected live trade from its own neighbor list", async () => {
+  const trades = Array.from({ length: 6 }, (_, index) =>
+    makeTrade({
+      id: `live-${index + 1}`,
+      entryIso: new Date(Date.parse("2025-03-01T00:00:00Z") + index * 2 * 60 * 60 * 1000).toISOString(),
+      exitIso: new Date(Date.parse("2025-03-01T01:00:00Z") + index * 2 * 60 * 60 * 1000).toISOString(),
+      result: index % 2 === 0 ? "Win" : "Loss",
+      pnlUsd: index % 2 === 0 ? 100 + index : -(100 + index),
+      pnlPct: index % 2 === 0 ? 0.2 : -0.2,
+      outcomePrice: index % 2 === 0 ? 101 : 99,
+      neighborVector: [index / 10, index / 10, 0, 0, 0, 0]
+    })
+  );
+
+  const payload = await postPanelAnalytics({
+    panelSourceTrades: trades,
+    panelLibraryPoints: [],
+    panelBacktestFilterSettings: baseFilterSettings({
+      selectedAiLibraries: ["core"]
+    }),
+    panelConfidenceGateDisabled: true,
+    panelEffectiveConfidenceThreshold: 0,
+    aiLibraryDefaultsById: {
+      core: { weight: 100, maxSamples: 1000 }
+    }
+  });
+
+  const stampedTrade = payload.timeFilteredTrades[3];
+  assert.ok(stampedTrade, "expected a stamped trade");
+  assert.ok(Array.isArray(stampedTrade.entryNeighbors) && stampedTrade.entryNeighbors.length > 0);
+  const firstNeighborUid =
+    stampedTrade.entryNeighbors[0]?.metaUid ?? stampedTrade.entryNeighbors[0]?.uid ?? null;
+  assert.notEqual(firstNeighborUid, String(stampedTrade.id));
+  assert.equal(stampedTrade.closestClusterUid, firstNeighborUid);
+});
+
 test("canonical library points stamp MIT to nearest neighbor #1", async () => {
   const trades = [
     makeTrade({
@@ -216,6 +252,78 @@ test("canonical library points stamp MIT to nearest neighbor #1", async () => {
     stampedTrade.entryNeighbors[0]?.metaUid ?? stampedTrade.entryNeighbors[0]?.uid ?? null;
   assert.equal(stampedTrade.closestClusterUid, firstNeighborUid);
   assert.equal(String(firstNeighborUid).startsWith("lib|base|"), true);
+});
+
+test("stored neighbor order stays nearest-first even when library weights differ", async () => {
+  const trades = [
+    makeTrade({
+      id: "live-1",
+      entryIso: "2025-03-01T00:00:00Z",
+      exitIso: "2025-03-01T01:00:00Z"
+    }),
+    makeTrade({
+      id: "live-2",
+      entryIso: "2025-03-01T02:00:00Z",
+      exitIso: "2025-03-01T03:00:00Z",
+      neighborVector: [0, 0, 0, 0, 0, 0]
+    })
+  ];
+
+  const libraryPoints = [
+    {
+      uid: "lib|alpha|nearest|0",
+      libId: "alpha",
+      metaTime: Math.floor(Date.parse("2025-02-28T02:00:00Z") / 1000),
+      metaPnl: 120,
+      metaOutcome: "Win",
+      metaSession: "London",
+      dir: 1,
+      label: 1,
+      v: [0, 0, 0, 0, 0, 0.01]
+    },
+    {
+      uid: "lib|beta|weighted|0",
+      libId: "beta",
+      metaTime: Math.floor(Date.parse("2025-02-28T02:00:00Z") / 1000),
+      metaPnl: 120,
+      metaOutcome: "Win",
+      metaSession: "London",
+      dir: 1,
+      label: 1,
+      v: [1, 1, 1, 1, 1, 1]
+    }
+  ];
+
+  const payload = await postPanelAnalytics({
+    panelSourceTrades: trades,
+    panelLibraryPoints: libraryPoints,
+    panelBacktestFilterSettings: baseFilterSettings({
+      selectedAiLibraries: ["alpha", "beta"],
+      selectedAiLibrarySettings: {
+        alpha: { weight: 25, maxSamples: 1000 },
+        beta: { weight: 500, maxSamples: 1000 }
+      }
+    }),
+    panelConfidenceGateDisabled: true,
+    panelEffectiveConfidenceThreshold: 0,
+    aiLibraryDefaultsById: {
+      alpha: { weight: 25, maxSamples: 1000 },
+      beta: { weight: 500, maxSamples: 1000 }
+    }
+  });
+
+  const stampedTrade = payload.timeFilteredTrades[1];
+  assert.ok(stampedTrade, "expected a second stamped trade");
+  assert.ok(Array.isArray(stampedTrade.entryNeighbors) && stampedTrade.entryNeighbors.length >= 2);
+
+  const firstNeighborUid =
+    stampedTrade.entryNeighbors[0]?.metaUid ?? stampedTrade.entryNeighbors[0]?.uid ?? null;
+  const secondNeighborUid =
+    stampedTrade.entryNeighbors[1]?.metaUid ?? stampedTrade.entryNeighbors[1]?.uid ?? null;
+
+  assert.equal(firstNeighborUid, "lib|alpha|nearest|0");
+  assert.equal(secondNeighborUid, "lib|beta|weighted|0");
+  assert.equal(stampedTrade.closestClusterUid, firstNeighborUid);
 });
 
 test("neighbor calculation space changes ranking", async () => {

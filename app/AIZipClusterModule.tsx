@@ -14938,15 +14938,6 @@ export function ClusterMap({
         if (!Array.isArray(raw) || raw.length === 0) return [];
         const candidates = raw
           .slice()
-          .sort((a: any, b: any) => {
-            const da = Number.isFinite(Number((a as any)?.d))
-              ? Number((a as any)?.d)
-              : Infinity;
-            const db = Number.isFinite(Number((b as any)?.d))
-              ? Number((b as any)?.d)
-              : Infinity;
-            return da - db;
-          })
           .map((nb: any, idx: number) => {
             const resolvedId = resolveNeighborId(nb);
             const rawFallback = pickRawId(nb);
@@ -15043,6 +15034,7 @@ export function ClusterMap({
                 resolvedId ||
                 rawFallback ||
                 `neighbor-${String(idx + 1).padStart(2, "0")}`,
+              payloadIndex: idx,
               id: resolvedId ?? rawFallback ?? null,
               displayId,
               dist,
@@ -15063,8 +15055,7 @@ export function ClusterMap({
             if (sourceId && row.id && row.id === sourceId) return false;
             seen.add(dedupeKey);
             return true;
-          })
-          .sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity));
+          });
 
         return ordered.slice(0, kLimit);
       };

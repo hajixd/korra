@@ -1067,6 +1067,42 @@ const buildEntryNeighbor = (
   };
 };
 
+const isSelfNeighborCandidate = (
+  trade: HistoryItem,
+  candidate: LibrarySourceCandidate
+): boolean => {
+  const tradeIds = new Set<string>();
+  const candidateIds = new Set<string>();
+
+  const addTradeId = (value: unknown) => {
+    const normalized = String(value ?? "").trim();
+    if (normalized) {
+      tradeIds.add(normalized);
+    }
+  };
+
+  const addCandidateId = (value: unknown) => {
+    const normalized = String(value ?? "").trim();
+    if (normalized) {
+      candidateIds.add(normalized);
+    }
+  };
+
+  addTradeId(trade.id);
+  addTradeId((trade as any).tradeUid);
+  addCandidateId(candidate.uid);
+  addCandidateId(candidate.trade?.id);
+  addCandidateId((candidate.trade as any)?.tradeUid);
+
+  for (const id of tradeIds) {
+    if (candidateIds.has(id)) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
 const applyTradeAiEntrySnapshot = (
   trade: HistoryItem,
   snapshot: TradeAiEntrySnapshot | undefined,
@@ -1823,6 +1859,9 @@ const computeAntiCheatBacktestContext = (params: {
       for (let candidateIndex = 0; candidateIndex < source.length; candidateIndex += 1) {
         const candidateEntry = source[candidateIndex]!;
         const { candidate, sourceIndex } = candidateEntry;
+        if (isSelfNeighborCandidate(trade, candidate)) {
+          continue;
+        }
         const candidateVector = preparedVectorSpace.candidates[candidateIndex] ?? null;
         const rawSimilarity = candidateVector
           ? getVectorSimilarityWeight(
@@ -1892,18 +1931,18 @@ const computeAntiCheatBacktestContext = (params: {
     const confidence =
       baselineWinRate + (weightedWinRate - baselineWinRate) * shrink;
     const normalizedConfidence = clamp(confidence, 0.02, 0.98);
-    const rankedNeighbors = [...neighborAggregate.values()]
+    const rankedNeighborEntries = [...neighborAggregate.values()]
       .sort(
         (left, right) =>
-          right.score - left.score ||
           right.bestSimilarity - left.bestSimilarity ||
+          right.score - left.score ||
           Number(right.candidate.entryTime ?? 0) - Number(left.candidate.entryTime ?? 0) ||
           left.candidate.uid.localeCompare(right.candidate.uid)
       )
-      .slice(0, entryNeighborCap)
-      .map((entry) =>
-        buildEntryNeighbor(entry.candidate, entry.bestSimilarity, entry.score)
-      );
+      .slice(0, entryNeighborCap);
+    const rankedNeighbors = rankedNeighborEntries.map((entry) =>
+      buildEntryNeighbor(entry.candidate, entry.bestSimilarity, entry.score)
+    );
 
     confidenceById.set(trade.id, normalizedConfidence);
     aiEntrySnapshotById.set(trade.id, {
