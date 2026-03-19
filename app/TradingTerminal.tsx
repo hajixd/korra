@@ -8992,6 +8992,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const visibleAiLibraries = useMemo(() => {
     return getVisibleAizipLibraryIds(selectedAiLibraries);
   }, [selectedAiLibraries]);
+  const appliedVisibleAiLibraries = useMemo(() => {
+    return getVisibleAizipLibraryIds(appliedBacktestSettings.selectedAiLibraries);
+  }, [appliedBacktestSettings.selectedAiLibraries]);
   const selectedAiLibraryCount = visibleAiLibraries.length;
   const availableAiLibraries = useMemo(() => {
     return aiLibraryDefs.filter(
@@ -11630,7 +11633,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [appliedBacktestSettings.selectedAiLibraries]);
   const panelAnalyticsCanonicalLibraryIds = useMemo(() => {
     return [...panelAnalyticsLibraryIdSet].filter((libraryId) => {
-      return !isOnlineLearningLibraryId(libraryId);
+      return (
+        !isOnlineLearningLibraryId(libraryId) &&
+        !isGhostLearningLibraryId(libraryId)
+      );
     });
   }, [panelAnalyticsLibraryIdSet]);
   const panelAnalyticsLibraryPoints = useMemo(() => {
@@ -15658,12 +15664,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   );
 
   const filterLibraryCandidatePool = useCallback(
-    (pool: HistoryItem[], settings: BacktestSettingsSnapshot) => {
+    (
+      pool: HistoryItem[],
+      settings: BacktestSettingsSnapshot,
+      options?: { skipTemporalBuckets?: boolean }
+    ) => {
       const dateFiltered = filterTradesByDateRange(
         pool,
         settings.statsDateStart,
         settings.statsDateEnd
       );
+
+      if (options?.skipTemporalBuckets) {
+        return dateFiltered;
+      }
 
       return filterTradesBySessionBuckets(dateFiltered, {
         enabledBacktestWeekdays: settings.enabledBacktestWeekdays,
@@ -16014,7 +16028,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         if (aiLibraryRunTokenRef.current[libraryId] !== runToken) {
           return;
         }
-        const candidatePool = filterLibraryCandidatePool(rawPool, settingsSnapshot);
+        const candidatePool = filterLibraryCandidatePool(rawPool, settingsSnapshot, {
+          skipTemporalBuckets: isBaseSeedingLibraryId(definition.id)
+        });
         const executedTradeIds = buildLibraryExecutedTradeIds(
           candidatePool,
           settingsSnapshot
@@ -16118,7 +16134,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       const poolParamsByKey = new Map<
         string,
-        { tpDollars: number; slDollars: number; useSeedPool: boolean }
+        {
+          tpDollars: number;
+          slDollars: number;
+          useSeedPool: boolean;
+          skipTemporalBuckets: boolean;
+        }
       >();
       const poolKeyByLibraryId = new Map<string, string>();
       const settingsByLibraryId = new Map<string, Record<string, AiLibrarySettingValue>>();
@@ -16147,7 +16168,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           poolParamsByKey.set(poolKey, {
             tpDollars,
             slDollars,
-            useSeedPool: useBase
+            useSeedPool: useBase,
+            skipTemporalBuckets: useBase
           });
         }
       }
@@ -16171,7 +16193,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 params.tpDollars,
                 params.slDollars
               );
-          const candidatePool = filterLibraryCandidatePool(rawPool, settingsSnapshot);
+          const candidatePool = filterLibraryCandidatePool(rawPool, settingsSnapshot, {
+            skipTemporalBuckets: params.skipTemporalBuckets
+          });
           const executedTradeIds = buildLibraryExecutedTradeIds(
             candidatePool,
             settingsSnapshot
@@ -16292,11 +16316,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   ]);
   const aiClusterActiveLibraryIdSet = useMemo(() => {
     return new Set(
-      (appliedBacktestSettings.selectedAiLibraries ?? []).map((libraryId) =>
-        String(libraryId).trim()
-      )
+      appliedVisibleAiLibraries.map((libraryId) => String(libraryId).trim())
     );
-  }, [appliedBacktestSettings.selectedAiLibraries]);
+  }, [appliedVisibleAiLibraries]);
   const aiClusterLibraryPoints = useMemo(() => {
     if (aiClusterActiveLibraryIdSet.size === 0) {
       return [] as any[];
@@ -16327,8 +16349,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [aiClusterActiveLibraryIdSet, aiLibraryCounts]);
   const aiLibraryDiagnosticsKeyRef = useRef<string>("");
   useEffect(() => {
-    const appliedLibraryIds = (appliedBacktestSettings.selectedAiLibraries ?? []).map(
-      (libraryId) => String(libraryId).trim()
+    const appliedLibraryIds = appliedVisibleAiLibraries.map((libraryId) =>
+      String(libraryId).trim()
     ).filter(Boolean);
     if (appliedLibraryIds.length === 0) {
       aiLibraryDiagnosticsKeyRef.current = "";
@@ -16396,7 +16418,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     aiLibraryCounts,
     aiLibraryRunStatus,
     appliedAiLibraryReadyToRun,
-    appliedBacktestSettings.selectedAiLibraries,
+    appliedVisibleAiLibraries,
     backtestHasRun,
     backtestHistorySeedReady,
     appliedSelectedAiModelCount,
@@ -16449,7 +16471,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       )
     : 50;
   const totalLoadedLibraryTrades = useMemo(() => {
-    const activeIds = appliedBacktestSettings.selectedAiLibraries ?? [];
+    const activeIds = appliedVisibleAiLibraries;
     if (activeIds.length === 0) {
       return 0;
     }
@@ -16459,7 +16481,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       total += Math.max(0, Number(aiLibraryCounts[libraryId] ?? 0));
     }
     return total;
-  }, [aiLibraryCounts, appliedBacktestSettings.selectedAiLibraries]);
+  }, [aiLibraryCounts, appliedVisibleAiLibraries]);
   const totalSimulatedLiveTrades = backtestSourceTrades.length;
 
   const mainStatsTitle = "Main Statistics";
@@ -22354,7 +22376,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       trades={aiZipClusterTrades}
                       ghostEntries={[]}
                       libraryPoints={aiClusterLibraryPoints}
-                      activeLibraries={appliedBacktestSettings.selectedAiLibraries}
+                      activeLibraries={appliedVisibleAiLibraries}
                       libraryCounts={aiClusterLibraryCounts}
                       chunkBars={appliedBacktestSettings.chunkBars}
                       potential={null}

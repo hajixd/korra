@@ -133,34 +133,34 @@ export async function GET(request: Request) {
   }
 
   const startFilter = start
-    ? `\n      AND time >= toDateTime('${start}', '${timezone}')`
+    ? `\n      AND source.time >= toDateTime('${start}', '${timezone}')`
     : "";
   const endFilter = end
-    ? `\n      AND time <= toDateTime('${end}', '${timezone}')`
+    ? `\n      AND source.time <= toDateTime('${end}', '${timezone}')`
     : "";
 
   const query = `
     SELECT
-      toInt64(toUnixTimestamp(toTimeZone(time, '${timezone}'))) * 1000 AS time,
-      pair,
-      timeframe,
-      toFloat64(open) AS open,
-      toFloat64(high) AS high,
-      toFloat64(low) AS low,
-      toFloat64(close) AS close,
-      toFloat64(volume) AS volume,
-      CAST(time_to_high_ms, 'Nullable(Int64)') AS time_to_high_ms,
-      CAST(time_to_low_ms, 'Nullable(Int64)') AS time_to_low_ms,
-      toUInt8(high_formed_first) AS high_formed_first,
-      toFloat64(body_percent) AS body_percent,
-      toFloat64(range_pips) AS range_pips,
-      toUInt8(is_displacement) AS is_displacement,
-      toFloat64(displacement_score) AS displacement_score
-    FROM ${database}.${table}
-    WHERE pair = '${pair}'
-      AND timeframe = '${timeframe}'
+      toInt64(toUnixTimestamp(toTimeZone(source.time, '${timezone}'))) * 1000 AS time,
+      source.pair AS pair,
+      source.timeframe AS timeframe,
+      toFloat64(source.open) AS open,
+      toFloat64(source.high) AS high,
+      toFloat64(source.low) AS low,
+      toFloat64(source.close) AS close,
+      toFloat64(source.volume) AS volume,
+      CAST(source.time_to_high_ms, 'Nullable(Int64)') AS time_to_high_ms,
+      CAST(source.time_to_low_ms, 'Nullable(Int64)') AS time_to_low_ms,
+      toUInt8(source.high_formed_first) AS high_formed_first,
+      toFloat64(source.body_percent) AS body_percent,
+      toFloat64(source.range_pips) AS range_pips,
+      toUInt8(source.is_displacement) AS is_displacement,
+      toFloat64(source.displacement_score) AS displacement_score
+    FROM ${database}.${table} AS source
+    WHERE source.pair = '${pair}'
+      AND source.timeframe = '${timeframe}'
 ${startFilter}${endFilter}
-    ORDER BY time DESC
+    ORDER BY source.time DESC
     LIMIT ${count}
     FORMAT JSON
   `;
