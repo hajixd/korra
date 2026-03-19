@@ -4470,23 +4470,15 @@ const mergeRecentCandles = (
   maxBars: number,
   timeframe: Timeframe
 ): Candle[] => {
+  void timeframe;
   if (liveWindow.length === 0) {
     return historical.slice(-maxBars);
   }
 
   const firstLiveTime = liveWindow[0].time;
   const lastLiveTime = liveWindow[liveWindow.length - 1].time;
-  const olderHistorical = historical.filter((row) => row.time < firstLiveTime);
-  const lastHistoricalBeforeLive = olderHistorical[olderHistorical.length - 1];
-  const keepOlderHistorical =
-    !lastHistoricalBeforeLive ||
-    !hasExcessiveTradingGap(
-      lastHistoricalBeforeLive.time,
-      firstLiveTime,
-      timeframe
-    );
   const merged = [
-    ...(keepOlderHistorical ? olderHistorical : []),
+    ...historical.filter((row) => row.time < firstLiveTime),
     ...liveWindow,
     // Keep any candles newer than the sync window so stale API windows
     // never move the chart backward during periodic refresh.
@@ -8662,6 +8654,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const requestChartVisibleRangeRef = useRef<(visibleRange: ChartDataWindow) => void>(() => {});
   const chartDataLengthRef = useRef(0);
   const chartLastBarTimeRef = useRef(0);
+  const chartJumpToLatestOnDiscontinuousMergeRef = useRef(false);
   const chartViewCenterTimeMsRef = useRef<number | null>(null);
   const seriesMapRef = useRef(seriesMap);
   const backtestSeriesMapRef = useRef(backtestSeriesMap);
@@ -9898,8 +9891,19 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             ...prev,
             [key]: (() => {
               const current = prev[key] ?? [];
-              const merged = mergeRecentCandles(current, liveCandles, historyLimit, selectedTimeframe);
               const currentLastTime = current[current.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
+              const firstLiveTime = liveCandles[0]?.time ?? Number.POSITIVE_INFINITY;
+
+              if (
+                Number.isFinite(currentLastTime) &&
+                Number.isFinite(firstLiveTime) &&
+                firstLiveTime > currentLastTime &&
+                hasExcessiveTradingGap(currentLastTime, firstLiveTime, selectedTimeframe)
+              ) {
+                chartJumpToLatestOnDiscontinuousMergeRef.current = true;
+              }
+
+              const merged = mergeRecentCandles(current, liveCandles, historyLimit, selectedTimeframe);
               const mergedLastTime = merged[merged.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
               return mergedLastTime < currentLastTime ? current : merged;
             })()
@@ -11459,6 +11463,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     if (selectionChanged || previousTotalBars <= 0) {
+      chartJumpToLatestOnDiscontinuousMergeRef.current = false;
       restoreSavedPosition();
       return;
     }
@@ -11499,6 +11504,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     if (totalBars > previousTotalBars) {
+      if (chartJumpToLatestOnDiscontinuousMergeRef.current) {
+        chartJumpToLatestOnDiscontinuousMergeRef.current = false;
+        moveToLatest();
+        return;
+      }
+
       const nextWindow = buildChartDataWindow(
         totalBars,
         chartRenderWindowRef.current.from,
