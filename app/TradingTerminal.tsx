@@ -4584,6 +4584,17 @@ const mergeHistoricalAndRecentCandles = (
     return historical.slice(-maxBars);
   }
 
+  const historicalLastTime = historical[historical.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
+  const recentFirstTime = recent[0]?.time ?? Number.POSITIVE_INFINITY;
+  if (
+    Number.isFinite(historicalLastTime) &&
+    Number.isFinite(recentFirstTime) &&
+    recentFirstTime > historicalLastTime &&
+    hasExcessiveTradingGap(historicalLastTime, recentFirstTime, timeframe)
+  ) {
+    return (historical.length >= recent.length ? historical : recent).slice(-maxBars);
+  }
+
   return mergeRecentCandles(historical, recent, maxBars, timeframe);
 };
 
@@ -8654,7 +8665,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const requestChartVisibleRangeRef = useRef<(visibleRange: ChartDataWindow) => void>(() => {});
   const chartDataLengthRef = useRef(0);
   const chartLastBarTimeRef = useRef(0);
-  const chartJumpToLatestOnDiscontinuousMergeRef = useRef(false);
   const chartViewCenterTimeMsRef = useRef<number | null>(null);
   const seriesMapRef = useRef(seriesMap);
   const backtestSeriesMapRef = useRef(backtestSeriesMap);
@@ -9900,7 +9910,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 firstLiveTime > currentLastTime &&
                 hasExcessiveTradingGap(currentLastTime, firstLiveTime, selectedTimeframe)
               ) {
-                chartJumpToLatestOnDiscontinuousMergeRef.current = true;
+                return current;
               }
 
               const merged = mergeRecentCandles(current, liveCandles, historyLimit, selectedTimeframe);
@@ -11463,7 +11473,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     if (selectionChanged || previousTotalBars <= 0) {
-      chartJumpToLatestOnDiscontinuousMergeRef.current = false;
       restoreSavedPosition();
       return;
     }
@@ -11504,12 +11513,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     if (totalBars > previousTotalBars) {
-      if (chartJumpToLatestOnDiscontinuousMergeRef.current) {
-        chartJumpToLatestOnDiscontinuousMergeRef.current = false;
-        moveToLatest();
-        return;
-      }
-
       const nextWindow = buildChartDataWindow(
         totalBars,
         chartRenderWindowRef.current.from,
