@@ -5974,7 +5974,6 @@ function dbscan2D(points: [number, number][], eps: number, minSamples: number) {
 
 const clusterMapDrawOrderCache = new WeakMap<any[], any[]>();
 const clusterMapKnnEdgeCache = new WeakMap<any[], Map<string, any[]>>();
-const CLUSTER_MAP_LOW_POWER_KEY = "clusterMapLowPower";
 
 function normalizeClusterMapToken(v: any): string | null {
   const s = String(v ?? "").trim();
@@ -7421,32 +7420,19 @@ function drawClusterMapCanvas(
       const strokeWidth =
         outlineBase * (Number(nodeOutlineMul) || 1) * focusOutlineMul * dimOutlineMul;
       ctx.lineWidth = strokeWidth;
+      ctx.beginPath();
+      ctx.arc(sx, sy, baseRadius, 0, Math.PI * 2);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.strokeStyle = outline;
+      ctx.stroke();
       if (isLib && !isSearch) {
-        const diamondR = baseRadius * 0.94;
-        ctx.translate(sx, sy);
-        ctx.rotate(Math.PI / 4);
-        ctx.beginPath();
-        ctx.rect(-diamondR, -diamondR, diamondR * 2, diamondR * 2);
-        ctx.fillStyle = fill;
-        ctx.fill();
-        ctx.strokeStyle = outline;
-        ctx.stroke();
-        ctx.rotate(-Math.PI / 4);
-        ctx.translate(-sx, -sy);
-
         ctx.beginPath();
         ctx.arc(sx, sy, Math.max(2.2, baseRadius * 0.34), 0, Math.PI * 2);
         ctx.fillStyle = libraryOutcomeColor;
         ctx.fill();
         ctx.lineWidth = Math.max(1.2, strokeWidth * 0.42);
         ctx.strokeStyle = "rgba(255,255,255,0.92)";
-        ctx.stroke();
-      } else {
-        ctx.beginPath();
-        ctx.arc(sx, sy, baseRadius, 0, Math.PI * 2);
-        ctx.fillStyle = fill;
-        ctx.fill();
-        ctx.strokeStyle = outline;
         ctx.stroke();
       }
       if (dimNode) {
@@ -9631,34 +9617,13 @@ export function ClusterMap({
   const [heatHoverLive, setHeatHover] = useState<null | any>(null);
   const heatmapRef = useRef<any>(null);
 
-  const [lowPowerModeUser, setLowPowerModeUser] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      const raw = localStorage.getItem(CLUSTER_MAP_LOW_POWER_KEY);
-      if (raw == null) return false;
-      const v = String(raw).trim().toLowerCase();
-      return v === "1" || v === "true" || v === "on";
-    } catch {
-      return false;
-    }
-  });
   const pointCount = useMemo(() => {
     const tradeCount = Array.isArray(trades) ? trades.length : 0;
     const libCount = Array.isArray(libraryPoints) ? libraryPoints.length : 0;
     const ghostCount = Array.isArray(ghostEntries) ? ghostEntries.length : 0;
     return tradeCount + libCount + ghostCount;
   }, [ghostEntries, libraryPoints, trades]);
-  const autoLowPower = useMemo(() => {
-    const threshold = clusterMapView === "3d" ? 1200 : 2400;
-    return pointCount > threshold;
-  }, [clusterMapView, pointCount]);
-  const lowPowerMode = lowPowerModeUser || autoLowPower;
-  const lowPowerLabel = lowPowerModeUser ? "ON" : autoLowPower ? "AUTO" : "OFF";
-  useEffect(() => {
-    try {
-      localStorage.setItem(CLUSTER_MAP_LOW_POWER_KEY, lowPowerModeUser ? "1" : "0");
-    } catch {}
-  }, [lowPowerModeUser]);
+  const lowPowerMode = false;
 
   // Pinning: click the map to freeze hover coords (top-center) and heatmap stats (top-left).
   // Press Escape to clear the pin and resume live hover.
@@ -9671,13 +9636,6 @@ export function ClusterMap({
   useEffect(() => {
     pinnedRef.current = !!pinnedWorld;
   }, [pinnedWorld]);
-  useEffect(() => {
-    if (!lowPowerModeUser) return;
-    setHeatmapOn(false);
-    setHeatHover(null);
-    setPinnedHeatHover(null);
-  }, [lowPowerModeUser]);
-
   // Track whether the mouse is currently over the map so WASD/arrow panning doesn't steal keys elsewhere.
   const mapFocusRef = useRef(false);
 
@@ -9923,7 +9881,6 @@ export function ClusterMap({
         if (isToggle3DHeat) {
           e.preventDefault();
           e.stopPropagation();
-          if (lowPowerModeUser) return;
           setBoxSelectMode3d(false);
           setHeatmapOn((v) => !v);
           return;
@@ -9964,7 +9921,6 @@ export function ClusterMap({
       if (isHeatToggle && !isTyping) {
         e.preventDefault();
         e.stopPropagation();
-        if (lowPowerModeUser) return;
         setHeatmapOn((v) => {
           const nv = !v;
           return nv;
@@ -11464,7 +11420,7 @@ export function ClusterMap({
     return Math.max(0, Math.min(36, Math.floor(Number(base) || 0)));
   }, [kEntry, knnLinkK]);
   const showGroupOverlays = (Number(groupOverlayOpacity) || 0) > 0;
-  const effectiveGroupOverlayOpacity = lowPowerModeUser ? 0 : groupOverlayOpacity;
+  const effectiveGroupOverlayOpacity = groupOverlayOpacity;
   const suppressedLibraryActive = React.useMemo(() => {
     const libs = Array.isArray(activeLibraries) ? (activeLibraries as any[]) : [];
     for (const v of libs) {
@@ -12638,6 +12594,7 @@ export function ClusterMap({
             entryModel: (n as any).entryModel ?? null,
             exitModel: (n as any).exitModel ?? null,
             chunkType: (n as any).chunkType ?? (n as any).model ?? null,
+            closestClusterUid: (n as any).closestClusterUid ?? null,
             entryNeighbors: (n as any).entryNeighbors ?? [],
             // Preserve exitReason exactly as-is. We do NOT relabel anything as "Model".
             exitReason: (n as any).exitReason ?? null,
@@ -14876,7 +14833,9 @@ export function ClusterMap({
         (sourceId && nodeCoordById.get(sourceId)) ||
         nodeCoordsForClusterMapKnn(node, dim);
 
-      const nbsRaw = pickNeighborPayload(node);
+      const sourceTrade = resolveSourceTradeForNode(node);
+      const nbsRaw =
+        pickNeighborPayload(node) ?? pickNeighborPayload(sourceTrade);
 
       const pickFromAlias = (token: string): string | null => {
         const ids = aliasToIds.get(token);
@@ -15110,7 +15069,13 @@ export function ClusterMap({
       neighborAlias,
       nodeByIdAll,
       pickNeighborPayload,
+      resolveSourceTradeForNode,
     ]
+  );
+
+  const selectedSourceTrade = useMemo(
+    () => resolveSourceTradeForNode(selectedNode),
+    [resolveSourceTradeForNode, selectedNode]
   );
 
   const selectedNeighborList = useMemo(
@@ -15184,7 +15149,7 @@ export function ClusterMap({
           .trim() === "suppressed");
     if (kind !== "trade" && !isSuppressedLibrary) return;
 
-    const sourceTrade = resolveSourceTradeForNode(selectedNode);
+    const sourceTrade = selectedSourceTrade;
     const nodeNeighbors = Array.isArray((selectedNode as any)?.entryNeighbors)
       ? ((selectedNode as any).entryNeighbors as any[])
       : [];
@@ -15313,10 +15278,10 @@ export function ClusterMap({
   }, [
     selectedId,
     selectedNode,
+    selectedSourceTrade,
     selectedNeighborList,
     nodeByIdAll,
     nodeById,
-    resolveSourceTradeForNode,
   ]);
 
   // User-facing selection stats should reflect exactly what the map is showing.
@@ -17657,27 +17622,6 @@ export function ClusterMap({
             >
               {clusterMapView === "3d" ? "2D" : "3D"}
             </button>
-            <button
-              onClick={() => setLowPowerModeUser((v) => !v)}
-              style={{
-                border: lowPowerMode
-                  ? "1px solid rgba(120,255,150,0.55)"
-                  : "1px solid rgba(255,255,255,0.18)",
-                background: lowPowerMode
-                  ? "rgba(40,130,70,0.28)"
-                  : "rgba(0,0,0,0.35)",
-                color: "rgba(255,255,255,0.92)",
-                borderRadius: 10,
-                padding: "6px 10px",
-                fontSize: 11,
-                fontWeight: 900,
-                cursor: "pointer",
-              }}
-              title="Aggressive performance mode for weak GPUs/CPUs"
-            >
-              Low-Power {lowPowerLabel}
-            </button>
-
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{ position: "relative" }}>
                 <input
@@ -19079,7 +19023,9 @@ export function ClusterMap({
                       const mitRef = key ? (mitMap as any).get(key) : null;
                       if (mitRef) return displayIdForNode(mitRef as any);
                       const rawMitId = String(
-                        (selectedNode as any)?.closestClusterUid ?? ""
+                        (selectedNode as any)?.closestClusterUid ??
+                          (selectedSourceTrade as any)?.closestClusterUid ??
+                          ""
                       ).trim();
                       if (!rawMitId) return "—";
                       const rawMitRef =
