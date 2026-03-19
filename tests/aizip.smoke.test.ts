@@ -24,9 +24,18 @@ const baseFilterSettings = (overrides?: Record<string, unknown>) => ({
   },
   distanceMetric: "euclidean",
   knnNeighborSpace: "high",
+  selectedAiDomains: [],
   kEntry: 12,
+  knnVoteMode: "distance",
   ...(overrides ?? {})
 });
+
+const assertApprox = (actual: number, expected: number, epsilon = 1e-6) => {
+  assert.ok(
+    Math.abs(actual - expected) <= epsilon,
+    `expected ${actual} to be within ${epsilon} of ${expected}`
+  );
+};
 
 const makeTrade = (params: {
   id: string;
@@ -404,6 +413,223 @@ test("neighbor calculation space changes ranking", async () => {
   assert.equal(highNeighbor, "lib|base|high-winner|1");
   assert.equal(postNeighbor, "lib|base|post-winner|0");
   assert.notEqual(highNeighbor, postNeighbor);
+});
+
+test("panel analytics confidence honors kEntry instead of scoring every candidate", async () => {
+  const trades = [
+    makeTrade({
+      id: "live-1",
+      entryIso: "2025-03-01T00:00:00Z",
+      exitIso: "2025-03-01T01:00:00Z"
+    }),
+    makeTrade({
+      id: "live-2",
+      entryIso: "2025-03-01T02:00:00Z",
+      exitIso: "2025-03-01T03:00:00Z",
+      neighborVector: [0, 0, 0, 0, 0, 0]
+    })
+  ];
+
+  const libraryPoints = [
+    {
+      uid: "lib|base|nearest-win|0",
+      libId: "base",
+      metaTime: Math.floor(Date.parse("2025-02-28T00:00:00Z") / 1000),
+      metaPnl: 120,
+      metaOutcome: "Win",
+      metaSession: "London",
+      dir: 1,
+      label: 1,
+      v: [0, 0, 0, 0, 0, 0.01]
+    },
+    {
+      uid: "lib|base|far-loss|1",
+      libId: "base",
+      metaTime: Math.floor(Date.parse("2025-02-27T00:00:00Z") / 1000),
+      metaPnl: -120,
+      metaOutcome: "Loss",
+      metaSession: "London",
+      dir: 1,
+      label: -1,
+      v: [1, 1, 1, 1, 1, 1]
+    },
+    {
+      uid: "lib|base|farther-loss|2",
+      libId: "base",
+      metaTime: Math.floor(Date.parse("2025-02-26T00:00:00Z") / 1000),
+      metaPnl: -140,
+      metaOutcome: "Loss",
+      metaSession: "London",
+      dir: 1,
+      label: -1,
+      v: [1.2, 1.2, 1.2, 1.2, 1.2, 1.2]
+    }
+  ];
+
+  const payload = await postPanelAnalytics({
+    panelSourceTrades: trades,
+    panelLibraryPoints: libraryPoints,
+    panelBacktestFilterSettings: baseFilterSettings({
+      selectedAiLibraries: ["base"],
+      kEntry: 1,
+      knnVoteMode: "majority"
+    }),
+    panelConfidenceGateDisabled: true,
+    panelEffectiveConfidenceThreshold: 0,
+    aiLibraryDefaultsById: {
+      base: { weight: 100, maxSamples: 1000 }
+    }
+  });
+
+  const stampedTrade = payload.timeFilteredTrades[1];
+  assert.ok(stampedTrade, "expected a second stamped trade");
+  assert.equal(stampedTrade.entryNeighbors.length, 1);
+  assert.equal(stampedTrade.closestClusterUid, "lib|base|nearest-win|0");
+  assertApprox(Number(stampedTrade.entryConfidence), 1);
+});
+
+test("panel analytics honors knn vote mode when scoring confidence", async () => {
+  const trades = [
+    makeTrade({
+      id: "live-1",
+      entryIso: "2025-03-01T00:00:00Z",
+      exitIso: "2025-03-01T01:00:00Z"
+    }),
+    makeTrade({
+      id: "live-2",
+      entryIso: "2025-03-01T02:00:00Z",
+      exitIso: "2025-03-01T03:00:00Z",
+      neighborVector: [0, 0, 0, 0, 0, 0]
+    })
+  ];
+
+  const libraryPoints = [
+    {
+      uid: "lib|base|near-win|0",
+      libId: "base",
+      metaTime: Math.floor(Date.parse("2025-02-28T00:00:00Z") / 1000),
+      metaPnl: 110,
+      metaOutcome: "Win",
+      metaSession: "London",
+      dir: 1,
+      label: 1,
+      v: [0, 0, 0, 0, 0, 0.01]
+    },
+    {
+      uid: "lib|base|far-loss|1",
+      libId: "base",
+      metaTime: Math.floor(Date.parse("2025-02-27T00:00:00Z") / 1000),
+      metaPnl: -110,
+      metaOutcome: "Loss",
+      metaSession: "London",
+      dir: 1,
+      label: -1,
+      v: [2, 2, 2, 2, 2, 2]
+    }
+  ];
+
+  const majorityPayload = await postPanelAnalytics({
+    panelSourceTrades: trades,
+    panelLibraryPoints: libraryPoints,
+    panelBacktestFilterSettings: baseFilterSettings({
+      selectedAiLibraries: ["base"],
+      kEntry: 2,
+      knnVoteMode: "majority"
+    }),
+    panelConfidenceGateDisabled: true,
+    panelEffectiveConfidenceThreshold: 0,
+    aiLibraryDefaultsById: {
+      base: { weight: 100, maxSamples: 1000 }
+    }
+  });
+
+  const distancePayload = await postPanelAnalytics({
+    panelSourceTrades: trades,
+    panelLibraryPoints: libraryPoints,
+    panelBacktestFilterSettings: baseFilterSettings({
+      selectedAiLibraries: ["base"],
+      kEntry: 2,
+      knnVoteMode: "distance"
+    }),
+    panelConfidenceGateDisabled: true,
+    panelEffectiveConfidenceThreshold: 0,
+    aiLibraryDefaultsById: {
+      base: { weight: 100, maxSamples: 1000 }
+    }
+  });
+
+  const majorityConfidence = Number(majorityPayload.timeFilteredTrades[1]?.entryConfidence);
+  const distanceConfidence = Number(distancePayload.timeFilteredTrades[1]?.entryConfidence);
+
+  assertApprox(majorityConfidence, 0.5);
+  assert.ok(
+    distanceConfidence > majorityConfidence,
+    `expected distance vote confidence ${distanceConfidence} to exceed majority ${majorityConfidence}`
+  );
+});
+
+test("panel analytics honors selected AI domains when filtering neighbors", async () => {
+  const trades = [
+    makeTrade({
+      id: "live-1",
+      entryIso: "2025-03-01T00:00:00Z",
+      exitIso: "2025-03-01T01:00:00Z"
+    }),
+    makeTrade({
+      id: "live-2",
+      entryIso: "2025-03-01T02:00:00Z",
+      exitIso: "2025-03-01T03:00:00Z",
+      side: "Long",
+      neighborVector: [0, 0, 0, 0, 0, 0]
+    })
+  ];
+
+  const libraryPoints = [
+    {
+      uid: "lib|base|opposite-close|0",
+      libId: "base",
+      metaTime: Math.floor(Date.parse("2025-02-28T00:00:00Z") / 1000),
+      metaPnl: -100,
+      metaOutcome: "Loss",
+      metaSession: "London",
+      dir: -1,
+      label: -1,
+      v: [0, 0, 0, 0, 0, 0.01]
+    },
+    {
+      uid: "lib|base|same-side-far|1",
+      libId: "base",
+      metaTime: Math.floor(Date.parse("2025-02-27T00:00:00Z") / 1000),
+      metaPnl: 120,
+      metaOutcome: "Win",
+      metaSession: "London",
+      dir: 1,
+      label: 1,
+      v: [1, 1, 1, 1, 1, 1]
+    }
+  ];
+
+  const payload = await postPanelAnalytics({
+    panelSourceTrades: trades,
+    panelLibraryPoints: libraryPoints,
+    panelBacktestFilterSettings: baseFilterSettings({
+      selectedAiLibraries: ["base"],
+      selectedAiDomains: ["Direction"],
+      kEntry: 1,
+      knnVoteMode: "majority"
+    }),
+    panelConfidenceGateDisabled: true,
+    panelEffectiveConfidenceThreshold: 0,
+    aiLibraryDefaultsById: {
+      base: { weight: 100, maxSamples: 1000 }
+    }
+  });
+
+  const stampedTrade = payload.timeFilteredTrades[1];
+  assert.ok(stampedTrade, "expected a second stamped trade");
+  assert.equal(stampedTrade.closestClusterUid, "lib|base|same-side-far|1");
+  assert.equal(stampedTrade.entryNeighbors[0]?.dir, 1);
+  assertApprox(Number(stampedTrade.entryConfidence), 1);
 });
 
 test("panel analytics caps stored neighbors to kEntry for large base libraries", async () => {

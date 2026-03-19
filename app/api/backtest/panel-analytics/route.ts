@@ -10,8 +10,14 @@ export const dynamic = "force-dynamic";
 
 type AiLibrarySettingValue = boolean | number | string;
 type AiLibrarySettings = Record<string, Record<string, AiLibrarySettingValue>>;
-type AiDistanceMetric = "euclidean" | "cosine" | "manhattan" | "chebyshev";
+type AiDistanceMetric =
+  | "euclidean"
+  | "cosine"
+  | "manhattan"
+  | "chebyshev"
+  | "mahalanobis";
 type KnnNeighborSpace = "high" | "post" | "3d" | "2d";
+type KnnVoteMode = "distance" | "majority";
 
 type HistoryItem = {
   id: string;
@@ -76,8 +82,10 @@ type LibrarySourceCandidate = {
 
 type LibraryNeighborAggregateEntry = {
   candidate: LibrarySourceCandidate;
-  score: number;
-  bestSimilarity: number;
+  distance: number;
+  voteWeight: number;
+  effectiveLabel: number | null;
+  outcomeScore: number;
 };
 
 type BacktestFilterSettings = {
@@ -95,6 +103,9 @@ type BacktestFilterSettings = {
   distanceMetric: AiDistanceMetric;
   knnNeighborSpace: KnnNeighborSpace;
   kEntry: number;
+  knnVoteMode: KnnVoteMode;
+  selectedAiDomains: string[];
+  remapOppositeOutcomes?: boolean;
 };
 
 type PanelAnalyticsResponseBody = {
@@ -292,13 +303,18 @@ const computeVectorVariance = (vectors: number[][]): number[] | null => {
 const normalizeDistanceMetric = (value: unknown): AiDistanceMetric => {
   return value === "cosine" ||
     value === "manhattan" ||
-    value === "chebyshev"
+    value === "chebyshev" ||
+    value === "mahalanobis"
     ? value
     : "euclidean";
 };
 
 const normalizeKnnNeighborSpace = (value: unknown): KnnNeighborSpace => {
   return value === "high" || value === "3d" || value === "2d" ? value : "post";
+};
+
+const normalizeKnnVoteMode = (value: unknown): KnnVoteMode => {
+  return value === "majority" ? "majority" : "distance";
 };
 
 const hashSeedFromText = (seedText: string): number => {
@@ -396,11 +412,127 @@ const buildTradeNeighborVector = (trade: HistoryItem): number[] => {
   ];
 };
 
+const getTradeDirection = (trade: HistoryItem): number => {
+  return trade.side === "Short" ? -1 : 1;
+};
+
+type QueryDomainMeta = {
+  session: string | null;
+  month: number | null;
+  dow: number | null;
+  hour: number | null;
+};
+
+const getTradeQueryMeta = (entryTimeSeconds: number): QueryDomainMeta => {
+  const timestampMs = Number(entryTimeSeconds) * 1000;
+  const date = new Date(timestampMs);
+
+  if (Number.isNaN(date.getTime())) {
+    return {
+      session: null,
+      month: null,
+      dow: null,
+      hour: null
+    };
+  }
+
+  return {
+    session: getSessionLabel(entryTimeSeconds),
+    month: date.getUTCMonth() + 1,
+    dow: date.getUTCDay(),
+    hour: date.getUTCHours()
+  };
+};
+
+const getCandidateQueryMeta = (candidate: LibrarySourceCandidate): QueryDomainMeta => {
+  if (candidate.entryTime == null) {
+    return {
+      session: candidate.session ?? null,
+      month: null,
+      dow: null,
+      hour: null
+    };
+  }
+
+  const timeMeta = getTradeQueryMeta(candidate.entryTime);
+  return {
+    ...timeMeta,
+    session: candidate.session ?? timeMeta.session
+  };
+};
+
+const candidatePassesAiDomains = (
+  candidate: LibrarySourceCandidate,
+  trade: HistoryItem,
+  selectedDomains: Set<string>,
+  queryMeta: QueryDomainMeta
+) => {
+  if (selectedDomains.size === 0) {
+    return true;
+  }
+
+  if (selectedDomains.has("Direction")) {
+    if (candidate.direction == null || candidate.direction !== getTradeDirection(trade)) {
+      return false;
+    }
+  }
+
+  if (selectedDomains.has("Model")) {
+    const queryModel = String(trade.entrySource ?? "").trim();
+    if (!queryModel || candidate.entryModel !== queryModel) {
+      return false;
+    }
+  }
+
+  const candidateMeta = getCandidateQueryMeta(candidate);
+
+  if (selectedDomains.has("Session") && queryMeta.session != null) {
+    if (candidateMeta.session !== queryMeta.session) {
+      return false;
+    }
+  }
+
+  if (selectedDomains.has("Month") && queryMeta.month != null) {
+    if (candidateMeta.month !== queryMeta.month) {
+      return false;
+    }
+  }
+
+  if (selectedDomains.has("Weekday") && queryMeta.dow != null) {
+    if (candidateMeta.dow !== queryMeta.dow) {
+      return false;
+    }
+  }
+
+  if (selectedDomains.has("Hour") && queryMeta.hour != null) {
+    if (candidateMeta.hour !== queryMeta.hour) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const computeNeighborVoteWeight = (
+  distance: number,
+  baseWeight: number,
+  voteMode: KnnVoteMode
+) => {
+  const resolvedBaseWeight =
+    Number.isFinite(baseWeight) && baseWeight > 0 ? baseWeight : 1;
+
+  if (voteMode === "majority") {
+    return resolvedBaseWeight;
+  }
+
+  return resolvedBaseWeight * (1 / (1 + Math.max(0, distance)));
+};
+
 const getVectorDistance = (
   left: number[],
   right: number[],
   metric: AiDistanceMetric,
-  _variance: number[] | null
+  variance: number[] | null
 ) => {
   const dim = Math.min(left.length, right.length);
   if (dim <= 0) {
@@ -430,6 +562,19 @@ const getVectorDistance = (
       maxDistance = Math.max(maxDistance, Math.abs(left[index]! - right[index]!));
     }
     return maxDistance;
+  }
+
+  if (metric === "mahalanobis") {
+    let total = 0;
+    for (let index = 0; index < dim; index += 1) {
+      const delta = left[index]! - right[index]!;
+      const varianceForDim =
+        variance && Number.isFinite(variance[index])
+          ? Math.max(AI_EPS, variance[index]!)
+          : 1;
+      total += (delta * delta) / varianceForDim;
+    }
+    return Math.sqrt(total);
   }
 
   let total = 0;
@@ -1030,8 +1175,9 @@ const buildLibraryPointSourceCandidate = (
 
 const buildEntryNeighbor = (
   candidate: LibrarySourceCandidate,
-  similarity: number,
-  weight: number
+  distance: number,
+  weight: number,
+  label: number | null
 ): BacktestEntryNeighbor => {
   const dir =
     Number.isFinite(Number(candidate.direction)) ? Number(candidate.direction) : null;
@@ -1047,8 +1193,8 @@ const buildEntryNeighbor = (
     metaOutcome: candidate.result,
     metaSession: candidate.session,
     dir,
-    label: candidate.label,
-    d: similarity > 0 ? 1 / similarity : Number.MAX_SAFE_INTEGER,
+    label,
+    d: Number.isFinite(distance) ? distance : Number.MAX_SAFE_INTEGER,
     w: weight,
     t: {
       id: trade?.id ?? candidate.uid,
@@ -1304,7 +1450,12 @@ const normalizeFilterSettings = (value: unknown): BacktestFilterSettings => {
         : {},
     distanceMetric: normalizeDistanceMetric(row.distanceMetric),
     knnNeighborSpace: normalizeKnnNeighborSpace(row.knnNeighborSpace),
-    kEntry: clamp(Math.floor(toNumeric(row.kEntry, 12)), 1, 512)
+    kEntry: clamp(Math.floor(toNumeric(row.kEntry, 12)), 1, 512),
+    knnVoteMode: normalizeKnnVoteMode(row.knnVoteMode),
+    selectedAiDomains: Array.isArray(row.selectedAiDomains)
+      ? row.selectedAiDomains.map((entry) => String(entry))
+      : [],
+    remapOppositeOutcomes: row.remapOppositeOutcomes === false ? false : true
   };
 };
 
@@ -1626,130 +1777,73 @@ const computeAntiCheatBacktestContext = (params: {
     return 0;
   };
 
-  const getSimilarityWeight = (currentTrade: HistoryItem, candidate: LibrarySourceCandidate) => {
-    let weight = 0.35;
-    const currentDirection = currentTrade.side === "Short" ? -1 : 1;
-
-    if (candidate.direction === currentDirection) {
-      weight += 0.18;
-    }
-
-    if (candidate.entryModel && candidate.entryModel === currentTrade.entrySource) {
-      weight += 0.24;
-    }
-
-    if (candidate.trade?.symbol === currentTrade.symbol) {
-      weight += 0.1;
-    }
-
-    const candidateSession =
-      candidate.session ??
-      (candidate.entryTime == null ? null : getSessionLabel(candidate.entryTime));
-    if (candidateSession === getSessionLabel(currentTrade.entryTime)) {
-      weight += 0.12;
-    }
-
-    const candidateHour =
-      candidate.entryTime == null ? null : getTradeHour(candidate.entryTime);
-    const hourGap =
-      candidateHour == null
-        ? Number.POSITIVE_INFINITY
-        : Math.abs(candidateHour - getTradeHour(currentTrade.entryTime));
-
-    if (hourGap === 0) {
-      weight += 0.08;
-    } else if (hourGap <= 2) {
-      weight += 0.04;
-    }
-
-    if (candidate.trade) {
-      const rrGap = Math.abs(
-        getTradeRiskReward(candidate.trade) - getTradeRiskReward(currentTrade)
-      );
-      weight *= 1 / (1 + rrGap * 0.65);
-    }
-
-    if (candidate.entryTime != null) {
-      const timeGapHours = Math.abs(
-        Number(currentTrade.entryTime) - Number(candidate.entryTime)
-      ) / 3600;
-      weight *= 1 / (1 + timeGapHours / 72);
-    }
-
-    return clamp(weight, 0.02, 2);
+  const resolveCandidateOutcomeScore = (candidate: LibrarySourceCandidate) => {
+    return panelBacktestFilterSettings.validationMode === "synthetic" && candidate.trade
+      ? getSyntheticWinProb(candidate.trade)
+      : getCandidateOutcomeScore(candidate);
   };
 
-  const getVectorSimilarityWeight = (
-    currentTrade: HistoryItem,
+  const resolveEffectiveOutcomeScore = (
     candidate: LibrarySourceCandidate,
-    queryVector: number[] | null,
-    candidateVector: number[] | null,
-    variance: number[] | null
+    trade: HistoryItem,
+    rawOutcomeScore: number
   ) => {
-    if (!queryVector || !candidateVector || queryVector.length !== candidateVector.length) {
-      return 0;
+    const remapOppositeOutcomes =
+      panelBacktestFilterSettings.remapOppositeOutcomes !== false;
+    const selectedDomains = new Set(panelBacktestFilterSettings.selectedAiDomains);
+
+    if (!remapOppositeOutcomes || selectedDomains.has("Direction")) {
+      return clamp(rawOutcomeScore, 0, 1);
     }
 
-    const distance = getVectorDistance(
-      queryVector,
-      candidateVector,
-      panelBacktestFilterSettings.distanceMetric,
-      variance
-    );
-    if (!Number.isFinite(distance)) {
-      return 0;
+    if (candidate.direction == null || candidate.direction === getTradeDirection(trade)) {
+      return clamp(rawOutcomeScore, 0, 1);
     }
 
-    let weight = 1 / (1 + Math.max(0, distance));
-    const currentDirection = currentTrade.side === "Short" ? -1 : 1;
+    return clamp(1 - rawOutcomeScore, 0, 1);
+  };
 
-    if (candidate.direction === currentDirection) {
-      weight *= 1.15;
+  const resolveEffectiveOutcomeLabel = (
+    candidate: LibrarySourceCandidate,
+    trade: HistoryItem,
+    outcomeScore: number
+  ) => {
+    const selectedDomains = new Set(panelBacktestFilterSettings.selectedAiDomains);
+    const remapOppositeOutcomes =
+      panelBacktestFilterSettings.remapOppositeOutcomes !== false;
+    const baseLabel =
+      candidate.label == null ? (outcomeScore >= 0.5 ? 1 : -1) : candidate.label;
+
+    if (!remapOppositeOutcomes || selectedDomains.has("Direction")) {
+      return baseLabel;
     }
 
-    if (candidate.entryModel && candidate.entryModel === currentTrade.entrySource) {
-      weight *= 1.18;
+    if (candidate.direction == null || candidate.direction === getTradeDirection(trade)) {
+      return baseLabel;
     }
 
-    if (candidate.trade?.symbol === currentTrade.symbol) {
-      weight *= 1.06;
+    return -baseLabel;
+  };
+
+  const computeNeighborConfidence = (neighbors: LibraryNeighborAggregateEntry[]) => {
+    let wins = 0;
+    let losses = 0;
+
+    for (const neighbor of neighbors) {
+      const voteWeight =
+        Number.isFinite(neighbor.voteWeight) && neighbor.voteWeight > 0
+          ? neighbor.voteWeight
+          : 1;
+      const outcomeScore = clamp(neighbor.outcomeScore, 0, 1);
+      wins += voteWeight * outcomeScore;
+      losses += voteWeight * (1 - outcomeScore);
     }
 
-    const candidateSession =
-      candidate.session ??
-      (candidate.entryTime == null ? null : getSessionLabel(candidate.entryTime));
-    if (candidateSession === getSessionLabel(currentTrade.entryTime)) {
-      weight *= 1.08;
+    if (wins <= 0 && losses <= 0) {
+      return null;
     }
 
-    const candidateHour =
-      candidate.entryTime == null ? null : getTradeHour(candidate.entryTime);
-    const hourGap =
-      candidateHour == null
-        ? Number.POSITIVE_INFINITY
-        : Math.abs(candidateHour - getTradeHour(currentTrade.entryTime));
-
-    if (hourGap === 0) {
-      weight *= 1.06;
-    } else if (hourGap <= 2) {
-      weight *= 1.03;
-    }
-
-    if (candidate.trade) {
-      const rrGap = Math.abs(
-        getTradeRiskReward(candidate.trade) - getTradeRiskReward(currentTrade)
-      );
-      weight *= 1 / (1 + rrGap * 0.65);
-    }
-
-    if (candidate.entryTime != null) {
-      const timeGapHours = Math.abs(
-        Number(currentTrade.entryTime) - Number(candidate.entryTime)
-      ) / 3600;
-      weight *= 1 / (1 + timeGapHours / 72);
-    }
-
-    return clamp(weight, 0.02, 2);
+    return clamp(wins / (wins + losses + AI_EPS), 0, 1);
   };
 
   const hydrateTradesWithSnapshots = (trades: HistoryItem[]) => {
@@ -1767,6 +1861,7 @@ const computeAntiCheatBacktestContext = (params: {
     Array<{ candidate: LibrarySourceCandidate; sourceIndex: number; libraryId: string }>
   >();
   const staticLibraryVectorSpaceById = new Map<string, StaticCandidateVectorSpace>();
+  const selectedAiDomains = new Set(panelBacktestFilterSettings.selectedAiDomains);
 
   for (const libraryId of activeLibraryIds) {
     const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
@@ -1823,11 +1918,8 @@ const computeAntiCheatBacktestContext = (params: {
         ? basePool.reduce((sum, candidate) => sum + (candidate.result === "Win" ? 1 : 0), 0) /
           basePool.length
         : 0.5;
-    let weightedWins = 0;
-    let weightedTotal = 0;
-    let similarityTotal = 0;
-    let sampleCount = 0;
-    const neighborAggregate = new Map<string, LibraryNeighborAggregateEntry>();
+    const queryMeta = getTradeQueryMeta(trade.entryTime);
+    const neighborEntries: LibraryNeighborAggregateEntry[] = [];
 
     for (const libraryId of activeLibraryIds) {
       const libraryWeight = getLibraryWeight(libraryId);
@@ -1856,58 +1948,56 @@ const computeAntiCheatBacktestContext = (params: {
               panelBacktestFilterSettings
             );
 
+      if (!preparedVectorSpace.queryVector) {
+        continue;
+      }
+
       for (let candidateIndex = 0; candidateIndex < source.length; candidateIndex += 1) {
         const candidateEntry = source[candidateIndex]!;
-        const { candidate, sourceIndex } = candidateEntry;
+        const { candidate } = candidateEntry;
         if (isSelfNeighborCandidate(trade, candidate)) {
           continue;
         }
+        if (!candidatePassesAiDomains(candidate, trade, selectedAiDomains, queryMeta)) {
+          continue;
+        }
         const candidateVector = preparedVectorSpace.candidates[candidateIndex] ?? null;
-        const rawSimilarity = candidateVector
-          ? getVectorSimilarityWeight(
-              trade,
-              candidate,
-              preparedVectorSpace.queryVector,
-              candidateVector,
-              preparedVectorSpace.variance
-            )
-          : getSimilarityWeight(trade, candidate);
-        const similarityWeight = rawSimilarity * libraryWeight;
-        if (!(similarityWeight > 0)) {
+        if (!candidateVector) {
           continue;
         }
-        const outcome =
-          panelBacktestFilterSettings.validationMode === "synthetic" && candidate.trade
-            ? getSyntheticWinProb(candidate.trade)
-            : getCandidateOutcomeScore(candidate);
-
-        weightedWins += similarityWeight * outcome;
-        weightedTotal += similarityWeight;
-        similarityTotal += similarityWeight;
-        sampleCount += 1;
-
-        const neighborUid = candidate.uid;
-        if (!neighborUid) {
+        const distance = getVectorDistance(
+          preparedVectorSpace.queryVector,
+          candidateVector,
+          panelBacktestFilterSettings.distanceMetric,
+          preparedVectorSpace.variance
+        );
+        if (!Number.isFinite(distance)) {
           continue;
         }
 
-        const existing = neighborAggregate.get(neighborUid);
-        if (existing) {
-          existing.score += similarityWeight;
-          if (rawSimilarity > existing.bestSimilarity) {
-            existing.bestSimilarity = rawSimilarity;
-          }
-        } else {
-          neighborAggregate.set(neighborUid, {
-            candidate,
-            score: similarityWeight,
-            bestSimilarity: rawSimilarity
-          });
+        const rawOutcomeScore = resolveCandidateOutcomeScore(candidate);
+        const outcomeScore = resolveEffectiveOutcomeScore(candidate, trade, rawOutcomeScore);
+        const effectiveLabel = resolveEffectiveOutcomeLabel(candidate, trade, outcomeScore);
+        const voteWeight = computeNeighborVoteWeight(
+          distance,
+          libraryWeight,
+          panelBacktestFilterSettings.knnVoteMode
+        );
+        if (!(voteWeight > 0)) {
+          continue;
         }
+
+        neighborEntries.push({
+          candidate,
+          distance,
+          voteWeight,
+          effectiveLabel,
+          outcomeScore
+        });
       }
     }
 
-    if (sampleCount === 0 || weightedTotal <= 0) {
+    if (neighborEntries.length === 0) {
       const confidence = clamp(0.5 + (baselineWinRate - 0.5) * 0.2, 0.18, 0.82);
       confidenceById.set(trade.id, confidence);
       aiEntrySnapshotById.set(trade.id, {
@@ -1922,34 +2012,33 @@ const computeAntiCheatBacktestContext = (params: {
       continue;
     }
 
-    const weightedWinRate = weightedWins / weightedTotal;
-    const labelVariance = weightedWinRate * (1 - weightedWinRate) * 4;
-    const matchStrength = clamp(similarityTotal / Math.max(1, sampleCount), 0, 1);
-    const coverage = clamp(sampleCount / 12, 0, 1);
-    const shrink =
-      coverage * (0.2 + matchStrength * 0.8) * (0.35 + labelVariance * 0.65);
-    const confidence =
-      baselineWinRate + (weightedWinRate - baselineWinRate) * shrink;
-    const normalizedConfidence = clamp(confidence, 0.02, 0.98);
-    const rankedNeighborEntries = [...neighborAggregate.values()]
+    const rankedNeighborEntries = [...neighborEntries]
       .sort(
         (left, right) =>
-          right.bestSimilarity - left.bestSimilarity ||
-          right.score - left.score ||
+          left.distance - right.distance ||
+          right.voteWeight - left.voteWeight ||
           Number(right.candidate.entryTime ?? 0) - Number(left.candidate.entryTime ?? 0) ||
           left.candidate.uid.localeCompare(right.candidate.uid)
       )
       .slice(0, entryNeighborCap);
+    const confidence =
+      computeNeighborConfidence(rankedNeighborEntries) ??
+      clamp(0.5 + (baselineWinRate - 0.5) * 0.2, 0.18, 0.82);
     const rankedNeighbors = rankedNeighborEntries.map((entry) =>
-      buildEntryNeighbor(entry.candidate, entry.bestSimilarity, entry.score)
+      buildEntryNeighbor(
+        entry.candidate,
+        entry.distance,
+        entry.voteWeight,
+        entry.effectiveLabel
+      )
     );
 
-    confidenceById.set(trade.id, normalizedConfidence);
+    confidenceById.set(trade.id, confidence);
     aiEntrySnapshotById.set(trade.id, {
-      entryConfidence: normalizedConfidence,
-      confidence: normalizedConfidence,
-      entryMargin: normalizedConfidence,
-      margin: normalizedConfidence,
+      entryConfidence: confidence,
+      confidence,
+      entryMargin: confidence,
+      margin: confidence,
       aiMode: activeAiMode,
       closestClusterUid:
         rankedNeighbors.length > 0

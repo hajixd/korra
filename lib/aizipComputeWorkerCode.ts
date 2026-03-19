@@ -93,7 +93,7 @@ export const AIZIP_COMPUTE_WORKER_CODE = String.raw`
 
   let FEATURE_LEVELS = {};
   let FEATURE_MODES = {};
-  let KNN_VOTE_MODE = "majority";
+  let KNN_VOTE_MODE = "distance";
   let KNN_NEIGHBOR_SPACE = "post";
   let DIST_METRIC = "euclidean";
   let LIB_VAR = {};
@@ -1226,6 +1226,18 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
     });
   }
 
+  function pointVoteBaseWeight(point){
+    const raw = Number(point && point.weight);
+    return Number.isFinite(raw) ? Math.max(0, raw) : 1;
+  }
+
+  function voteWeightForNeighbor(point, distance){
+    const base = pointVoteBaseWeight(point);
+    if(!(base > 0)) return 0;
+    if(KNN_VOTE_MODE === "majority") return base;
+    return base * (1 / (1 + Math.max(0, Number(distance) || 0)));
+  }
+
   function knnMargin(points, q, k, dirFilter, excludeTime, modelKey, qMeta, queryDir){
     let usable = filterUsableNeighbors(points, excludeTime);
     if(!COUNT_SUPPRESSED_NEIGHBORS) usable = usable.filter(p=>!p.metaSuppressed);
@@ -1251,6 +1263,7 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
     const qk = knnProjectQuery(points, qz);
     const nbs = [];
     for(const p of usable){
+      if(!(pointVoteBaseWeight(p) > 0)) continue;
       const pv = knnVecForPoint(p);
       if(!pv) continue;
       const d = dist(modelKey, qk, pv);
@@ -1278,7 +1291,8 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
         (DOMAIN_SET && DOMAIN_SET.has("Direction") && dirFilter)
           ? base
           : ((REMAP_OPPOSITE_OUTCOMES && queryDir) ? ((nb.p.dir === queryDir) ? base : -base) : base);
-      const wt = 1;
+      const wt = voteWeightForNeighbor(nb.p, nb.d);
+      if(!(wt > 0)) continue;
       if(effLabel === 1) win += wt;
       else loss += wt;
     }
@@ -1752,6 +1766,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
     const qk = knnProjectQuery(points, qz);
     const nbs = [];
     for(const p of usable){
+      if(!(pointVoteBaseWeight(p) > 0)) continue;
       const pv = knnVecForPoint(p);
       if(!pv) continue;
       const d = dist(modelKey, qk, pv);
@@ -1775,6 +1790,8 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
     const out = [];
     for(let i=0; i<take; i++){
       const nb = nbs[i];
+      const wt = voteWeightForNeighbor(nb.p, nb.d);
+      if(!(wt > 0)) continue;
       const baseLabel = (nb.p && nb.p.label) || -1;
       const effLabel =
         (DOMAIN_SET && DOMAIN_SET.has("Direction") && dirFilter)
@@ -1784,6 +1801,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
       out.push({
         rank: i+1,
         d: nb.d,
+        w: wt,
         label: effLabel,
         uid: (nb.p.uid ?? nb.p.tradeUid ?? nb.p.metaUid ?? nb.p.metaTradeUid ?? nb.p.metaId ?? nb.p.id ?? nb.p.metaTime ?? ("NB"+(i+1))),
         metaTime: nb.p.metaTime,
@@ -1817,6 +1835,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
     const qk = knnProjectQuery(points, qz);
     let best = null;
     for(const p of usable){
+      if(!(pointVoteBaseWeight(p) > 0)) continue;
       const pv = knnVecForPoint(p);
       if(!pv) continue;
       const d = dist(modelKey, qk, pv);
@@ -1857,6 +1876,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
     const qk = knnProjectQuery(points, qz);
     let best = null;
     for(const p of usable){
+      if(!(pointVoteBaseWeight(p) > 0)) continue;
       const pv = knnVecForPoint(p);
       if(!pv) continue;
       const d = dist(modelKey, qk, pv);
@@ -1886,6 +1906,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
     const qk = knnProjectQuery(points, qz);
     let best = null;
     for(const p of usable){
+      if(!(pointVoteBaseWeight(p) > 0)) continue;
       const pv = knnVecForPoint(p);
       if(!pv) continue;
       const d = dist(modelKey, qk, pv);
@@ -2762,7 +2783,7 @@ const _nA = candles.length;
     HDB_DOMAIN_DISTINCTION =
       settings.hdbDomainDistinction === "conceptual" ? "conceptual" : "real";
 
-    KNN_VOTE_MODE = "majority";
+    KNN_VOTE_MODE = (settings.knnVoteMode === "majority") ? "majority" : "distance";
     const knnSpaceRaw = settings.knnNeighborSpace;
     KNN_NEIGHBOR_SPACE = (knnSpaceRaw === "high" || knnSpaceRaw === "2d" || knnSpaceRaw === "3d") ? knnSpaceRaw : "post";
     DIST_METRIC = (settings.distanceMetric === "cosine" || settings.distanceMetric === "manhattan" || settings.distanceMetric === "chebyshev" || settings.distanceMetric === "mahalanobis")
@@ -4154,25 +4175,28 @@ function flushSuppressedNeighbors(uptoIndex){
       let losses = 0;
       for(const nb of neighbors){
         if(!nb) continue;
+        const wtRaw = Number(nb.w);
+        const wt = Number.isFinite(wtRaw) ? Math.max(0, wtRaw) : 1;
+        if(!(wt > 0)) continue;
         const label = Number(nb.label);
         if(Number.isFinite(label)){
-          if(label > 0) wins += 1;
-          else if(label < 0) losses += 1;
+          if(label > 0) wins += wt;
+          else if(label < 0) losses += wt;
           continue;
         }
         const outcome = String(nb.metaOutcome || "").toUpperCase();
         if(outcome === "TP" || outcome === "WIN" || outcome.includes("WIN")){
-          wins += 1;
+          wins += wt;
           continue;
         }
         if(outcome === "SL" || outcome === "LOSS" || outcome.includes("LOSS")){
-          losses += 1;
+          losses += wt;
           continue;
         }
         const pnl = Number(nb.metaPnl);
         if(Number.isFinite(pnl)){
-          if(pnl >= 0) wins += 1;
-          else losses += 1;
+          if(pnl >= 0) wins += wt;
+          else losses += wt;
         }
       }
       if(wins <= 0 && losses <= 0) return null;
