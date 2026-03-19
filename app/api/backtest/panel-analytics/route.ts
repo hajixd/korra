@@ -1394,6 +1394,14 @@ const computeAntiCheatBacktestContext = (params: {
     },
     new Map<string, LibrarySourceCandidate[]>()
   );
+  const hasCanonicalLibraryCandidates = activeLibraryIds.some((libraryId) => {
+    const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
+    if (!normalizedLibraryId || normalizedLibraryId === "core") {
+      return false;
+    }
+
+    return (libraryPointsById.get(normalizedLibraryId)?.length ?? 0) > 0;
+  });
 
   const getLibrarySettings = (libraryId: string) => {
     const defaults = aiLibraryDefaultsById[libraryId] ?? {};
@@ -1693,7 +1701,7 @@ const computeAntiCheatBacktestContext = (params: {
         ? splitTrainingTrades
         : chronologicalTrades.slice(0, index);
 
-    if (basePool.length === 0) {
+    if (basePool.length === 0 && !hasCanonicalLibraryCandidates) {
       const confidence = getSyntheticWinProb(trade);
       confidenceById.set(trade.id, confidence);
       aiEntrySnapshotById.set(trade.id, {
@@ -1709,8 +1717,10 @@ const computeAntiCheatBacktestContext = (params: {
     }
 
     const baselineWinRate =
-      basePool.reduce((sum, candidate) => sum + (candidate.result === "Win" ? 1 : 0), 0) /
-      basePool.length;
+      basePool.length > 0
+        ? basePool.reduce((sum, candidate) => sum + (candidate.result === "Win" ? 1 : 0), 0) /
+          basePool.length
+        : 0.5;
     let weightedWins = 0;
     let weightedTotal = 0;
     let similarityTotal = 0;

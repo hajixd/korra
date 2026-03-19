@@ -11607,6 +11607,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       )
     );
   }, [appliedBacktestSettings.selectedAiLibraries]);
+  const panelAnalyticsCanonicalLibraryIds = useMemo(() => {
+    return [...panelAnalyticsLibraryIdSet].filter((libraryId) => {
+      return !isOnlineLearningLibraryId(libraryId);
+    });
+  }, [panelAnalyticsLibraryIdSet]);
   const panelAnalyticsLibraryPoints = useMemo(() => {
     if (panelAnalyticsLibraryIdSet.size === 0) {
       return [] as any[];
@@ -11617,9 +11622,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return libraryId.length > 0 && panelAnalyticsLibraryIdSet.has(libraryId);
     });
   }, [aiLibraryPoints, panelAnalyticsLibraryIdSet]);
+  const panelAnalyticsLibrarySourcesSettled = useMemo(() => {
+    if (panelAnalyticsCanonicalLibraryIds.length === 0) {
+      return true;
+    }
+
+    return panelAnalyticsCanonicalLibraryIds.every((libraryId) => {
+      const status = aiLibraryRunStatus[libraryId] ?? "idle";
+      return status === "ready" || status === "error";
+    });
+  }, [aiLibraryRunStatus, panelAnalyticsCanonicalLibraryIds]);
   useEffect(() => {
     if (!shouldComputePanelAnalyticsOnServer) {
       setPanelAnalyticsStatus("idle");
+      return;
+    }
+
+    if (!panelAnalyticsLibrarySourcesSettled) {
+      setPanelAnalyticsStatus("loading");
       return;
     }
 
@@ -11681,6 +11701,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     panelEffectiveConfidenceThreshold,
     panelAnalyticsLibraryIdSet,
     panelAnalyticsLibraryPoints,
+    panelAnalyticsLibrarySourcesSettled,
     panelSourceTrades,
     shouldComputePanelAnalyticsOnServer,
     shouldSendActivePanelOverrides
