@@ -800,16 +800,10 @@ export const buildStrategyReplayTradeBlueprints = ({
   const blueprints: BacktestHistoryTradeBlueprint[] = [];
   const startIndex = Math.max(2, Math.trunc(chunkBars));
   const safeUnits = Math.max(1, Number.isFinite(unitsPerMove) ? unitsPerMove : 1);
-
-  for (let signalIndex = startIndex; signalIndex < candles.length - 1; signalIndex += 1) {
-    const snapshot = buildFeatureSnapshot(candles, featureSeries, signalIndex, chunkBars);
-    let selectedModel: StrategyReplayModelProfile | null = null;
-    let selectedSpec: StrategyBacktestSpec | null = null;
-    let selectedSide: BacktestHistoryTradeSide | null = null;
-
-    for (const model of models) {
+  const eligibleModels = models
+    .map((model) => {
       if ((model.state ?? 2) <= 0) {
-        continue;
+        return null;
       }
 
       const catalogEntry =
@@ -819,24 +813,29 @@ export const buildStrategyReplayTradeBlueprints = ({
         resolveStrategyModelCatalogEntry(model.name);
 
       if (!catalogEntry?.backtest) {
-        continue;
+        return null;
       }
 
-      const side = evaluateEntrySide(catalogEntry.backtest, snapshot);
-      if (!side) {
-        continue;
-      }
+      return {
+        model,
+        spec: catalogEntry.backtest
+      };
+    })
+    .filter(
+      (
+        candidate
+      ): candidate is {
+        model: StrategyReplayModelProfile;
+        spec: StrategyBacktestSpec;
+      } => candidate !== null
+    );
 
-      selectedModel = model;
-      selectedSpec = catalogEntry.backtest;
-      selectedSide = side;
-      break;
-    }
+  if (eligibleModels.length === 0) {
+    return [];
+  }
 
-    if (!selectedModel || !selectedSpec || !selectedSide) {
-      continue;
-    }
-
+  for (let signalIndex = startIndex; signalIndex < candles.length - 1; signalIndex += 1) {
+    const snapshot = buildFeatureSnapshot(candles, featureSeries, signalIndex, chunkBars);
     const entryIndex = signalIndex + 1;
     const entryCandle = candles[entryIndex];
     if (!entryCandle) {
@@ -844,47 +843,59 @@ export const buildStrategyReplayTradeBlueprints = ({
     }
 
     const entryPrice = Math.max(0.000001, entryCandle.open);
-    const tpDistance =
-      tpDollars > 0 ? Math.max(0.000001, tpDollars / safeUnits) : resolveFallbackDistance(selectedModel, entryPrice, true);
-    const slDistance =
-      slDollars > 0 ? Math.max(0.000001, slDollars / safeUnits) : resolveFallbackDistance(selectedModel, entryPrice, false);
-    const exitIndex = resolveTradeExitIndex({
-      candles,
-      featureSeries,
-      model: selectedModel,
-      modelSpec: selectedSpec,
-      signalIndex,
-      chunkBars,
-      entryPrice,
-      side: selectedSide,
-      tpDistance,
-      slDistance,
-      stopMode,
-      breakEvenTriggerPct,
-      trailingStartPct,
-      trailingDistPct,
-      maxBarsInTrade
-    });
 
-    if (exitIndex <= entryIndex || exitIndex >= candles.length) {
-      continue;
+    for (const { model, spec } of eligibleModels) {
+      const side = evaluateEntrySide(spec, snapshot);
+      if (!side) {
+        continue;
+      }
+
+      const tpDistance =
+        tpDollars > 0
+          ? Math.max(0.000001, tpDollars / safeUnits)
+          : resolveFallbackDistance(model, entryPrice, true);
+      const slDistance =
+        slDollars > 0
+          ? Math.max(0.000001, slDollars / safeUnits)
+          : resolveFallbackDistance(model, entryPrice, false);
+      const exitIndex = resolveTradeExitIndex({
+        candles,
+        featureSeries,
+        model,
+        modelSpec: spec,
+        signalIndex,
+        chunkBars,
+        entryPrice,
+        side,
+        tpDistance,
+        slDistance,
+        stopMode,
+        breakEvenTriggerPct,
+        trailingStartPct,
+        trailingDistPct,
+        maxBarsInTrade
+      });
+
+      if (exitIndex <= entryIndex || exitIndex >= candles.length) {
+        continue;
+      }
+
+      const riskPct = (model.riskMin + model.riskMax) / 2;
+      const rr = (model.rrMin + model.rrMax) / 2;
+
+      blueprints.push({
+        id: `${model.id}-json-${String(signalIndex).padStart(6, "0")}`,
+        modelId: model.id,
+        symbol,
+        side,
+        result: "Win",
+        entryMs: entryCandle.time,
+        exitMs: candles[exitIndex]!.time,
+        riskPct,
+        rr,
+        units: safeUnits
+      });
     }
-
-    const riskPct = (selectedModel.riskMin + selectedModel.riskMax) / 2;
-    const rr = (selectedModel.rrMin + selectedModel.rrMax) / 2;
-
-    blueprints.push({
-      id: `${selectedModel.id}-json-${String(signalIndex).padStart(6, "0")}`,
-      modelId: selectedModel.id,
-      symbol,
-      side: selectedSide,
-      result: "Win",
-      entryMs: entryCandle.time,
-      exitMs: candles[exitIndex]!.time,
-      riskPct,
-      rr,
-      units: safeUnits
-    });
   }
 
   return blueprints.sort(

@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "backfill:xauusd": "node scripts/backfill-xauusd-1m.mjs",
-    "test:aizip-smoke": "node --import tsx --test tests/aizip.smoke.test.ts tests/aizip.runtime.test.ts"
+    "test:aizip-smoke": "node --import tsx --test tests/aizip.smoke.test.ts tests/aizip.runtime.test.ts tests/strategyModelBacktest.test.ts"
   },
   "dependencies": {
     "@deck.gl/aggregation-layers": "^9.2.11",
