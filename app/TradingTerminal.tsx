@@ -2479,6 +2479,7 @@ type BacktestFilterSettings = Pick<
   | "selectedAiLibrarySettings"
   | "distanceMetric"
   | "knnNeighborSpace"
+  | "kEntry"
 >;
 
 type AiSettingsModalProps = {
@@ -11428,7 +11429,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       selectedAiLibraries: [...selectedAiLibraries],
       selectedAiLibrarySettings: cloneAiLibrarySettings(selectedAiLibrarySettings),
       distanceMetric,
-      knnNeighborSpace
+      knnNeighborSpace,
+      kEntry
     }),
     [
       antiCheatEnabled,
@@ -11438,6 +11440,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       enabledBacktestMonths,
       enabledBacktestSessions,
       enabledBacktestWeekdays,
+      kEntry,
       knnNeighborSpace,
       selectedAiLibraries,
       selectedAiLibrarySettings,

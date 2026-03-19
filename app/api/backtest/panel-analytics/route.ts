@@ -94,6 +94,7 @@ type BacktestFilterSettings = {
   selectedAiLibrarySettings: AiLibrarySettings;
   distanceMetric: AiDistanceMetric;
   knnNeighborSpace: KnnNeighborSpace;
+  kEntry: number;
 };
 
 type PanelAnalyticsResponseBody = {
@@ -636,33 +637,39 @@ type PreparedCandidateVectorSpace = {
   variance: number[] | null;
 };
 
-const prepareCandidateVectorSpace = (
-  currentTrade: HistoryItem,
+type StaticCandidateVectorSpace = {
+  candidates: Array<number[] | null>;
+  variance: number[] | null;
+  projectQuery: (queryVector: number[]) => number[] | null;
+};
+
+const buildStaticCandidateVectorSpace = (
   source: Array<{ candidate: LibrarySourceCandidate; sourceIndex: number; libraryId: string }>,
   settings: BacktestFilterSettings
-): PreparedCandidateVectorSpace => {
+): StaticCandidateVectorSpace => {
   const space = normalizeKnnNeighborSpace(settings.knnNeighborSpace);
-  const rawQueryVector = currentTrade.neighborVector ?? buildTradeNeighborVector(currentTrade);
   const rawCandidateVectors = source.map((entry) => entry.candidate.vector);
   const usableVectors = rawCandidateVectors.filter(
     (vector): vector is number[] => Array.isArray(vector) && vector.length > 0
   );
 
+  const nullQuery = () => null;
+
   if (usableVectors.length === 0) {
     return {
       candidates: rawCandidateVectors.map(() => null),
-      queryVector: rawQueryVector,
-      variance: null
+      variance: null,
+      projectQuery: nullQuery
     };
   }
 
-  const baseDim = usableVectors[0]!.length;
+  const baseDim = usableVectors[0]?.length ?? 0;
   const compatibleVectors = usableVectors.filter((vector) => vector.length === baseDim);
   if (compatibleVectors.length === 0) {
     return {
       candidates: rawCandidateVectors.map(() => null),
-      queryVector: rawQueryVector,
-      variance: null
+      variance: null,
+      projectQuery: nullQuery
     };
   }
 
@@ -672,8 +679,9 @@ const prepareCandidateVectorSpace = (
     );
     return {
       candidates,
-      queryVector: rawQueryVector.length === baseDim ? rawQueryVector : null,
-      variance: computeVectorVariance(compatibleVectors)
+      variance: computeVectorVariance(compatibleVectors),
+      projectQuery: (queryVector: number[]) =>
+        queryVector.length === baseDim ? queryVector : null
     };
   }
 
@@ -704,8 +712,6 @@ const prepareCandidateVectorSpace = (
   const standardizedCandidates = rawCandidateVectors.map((vector) =>
     Array.isArray(vector) && vector.length === baseDim ? standardize(vector) : null
   );
-  let standardizedQuery =
-    rawQueryVector.length === baseDim ? standardize(rawQueryVector) : null;
 
   if (space === "post") {
     const usableStandardized = standardizedCandidates.filter(
@@ -713,8 +719,9 @@ const prepareCandidateVectorSpace = (
     );
     return {
       candidates: standardizedCandidates,
-      queryVector: standardizedQuery,
-      variance: computeVectorVariance(usableStandardized)
+      variance: computeVectorVariance(usableStandardized),
+      projectQuery: (queryVector: number[]) =>
+        queryVector.length === baseDim ? standardize(queryVector) : null
     };
   }
 
@@ -726,8 +733,9 @@ const prepareCandidateVectorSpace = (
   if (pcaSource.length < targetDim + 1) {
     return {
       candidates: standardizedCandidates,
-      queryVector: standardizedQuery,
-      variance: computeVectorVariance(pcaSource)
+      variance: computeVectorVariance(pcaSource),
+      projectQuery: (queryVector: number[]) =>
+        queryVector.length === baseDim ? standardize(queryVector) : null
     };
   }
 
@@ -739,26 +747,44 @@ const prepareCandidateVectorSpace = (
   if (!basis) {
     return {
       candidates: standardizedCandidates,
-      queryVector: standardizedQuery,
-      variance: computeVectorVariance(pcaSource)
+      variance: computeVectorVariance(pcaSource),
+      projectQuery: (queryVector: number[]) =>
+        queryVector.length === baseDim ? standardize(queryVector) : null
     };
   }
 
   const projectedCandidates = standardizedCandidates.map((vector) =>
     Array.isArray(vector) && vector.length === baseDim ? applyPcaBasis(basis, vector) : null
   );
-  standardizedQuery =
-    standardizedQuery && standardizedQuery.length === baseDim
-      ? applyPcaBasis(basis, standardizedQuery)
-      : null;
   const projectedUsable = projectedCandidates.filter(
     (vector): vector is number[] => Array.isArray(vector) && vector.length === targetDim
   );
 
   return {
     candidates: projectedCandidates,
-    queryVector: standardizedQuery,
-    variance: computeVectorVariance(projectedUsable)
+    variance: computeVectorVariance(projectedUsable),
+    projectQuery: (queryVector: number[]) => {
+      if (queryVector.length !== baseDim) {
+        return null;
+      }
+      return applyPcaBasis(basis, standardize(queryVector));
+    }
+  };
+};
+
+const prepareCandidateVectorSpace = (
+  currentTrade: HistoryItem,
+  source: Array<{ candidate: LibrarySourceCandidate; sourceIndex: number; libraryId: string }>,
+  settings: BacktestFilterSettings
+): PreparedCandidateVectorSpace => {
+  const space = normalizeKnnNeighborSpace(settings.knnNeighborSpace);
+  const rawQueryVector = currentTrade.neighborVector ?? buildTradeNeighborVector(currentTrade);
+  const staticSpace = buildStaticCandidateVectorSpace(source, settings);
+
+  return {
+    candidates: staticSpace.candidates,
+    queryVector: staticSpace.projectQuery(rawQueryVector),
+    variance: staticSpace.variance
   };
 };
 
@@ -1241,7 +1267,8 @@ const normalizeFilterSettings = (value: unknown): BacktestFilterSettings => {
         ? (row.selectedAiLibrarySettings as AiLibrarySettings)
         : {},
     distanceMetric: normalizeDistanceMetric(row.distanceMetric),
-    knnNeighborSpace: normalizeKnnNeighborSpace(row.knnNeighborSpace)
+    knnNeighborSpace: normalizeKnnNeighborSpace(row.knnNeighborSpace),
+    kEntry: clamp(Math.floor(toNumeric(row.kEntry, 12)), 1, 512)
   };
 };
 
@@ -1440,6 +1467,11 @@ const computeAntiCheatBacktestContext = (params: {
       100000
     );
   };
+  const entryNeighborCap = clamp(
+    Math.floor(Number(panelBacktestFilterSettings.kEntry) || 12),
+    1,
+    512
+  );
 
   const getTradeRiskReward = (trade: HistoryItem) => {
     const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
@@ -1694,8 +1726,42 @@ const computeAntiCheatBacktestContext = (params: {
     );
   };
 
+  const staticLibrarySourceById = new Map<
+    string,
+    Array<{ candidate: LibrarySourceCandidate; sourceIndex: number; libraryId: string }>
+  >();
+  const staticLibraryVectorSpaceById = new Map<string, StaticCandidateVectorSpace>();
+
+  for (const libraryId of activeLibraryIds) {
+    const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
+    if (!normalizedLibraryId || normalizedLibraryId === "core") {
+      continue;
+    }
+
+    const canonicalPoints = libraryPointsById.get(normalizedLibraryId);
+    if (!canonicalPoints || canonicalPoints.length === 0) {
+      continue;
+    }
+
+    const source = canonicalPoints.map((candidate, sourceIndex) => ({
+      candidate: {
+        ...candidate,
+        sourceIndex
+      },
+      libraryId,
+      sourceIndex
+    }));
+
+    staticLibrarySourceById.set(libraryId, source);
+    staticLibraryVectorSpaceById.set(
+      libraryId,
+      buildStaticCandidateVectorSpace(source, panelBacktestFilterSettings)
+    );
+  }
+
   for (let index = 0; index < chronologicalTrades.length; index += 1) {
     const trade = chronologicalTrades[index]!;
+    const tradeQueryVector = trade.neighborVector ?? buildTradeNeighborVector(trade);
     const basePool =
       panelBacktestFilterSettings.validationMode === "split"
         ? splitTrainingTrades
@@ -1734,12 +1800,25 @@ const computeAntiCheatBacktestContext = (params: {
         continue;
       }
 
-      const source = pickLibrarySource(libraryId, basePool, trade);
-      const preparedVectorSpace = prepareCandidateVectorSpace(
-        trade,
-        source,
-        panelBacktestFilterSettings
-      );
+      const staticSource = staticLibrarySourceById.get(libraryId);
+      const staticVectorSpace = staticLibraryVectorSpaceById.get(libraryId);
+      const source = staticSource ?? pickLibrarySource(libraryId, basePool, trade);
+      if (source.length === 0) {
+        continue;
+      }
+
+      const preparedVectorSpace =
+        staticVectorSpace && staticSource
+          ? {
+              candidates: staticVectorSpace.candidates,
+              queryVector: staticVectorSpace.projectQuery(tradeQueryVector),
+              variance: staticVectorSpace.variance
+            }
+          : prepareCandidateVectorSpace(
+              trade,
+              source,
+              panelBacktestFilterSettings
+            );
 
       for (let candidateIndex = 0; candidateIndex < source.length; candidateIndex += 1) {
         const candidateEntry = source[candidateIndex]!;
@@ -1821,6 +1900,7 @@ const computeAntiCheatBacktestContext = (params: {
           Number(right.candidate.entryTime ?? 0) - Number(left.candidate.entryTime ?? 0) ||
           left.candidate.uid.localeCompare(right.candidate.uid)
       )
+      .slice(0, entryNeighborCap)
       .map((entry) =>
         buildEntryNeighbor(entry.candidate, entry.bestSimilarity, entry.score)
       );
@@ -1841,8 +1921,8 @@ const computeAntiCheatBacktestContext = (params: {
   }
 
   return {
-    dateFilteredTrades: hydrateTradesWithSnapshots(dateFilteredTrades),
-    libraryCandidateTrades: hydrateTradesWithSnapshots(splitTrainingTrades),
+    dateFilteredTrades,
+    libraryCandidateTrades: splitTrainingTrades,
     timeFilteredTrades: hydrateTradesWithSnapshots(timeFilteredTrades),
     confidenceById,
     aiEntrySnapshotById
@@ -1957,43 +2037,62 @@ export async function POST(request: Request) {
       : toNumeric(body.activePanelEffectiveConfidenceThreshold);
   const aiLibraryDefaultsById = normalizeAiLibraryDefaultsById(body.aiLibraryDefaultsById);
 
-  const antiCheatBacktestContext = computeAntiCheatBacktestContext({
-    panelSourceTrades,
-    panelLibraryPoints,
-    panelBacktestFilterSettings,
-    aiLibraryDefaultsById
-  });
+  try {
+    const antiCheatBacktestContext = computeAntiCheatBacktestContext({
+      panelSourceTrades,
+      panelLibraryPoints,
+      panelBacktestFilterSettings,
+      aiLibraryDefaultsById
+    });
 
-  const chartPanelHistoryRows = filterHistoryRows({
-    sourceTrades: antiCheatBacktestContext.timeFilteredTrades,
-    settings: panelBacktestFilterSettings,
-    confidenceById: antiCheatBacktestContext.confidenceById,
-    aiEntrySnapshotById: antiCheatBacktestContext.aiEntrySnapshotById,
-    confidenceGateDisabled: panelConfidenceGateDisabled,
-    effectiveConfidenceThreshold: panelEffectiveConfidenceThreshold
-  });
+    const chartPanelHistoryRows = filterHistoryRows({
+      sourceTrades: antiCheatBacktestContext.timeFilteredTrades,
+      settings: panelBacktestFilterSettings,
+      confidenceById: antiCheatBacktestContext.confidenceById,
+      aiEntrySnapshotById: antiCheatBacktestContext.aiEntrySnapshotById,
+      confidenceGateDisabled: panelConfidenceGateDisabled,
+      effectiveConfidenceThreshold: panelEffectiveConfidenceThreshold
+    });
 
-  const activePanelHistoryRows = filterHistoryRows({
-    sourceTrades: activePanelSourceTrades,
-    settings: activePanelBacktestFilterSettings,
-    confidenceById: antiCheatBacktestContext.confidenceById,
-    aiEntrySnapshotById: antiCheatBacktestContext.aiEntrySnapshotById,
-    confidenceGateDisabled: activePanelConfidenceGateDisabled,
-    effectiveConfidenceThreshold: activePanelEffectiveConfidenceThreshold
-  });
+    const activePanelHistoryRows = filterHistoryRows({
+      sourceTrades: activePanelSourceTrades,
+      settings: activePanelBacktestFilterSettings,
+      confidenceById: antiCheatBacktestContext.confidenceById,
+      aiEntrySnapshotById: antiCheatBacktestContext.aiEntrySnapshotById,
+      confidenceGateDisabled: activePanelConfidenceGateDisabled,
+      effectiveConfidenceThreshold: activePanelEffectiveConfidenceThreshold
+    });
 
-  const payload: PanelAnalyticsResponseBody = {
-    dateFilteredTrades: antiCheatBacktestContext.dateFilteredTrades,
-    libraryCandidateTrades: antiCheatBacktestContext.libraryCandidateTrades,
-    timeFilteredTrades: antiCheatBacktestContext.timeFilteredTrades,
-    confidenceByIdEntries: Array.from(antiCheatBacktestContext.confidenceById.entries()),
-    chartPanelHistoryRows,
-    activePanelHistoryRows
-  };
+    const payload: PanelAnalyticsResponseBody = {
+      dateFilteredTrades: antiCheatBacktestContext.dateFilteredTrades,
+      libraryCandidateTrades: antiCheatBacktestContext.libraryCandidateTrades,
+      timeFilteredTrades: antiCheatBacktestContext.timeFilteredTrades,
+      confidenceByIdEntries: Array.from(antiCheatBacktestContext.confidenceById.entries()),
+      chartPanelHistoryRows,
+      activePanelHistoryRows
+    };
 
-  return NextResponse.json(payload, {
-    headers: {
-      "Cache-Control": "no-store"
-    }
-  });
+    return NextResponse.json(payload, {
+      headers: {
+        "Cache-Control": "no-store"
+      }
+    });
+  } catch (error) {
+    console.error("[AIZip][PanelAnalyticsRouteError]", {
+      panelSourceTrades: panelSourceTrades.length,
+      panelLibraryPoints: panelLibraryPoints.length,
+      selectedAiLibraries: panelBacktestFilterSettings.selectedAiLibraries,
+      aiMode: panelBacktestFilterSettings.aiMode,
+      knnNeighborSpace: panelBacktestFilterSettings.knnNeighborSpace,
+      kEntry: panelBacktestFilterSettings.kEntry,
+      error
+    });
+
+    return NextResponse.json(
+      {
+        error: "Panel analytics server compute failed."
+      },
+      { status: 500 }
+    );
+  }
 }

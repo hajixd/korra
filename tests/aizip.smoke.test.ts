@@ -24,6 +24,7 @@ const baseFilterSettings = (overrides?: Record<string, unknown>) => ({
   },
   distanceMetric: "euclidean",
   knnNeighborSpace: "high",
+  kEntry: 12,
   ...(overrides ?? {})
 });
 
@@ -295,4 +296,68 @@ test("neighbor calculation space changes ranking", async () => {
   assert.equal(highNeighbor, "lib|base|high-winner|1");
   assert.equal(postNeighbor, "lib|base|post-winner|0");
   assert.notEqual(highNeighbor, postNeighbor);
+});
+
+test("panel analytics caps stored neighbors to kEntry for large base libraries", async () => {
+  const trades = Array.from({ length: 48 }, (_, index) =>
+    makeTrade({
+      id: `live-${index}`,
+      entryIso: new Date(Date.parse("2025-03-01T00:00:00Z") + index * 3_600_000).toISOString(),
+      exitIso: new Date(Date.parse("2025-03-01T01:00:00Z") + index * 3_600_000).toISOString(),
+      side: index % 2 === 0 ? "Long" : "Short",
+      result: index % 3 === 0 ? "Loss" : "Win",
+      pnlUsd: index % 3 === 0 ? -120 : 140,
+      pnlPct: index % 3 === 0 ? -0.2 : 0.25,
+      outcomePrice: index % 3 === 0 ? 99 : 101,
+      neighborVector: [
+        Math.sin(index / 7),
+        Math.cos(index / 9),
+        (index % 5) / 5,
+        (index % 7) / 7,
+        (index % 11) / 11,
+        (index % 13) / 13
+      ]
+    })
+  );
+
+  const libraryPoints = Array.from({ length: 1500 }, (_, index) => ({
+    uid: `lib|base|bulk-${index}|${index}`,
+    libId: "base",
+    metaTime: Math.floor(Date.parse("2025-02-01T00:00:00Z") / 1000) + index * 300,
+    metaPnl: index % 2 === 0 ? 110 : -105,
+    metaOutcome: index % 2 === 0 ? "Win" : "Loss",
+    metaSession: ALL_SESSIONS[index % ALL_SESSIONS.length],
+    dir: index % 2 === 0 ? 1 : -1,
+    label: index % 2 === 0 ? 1 : -1,
+    v: [
+      Math.sin(index / 7),
+      Math.cos(index / 9),
+      (index % 5) / 5,
+      (index % 7) / 7,
+      (index % 11) / 11,
+      (index % 13) / 13
+    ]
+  }));
+
+  const payload = await postPanelAnalytics({
+    panelSourceTrades: trades,
+    panelLibraryPoints: libraryPoints,
+    panelBacktestFilterSettings: baseFilterSettings({
+      selectedAiLibraries: ["base"],
+      kEntry: 12
+    }),
+    panelConfidenceGateDisabled: true,
+    panelEffectiveConfidenceThreshold: 0,
+    aiLibraryDefaultsById: {
+      base: { weight: 100, maxSamples: 10000 }
+    }
+  });
+
+  const stampedTrade = payload.timeFilteredTrades[payload.timeFilteredTrades.length - 1];
+  assert.ok(stampedTrade, "expected a stamped trade from the large base library run");
+  assert.ok(Array.isArray(stampedTrade.entryNeighbors), "expected stamped neighbors");
+  assert.equal(stampedTrade.entryNeighbors.length, 12);
+  const firstNeighborUid =
+    stampedTrade.entryNeighbors[0]?.metaUid ?? stampedTrade.entryNeighbors[0]?.uid ?? null;
+  assert.equal(stampedTrade.closestClusterUid, firstNeighborUid);
 });
