@@ -17,7 +17,21 @@ const ALLOWED_PAIRS = new Set([
   "BTC_USD"
 ]);
 const MAX_UPSTREAM_LIMIT = 10000;
+const MAX_RELIABLE_UPSTREAM_LIMIT = 3800;
 const UPSTREAM_TIMEOUT_MS = 3000;
+
+const buildUpstreamAttemptLimits = (requestedLimit: number): number[] => {
+  const attempts = new Set<number>();
+  attempts.add(Math.min(requestedLimit, MAX_RELIABLE_UPSTREAM_LIMIT));
+
+  for (const candidate of [3000, 2000, 1500, 1000, 500]) {
+    if (candidate <= requestedLimit) {
+      attempts.add(candidate);
+    }
+  }
+
+  return Array.from(attempts).filter((value) => value > 0);
+};
 
 const buildHistoryFallbackRequest = (
   request: Request,
@@ -125,54 +139,59 @@ export async function GET(request: Request) {
   const upstreamUrl = new URL(API_BASE);
   upstreamUrl.searchParams.set("pair", pair);
   upstreamUrl.searchParams.set("timeframe", timeframe);
-  upstreamUrl.searchParams.set("limit", String(limit));
 
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
-    const response = await fetch(upstreamUrl.toString(), {
-      headers: {
-        "X-API-Key": apiKey,
-        Accept: "application/json"
-      },
-      cache: "no-store",
-      signal: controller.signal
-    }).finally(() => {
-      clearTimeout(timeoutId);
-    });
+  let lastFailureReason = "unknown-error";
 
-    const text = await response.text();
+  for (const attemptLimit of buildUpstreamAttemptLimits(limit)) {
+    upstreamUrl.searchParams.set("limit", String(attemptLimit));
 
-    if (!response.ok) {
-      return fallbackToHistory(
-        request,
-        pair,
-        timeframe,
-        limit,
-        `upstream-${response.status}`
-      );
-    }
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+      const response = await fetch(upstreamUrl.toString(), {
+        headers: {
+          "X-API-Key": apiKey,
+          Accept: "application/json"
+        },
+        cache: "no-store",
+        signal: controller.signal
+      }).finally(() => {
+        clearTimeout(timeoutId);
+      });
 
-    return new NextResponse(text, {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": "no-store",
-        "X-Korra-Market-Source": "upstream",
-        "X-RateLimit-Limit": response.headers.get("X-RateLimit-Limit") || "",
-        "X-RateLimit-Remaining": response.headers.get("X-RateLimit-Remaining") || "",
-        "X-RateLimit-Reset": response.headers.get("X-RateLimit-Reset") || ""
+      const text = await response.text();
+
+      if (!response.ok) {
+        lastFailureReason = `upstream-${response.status}`;
+        continue;
       }
-    });
-  } catch (error) {
-    return fallbackToHistory(
-      request,
-      pair,
-      timeframe,
-      limit,
-      error instanceof Error && error.name === "AbortError"
-        ? "upstream-timeout"
-        : (error as Error).message || "unknown-error"
-    );
+
+      return new NextResponse(text, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          "X-Korra-Market-Source": "upstream",
+          "X-Korra-Market-Requested-Limit": String(limit),
+          "X-Korra-Market-Upstream-Limit": String(attemptLimit),
+          "X-RateLimit-Limit": response.headers.get("X-RateLimit-Limit") || "",
+          "X-RateLimit-Remaining": response.headers.get("X-RateLimit-Remaining") || "",
+          "X-RateLimit-Reset": response.headers.get("X-RateLimit-Reset") || ""
+        }
+      });
+    } catch (error) {
+      lastFailureReason =
+        error instanceof Error && error.name === "AbortError"
+          ? "upstream-timeout"
+          : (error as Error).message || "unknown-error";
+    }
   }
+
+  return fallbackToHistory(
+    request,
+    pair,
+    timeframe,
+    limit,
+    lastFailureReason
+  );
 }

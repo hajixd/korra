@@ -4863,7 +4863,7 @@ const fetchHybridHistoryCandles = async (
       coverageWindow
     );
     const recentTimeframePromise =
-      timeframe === "1m" || Boolean(coverageWindow?.strictCoverage)
+      timeframe === "1m"
         ? Promise.resolve([] as Candle[])
         : fetchMarketCandles(
             timeframe,
@@ -4903,7 +4903,41 @@ const fetchHybridHistoryCandles = async (
       return coveredHistoryCandles.slice(-targetBars);
     }
 
+    const mergedWithRecentCandles =
+      recentTimeframeCandles.length > 0
+        ? mergeRecentCandles(
+            historyCandles,
+            recentTimeframeCandles,
+            Math.max(targetBars, historyCandles.length + recentTimeframeCandles.length),
+            timeframe
+          )
+        : EMPTY_CANDLES;
+    const coveredMergedCandles =
+      mergedWithRecentCandles.length > 0
+        ? applyHistoryCoverageWindow(mergedWithRecentCandles, timeframe, coverageWindow)
+        : EMPTY_CANDLES;
+
+    if (
+      coverageWindow &&
+      coveredMergedCandles.length > 0 &&
+      candlesSatisfyHistoryCoverage(mergedWithRecentCandles, timeframe, coverageWindow)
+    ) {
+      return coveredMergedCandles.slice(-targetBars);
+    }
+
     if (coverageWindow?.strictCoverage) {
+      if (
+        coveredMergedCandles.length >= MIN_SEED_CANDLES &&
+        candlesReachDateRangeStart(
+          mergedWithRecentCandles,
+          timeframe,
+          coverageWindow.startYmd,
+          coverageWindow.leadingBars ?? 0
+        )
+      ) {
+        return coveredMergedCandles.slice(-targetBars);
+      }
+
       if (
         candlesReachDateRangeStart(
           historyCandles,
