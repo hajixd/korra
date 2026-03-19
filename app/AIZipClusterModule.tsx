@@ -8134,15 +8134,7 @@ function ClusterMapViewport3D({
     };
     controls.addEventListener("change", onControlsChange);
 
-    if (!lowPowerMode) {
-      const animate = () => {
-        frameRef.current = requestAnimationFrame(animate);
-        renderNow();
-      };
-      animate();
-    } else {
-      requestRender();
-    }
+    requestRender();
 
     return () => {
       try {
@@ -9525,7 +9517,78 @@ function LegendChip({ dot, label, sub, bg, border }) {
     </div>
   );
 }
-export function ClusterMap({
+
+const shallowValueArrayEqual = (left: any, right: any) => {
+  if (left === right) return true;
+  if (!Array.isArray(left) || !Array.isArray(right)) return false;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (!Object.is(left[index], right[index])) return false;
+  }
+  return true;
+};
+
+const shallowNumberRecordEqual = (left: any, right: any) => {
+  if (left === right) return true;
+  const leftKeys = Object.keys(left || {});
+  const rightKeys = Object.keys(right || {});
+  if (leftKeys.length !== rightKeys.length) return false;
+  for (const key of leftKeys) {
+    if (!Object.prototype.hasOwnProperty.call(right || {}, key)) return false;
+    if (!Object.is(Number(left?.[key] ?? 0), Number(right?.[key] ?? 0))) return false;
+  }
+  return true;
+};
+
+const sameClusterMapCandleWindow = (left: any, right: any) => {
+  if (left === right) return true;
+  if (!Array.isArray(left) || !Array.isArray(right)) return false;
+  if (left.length !== right.length) return false;
+  if (left.length === 0) return true;
+  const leftFirst = Number(left[0]?.time ?? NaN);
+  const rightFirst = Number(right[0]?.time ?? NaN);
+  const leftLast = Number(left[left.length - 1]?.time ?? NaN);
+  const rightLast = Number(right[right.length - 1]?.time ?? NaN);
+  return Object.is(leftFirst, rightFirst) && Object.is(leftLast, rightLast);
+};
+
+const areClusterMapPropsEqual = (prev: any, next: any) => {
+  return (
+    sameClusterMapCandleWindow(prev.candles, next.candles) &&
+    prev.trades === next.trades &&
+    prev.ghostEntries === next.ghostEntries &&
+    prev.libraryPoints === next.libraryPoints &&
+    shallowValueArrayEqual(prev.activeLibraries, next.activeLibraries) &&
+    shallowNumberRecordEqual(prev.libraryCounts, next.libraryCounts) &&
+    prev.chunkBars === next.chunkBars &&
+    prev.potential === next.potential &&
+    prev.parseMode === next.parseMode &&
+    prev.showPotential === next.showPotential &&
+    prev.resetKey === next.resetKey &&
+    prev.sliderValue === next.sliderValue &&
+    prev.clusterMapView === next.clusterMapView &&
+    prev.aiMethod === next.aiMethod &&
+    shallowValueArrayEqual(prev.aiDomains, next.aiDomains) &&
+    prev.knnVoteMode === next.knnVoteMode &&
+    prev.kEntry === next.kEntry &&
+    prev.knnNeighborSpace === next.knnNeighborSpace &&
+    prev.distanceMetric === next.distanceMetric &&
+    prev.hdbDomainDistinction === next.hdbDomainDistinction &&
+    prev.hdbMinClusterSize === next.hdbMinClusterSize &&
+    prev.hdbMinSamples === next.hdbMinSamples &&
+    prev.hdbEpsQuantile === next.hdbEpsQuantile &&
+    prev.staticLibrariesClusters === next.staticLibrariesClusters &&
+    prev.confidenceThreshold === next.confidenceThreshold &&
+    prev.statsDateStart === next.statsDateStart &&
+    prev.statsDateEnd === next.statsDateEnd &&
+    prev.antiCheatEnabled === next.antiCheatEnabled &&
+    prev.allowTradeNeighborFallback === next.allowTradeNeighborFallback &&
+    prev.useEntryNeighborsOnly === next.useEntryNeighborsOnly &&
+    prev.headless === next.headless
+  );
+};
+
+function ClusterMapInner({
   candles,
   trades,
   ghostEntries,
@@ -9779,6 +9842,10 @@ export function ClusterMap({
 
   // Effective heat hover used by UI (pinned beats live).
   const heatHover = pinnedHeatHover ?? heatHoverLive;
+  const heatHoverRef = useRef<any>(null);
+  useEffect(() => {
+    heatHoverRef.current = heatHover;
+  }, [heatHover]);
 
   const heatWinRateColor = (wrRaw: any) => {
     const wr = Number(wrRaw);
@@ -15078,9 +15145,21 @@ export function ClusterMap({
     [resolveSourceTradeForNode, selectedNode]
   );
 
+  const selectedAiSnapshotSource = useMemo(() => {
+    const sourceHasSnapshot =
+      !!selectedSourceTrade &&
+      ((Array.isArray((selectedSourceTrade as any)?.entryNeighbors) &&
+        ((selectedSourceTrade as any).entryNeighbors as any[]).length > 0) ||
+        String((selectedSourceTrade as any)?.closestClusterUid ?? "").trim().length > 0);
+    if (sourceHasSnapshot) {
+      return selectedSourceTrade;
+    }
+    return selectedNode;
+  }, [selectedNode, selectedSourceTrade]);
+
   const selectedNeighborList = useMemo(
-    () => buildNeighborListForNode(selectedNode),
-    [buildNeighborListForNode, selectedNode]
+    () => buildNeighborListForNode(selectedAiSnapshotSource),
+    [buildNeighborListForNode, selectedAiSnapshotSource]
   );
 
   const computeNeighborConfidence = React.useCallback(
@@ -16378,7 +16457,7 @@ export function ClusterMap({
           drawRenderOpts
         );
         return;
-      } else if (heatHover) {
+      } else if (heatHoverRef.current) {
         // Clear hover box when leaving heatmap mode.
         setHeatHover(null);
       }
@@ -16820,7 +16899,6 @@ export function ClusterMap({
     boxViz,
     ghostLegendColored,
     heatmapOn,
-    heatHover,
     computeHeatHover,
     heatmapBasisNodes,
     hdbOverlay,
@@ -19014,16 +19092,17 @@ export function ClusterMap({
                             .trim() === "suppressed");
                       if (k !== "trade" && !isSuppressed) return "—";
                       const key = String(
-                        (selectedNode as any)?.uid ??
-                          (selectedNode as any)?.tradeUid ??
-                          (selectedNode as any)?.id ??
-                          (selectedNode as any)?.tradeId ??
+                        (selectedAiSnapshotSource as any)?.uid ??
+                          (selectedAiSnapshotSource as any)?.tradeUid ??
+                          (selectedAiSnapshotSource as any)?.id ??
+                          (selectedAiSnapshotSource as any)?.tradeId ??
                           ""
                       );
                       const mitRef = key ? (mitMap as any).get(key) : null;
                       if (mitRef) return displayIdForNode(mitRef as any);
                       const rawMitId = String(
-                        (selectedNode as any)?.closestClusterUid ??
+                        (selectedAiSnapshotSource as any)?.closestClusterUid ??
+                          (selectedNode as any)?.closestClusterUid ??
                           (selectedSourceTrade as any)?.closestClusterUid ??
                           ""
                       ).trim();
@@ -20849,6 +20928,8 @@ export function ClusterMap({
     </div>
   );
 }
+
+export const ClusterMap = React.memo(ClusterMapInner, areClusterMapPropsEqual);
 
 
 function Stat({ label, value, color }) {

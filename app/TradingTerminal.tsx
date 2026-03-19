@@ -763,6 +763,36 @@ type PanelAnalyticsServerResponse = {
   activePanelHistoryRows: HistoryItem[];
 };
 
+const PANEL_ANALYTICS_CLIENT_CACHE_TTL_MS = 15_000;
+const PANEL_ANALYTICS_CLIENT_CACHE_MAX = 6;
+const panelAnalyticsClientCache = new Map<
+  string,
+  { expiresAt: number; value: PanelAnalyticsServerResponse }
+>();
+const panelAnalyticsClientInFlight = new Map<string, Promise<PanelAnalyticsServerResponse>>();
+
+const hashStableText = (value: string) => {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fnv1a:${(hash >>> 0).toString(16)}`;
+};
+
+const prunePanelAnalyticsClientCache = (nowMs: number) => {
+  for (const [key, entry] of panelAnalyticsClientCache.entries()) {
+    if (entry.expiresAt <= nowMs) {
+      panelAnalyticsClientCache.delete(key);
+    }
+  }
+  while (panelAnalyticsClientCache.size > PANEL_ANALYTICS_CLIENT_CACHE_MAX) {
+    const oldestKey = panelAnalyticsClientCache.keys().next().value;
+    if (!oldestKey) break;
+    panelAnalyticsClientCache.delete(oldestKey);
+  }
+};
+
 const computePanelAnalyticsOnServer = async (
   payload: PanelAnalyticsServerPayload,
   signal?: AbortSignal
@@ -794,33 +824,71 @@ const computePanelAnalyticsOnServer = async (
     requestBody.activePanelEffectiveConfidenceThreshold = payload.activePanelEffectiveConfidenceThreshold;
   }
 
-  const response = await fetch("/api/backtest/panel-analytics", {
+  const requestText = JSON.stringify(requestBody);
+  const cacheKey = hashStableText(requestText);
+  const nowMs = Date.now();
+  prunePanelAnalyticsClientCache(nowMs);
+
+  const cached = panelAnalyticsClientCache.get(cacheKey);
+  if (cached && cached.expiresAt > nowMs) {
+    return cached.value;
+  }
+
+  const canReuseInFlight = !signal;
+  const inFlight = canReuseInFlight
+    ? panelAnalyticsClientInFlight.get(cacheKey)
+    : null;
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const requestPromise = fetch("/api/backtest/panel-analytics", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(requestBody),
+    body: requestText,
     cache: "no-store",
     signal
-  });
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`Panel analytics server compute failed (${response.status}).`);
+      }
 
-  if (!response.ok) {
-    throw new Error(`Panel analytics server compute failed (${response.status}).`);
+      const data = (await response.json()) as Partial<PanelAnalyticsServerResponse>;
+      const normalized: PanelAnalyticsServerResponse = {
+        dateFilteredTrades: Array.isArray(data.dateFilteredTrades) ? data.dateFilteredTrades : [],
+        libraryCandidateTrades: Array.isArray(data.libraryCandidateTrades)
+          ? data.libraryCandidateTrades
+          : [],
+        timeFilteredTrades: Array.isArray(data.timeFilteredTrades) ? data.timeFilteredTrades : [],
+        confidenceByIdEntries: Array.isArray(data.confidenceByIdEntries)
+          ? (data.confidenceByIdEntries as Array<[string, number]>)
+          : [],
+        chartPanelHistoryRows: Array.isArray(data.chartPanelHistoryRows)
+          ? data.chartPanelHistoryRows
+          : [],
+        activePanelHistoryRows: Array.isArray(data.activePanelHistoryRows)
+          ? data.activePanelHistoryRows
+          : []
+      };
+
+      panelAnalyticsClientCache.set(cacheKey, {
+        expiresAt: Date.now() + PANEL_ANALYTICS_CLIENT_CACHE_TTL_MS,
+        value: normalized
+      });
+      prunePanelAnalyticsClientCache(Date.now());
+      return normalized;
+    })
+    .finally(() => {
+      panelAnalyticsClientInFlight.delete(cacheKey);
+    });
+
+  if (canReuseInFlight) {
+    panelAnalyticsClientInFlight.set(cacheKey, requestPromise);
   }
-
-  const data = (await response.json()) as Partial<PanelAnalyticsServerResponse>;
-  return {
-    dateFilteredTrades: Array.isArray(data.dateFilteredTrades) ? data.dateFilteredTrades : [],
-    libraryCandidateTrades: Array.isArray(data.libraryCandidateTrades)
-      ? data.libraryCandidateTrades
-      : [],
-    timeFilteredTrades: Array.isArray(data.timeFilteredTrades) ? data.timeFilteredTrades : [],
-    confidenceByIdEntries: Array.isArray(data.confidenceByIdEntries)
-      ? (data.confidenceByIdEntries as Array<[string, number]>)
-      : [],
-    chartPanelHistoryRows: Array.isArray(data.chartPanelHistoryRows) ? data.chartPanelHistoryRows : [],
-    activePanelHistoryRows: Array.isArray(data.activePanelHistoryRows) ? data.activePanelHistoryRows : []
-  };
+  return requestPromise;
 };
 
 const computeBacktestAnalyticsOnServer = async (
@@ -12239,16 +12307,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     activePanelEffectiveConfidenceThreshold,
     activePanelSourceTrades,
     aiLibraryDefaultsById,
-    aiLibraryPoints,
-    appliedBacktestSettings,
-    chartPanelConfidenceGateDisabled,
-    appliedConfidenceGateDisabled,
-    chartPanelEffectiveConfidenceThreshold,
-    appliedEffectiveConfidenceThreshold,
     panelBacktestFilterSettings,
     panelConfidenceGateDisabled,
     panelEffectiveConfidenceThreshold,
-    panelAnalyticsLibraryIdSet,
     panelAnalyticsCanonicalLibrariesMissingPoints,
     panelAnalyticsLibraryPoints,
     panelAnalyticsLibrarySourcesSettled,
@@ -18333,16 +18394,60 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return filteredBacktestHistory.slice(startIndex, startIndex + BACKTEST_HISTORY_PAGE_SIZE);
   }, [filteredBacktestHistory, visibleBacktestHistoryPage]);
 
+  const aiZipClusterCandleCount = selectedChartCandles.length;
+  const aiZipClusterFirstCandleTime =
+    aiZipClusterCandleCount > 0
+      ? Number(selectedChartCandles[0]?.time ?? NaN)
+      : NaN;
+  const aiZipClusterLastCandleTime =
+    aiZipClusterCandleCount > 0
+      ? Number(selectedChartCandles[aiZipClusterCandleCount - 1]?.time ?? NaN)
+      : NaN;
+  const aiZipClusterCandleWindowKey = useMemo(() => {
+    if (!isClusterBacktestTabActive) {
+      return "inactive";
+    }
+    return `${aiZipClusterCandleCount}|${
+      Number.isFinite(aiZipClusterFirstCandleTime) ? aiZipClusterFirstCandleTime : "na"
+    }|${
+      Number.isFinite(aiZipClusterLastCandleTime) ? aiZipClusterLastCandleTime : "na"
+    }`;
+  }, [
+    aiZipClusterCandleCount,
+    aiZipClusterFirstCandleTime,
+    aiZipClusterLastCandleTime,
+    isClusterBacktestTabActive
+  ]);
+  const aiZipClusterCandlesCacheRef = useRef<{
+    key: string;
+    value: Array<Candle & { time: number }>;
+  }>({
+    key: "inactive",
+    value: []
+  });
   const aiZipClusterCandles = useMemo(() => {
     if (!isClusterBacktestTabActive) {
+      aiZipClusterCandlesCacheRef.current = {
+        key: "inactive",
+        value: []
+      };
       return [] as Array<Candle & { time: number }>;
     }
 
-    return selectedChartCandles.map((candle) => ({
+    if (aiZipClusterCandlesCacheRef.current.key === aiZipClusterCandleWindowKey) {
+      return aiZipClusterCandlesCacheRef.current.value;
+    }
+
+    const nextCandles = selectedChartCandles.map((candle) => ({
       ...candle,
       time: Number(candle.time)
     }));
-  }, [isClusterBacktestTabActive, selectedChartCandles]);
+    aiZipClusterCandlesCacheRef.current = {
+      key: aiZipClusterCandleWindowKey,
+      value: nextCandles
+    };
+    return nextCandles;
+  }, [aiZipClusterCandleWindowKey, isClusterBacktestTabActive, selectedChartCandles]);
 
   const aiZipClusterTrades = useMemo(() => {
     if (!isClusterBacktestTabActive) {
