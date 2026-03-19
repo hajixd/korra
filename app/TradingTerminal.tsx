@@ -5168,6 +5168,38 @@ const formatStatsDateLabel = (ymd: string): string => {
   });
 };
 
+const resolveExecutedTradeDateRangeLabels = (
+  trades: Array<Pick<HistoryItem, "entryTime" | "exitTime">>,
+  fallbackStartYmd: string,
+  fallbackEndYmd: string
+): { startLabel: string; endLabel: string } => {
+  let firstTradeYmd: string | null = null;
+  let lastTradeYmd: string | null = null;
+
+  for (const trade of trades) {
+    const entryTimeRaw = Number(trade.entryTime ?? trade.exitTime ?? NaN);
+    if (!Number.isFinite(entryTimeRaw) || entryTimeRaw <= 0) {
+      continue;
+    }
+
+    const tradeYmd = getTradeDayKey(entryTimeRaw as UTCTimestamp);
+    if (!firstTradeYmd || tradeYmd < firstTradeYmd) {
+      firstTradeYmd = tradeYmd;
+    }
+    if (!lastTradeYmd || tradeYmd > lastTradeYmd) {
+      lastTradeYmd = tradeYmd;
+    }
+  }
+
+  const resolvedStartYmd = firstTradeYmd ?? fallbackStartYmd;
+  const resolvedEndYmd = lastTradeYmd ?? fallbackEndYmd;
+
+  return {
+    startLabel: resolvedStartYmd ? formatStatsDateLabel(resolvedStartYmd) : "Start",
+    endLabel: resolvedEndYmd ? formatStatsDateLabel(resolvedEndYmd) : "End"
+  };
+};
+
 const getUtcDayStartMs = (ymd: string): number | null => {
   if (!ymd) {
     return null;
@@ -17338,17 +17370,22 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   const mainStatsTitle = "Main Statistics";
 
-  const backtestDateRangeStartLabel = useMemo(() => {
-    return appliedBacktestSettings.statsDateStart
-      ? formatStatsDateLabel(appliedBacktestSettings.statsDateStart)
-      : "Start";
-  }, [appliedBacktestSettings.statsDateStart]);
+  const backtestExecutedDateRange = useMemo(
+    () =>
+      resolveExecutedTradeDateRangeLabels(
+        backtestTrades,
+        appliedBacktestSettings.statsDateStart,
+        appliedBacktestSettings.statsDateEnd
+      ),
+    [
+      backtestTrades,
+      appliedBacktestSettings.statsDateEnd,
+      appliedBacktestSettings.statsDateStart
+    ]
+  );
 
-  const backtestDateRangeEndLabel = useMemo(() => {
-    return appliedBacktestSettings.statsDateEnd
-      ? formatStatsDateLabel(appliedBacktestSettings.statsDateEnd)
-      : "End";
-  }, [appliedBacktestSettings.statsDateEnd]);
+  const backtestDateRangeStartLabel = backtestExecutedDateRange.startLabel;
+  const backtestDateRangeEndLabel = backtestExecutedDateRange.endLabel;
 
   const backtestHeroStats = useMemo<BacktestHeroStatCard[]>(() => {
     const hasTrades = backtestSummary.tradeCount > 0;

@@ -6023,6 +6023,10 @@ function dbscan2D(points: [number, number][], eps: number, minSamples: number) {
 }
 
 const clusterMapDrawOrderCache = new WeakMap<any[], any[]>();
+const clusterMapDrawLayerCache = new WeakMap<
+  any[],
+  { background: any[]; foreground: any[] }
+>();
 const clusterMapKnnEdgeCache = new WeakMap<any[], Map<string, any[]>>();
 
 function normalizeClusterMapToken(v: any): string | null {
@@ -7501,8 +7505,18 @@ function drawClusterMapCanvas(
 
     };
 
-    const bgNodes = ordered.filter((n: any) => !isTop(n));
-    const topNodes = ordered.filter((n: any) => isTop(n));
+    let cachedLayers = clusterMapDrawLayerCache.get(ordered as any[]);
+    if (!cachedLayers) {
+      const background: any[] = [];
+      const foreground: any[] = [];
+      for (const n of ordered as any[]) {
+        (isTop(n) ? foreground : background).push(n);
+      }
+      cachedLayers = { background, foreground };
+      clusterMapDrawLayerCache.set(ordered as any[], cachedLayers);
+    }
+    const bgNodes = cachedLayers.background;
+    const topNodes = cachedLayers.foreground;
 
     // Background nodes first
     for (const n of bgNodes) drawOne(n);
@@ -9669,7 +9683,6 @@ function ClusterMapInner({
   const canvasRef = useRef(null);
   const canvasWrapRef = useRef(null);
   const redrawRef = useRef(() => {});
-  const [hoveredId, setHoveredId] = useState(null);
   const entryNeighborsOnly = !!useEntryNeighborsOnly;
   const [selectedId, setSelectedId] = useState(null);
   const [selectedLink, setSelectedLink] = useState<any>(null);
@@ -9881,9 +9894,40 @@ function ClusterMapInner({
   // Effective heat hover used by UI (pinned beats live).
   const heatHover = pinnedHeatHover ?? heatHoverLive;
   const heatHoverRef = useRef<any>(null);
+  const heatHoverCellKeyRef = useRef<string | null>(null);
   useEffect(() => {
     heatHoverRef.current = heatHover;
   }, [heatHover]);
+  useEffect(() => {
+    if (!heatmapOn) heatHoverCellKeyRef.current = null;
+  }, [heatmapOn]);
+
+  const resolveHeatHoverCellKey = React.useCallback((wx: number, wy: number) => {
+    const hm = heatmapRef.current;
+    if (!hm) return null;
+    const { xMin, xMax, yMin, yMax, nx, ny } = hm || {};
+    if (
+      !Number.isFinite(xMin) ||
+      !Number.isFinite(xMax) ||
+      !Number.isFinite(yMin) ||
+      !Number.isFinite(yMax) ||
+      !Number.isFinite(nx) ||
+      !Number.isFinite(ny) ||
+      nx <= 0 ||
+      ny <= 0
+    ) {
+      return null;
+    }
+    const dxW = xMax - xMin;
+    const dyW = yMax - yMin;
+    if (dxW <= 1e-9 || dyW <= 1e-9) return null;
+    const fx = (wx - xMin) / dxW;
+    const fy = (wy - yMin) / dyW;
+    if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return "out";
+    const ix = Math.min(nx - 1, Math.max(0, Math.floor(fx * nx)));
+    const iy = Math.min(ny - 1, Math.max(0, Math.floor(fy * ny)));
+    return `${ix}|${iy}`;
+  }, []);
 
   const heatWinRateColor = (wrRaw: any) => {
     const wr = Number(wrRaw);
@@ -13396,9 +13440,9 @@ function ClusterMapInner({
 
   useEffect(() => {
     setTooltip(null);
-    setHoveredId(null);
     setSelectedLink(null);
     hoveredIdRef.current = null;
+    heatHoverCellKeyRef.current = null;
     if (hoveredGroupRef.current) {
       hoveredGroupRef.current = null;
       setHoveredGroup(null);
@@ -15730,7 +15774,6 @@ function ClusterMapInner({
     if (is3dMapActive) return;
     const c = canvasRef.current;
     if (!c) return;
-    hoveredIdRef.current = hoveredId;
     drawClusterMapCanvas(
       c,
       displayNodes,
@@ -15757,7 +15800,6 @@ function ClusterMapInner({
     is3dMapActive,
     displayNodes,
     heatmapBasisNodes,
-    hoveredId,
     searchHighlightId,
     ghostLegendColored,
     boxViz,
@@ -16031,8 +16073,43 @@ function ClusterMapInner({
     let drag = { x: 0, y: 0, ox: 0, oy: 0, moved: false };
     let rafId = null;
     let hoverRafId = null;
+    let pendingScale = Number(viewRef.current.scale) || 1;
     let pendingOx = viewRef.current.ox;
     let pendingOy = viewRef.current.oy;
+    const scheduleViewRedraw = () => {
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        viewRef.current = {
+          ...viewRef.current,
+          scale: pendingScale,
+          ox: pendingOx,
+          oy: pendingOy,
+        };
+        drawClusterMapCanvas(
+          canvas,
+          displayNodes,
+          viewRef.current,
+          hoveredIdRef.current,
+          searchHighlightIdRef.current,
+          ghostLegendColored,
+          boxViz,
+          heatmapOn,
+          heatmapRef,
+          hdbOverlay,
+          hoveredGroupRef.current,
+          selectedGroupRef.current,
+          effectiveGroupOverlayOpacity,
+          nodeSizeMul,
+          nodeOutlineMul,
+          heatmapInterp,
+          mapSpreadMulRef.current,
+          heatmapSmoothness,
+          heatmapBasisNodes,
+          drawRenderOpts
+        );
+      });
+    };
     const scheduleHoverRedraw = () => {
       if (hoverRafId != null) return;
       hoverRafId = requestAnimationFrame(() => {
@@ -16216,7 +16293,6 @@ function ClusterMapInner({
           const ry0 = Math.min(boxStart.y, w.y);
           const ry1 = Math.max(boxStart.y, w.y);
           setTooltip(null);
-          setHoveredId(null);
           hoveredIdRef.current = null;
           if (hoveredGroupRef.current) {
             hoveredGroupRef.current = null;
@@ -16273,7 +16349,6 @@ function ClusterMapInner({
           // We draw here and return early so the normal hover redraw below
           // doesn't overwrite the in-progress path.
           setTooltip(null);
-          setHoveredId(null);
           hoveredIdRef.current = null;
           if (hoveredGroupRef.current) {
             hoveredGroupRef.current = null;
@@ -16322,36 +16397,10 @@ function ClusterMapInner({
         const spreadDiv = Math.max(0.7, Math.sqrt(Math.max(0.01, s)));
         const newOx = drag.ox + ((p.x - drag.x) * panSpeed) / spreadDiv;
         const newOy = drag.oy + ((p.y - drag.y) * panSpeed) / spreadDiv;
+        pendingScale = Number(viewRef.current.scale) || 1;
         pendingOx = newOx;
         pendingOy = newOy;
-        if (rafId === null) {
-          rafId = requestAnimationFrame(() => {
-            viewRef.current = { ...viewRef.current, ox: pendingOx, oy: pendingOy };
-            drawClusterMapCanvas(
-              canvas,
-              displayNodes,
-              viewRef.current,
-              hoveredIdRef.current,
-              searchHighlightIdRef.current,
-              ghostLegendColored,
-              boxViz,
-              heatmapOn,
-              heatmapRef,
-              hdbOverlay,
-              hoveredGroupRef.current,
-              selectedGroupRef.current,
-              effectiveGroupOverlayOpacity,
-              nodeSizeMul,
-              nodeOutlineMul,
-              heatmapInterp,
-              mapSpreadMulRef.current,
-              heatmapSmoothness,
-              heatmapBasisNodes,
-              drawRenderOpts
-            );
-            rafId = null;
-          });
-        }
+        scheduleViewRedraw();
         return;
       }
 
@@ -16373,39 +16422,22 @@ function ClusterMapInner({
       if (heatmapOn) {
         if (!pinnedRef.current) {
           const wpos = wpos0;
-          const hs = computeHeatHover(wpos.x, wpos.y);
-          setHeatHover(hs);
+          const nextCellKey = resolveHeatHoverCellKey(wpos.x, wpos.y);
+          if (heatHoverCellKeyRef.current !== nextCellKey) {
+            heatHoverCellKeyRef.current = nextCellKey;
+            const hs = computeHeatHover(wpos.x, wpos.y);
+            React.startTransition(() => {
+              setHeatHover(hs);
+            });
+          }
         }
 
         setTooltip(null);
-        setHoveredId(null);
         hoveredIdRef.current = null;
-
-        drawClusterMapCanvas(
-          canvas,
-          displayNodes,
-          viewRef.current,
-          hoveredIdRef.current,
-          searchHighlightIdRef.current,
-          ghostLegendColored,
-          boxViz,
-          heatmapOn,
-          heatmapRef,
-          hdbOverlay,
-          hoveredGroupRef.current,
-          selectedGroupRef.current,
-          effectiveGroupOverlayOpacity,
-          nodeSizeMul,
-          nodeOutlineMul,
-          heatmapInterp,
-          mapSpreadMulRef.current,
-          heatmapSmoothness,
-          heatmapBasisNodes,
-          drawRenderOpts
-        );
         return;
       } else if (heatHoverRef.current) {
         // Clear hover box when leaving heatmap mode.
+        heatHoverCellKeyRef.current = null;
         setHeatHover(null);
       }
       let hoverVisualChanged = false;
@@ -16419,12 +16451,11 @@ function ClusterMapInner({
         }
       }
       if (hoveredIdRef.current !== id) {
-        setHoveredId(id);
         hoveredIdRef.current = id;
         hoverVisualChanged = true;
       }
       if (id) {
-        const n = displayNodes.find((x) => x.id === id);
+        const n = nodeById.get(String(id)) || null;
         if (n) {
           const lines = [];
           const kind = String((n as any).kind ?? "").toLowerCase();
@@ -16613,6 +16644,38 @@ function ClusterMapInner({
     const endDrag = (e) => {
       dragging = false;
       setIsDragging(false);
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+        viewRef.current = {
+          ...viewRef.current,
+          scale: pendingScale,
+          ox: pendingOx,
+          oy: pendingOy,
+        };
+        drawClusterMapCanvas(
+          canvas,
+          displayNodes,
+          viewRef.current,
+          hoveredIdRef.current,
+          searchHighlightIdRef.current,
+          ghostLegendColored,
+          boxViz,
+          heatmapOn,
+          heatmapRef,
+          hdbOverlay,
+          hoveredGroupRef.current,
+          selectedGroupRef.current,
+          effectiveGroupOverlayOpacity,
+          nodeSizeMul,
+          nodeOutlineMul,
+          heatmapInterp,
+          mapSpreadMulRef.current,
+          heatmapSmoothness,
+          heatmapBasisNodes,
+          drawRenderOpts
+        );
+      }
       setView((prev) => {
         const cur = viewRef.current;
         if (
@@ -16740,6 +16803,9 @@ function ClusterMapInner({
 
       const newV = { scale: newScale, ox: nox, oy: noy };
       viewRef.current = newV;
+      pendingScale = newV.scale;
+      pendingOx = newV.ox;
+      pendingOy = newV.oy;
       setView((prev) => {
         if (
           Math.abs((prev?.scale ?? 1) - newV.scale) < 1e-9 &&
@@ -16750,28 +16816,7 @@ function ClusterMapInner({
         }
         return newV;
       });
-      drawClusterMapCanvas(
-        canvas,
-        displayNodes,
-        viewRef.current,
-        hoveredIdRef.current,
-        searchHighlightIdRef.current,
-        ghostLegendColored,
-        boxViz,
-        heatmapOn,
-        heatmapRef,
-        hdbOverlay,
-        hoveredGroupRef.current,
-        selectedGroupRef.current,
-        effectiveGroupOverlayOpacity,
-        nodeSizeMul,
-        nodeOutlineMul,
-        heatmapInterp,
-        mapSpreadMulRef.current,
-        heatmapSmoothness,
-        heatmapBasisNodes,
-        drawRenderOpts
-      );
+      scheduleViewRedraw();
     };
 
     const onContextMenu = (e) => {
@@ -16788,14 +16833,15 @@ function ClusterMapInner({
       mapFocusRef.current = false;
 
       setTooltip(null);
-      setHoveredId(null);
       hoveredIdRef.current = null;
       if (hoveredGroupRef.current) {
         hoveredGroupRef.current = null;
         setHoveredGroup(null);
       }
+      heatHoverCellKeyRef.current = null;
       setHeatHover(null);
       setHoverWorld(null);
+      scheduleHoverRedraw();
     };
 
     canvas.addEventListener("pointerdown", onPointerDown);
@@ -16840,6 +16886,7 @@ function ClusterMapInner({
     ghostLegendColored,
     heatmapOn,
     computeHeatHover,
+    resolveHeatHoverCellKey,
     heatmapBasisNodes,
     hdbOverlay,
     effectiveGroupOverlayOpacity,
@@ -16848,9 +16895,8 @@ function ClusterMapInner({
     heatmapInterp,
     heatmapSmoothness,
     drawRenderOpts,
-    buildNeighborListForNode,
+    nodeById,
     resolveNonHdbConfidence,
-    entryNeighborsOnly,
     gateConfidenceForNode,
     hdbConfidenceForNode,
     hdbInfo,
