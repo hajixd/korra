@@ -10074,28 +10074,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return;
     }
 
-    if (shouldSkipBacktestHistoryFetch) {
-      setBacktestSeriesMap((prev) => {
-        if (!prev[key]) {
-          return prev;
-        }
-        const next = { ...prev };
-        delete next[key];
-        return next;
-      });
-      setBacktestOneMinuteSeriesMap((prev) => {
-        if (!prev[oneMinuteKey]) {
-          return prev;
-        }
-        const next = { ...prev };
-        delete next[oneMinuteKey];
-        return next;
-      });
-      setStatsRefreshStatus("Preparing Backtest Replay");
-      setBacktestHistorySeedReady(true);
-      return;
-    }
-
     let cancelled = false;
     const isAlreadyOneMinute = appliedBacktestSettings.timeframe === "1m";
     const shouldLoadOneMinutePrecision =
@@ -10478,10 +10456,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const isChartDataLoading = isChartSurface && chartHistoryLoadingKey === selectedKey;
 
   const selectedBacktestCandles = useMemo(() => {
-    return (
-      backtestSeriesMap[appliedBacktestKey] ??
-      seriesMap[appliedBacktestKey] ??
-      EMPTY_CANDLES
+    return pickLongestCandleSeries(
+      backtestSeriesMap[appliedBacktestKey],
+      seriesMap[appliedBacktestKey]
     );
   }, [appliedBacktestKey, backtestSeriesMap, seriesMap]);
 
@@ -10633,15 +10610,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           blueprint.symbol,
           appliedBacktestSettings.timeframe
         );
-        candleSeriesBySymbol[blueprint.symbol] =
-          backtestSeriesMap[timeframeKey] ?? seriesMap[timeframeKey] ?? EMPTY_CANDLES;
+        candleSeriesBySymbol[blueprint.symbol] = pickLongestCandleSeries(
+          backtestSeriesMap[timeframeKey],
+          seriesMap[timeframeKey]
+        );
       }
       if (
         appliedBacktestSettings.timeframe !== "1m" &&
         !oneMinuteCandlesBySymbol[blueprint.symbol]
       ) {
         const minuteKey = symbolTimeframeKey(blueprint.symbol, "1m");
-        const minuteCandles = backtestOneMinuteSeriesMap[minuteKey] ?? EMPTY_CANDLES;
+        const minuteCandles = pickLongestCandleSeries(
+          backtestOneMinuteSeriesMap[minuteKey],
+          backtestSeriesMap[minuteKey],
+          seriesMap[minuteKey]
+        );
         if (minuteCandles.length > 0) {
           oneMinuteCandlesBySymbol[blueprint.symbol] = minuteCandles;
         }
@@ -10718,7 +10701,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     isBacktestClusterHydrationActive ||
     activeBacktestTradeDetails !== null;
   const deepChartCandles = shouldHydrateBacktestChartData
-    ? backtestSeriesMap[selectedKey] ?? null
+    ? pickLongestCandleSeries(backtestSeriesMap[selectedKey], seriesMap[selectedKey])
     : null;
   const usesDeepChartHistory = (deepChartCandles?.length ?? 0) > 0;
   const selectedChartCandles = useMemo(() => {
@@ -11499,7 +11482,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     const minuteKey = symbolTimeframeKey(selectedSymbol, "1m");
-    const minuteCandles = seriesMap[minuteKey] ?? backtestOneMinuteSeriesMap[minuteKey] ?? EMPTY_CANDLES;
+    const minuteCandles = pickLongestCandleSeries(
+      backtestOneMinuteSeriesMap[minuteKey],
+      backtestSeriesMap[minuteKey],
+      seriesMap[minuteKey]
+    );
 
     if (minuteCandles.length === 0) {
       return undefined;
@@ -11509,6 +11496,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       [selectedSymbol]: minuteCandles
     };
   }, [
+    backtestSeriesMap,
     backtestOneMinuteSeriesMap,
     minutePreciseEnabled,
     selectedSymbol,
@@ -11943,7 +11931,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       const key = symbolTimeframeKey(blueprint.symbol, appliedBacktestSettings.timeframe);
-      next[blueprint.symbol] = backtestSeriesMap[key] ?? seriesMap[key] ?? EMPTY_CANDLES;
+      next[blueprint.symbol] = pickLongestCandleSeries(
+        backtestSeriesMap[key],
+        seriesMap[key]
+      );
     }
 
     return next;
@@ -11967,7 +11958,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       const key = symbolTimeframeKey(blueprint.symbol, "1m");
-      const candles = backtestOneMinuteSeriesMap[key] ?? EMPTY_CANDLES;
+      const candles = pickLongestCandleSeries(
+        backtestOneMinuteSeriesMap[key],
+        backtestSeriesMap[key],
+        seriesMap[key]
+      );
 
       if (candles.length > 0) {
         next[blueprint.symbol] = candles;
@@ -11977,7 +11972,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return next;
   }, [
     appliedBacktestSettings.timeframe,
+    backtestSeriesMap,
     backtestOneMinuteSeriesMap,
+    seriesMap,
     tradeBlueprints
   ]);
 
@@ -12320,7 +12317,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   const getHistoryCandlesForSymbol = useCallback((symbol: string): Candle[] => {
     const key = symbolTimeframeKey(symbol, selectedTimeframe);
-    const byTimeframe = backtestSeriesMap[key] ?? seriesMap[key];
+    const byTimeframe = pickLongestCandleSeries(
+      backtestSeriesMap[key],
+      seriesMap[key]
+    );
     if (byTimeframe && byTimeframe.length > 0) {
       return byTimeframe;
     }
@@ -13178,7 +13178,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         modelRunTimeframe,
         leadingBars
       );
-      let candles = seriesMap[candleKey] ?? backtestSeriesMap[candleKey] ?? EMPTY_CANDLES;
+      let candles = pickLongestCandleSeries(
+        backtestSeriesMap[candleKey],
+        seriesMap[candleKey]
+      );
 
       if (
         candles.length < MIN_SEED_CANDLES ||
@@ -15517,6 +15520,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         `bars:${settings.chunkBars}`,
         `max:${settings.maxBarsInTrade}`,
         `dpm:${normalizedUnits}`,
+        `start:${settings.statsDateStart || "-"}`,
+        `end:${settings.statsDateEnd || "-"}`,
         `models:${modelKey}`
       ].join("|");
     },
@@ -15538,8 +15543,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         `sym:${settings.symbol}`,
         `tp:${normalizedTp}`,
         `sl:${normalizedSl}`,
+        `mp:${settings.minutePreciseEnabled ? 1 : 0}`,
         `bars:${settings.chunkBars}`,
-        `dpm:${normalizedUnits}`
+        `max:${settings.maxBarsInTrade}`,
+        `dpm:${normalizedUnits}`,
+        `start:${settings.statsDateStart || "-"}`,
+        `end:${settings.statsDateEnd || "-"}`
       ].join("|");
     },
     []
@@ -16341,6 +16350,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   );
 
   const runAllLibrariesRef = useRef(runAllActiveLibraries);
+  const aiLibraryAutoRunSignatureRef = useRef<string>("");
   useEffect(() => {
     runAllLibrariesRef.current = runAllActiveLibraries;
   }, [runAllActiveLibraries]);
@@ -16358,6 +16368,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (!appliedAiLibraryReadyToRun) {
       return;
     }
+
+    const nextAutoRunSignature = `${backtestRunCount}|${appliedAiLibraryRunInputsSignature}`;
+    if (aiLibraryAutoRunSignatureRef.current === nextAutoRunSignature) {
+      return;
+    }
+    aiLibraryAutoRunSignatureRef.current = nextAutoRunSignature;
 
     const appliedSettingsSnapshot = appliedBacktestSettingsRef.current;
     runAllLibrariesRef.current({
@@ -18047,9 +18063,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     for (const trade of evaluationTrades) {
       const candles =
-        backtestSeriesMap[symbolTimeframeKey(trade.symbol, appliedBacktestSettings.timeframe)] ??
-        seriesMap[symbolTimeframeKey(trade.symbol, appliedBacktestSettings.timeframe)] ??
-        EMPTY_CANDLES;
+        pickLongestCandleSeries(
+          backtestSeriesMap[symbolTimeframeKey(trade.symbol, appliedBacktestSettings.timeframe)],
+          seriesMap[symbolTimeframeKey(trade.symbol, appliedBacktestSettings.timeframe)]
+        );
 
       if (candles.length === 0) {
         continue;
@@ -22292,14 +22309,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                             appliedBacktestSettings.timeframe
                           );
                           const oneMinuteCandles =
-                            backtestOneMinuteSeriesMap[oneMinuteKey] ??
-                            backtestSeriesMap[oneMinuteKey] ??
-                            seriesMap[oneMinuteKey] ??
-                            EMPTY_CANDLES;
+                            pickLongestCandleSeries(
+                              backtestOneMinuteSeriesMap[oneMinuteKey],
+                              backtestSeriesMap[oneMinuteKey],
+                              seriesMap[oneMinuteKey]
+                            );
                           const timeframeCandles =
-                            backtestSeriesMap[timeframeKey] ??
-                            seriesMap[timeframeKey] ??
-                            EMPTY_CANDLES;
+                            pickLongestCandleSeries(
+                              backtestSeriesMap[timeframeKey],
+                              seriesMap[timeframeKey]
+                            );
                           const tradeCandles = resolveTradeMiniChartCandles(
                             trade,
                             appliedBacktestSettings.minutePreciseEnabled
