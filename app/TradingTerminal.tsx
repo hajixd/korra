@@ -4622,6 +4622,29 @@ const fetchHistoryApiCandles = async (
   }
 };
 
+const withTimeout = <T,>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string
+): Promise<T> => {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new Error(message));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      }
+    );
+  });
+};
+
 const pickLongestCandleSeries = (...series: Array<Candle[] | undefined | null>): Candle[] => {
   let best = EMPTY_CANDLES;
 
@@ -4774,6 +4797,7 @@ const XAUUSD_PAIR = "XAU_USD";
 const MIN_SEED_CANDLES = 40;
 const CLIENT_CANDLE_FETCH_TIMEOUT_MS = 3500;
 const BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS = AIZIP_BACKTEST_HISTORY_FETCH_TIMEOUT_MS;
+const AI_LIBRARY_RUN_TIMEOUT_MS = Math.max(15_000, BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS * 2);
 const CLICKHOUSE_MAX_HISTORY_CANDLES = 300_000;
 const MARKET_MAX_HISTORY_CANDLES = 25_000;
 const LIVE_MARKET_SYNC_LIMIT = 160;
@@ -16082,15 +16106,23 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           : settingsSnapshot.slDollars;
 
         const rawPool = useBase
-          ? await loadSeededLibraryTradePool(
-              settingsSnapshot,
-              tpDollars,
-              slDollars
+          ? await withTimeout(
+              loadSeededLibraryTradePool(
+                settingsSnapshot,
+                tpDollars,
+                slDollars
+              ),
+              AI_LIBRARY_RUN_TIMEOUT_MS,
+              `AI library ${libraryId} timed out while loading its seeded pool.`
             )
-          : await loadLibraryTradePool(
-              settingsSnapshot,
-              tpDollars,
-              slDollars
+          : await withTimeout(
+              loadLibraryTradePool(
+                settingsSnapshot,
+                tpDollars,
+                slDollars
+              ),
+              AI_LIBRARY_RUN_TIMEOUT_MS,
+              `AI library ${libraryId} timed out while loading its trade pool.`
             );
         if (aiLibraryRunTokenRef.current[libraryId] !== runToken) {
           return;
@@ -16199,137 +16231,177 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         return;
       }
 
-      const poolParamsByKey = new Map<
-        string,
-        {
-          tpDollars: number;
-          slDollars: number;
-          useSeedPool: boolean;
-          skipTemporalBuckets: boolean;
-        }
-      >();
-      const poolKeyByLibraryId = new Map<string, string>();
-      const settingsByLibraryId = new Map<string, Record<string, AiLibrarySettingValue>>();
+      try {
+        const poolParamsByKey = new Map<
+          string,
+          {
+            tpDollars: number;
+            slDollars: number;
+            useSeedPool: boolean;
+            skipTemporalBuckets: boolean;
+          }
+        >();
+        const poolKeyByLibraryId = new Map<string, string>();
+        const settingsByLibraryId = new Map<string, Record<string, AiLibrarySettingValue>>();
 
-      for (const libraryId of activeIds) {
-        const definition = aiLibraryDefById[libraryId];
-        if (!definition) {
-          continue;
-        }
-        const settings = resolveLibrarySettingsSnapshot(definition, settingsSource);
-        settingsByLibraryId.set(libraryId, settings);
+        for (const libraryId of activeIds) {
+          const definition = aiLibraryDefById[libraryId];
+          if (!definition) {
+            continue;
+          }
+          const settings = resolveLibrarySettingsSnapshot(definition, settingsSource);
+          settingsByLibraryId.set(libraryId, settings);
 
-        const useBase = isBaseSeedingLibraryId(definition.id);
-        const tpDollars = useBase
-          ? resolveLibraryDollarValue(settings.tpDollars, settingsSnapshot.tpDollars)
-          : settingsSnapshot.tpDollars;
-        const slDollars = useBase
-          ? resolveLibraryDollarValue(settings.slDollars, settingsSnapshot.slDollars)
-          : settingsSnapshot.slDollars;
+          const useBase = isBaseSeedingLibraryId(definition.id);
+          const tpDollars = useBase
+            ? resolveLibraryDollarValue(settings.tpDollars, settingsSnapshot.tpDollars)
+            : settingsSnapshot.tpDollars;
+          const slDollars = useBase
+            ? resolveLibraryDollarValue(settings.slDollars, settingsSnapshot.slDollars)
+            : settingsSnapshot.slDollars;
 
-        const poolKey = useBase
-          ? buildSeedLibraryPoolKey(settingsSnapshot, tpDollars, slDollars)
-          : buildLibraryPoolKey(settingsSnapshot, tpDollars, slDollars);
-        poolKeyByLibraryId.set(libraryId, poolKey);
-        if (!poolParamsByKey.has(poolKey)) {
-          poolParamsByKey.set(poolKey, {
-            tpDollars,
-            slDollars,
-            useSeedPool: useBase,
-            skipTemporalBuckets: useBase
-          });
-        }
-      }
-
-      const poolSnapshots = new Map<
-        string,
-        { pool: HistoryItem[]; executedTradeIds: Set<string> }
-      >();
-      const poolErrors = new Set<string>();
-
-      for (const [poolKey, params] of poolParamsByKey.entries()) {
-        try {
-          const rawPool = params.useSeedPool
-            ? await loadSeededLibraryTradePool(
-                settingsSnapshot,
-                params.tpDollars,
-                params.slDollars
-              )
-            : await loadLibraryTradePool(
-                settingsSnapshot,
-                params.tpDollars,
-                params.slDollars
-              );
-          const candidatePool = filterLibraryCandidatePool(rawPool, settingsSnapshot, {
-            skipTemporalBuckets: params.skipTemporalBuckets
-          });
-          const executedTradeIds = buildLibraryExecutedTradeIds(
-            candidatePool,
-            settingsSnapshot
-          );
-          poolSnapshots.set(poolKey, {
-            pool: candidatePool,
-            executedTradeIds
-          });
-        } catch {
-          poolErrors.add(poolKey);
-        }
-      }
-
-      const countsUpdate: Record<string, number> = {};
-      const baselineUpdate: Record<string, number> = {};
-      const statusUpdate: Record<string, AiLibraryRunStatus> = {};
-      const nextPointsById = { ...aiLibraryPointsByIdRef.current };
-
-      for (const libraryId of activeIds) {
-        const token = runTokens.get(libraryId);
-        if (!token || aiLibraryRunTokenRef.current[libraryId] !== token) {
-          continue;
+          const poolKey = useBase
+            ? buildSeedLibraryPoolKey(settingsSnapshot, tpDollars, slDollars)
+            : buildLibraryPoolKey(settingsSnapshot, tpDollars, slDollars);
+          poolKeyByLibraryId.set(libraryId, poolKey);
+          if (!poolParamsByKey.has(poolKey)) {
+            poolParamsByKey.set(poolKey, {
+              tpDollars,
+              slDollars,
+              useSeedPool: useBase,
+              skipTemporalBuckets: useBase
+            });
+          }
         }
 
-        const definition = aiLibraryDefById[libraryId];
-        const settings = settingsByLibraryId.get(libraryId);
-        const poolKey = poolKeyByLibraryId.get(libraryId);
+        const poolSnapshots = new Map<
+          string,
+          { pool: HistoryItem[]; executedTradeIds: Set<string> }
+        >();
+        const poolErrors = new Set<string>();
 
-        if (!definition || !settings || !poolKey) {
-          statusUpdate[libraryId] = "error";
-          continue;
+        for (const [poolKey, params] of poolParamsByKey.entries()) {
+          try {
+            const rawPool = params.useSeedPool
+              ? await withTimeout(
+                  loadSeededLibraryTradePool(
+                    settingsSnapshot,
+                    params.tpDollars,
+                    params.slDollars
+                  ),
+                  AI_LIBRARY_RUN_TIMEOUT_MS,
+                  `AI library pool ${poolKey} timed out while loading its seeded trades.`
+                )
+              : await withTimeout(
+                  loadLibraryTradePool(
+                    settingsSnapshot,
+                    params.tpDollars,
+                    params.slDollars
+                  ),
+                  AI_LIBRARY_RUN_TIMEOUT_MS,
+                  `AI library pool ${poolKey} timed out while loading its trades.`
+                );
+            const candidatePool = filterLibraryCandidatePool(rawPool, settingsSnapshot, {
+              skipTemporalBuckets: params.skipTemporalBuckets
+            });
+            const executedTradeIds = buildLibraryExecutedTradeIds(
+              candidatePool,
+              settingsSnapshot
+            );
+            poolSnapshots.set(poolKey, {
+              pool: candidatePool,
+              executedTradeIds
+            });
+          } catch (error) {
+            poolErrors.add(poolKey);
+            console.error("[AIZip][AiLibraryRunDiagnostics] POOL_LOAD_FAILED", {
+              poolKey,
+              params,
+              error
+            });
+          }
         }
 
-        if (poolErrors.has(poolKey)) {
-          statusUpdate[libraryId] = "error";
-          continue;
+        const countsUpdate: Record<string, number> = {};
+        const baselineUpdate: Record<string, number> = {};
+        const statusUpdate: Record<string, AiLibraryRunStatus> = {};
+        const nextPointsById = { ...aiLibraryPointsByIdRef.current };
+
+        for (const libraryId of activeIds) {
+          const token = runTokens.get(libraryId);
+          if (!token || aiLibraryRunTokenRef.current[libraryId] !== token) {
+            continue;
+          }
+
+          const definition = aiLibraryDefById[libraryId];
+          const settings = settingsByLibraryId.get(libraryId);
+          const poolKey = poolKeyByLibraryId.get(libraryId);
+
+          if (!definition || !settings || !poolKey) {
+            statusUpdate[libraryId] = "error";
+            continue;
+          }
+
+          if (poolErrors.has(poolKey)) {
+            statusUpdate[libraryId] = "error";
+            continue;
+          }
+
+          const poolSnapshot = poolSnapshots.get(poolKey);
+          if (!poolSnapshot) {
+            statusUpdate[libraryId] = "error";
+            continue;
+          }
+
+          try {
+            const result = buildLibrarySnapshotFromPool(
+              definition,
+              settings,
+              poolSnapshot.pool,
+              poolSnapshot.executedTradeIds
+            );
+
+            countsUpdate[libraryId] = result.count;
+            baselineUpdate[libraryId] = result.baselineWinRate;
+            nextPointsById[libraryId] = result.points;
+            statusUpdate[libraryId] = "ready";
+          } catch (error) {
+            statusUpdate[libraryId] = "error";
+            console.error("[AIZip][AiLibraryRunDiagnostics] SNAPSHOT_BUILD_FAILED", {
+              libraryId,
+              poolKey,
+              poolCount: poolSnapshot.pool.length,
+              error
+            });
+          }
         }
 
-        const poolSnapshot = poolSnapshots.get(poolKey);
-        if (!poolSnapshot) {
-          statusUpdate[libraryId] = "error";
-          continue;
+        aiLibraryPointsByIdRef.current = nextPointsById;
+        setAiLibraryPoints(Object.values(nextPointsById).flat());
+        if (Object.keys(countsUpdate).length > 0) {
+          setAiLibraryCounts((current) => ({ ...current, ...countsUpdate }));
         }
-
-        const result = buildLibrarySnapshotFromPool(
-          definition,
-          settings,
-          poolSnapshot.pool,
-          poolSnapshot.executedTradeIds
-        );
-
-        countsUpdate[libraryId] = result.count;
-        baselineUpdate[libraryId] = result.baselineWinRate;
-        nextPointsById[libraryId] = result.points;
-        statusUpdate[libraryId] = "ready";
-      }
-
-      aiLibraryPointsByIdRef.current = nextPointsById;
-      setAiLibraryPoints(Object.values(nextPointsById).flat());
-      if (Object.keys(countsUpdate).length > 0) {
-        setAiLibraryCounts((current) => ({ ...current, ...countsUpdate }));
-      }
-      if (Object.keys(baselineUpdate).length > 0) {
-        setAiLibraryBaselineWinRates((current) => ({ ...current, ...baselineUpdate }));
-      }
-      if (Object.keys(statusUpdate).length > 0) {
-        setAiLibraryRunStatus((current) => ({ ...current, ...statusUpdate }));
+        if (Object.keys(baselineUpdate).length > 0) {
+          setAiLibraryBaselineWinRates((current) => ({ ...current, ...baselineUpdate }));
+        }
+        if (Object.keys(statusUpdate).length > 0) {
+          setAiLibraryRunStatus((current) => ({ ...current, ...statusUpdate }));
+        }
+      } catch (error) {
+        console.error("[AIZip][AiLibraryRunDiagnostics] RUN_ALL_ACTIVE_LIBRARIES_FAILED", {
+          activeIds,
+          error
+        });
+        setAiLibraryRunStatus((current) => {
+          const next = { ...current };
+          for (const libraryId of activeIds) {
+            const token = runTokens.get(libraryId);
+            if (token && aiLibraryRunTokenRef.current[libraryId] === token) {
+              next[libraryId] = "error";
+            }
+          }
+          return next;
+        });
       }
     },
     [
@@ -16359,6 +16431,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     aiLibraryPoolCacheRef.current.clear();
     aiLibraryPoolInFlightRef.current.clear();
     aiLibraryHistoryInFlightRef.current.clear();
+    setAiLibraryRunStatus((current) => {
+      const next = { ...current };
+      let changed = false;
+      for (const [libraryId, status] of Object.entries(next)) {
+        if (status === "loading") {
+          next[libraryId] = "idle";
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
   }, [backtestRunCount]);
 
   useEffect(() => {
