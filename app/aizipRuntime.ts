@@ -53,7 +53,7 @@ export const BASE_SEEDING_LIBRARY_IDS = new Set([
 ]);
 
 export const AI_LIBRARY_SEED_LOOKAHEAD_BARS = 96;
-export const AIZIP_BACKTEST_HISTORY_FETCH_TIMEOUT_MS = 5000;
+export const AIZIP_BACKTEST_HISTORY_FETCH_TIMEOUT_MS = 12000;
 
 export const isBaseSeedingLibraryId = (libraryId: string): boolean => {
   return BASE_SEEDING_LIBRARY_IDS.has(String(libraryId || "").trim().toLowerCase());

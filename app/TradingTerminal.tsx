@@ -4555,6 +4555,18 @@ const mergeHistoricalAndRecentCandles = (
   return mergeRecentCandles(historical, recent, maxBars);
 };
 
+type HistoryApiRequestWindow = {
+  startIso?: string;
+  endIso?: string;
+};
+
+type HistoryCoverageWindow = {
+  startYmd: string;
+  endYmd: string;
+  leadingBars?: number;
+  strictCoverage?: boolean;
+};
+
 const fetchMarketCandles = async (
   timeframe: Timeframe,
   limit: number,
@@ -4681,15 +4693,85 @@ const fetchRecentOneMinuteCandles = async (
   }
 
   try {
-    const recentCandles = await fetchHistoryApiCandles(
+    const recentHistoryCandles = await fetchHistoryApiCandles(
       "1m",
       RECENT_ONE_MINUTE_FETCH_COUNT,
       timeoutMs
     );
-    return trimRecentOneMinuteCandles(recentCandles);
+    const trimmedHistoryCandles = trimRecentOneMinuteCandles(recentHistoryCandles);
+
+    if (trimmedHistoryCandles.length >= MIN_SEED_CANDLES) {
+      return trimmedHistoryCandles;
+    }
+
+    const recentMarketCandles = await fetchMarketCandles(
+      "1m",
+      RECENT_ONE_MINUTE_FETCH_COUNT,
+      timeoutMs
+    );
+    const trimmedMarketCandles = trimRecentOneMinuteCandles(recentMarketCandles);
+
+    return trimmedMarketCandles.length > 0 ? trimmedMarketCandles : trimmedHistoryCandles;
   } catch {
-    return [];
+    try {
+      const recentMarketCandles = await fetchMarketCandles(
+        "1m",
+        RECENT_ONE_MINUTE_FETCH_COUNT,
+        timeoutMs
+      );
+      return trimRecentOneMinuteCandles(recentMarketCandles);
+    } catch {
+      return [];
+    }
   }
+};
+
+const candlesSatisfyHistoryCoverage = (
+  candles: Candle[],
+  timeframe: Timeframe,
+  coverageWindow?: HistoryCoverageWindow
+): boolean => {
+  if (!coverageWindow) {
+    return candles.length >= MIN_SEED_CANDLES;
+  }
+
+  return candlesCoverDateRange(
+    candles,
+    timeframe,
+    coverageWindow.startYmd,
+    coverageWindow.endYmd,
+    coverageWindow.leadingBars ?? 0
+  );
+};
+
+const applyHistoryCoverageWindow = (
+  candles: Candle[],
+  timeframe: Timeframe,
+  coverageWindow?: HistoryCoverageWindow
+): Candle[] => {
+  if (!coverageWindow) {
+    return candles;
+  }
+
+  if (
+    !candlesCoverDateRange(
+      candles,
+      timeframe,
+      coverageWindow.startYmd,
+      coverageWindow.endYmd,
+      coverageWindow.leadingBars ?? 0
+    )
+  ) {
+    return candles;
+  }
+
+  return filterCandlesToDateRange(
+    candles,
+    timeframe,
+    coverageWindow.startYmd,
+    coverageWindow.endYmd,
+    coverageWindow.leadingBars ?? 0
+  );
 };
 
 const fetchHybridHistoryCandles = async (
@@ -4699,38 +4781,67 @@ const fetchHybridHistoryCandles = async (
   allowOneMinuteFallback = true,
   timeoutMs = CLIENT_CANDLE_FETCH_TIMEOUT_MS,
   options?: {
-    requestWindow?: {
-      startIso?: string;
-      endIso?: string;
-    };
+    requestWindow?: HistoryApiRequestWindow;
+    coverageWindow?: HistoryCoverageWindow;
   }
 ): Promise<Candle[]> => {
+  const coverageWindow = options?.coverageWindow;
   const isRangeScoped =
-    Boolean(options?.requestWindow?.startIso) || Boolean(options?.requestWindow?.endIso);
+    Boolean(options?.requestWindow?.startIso) ||
+    Boolean(options?.requestWindow?.endIso) ||
+    Boolean(coverageWindow);
   try {
-    const historyPromise = fetchHistoryApiCandles(
+    const historyCount = Math.min(targetBars, CLICKHOUSE_MAX_HISTORY_CANDLES);
+    let historyCandles = await fetchHistoryApiCandles(
       timeframe,
-      Math.min(targetBars, CLICKHOUSE_MAX_HISTORY_CANDLES),
+      historyCount,
       timeoutMs,
       options?.requestWindow
     );
+
+    if (coverageWindow && !candlesSatisfyHistoryCoverage(historyCandles, timeframe, coverageWindow)) {
+      const deepHistoryCandles = await fetchHistoryApiCandles(
+        timeframe,
+        historyCount,
+        timeoutMs
+      ).catch(() => []);
+
+      if (
+        candlesSatisfyHistoryCoverage(deepHistoryCandles, timeframe, coverageWindow) ||
+        deepHistoryCandles.length > historyCandles.length
+      ) {
+        historyCandles = deepHistoryCandles;
+      }
+    }
+
+    const coveredHistoryCandles = applyHistoryCoverageWindow(
+      historyCandles,
+      timeframe,
+      coverageWindow
+    );
     const recentTimeframePromise =
-      timeframe === "1m" || isRangeScoped
+      timeframe === "1m" || Boolean(coverageWindow?.strictCoverage)
         ? Promise.resolve([] as Candle[])
         : fetchMarketCandles(
             timeframe,
             Math.min(targetBars, MARKET_MAX_HISTORY_CANDLES),
             timeoutMs
           ).catch(() => []);
-    const historyCandles = await historyPromise;
 
     if (timeframe === "1m") {
-      if (isRangeScoped || historyCandles.length >= MIN_SEED_CANDLES) {
-        return historyCandles.slice(-targetBars);
+      if (
+        !coverageWindow ||
+        candlesSatisfyHistoryCoverage(historyCandles, timeframe, coverageWindow)
+      ) {
+        return coveredHistoryCandles.slice(-targetBars);
+      }
+
+      if (coveredHistoryCandles.length >= MIN_SEED_CANDLES && !coverageWindow.strictCoverage) {
+        return coveredHistoryCandles.slice(-targetBars);
       }
 
       if (!allowOneMinuteFallback) {
-        return historyCandles.slice(-targetBars);
+        return coveredHistoryCandles.slice(-targetBars);
       }
 
       const recentOneMinuteCandles = await fetchRecentOneMinuteCandles(
@@ -4742,12 +4853,27 @@ const fetchHybridHistoryCandles = async (
 
     const recentTimeframeCandles = await recentTimeframePromise;
 
-    if (isRangeScoped) {
-      return historyCandles.slice(-targetBars);
+    if (
+      coverageWindow &&
+      candlesSatisfyHistoryCoverage(historyCandles, timeframe, coverageWindow)
+    ) {
+      return coveredHistoryCandles.slice(-targetBars);
     }
 
-    if (historyCandles.length >= MIN_SEED_CANDLES) {
-      return mergeHistoricalAndRecentCandles(historyCandles, recentTimeframeCandles, targetBars);
+    if (coverageWindow?.strictCoverage) {
+      return [];
+    }
+
+    if (isRangeScoped && coveredHistoryCandles.length >= MIN_SEED_CANDLES) {
+      return coveredHistoryCandles.slice(-targetBars);
+    }
+
+    if (coveredHistoryCandles.length >= MIN_SEED_CANDLES) {
+      return mergeHistoricalAndRecentCandles(
+        coveredHistoryCandles,
+        recentTimeframeCandles,
+        targetBars
+      );
     }
 
     if (recentTimeframeCandles.length >= MIN_SEED_CANDLES) {
@@ -4755,8 +4881,8 @@ const fetchHybridHistoryCandles = async (
     }
 
     if (!allowOneMinuteFallback) {
-      return historyCandles.length > 0
-        ? historyCandles.slice(-targetBars)
+      return coveredHistoryCandles.length > 0
+        ? coveredHistoryCandles.slice(-targetBars)
         : recentTimeframeCandles.slice(-targetBars);
     }
   } catch {
@@ -4802,10 +4928,8 @@ const fetchBacktestHistoryCandles = async (
   allowOneMinuteFallback = true,
   timeoutMs = BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
   options?: {
-    requestWindow?: {
-      startIso?: string;
-      endIso?: string;
-    };
+    requestWindow?: HistoryApiRequestWindow;
+    coverageWindow?: HistoryCoverageWindow;
   }
 ): Promise<Candle[]> => {
   const safeTargetBars = clamp(
@@ -10283,16 +10407,38 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 recentOneMinutePromise,
                 allowOneMinuteFallback,
                 BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
-                historyRequestWindow ? { requestWindow: historyRequestWindow } : undefined
+                hasDateRange
+                  ? {
+                      requestWindow: historyRequestWindow ?? undefined,
+                      coverageWindow: {
+                        startYmd: appliedBacktestSettings.statsDateStart,
+                        endYmd: appliedBacktestSettings.statsDateEnd,
+                        leadingBars,
+                        strictCoverage: true
+                      }
+                    }
+                  : undefined
               )
             : Promise.resolve(existingCandles),
           shouldLoadOneMinutePrecision
             ? needsOneMinute
-              ? fetchHistoryApiCandles(
+              ? fetchBacktestHistoryCandles(
                   "1m",
                   oneMinuteTargetBars,
+                  recentOneMinutePromise,
+                  true,
                   BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
-                  oneMinuteHistoryRequestWindow ?? undefined
+                  hasDateRange
+                    ? {
+                        requestWindow: oneMinuteHistoryRequestWindow ?? undefined,
+                        coverageWindow: {
+                          startYmd: appliedBacktestSettings.statsDateStart,
+                          endYmd: appliedBacktestSettings.statsDateEnd,
+                          leadingBars: oneMinutePaddingBars,
+                          strictCoverage: false
+                        }
+                      }
+                    : undefined
                 ).catch(() => [])
               : Promise.resolve(existingOneMinute)
             : Promise.resolve([])
@@ -13375,7 +13521,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           undefined,
           !historyRequestWindow,
           CLIENT_CANDLE_FETCH_TIMEOUT_MS,
-          historyRequestWindow ? { requestWindow: historyRequestWindow } : undefined
+          {
+            requestWindow: historyRequestWindow ?? undefined,
+            coverageWindow:
+              startDate && endDate
+                ? {
+                    startYmd: startDate,
+                    endYmd: endDate,
+                    leadingBars,
+                    strictCoverage: true
+                  }
+                : undefined
+          }
         );
 
         if (candles.length >= MIN_SEED_CANDLES && candles.length > (seriesMap[candleKey]?.length ?? 0)) {
@@ -15640,16 +15797,38 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   recentOneMinutePromise,
                   allowOneMinuteFallback,
                   BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
-                  historyRequestWindow ? { requestWindow: historyRequestWindow } : undefined
+                  hasDateRange
+                    ? {
+                        requestWindow: historyRequestWindow ?? undefined,
+                        coverageWindow: {
+                          startYmd: settings.statsDateStart,
+                          endYmd: settings.statsDateEnd,
+                          leadingBars,
+                          strictCoverage: true
+                        }
+                      }
+                    : undefined
                 )
               : Promise.resolve(existingCandles),
             shouldLoadOneMinutePrecision
               ? needsOneMinute
-                ? fetchHistoryApiCandles(
+                ? fetchBacktestHistoryCandles(
                     "1m",
                     oneMinuteTargetBars,
+                    recentOneMinutePromise,
+                    true,
                     BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
-                    oneMinuteHistoryRequestWindow ?? undefined
+                    hasDateRange
+                      ? {
+                          requestWindow: oneMinuteHistoryRequestWindow ?? undefined,
+                          coverageWindow: {
+                            startYmd: settings.statsDateStart,
+                            endYmd: settings.statsDateEnd,
+                            leadingBars: oneMinutePaddingBars,
+                            strictCoverage: false
+                          }
+                        }
+                      : undefined
                   ).catch(() => [])
                 : Promise.resolve(existingOneMinute)
               : Promise.resolve([])
