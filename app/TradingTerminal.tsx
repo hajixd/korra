@@ -7832,6 +7832,10 @@ const getStatsRefreshPhaseKey = (status: string): string => {
     return "Loading AI Libraries";
   }
 
+  if (status === "Historical Candle Range Unavailable") {
+    return "Loading Candle History";
+  }
+
   return status;
 };
 
@@ -7878,12 +7882,20 @@ const getStatsRefreshPhaseDurationMs = (status: string): number => {
     return 1000;
   }
 
+  if (status === "Historical Candle Range Unavailable") {
+    return 1200;
+  }
+
   return 2200;
 };
 
 const isStatsRefreshAutoFinishPhase = (status: string): boolean => {
   const phaseKey = getStatsRefreshPhaseKey(status);
-  return phaseKey === "Finalizing Statistics" || phaseKey === "No Trades In Selected Range";
+  return (
+    phaseKey === "Finalizing Statistics" ||
+    phaseKey === "No Trades In Selected Range" ||
+    status === "Historical Candle Range Unavailable"
+  );
 };
 
 const getStatsRefreshStatusDetail = (status: string): string => {
@@ -7917,6 +7929,10 @@ const getStatsRefreshStatusDetail = (status: string): string => {
 
   if (status === "No Trades In Selected Range") {
     return "No trades were found inside the selected backtest range.";
+  }
+
+  if (status === "Historical Candle Range Unavailable") {
+    return "The requested historical candle range could not be loaded. Adjust the date window or rerun after history sync completes.";
   }
 
   return "Updating backtest statistics.";
@@ -10357,7 +10373,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             setStatsRefreshStatus("Preparing Backtest Replay");
             setBacktestHistorySeedReady(true);
           } else {
-            setStatsRefreshStatus("Loading Candle History");
+            setStatsRefreshStatus(
+              hasDateRange
+                ? "Historical Candle Range Unavailable"
+                : "Loading Candle History"
+            );
           }
         }
       }
@@ -15189,11 +15209,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       (deferredBacktestTab === "mainStats" && appliedBacktestSettings.aiMode !== "off")
     );
   const isBacktestTabDataPending = selectedBacktestTab !== deferredBacktestTab;
+  const isBacktestHistorySeedBlocked =
+    statsRefreshStatus === "Historical Candle Range Unavailable";
   const isBacktestTabHistoryPending = backtestHasRun && !backtestHistorySeedReady;
   const shouldShowBacktestInlineLoader =
     isBacktestSurfaceSettled &&
     backtestInlineLoaderTabs.has(selectedBacktestTab) &&
-    (isBacktestTabDataPending || isBacktestTabHistoryPending);
+    (isBacktestTabDataPending || (isBacktestTabHistoryPending && !isBacktestHistorySeedBlocked));
   const backtestInlineLoaderLabel =
     selectedBacktestTab === "dimensions"
       ? "Building dimension statistics..."
@@ -16699,11 +16721,39 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedAiLibraryRunInputsSignature,
     backtestRunCount
   ]);
+  const appliedVisibleAiLibrariesSettled = useMemo(() => {
+    if (appliedVisibleAiLibraries.length === 0) {
+      return true;
+    }
+
+    return appliedVisibleAiLibraries.every((libraryId) => {
+      const status = aiLibraryRunStatus[String(libraryId).trim()] ?? "idle";
+      return status === "ready" || status === "error";
+    });
+  }, [aiLibraryRunStatus, appliedVisibleAiLibraries]);
+  const aiClusterActiveLibraries = useMemo(() => {
+    if (
+      !backtestHasRun ||
+      !backtestHistorySeedReady ||
+      !appliedAiLibraryReadyToRun ||
+      !appliedVisibleAiLibrariesSettled
+    ) {
+      return [] as string[];
+    }
+
+    return appliedVisibleAiLibraries;
+  }, [
+    appliedAiLibraryReadyToRun,
+    appliedVisibleAiLibraries,
+    appliedVisibleAiLibrariesSettled,
+    backtestHasRun,
+    backtestHistorySeedReady
+  ]);
   const aiClusterActiveLibraryIdSet = useMemo(() => {
     return new Set(
-      appliedVisibleAiLibraries.map((libraryId) => String(libraryId).trim())
+      aiClusterActiveLibraries.map((libraryId) => String(libraryId).trim())
     );
-  }, [appliedVisibleAiLibraries]);
+  }, [aiClusterActiveLibraries]);
   const aiClusterLibraryPoints = useMemo(() => {
     if (aiClusterActiveLibraryIdSet.size === 0) {
       return [] as any[];
@@ -16764,10 +16814,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (!appliedAiLibraryReadyToRun) {
       codes.push("APPLIED_LIBRARIES_BLOCKED_BY_READINESS_GATE");
     }
-    if (appliedAiLibraryReadyToRun && totalAppliedCount === 0) {
+    if (
+      appliedAiLibraryReadyToRun &&
+      appliedVisibleAiLibrariesSettled &&
+      totalAppliedCount === 0
+    ) {
       codes.push("APPLIED_LIBRARIES_PRODUCED_ZERO_COUNTS");
     }
-    if (appliedAiLibraryReadyToRun && pointCount === 0) {
+    if (
+      appliedAiLibraryReadyToRun &&
+      appliedVisibleAiLibrariesSettled &&
+      pointCount === 0
+    ) {
       codes.push("APPLIED_LIBRARIES_PRODUCED_ZERO_POINTS");
     }
     if (appliedLibraryIds.some((libraryId) => statuses[libraryId] === "error")) {
@@ -16807,6 +16865,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     aiLibraryCounts,
     aiLibraryRunStatus,
     appliedAiLibraryReadyToRun,
+    appliedVisibleAiLibrariesSettled,
     appliedVisibleAiLibraries,
     backtestHasRun,
     backtestHistorySeedReady,
@@ -20803,6 +20862,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     trade history again.
                   </p>
                 </div>
+              ) : selectedSurfaceTab === "backtest" &&
+                isBacktestHistorySeedBlocked ? (
+                <div className="backtest-empty">
+                  <h3>Historical candle range unavailable</h3>
+                  <p>
+                    The requested candle history could not be loaded for the selected backtest
+                    window. Narrow the date range or rerun after history sync completes.
+                  </p>
+                </div>
               ) : null}
 
               {selectedSurfaceTab === "backtest" && shouldShowBacktestInlineLoader ? (
@@ -22768,7 +22836,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       trades={aiZipClusterTrades}
                       ghostEntries={[]}
                       libraryPoints={aiClusterLibraryPoints}
-                      activeLibraries={appliedVisibleAiLibraries}
+                      activeLibraries={aiClusterActiveLibraries}
                       libraryCounts={aiClusterLibraryCounts}
                       chunkBars={appliedBacktestSettings.chunkBars}
                       potential={null}
