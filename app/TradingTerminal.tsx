@@ -3197,6 +3197,64 @@ const buildDefaultAiLibrarySettings = (libraryDefs: readonly AiLibraryDef[]): Ai
   return next;
 };
 
+const normalizeResolvedAiLibrarySettings = (
+  definition: AiLibraryDef,
+  source?: Record<string, AiLibrarySettingValue>
+): Record<string, AiLibrarySettingValue> => {
+  const merged: Record<string, AiLibrarySettingValue> = {
+    ...definition.defaults,
+    ...(source ?? {})
+  };
+
+  for (const field of definition.fields) {
+    const key = field.key;
+    const fallback = definition.defaults[key];
+    const current = merged[key];
+
+    if (field.type === "boolean") {
+      merged[key] = Boolean(current ?? fallback);
+      continue;
+    }
+
+    if (field.type === "number") {
+      const fallbackNumber = Number(fallback);
+      let normalized = Number(current);
+      if (!Number.isFinite(normalized)) {
+        normalized = Number.isFinite(fallbackNumber) ? fallbackNumber : 0;
+      }
+
+      if (key === "maxSamples" && normalized <= 0) {
+        normalized =
+          Number.isFinite(fallbackNumber) && fallbackNumber > 0
+            ? fallbackNumber
+            : 1;
+      }
+
+      if (typeof field.min === "number") {
+        normalized = Math.max(field.min, normalized);
+      }
+      if (typeof field.max === "number") {
+        normalized = Math.min(field.max, normalized);
+      }
+
+      merged[key] = normalized;
+      continue;
+    }
+
+    if (field.type === "select" && Array.isArray(field.options) && field.options.length > 0) {
+      const normalized = String(current ?? fallback ?? "").trim();
+      merged[key] = field.options.some((option) => option.value === normalized)
+        ? normalized
+        : String(field.options[0]!.value);
+      continue;
+    }
+
+    merged[key] = String(current ?? fallback ?? "");
+  }
+
+  return merged;
+};
+
 const getOutcomeWinRatePercent = <T,>(
   items: readonly T[],
   isWin: (item: T) => boolean
@@ -15215,10 +15273,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const resolveLibrarySettingsSnapshot = useCallback(
     (definition: AiLibraryDef, source?: AiLibrarySettings) => {
       const settingsSource = source ?? selectedAiLibrarySettings;
-      return {
-        ...definition.defaults,
-        ...(settingsSource[definition.id] ?? {})
-      };
+      return normalizeResolvedAiLibrarySettings(
+        definition,
+        settingsSource[definition.id]
+      );
     },
     [selectedAiLibrarySettings]
   );
@@ -16400,8 +16458,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (aiLibraryDiagnosticsKeyRef.current === signature) return;
     aiLibraryDiagnosticsKeyRef.current = signature;
 
+    const statusSummary = appliedLibraryIds
+      .map((libraryId) => `${libraryId}:${statuses[libraryId] ?? "idle"}`)
+      .join("|");
+
     console.error(
-      `[AIZip][AiLibraryDiagnostics] ${codes.join(", ")}`,
+      `[AIZip][AiLibraryDiagnostics] ${codes.join(", ")} :: ids=${appliedLibraryIds.join("|")} :: statuses=${statusSummary}`,
       {
         appliedLibraryIds,
         appliedSelectedAiModelCount,
