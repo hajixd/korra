@@ -23310,7 +23310,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       distanceMetric={appliedBacktestSettings.distanceMetric}
                       kEntry={appliedBacktestSettings.kEntry}
                       knnVoteMode={appliedBacktestSettings.knnVoteMode}
-                      allowTradeNeighborFallback={appliedBacktestSettings.selectedAiLibraries.includes("core")}
                       useEntryNeighborsOnly
                       hdbDomainDistinction="conceptual"
                       hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}

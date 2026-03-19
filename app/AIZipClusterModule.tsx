@@ -5837,6 +5837,56 @@ function displayIdFromRaw(v: any): string {
   return prettyIdForNode({ id: raw }).short;
 }
 
+function neighborSortDistance(value: any): number {
+  const d = Number(value);
+  return Number.isFinite(d) ? d : Number.POSITIVE_INFINITY;
+}
+
+function extractNeighborPrimaryRawId(nb: any): string | null {
+  if (!nb) return null;
+  const rawCandidates = [
+    (nb as any)?.metaUid,
+    (nb as any)?.uid,
+    (nb as any)?.metaId,
+    (nb as any)?.id,
+    (nb as any)?.nodeId,
+    (nb as any)?.targetId,
+    (nb as any)?.tradeUid,
+    (nb as any)?.metaTradeUid,
+    (nb as any)?.labelUid,
+  ];
+  for (const raw of rawCandidates) {
+    if (raw == null) continue;
+    const s = String(raw).trim();
+    if (s) return s;
+  }
+  return null;
+}
+
+function resolvePrimaryNeighborRawId(src: any): string | null {
+  const raw = (src as any)?.entryNeighbors;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+
+  const ordered = raw
+    .slice()
+    .sort((a: any, b: any) => {
+      const da = neighborSortDistance((a as any)?.d);
+      const db = neighborSortDistance((b as any)?.d);
+      if (da !== db) return da - db;
+      const ra = Number((a as any)?.rank);
+      const rb = Number((b as any)?.rank);
+      const raa = Number.isFinite(ra) ? ra : Number.POSITIVE_INFINITY;
+      const rbb = Number.isFinite(rb) ? rb : Number.POSITIVE_INFINITY;
+      return raa - rbb;
+    });
+
+  for (const nb of ordered) {
+    const rawId = extractNeighborPrimaryRawId(nb);
+    if (rawId) return rawId;
+  }
+  return null;
+}
+
 // Deterministic color for libraries / overlays (used by canvas + legends).
 // Kept in the outer scope so helper functions like drawClusterMapCanvas can call it safely.
 function colorForLibrary(key: string) {
@@ -6160,7 +6210,6 @@ function getKnnEdgesForClusterMap(
     addClusterMapAlias(aliasToIds, (n as any)?.metaOrigUid, id);
     addClusterMapAlias(aliasToIds, (n as any)?.metaId, id);
     addClusterMapAlias(aliasToIds, (n as any)?.parentId, id);
-    addClusterMapAlias(aliasToIds, (n as any)?.closestClusterUid, id);
 
     const t = normalizeClusterMapToken(
       (n as any)?.entryTime ?? (n as any)?.metaTime ?? (n as any)?.time
@@ -6224,7 +6273,6 @@ function getKnnEdgesForClusterMap(
     sourceNode: any,
     sourceCoord: { x: number; y: number; z: number } | null
   ): string | null => {
-    const tr = (nb as any)?.t ?? null;
     const rawCandidates = [
       (nb as any)?.targetId,
       (nb as any)?.nodeId,
@@ -6235,14 +6283,6 @@ function getKnnEdgesForClusterMap(
       (nb as any)?.tradeUid,
       (nb as any)?.metaTradeUid,
       (nb as any)?.labelUid,
-      (nb as any)?.closestClusterUid,
-      (tr as any)?.id,
-      (tr as any)?.uid,
-      (tr as any)?.tradeUid,
-      (tr as any)?.tradeId,
-      (tr as any)?.metaUid,
-      (tr as any)?.metaTradeUid,
-      (tr as any)?.metaId,
     ];
 
     for (const raw of rawCandidates) {
@@ -9582,7 +9622,6 @@ const areClusterMapPropsEqual = (prev: any, next: any) => {
     prev.statsDateStart === next.statsDateStart &&
     prev.statsDateEnd === next.statsDateEnd &&
     prev.antiCheatEnabled === next.antiCheatEnabled &&
-    prev.allowTradeNeighborFallback === next.allowTradeNeighborFallback &&
     prev.useEntryNeighborsOnly === next.useEntryNeighborsOnly &&
     prev.headless === next.headless
   );
@@ -9623,7 +9662,6 @@ function ClusterMapInner({
   statsDateStart,
   statsDateEnd,
   antiCheatEnabled = false,
-  allowTradeNeighborFallback = false,
   useEntryNeighborsOnly = false,
   headless = false,
 }) {
@@ -11304,7 +11342,6 @@ function ClusterMapInner({
     entryNeighborsOnly,
     staticLibrariesClusters,
     kEntry,
-    allowTradeNeighborFallback,
     aiMethod,
     activeModSet,
     distanceMetric,
@@ -14761,7 +14798,7 @@ function ClusterMapInner({
       const kind = String((n as any).kind || "").toLowerCase();
       if (kind !== "trade" && kind !== "library") continue;
 
-      const directId = (n as any)?.closestClusterUid;
+      const directId = resolvePrimaryNeighborRawId(n);
       if (directId == null || directId === "") continue;
 
       const direct = nodeById.get(String(directId)) ?? null;
@@ -14854,7 +14891,6 @@ function ClusterMapInner({
       addClusterMapAlias(aliasToIds, (n as any)?.metaOrigUid, id);
       addClusterMapAlias(aliasToIds, (n as any)?.metaId, id);
       addClusterMapAlias(aliasToIds, (n as any)?.parentId, id);
-      addClusterMapAlias(aliasToIds, (n as any)?.closestClusterUid, id);
 
       const t = normalizeClusterMapToken(
         (n as any)?.entryTime ?? (n as any)?.metaTime ?? (n as any)?.time
@@ -14910,8 +14946,8 @@ function ClusterMapInner({
         nodeCoordsForClusterMapKnn(node, dim);
 
       const sourceTrade = resolveSourceTradeForNode(node);
-      const nbsRaw =
-        pickNeighborPayload(node) ?? pickNeighborPayload(sourceTrade);
+      const snapshotSource = sourceTrade ?? node;
+      const nbsRaw = pickNeighborPayload(snapshotSource);
 
       const pickFromAlias = (token: string): string | null => {
         const ids = aliasToIds.get(token);
@@ -14936,7 +14972,6 @@ function ClusterMapInner({
       };
 
       const resolveNeighborId = (nb: any): string | null => {
-        const tr = (nb as any)?.t ?? null;
         const rawCandidates = [
           (nb as any)?.targetId,
           (nb as any)?.nodeId,
@@ -14947,19 +14982,7 @@ function ClusterMapInner({
           (nb as any)?.tradeUid,
           (nb as any)?.metaTradeUid,
           (nb as any)?.labelUid,
-          (nb as any)?.closestClusterUid,
         ];
-        if (allowTradeNeighborFallback) {
-          rawCandidates.push(
-            (tr as any)?.id,
-            (tr as any)?.uid,
-            (tr as any)?.tradeUid,
-            (tr as any)?.tradeId,
-            (tr as any)?.metaUid,
-            (tr as any)?.metaTradeUid,
-            (tr as any)?.metaId
-          );
-        }
 
         for (const raw of rawCandidates) {
           const t = normalizeClusterMapToken(raw);
@@ -14972,7 +14995,6 @@ function ClusterMapInner({
       };
 
       const pickRawId = (nb: any) => {
-        const tr = (nb as any)?.t ?? {};
         const rawCandidates = [
           (nb as any)?.metaUid,
           (nb as any)?.uid,
@@ -14983,16 +15005,6 @@ function ClusterMapInner({
           (nb as any)?.tradeUid,
           (nb as any)?.metaTradeUid,
         ];
-        if (allowTradeNeighborFallback) {
-          rawCandidates.push(
-            (tr as any)?.uid,
-            (tr as any)?.tradeUid,
-            (tr as any)?.id,
-            (tr as any)?.tradeId,
-            (tr as any)?.metaUid,
-            (tr as any)?.metaId
-          );
-        }
         for (const raw of rawCandidates) {
           if (raw == null) continue;
           const s = String(raw).trim();
@@ -15010,51 +15022,36 @@ function ClusterMapInner({
             const rawFallback = pickRawId(nb);
             const hitNode =
               resolvedId != null ? (nodeByIdAll as any).get(resolvedId) : null;
-            const tr = (nb as any)?.t ?? null;
             const rawDisplayId = rawFallback
               ? displayIdFromRaw(rawFallback)
               : "—";
-            let displayId = allowTradeNeighborFallback
-              ? hitNode
-                ? displayIdForNode(hitNode)
-                : tr
-                ? displayIdForNode(tr)
-                : rawDisplayId
+            let displayId = hitNode
+              ? displayIdForNode(hitNode)
               : rawDisplayId !== "—"
               ? rawDisplayId
-              : hitNode
-              ? displayIdForNode(hitNode)
               : "—";
             if (!displayId || displayId === "—") {
               displayId = rawFallback ? displayIdFromRaw(rawFallback) : "—";
             }
 
             const pnlVal = (() => {
-              const v =
-                (nb as any)?.metaPnl != null
-                  ? Number((nb as any).metaPnl)
-                  : tr?.isOpen
-                  ? Number(tr.unrealizedPnl ?? NaN)
-                  : Number(tr?.pnl ?? NaN);
-              if (Number.isFinite(v)) return v;
-              if (hitNode) {
-                const nv =
-                  (hitNode as any).isOpen &&
-                  typeof (hitNode as any).unrealizedPnl === "number"
-                    ? Number((hitNode as any).unrealizedPnl)
-                    : typeof (hitNode as any).pnl === "number"
-                    ? Number((hitNode as any).pnl)
-                    : null;
-                if (Number.isFinite(nv as any)) return nv as any;
-              }
-              return null;
+              const v = Number((nb as any)?.metaPnl);
+              return Number.isFinite(v) ? v : null;
             })();
 
             const outcomeStr = String(
-              (nb as any)?.metaOutcome ?? tr?.result ?? ""
+              (nb as any)?.metaOutcome ??
+                (nb as any)?.outcome ??
+                (nb as any)?.result ??
+                (nb as any)?.metaResult ??
+                ""
             ).toUpperCase();
             const labelRaw = Number(
-              (nb as any)?.label ?? (nb as any)?.metaLabel ?? tr?.label ?? NaN
+              (nb as any)?.label ??
+                (nb as any)?.metaLabel ??
+                (nb as any)?.outcomeLabel ??
+                (nb as any)?.metaOutcomeLabel ??
+                NaN
             );
             const label = Number.isFinite(labelRaw) ? labelRaw : null;
             const hasOutcomeSignal =
@@ -15073,28 +15070,12 @@ function ClusterMapInner({
               outcomeStr.includes("LOSS") ||
               label === -1 ||
               (pnlVal != null && pnlVal < 0);
-            const nodeWin =
-              typeof (hitNode as any)?.win === "boolean"
-                ? (hitNode as any).win
-                : null;
-            const isWin = hasOutcomeSignal ? isWinFromPayload : nodeWin === true;
-            const isLoss = hasOutcomeSignal
-              ? isLossFromPayload
-              : nodeWin === false;
+            const isWin = hasOutcomeSignal ? isWinFromPayload : false;
+            const isLoss = hasOutcomeSignal ? isLossFromPayload : false;
             const tone = isWin ? "green" : isLoss ? "red" : "neutral";
 
-            const dist = (() => {
-              const d0 = Number((nb as any)?.d);
-              if (Number.isFinite(d0)) return d0;
-              if (!sourceCoord) return Infinity;
-              const dstId = resolvedId;
-              const dstCoord = dstId ? nodeCoordById.get(dstId) : null;
-              if (!dstCoord) return Infinity;
-              const dx = sourceCoord.x - dstCoord.x;
-              const dy = sourceCoord.y - dstCoord.y;
-              const dz = dim === "3d" ? sourceCoord.z - dstCoord.z : 0;
-              return Math.sqrt(dx * dx + dy * dy + dz * dz);
-            })();
+            const d0 = Number((nb as any)?.d);
+            const dist = Number.isFinite(d0) ? d0 : Infinity;
 
             return {
               key:
@@ -15131,7 +15112,6 @@ function ClusterMapInner({
       return payloadList.length ? payloadList : [];
     },
     [
-      allowTradeNeighborFallback,
       effectiveNeighborK,
       neighborAlias,
       nodeByIdAll,
@@ -15145,42 +15125,18 @@ function ClusterMapInner({
     [resolveSourceTradeForNode, selectedNode]
   );
 
-  const selectedAiSnapshotSource = useMemo(() => {
-    const sourceHasSnapshot =
-      !!selectedSourceTrade &&
-      ((Array.isArray((selectedSourceTrade as any)?.entryNeighbors) &&
-        ((selectedSourceTrade as any).entryNeighbors as any[]).length > 0) ||
-        String((selectedSourceTrade as any)?.closestClusterUid ?? "").trim().length > 0);
-    if (sourceHasSnapshot) {
-      return selectedSourceTrade;
-    }
-    return selectedNode;
-  }, [selectedNode, selectedSourceTrade]);
+  const selectedAiSnapshotSource = useMemo(
+    () => selectedSourceTrade ?? selectedNode,
+    [selectedNode, selectedSourceTrade]
+  );
 
   const selectedNeighborList = useMemo(
     () => buildNeighborListForNode(selectedAiSnapshotSource),
     [buildNeighborListForNode, selectedAiSnapshotSource]
   );
 
-  const computeNeighborConfidence = React.useCallback(
-    (rows: any[]) => {
-      if (aiMethod === "hdbscan") return null;
-      if (!rows || rows.length === 0) return null;
-      let win = 0;
-      let loss = 0;
-      for (const row of rows as any[]) {
-        if (!row) continue;
-        if (row.isWin) win += 1;
-        else if (row.isLoss) loss += 1;
-      }
-      if (win <= 0 && loss <= 0) return null;
-      return clamp(win / (win + loss + AI_EPS), 0, 1);
-    },
-    [aiMethod]
-  );
-
   const resolveNonHdbConfidence = React.useCallback(
-    (node: any, neighborConf: number | null) => {
+    (node: any) => {
       if (!node) return null;
       const raw =
         (node as any)?.entryConfidence ??
@@ -15197,14 +15153,9 @@ function ClusterMapInner({
         if (v >= -1 && v <= 1 && v < 0) v = (v + 1) / 2;
         return clamp(Math.abs(v), 0, 1);
       }
-      return neighborConf ?? null;
+      return null;
     },
     []
-  );
-
-  const selectedNeighborConfidence = useMemo(
-    () => computeNeighborConfidence(selectedNeighborList),
-    [computeNeighborConfidence, selectedNeighborList]
   );
 
   const selectionDiagnosticKeyRef = useRef("");
@@ -15252,13 +15203,9 @@ function ClusterMapInner({
         });
       }).length;
 
-    const nodeMitUid = String(
-      (selectedNode as any)?.closestClusterUid ?? ""
-    ).trim();
-    const sourceMitUid = String(
-      (sourceTrade as any)?.closestClusterUid ?? ""
-    ).trim();
-    const effectiveMitUid = nodeMitUid || sourceMitUid;
+    const nodeMitUid = String(resolvePrimaryNeighborRawId(selectedNode) ?? "").trim();
+    const sourceMitUid = String(resolvePrimaryNeighborRawId(sourceTrade) ?? "").trim();
+    const effectiveMitUid = sourceMitUid || nodeMitUid;
     const resolvedMitNode = effectiveMitUid
       ? (nodeByIdAll as any).get(effectiveMitUid) ??
         (nodeById as any).get(effectiveMitUid) ??
@@ -15269,10 +15216,11 @@ function ClusterMapInner({
     if (!sourceTrade) codes.push("SOURCE_TRADE_NOT_FOUND");
     if (sourceTrade && sourceNeighbors.length === 0)
       codes.push("SOURCE_TRADE_MISSING_ENTRY_NEIGHBORS");
-    if (sourceTrade && !sourceMitUid)
-      codes.push("SOURCE_TRADE_MISSING_CLOSEST_CLUSTER_UID");
+    if (sourceTrade && sourceNeighbors.length > 0 && !sourceMitUid)
+      codes.push("SOURCE_TRADE_ENTRY_NEIGHBORS_MISSING_PRIMARY_ID");
     if (nodeNeighbors.length === 0) codes.push("MAP_NODE_MISSING_ENTRY_NEIGHBORS");
-    if (!nodeMitUid) codes.push("MAP_NODE_MISSING_CLOSEST_CLUSTER_UID");
+    if (nodeNeighbors.length > 0 && !nodeMitUid)
+      codes.push("MAP_NODE_ENTRY_NEIGHBORS_MISSING_PRIMARY_ID");
     if (sourceNeighbors.length > 0 && countNeighborIds(sourceNeighbors) === 0) {
       codes.push("SOURCE_TRADE_ENTRY_NEIGHBORS_MISSING_IDS");
     }
@@ -15282,9 +15230,8 @@ function ClusterMapInner({
     if (nodeNeighbors.length > 0 && selectedNeighborList.length === 0) {
       codes.push("ENTRY_NEIGHBORS_PRESENT_BUT_SELECTED_LIST_EMPTY");
     }
-    if (effectiveMitUid && !resolvedMitNode) {
-      codes.push("CLOSEST_CLUSTER_UID_PRESENT_BUT_NODE_NOT_FOUND");
-    }
+    if (effectiveMitUid && !resolvedMitNode)
+      codes.push("PRIMARY_NEIGHBOR_ID_PRESENT_BUT_NODE_NOT_FOUND");
     if (codes.length === 0) return;
 
     const signature = JSON.stringify({
@@ -15318,7 +15265,7 @@ function ClusterMapInner({
         (selectedNode as any)?.entryConfidence ??
         (selectedNode as any)?.confidence ??
         null,
-      closestClusterUid: nodeMitUid || null,
+      primaryNeighborUid: nodeMitUid || null,
       entryNeighborCount: nodeNeighbors.length,
       entryNeighborIds: countNeighborIds(nodeNeighbors),
     });
@@ -15335,7 +15282,7 @@ function ClusterMapInner({
               (sourceTrade as any)?.entryConfidence ??
               (sourceTrade as any)?.confidence ??
               null,
-            closestClusterUid: sourceMitUid || null,
+            primaryNeighborUid: sourceMitUid || null,
             entryNeighborCount: sourceNeighbors.length,
             entryNeighborIds: countNeighborIds(sourceNeighbors),
           }
@@ -15345,9 +15292,9 @@ function ClusterMapInner({
     console.log("sourceTradeEntryNeighborsSample", sourceNeighbors.slice(0, 3));
     console.log("selectedNeighborListSample", selectedNeighborList.slice(0, 3));
     console.log("mitResolution", {
-      selectedNodeClosestClusterUid: nodeMitUid || null,
-      sourceTradeClosestClusterUid: sourceMitUid || null,
-      effectiveClosestClusterUid: effectiveMitUid || null,
+      selectedNodePrimaryNeighborUid: nodeMitUid || null,
+      sourceTradePrimaryNeighborUid: sourceMitUid || null,
+      effectivePrimaryNeighborUid: effectiveMitUid || null,
       resolvedMitNodeId:
         (resolvedMitNode as any)?.id ??
         (resolvedMitNode as any)?.uid ??
@@ -16485,19 +16432,11 @@ function ClusterMapInner({
             aiMethod !== "hdbscan" &&
             kind !== "potential" &&
             kind !== "library";
-          const neighborRows = wantsNeighborConfidence
-            ? buildNeighborListForNode(n)
-            : [];
-          const neighborConf = wantsNeighborConfidence
-            ? computeNeighborConfidence(neighborRows)
-            : null;
           const displayConf = wantsNeighborConfidence
-            ? resolveNonHdbConfidence(n, neighborConf)
+            ? resolveNonHdbConfidence(n)
             : null;
           const displayGate = wantsNeighborConfidence
-            ? entryNeighborsOnly && neighborConf != null
-              ? neighborConf
-              : gateConfidenceForNode(n)
+            ? gateConfidenceForNode(n)
             : null;
           if (kind === "potential") {
             lines.push(
@@ -16615,9 +16554,10 @@ function ClusterMapInner({
               }
             }
             if (n.closestCluster) lines.push(`Closest: ${n.closestCluster}`);
-            if ((n as any).closestClusterUid)
+            const mitUid = resolvePrimaryNeighborRawId(n);
+            if (mitUid)
               lines.push(
-                `MIT ID: ${displayIdFromRaw((n as any).closestClusterUid)}`
+                `MIT ID: ${displayIdFromRaw(mitUid)}`
               );
             lines.push(`PnL: ${formatNumber(pnl, 2)}`);
             if (n.exitReason && !n.isOpen) lines.push(`Exit: ${n.exitReason}`);
@@ -16909,7 +16849,6 @@ function ClusterMapInner({
     heatmapSmoothness,
     drawRenderOpts,
     buildNeighborListForNode,
-    computeNeighborConfidence,
     resolveNonHdbConfidence,
     entryNeighborsOnly,
     gateConfidenceForNode,
@@ -19057,8 +18996,7 @@ function ClusterMapInner({
                           : `${pct}%`;
                       }
                       const v = resolveNonHdbConfidence(
-                        selectedNode,
-                        selectedNeighborConfidence
+                        selectedAiSnapshotSource ?? selectedNode
                       );
                       return v == null ? "—" : `${Math.round(v * 100)}%`;
                     })()}
@@ -19091,19 +19029,12 @@ function ClusterMapInner({
                             .toLowerCase()
                             .trim() === "suppressed");
                       if (k !== "trade" && !isSuppressed) return "—";
-                      const key = String(
-                        (selectedAiSnapshotSource as any)?.uid ??
-                          (selectedAiSnapshotSource as any)?.tradeUid ??
-                          (selectedAiSnapshotSource as any)?.id ??
-                          (selectedAiSnapshotSource as any)?.tradeId ??
-                          ""
-                      );
-                      const mitRef = key ? (mitMap as any).get(key) : null;
-                      if (mitRef) return displayIdForNode(mitRef as any);
+                      const topNeighbor = selectedNeighborList?.[0] ?? null;
+                      if (topNeighbor && String(topNeighbor.displayId || "").trim()) {
+                        return String(topNeighbor.displayId);
+                      }
                       const rawMitId = String(
-                        (selectedAiSnapshotSource as any)?.closestClusterUid ??
-                          (selectedNode as any)?.closestClusterUid ??
-                          (selectedSourceTrade as any)?.closestClusterUid ??
+                        resolvePrimaryNeighborRawId(selectedAiSnapshotSource) ??
                           ""
                       ).trim();
                       if (!rawMitId) return "—";
@@ -25003,7 +24934,7 @@ export default function App() {
       return bx - ax;
     });
   }, [uiTrades]);
-  // MIT: keyed by trade uid/id -> resolved node for the trade's stored closestClusterUid.
+  // MIT: keyed by trade uid/id -> resolved node for the trade's primary saved neighbor.
   const mitRefByTradeId = mitByTradeKey;
   // Trade History (virtualized for performance)
   const [tradeHistoryQuery, setTradeHistoryQuery] = useState("");
@@ -27241,7 +27172,8 @@ export default function App() {
 
   const mimDetailsLine = (t) => {
     const mitUidRaw =
-      (t as any)?.closestClusterUid ?? (t as any)?.raw?.closestClusterUid;
+      resolvePrimaryNeighborRawId(t) ??
+      resolvePrimaryNeighborRawId((t as any)?.raw);
     const mitUid =
       mitUidRaw != null && String(mitUidRaw).trim()
         ? String(mitUidRaw).trim()
@@ -27275,7 +27207,8 @@ export default function App() {
 
   const getMitInfo = (t: any) => {
     const mitUidRaw =
-      (t as any)?.closestClusterUid ?? (t as any)?.raw?.closestClusterUid;
+      resolvePrimaryNeighborRawId(t) ??
+      resolvePrimaryNeighborRawId((t as any)?.raw);
     const mitUid =
       mitUidRaw != null && String(mitUidRaw).trim() ? String(mitUidRaw) : null;
 
