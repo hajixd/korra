@@ -8066,9 +8066,20 @@ const isStatsRefreshAutoFinishPhase = (status: string): boolean => {
   );
 };
 
-const getStatsRefreshStatusDetail = (status: string): string => {
+const getStatsRefreshStatusDetail = (
+  status: string,
+  options?: {
+    minutePreciseEnabled?: boolean;
+    timeframe?: Timeframe;
+  }
+): string => {
+  const needsOneMinuteSupportData =
+    Boolean(options?.minutePreciseEnabled) && options?.timeframe !== "1m";
+
   if (status === "Loading Candle History") {
-    return "Fetching historical candles and 1-minute support data.";
+    return needsOneMinuteSupportData
+      ? "Fetching historical candles and 1-minute support data."
+      : "Fetching historical candles.";
   }
 
   if (status === "Preparing Backtest Replay") {
@@ -9793,7 +9804,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       AGGRESSOR_MIN_TRAINING_PERIOD_MS,
       candleDurationMs * AGGRESSOR_TRAINING_BARS
     );
-    const recentOneMinutePromise = fetchRecentOneMinuteCandles();
+    const allowOneMinuteFallback = minutePreciseEnabled || selectedTimeframe === "1m";
     const keyWasReady = Boolean(chartHistoryReadyByKeyRef.current[key]);
 
     if (!keyWasReady) {
@@ -9872,7 +9883,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       };
 
       try {
-        const historicalCandles = await fetchHistoryCandles(selectedTimeframe, recentOneMinutePromise);
+        const historicalCandles = await fetchHistoryCandles(
+          selectedTimeframe,
+          undefined,
+          allowOneMinuteFallback
+        );
 
         if (!cancelled && historicalCandles.length > 0) {
           hasInitialSeed = true;
@@ -10301,7 +10316,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       stream?.close();
     };
-  }, [selectedKey, selectedTimeframe]);
+  }, [minutePreciseEnabled, selectedKey, selectedTimeframe]);
 
   useEffect(() => {
     let cancelled = false;
@@ -10409,7 +10424,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           })
         : null;
     // A requested historical date range should not silently degrade to a recent fragment.
-    const allowOneMinuteFallback = !hasDateRange;
+    const allowOneMinuteFallback = !hasDateRange && (shouldLoadOneMinutePrecision || isAlreadyOneMinute);
     const needsHistory =
       existingCandles.length < MIN_SEED_CANDLES ||
       existingCandles.length < targetBars ||
@@ -15797,7 +15812,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             })
           : null;
       // If a specific date range was requested, only exact range history counts as valid seed data.
-      const allowOneMinuteFallback = !hasDateRange;
+      const allowOneMinuteFallback =
+        !hasDateRange && (shouldLoadOneMinutePrecision || isAlreadyOneMinute);
       const needsHistory =
         existingCandles.length < MIN_SEED_CANDLES ||
         existingCandles.length < targetBars ||
@@ -19506,7 +19522,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     ((100 - clamp(statsRefreshProgress, 0, 100)) / 100) * (STATS_REFRESH_HOLD_MS / 1000)
   );
   const statsRefreshDisplayProgress = clamp(statsRefreshProgress, 0, 100);
-  const statsRefreshStatusDetail = getStatsRefreshStatusDetail(statsRefreshStatus);
+  const statsRefreshStatusDetail = getStatsRefreshStatusDetail(statsRefreshStatus, {
+    minutePreciseEnabled: appliedBacktestSettings.minutePreciseEnabled,
+    timeframe: appliedBacktestSettings.timeframe
+  });
   const statsRefreshRangeStartLabel = formatStatsRefreshDateLabel(statsRefreshTimelineRange.startMs);
   const statsRefreshRangeEndLabel = formatStatsRefreshDateLabel(statsRefreshTimelineRange.endMs);
   const statsRefreshCurrentDateLabel =
