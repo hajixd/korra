@@ -15603,6 +15603,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         const minimumSeedBars = getMinimumAizipSeedBars(settings.chunkBars);
 
         if (!hasUsableAizipSeedCandles(candles, minimumSeedBars)) {
+          console.error("[AIZip][AiLibraryRunDiagnostics] SEEDED_POOL_INSUFFICIENT_CANDLES", {
+            poolKey,
+            symbol: settings.symbol,
+            timeframe: settings.timeframe,
+            candleCount: candles.length,
+            minimumSeedBars,
+            chunkBars: settings.chunkBars,
+            statsDateStart: settings.statsDateStart,
+            statsDateEnd: settings.statsDateEnd
+          });
           return [];
         }
 
@@ -15626,6 +15636,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           chunkBars: settings.chunkBars,
           formatTimestamp: formatSeedTime
         }) as HistoryItem[];
+        if (ordered.length === 0) {
+          console.error("[AIZip][AiLibraryRunDiagnostics] SEEDED_POOL_BUILT_ZERO_TRADES", {
+            poolKey,
+            symbol: settings.symbol,
+            timeframe: settings.timeframe,
+            candleCount: candles.length,
+            chunkBars: settings.chunkBars,
+            tpDollars: normalizedTp,
+            slDollars: normalizedSl,
+            dollarsPerMove: settings.dollarsPerMove
+          });
+        }
         if (ordered.length > 0) {
           aiLibraryPoolCacheRef.current.set(poolKey, ordered);
         }
@@ -16048,6 +16070,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       return {
         baselineWinRate,
+        sourceCount: source.length,
         count: balanced.length,
         points
       };
@@ -16140,6 +16163,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           candidatePool,
           executedTradeIds
         );
+        if (result.count === 0) {
+          console.error("[AIZip][AiLibraryRunDiagnostics] LIBRARY_READY_WITH_ZERO_RESULTS", {
+            libraryId,
+            rawPoolCount: rawPool.length,
+            candidatePoolCount: candidatePool.length,
+            sourceCount: result.sourceCount,
+            resultCount: result.count,
+            baselineWinRate: result.baselineWinRate
+          });
+        }
 
         if (aiLibraryRunTokenRef.current[libraryId] !== runToken) {
           return;
@@ -16276,7 +16309,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
         const poolSnapshots = new Map<
           string,
-          { pool: HistoryItem[]; executedTradeIds: Set<string> }
+          { rawPoolCount: number; pool: HistoryItem[]; executedTradeIds: Set<string> }
         >();
         const poolErrors = new Set<string>();
 
@@ -16309,6 +16342,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               settingsSnapshot
             );
             poolSnapshots.set(poolKey, {
+              rawPoolCount: rawPool.length,
               pool: candidatePool,
               executedTradeIds
             });
@@ -16365,6 +16399,17 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             baselineUpdate[libraryId] = result.baselineWinRate;
             nextPointsById[libraryId] = result.points;
             statusUpdate[libraryId] = "ready";
+            if (result.count === 0) {
+              console.error("[AIZip][AiLibraryRunDiagnostics] LIBRARY_READY_WITH_ZERO_RESULTS", {
+                libraryId,
+                poolKey,
+                rawPoolCount: poolSnapshot.rawPoolCount,
+                candidatePoolCount: poolSnapshot.pool.length,
+                sourceCount: result.sourceCount,
+                resultCount: result.count,
+                baselineWinRate: result.baselineWinRate
+              });
+            }
           } catch (error) {
             statusUpdate[libraryId] = "error";
             console.error("[AIZip][AiLibraryRunDiagnostics] SNAPSHOT_BUILD_FAILED", {
