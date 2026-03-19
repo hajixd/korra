@@ -12,6 +12,7 @@ import {
   useDeferredValue,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState
@@ -202,6 +203,8 @@ const isBacktestTab = (value: unknown): value is BacktestTab => {
 const isPanelTab = (value: unknown): value is PanelTab => {
   return typeof value === "string" && PANEL_TAB_IDS.includes(value as PanelTab);
 };
+const useIsomorphicLayoutEffect =
+  typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 const applyDefaultCopytradeRoute = (parsed: URL): void => {
   parsed.pathname = DEFAULT_COPYTRADE_ROUTE_PATHNAME;
@@ -2449,6 +2452,7 @@ type AiLibraryDef = {
 };
 
 type StatsRefreshOverlayMode = "idle" | "hold" | "loading";
+type StatsRefreshPhaseKey = "history" | "prepare" | "replay" | "ai" | "finalize";
 type BacktestDatePreset =
   | "custom"
   | "pastWeek"
@@ -3497,14 +3501,17 @@ const KNN_NEIGHBOR_SPACE_OPTIONS: Array<{
 }> = [
   { value: "high", label: "High Dimensional Space" },
   { value: "post", label: "Post-Compressed Space" },
-  { value: "3d", label: "3 Dimensions" },
-  { value: "2d", label: "2 Dimensions" }
+  { value: "2d", label: "2 Dimensions" },
+  { value: "3d", label: "3 Dimensions" }
 ];
 
 const normalizeAiValidationMode = (value: unknown): AiValidationMode => {
   const mode = String(value ?? "").trim().toLowerCase();
   if (mode === "split" || mode === "synthetic") return mode;
   return "off";
+};
+const normalizeAiRealismLevel = (value: unknown): number => {
+  return clamp(Math.floor(Number(value) || 0), 0, 3);
 };
 
 const AI_VALIDATION_ORDER: AiValidationMode[] = ["off", "split", "synthetic"];
@@ -3513,7 +3520,7 @@ const AI_VALIDATION_LABELS: Record<AiValidationMode, string> = {
   split: "Test/Split",
   synthetic: "Synthetic"
 };
-const AI_REALISM_LABELS = ["Off", "Low", "Medium", "High", "Max"] as const;
+const AI_REALISM_LABELS = ["Off", "Low", "Medium", "High"] as const;
 const DIMENSION_STATS_SPLIT_PCT = 50;
 const DIMENSION_FEATURE_NAME_BANK: Record<string, string[]> = {
   pricePath: [
@@ -8166,20 +8173,72 @@ const doesBacktestHistoryGenerationInputChange = (
   return false;
 };
 
-const getStatsRefreshPhaseKey = (status: string): string => {
-  if (status === "Recovering Replay Locally") {
-    return "Replaying Backtest Trades";
+const STATS_REFRESH_PHASE_META: Record<
+  StatsRefreshPhaseKey,
+  { label: string; weight: number; durationMs: number }
+> = {
+  history: { label: "Sync Candle History", weight: 22, durationMs: 1400 },
+  prepare: { label: "Build Replay Window", weight: 12, durationMs: 900 },
+  replay: { label: "Replay Trades", weight: 46, durationMs: 0 },
+  ai: { label: "Apply AI Context", weight: 12, durationMs: 1100 },
+  finalize: { label: "Finalize Panels", weight: 8, durationMs: 850 }
+};
+
+const getStatsRefreshPhaseKey = (status: string): StatsRefreshPhaseKey => {
+  if (status === "Loading Candle History") {
+    return "history";
   }
 
-  if (status === "Applying AI Analysis") {
-    return "Loading AI Libraries";
+  if (status === "Preparing Backtest Replay") {
+    return "prepare";
   }
 
-  if (status === "Historical Candle Range Unavailable") {
-    return "Loading Candle History";
+  if (status === "Replaying Backtest Trades" || status === "Recovering Replay Locally") {
+    return "replay";
   }
 
-  return status;
+  if (status === "Loading AI Libraries" || status === "Applying AI Analysis") {
+    return "ai";
+  }
+
+  return "finalize";
+};
+
+const resolveStatsRefreshPhaseKey = (
+  phasePlan: StatsRefreshPhaseKey[],
+  status: string
+): StatsRefreshPhaseKey => {
+  const preferred = getStatsRefreshPhaseKey(status);
+  if (phasePlan.includes(preferred)) {
+    return preferred;
+  }
+
+  return phasePlan[phasePlan.length - 1] ?? preferred;
+};
+
+const getStatsRefreshProgressPct = (
+  phasePlan: StatsRefreshPhaseKey[],
+  status: string,
+  phaseRatio: number
+): number => {
+  const safePlan: StatsRefreshPhaseKey[] =
+    phasePlan.length > 0 ? phasePlan : ["prepare", "replay", "finalize"];
+  const activePhase = resolveStatsRefreshPhaseKey(safePlan, status);
+  const totalWeight = safePlan.reduce(
+    (sum, phase) => sum + STATS_REFRESH_PHASE_META[phase].weight,
+    0
+  );
+  const activeIndex = Math.max(0, safePlan.indexOf(activePhase));
+  const completedWeight = safePlan
+    .slice(0, activeIndex)
+    .reduce((sum, phase) => sum + STATS_REFRESH_PHASE_META[phase].weight, 0);
+  const currentWeight = STATS_REFRESH_PHASE_META[activePhase].weight;
+
+  return clamp(
+    ((completedWeight + currentWeight * clamp(phaseRatio, 0, 1)) / Math.max(1, totalWeight)) * 100,
+    0,
+    100
+  );
 };
 
 const formatStatsRefreshDateLabel = (timeMs: number) => {
@@ -8207,38 +8266,12 @@ const normalizeTimestampMs = (value: number): number => {
 };
 
 const getStatsRefreshPhaseDurationMs = (status: string): number => {
-  const phaseKey = getStatsRefreshPhaseKey(status);
-
-  if (phaseKey === "Preparing Backtest Replay") {
-    return 900;
-  }
-
-  if (phaseKey === "Finalizing Statistics") {
-    return 800;
-  }
-
-  if (phaseKey === "Loading AI Libraries") {
-    return 1200;
-  }
-
-  if (phaseKey === "No Trades In Selected Range") {
-    return 1000;
-  }
-
-  if (status === "Historical Candle Range Unavailable") {
-    return 1200;
-  }
-
-  return 2200;
+  return STATS_REFRESH_PHASE_META[getStatsRefreshPhaseKey(status)].durationMs;
 };
 
 const isStatsRefreshAutoFinishPhase = (status: string): boolean => {
   const phaseKey = getStatsRefreshPhaseKey(status);
-  return (
-    phaseKey === "Finalizing Statistics" ||
-    phaseKey === "No Trades In Selected Range" ||
-    status === "Historical Candle Range Unavailable"
-  );
+  return phaseKey === "finalize";
 };
 
 const getStatsRefreshStatusDetail = (
@@ -8298,21 +8331,21 @@ const buildStatsRefreshPhasePlan = ({
 }: {
   needsHistorySeedReload: boolean;
   loadingLibraries: boolean;
-}): string[] => {
-  const phases: string[] = [];
+}): StatsRefreshPhaseKey[] => {
+  const phases: StatsRefreshPhaseKey[] = [];
 
   if (needsHistorySeedReload) {
-    phases.push("Loading Candle History");
+    phases.push("history");
   }
 
-  phases.push("Preparing Backtest Replay");
-  phases.push("Replaying Backtest Trades");
+  phases.push("prepare");
+  phases.push("replay");
 
   if (loadingLibraries) {
-    phases.push("Loading AI Libraries");
+    phases.push("ai");
   }
 
-  phases.push("Finalizing Statistics");
+  phases.push("finalize");
 
   return phases;
 };
@@ -8572,7 +8605,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [statsRefreshProgress, setStatsRefreshProgress] = useState(0);
   const [statsRefreshLoadingDisplayProgress, setStatsRefreshLoadingDisplayProgress] = useState(0);
   const [statsRefreshStatus, setStatsRefreshStatus] = useState("Updating Backtest Statistics");
-  const [statsRefreshPhasePlan, setStatsRefreshPhasePlan] = useState<string[]>([]);
+  const [statsRefreshPhasePlan, setStatsRefreshPhasePlan] = useState<StatsRefreshPhaseKey[]>([]);
   const [statsRefreshProgressLabel, setStatsRefreshProgressLabel] = useState("");
   const [statsRefreshTimelineRange, setStatsRefreshTimelineRange] = useState<{
     startMs: number;
@@ -8659,7 +8692,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     () => buildCurrentBacktestSettingsSnapshot()
   );
 
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (typeof window === "undefined") {
       setTerminalViewStateReady(true);
       return;
@@ -8803,13 +8836,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const selectedSurfaceTabRef = useRef<SurfaceTab>(selectedSurfaceTab);
   const statsRefreshOverlayModeRef = useRef<StatsRefreshOverlayMode>("idle");
   const statsRefreshStatusRef = useRef(statsRefreshStatus);
+  const statsRefreshPhasePlanRef = useRef<StatsRefreshPhaseKey[]>([]);
   const statsRefreshTimelineRangeRef = useRef<{ startMs: number; endMs: number }>({
     startMs: statsRefreshTimelineRange.startMs,
     endMs: statsRefreshTimelineRange.endMs
   });
   const statsRefreshResetTimeoutRef = useRef(0);
   const statsRefreshVisualCompletionRafRef = useRef(0);
-  const statsRefreshProgressRef = useRef(0);
   const statsRefreshLoadingDisplayProgressRef = useRef(0);
   const liveBacktestSettingsRef = useRef<BacktestSettingsSnapshot>(appliedBacktestSettings);
   const tradeBlueprintsRef = useRef<TradeBlueprint[]>([]);
@@ -9059,6 +9092,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     statsRefreshOverlayModeRef.current = mode;
     setStatsRefreshOverlayMode(mode);
   }, []);
+  const setStatsRefreshPhasePlanValue = useCallback((phasePlan: StatsRefreshPhaseKey[]) => {
+    statsRefreshPhasePlanRef.current = phasePlan;
+    setStatsRefreshPhasePlan(phasePlan);
+  }, []);
   const setStatsRefreshTimelineRangeValue = useCallback((startMs: number, endMs: number) => {
     const safeStartMs = Number.isFinite(startMs)
       ? startMs
@@ -9092,7 +9129,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         setStatsRefreshProgress(0);
         setStatsRefreshLoadingDisplayProgress(0);
         setStatsRefreshStatus("Updating Backtest Statistics");
-        setStatsRefreshPhasePlan([]);
+        setStatsRefreshPhasePlanValue([]);
         setStatsRefreshProgressLabel("");
         statsRefreshResetTimeoutRef.current = 0;
       };
@@ -9126,7 +9163,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       statsRefreshVisualCompletionRafRef.current =
         window.requestAnimationFrame(waitUntilVisuallyFull);
     },
-    [clearStatsRefreshResetTimeout, updateStatsRefreshOverlayMode]
+    [clearStatsRefreshResetTimeout, setStatsRefreshPhasePlanValue, updateStatsRefreshOverlayMode]
   );
   const applyBacktestSettingsSnapshot = useCallback((options?: { forceFullReload?: boolean }) => {
     const forceFullReload = options?.forceFullReload ?? false;
@@ -9143,7 +9180,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       setStatsRefreshProgress(0);
       setStatsRefreshLoadingDisplayProgress(0);
       setStatsRefreshStatus("Updating Backtest Statistics");
-      setStatsRefreshPhasePlan([]);
+      setStatsRefreshPhasePlanValue([]);
       setStatsRefreshProgressLabel("");
       return;
     }
@@ -9175,12 +9212,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       updateStatsRefreshOverlayMode("loading");
       setStatsRefreshProgress(0);
       setStatsRefreshLoadingDisplayProgress(0);
-      setStatsRefreshPhasePlan(
-        buildStatsRefreshPhasePlan({
-          needsHistorySeedReload,
-          loadingLibraries: hasAiAnalysisPhase
-        })
-      );
+      const nextPhasePlan = buildStatsRefreshPhasePlan({
+        needsHistorySeedReload,
+        loadingLibraries: hasAiAnalysisPhase
+      });
+      setStatsRefreshPhasePlanValue(nextPhasePlan);
       setStatsRefreshStatus(
         needsHistorySeedReload
           ? "Loading Candle History"
@@ -9214,7 +9250,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       setStatsRefreshProgress(0);
       setStatsRefreshLoadingDisplayProgress(0);
       setStatsRefreshStatus("Updating Backtest Statistics");
-      setStatsRefreshPhasePlan([]);
+      setStatsRefreshPhasePlanValue([]);
       setStatsRefreshProgressLabel("");
     }
     setPropResult(null);
@@ -9223,6 +9259,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     appliedBacktestSettings,
     backtestRunCount,
     clearStatsRefreshResetTimeout,
+    setStatsRefreshPhasePlanValue,
     setStatsRefreshTimelineRangeValue,
     updateStatsRefreshOverlayMode
   ]);
@@ -9294,43 +9331,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }, [statsRefreshLoadingDisplayProgress]);
 
   useEffect(() => {
-    statsRefreshProgressRef.current = statsRefreshProgress;
-  }, [statsRefreshProgress]);
-
-  useEffect(() => {
     statsRefreshStatusRef.current = statsRefreshStatus;
   }, [statsRefreshStatus]);
-
-  useEffect(() => {
-    if (statsRefreshOverlayMode !== "loading") {
-      return;
-    }
-
-    setStatsRefreshPhasePlan((current) => {
-      let next = current.length > 0 ? [...current] : [statsRefreshStatus];
-
-      if (statsRefreshStatus === "No Trades In Selected Range") {
-        next = next.filter(
-          (phase) =>
-            phase !== "Finalizing Statistics" &&
-            phase !== "Loading AI Libraries" &&
-            phase !== "No Trades In Selected Range"
-        );
-        next.push("No Trades In Selected Range");
-        return next;
-      }
-
-      if (statsRefreshStatus === "Finalizing Statistics") {
-        next = next.filter((phase) => phase !== "No Trades In Selected Range");
-      }
-
-      if (!next.includes(statsRefreshStatus)) {
-        next.push(statsRefreshStatus);
-      }
-
-      return next;
-    });
-  }, [statsRefreshOverlayMode, statsRefreshStatus]);
 
   useEffect(() => {
     setStatsRefreshLoadingDisplayProgress(statsRefreshProgress);
@@ -9347,6 +9349,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     const durationMs = getStatsRefreshPhaseDurationMs(statsRefreshStatus);
     const statusSnapshot = statsRefreshStatus;
+    const phasePlanSnapshot =
+      statsRefreshPhasePlanRef.current.length > 0
+        ? [...statsRefreshPhasePlanRef.current]
+        : buildStatsRefreshPhasePlan({
+            needsHistorySeedReload: false,
+            loadingLibraries: false
+          });
     const startedAt = performance.now();
     const rangeSnapshot = statsRefreshTimelineRangeRef.current;
     const rangeStartMs = Number.isFinite(rangeSnapshot.startMs)
@@ -9355,14 +9364,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const rangeEndMs = Number.isFinite(rangeSnapshot.endMs)
       ? Math.max(rangeStartMs + 60_000, rangeSnapshot.endMs)
       : backtestRefreshNowMs;
-    const spanMs = Math.max(60_000, rangeEndMs - rangeStartMs);
     const autoFinish = isStatsRefreshAutoFinishPhase(statusSnapshot);
     let completed = false;
     let rafId = 0;
 
-    setStatsRefreshProgress(0);
-    setStatsRefreshLoadingDisplayProgress(0);
-    setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(rangeStartMs));
+    const phaseKey = resolveStatsRefreshPhaseKey(phasePlanSnapshot, statusSnapshot);
+    const phaseStartProgress = getStatsRefreshProgressPct(phasePlanSnapshot, statusSnapshot, 0);
+    const phaseCursorLabel =
+      phaseKey === "history" || phaseKey === "prepare"
+        ? formatStatsRefreshDateLabel(rangeStartMs)
+        : formatStatsRefreshDateLabel(rangeEndMs);
+
+    setStatsRefreshProgress(phaseStartProgress);
+    setStatsRefreshLoadingDisplayProgress(phaseStartProgress);
+    setStatsRefreshProgressLabel(phaseCursorLabel);
 
     const tick = () => {
       if (statsRefreshOverlayModeRef.current !== "loading") {
@@ -9374,9 +9389,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       const ratio = clamp((performance.now() - startedAt) / durationMs, 0, 1);
-      const cursorMs = rangeStartMs + spanMs * ratio;
-      setStatsRefreshProgress(ratio * 100);
-      setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(cursorMs));
+      setStatsRefreshProgress(
+        getStatsRefreshProgressPct(phasePlanSnapshot, statusSnapshot, ratio)
+      );
 
       if (ratio < 1) {
         rafId = window.requestAnimationFrame(tick);
@@ -12673,6 +12688,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     const analysisSpanMs = Math.max(60_000, analysisEndMs - analysisStartMs);
+    const phasePlanSnapshot =
+      statsRefreshPhasePlanRef.current.length > 0
+        ? [...statsRefreshPhasePlanRef.current]
+        : buildStatsRefreshPhasePlan({
+            needsHistorySeedReload: false,
+            loadingLibraries: hasAiAnalysisPass
+          });
     let lastLoadingProgressRatio = 0;
     const setLoadingProgressFromRatio = (ratio: number) => {
       const normalizedRatio = clamp(ratio, 0, 1);
@@ -12683,7 +12705,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       lastLoadingProgressRatio = normalizedRatio;
       const cursorMs = analysisStartMs + analysisSpanMs * normalizedRatio;
-      setStatsRefreshProgress(normalizedRatio * 100);
+      setStatsRefreshProgress(
+        getStatsRefreshProgressPct(
+          phasePlanSnapshot,
+          "Replaying Backtest Trades",
+          normalizedRatio
+        )
+      );
       setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(cursorMs));
     };
 
@@ -12812,8 +12840,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }, 0);
     };
 
-    setStatsRefreshProgress(0);
-    setStatsRefreshLoadingDisplayProgress(0);
     setStatsRefreshStatus("Replaying Backtest Trades");
     setLoadingProgressFromRatio(0);
     setLoadingProgressFromRatio(0.1);
@@ -13389,7 +13415,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (s.hdbSampleCap != null) setHdbSampleCap(s.hdbSampleCap);
     if (s.antiCheatEnabled != null) setAntiCheatEnabled(s.antiCheatEnabled);
     if (s.validationMode != null) setValidationMode(normalizeAiValidationMode(s.validationMode));
-    if (s.realismLevel != null) setRealismLevel(s.realismLevel);
+    if (s.realismLevel != null) setRealismLevel(normalizeAiRealismLevel(s.realismLevel));
     if (s.propInitialBalance != null) setPropInitialBalance(s.propInitialBalance);
     if (s.propDailyMaxLoss != null) setPropDailyMaxLoss(s.propDailyMaxLoss);
     if (s.propTotalMaxLoss != null) setPropTotalMaxLoss(s.propTotalMaxLoss);
@@ -19769,11 +19795,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const statsRefreshCurrentDateLabel =
     statsRefreshProgressLabel || statsRefreshRangeStartLabel;
   const statsRefreshPhaseCount = Math.max(1, statsRefreshPhasePlan.length);
+  const statsRefreshActivePhaseKey = resolveStatsRefreshPhaseKey(
+    statsRefreshPhasePlan,
+    statsRefreshStatus
+  );
   const statsRefreshPhaseIndex = Math.max(
     1,
-    statsRefreshPhasePlan.indexOf(getStatsRefreshPhaseKey(statsRefreshStatus)) + 1
+    statsRefreshPhasePlan.indexOf(statsRefreshActivePhaseKey) + 1
   );
-  const statsRefreshPhaseLabel = `${statsRefreshPhaseIndex} out of ${statsRefreshPhaseCount} phases`;
+  const statsRefreshPhaseName = STATS_REFRESH_PHASE_META[statsRefreshActivePhaseKey].label;
+  const statsRefreshPhaseLabel = `Phase ${statsRefreshPhaseIndex} of ${statsRefreshPhaseCount} · ${statsRefreshPhaseName}`;
   const statsRefreshContextLabel =
     `${appliedBacktestSettings.symbol} · ${appliedBacktestSettings.timeframe} · ` +
     `${appliedBacktestSettings.aiMode === "off" ? "AI Off" : "AI On"}`;
@@ -19790,7 +19821,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             <button
               key={tab.id}
               type="button"
-              className={`surface-tab ${selectedSurfaceTab === tab.id ? "active" : ""}`}
+              className={`surface-tab ${
+                terminalViewStateReady && selectedSurfaceTab === tab.id ? "active" : ""
+              }`}
               onClick={() => {
                 if (
                   (tab.id === "backtest" || tab.id === "settings" || tab.id === "models") &&
@@ -21560,12 +21593,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           />
                           <div className="ai-zip-note">{effectiveConfidenceThreshold}</div>
                         </div>
-                        <div className="ai-zip-note">
-                          The active backtest surface applies the confidence gate plus data,
-                          dimensionality, and library settings below. Exit-tuning and
-                          volatility-only controls remain out of this applied pipeline for now,
-                          so they were removed here to keep the surface honest.
-                        </div>
                       </div>
                     </div>
 
@@ -21955,7 +21982,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
                         <div className="ai-zip-section-divider" />
 
-                        {(["Low", "Medium", "High", "Max"] as const).map((label, i) => {
+                        {(["Low", "Medium", "High"] as const).map((label, i) => {
                           const idx = i + 1;
                           return (
                             <button
@@ -22073,18 +22100,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           />
                         </label>
                       </div>
-                      <label className="ai-zip-field">
-                        <span className="ai-zip-label">kNN Voting</span>
-                        <select
-                          value={knnVoteMode}
-                          disabled
-                          className="ai-zip-input"
-                        >
-                          <option value="majority">Majority vote</option>
-                        </select>
-                      </label>
                       <div className="ai-zip-note">
-                        These settings control how many neighbors are used. Voting is locked to majority.
+                        These settings control how many neighbors are used. Voting is always
+                        majority vote.
                       </div>
                     </>
                   )}

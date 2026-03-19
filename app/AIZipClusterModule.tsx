@@ -21327,7 +21327,7 @@ export default function App() {
     if (typeof data.preventAiLeak === "boolean")
       setPreventAiLeak(!!data.preventAiLeak);
     if (typeof data.realismLevel === "number")
-      setRealismLevel(clamp(Number(data.realismLevel) || 0, 0, 100));
+      setRealismLevel(clamp(Number(data.realismLevel) || 0, 0, 3));
     if (typeof (data as any).staticLibrariesClusters === "boolean")
       setStaticLibrariesClusters(!!(data as any).staticLibrariesClusters);
 
@@ -22705,7 +22705,6 @@ export default function App() {
     "Slightly Realistic",
     "Realistic",
     "Very Realistic",
-    "Extremely Realistic",
   ];
   const normalizeValidationMode = (value) => {
     const mode = String(value ?? "").trim().toLowerCase();
@@ -22717,7 +22716,7 @@ export default function App() {
   const WORST_ADD_SLIPPAGE = 10;
   const WORST_ADD_SPREAD = 5;
   const WORST_ADD_COMMISSION = 2;
-  const realismFactor = clamp(realismLevel / 4, 0, 1);
+  const realismFactor = clamp(realismLevel / 3, 0, 1);
   const slippage = Number((WORST_ADD_SLIPPAGE * realismFactor).toFixed(4));
   const spread = Number((WORST_ADD_SPREAD * realismFactor).toFixed(4));
   const commission = Number((WORST_ADD_COMMISSION * realismFactor).toFixed(4));
@@ -32361,8 +32360,8 @@ export default function App() {
                     >
                       <option value="high">High Dimensional Space</option>
                       <option value="post">Post-Compressed Space</option>
-                      <option value="3d">3 Dimensions</option>
                       <option value="2d">2 Dimensions</option>
+                      <option value="3d">3 Dimensions</option>
                     </select>
                   </div>
                 </div>
@@ -32879,9 +32878,7 @@ export default function App() {
 
                         <div>
                           <div style={ui.label}>kNN Voting</div>
-                          <select
-                            value="majority"
-                            disabled
+                          <div
                             style={{
                               width: "100%",
                               fontSize: 11,
@@ -32890,14 +32887,12 @@ export default function App() {
                               border: "1px solid rgba(255,255,255,0.14)",
                               background: "rgba(255,255,255,0.06)",
                               color: "rgba(255,255,255,0.92)",
-                              outline: "none",
                               fontWeight: 800,
-                              cursor: "not-allowed",
-                              opacity: 0.7,
+                              opacity: 0.82,
                             }}
                           >
-                            <option value="majority">Majority vote</option>
-                          </select>
+                            Majority vote
+                          </div>
                           <div
                             style={{ ...ui.tiny, marginTop: 6, opacity: 0.85 }}
                           >
@@ -33013,7 +33008,7 @@ export default function App() {
 
                 <div>
                   <button
-                    onClick={() => setRealismLevel((v) => (v + 1) % 5)}
+                    onClick={() => setRealismLevel((v) => (v + 1) % 4)}
                     style={{
                       width: "100%",
                       fontSize: 11,
@@ -33031,7 +33026,7 @@ export default function App() {
                     }}
                     title="Cycle realism (transaction costs)"
                   >
-                    Realism · {REALISM_LABELS[clamp(realismLevel, 0, 4)]}
+                    Realism · {REALISM_LABELS[clamp(realismLevel, 0, 3)]}
                   </button>
                 </div>
               </div>
