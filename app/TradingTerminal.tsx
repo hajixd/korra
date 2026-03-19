@@ -7683,12 +7683,19 @@ const doesBacktestHistoryGenerationInputChange = (
   if (previous.trailingDistPct !== next.trailingDistPct) return true;
   if (previous.maxBarsInTrade !== next.maxBarsInTrade) return true;
   if (previous.maxConcurrentTrades !== next.maxConcurrentTrades) return true;
-  if (previous.distanceMetric !== next.distanceMetric) return true;
-  if (previous.knnNeighborSpace !== next.knnNeighborSpace) return true;
-  if (previous.kEntry !== next.kEntry) return true;
-  if (previous.kExit !== next.kExit) return true;
-  if (previous.knnVoteMode !== next.knnVoteMode) return true;
   return false;
+};
+
+const getStatsRefreshPhaseKey = (status: string): string => {
+  if (status === "Recovering Replay Locally") {
+    return "Replaying Backtest Trades";
+  }
+
+  if (status === "Applying AI Analysis") {
+    return "Loading AI Libraries";
+  }
+
+  return status;
 };
 
 const formatStatsRefreshDateLabel = (timeMs: number) => {
@@ -7716,19 +7723,21 @@ const normalizeTimestampMs = (value: number): number => {
 };
 
 const getStatsRefreshPhaseDurationMs = (status: string): number => {
-  if (status === "Preparing Backtest Replay") {
+  const phaseKey = getStatsRefreshPhaseKey(status);
+
+  if (phaseKey === "Preparing Backtest Replay") {
     return 900;
   }
 
-  if (status === "Finalizing Statistics") {
+  if (phaseKey === "Finalizing Statistics") {
     return 800;
   }
 
-  if (status === "Loading AI Libraries") {
+  if (phaseKey === "Loading AI Libraries") {
     return 1200;
   }
 
-  if (status === "No Trades In Selected Range") {
+  if (phaseKey === "No Trades In Selected Range") {
     return 1000;
   }
 
@@ -7736,7 +7745,8 @@ const getStatsRefreshPhaseDurationMs = (status: string): number => {
 };
 
 const isStatsRefreshAutoFinishPhase = (status: string): boolean => {
-  return status === "Finalizing Statistics" || status === "No Trades In Selected Range";
+  const phaseKey = getStatsRefreshPhaseKey(status);
+  return phaseKey === "Finalizing Statistics" || phaseKey === "No Trades In Selected Range";
 };
 
 const getStatsRefreshStatusDetail = (status: string): string => {
@@ -7752,8 +7762,16 @@ const getStatsRefreshStatusDetail = (status: string): string => {
     return "Replaying backtest trades across the full selected date range.";
   }
 
+  if (status === "Recovering Replay Locally") {
+    return "Server replay ran long, so the run is finishing with the local replay engine.";
+  }
+
   if (status === "Loading AI Libraries") {
     return "Applying selected AI libraries to replayed backtest results.";
+  }
+
+  if (status === "Applying AI Analysis") {
+    return "Applying AI filters, confidence, and nearest-neighbor analysis to replayed trades.";
   }
 
   if (status === "Finalizing Statistics") {
@@ -8636,13 +8654,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     clearStatsRefreshResetTimeout();
     setAppliedBacktestSettings(nextSettings);
     if (needsHistoryRecompute) {
-      const loadingLibraries =
+      const hasAiAnalysisPhase =
         nextSettings.aiMode !== "off" &&
         (nextSettings.antiCheatEnabled ||
-          canRunAizipLibrariesForSettings({
-            libraryIds: nextSettings.selectedAiLibraries,
-            aiModelStates: nextSettings.aiModelStates
-          }));
+          ((nextSettings.selectedAiLibraries?.length ?? 0) > 0 &&
+            canRunAizipLibrariesForSettings({
+              libraryIds: nextSettings.selectedAiLibraries,
+              aiModelStates: nextSettings.aiModelStates
+            })));
       setBacktestRunCount((current) => current + 1);
       setBacktestRefreshNowMs(nextRefreshMs);
       setBacktestHistorySeedReady(!needsHistorySeedReload);
@@ -8652,15 +8671,13 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       setStatsRefreshPhasePlan(
         buildStatsRefreshPhasePlan({
           needsHistorySeedReload,
-          loadingLibraries
+          loadingLibraries: hasAiAnalysisPhase
         })
       );
       setStatsRefreshStatus(
         needsHistorySeedReload
           ? "Loading Candle History"
-          : loadingLibraries
-            ? "Replaying Backtest + AI Libraries"
-            : "Replaying Backtest Trades"
+          : "Preparing Backtest Replay"
       );
       const rangeStartMs = normalizeTimestampMs(backtestBlueprintRangeRef.current.startMs);
       const rangeEndMs = normalizeTimestampMs(backtestBlueprintRangeRef.current.endMs);
@@ -11897,13 +11914,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const trailingDistPctSnapshot = appliedBacktestTrailingDistPctRef.current;
     const minutePreciseEnabledSnapshot = appliedBacktestMinutePreciseEnabledRef.current;
     const appliedSettingsSnapshot = appliedBacktestSettingsRef.current;
-    const hasAiLibraryPass =
+    const hasActiveLibraries = (appliedSettingsSnapshot.selectedAiLibraries?.length ?? 0) > 0;
+    const hasAiAnalysisPass =
       appliedSettingsSnapshot.aiMode !== "off" &&
       (appliedSettingsSnapshot.antiCheatEnabled ||
+        (hasActiveLibraries &&
         canRunAizipLibrariesForSettings({
           libraryIds: appliedSettingsSnapshot.selectedAiLibraries,
           aiModelStates: appliedSettingsSnapshot.aiModelStates
-        }));
+        })));
+    const aiAnalysisStatus = hasActiveLibraries
+      ? "Loading AI Libraries"
+      : "Applying AI Analysis";
     const statsDateStartSnapshot = appliedBacktestStatsDateStartRef.current;
     const statsDateEndSnapshot = appliedBacktestStatsDateEndRef.current;
 
@@ -11987,6 +12009,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     let progressTimeoutId = 0;
     let requestTimeoutId = 0;
     const requestController = new AbortController();
+    const replayPayload = {
+      blueprints: chronologicalTradeBlueprints,
+      candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
+      oneMinuteCandlesBySymbol: backtestOneMinuteCandlesBySymbolSnapshot,
+      modelNamesById,
+      tpDollars: tpDollarsSnapshot,
+      slDollars: slDollarsSnapshot,
+      stopMode: stopModeSnapshot,
+      breakEvenTriggerPct: breakEvenTriggerPctSnapshot,
+      trailingStartPct: trailingStartPctSnapshot,
+      trailingDistPct: trailingDistPctSnapshot,
+      minutePreciseEnabled: minutePreciseEnabledSnapshot,
+      limit: backtestTargetTradesSnapshot
+    };
 
     const clearProgressTimeout = () => {
       if (!progressTimeoutId) {
@@ -12041,6 +12077,57 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       commitRows([]);
     };
 
+    const finalizeReplayRows = (rows: HistoryItem[]) => {
+      if (cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
+        return;
+      }
+
+      setLoadingProgressFromRatio(1);
+      const commitFinalizingPhase = () => {
+        if (cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
+          return;
+        }
+
+        setStatsRefreshStatus("Finalizing Statistics");
+        commitRows(rows);
+      };
+
+      if (hasAiAnalysisPass) {
+        setStatsRefreshStatus(aiAnalysisStatus);
+        clearPhaseTransitionTimeout();
+        phaseTransitionTimeoutId = window.setTimeout(() => {
+          commitFinalizingPhase();
+        }, getStatsRefreshPhaseDurationMs(aiAnalysisStatus));
+        return;
+      }
+
+      commitFinalizingPhase();
+    };
+
+    const recoverReplayLocally = () => {
+      if (cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
+        return;
+      }
+
+      clearProgressTimeout();
+      clearRequestTimeout();
+      setStatsRefreshStatus("Recovering Replay Locally");
+      setLoadingProgressFromRatio(0.82);
+
+      window.setTimeout(() => {
+        if (cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
+          return;
+        }
+
+        try {
+          const localRows = computeBacktestRowsLocally(replayPayload);
+          finalizeReplayRows(localRows);
+        } catch {
+          failWithEmptyRows();
+        }
+      }, 0);
+    };
+
     setStatsRefreshProgress(0);
     setStatsRefreshLoadingDisplayProgress(0);
     setStatsRefreshStatus("Replaying Backtest Trades");
@@ -12051,24 +12138,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }, 350);
     requestTimeoutId = window.setTimeout(() => {
       requestController.abort();
-      failWithEmptyRows();
+      recoverReplayLocally();
     }, 90_000);
 
     computeBacktestRowsOnServer(
-      {
-        blueprints: chronologicalTradeBlueprints,
-        candleSeriesBySymbol: backtestHistorySeriesBySymbolSnapshot,
-        oneMinuteCandlesBySymbol: backtestOneMinuteCandlesBySymbolSnapshot,
-        modelNamesById,
-        tpDollars: tpDollarsSnapshot,
-        slDollars: slDollarsSnapshot,
-        stopMode: stopModeSnapshot,
-        breakEvenTriggerPct: breakEvenTriggerPctSnapshot,
-        trailingStartPct: trailingStartPctSnapshot,
-        trailingDistPct: trailingDistPctSnapshot,
-        minutePreciseEnabled: minutePreciseEnabledSnapshot,
-        limit: backtestTargetTradesSnapshot
-      },
+      replayPayload,
       requestController.signal
     )
       .then((finalizedRows) => {
@@ -12081,33 +12155,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           return;
         }
 
-        setLoadingProgressFromRatio(1);
-        const commitFinalizingPhase = () => {
-          if (cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
-            return;
-          }
-
-          setStatsRefreshStatus("Finalizing Statistics");
-          commitRows(finalizedRows);
-        };
-
-        if (hasAiLibraryPass) {
-          setStatsRefreshStatus("Loading AI Libraries");
-          clearPhaseTransitionTimeout();
-          phaseTransitionTimeoutId = window.setTimeout(() => {
-            commitFinalizingPhase();
-          }, getStatsRefreshPhaseDurationMs("Loading AI Libraries"));
-          return;
-        }
-
-        commitFinalizingPhase();
+        finalizeReplayRows(finalizedRows);
       })
       .catch(() => {
         if (cancelled || requestController.signal.aborted) {
           return;
         }
 
-        failWithEmptyRows();
+        recoverReplayLocally();
       });
 
     return () => {
@@ -14075,7 +14130,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     const onKeyDown = (event: KeyboardEvent) => {
       const isSpace =
         event.code === "Space" || event.key === " " || event.key === "Spacebar";
-      if (!isSpace || event.repeat) {
+      if (!isSpace) {
         return;
       }
 
@@ -14090,6 +14145,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       event.preventDefault();
+
+      if (event.repeat) {
+        return;
+      }
 
       if (
         holdActive ||
@@ -16354,6 +16413,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
     return total;
   }, [aiLibraryCounts, appliedBacktestSettings.selectedAiLibraries]);
+  const totalSimulatedLiveTrades = backtestSourceTrades.length;
 
   const mainStatsTitle = "Main Statistics";
 
@@ -18698,7 +18758,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const statsRefreshCurrentDateLabel =
     statsRefreshProgressLabel || statsRefreshRangeStartLabel;
   const statsRefreshPhaseCount = Math.max(1, statsRefreshPhasePlan.length);
-  const statsRefreshPhaseIndex = Math.max(1, statsRefreshPhasePlan.indexOf(statsRefreshStatus) + 1);
+  const statsRefreshPhaseIndex = Math.max(
+    1,
+    statsRefreshPhasePlan.indexOf(getStatsRefreshPhaseKey(statsRefreshStatus)) + 1
+  );
   const statsRefreshPhaseLabel = `${statsRefreshPhaseIndex} out of ${statsRefreshPhaseCount} phases`;
   const statsRefreshContextLabel =
     `${appliedBacktestSettings.symbol} · ${appliedBacktestSettings.timeframe} · ` +
@@ -19830,9 +19893,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           aria-label="Toggle minute precise execution"
                         >
                           <span className="backtest-minute-precise-btn-title">Minute Precise</span>
-                          <span className="backtest-minute-precise-btn-state">
-                            {minutePreciseEnabled ? "ON" : "OFF"}
-                          </span>
+                          {minutePreciseEnabled ? (
+                            <span className="backtest-minute-precise-btn-state">ON</span>
+                          ) : null}
                         </button>
                       </div>
                     </div>
@@ -19844,7 +19907,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     <strong>{backtestDateRangeEndLabel}</strong>
                   </span>
                   <span className="backtest-toolbar-note-meta">
-                    Total Live Trades: <strong>{backtestTrades.length.toLocaleString("en-US")}</strong> ·
+                    Total Live Trades: <strong>{totalSimulatedLiveTrades.toLocaleString("en-US")}</strong> ·
+                    {" "}Accepted Live Trades: <strong>{backtestTrades.length.toLocaleString("en-US")}</strong> ·
                     {" "}Total Library Trades:{" "}
                     <strong>{totalLoadedLibraryTrades.toLocaleString("en-US")}</strong>
                   </span>

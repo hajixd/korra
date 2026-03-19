@@ -11346,10 +11346,19 @@ export function ClusterMap({
   const playRef = useRef(null);
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.code === "Space" || e.key === " ") {
-        e.preventDefault();
-        setIsPlaying((prev) => !prev);
+      if (!(e.code === "Space" || e.key === " ")) return;
+      const target = e.target;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
       }
+      e.preventDefault();
+      if (e.repeat) return;
+      setIsPlaying((prev) => !prev);
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => {
