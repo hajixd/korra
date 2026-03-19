@@ -4435,10 +4435,40 @@ const mergeLivePriceIntoCandles = (
   return next.length > maxBars ? next.slice(next.length - maxBars) : next;
 };
 
+const MAX_CONTIGUOUS_MERGE_GAP_BARS = 8;
+
+const hasExcessiveTradingGap = (
+  previousTimeMs: number,
+  nextTimeMs: number,
+  timeframe: Timeframe,
+  maxMissingBars = MAX_CONTIGUOUS_MERGE_GAP_BARS
+): boolean => {
+  if (!Number.isFinite(previousTimeMs) || !Number.isFinite(nextTimeMs) || nextTimeMs <= previousTimeMs) {
+    return false;
+  }
+
+  const stepMs = Math.max(60_000, getTimeframeMs(timeframe));
+  let probeTime = previousTimeMs + stepMs;
+  let missingBars = 0;
+
+  while (probeTime < nextTimeMs) {
+    if (isXauTradingTime(probeTime)) {
+      missingBars += 1;
+      if (missingBars > maxMissingBars) {
+        return true;
+      }
+    }
+    probeTime += stepMs;
+  }
+
+  return false;
+};
+
 const mergeRecentCandles = (
   historical: Candle[],
   liveWindow: Candle[],
-  maxBars: number
+  maxBars: number,
+  timeframe: Timeframe
 ): Candle[] => {
   if (liveWindow.length === 0) {
     return historical.slice(-maxBars);
@@ -4446,8 +4476,17 @@ const mergeRecentCandles = (
 
   const firstLiveTime = liveWindow[0].time;
   const lastLiveTime = liveWindow[liveWindow.length - 1].time;
+  const olderHistorical = historical.filter((row) => row.time < firstLiveTime);
+  const lastHistoricalBeforeLive = olderHistorical[olderHistorical.length - 1];
+  const keepOlderHistorical =
+    !lastHistoricalBeforeLive ||
+    !hasExcessiveTradingGap(
+      lastHistoricalBeforeLive.time,
+      firstLiveTime,
+      timeframe
+    );
   const merged = [
-    ...historical.filter((row) => row.time < firstLiveTime),
+    ...(keepOlderHistorical ? olderHistorical : []),
     ...liveWindow,
     // Keep any candles newer than the sync window so stale API windows
     // never move the chart backward during periodic refresh.
@@ -4542,7 +4581,8 @@ const trimRecentOneMinuteCandles = (candles: Candle[]): Candle[] => {
 const mergeHistoricalAndRecentCandles = (
   historical: Candle[],
   recent: Candle[],
-  maxBars: number
+  maxBars: number,
+  timeframe: Timeframe
 ): Candle[] => {
   if (historical.length === 0) {
     return recent.slice(-maxBars);
@@ -4552,7 +4592,7 @@ const mergeHistoricalAndRecentCandles = (
     return historical.slice(-maxBars);
   }
 
-  return mergeRecentCandles(historical, recent, maxBars);
+  return mergeRecentCandles(historical, recent, maxBars, timeframe);
 };
 
 type HistoryApiRequestWindow = {
@@ -4872,7 +4912,8 @@ const fetchHybridHistoryCandles = async (
       return mergeHistoricalAndRecentCandles(
         coveredHistoryCandles,
         recentTimeframeCandles,
-        targetBars
+        targetBars,
+        timeframe
       );
     }
 
@@ -9857,7 +9898,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             ...prev,
             [key]: (() => {
               const current = prev[key] ?? [];
-              const merged = mergeRecentCandles(current, liveCandles, historyLimit);
+              const merged = mergeRecentCandles(current, liveCandles, historyLimit, selectedTimeframe);
               const currentLastTime = current[current.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
               const mergedLastTime = merged[merged.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
               return mergedLastTime < currentLastTime ? current : merged;
@@ -11009,12 +11050,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return mergeRecentCandles(
       deepHistory,
       selectedCandles,
-      Math.max(deepHistory.length + selectedCandles.length, selectedCandles.length)
+      Math.max(deepHistory.length + selectedCandles.length, selectedCandles.length),
+      selectedTimeframe
     );
   }, [
     deepChartCandles,
     isChartSurface,
     selectedCandles,
+    selectedTimeframe,
     shouldHydrateBacktestChartData,
     usesDeepChartHistory
   ]);
