@@ -97,7 +97,7 @@ type BacktestFilterSettings = {
   enabledBacktestHours: number[];
   aiMode: "off" | "knn" | "hdbscan";
   antiCheatEnabled: boolean;
-  validationMode: "off" | "split" | "online" | "synthetic";
+  validationMode: "off" | "split" | "synthetic";
   selectedAiLibraries: string[];
   selectedAiLibrarySettings: AiLibrarySettings;
   distanceMetric: AiDistanceMetric;
@@ -1407,6 +1407,15 @@ const normalizeFilterSettings = (value: unknown): BacktestFilterSettings => {
     value && typeof value === "object" && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : {};
+  const normalizeValidationMode = (
+    mode: unknown
+  ): BacktestFilterSettings["validationMode"] => {
+    const normalized = String(mode ?? "").trim().toLowerCase();
+    if (normalized === "split" || normalized === "synthetic") {
+      return normalized;
+    }
+    return "off";
+  };
 
   return {
     statsDateStart: String(row.statsDateStart ?? ""),
@@ -1425,12 +1434,7 @@ const normalizeFilterSettings = (value: unknown): BacktestFilterSettings => {
       : [],
     aiMode: row.aiMode === "knn" || row.aiMode === "hdbscan" ? row.aiMode : "off",
     antiCheatEnabled: row.antiCheatEnabled === true,
-    validationMode:
-      row.validationMode === "split" ||
-      row.validationMode === "online" ||
-      row.validationMode === "synthetic"
-        ? row.validationMode
-        : "off",
+    validationMode: normalizeValidationMode(row.validationMode),
     selectedAiLibraries: Array.isArray(row.selectedAiLibraries)
       ? row.selectedAiLibraries.map((entry) => String(entry))
       : [],
@@ -1888,7 +1892,9 @@ const computeAntiCheatBacktestContext = (params: {
     const basePool =
       panelBacktestFilterSettings.validationMode === "split"
         ? splitTrainingTrades
-        : chronologicalTrades.slice(0, index);
+        : panelBacktestFilterSettings.validationMode === "synthetic"
+          ? chronologicalTrades.filter((_, candidateIndex) => candidateIndex !== index)
+          : chronologicalTrades.slice(0, index);
 
     if (basePool.length === 0 && !hasCanonicalLibraryCandidates) {
       const confidence = getSyntheticWinProb(trade);

@@ -2402,7 +2402,7 @@ type PropFirmStats = {
   maxX: number;
 };
 
-type AiValidationMode = "off" | "split" | "online" | "synthetic";
+type AiValidationMode = "off" | "split" | "synthetic";
 type AiDistanceMetric = "euclidean" | "cosine" | "manhattan" | "chebyshev";
 type AiCompressionMethod = "pca" | "jl" | "hash" | "variance" | "subsample";
 type KnnVoteMode = "distance" | "majority";
@@ -3501,11 +3501,16 @@ const KNN_NEIGHBOR_SPACE_OPTIONS: Array<{
   { value: "2d", label: "2 Dimensions" }
 ];
 
-const AI_VALIDATION_ORDER: AiValidationMode[] = ["off", "split", "online", "synthetic"];
+const normalizeAiValidationMode = (value: unknown): AiValidationMode => {
+  const mode = String(value ?? "").trim().toLowerCase();
+  if (mode === "split" || mode === "synthetic") return mode;
+  return "off";
+};
+
+const AI_VALIDATION_ORDER: AiValidationMode[] = ["off", "split", "synthetic"];
 const AI_VALIDATION_LABELS: Record<AiValidationMode, string> = {
-  off: "Off",
+  off: "Online",
   split: "Test/Split",
-  online: "Online",
   synthetic: "Synthetic"
 };
 const AI_REALISM_LABELS = ["Off", "Low", "Medium", "High", "Max"] as const;
@@ -13383,7 +13388,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     if (s.hdbEpsQuantile != null) setHdbEpsQuantile(s.hdbEpsQuantile);
     if (s.hdbSampleCap != null) setHdbSampleCap(s.hdbSampleCap);
     if (s.antiCheatEnabled != null) setAntiCheatEnabled(s.antiCheatEnabled);
-    if (s.validationMode != null) setValidationMode(s.validationMode);
+    if (s.validationMode != null) setValidationMode(normalizeAiValidationMode(s.validationMode));
     if (s.realismLevel != null) setRealismLevel(s.realismLevel);
     if (s.propInitialBalance != null) setPropInitialBalance(s.propInitialBalance);
     if (s.propDailyMaxLoss != null) setPropDailyMaxLoss(s.propDailyMaxLoss);
@@ -21913,7 +21918,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           disabled={!antiCheatEnabled}
                           onClick={() => setValidationMode("off")}
                         >
-                          Normal
+                          Online
                         </button>
 
                         <button
@@ -21923,15 +21928,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           onClick={() => setValidationMode("split")}
                         >
                           Test / Split
-                        </button>
-
-                        <button
-                          type="button"
-                          className={`ai-zip-button ${validationMode === "online" ? "active" : ""}`}
-                          disabled={!antiCheatEnabled}
-                          onClick={() => setValidationMode("online")}
-                        >
-                          Online
                         </button>
 
                         <button

@@ -2530,9 +2530,12 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
     const staticLibrariesClusters = !!settings.staticLibrariesClusters;
     const preventAiLeak = !!settings.preventAiLeak;
     const antiCheatEnabled = !!settings.antiCheatEnabled;
-    const validationMode = settings.validationMode || "off";
+    const rawValidationMode = settings.validationMode || "off";
+    const validationMode =
+      rawValidationMode === "split" || rawValidationMode === "synthetic"
+        ? rawValidationMode
+        : "off";
     const useMimExit = !!settings.useMimExit;
-    const onlineLearning = validationMode === "online" && !staticLibrariesClusters;
     const syntheticTraining = validationMode === "synthetic";
     CHRONOLOGICAL_NEIGHBOR_FILTER = !!(antiCheatEnabled && validationMode === "off");
     CANDLE_INDEX_BY_TIME = new Map();
@@ -2543,9 +2546,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
     HDB_CACHE.clear();
     const effectivePreventAiLeak = staticLibrariesClusters
       ? false
-      : (antiCheatEnabled
-          ? (onlineLearning ? true : preventAiLeak)
-          : false);
+      : (antiCheatEnabled ? preventAiLeak : false);
     if(!n) return {trades:[], potential:null, entryBreakdowns:[], openExitPotential:null, stats: computeStats([], parseMode)};
 
     const closesArr = candles.map(c => c.close);
@@ -3586,11 +3587,11 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
           Math.floor(n * 0.08)
         )
       );
-      // Anti-cheat + Validation OFF keeps the full seeded library and applies chronology per query instead.
+      // Chronological full-history mode keeps the full seeded library and applies chronology per query instead.
       const maxSeedIndexForSeed = staticLibrariesClusters
         ? undefined
-        : (antiCheatEnabled && onlineLearning
-            ? onlineInitMaxSeedIndex
+        : (syntheticTraining
+            ? undefined
             : (effectivePreventAiLeak && !CHRONOLOGICAL_NEIGHBOR_FILTER
                 ? trainCut
                 : undefined));

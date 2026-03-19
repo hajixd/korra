@@ -21323,7 +21323,7 @@ export default function App() {
     if (typeof data.antiCheatEnabled === "boolean")
       setAntiCheatEnabled(!!data.antiCheatEnabled);
     if (typeof data.validationMode === "string")
-      setValidationMode(String(data.validationMode || "split"));
+      setValidationMode(normalizeValidationMode(data.validationMode || "split"));
     if (typeof data.preventAiLeak === "boolean")
       setPreventAiLeak(!!data.preventAiLeak);
     if (typeof data.realismLevel === "number")
@@ -22707,6 +22707,11 @@ export default function App() {
     "Very Realistic",
     "Extremely Realistic",
   ];
+  const normalizeValidationMode = (value) => {
+    const mode = String(value ?? "").trim().toLowerCase();
+    if (mode === "split" || mode === "synthetic") return mode;
+    return "off";
+  };
   const [realismLevel, setRealismLevel] = useState(0);
   const [validationMode, setValidationMode] = useState("split");
   const WORST_ADD_SLIPPAGE = 10;
@@ -22719,7 +22724,7 @@ export default function App() {
   const [useMimExit, setUseMimExit] = useState(false);
   const cycleValidationMode = React.useCallback(() => {
     setValidationMode((prev) => {
-      const modes = ["off", "split", "online", "synthetic"];
+      const modes = ["off", "split", "synthetic"];
       const idx = modes.indexOf(prev);
       return modes[(idx + 1) % modes.length];
     });
@@ -32999,11 +33004,9 @@ export default function App() {
                   >
                     Validation ·{" "}
                     {validationMode === "off"
-                      ? "Off"
+                      ? "Online"
                       : validationMode === "split"
                       ? "Test/Split"
-                      : validationMode === "online"
-                      ? "Online"
                       : "Synthetic"}
                   </button>
                 </div>

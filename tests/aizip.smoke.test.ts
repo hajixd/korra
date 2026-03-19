@@ -694,3 +694,70 @@ test("panel analytics caps stored neighbors to kEntry for large base libraries",
     stampedTrade.entryNeighbors[0]?.metaUid ?? stampedTrade.entryNeighbors[0]?.uid ?? null;
   assert.equal(stampedTrade.closestClusterUid, firstNeighborUid);
 });
+
+test("synthetic validation uses the full trade history as its training pool", async () => {
+  const trades = [
+    makeTrade({
+      id: "live-1",
+      entryIso: "2025-03-01T00:00:00Z",
+      exitIso: "2025-03-01T01:00:00Z",
+      result: "Loss",
+      pnlUsd: -100,
+      pnlPct: -0.2,
+      outcomePrice: 99,
+      neighborVector: [0, 0, 0, 0, 0, 0]
+    }),
+    makeTrade({
+      id: "live-2",
+      entryIso: "2025-03-01T02:00:00Z",
+      exitIso: "2025-03-01T03:00:00Z",
+      neighborVector: [10, 10, 10, 10, 10, 10]
+    }),
+    makeTrade({
+      id: "live-3",
+      entryIso: "2025-03-01T04:00:00Z",
+      exitIso: "2025-03-01T05:00:00Z",
+      neighborVector: [10.1, 10.1, 10.1, 10.1, 10.1, 10.1]
+    })
+  ];
+
+  const onlinePayload = await postPanelAnalytics({
+    panelSourceTrades: trades,
+    panelLibraryPoints: [],
+    panelBacktestFilterSettings: baseFilterSettings({
+      antiCheatEnabled: true,
+      validationMode: "off",
+      selectedAiLibraries: ["core"]
+    }),
+    panelConfidenceGateDisabled: true,
+    panelEffectiveConfidenceThreshold: 0,
+    aiLibraryDefaultsById: {
+      core: { weight: 100, maxSamples: 1000 }
+    }
+  });
+
+  const syntheticPayload = await postPanelAnalytics({
+    panelSourceTrades: trades,
+    panelLibraryPoints: [],
+    panelBacktestFilterSettings: baseFilterSettings({
+      antiCheatEnabled: true,
+      validationMode: "synthetic",
+      selectedAiLibraries: ["core"]
+    }),
+    panelConfidenceGateDisabled: true,
+    panelEffectiveConfidenceThreshold: 0,
+    aiLibraryDefaultsById: {
+      core: { weight: 100, maxSamples: 1000 }
+    }
+  });
+
+  const onlineNeighborUid =
+    onlinePayload.timeFilteredTrades[1]?.entryNeighbors?.[0]?.metaUid ??
+    onlinePayload.timeFilteredTrades[1]?.entryNeighbors?.[0]?.uid;
+  const syntheticNeighborUid =
+    syntheticPayload.timeFilteredTrades[1]?.entryNeighbors?.[0]?.metaUid ??
+    syntheticPayload.timeFilteredTrades[1]?.entryNeighbors?.[0]?.uid;
+
+  assert.equal(onlineNeighborUid, "live-1");
+  assert.equal(syntheticNeighborUid, "live-3");
+});
