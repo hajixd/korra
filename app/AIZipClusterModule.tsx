@@ -11937,7 +11937,7 @@ function ClusterMapInner({
     const N = pts.length;
     if (N < 10) return null;
 
-    const minSamples = Math.max(5, Math.min(200, Number(hdbMinSamples || 5)));
+    const minSamples = Math.max(2, Math.min(200, Number(hdbMinSamples || 12)));
     const coreCap = 1400;
     let sampleIndices: number[] = [];
     if (N > coreCap) {
@@ -11975,9 +11975,9 @@ function ClusterMapInner({
 
     let eps = quantile1D(
       coreD,
-      Math.max(0.5, Math.min(0.99, Number(hdbEpsQuantile || 0.5)))
+      Math.max(0.5, Math.min(0.99, Number(hdbEpsQuantile || 0.85)))
     );
-    if (!Number.isFinite(eps) || eps <= 0) eps = quantile1D(coreD, 0.5) || 1;
+    if (!Number.isFinite(eps) || eps <= 0) eps = quantile1D(coreD, 0.75) || 1;
 
     const dbscan2DGrid = (
       points: [number, number][],
@@ -14353,130 +14353,6 @@ function ClusterMapInner({
     [aiMethod, hdbConfidenceClusters, pointInPolyWorld, resolveHdbClusterWinRate]
   );
 
-  const selectedHdbGroupPanel = useMemo(() => {
-    const empty = {
-      clusterId: null as number | null,
-      isNoise: false,
-      totalCount: 0,
-      rows: [] as any[],
-    };
-    if (aiMethod !== "hdbscan" || !selectedAiSnapshotSource) return empty;
-
-    const info = hdbClusterInfoForNode(selectedAiSnapshotSource);
-    const clusterId =
-      info && Number.isFinite(Number(info.clusterId))
-        ? Number(info.clusterId)
-        : null;
-    if (clusterId == null) {
-      return { ...empty, isNoise: true };
-    }
-
-    const cluster = ((hdbConfidenceClusters as any[]) || []).find(
-      (entry) => Number((entry as any)?.id) === clusterId
-    );
-    if (!cluster) {
-      return { ...empty, clusterId };
-    }
-
-    const members = Array.isArray((cluster as any)?.memberNodes)
-      ? ((cluster as any).memberNodes as any[])
-      : [];
-    const selectedKeys = new Set(
-      [
-        nodeStableKey(selectedAiSnapshotSource),
-        String((selectedAiSnapshotSource as any)?.id ?? "").trim(),
-        String(selectedId ?? "").trim(),
-      ].filter(Boolean)
-    );
-
-    const seen = new Set<string>();
-    const rows: any[] = [];
-    let totalCount = 0;
-
-    for (const member of members) {
-      if (!member) continue;
-      const stableKey = nodeStableKey(member);
-      const fallbackId = String((member as any)?.id ?? "").trim();
-      const rowKey = stableKey || fallbackId;
-      if (!rowKey || seen.has(rowKey)) continue;
-      seen.add(rowKey);
-      totalCount += 1;
-      if (selectedKeys.has(rowKey)) continue;
-
-      const kind = String((member as any)?.kind || "").toLowerCase();
-      const kindLabel =
-        kind === "library"
-          ? "Library"
-          : kind === "trade"
-          ? (member as any)?.isOpen
-            ? "Open Trade"
-            : "Trade"
-          : kind === "close"
-          ? "Live Trade"
-          : kind === "potential"
-          ? "Potential"
-          : "Node";
-      const dir = Number((member as any)?.dir ?? (member as any)?.direction ?? 0);
-      const dirLabel = dir === 1 ? "Buy" : dir === -1 ? "Sell" : null;
-      const entryRaw =
-        (member as any)?.entryTime ??
-        (member as any)?.entry ??
-        (member as any)?.time ??
-        (member as any)?.timestamp ??
-        null;
-      const entryTs = entryRaw ? new Date(entryRaw).getTime() : 0;
-      const entryLabel =
-        entryRaw && Number.isFinite(entryTs)
-          ? formatDateTime(entryRaw, parseMode)
-          : null;
-      const pnlRaw =
-        typeof (member as any)?.unrealizedPnl === "number"
-          ? (member as any).unrealizedPnl
-          : typeof (member as any)?.pnl === "number"
-          ? (member as any).pnl
-          : typeof (member as any)?.closePnl === "number"
-          ? (member as any).closePnl
-          : null;
-      const pnlLabel =
-        pnlRaw == null || !Number.isFinite(Number(pnlRaw))
-          ? null
-          : `${Number(pnlRaw) >= 0 ? "+" : "-"}$${formatNumber(
-              Math.abs(Number(pnlRaw)),
-              2
-            )}`;
-      const tone =
-        pnlRaw == null
-          ? "neutral"
-          : Number(pnlRaw) >= 0
-          ? "green"
-          : "red";
-
-      rows.push({
-        key: rowKey,
-        displayId: displayIdForNode(member as any),
-        meta: [kindLabel, dirLabel, entryLabel].filter(Boolean).join(" · "),
-        pnlLabel,
-        tone,
-        entryTs: Number.isFinite(entryTs) ? entryTs : 0,
-      });
-    }
-
-    rows.sort((a, b) => {
-      if (a.entryTs !== b.entryTs) return b.entryTs - a.entryTs;
-      return String(a.displayId || "").localeCompare(String(b.displayId || ""));
-    });
-
-    return { clusterId, isNoise: false, totalCount, rows };
-  }, [
-    aiMethod,
-    hdbClusterInfoForNode,
-    hdbConfidenceClusters,
-    nodeStableKey,
-    parseMode,
-    selectedId,
-    selectedAiSnapshotSource,
-  ]);
-
   // --- HDBSCAN post-hoc entry pass: determine entries purely from cluster win-rate (no gate)
   // In HDBSCAN mode we *replace* nodes that change category with brand-new objects:
   //   - Promoted: library -> trade (new id/uid/tradeUid and scrubbed library/suppression identity)
@@ -14885,15 +14761,11 @@ function ClusterMapInner({
     return m;
   }, [neighborNodes]);
 
-  const showKnnLinks = aiMethod !== "hdbscan";
-  const effectiveKnnLinkK = showKnnLinks ? knnLinkK : 0;
-  const effectiveKnnLinkOpacity = showKnnLinks ? knnLinkOpacity : 0;
-
   const drawRenderOpts = React.useMemo(
     () => ({
       lowPowerMode,
-      knnLinkK: effectiveKnnLinkK,
-      knnLinkOpacity: effectiveKnnLinkOpacity,
+      knnLinkK,
+      knnLinkOpacity,
       aiMethod,
       selectedId,
       selectedLink,
@@ -14902,8 +14774,8 @@ function ClusterMapInner({
     }),
     [
       lowPowerMode,
-      effectiveKnnLinkK,
-      effectiveKnnLinkOpacity,
+      knnLinkK,
+      knnLinkOpacity,
       aiMethod,
       selectedId,
       selectedLink,
@@ -14959,12 +14831,6 @@ function ClusterMapInner({
 
     return { aliasToIds, nodeCoordById, dim };
   }, [neighborNodes, clusterMapView]);
-
-  useEffect(() => {
-    if (aiMethod !== "hdbscan") return;
-    const linkType = String((selectedLink as any)?.type ?? "").toLowerCase();
-    if (linkType === "knn") setSelectedLink(null);
-  }, [aiMethod, selectedLink]);
 
   const selectedNeighborCap = Math.max(
     0,
@@ -17905,8 +17771,8 @@ function ClusterMapInner({
             heatmapSmoothness={heatmapSmoothness}
             nodeSizeMul={nodeSizeMul}
             nodeOutlineMul={nodeOutlineMul}
-            knnLinkK={effectiveKnnLinkK}
-            knnLinkOpacity={effectiveKnnLinkOpacity}
+            knnLinkK={knnLinkK}
+            knnLinkOpacity={knnLinkOpacity}
             mapSpreadMul={mapSpreadMul}
             onSelectId={handle3dSelectId}
             onSelectionIdsChange={handle3dSelectionIds}
@@ -19043,9 +18909,7 @@ function ClusterMapInner({
                     })()}
                   </div>
 
-                  <div style={{ opacity: 0.65 }}>
-                    {aiMethod === "hdbscan" ? "Cluster ID" : "MIT ID"}
-                  </div>
+                  <div style={{ opacity: 0.65 }}>MIT ID</div>
                   <div
                     style={{
                       ...mono(),
@@ -19055,11 +18919,6 @@ function ClusterMapInner({
                     }}
                   >
                     {(() => {
-                      if (aiMethod === "hdbscan") {
-                        return selectedHdbGroupPanel.clusterId != null
-                          ? `HD #${selectedHdbGroupPanel.clusterId}`
-                          : "Noise";
-                      }
                       const k = String(
                         (selectedNode as any)?.kind || ""
                       ).toLowerCase();
@@ -19132,31 +18991,18 @@ function ClusterMapInner({
                       color: "rgba(255,255,255,0.70)",
                     }}
                   >
-                    <div>
-                      {aiMethod === "hdbscan"
-                        ? "Same Cluster Group"
-                        : "Nearest Neighbors"}
-                    </div>
+                    <div>Nearest Neighbors</div>
                     <div style={{ ...mono(), opacity: 0.7 }}>
-                      {aiMethod === "hdbscan"
-                        ? selectedHdbGroupPanel.isNoise
-                          ? "Noise"
-                          : selectedHdbGroupPanel.clusterId != null
-                          ? `HD #${selectedHdbGroupPanel.clusterId} · n=${selectedHdbGroupPanel.totalCount}`
-                          : "No cluster"
-                        : `k=${
-                            isSelectedLib
-                              ? 0
-                              : selectedNeighborCap ||
-                                selectedNeighborList.length ||
-                                0
-                          }`}
+                      k=
+                      {isSelectedLib
+                        ? 0
+                        : selectedNeighborCap || selectedNeighborList.length || 0}
                     </div>
                   </div>
                   <div
                     style={{
                       marginTop: 6,
-                      maxHeight: 164,
+                      maxHeight: 140,
                       overflowY: "auto",
                       overscrollBehavior: "contain",
                       borderRadius: 10,
@@ -19165,98 +19011,7 @@ function ClusterMapInner({
                       padding: 6,
                     }}
                   >
-                    {aiMethod === "hdbscan" ? (
-                      selectedHdbGroupPanel.rows.length ? (
-                        <div style={{ display: "grid", gap: 6 }}>
-                          {selectedHdbGroupPanel.rows.map((row, idx) => (
-                            <div
-                              key={String(row.key || idx)}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                gap: 10,
-                                padding: "5px 7px",
-                                borderRadius: 8,
-                                border:
-                                  row.tone === "green"
-                                    ? "1px solid rgba(60,220,120,0.35)"
-                                    : row.tone === "red"
-                                    ? "1px solid rgba(230,80,80,0.35)"
-                                    : "1px solid rgba(255,255,255,0.08)",
-                                background:
-                                  row.tone === "green"
-                                    ? "rgba(60,220,120,0.12)"
-                                    : row.tone === "red"
-                                    ? "rgba(230,80,80,0.12)"
-                                    : "rgba(255,255,255,0.03)",
-                              }}
-                            >
-                              <div
-                                style={{
-                                  minWidth: 0,
-                                  display: "grid",
-                                  gap: 2,
-                                  flex: 1,
-                                }}
-                              >
-                                <div
-                                  title={row.displayId}
-                                  style={{
-                                    ...mono(),
-                                    fontSize: 11,
-                                    fontWeight: 900,
-                                    opacity: 0.92,
-                                    whiteSpace: "nowrap",
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                  }}
-                                >
-                                  {String(idx + 1).padStart(2, "0")} {row.displayId}
-                                </div>
-                                <div
-                                  style={{
-                                    fontSize: 10,
-                                    opacity: 0.62,
-                                    whiteSpace: "nowrap",
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                  }}
-                                >
-                                  {row.meta || "Cluster member"}
-                                </div>
-                              </div>
-                              {row.pnlLabel ? (
-                                <div
-                                  style={{
-                                    ...mono(),
-                                    fontSize: 10,
-                                    fontWeight: 900,
-                                    color:
-                                      row.tone === "green"
-                                        ? "rgba(60,220,120,0.95)"
-                                        : row.tone === "red"
-                                        ? "rgba(255,140,140,0.95)"
-                                        : "rgba(255,255,255,0.74)",
-                                    whiteSpace: "nowrap",
-                                  }}
-                                >
-                                  {row.pnlLabel}
-                                </div>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div style={{ fontSize: 10, opacity: 0.65 }}>
-                          {selectedHdbGroupPanel.isNoise
-                            ? "This node is outside the current HDBSCAN groups."
-                            : selectedHdbGroupPanel.totalCount <= 1
-                            ? "Only the selected node is in this cluster group."
-                            : "No additional group members available."}
-                        </div>
-                      )
-                    ) : selectedNeighborList && selectedNeighborList.length ? (
+                    {selectedNeighborList && selectedNeighborList.length ? (
                       <div style={{ display: "grid", gap: 6 }}>
                         {selectedNeighborList.map((row, idx) => (
                           <div
@@ -19330,7 +19085,6 @@ function ClusterMapInner({
             const bNode = (nodeById as any).get(bId) || null;
             const t = String((selectedLink as any)?.type ?? "").toLowerCase();
             const isKnn = t === "knn";
-            if (aiMethod === "hdbscan" && isKnn) return null;
             const title = isKnn ? "Selected KNN Link" : "Selected Trade Link";
             const accent = isKnn
               ? "rgba(130,215,255,0.98)"
@@ -20128,53 +19882,51 @@ function ClusterMapInner({
             />
           </div>
 
-          {showKnnLinks ? (
+          <div
+            className="rounded-xl border border-neutral-800"
+            style={{
+              padding: "8px 10px",
+              background:
+                "linear-gradient(180deg, rgba(16,34,58,0.66), rgba(8,16,34,0.72))",
+            }}
+          >
             <div
-              className="rounded-xl border border-neutral-800"
               style={{
-                padding: "8px 10px",
-                background:
-                  "linear-gradient(180deg, rgba(16,34,58,0.66), rgba(8,16,34,0.72))",
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: 10,
+                color: "rgba(255,255,255,0.78)",
               }}
             >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  fontSize: 10,
-                  color: "rgba(255,255,255,0.78)",
-                }}
-              >
-                <span>KNN Link Opacity</span>
-                <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>
-                  {Math.round(
-                    Math.max(0, Math.min(1, Number(knnLinkOpacity) || 0)) * 100
-                  )}
-                  %
-                </span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={knnLinkOpacity}
-                onChange={(e) =>
-                  setKnnLinkOpacity(Number((e as any).target.value))
-                }
-                className="theme-slider"
-                style={{
-                  ...sliderVars(knnLinkOpacity, 0, 1),
-                  width: "100%",
-                  height: 6,
-                  cursor: "pointer",
-                }}
-              />
-              <div style={{ marginTop: 3, fontSize: 9, opacity: 0.72 }}>
-                Topology count follows K Entry. Nearer neighbors render thicker.
-              </div>
+              <span>KNN Link Opacity</span>
+              <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>
+                {Math.round(
+                  Math.max(0, Math.min(1, Number(knnLinkOpacity) || 0)) * 100
+                )}
+                %
+              </span>
             </div>
-          ) : null}
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={knnLinkOpacity}
+              onChange={(e) =>
+                setKnnLinkOpacity(Number((e as any).target.value))
+              }
+              className="theme-slider"
+              style={{
+                ...sliderVars(knnLinkOpacity, 0, 1),
+                width: "100%",
+                height: 6,
+                cursor: "pointer",
+              }}
+            />
+            <div style={{ marginTop: 3, fontSize: 9, opacity: 0.72 }}>
+              Topology count follows K Entry. Nearer neighbors render thicker.
+            </div>
+          </div>
 
           {/* Row 4 (span) */}
           <div
@@ -21307,7 +21059,7 @@ export default function App() {
     if (typeof (data as any).hdbMinClusterSize === "number")
       setHdbMinClusterSize(clampInt((data as any).hdbMinClusterSize, 5, 5000));
     if (typeof (data as any).hdbMinSamples === "number")
-      setHdbMinSamples(clampInt((data as any).hdbMinSamples, 5, 200));
+      setHdbMinSamples(clampInt((data as any).hdbMinSamples, 2, 200));
     if (typeof (data as any).hdbEpsQuantile === "number")
       setHdbEpsQuantile(
         Math.max(0.5, Math.min(0.99, (data as any).hdbEpsQuantile))
@@ -21779,8 +21531,8 @@ export default function App() {
   const [checkEveryBar, setCheckEveryBar] = useState(false);
   const [aiMethod, setAiMethod] = useState<"off" | "knn" | "hdbscan">("off");
   const [hdbMinClusterSize, setHdbMinClusterSize] = useState(40);
-  const [hdbMinSamples, setHdbMinSamples] = useState(5);
-  const [hdbEpsQuantile, setHdbEpsQuantile] = useState(0.5); // 0.50..0.99 (k-distance quantile)
+  const [hdbMinSamples, setHdbMinSamples] = useState(12);
+  const [hdbEpsQuantile, setHdbEpsQuantile] = useState(0.85); // 0.50..0.99 (k-distance quantile)
   const [hdbSampleCap, setHdbSampleCap] = useState(3000);
   const [hdbDomainDistinction, setHdbDomainDistinction] = useState<
     "conceptual" | "real"
@@ -29090,20 +28842,14 @@ export default function App() {
                     icon="🧠"
                     title={
                       !isActive && !canEnterNextBar
-                        ? aiMethod === "hdbscan"
-                          ? "Cluster Group"
-                          : "Nearest Neighbors"
+                        ? "Nearest Neighbors"
                         : "AI Signal"
                     }
                     right={
                       !isActive && !canEnterNextBar ? (
-                        aiMethod === "hdbscan" ? (
-                          <Pill tone="neutral">HDBSCAN</Pill>
-                        ) : (
-                          <Pill tone="neutral">
-                            k={entryNeighborsCap || entryNeighborsForUi.length}
-                          </Pill>
-                        )
+                        <Pill tone="neutral">
+                          k={entryNeighborsCap || entryNeighborsForUi.length}
+                        </Pill>
                       ) : (
                         <Pill
                           tone={
@@ -32775,14 +32521,14 @@ export default function App() {
                             <div style={ui.label}>Min Samples</div>
                             <input
                               type="number"
-                              min={5}
+                              min={2}
                               max={200}
                               value={hdbMinSamples}
                               onChange={(e) =>
                                 setHdbMinSamples(
                                   clampInt(
                                     Number((e.target as any).value || 0),
-                                    5,
+                                    2,
                                     200
                                   )
                                 )
@@ -32809,7 +32555,7 @@ export default function App() {
                                     0.5,
                                     Math.min(
                                       0.99,
-                                      Number((e.target as any).value || 0.5)
+                                      Number((e.target as any).value || 0.85)
                                     )
                                   )
                                 )
