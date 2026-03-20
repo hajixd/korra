@@ -7374,8 +7374,8 @@ function drawClusterMapCanvas(
         outline = n.dir === 1 ? "rgba(30,180,80,1.0)" : "rgba(180,50,50,1.0)";
       } else if (isLib) {
         const isSupp = libKey.toLowerCase() === "suppressed";
-        fill = cssColorWithAlpha(libColor, isSupp ? 0.42 : 0.92);
-        outline = cssColorWithAlpha(libColor, 1);
+        fill = cssColorWithAlpha(libraryOutcomeColor, isSupp ? 0.82 : 0.96);
+        outline = cssColorWithAlpha(libColor, isSupp ? 0.84 : 1);
       } else if (kind === "ghost") {
         if (ghostColored) {
           if (n.isOpen) {
@@ -7451,6 +7451,10 @@ function drawClusterMapCanvas(
       const focusScale =
         isSelectedNode ? 1.0 : isKnnNeighbor ? 1.05 : isHdbFocused ? 1.03 : 1;
       const baseRadius = r * (isHovered ? 1.25 : 1.0) * focusScale;
+      const visibleRadius =
+        isLib && !isSearch
+          ? Math.max(2.4, baseRadius * (isHovered ? 0.88 : 0.72))
+          : baseRadius;
       ctx.save();
       const dimAlpha = selectionFocusActive ? 0.18 : 0.36;
       ctx.globalAlpha = dimNode ? dimAlpha : 1;
@@ -7462,27 +7466,18 @@ function drawClusterMapCanvas(
         outlineBase * (Number(nodeOutlineMul) || 1) * focusOutlineMul * dimOutlineMul;
       const strokeWidth =
         isLib && !isSearch
-          ? Math.max(0.28, strokeWidthBase * (isHovered ? 0.24 : 0.14))
+          ? Math.max(0.22, strokeWidthBase * (isHovered ? 0.18 : 0.1))
           : strokeWidthBase;
       ctx.lineWidth = strokeWidth;
       ctx.beginPath();
-      ctx.arc(sx, sy, baseRadius, 0, Math.PI * 2);
+      ctx.arc(sx, sy, visibleRadius, 0, Math.PI * 2);
       ctx.fillStyle = fill;
       ctx.fill();
       ctx.strokeStyle = outline;
       ctx.stroke();
-      if (isLib && !isSearch) {
-        ctx.beginPath();
-        ctx.arc(sx, sy, Math.max(2.2, baseRadius * 0.34), 0, Math.PI * 2);
-        ctx.fillStyle = libraryOutcomeColor;
-        ctx.fill();
-        ctx.lineWidth = Math.max(0.32, strokeWidth * 0.22);
-        ctx.strokeStyle = outline;
-        ctx.stroke();
-      }
       if (dimNode) {
         if (isLib && !isSearch) {
-          const dimR = Math.max(2.2, baseRadius * 1.06);
+          const dimR = Math.max(2.2, visibleRadius * 1.06);
           ctx.save();
           ctx.translate(sx, sy);
           ctx.rotate(Math.PI / 4);
@@ -7796,13 +7791,8 @@ function ClusterMapViewport3D({
       return ghostPnl >= 0 ? 0x3cdc78 : 0xe65050;
     }
     if (isLib) {
-      if (THREE) {
-        const libKey = String(
-          (n as any)?.libId ?? (n as any)?.metaLib ?? (n as any)?.id ?? "library"
-        );
-        const c = new (THREE as any).Color(colorForLibrary(libKey));
-        return c.getHex();
-      }
+      const libPnl = Number((n as any)?.pnl ?? (n as any)?.unrealizedPnl ?? 0);
+      return libPnl >= 0 ? 0x3cdc78 : 0xe65050;
     }
     if ((n as any)?.isOpen && kind === "trade" && !isLib) return 0x00d2ff;
     const pnl = Number((n as any)?.pnl ?? (n as any)?.unrealizedPnl ?? 0);
@@ -8456,7 +8446,7 @@ function ClusterMapViewport3D({
     const sizeMul = Math.max(0.25, Math.min(4, Number(nodeSizeMul) || 1));
     const outlineMul = Math.max(0.25, Math.min(4, Number(nodeOutlineMul) || 1));
     const outlineScaleMul = 1 + 0.12 * outlineMul;
-    const libraryOutlineScaleMul = 1 + 0.015 * outlineMul;
+    const libraryOutlineScaleMul = 1 + 0.0075 * outlineMul;
     const selectedSet = selectedIdsRef.current;
 
     for (let i = 0; i < rawPts.length; i++) {
