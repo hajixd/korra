@@ -17567,7 +17567,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       appliedAiMode === "off" || (!appliedAiFilter && !appliedAiModelEnabled);
     const appliedEffConfThreshold = appliedConfGateDisabled ? 0 : applied.confidenceThreshold;
     const appliedAntiCheat = applied.antiCheatEnabled;
-    const appliedStaticLibClusters = applied.staticLibrariesClusters;
     const appliedLibCount = applied.selectedAiLibraries.length;
     const appliedModelCount = countEnabledAizipModels(applied.aiModelStates);
     const appliedFeatureCount = Object.values(applied.aiFeatureLevels).filter((l) => l > 0).length;
@@ -17641,13 +17640,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         tone: appliedAiFilter && appliedAiMode !== "off" ? "up" : "neutral",
         valueStyle: { color: appliedAiFilter && appliedAiMode !== "off" ? "#34d399" : "rgba(255,255,255,0.4)" },
         meta: "Confidence filtering module"
-      },
-      {
-        label: "Static Lib + Cluster",
-        value: appliedStaticLibClusters ? "ON" : "OFF",
-        tone: appliedStaticLibClusters ? "up" : "neutral",
-        valueStyle: { color: appliedStaticLibClusters ? "#34d399" : "rgba(255,255,255,0.4)" },
-        meta: "Static AI data mode"
       },
       {
         label: "Active Models",
@@ -21628,16 +21620,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                           <button
                             type="button"
                             className={`ai-zip-button toggle ${
-                              staticLibrariesClusters ? "active success" : ""
-                            }`}
-                            disabled={aiDisabled}
-                            onClick={() => setStaticLibrariesClusters((value) => !value)}
-                          >
-                            Static Libraries {staticLibrariesClusters ? "· ON" : "· OFF"}
-                          </button>
-                          <button
-                            type="button"
-                            className={`ai-zip-button toggle ${
                               onlineLearningEnabled ? "active success" : ""
                             }`}
                             disabled={aiDisabled}
@@ -23352,6 +23334,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       onPostHocProgress={() => {}}
                       onMitMap={() => {}}
                       aiMethod={appliedBacktestSettings.aiMode}
+                      validationMode={appliedBacktestSettings.validationMode}
                       aiDomains={appliedBacktestSettings.selectedAiDomains}
                       knnNeighborSpace={appliedBacktestSettings.knnNeighborSpace}
                       distanceMetric={appliedBacktestSettings.distanceMetric}
@@ -23362,7 +23345,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}
                       hdbMinSamples={appliedBacktestSettings.hdbMinSamples}
                       hdbEpsQuantile={appliedBacktestSettings.hdbEpsQuantile}
-                      staticLibrariesClusters={appliedBacktestSettings.staticLibrariesClusters}
                       confidenceThreshold={appliedEffectiveConfidenceThreshold}
                       statsDateStart={appliedBacktestSettings.statsDateStart}
                       statsDateEnd={appliedBacktestSettings.statsDateEnd}

@@ -9617,7 +9617,7 @@ const areClusterMapPropsEqual = (prev: any, next: any) => {
     prev.hdbMinClusterSize === next.hdbMinClusterSize &&
     prev.hdbMinSamples === next.hdbMinSamples &&
     prev.hdbEpsQuantile === next.hdbEpsQuantile &&
-    prev.staticLibrariesClusters === next.staticLibrariesClusters &&
+    prev.validationMode === next.validationMode &&
     prev.confidenceThreshold === next.confidenceThreshold &&
     prev.statsDateStart === next.statsDateStart &&
     prev.statsDateEnd === next.statsDateEnd &&
@@ -9657,7 +9657,7 @@ function ClusterMapInner({
   hdbMinClusterSize,
   hdbMinSamples,
   hdbEpsQuantile,
-  staticLibrariesClusters,
+  validationMode = "off",
   confidenceThreshold,
   statsDateStart,
   statsDateEnd,
@@ -9779,14 +9779,30 @@ function ClusterMapInner({
     ).trim();
   }, []);
 
+  const effectiveValidationMode = React.useMemo<
+    "off" | "split" | "synthetic"
+  >(() => {
+    if (!antiCheatEnabled) return "off";
+    return validationMode === "split" || validationMode === "synthetic"
+      ? validationMode
+      : "off";
+  }, [antiCheatEnabled, validationMode]);
+
+  const hdbSplitCutoffIndex = React.useMemo(() => {
+    const totalCandles = Array.isArray(candles) ? candles.length : 0;
+    return Math.max(0, Math.floor(totalCandles * 0.5));
+  }, [candles]);
+
   const resolveHdbClusterWinRate = React.useCallback(
     (cluster: any, node: any): number => {
       if (!cluster || !node) return 0.01;
 
       const st: any = (cluster as any)?.stats || {};
       const dir = Number((node as any)?.dir ?? (node as any)?.direction ?? 0);
+      const useChronologicalClusterStats =
+        antiCheatEnabled && effectiveValidationMode === "off";
 
-      if (antiCheatEnabled) {
+      if (useChronologicalClusterStats) {
         const cutoff = nodeChronologyValue(node);
         const members = Array.isArray((cluster as any)?.memberNodes)
           ? ((cluster as any).memberNodes as any[])
@@ -9875,7 +9891,13 @@ function ClusterMapInner({
       if (!Number.isFinite(wr)) wr = 0;
       return clamp(wr, 0, 1);
     },
-    [activeModSet, antiCheatEnabled, nodeChronologyValue, nodeStableKey]
+    [
+      activeModSet,
+      antiCheatEnabled,
+      effectiveValidationMode,
+      nodeChronologyValue,
+      nodeStableKey,
+    ]
   );
 
   // Effective heat hover used by UI (pinned beats live).
@@ -10542,15 +10564,6 @@ function ClusterMapInner({
         pnl: 0,
         isOpen: false,
       };
-      const baseV = buildMapVector(
-        candles,
-        sIdx,
-        chunkBarsDeb,
-        potential.model,
-        pseudo,
-        pnlScale,
-        parseMode
-      );
       const tRaw =
         candles[Math.min(candles.length - 1, sIdx + 1)]?.time ??
         candles[sIdx]?.time ??
@@ -10560,6 +10573,15 @@ function ClusterMapInner({
       ) {
         const tod = timeOfDayUnit(tRaw, parseMode);
         const timeFeature = (tod - 0.5) * 2 * TIME_FEATURE_STRENGTH;
+        const baseV = buildMapVector(
+          candles,
+          sIdx,
+          chunkBarsDeb,
+          potential.model,
+          pseudo,
+          pnlScale,
+          parseMode
+        );
         const meta = baseV.slice(-6);
         const chunk = baseV.slice(0, Math.max(0, baseV.length - 6));
         const baseR = 6.8;
@@ -11340,7 +11362,6 @@ function ClusterMapInner({
     clusterMapView,
     lowPowerMode,
     entryNeighborsOnly,
-    staticLibrariesClusters,
     kEntry,
     aiMethod,
     activeModSet,
@@ -11541,6 +11562,24 @@ function ClusterMapInner({
     }
     return false;
   }, [activeLibraries]);
+  const normalizeHdbBasisNodes = React.useCallback((src: any[]) => {
+    return (src || []).filter(
+      (n: any) =>
+        n &&
+        !n.isOpen &&
+        n.kind !== "potential" &&
+        n.kind !== "close" &&
+        n.kind !== "ghost" &&
+        !(n as any).metaFromLibrary &&
+        !(
+          String((n as any).kind || "").toLowerCase() === "trade" &&
+          (String((n as any).exitReason ?? "").toLowerCase() === "library" ||
+            String(
+              (n as any).exitBy ?? (n as any).exitMethod ?? ""
+            ).toLowerCase() === "library")
+        )
+    );
+  }, []);
   const [nodeSizeMul, setNodeSizeMul] = React.useState(1);
   const [nodeOutlineMul, setNodeOutlineMul] = React.useState(1);
   const [heatmapInterp, setHeatmapInterp] = React.useState(0.1);
@@ -11643,10 +11682,8 @@ function ClusterMapInner({
         (n as any).kind === "library" ||
         String((n as any).id || "").startsWith("lib|");
 
-      // Timeline filter: hide future points. Library nodes only appear after their entry
-      // unless Static Libraries & Clusters is enabled.
-      if (idx < (n as any).signalIndex && (!isLib || !staticLibrariesClusters))
-        continue;
+      // Timeline filter: hide future points until their signal time is reached.
+      if (idx < (n as any).signalIndex) continue;
 
       let dKind = (n as any).kind;
       let dIsOpen = (n as any).isOpen;
@@ -11830,164 +11867,70 @@ function ClusterMapInner({
     pnlScale,
     parseMode,
     legendToggles.close,
-    staticLibrariesClusters,
     suppressedLibraryActive,
+  ]);
+
+  const fullHistoryHdbBasisNodes = useMemo(
+    () => normalizeHdbBasisNodes(sortedNodes as any[]),
+    [normalizeHdbBasisNodes, sortedNodes]
+  );
+
+  const onlineHdbBasisNodes = useMemo(
+    () => normalizeHdbBasisNodes(timelineNodes as any[]),
+    [normalizeHdbBasisNodes, timelineNodes]
+  );
+
+  const splitHdbBasisNodes = useMemo(
+    () =>
+      normalizeHdbBasisNodes(
+        (sortedNodes as any[]).filter((n: any) => {
+          const signalIdx = Number(
+            (n as any)?.signalIndex ?? (n as any)?.entryIndex
+          );
+          return !Number.isFinite(signalIdx) || signalIdx < hdbSplitCutoffIndex;
+        })
+      ),
+    [hdbSplitCutoffIndex, normalizeHdbBasisNodes, sortedNodes]
+  );
+
+  const syntheticHdbBasisNodes = useMemo(
+    () =>
+      normalizeHdbBasisNodes(
+        (sortedNodes as any[]).filter((n: any) => {
+          const kind = String((n as any)?.kind || "").toLowerCase();
+          return (
+            kind === "library" || String((n as any)?.id || "").startsWith("lib|")
+          );
+        })
+      ),
+    [normalizeHdbBasisNodes, sortedNodes]
+  );
+
+  const hdbClusterBasisNodes = useMemo(() => {
+    if (aiMethod !== "hdbscan") return [] as any[];
+    if (!antiCheatEnabled) return fullHistoryHdbBasisNodes;
+    if (effectiveValidationMode === "split") return splitHdbBasisNodes;
+    if (effectiveValidationMode === "synthetic") return syntheticHdbBasisNodes;
+    return onlineHdbBasisNodes;
+  }, [
+    aiMethod,
+    antiCheatEnabled,
+    effectiveValidationMode,
+    fullHistoryHdbBasisNodes,
+    onlineHdbBasisNodes,
+    splitHdbBasisNodes,
+    syntheticHdbBasisNodes,
   ]);
 
   const hdbOverlay = useMemo(() => {
     if (aiMethod !== "hdbscan") return null;
-
-    const modSet = new Set<string>();
-    const wantFilterClusters = false;
-    const wantFilterStats = false;
-    // Query context for domain matching.
-    // IMPORTANT: Keep this overlay independent of selection/hover/slider so post-hoc does not recompute on node clicks.
-    const ctxNode: any = null;
-    const ctxTime = "";
-
-    const ctxDate = parseDateFromString(ctxTime, parseMode);
-    const ctxMonth =
-      viewMonth !== "All"
-        ? Number(viewMonth)
-        : ctxDate
-        ? parseMode === "utc"
-          ? ctxDate.getUTCMonth()
-          : ctxDate.getMonth()
-        : null;
-    const ctxDow =
-      viewWeekday !== "All"
-        ? Number(viewWeekday)
-        : ctxDate
-        ? parseMode === "utc"
-          ? ctxDate.getUTCDay()
-          : ctxDate.getDay()
-        : null;
-    const ctxHour =
-      viewHour !== "All"
-        ? Number(viewHour)
-        : ctxDate
-        ? parseMode === "utc"
-          ? ctxDate.getUTCHours()
-          : ctxDate.getHours()
-        : null;
-    const ctxYear = ctxDate
-      ? parseMode === "utc"
-        ? ctxDate.getUTCFullYear()
-        : ctxDate.getFullYear()
-      : null;
-
-    const ctxSession =
-      viewSession !== "All"
-        ? String(viewSession)
-        : resolveSessionLabel((ctxNode as any)?.session, ctxTime, parseMode, "");
-
-    const ctxDir = 0;
-
-    const ctxMeta: any = {
-      dir: ctxDir,
-      session: ctxSession,
-      month: ctxMonth,
-      dow: ctxDow,
-      hour: ctxHour,
-      year: ctxYear,
-    };
-
-    const metaCache = new Map<string, any>();
-    const nodeMeta = (n: any) => {
-      const k = String(n?.id ?? n?.uid ?? "");
-      const hit = metaCache.get(k);
-      if (hit) return hit;
-      const t = String(n?.entryTime ?? n?.time ?? "");
-      const d = parseDateFromString(t, parseMode);
-      const m = {
-        dir: Number(n?.dir ?? n?.direction ?? 0),
-        session: resolveSessionLabel((n as any)?.session, t, parseMode, ""),
-        month: d
-          ? parseMode === "utc"
-            ? d.getUTCMonth()
-            : d.getMonth()
-          : null,
-        dow: d ? (parseMode === "utc" ? d.getUTCDay() : d.getDay()) : null,
-        hour: d ? (parseMode === "utc" ? d.getUTCHours() : d.getHours()) : null,
-        year: d
-          ? parseMode === "utc"
-            ? d.getUTCFullYear()
-            : d.getFullYear()
-          : null,
-      };
-      metaCache.set(k, m);
-      return m;
-    };
-
-    const passesDomainForViz = (n: any) => {
-      if (modSet.size === 0) return true;
-      const m = nodeMeta(n);
-
-      if (
-        modSet.has("Direction") &&
-        Number.isFinite(Number(ctxMeta.dir)) &&
-        Number(ctxMeta.dir) !== 0
-      ) {
-        if (Number(m.dir) !== Number(ctxMeta.dir)) return false;
-      }
-      if (
-        modSet.has("Session") &&
-        String(ctxMeta.session || "") !== "All" &&
-        String(ctxMeta.session || "") !== ""
-      ) {
-        if (String(m.session || "") !== String(ctxMeta.session || ""))
-          return false;
-      }
-      if (modSet.has("Month") && ctxMeta.month != null) {
-        if (Number(m.month) !== Number(ctxMeta.month)) return false;
-      }
-      if (modSet.has("Weekday") && ctxMeta.dow != null) {
-        if (Number(m.dow) !== Number(ctxMeta.dow)) return false;
-      }
-      if (modSet.has("Hour") && ctxMeta.hour != null) {
-        if (Number(m.hour) !== Number(ctxMeta.hour)) return false;
-      }
-      if (modSet.has("Year") && ctxMeta.year != null) {
-        if (Number(m.year) !== Number(ctxMeta.year)) return false;
-      }
-      return true;
-    };
-
-    const baseNodes: any[] = (timelineNodes as any[]).filter(
-      (n: any) =>
-        n &&
-        !n.isOpen &&
-        n.kind !== "potential" &&
-        n.kind !== "close" &&
-        n.kind !== "ghost" &&
-        !(n as any).metaFromLibrary &&
-        !(
-          String((n as any).kind || "").toLowerCase() === "trade" &&
-          (String((n as any).exitReason ?? "").toLowerCase() === "library" ||
-            String(
-              (n as any).exitBy ?? (n as any).exitMethod ?? ""
-            ).toLowerCase() === "library")
-        )
-    );
-
-    const basisNodes: any[] = staticLibrariesClusters
-      ? baseNodes.filter(
-          (n: any) =>
-            n &&
-            (String((n as any).kind || "").toLowerCase() === "library" ||
-              String((n as any).id || "").startsWith("lib|"))
-        )
-      : baseNodes;
-
-    // Use visible nodes in UMAP space (2D) and run a density clustering for visualization.
-    // This is purely visual — trading decisions use the feature-space clustering in the worker.
+    const basisNodes: any[] = hdbClusterBasisNodes;
     const pts: [number, number][] = [];
     const nodeRefs: any[] = [];
-    for (let i = 0; i < (basisNodes as any[]).length; i++) {
-      const n: any = (basisNodes as any[])[i];
+    for (let i = 0; i < basisNodes.length; i++) {
+      const n: any = basisNodes[i];
       if (!n) continue;
       if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) continue;
-      if (wantFilterClusters && !passesDomainForViz(n)) continue;
       if (n.isPotential || n.isOpen || n.isLive) continue;
       pts.push([n.x, n.y]);
       nodeRefs.push(n);
@@ -11995,43 +11938,34 @@ function ClusterMapInner({
     const N = pts.length;
     if (N < 10) return null;
 
-    // ---- Performance note ----
-    // A naive DBSCAN/HDBSCAN visualization that computes all pairwise distances is O(N^2) and will freeze the browser
-    // once N gets large (e.g. thousands of nodes). We:
-    // 1) estimate eps using a capped sample (k-distance quantile),
-    // 2) run DBSCAN using a grid index in 2D (near-linear in practice).
-    const ms = Math.max(2, Math.min(200, Number(hdbMinSamples || 12)));
-
-    const CORE_CAP = 1400; // cap for eps estimation
-    let sampIdx: number[] = [];
-    if (N > CORE_CAP) {
-      const step = Math.ceil(N / CORE_CAP);
-      for (let i = 0; i < N; i += step) sampIdx.push(i);
-      if (sampIdx.length > CORE_CAP) sampIdx = sampIdx.slice(0, CORE_CAP);
+    const minSamples = Math.max(2, Math.min(200, Number(hdbMinSamples || 12)));
+    const coreCap = 1400;
+    let sampleIndices: number[] = [];
+    if (N > coreCap) {
+      const step = Math.ceil(N / coreCap);
+      for (let i = 0; i < N; i += step) sampleIndices.push(i);
+      if (sampleIndices.length > coreCap) sampleIndices = sampleIndices.slice(0, coreCap);
     } else {
-      sampIdx = Array.from({ length: N }, (_, i) => i);
+      sampleIndices = Array.from({ length: N }, (_, index) => index);
     }
-    const sampPts = sampIdx.map((i) => pts[i]);
-    const k = Math.max(2, Math.min(ms, sampPts.length - 1));
 
-    // k-distance (kth nearest neighbor distance) for eps selection, computed without full sorts.
-    const coreD: number[] = new Array(sampPts.length).fill(0);
-    for (let i = 0; i < sampPts.length; i++) {
+    const samplePoints = sampleIndices.map((index) => pts[index]!);
+    const k = Math.max(2, Math.min(minSamples, samplePoints.length - 1));
+    const coreD: number[] = new Array(samplePoints.length).fill(0);
+    for (let i = 0; i < samplePoints.length; i++) {
       const best = new Array(k).fill(Infinity);
       let max = Infinity;
       let maxIdx = 0;
-
-      for (let j = 0; j < sampPts.length; j++) {
+      for (let j = 0; j < samplePoints.length; j++) {
         if (i === j) continue;
-        const d = dist2(sampPts[i], sampPts[j]);
+        const d = dist2(samplePoints[i]!, samplePoints[j]!);
         if (d < max) {
           best[maxIdx] = d;
-          // recompute current max of the k-best list
-          max = best[0];
+          max = best[0]!;
           maxIdx = 0;
           for (let t = 1; t < k; t++) {
-            if (best[t] > max) {
-              max = best[t];
+            if (best[t]! > max) {
+              max = best[t]!;
               maxIdx = t;
             }
           }
@@ -12046,7 +11980,6 @@ function ClusterMapInner({
     );
     if (!Number.isFinite(eps) || eps <= 0) eps = quantile1D(coreD, 0.75) || 1;
 
-    // Grid-indexed DBSCAN in 2D (fast for large N)
     const dbscan2DGrid = (
       points: [number, number][],
       eps0: number,
@@ -12063,42 +11996,41 @@ function ClusterMapInner({
 
       const grid = new Map<string, number[]>();
       for (let i = 0; i < n; i++) {
-        const p = points[i];
+        const p = points[i]!;
         const cx = Math.floor(p[0] * inv);
         const cy = Math.floor(p[1] * inv);
-        const key = String(cx) + "," + String(cy);
-        const arr = grid.get(key);
-        if (arr) arr.push(i);
+        const key = `${cx},${cy}`;
+        const bucket = grid.get(key);
+        if (bucket) bucket.push(i);
         else grid.set(key, [i]);
       }
 
-      const neighCache: (number[] | null)[] = new Array(n).fill(null);
+      const neighCache: Array<number[] | null> = new Array(n).fill(null);
 
       const regionQuery = (i: number) => {
         const cached = neighCache[i];
         if (cached) return cached;
 
-        const p = points[i];
+        const p = points[i]!;
         const cx = Math.floor(p[0] * inv);
         const cy = Math.floor(p[1] * inv);
-
         const out: number[] = [];
+
         for (let dx = -1; dx <= 1; dx++) {
           for (let dy = -1; dy <= 1; dy++) {
-            const key = String(cx + dx) + "," + String(cy + dy);
-            const bucket = grid.get(key);
+            const bucket = grid.get(`${cx + dx},${cy + dy}`);
             if (!bucket) continue;
             for (let bi = 0; bi < bucket.length; bi++) {
-              const j = bucket[bi];
+              const j = bucket[bi]!;
               if (j === i) continue;
-              const q = points[j];
+              const q = points[j]!;
               const ddx = p[0] - q[0];
               const ddy = p[1] - q[1];
-              const d2 = ddx * ddx + ddy * ddy;
-              if (d2 <= eps2) out.push(j);
+              if (ddx * ddx + ddy * ddy <= eps2) out.push(j);
             }
           }
         }
+
         neighCache[i] = out;
         return out;
       };
@@ -12108,13 +12040,13 @@ function ClusterMapInner({
         const queue = seedNeighbors.slice();
         const queued = new Set<number>(queue);
         for (let qi = 0; qi < queue.length; qi++) {
-          const j = queue[qi];
+          const j = queue[qi]!;
           if (!visited[j]) {
             visited[j] = true;
-            const nj = regionQuery(j);
-            if (nj.length + 1 >= minSamples0) {
-              for (let t = 0; t < nj.length; t++) {
-                const u = nj[t];
+            const neighbors = regionQuery(j);
+            if (neighbors.length + 1 >= minSamples0) {
+              for (let ni = 0; ni < neighbors.length; ni++) {
+                const u = neighbors[ni]!;
                 if (!queued.has(u)) {
                   queued.add(u);
                   queue.push(u);
@@ -12129,11 +12061,11 @@ function ClusterMapInner({
       for (let i = 0; i < n; i++) {
         if (visited[i]) continue;
         visited[i] = true;
-        const nbs = regionQuery(i);
-        if (nbs.length + 1 < minSamples0) {
+        const neighbors = regionQuery(i);
+        if (neighbors.length + 1 < minSamples0) {
           labels[i] = -1;
         } else {
-          expand(i, clusterId, nbs);
+          expand(i, clusterId, neighbors);
           clusterId++;
         }
       }
@@ -12141,23 +12073,23 @@ function ClusterMapInner({
       return { labels, nClusters: clusterId };
     };
 
-    const res = dbscan2DGrid(pts, eps, ms);
+    const res = dbscan2DGrid(pts, eps, minSamples);
     const labels = res.labels.slice();
-
-    // Prune tiny clusters -> noise
     const counts0 = new Array(res.nClusters).fill(0);
-    for (const c of labels) if (c >= 0) counts0[c] += 1;
-    const minSz = Math.max(5, Math.min(5000, Number(hdbMinClusterSize || 40)));
+    for (const cid of labels) if (cid >= 0) counts0[cid] += 1;
+    const minClusterSize = Math.max(
+      5,
+      Math.min(5000, Number(hdbMinClusterSize || 40))
+    );
     for (let i = 0; i < labels.length; i++) {
-      const c = labels[i];
-      if (c >= 0 && counts0[c] < minSz) labels[i] = -1;
+      const cid = labels[i]!;
+      if (cid >= 0 && counts0[cid]! < minClusterSize) labels[i] = -1;
     }
 
-    // Re-index clusters to compact ids
     const remap = new Map<number, number>();
     let nextId = 0;
     for (let i = 0; i < labels.length; i++) {
-      const cid = labels[i];
+      const cid = labels[i]!;
       if (cid < 0) continue;
       if (!remap.has(cid)) remap.set(cid, nextId++);
       labels[i] = remap.get(cid) as number;
@@ -12167,30 +12099,26 @@ function ClusterMapInner({
     const clusterMembers: Record<string, number[]> = {};
     const clusterStats: Record<string, any> = {};
     for (let i = 0; i < labels.length; i++) {
-      const c = labels[i];
-      if (c < 0) continue;
-      const key = String(c);
+      const cid = labels[i]!;
+      if (cid < 0) continue;
+      const key = String(cid);
+      const node: any = nodeRefs[i];
       if (!clusterPts[key]) clusterPts[key] = [];
-      clusterPts[key].push(pts[i]);
-
+      clusterPts[key].push([Number(node.x), Number(node.y)]);
       if (!clusterMembers[key]) clusterMembers[key] = [];
       clusterMembers[key].push(i);
 
-      const n: any = nodeRefs[i];
-      if (wantFilterStats && !passesDomainForViz(n)) {
-        continue;
-      }
       const pnl =
-        typeof n?.pnl === "number"
-          ? n.pnl
-          : typeof n?.unrealizedPnl === "number"
-          ? n.unrealizedPnl
-          : typeof n?.closePnl === "number"
-          ? n.closePnl
+        typeof node?.pnl === "number"
+          ? node.pnl
+          : typeof node?.unrealizedPnl === "number"
+          ? node.unrealizedPnl
+          : typeof node?.closePnl === "number"
+          ? node.closePnl
           : 0;
-      const dir = Number(n?.dir ?? n?.direction ?? 0);
+      const dir = Number(node?.dir ?? node?.direction ?? 0);
 
-      if (!clusterStats[key])
+      if (!clusterStats[key]) {
         clusterStats[key] = {
           count: 0,
           wins: 0,
@@ -12201,8 +12129,6 @@ function ClusterMapInner({
           sumNeg: 0,
           maxWin: 0,
           maxLoss: 0,
-
-          // Direction-specific (BUY / SELL)
           buyCount: 0,
           buyWins: 0,
           buySumPnl: 0,
@@ -12210,7 +12136,6 @@ function ClusterMapInner({
           buySumNeg: 0,
           buyMaxWin: 0,
           buyMaxLoss: 0,
-
           sellCount: 0,
           sellWins: 0,
           sellSumPnl: 0,
@@ -12219,13 +12144,13 @@ function ClusterMapInner({
           sellMaxWin: 0,
           sellMaxLoss: 0,
         };
+      }
       const st = clusterStats[key];
       st.count += 1;
       if (pnl >= 0) st.wins += 1;
       if (dir === 1) st.buys += 1;
       if (dir === -1) st.sells += 1;
 
-      // Direction-specific (BUY / SELL) accumulators
       if (dir === 1) {
         st.buyCount += 1;
         if (pnl >= 0) st.buyWins += 1;
@@ -12262,18 +12187,17 @@ function ClusterMapInner({
 
     const clusters: any[] = [];
     const keys = Object.keys(clusterPts).sort((a, b) => Number(a) - Number(b));
-    for (const k0 of keys) {
-      const arr = clusterPts[k0];
-      if (!arr || arr.length < 6) continue;
-      const hull = convexHull2D(arr);
+    for (const key of keys) {
+      const pts = clusterPts[key];
+      if (!pts || pts.length < 6) continue;
+      const hull = convexHull2D(pts);
       if (!hull || hull.length < 3) continue;
-      const st0 = clusterStats[k0] || { count: 0, wins: 0, buys: 0, sells: 0 };
+      const st0 = clusterStats[key] || { count: 0, wins: 0, buys: 0, sells: 0 };
       const cN = Number(st0.count || 0);
       const wN = Number(st0.wins || 0);
       const lN = Math.max(0, cN - wN);
       const bN = Number(st0.buys || 0);
       const sN = Number(st0.sells || 0);
-
       const bcN = Number((st0 as any).buyCount || 0);
       const bwN = Number((st0 as any).buyWins || 0);
       const blN = Math.max(0, bcN - bwN);
@@ -12282,9 +12206,9 @@ function ClusterMapInner({
       const slN = Math.max(0, scN - swN);
 
       clusters.push({
-        id: Number(k0),
-        members: (clusterMembers[k0] || []).slice(),
-        memberNodes: (clusterMembers[k0] || [])
+        id: Number(key),
+        members: (clusterMembers[key] || []).slice(),
+        memberNodes: (clusterMembers[key] || [])
           .map((memberIndex) => nodeRefs[memberIndex])
           .filter(Boolean),
         hull,
@@ -12313,7 +12237,6 @@ function ClusterMapInner({
               : (Number(st0.buySumPos) || 0) > 0
               ? Infinity
               : 0,
-
           sellCount: scN,
           sellWins: swN,
           sellLosses: slN,
@@ -12367,15 +12290,7 @@ function ClusterMapInner({
     return { eps, clusters };
   }, [
     aiMethod,
-    timelineNodes,
-    staticLibrariesClusters,
-    candles,
-    parseMode,
-    viewSession,
-    viewMonth,
-    viewWeekday,
-    viewHour,
-    hdbDomainDistinction,
+    hdbClusterBasisNodes,
     hdbMinSamples,
     hdbEpsQuantile,
     hdbMinClusterSize,
@@ -15651,11 +15566,9 @@ function ClusterMapInner({
     // - never include "close" projection nodes
     // - never include "potential" nodes
     // - never include OPEN trades
-    // In HDBSCAN mode, this should follow post-hoc promotion/demotion (timelineNodesCheat).
-    const src =
-      (aiMethod === "hdbscan"
-        ? (timelineNodesCheat as any[])
-        : (timelineNodes as any[])) || [];
+    if (aiMethod === "hdbscan") return hdbClusterBasisNodes as any[];
+
+    const src = (timelineNodes as any[]) || [];
 
     const base = src.filter(
       (n: any) =>
@@ -15665,13 +15578,8 @@ function ClusterMapInner({
         n.kind !== "close" &&
         n.kind !== "ghost"
     );
-
-    if (!staticLibrariesClusters) return base;
-
-    return base.filter(
-      (n: any) => n && String((n as any).kind || "").toLowerCase() === "library"
-    );
-  }, [timelineNodes, timelineNodesCheat, staticLibrariesClusters, aiMethod]);
+    return base;
+  }, [aiMethod, hdbClusterBasisNodes, timelineNodes]);
 
   // Keep a stable redraw function for ResizeObserver/visibility changes.
   useEffect(() => {
@@ -31970,41 +31878,6 @@ export default function App() {
                 MIT Exit {useMimExit ? "· ON" : "· OFF"}
               </button>
 
-              <button
-                disabled={aiAllOff}
-                onClick={() => setStaticLibrariesClusters((v) => !v)}
-                style={{
-                  width: "100%",
-                  fontSize: 11,
-                  padding: "9px 10px",
-                  borderRadius: 14,
-                  border: "1px solid rgba(255,255,255,0.14)",
-                  background: aiAllOff
-                    ? "rgba(255,255,255,0.035)"
-                    : staticLibrariesClusters
-                    ? "linear-gradient(135deg, rgba(60,220,120,0.16), rgba(90,170,255,0.14), rgba(160,90,255,0.12))"
-                    : "rgba(255,255,255,0.06)",
-                  color: aiAllOff
-                    ? "rgba(255,255,255,0.50)"
-                    : staticLibrariesClusters
-                    ? "rgba(235,255,245,0.98)"
-                    : "rgba(255,255,255,0.70)",
-                  cursor: aiAllOff ? "not-allowed" : "pointer",
-                  fontWeight: 900,
-                  marginBottom: 10,
-                  opacity: aiAllOff ? 0.55 : 1,
-                  boxShadow: aiAllOff
-                    ? "none"
-                    : staticLibrariesClusters
-                    ? "0 14px 34px rgba(0,0,0,0.58)"
-                    : "0 10px 24px rgba(0,0,0,0.45)",
-                }}
-                title="When ON: library nodes are always available from the beginning, and clusters/heatmaps/group stats are computed from libraries only (live trades never shift clusters)."
-              >
-                Static Libraries &amp; Clusters{" "}
-                {staticLibrariesClusters ? "· ON" : "· OFF"}
-              </button>
-
               <div
                 style={{
                   opacity: confidenceGateDisabled ? 0.45 : 1,
@@ -35330,13 +35203,13 @@ export default function App() {
                   setClusterMapView((v) => (v === "3d" ? "2d" : "3d"))
                 }
                 aiMethod={aiMethod}
+                validationMode={validationMode}
                 confidenceThreshold={effectiveConfidenceThreshold}
                 statsDateStart={statsDateStart}
                 statsDateEnd={statsDateEnd}
                 hdbMinClusterSize={hdbMinClusterSize}
                 hdbMinSamples={hdbMinSamples}
                 hdbEpsQuantile={hdbEpsQuantile}
-                staticLibrariesClusters={staticLibrariesClusters}
               />
             ) : !isClusterCollapsed ? (
               <ClusterMap
@@ -35377,11 +35250,11 @@ export default function App() {
                   setClusterMapView((v) => (v === "3d" ? "2d" : "3d"))
                 }
                 aiMethod={aiMethod}
+                validationMode={validationMode}
                 confidenceThreshold={effectiveConfidenceThreshold}
                 hdbMinClusterSize={hdbMinClusterSize}
                 hdbMinSamples={hdbMinSamples}
                 hdbEpsQuantile={hdbEpsQuantile}
-                staticLibrariesClusters={staticLibrariesClusters}
               />
             ) : null}
           </div>

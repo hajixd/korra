@@ -2527,9 +2527,6 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
       typeof settings.trainingSplit === "number"
         ? Math.max(0, Math.min(100, settings.trainingSplit))
         : 100;
-    // When enabled, libraries are treated as fully-static from the beginning and
-    // we don't apply any train/test seeding cutoffs.
-    const staticLibrariesClusters = !!settings.staticLibrariesClusters;
     const preventAiLeak = !!settings.preventAiLeak;
     const antiCheatEnabled = !!settings.antiCheatEnabled;
     const rawValidationMode = settings.validationMode || "off";
@@ -2547,9 +2544,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
       if(t != null && t !== "") CANDLE_INDEX_BY_TIME.set(String(t), i);
     }
     HDB_CACHE.clear();
-    const effectivePreventAiLeak = staticLibrariesClusters
-      ? false
-      : (antiCheatEnabled ? preventAiLeak : false);
+    const effectivePreventAiLeak = antiCheatEnabled ? preventAiLeak : false;
     if(!n) return {trades:[], potential:null, entryBreakdowns:[], openExitPotential:null, stats: computeStats([], parseMode)};
 
     const closesArr = candles.map(c => c.close);
@@ -3591,13 +3586,11 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
         )
       );
       // Chronological full-history mode keeps the full seeded library and applies chronology per query instead.
-      const maxSeedIndexForSeed = staticLibrariesClusters
+      const maxSeedIndexForSeed = syntheticTraining
         ? undefined
-        : (syntheticTraining
-            ? undefined
-            : (effectivePreventAiLeak && !CHRONOLOGICAL_NEIGHBOR_FILTER
-                ? trainCut
-                : undefined));
+        : (effectivePreventAiLeak && !CHRONOLOGICAL_NEIGHBOR_FILTER
+            ? trainCut
+            : undefined);
 
       // Cache per-library, per-model.
       const cacheGet = (k) => cachedLibsMap[k];
@@ -3627,7 +3620,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
               seedCandles, chunkBars, tpD, slD, dollarsPerMove,
               look, strideEff,
               modelKey, enabledSessions, parseMode,
-              0, 0, undefined
+              0, 0, maxSeedIndexForSeed
             );
             cacheSet(ck, pts);
           }
@@ -3686,7 +3679,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
                 seedCandles, chunkBars, tpD, slD, dollarsPerMove,
                 look, strideEff,
                 modelKey, enabledSessions, parseMode,
-                0, 0, undefined
+                0, 0, maxSeedIndexForSeed
               );
 
               pts = pts.filter((p) => {
@@ -3781,7 +3774,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
               slDist,
               dollarsPerMove,
               strideEff,
-              undefined,
+              maxSeedIndexForSeed,
               parseMode,
               cap
             );
