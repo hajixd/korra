@@ -30,7 +30,7 @@ import {
   updateProfile,
   type User
 } from "firebase/auth";
-import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import { doc, getDoc, serverTimestamp, setDoc, type Firestore } from "firebase/firestore";
 import type {
   AutoscaleInfo,
   CandlestickData,
@@ -2225,6 +2225,7 @@ type TerminalAccountUser = {
 
 type TradingTerminalWorkspaceProps = TradingTerminalProps & {
   currentUser: TerminalAccountUser;
+  firebaseDb: Firestore | null;
   onChangeDisplayName: (value: string) => Promise<void>;
   onChangePassword: (input: {
     currentPassword: string;
@@ -2380,6 +2381,56 @@ const formatFirebaseAuthError = (error: unknown): string => {
     default:
       return error instanceof Error ? error.message : "Something went wrong.";
   }
+};
+
+const parseSavedPresetList = (value: unknown): SavedPreset[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return null;
+      }
+
+      const candidate = entry as {
+        name?: unknown;
+        settings?: unknown;
+        savedAt?: unknown;
+      };
+      const name = String(candidate.name ?? "").trim();
+      const settings = candidate.settings;
+      const savedAt = Number(candidate.savedAt ?? Date.now());
+
+      if (!name || !settings || typeof settings !== "object" || Array.isArray(settings)) {
+        return null;
+      }
+
+      return {
+        name,
+        settings: settings as Record<string, any>,
+        savedAt: Number.isFinite(savedAt) ? savedAt : Date.now()
+      };
+    })
+    .filter((entry): entry is SavedPreset => entry !== null);
+};
+
+const parseUploadedStrategyModelList = (
+  value: unknown
+): { models: StrategyModelCatalogEntry[]; invalidCount: number } => {
+  if (!Array.isArray(value)) {
+    return { models: [], invalidCount: 0 };
+  }
+
+  const models = value
+    .map((entry) => parseStrategyModelCatalogEntry(entry))
+    .filter((entry): entry is StrategyModelCatalogEntry => entry !== null);
+
+  return {
+    models,
+    invalidCount: Math.max(0, value.length - models.length)
+  };
 };
 
 type TradeBlueprint = {
@@ -8829,6 +8880,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       key={currentUser.uid}
       aiZipModelNames={aiZipModelNames}
       currentUser={currentUser}
+      firebaseDb={firebaseDb}
       onChangeDisplayName={handleChangeDisplayName}
       onChangePassword={handleChangePassword}
       onLogOut={handleLogOut}
@@ -8839,6 +8891,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 function TradingTerminalWorkspace({
   aiZipModelNames,
   currentUser,
+  firebaseDb,
   onChangeDisplayName,
   onChangePassword,
   onLogOut
@@ -8876,6 +8929,9 @@ function TradingTerminalWorkspace({
     () => scopeStorageKey(UPLOADED_STRATEGY_MODELS_STORAGE_KEY, currentUser.uid),
     [currentUser.uid]
   );
+  const accountWorkspaceDocRef = useMemo(() => {
+    return firebaseDb ? doc(firebaseDb, "users", currentUser.uid) : null;
+  }, [currentUser.uid, firebaseDb]);
   const currentUserDisplayName = useMemo(() => resolveUserDisplayName(currentUser), [currentUser]);
   const currentUserInitials = useMemo(() => resolveUserInitials(currentUser), [currentUser]);
   const aiLibraryDefs = useMemo(() => {
@@ -9032,6 +9088,9 @@ function TradingTerminalWorkspace({
   const [modelsModalOpen, setModelsModalOpen] = useState(false);
   const [uploadedStrategyModels, setUploadedStrategyModels] = useState<StrategyModelCatalogEntry[]>([]);
   const [uploadedStrategyModelsReady, setUploadedStrategyModelsReady] = useState(false);
+  const [savedPresetsReady, setSavedPresetsReady] = useState(false);
+  const [cloudWorkspaceReady, setCloudWorkspaceReady] = useState(!firebaseDb);
+  const cloudWorkspaceHydratedRef = useRef(false);
   const settingsModelNames = useMemo(() => {
     const names: string[] = [];
     const seen = new Set<string>();
@@ -14531,35 +14590,36 @@ function TradingTerminalWorkspace({
   ]);
 
   useEffect(() => {
+    setSavedPresetsReady(false);
+
     try {
       const raw = localStorage.getItem(scopedPresetsStorageKey);
-      if (raw) setSavedPresets(JSON.parse(raw));
-    } catch { /* corrupt */ }
+      setSavedPresets(raw ? parseSavedPresetList(JSON.parse(raw)) : []);
+    } catch {
+      setSavedPresets([]);
+    } finally {
+      setSavedPresetsReady(true);
+    }
   }, [scopedPresetsStorageKey]);
 
   useEffect(() => {
+    setUploadedStrategyModelsReady(false);
+
     try {
       const raw = localStorage.getItem(scopedUploadedStrategyModelsStorageKey);
 
       if (!raw) {
+        setUploadedStrategyModels([]);
         setUploadedStrategyModelsReady(true);
         return;
       }
 
-      const parsed = JSON.parse(raw) as unknown;
-
-      if (!Array.isArray(parsed)) {
-        setUploadedStrategyModelsReady(true);
-        return;
-      }
-
-      const models = parsed
-        .map((entry) => parseStrategyModelCatalogEntry(entry))
-        .filter((entry): entry is StrategyModelCatalogEntry => entry !== null);
+      const parsed = parseUploadedStrategyModelList(JSON.parse(raw));
+      const models = parsed.models;
 
       setUploadedStrategyModels(models);
 
-      if (models.length !== parsed.length) {
+      if (parsed.invalidCount > 0) {
         setModelsSurfaceNotice("Some saved uploaded models were skipped because they were invalid.");
         setModelsSurfaceNoticeTone("error");
       }
@@ -14570,6 +14630,93 @@ function TradingTerminalWorkspace({
       setUploadedStrategyModelsReady(true);
     }
   }, [scopedUploadedStrategyModelsStorageKey]);
+
+  useEffect(() => {
+    cloudWorkspaceHydratedRef.current = false;
+    setCloudWorkspaceReady(!firebaseDb);
+  }, [currentUser.uid, firebaseDb]);
+
+  useEffect(() => {
+    if (
+      cloudWorkspaceHydratedRef.current ||
+      !savedPresetsReady ||
+      !uploadedStrategyModelsReady
+    ) {
+      return;
+    }
+
+    cloudWorkspaceHydratedRef.current = true;
+
+    if (!accountWorkspaceDocRef) {
+      setCloudWorkspaceReady(true);
+      return;
+    }
+
+    let active = true;
+
+    const hydrateWorkspace = async () => {
+      try {
+        const snapshot = await getDoc(accountWorkspaceDocRef);
+
+        if (!active || !snapshot.exists()) {
+          return;
+        }
+
+        const data = snapshot.data();
+
+        if (Array.isArray(data.savedPresets)) {
+          const remotePresets = parseSavedPresetList(data.savedPresets);
+          setSavedPresets(remotePresets);
+
+          try {
+            localStorage.setItem(scopedPresetsStorageKey, JSON.stringify(remotePresets));
+          } catch {
+            /* ignore quota */
+          }
+        }
+
+        if (Array.isArray(data.uploadedStrategyModels)) {
+          const remoteModels = parseUploadedStrategyModelList(data.uploadedStrategyModels);
+
+          setUploadedStrategyModels(remoteModels.models);
+
+          try {
+            localStorage.setItem(
+              scopedUploadedStrategyModelsStorageKey,
+              JSON.stringify(remoteModels.models)
+            );
+          } catch {
+            /* ignore quota */
+          }
+
+          if (remoteModels.invalidCount > 0) {
+            setModelsSurfaceNotice(
+              "Some account-saved uploaded models were skipped because they were invalid."
+            );
+            setModelsSurfaceNoticeTone("error");
+          }
+        }
+      } catch {
+        // Keep the local workspace usable if Firestore is unavailable.
+      } finally {
+        if (active) {
+          setCloudWorkspaceReady(true);
+        }
+      }
+    };
+
+    void hydrateWorkspace();
+
+    return () => {
+      active = false;
+    };
+  }, [
+    accountWorkspaceDocRef,
+    savedPresetsReady,
+    scopedPresetsStorageKey,
+    scopedUploadedStrategyModelsStorageKey,
+    uploadedStrategyModelsReady
+  ]);
 
   useEffect(() => {
     if (!uploadedStrategyModelsReady) {
@@ -14586,6 +14733,42 @@ function TradingTerminalWorkspace({
     }
   }, [
     scopedUploadedStrategyModelsStorageKey,
+    uploadedStrategyModels,
+    uploadedStrategyModelsReady
+  ]);
+
+  useEffect(() => {
+    if (
+      !accountWorkspaceDocRef ||
+      !cloudWorkspaceReady ||
+      !savedPresetsReady ||
+      !uploadedStrategyModelsReady
+    ) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void setDoc(
+        accountWorkspaceDocRef,
+        {
+          savedPresets,
+          uploadedStrategyModels,
+          workspaceUpdatedAt: serverTimestamp()
+        },
+        { merge: true }
+      ).catch(() => {
+        // Keep local state working even if cloud sync fails.
+      });
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    accountWorkspaceDocRef,
+    cloudWorkspaceReady,
+    savedPresets,
+    savedPresetsReady,
     uploadedStrategyModels,
     uploadedStrategyModelsReady
   ]);
@@ -20550,8 +20733,7 @@ function TradingTerminalWorkspace({
           {profileMenuOpen ? (
             <div className="profile-menu-popover">
               <div className="profile-menu-header">
-                <strong>{currentUserDisplayName}</strong>
-                <span>{currentUser.email ?? "Workspace account"}</span>
+                <strong>{`Welcome ${currentUserDisplayName}`}</strong>
               </div>
               <button
                 type="button"
