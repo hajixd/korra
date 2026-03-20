@@ -9157,8 +9157,8 @@ function TradingTerminalWorkspace({
   const [kExit, setKExit] = useState(9);
   const [knnVoteMode, setKnnVoteMode] = useState<KnnVoteMode>("majority");
   const [hdbMinClusterSize, setHdbMinClusterSize] = useState(35);
-  const [hdbMinSamples, setHdbMinSamples] = useState(12);
-  const [hdbEpsQuantile, setHdbEpsQuantile] = useState(0.85);
+  const [hdbMinSamples, setHdbMinSamples] = useState(5);
+  const [hdbEpsQuantile, setHdbEpsQuantile] = useState(0.5);
   const [hdbSampleCap, setHdbSampleCap] = useState(5000);
   const [antiCheatEnabled, setAntiCheatEnabled] = useState(false);
   const [validationMode, setValidationMode] = useState<AiValidationMode>("off");
@@ -14007,9 +14007,9 @@ function TradingTerminalWorkspace({
     if (s.kEntry != null) setKEntry(s.kEntry);
     if (s.kExit != null) setKExit(s.kExit);
     if (s.knnVoteMode != null) setKnnVoteMode("majority");
-    if (s.hdbMinClusterSize != null) setHdbMinClusterSize(s.hdbMinClusterSize);
-    if (s.hdbMinSamples != null) setHdbMinSamples(s.hdbMinSamples);
-    if (s.hdbEpsQuantile != null) setHdbEpsQuantile(s.hdbEpsQuantile);
+    if (s.hdbMinClusterSize != null) setHdbMinClusterSize(clamp(s.hdbMinClusterSize, 5, 5000));
+    if (s.hdbMinSamples != null) setHdbMinSamples(clamp(s.hdbMinSamples, 5, 200));
+    if (s.hdbEpsQuantile != null) setHdbEpsQuantile(clamp(s.hdbEpsQuantile, 0.5, 0.99));
     if (s.hdbSampleCap != null) setHdbSampleCap(s.hdbSampleCap);
     if (s.antiCheatEnabled != null) setAntiCheatEnabled(s.antiCheatEnabled);
     if (s.validationMode != null) setValidationMode(normalizeAiValidationMode(s.validationMode));
@@ -14143,8 +14143,8 @@ function TradingTerminalWorkspace({
     setKExit(9);
     setKnnVoteMode("majority");
     setHdbMinClusterSize(35);
-    setHdbMinSamples(12);
-    setHdbEpsQuantile(0.85);
+    setHdbMinSamples(5);
+    setHdbEpsQuantile(0.5);
     setHdbSampleCap(5000);
     setAntiCheatEnabled(false);
     setValidationMode("off");
@@ -23043,14 +23043,14 @@ function TradingTerminalWorkspace({
                           <span className="ai-zip-label">Min Samples</span>
                           <input
                             type="number"
-                            min={2}
+                            min={5}
                             max={200}
                             step={1}
                             value={hdbMinSamples}
                             disabled={aiDisabled}
                             onChange={(event) => {
                               setHdbMinSamples(
-                                clamp(Math.floor(Number(event.target.value) || 2), 2, 200)
+                                clamp(Math.floor(Number(event.target.value) || 5), 5, 200)
                               );
                             }}
                             className="ai-zip-input"
