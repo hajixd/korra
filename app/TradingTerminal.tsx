@@ -11292,14 +11292,20 @@ function TradingTerminalWorkspace({
     const key = appliedBacktestKey;
     const oneMinuteKey = appliedBacktestOneMinuteKey;
 
-    if (backtestHistorySeedReady) {
-      return;
-    }
-
     let cancelled = false;
     const isAlreadyOneMinute = appliedBacktestSettings.timeframe === "1m";
+    const shouldHydrateDetailedBacktestStats =
+      selectedSurfaceTab === "backtest" &&
+      (selectedBacktestTab === "performanceStats" ||
+        selectedBacktestTab === "entryExit");
+
+    if (backtestHistorySeedReady && !shouldHydrateDetailedBacktestStats) {
+      return;
+    }
     const shouldLoadOneMinutePrecision =
-      appliedBacktestSettings.minutePreciseEnabled && !isAlreadyOneMinute;
+      shouldHydrateDetailedBacktestStats &&
+      appliedBacktestSettings.minutePreciseEnabled &&
+      !isAlreadyOneMinute;
     const existingCandles = pickLongestCandleSeries(
       appliedBacktestSeedCandlesRef.current,
       appliedBacktestFallbackCandlesRef.current
@@ -11358,8 +11364,11 @@ function TradingTerminalWorkspace({
         : null;
     // A requested historical date range should not silently degrade to a recent fragment.
     const allowOneMinuteFallback = !hasDateRange && (shouldLoadOneMinutePrecision || isAlreadyOneMinute);
-    const needsHistory =
-      existingCandles.length < MIN_SEED_CANDLES ||
+    const hasBasicReplaySeed =
+      hasUsableAizipSeedCandles(existingCandles, minimumReplaySeedBars) &&
+      existingCandles.length >= MIN_SEED_CANDLES;
+    const needsReplaySeed = !hasBasicReplaySeed;
+    const needsExtendedHistoryCoverage =
       existingCandles.length < targetBars ||
       (hasDateRange &&
         !candlesCoverDateRange(
@@ -11369,6 +11378,9 @@ function TradingTerminalWorkspace({
           appliedBacktestSettings.statsDateEnd,
           leadingBars
         ));
+    const needsHistory =
+      needsReplaySeed ||
+      (shouldHydrateDetailedBacktestStats && needsExtendedHistoryCoverage);
     const needsOneMinute =
       shouldLoadOneMinutePrecision &&
       (existingOneMinute.length < MIN_SEED_CANDLES ||
@@ -11393,6 +11405,16 @@ function TradingTerminalWorkspace({
       }
       setStatsRefreshStatus("Preparing Backtest Replay");
       setBacktestHistorySeedReady(true);
+      return;
+    }
+
+    if (
+      backtestHistorySeedReady &&
+      shouldHydrateDetailedBacktestStats &&
+      (needsHistory || needsOneMinute)
+    ) {
+      setStatsRefreshStatus("Loading Candle History");
+      setBacktestHistorySeedReady(false);
       return;
     }
 
@@ -11507,7 +11529,9 @@ function TradingTerminalWorkspace({
         }
       } finally {
         if (!cancelled) {
+          const shouldRequireExtendedCoverage = shouldHydrateDetailedBacktestStats;
           const hasReplaySeedRangeStart =
+            !shouldRequireExtendedCoverage ||
             !hasDateRange ||
             candlesReachDateRangeStart(
               resolvedReplaySeedCandles,
@@ -11520,6 +11544,7 @@ function TradingTerminalWorkspace({
             hasReplaySeedRangeStart;
           if (hasReplaySeedCandles) {
             if (
+              shouldRequireExtendedCoverage &&
               hasDateRange &&
               !candlesCoverDateRange(
                 resolvedReplaySeedCandles,
@@ -11571,6 +11596,8 @@ function TradingTerminalWorkspace({
     appliedBacktestOneMinuteKey,
     appliedBacktestSeedCandles.length,
     appliedBacktestSeedOneMinuteCandles.length,
+    selectedBacktestTab,
+    selectedSurfaceTab,
     shouldSkipBacktestHistoryFetch
   ]);
 
@@ -16627,6 +16654,8 @@ function TradingTerminalWorkspace({
     isBacktestAnalyticsVisible && deferredBacktestTab === "performanceStats";
   const isEntryExitBacktestTabActive =
     isBacktestAnalyticsVisible && deferredBacktestTab === "entryExit";
+  const isDetailedBacktestStatsTabActive =
+    isPerformanceStatsBacktestTabActive || isEntryExitBacktestTabActive;
   const isPropFirmBacktestTabActive =
     isBacktestAnalyticsVisible && deferredBacktestTab === "propFirm";
   const shouldComputeBacktestAnalyticsOnServer =
@@ -16641,7 +16670,8 @@ function TradingTerminalWorkspace({
   const isBacktestTabDataPending = selectedBacktestTab !== deferredBacktestTab;
   const isBacktestHistorySeedBlocked =
     statsRefreshStatus === "Historical Candle Range Unavailable";
-  const isBacktestTabHistoryPending = backtestHasRun && !backtestHistorySeedReady;
+  const isBacktestTabHistoryPending =
+    backtestHasRun && !backtestHistorySeedReady && isDetailedBacktestStatsTabActive;
   const shouldShowBacktestInlineLoader =
     isBacktestSurfaceSettled &&
     backtestInlineLoaderTabs.has(selectedBacktestTab) &&
