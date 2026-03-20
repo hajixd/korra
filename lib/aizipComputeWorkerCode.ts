@@ -4113,7 +4113,6 @@ function flushSuppressedNeighbors(uptoIndex){
     let closestClusterUid = null;
     let aiEntryMode = "off";
     let entryNeighbors=[];
-    let entryClusterMapVector = null;
 
     let steps=0, totalSteps = Math.max(1, n - Math.max(2, chunkBars));
 
@@ -4358,10 +4357,6 @@ function flushSuppressedNeighbors(uptoIndex){
             exitTime: ghostRes.exitTime,
             entryPrice: ghostRes.entryPrice,
             entryNeighbors: bestPick.snapshot.neighbors.slice(),
-            clusterMapVector: Array.isArray(bestPick.snapshot.q)
-              ? bestPick.snapshot.q.slice()
-              : null,
-            clusterMapVectorSource: "worker",
             suppressed: true,
           });
           return null;
@@ -4421,10 +4416,6 @@ function flushSuppressedNeighbors(uptoIndex){
             exitTime: ghostRes.exitTime,
             entryPrice: ghostRes.entryPrice,
             entryNeighbors: entrySnapshot.neighbors.slice(),
-            clusterMapVector: Array.isArray(entrySnapshot.q)
-              ? entrySnapshot.q.slice()
-              : null,
-            clusterMapVectorSource: "worker",
             suppressed: true,
           });
           return null;
@@ -4742,7 +4733,6 @@ function flushSuppressedNeighbors(uptoIndex){
         let bestLabelUid = null;
         let bestMBuy = 0, bestMSell = 0;
         let bestNeighbors = [];
-        let bestVector = null;
 
         for(const m of candidates){
           const buySnapshot = buildEntrySnapshot(i, m, 1, excludeTime);
@@ -4764,7 +4754,6 @@ function flushSuppressedNeighbors(uptoIndex){
             bestLabelPnl = snapshot.labelPnl;
             bestLabelUid = snapshot.labelUid;
             bestNeighbors = snapshot.neighbors.slice();
-            bestVector = Array.isArray(snapshot.q) ? snapshot.q.slice() : null;
           }
         }
 
@@ -4778,7 +4767,6 @@ function flushSuppressedNeighbors(uptoIndex){
           bestLabelPnl = null;
           bestLabelUid = null;
           bestNeighbors = [];
-          bestVector = null;
         }
 
         const buyScore = clamp(bestMBuy, 0, 1);
@@ -4805,9 +4793,7 @@ function flushSuppressedNeighbors(uptoIndex){
             signalIndex: i,
             model: bestModel || "Momentum",
             breakdowns: entryBreakdowns,
-            entryNeighbors: bestNeighbors,
-            clusterMapVector: bestVector,
-            clusterMapVectorSource: "worker",
+            entryNeighbors: bestNeighbors
           },
           entryBreakdowns
         };
@@ -4857,11 +4843,7 @@ function flushSuppressedNeighbors(uptoIndex){
           buyChecks: picked.best.buyChecks,
           sellChecks: picked.best.sellChecks,
           breakdowns: entryBreakdowns,
-          entryNeighbors: entrySnapshot.neighbors.slice(),
-          clusterMapVector: Array.isArray(entrySnapshot.q)
-            ? entrySnapshot.q.slice()
-            : null,
-          clusterMapVectorSource: "worker",
+          entryNeighbors: entrySnapshot.neighbors.slice()
         },
         entryBreakdowns
       };
@@ -5110,9 +5092,6 @@ function flushSuppressedNeighbors(uptoIndex){
         entryNeighbors = Array.isArray(pick.entryNeighbors)
           ? pick.entryNeighbors.slice()
           : entrySnapshot.neighbors.slice();
-        entryClusterMapVector = Array.isArray(entrySnapshot.q)
-          ? entrySnapshot.q.slice()
-          : null;
 
         tpPrice = direction===1 ? entryPrice+tpDist : entryPrice-tpDist;
         slPrice = direction===1 ? entryPrice-slDist : entryPrice+slDist;
@@ -5273,10 +5252,6 @@ function flushSuppressedNeighbors(uptoIndex){
           closestClusterPnl,
           closestClusterUid,
           entryNeighbors,
-          clusterMapVector: Array.isArray(entryClusterMapVector)
-            ? entryClusterMapVector.slice()
-            : null,
-          clusterMapVectorSource: "worker",
           aiMode: aiEntryMode,
           isOpen: false,
           chunkType: displayChunk,
@@ -5306,7 +5281,6 @@ function flushSuppressedNeighbors(uptoIndex){
         closestClusterPnl = null;
         closestClusterUid = null;
         entryNeighbors = [];
-        entryClusterMapVector = null;
         entryModel = null;
         aiEntryMode = "off";
         isAiTrade = false;
@@ -5356,10 +5330,6 @@ function flushSuppressedNeighbors(uptoIndex){
           openTradePotential.labelUid =
             liveLabelUid || openTradePotential.labelUid || null;
           openTradePotential.entryNeighbors = liveNeighbors;
-          openTradePotential.clusterMapVector = Array.isArray(entryClusterMapVector)
-            ? entryClusterMapVector.slice()
-            : openTradePotential.clusterMapVector ?? null;
-          openTradePotential.clusterMapVectorSource = "worker";
         } else {
           openTradePotential = {
             dir: direction,
@@ -5371,10 +5341,6 @@ function flushSuppressedNeighbors(uptoIndex){
             labelUid: liveLabelUid,
             signalIndex,
             entryNeighbors: liveNeighbors,
-            clusterMapVector: Array.isArray(entryClusterMapVector)
-              ? entryClusterMapVector.slice()
-              : null,
-            clusterMapVectorSource: "worker",
           };
         }
       } catch (e) {
@@ -5408,10 +5374,6 @@ function flushSuppressedNeighbors(uptoIndex){
           closestClusterPnl,
           closestClusterUid,
           entryNeighbors,
-          clusterMapVector: Array.isArray(entryClusterMapVector)
-            ? entryClusterMapVector.slice()
-            : null,
-          clusterMapVectorSource: "worker",
           aiMode: aiEntryMode,
           isOpen: true,
           chunkType: displayChunkOpen,

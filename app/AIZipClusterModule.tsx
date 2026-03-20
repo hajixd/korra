@@ -5598,29 +5598,6 @@ function buildMapVector(
   vec.push(Math.tanh(p / scale) * PNL_STRENGTH);
   return vec;
 }
-function normalizeClusterMapVectorPayload(value: any): number[] | null {
-  if (!Array.isArray(value)) return null;
-  const out: number[] = [];
-  for (const entry of value) {
-    const num = Number(entry);
-    if (!Number.isFinite(num)) return null;
-    out.push(num);
-  }
-  return out.length >= 2 ? out : null;
-}
-function resolveClusterMapDirectVector(src: any): number[] | null {
-  if (!src || typeof src !== "object") return null;
-  const source = String((src as any)?.clusterMapVectorSource || "")
-    .trim()
-    .toLowerCase();
-  const explicit = normalizeClusterMapVectorPayload((src as any)?.clusterMapVector);
-  if (explicit && source && source !== "panel") return explicit;
-  if (source === "worker") {
-    const workerVec = normalizeClusterMapVectorPayload((src as any)?.neighborVector);
-    if (workerVec) return workerVec;
-  }
-  return null;
-}
 async function fetchTwelveCandles(symbol, interval, outputsize) {
   const url =
     `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(
@@ -5987,15 +5964,6 @@ function dist2(a: [number, number], b: [number, number]) {
   const dy = a[1] - b[1];
   return Math.sqrt(dx * dx + dy * dy);
 }
-function vecDist(a: number[], b: number[]) {
-  const dim = Math.min(a.length, b.length);
-  let sum = 0;
-  for (let i = 0; i < dim; i++) {
-    const d = Number(a[i] || 0) - Number(b[i] || 0);
-    sum += d * d;
-  }
-  return Math.sqrt(sum);
-}
 
 function quantile1D(arr: number[], q: number) {
   if (!arr || arr.length === 0) return NaN;
@@ -6019,52 +5987,6 @@ function dbscan2D(points: [number, number][], eps: number, minSamples: number) {
     for (let j = 0; j < n; j++) {
       if (i === j) continue;
       if (dist2(points[i], points[j]) <= eps) ni.push(j);
-    }
-    neigh[i] = ni;
-  }
-
-  const expand = (i: number, neighbors: number[], cid: number) => {
-    labels[i] = cid;
-    const queue = neighbors.slice();
-    while (queue.length) {
-      const j = queue.shift() as number;
-      if (!visited[j]) {
-        visited[j] = true;
-        const nj = neigh[j];
-        if (nj.length + 1 >= minSamples) {
-          for (const u of nj) if (!queue.includes(u)) queue.push(u);
-        }
-      }
-      if (labels[j] === -1) labels[j] = cid;
-    }
-  };
-
-  for (let i = 0; i < n; i++) {
-    if (visited[i]) continue;
-    visited[i] = true;
-    const nbs = neigh[i];
-    if (nbs.length + 1 < minSamples) {
-      labels[i] = -1;
-    } else {
-      expand(i, nbs, clusterId);
-      clusterId++;
-    }
-  }
-
-  return { labels, nClusters: clusterId };
-}
-function dbscanVectors(points: number[][], eps: number, minSamples: number) {
-  const n = points.length;
-  const labels = new Array(n).fill(-1);
-  const visited = new Array(n).fill(false);
-  let clusterId = 0;
-
-  const neigh: number[][] = new Array(n);
-  for (let i = 0; i < n; i++) {
-    const ni: number[] = [];
-    for (let j = 0; j < n; j++) {
-      if (i === j) continue;
-      if (vecDist(points[i], points[j]) <= eps) ni.push(j);
     }
     neigh[i] = ni;
   }
@@ -10527,24 +10449,19 @@ function ClusterMapInner({
     for (let i = 0; i < trades.length; i++) {
       const t = trades[i];
       const fi = t.signalIndex;
-      const directVec = resolveClusterMapDirectVector(t);
-      const baseV = directVec
-        ? null
-        : buildMapVector(
-            candles,
-            fi,
-            chunkBarsDeb,
-            t.chunkType,
-            t,
-            pnlScale,
-            parseMode
-          );
+      const baseV = buildMapVector(
+        candles,
+        fi,
+        chunkBarsDeb,
+        t.chunkType,
+        t,
+        pnlScale,
+        parseMode
+      );
       const tod = timeOfDayUnit(t.entryTime, parseMode);
       const timeFeature = (tod - 0.5) * 2 * TIME_FEATURE_STRENGTH;
-      const meta = baseV ? baseV.slice(-6) : [0, 0, 0, 0, 0, 0];
-      const chunk = directVec
-        ? directVec.slice()
-        : (baseV as number[]).slice(0, Math.max(0, (baseV as number[]).length - 6));
+      const meta = baseV.slice(-6);
+      const chunk = baseV.slice(0, Math.max(0, baseV.length - 6));
 
       const pnl = t.isOpen ? t.unrealizedPnl ?? 0 : t.pnl ?? 0;
       const baseR = (3.4 + Math.min(10, Math.log10(Math.abs(pnl) + 10))) * 0.78;
@@ -10656,25 +10573,17 @@ function ClusterMapInner({
       ) {
         const tod = timeOfDayUnit(tRaw, parseMode);
         const timeFeature = (tod - 0.5) * 2 * TIME_FEATURE_STRENGTH;
-        const directVec = resolveClusterMapDirectVector(potential);
-        const vectorBase = directVec
-          ? null
-          : buildMapVector(
-              candles,
-              sIdx,
-              chunkBarsDeb,
-              potential.model,
-              pseudo,
-              pnlScale,
-              parseMode
-            );
-        const meta = vectorBase ? vectorBase.slice(-6) : [0, 0, 0, 0, 0, 0];
-        const chunk = directVec
-          ? directVec.slice()
-          : (vectorBase as number[]).slice(
-              0,
-              Math.max(0, (vectorBase as number[]).length - 6)
-            );
+        const baseV = buildMapVector(
+          candles,
+          sIdx,
+          chunkBarsDeb,
+          potential.model,
+          pseudo,
+          pnlScale,
+          parseMode
+        );
+        const meta = baseV.slice(-6);
+        const chunk = baseV.slice(0, Math.max(0, baseV.length - 6));
         const baseR = 6.8;
         entries.push({
           id: `potential-${sIdx}`,
@@ -10705,24 +10614,19 @@ function ClusterMapInner({
           pnl: 0,
           isOpen: false,
         };
-        const directVec = resolveClusterMapDirectVector(g);
-        const baseV = directVec
-          ? null
-          : buildMapVector(
-              candles,
-              g.signalIndex,
-              chunkBarsDeb,
-              g.model,
-              pseudo,
-              pnlScale,
-              parseMode
-            );
+        const baseV = buildMapVector(
+          candles,
+          g.signalIndex,
+          chunkBarsDeb,
+          g.model,
+          pseudo,
+          pnlScale,
+          parseMode
+        );
         const tod = timeOfDayUnit(g.entryTime, parseMode);
         const timeFeature = (tod - 0.5) * 2 * TIME_FEATURE_STRENGTH;
-        const meta = baseV ? baseV.slice(-6) : [0, 0, 0, 0, 0, 0];
-        const chunk = directVec
-          ? directVec.slice()
-          : (baseV as number[]).slice(0, Math.max(0, (baseV as number[]).length - 6));
+        const meta = baseV.slice(-6);
+        const chunk = baseV.slice(0, Math.max(0, baseV.length - 6));
         const baseR = 6.8;
 
         const dtStr = (g.entryTime || "") as any;
@@ -11435,7 +11339,6 @@ function ClusterMapInner({
         exitIndex: e.exitIndex,
         entryPrice: e.entryPrice,
         entryNeighbors: (e as any).entryNeighbors ?? [],
-        v: Array.isArray((e as any).v) ? (e as any).v.slice() : null,
       });
     }
 
@@ -12022,64 +11925,47 @@ function ClusterMapInner({
   const hdbOverlay = useMemo(() => {
     if (aiMethod !== "hdbscan") return null;
     const basisNodes: any[] = hdbClusterBasisNodes;
+    const pts: [number, number][] = [];
     const nodeRefs: any[] = [];
-    const rawVectors: number[][] = [];
-    let maxDim = 0;
-
     for (let i = 0; i < basisNodes.length; i++) {
       const n: any = basisNodes[i];
       if (!n) continue;
       if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) continue;
       if (n.isPotential || n.isOpen || n.isLive) continue;
-      const raw = normalizeClusterMapVectorPayload((n as any)?.v);
-      if (!raw) continue;
-      if (raw.length > maxDim) maxDim = raw.length;
+      pts.push([n.x, n.y]);
       nodeRefs.push(n);
-      rawVectors.push(raw);
     }
-
-    if (nodeRefs.length < 10 || maxDim < 2) return null;
-
-    const alignedVectors = rawVectors.map((vector) => {
-      const next = vector.slice(0, maxDim);
-      while (next.length < maxDim) next.push(0);
-      return next;
-    });
-    const { stdData } = standardiseVectors(alignedVectors);
-    if (stdData.length < 10) return null;
+    const N = pts.length;
+    if (N < 10) return null;
 
     const minSamples = Math.max(2, Math.min(200, Number(hdbMinSamples || 12)));
-    const clusterCap = lowPowerMode ? 900 : 1600;
+    const coreCap = 1400;
     let sampleIndices: number[] = [];
-    if (stdData.length > clusterCap) {
-      const step = Math.ceil(stdData.length / clusterCap);
-      for (let i = 0; i < stdData.length; i += step) sampleIndices.push(i);
-      if (sampleIndices.length > clusterCap) {
-        sampleIndices = sampleIndices.slice(0, clusterCap);
-      }
+    if (N > coreCap) {
+      const step = Math.ceil(N / coreCap);
+      for (let i = 0; i < N; i += step) sampleIndices.push(i);
+      if (sampleIndices.length > coreCap) sampleIndices = sampleIndices.slice(0, coreCap);
     } else {
-      sampleIndices = Array.from({ length: stdData.length }, (_, index) => index);
+      sampleIndices = Array.from({ length: N }, (_, index) => index);
     }
 
-    const sampleVectors = sampleIndices.map((index) => stdData[index]!);
-    if (sampleVectors.length < 10) return null;
-
-    const k = Math.max(2, Math.min(minSamples, sampleVectors.length - 1));
-    const coreD: number[] = new Array(sampleVectors.length).fill(0);
-    for (let i = 0; i < sampleVectors.length; i++) {
+    const samplePoints = sampleIndices.map((index) => pts[index]!);
+    const k = Math.max(2, Math.min(minSamples, samplePoints.length - 1));
+    const coreD: number[] = new Array(samplePoints.length).fill(0);
+    for (let i = 0; i < samplePoints.length; i++) {
       const best = new Array(k).fill(Infinity);
       let max = Infinity;
       let maxIdx = 0;
-      for (let j = 0; j < sampleVectors.length; j++) {
+      for (let j = 0; j < samplePoints.length; j++) {
         if (i === j) continue;
-        const d = vecDist(sampleVectors[i]!, sampleVectors[j]!);
+        const d = dist2(samplePoints[i]!, samplePoints[j]!);
         if (d < max) {
           best[maxIdx] = d;
           max = best[0]!;
           maxIdx = 0;
           for (let t = 1; t < k; t++) {
-            if ((best[t] as number) > max) {
-              max = best[t] as number;
+            if (best[t]! > max) {
+              max = best[t]!;
               maxIdx = t;
             }
           }
@@ -12094,81 +11980,119 @@ function ClusterMapInner({
     );
     if (!Number.isFinite(eps) || eps <= 0) eps = quantile1D(coreD, 0.75) || 1;
 
-    const sampleRes = dbscanVectors(sampleVectors, eps, minSamples);
-    const sampleLabels = sampleRes.labels.slice();
+    const dbscan2DGrid = (
+      points: [number, number][],
+      eps0: number,
+      minSamples0: number
+    ) => {
+      const n = points.length;
+      const labels = new Array(n).fill(-1);
+      const visited = new Array(n).fill(false);
+      let clusterId = 0;
+
+      const epsSafe = Math.max(1e-9, Number(eps0) || 0);
+      const eps2 = epsSafe * epsSafe;
+      const inv = 1 / epsSafe;
+
+      const grid = new Map<string, number[]>();
+      for (let i = 0; i < n; i++) {
+        const p = points[i]!;
+        const cx = Math.floor(p[0] * inv);
+        const cy = Math.floor(p[1] * inv);
+        const key = `${cx},${cy}`;
+        const bucket = grid.get(key);
+        if (bucket) bucket.push(i);
+        else grid.set(key, [i]);
+      }
+
+      const neighCache: Array<number[] | null> = new Array(n).fill(null);
+
+      const regionQuery = (i: number) => {
+        const cached = neighCache[i];
+        if (cached) return cached;
+
+        const p = points[i]!;
+        const cx = Math.floor(p[0] * inv);
+        const cy = Math.floor(p[1] * inv);
+        const out: number[] = [];
+
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            const bucket = grid.get(`${cx + dx},${cy + dy}`);
+            if (!bucket) continue;
+            for (let bi = 0; bi < bucket.length; bi++) {
+              const j = bucket[bi]!;
+              if (j === i) continue;
+              const q = points[j]!;
+              const ddx = p[0] - q[0];
+              const ddy = p[1] - q[1];
+              if (ddx * ddx + ddy * ddy <= eps2) out.push(j);
+            }
+          }
+        }
+
+        neighCache[i] = out;
+        return out;
+      };
+
+      const expand = (seed: number, cid: number, seedNeighbors: number[]) => {
+        labels[seed] = cid;
+        const queue = seedNeighbors.slice();
+        const queued = new Set<number>(queue);
+        for (let qi = 0; qi < queue.length; qi++) {
+          const j = queue[qi]!;
+          if (!visited[j]) {
+            visited[j] = true;
+            const neighbors = regionQuery(j);
+            if (neighbors.length + 1 >= minSamples0) {
+              for (let ni = 0; ni < neighbors.length; ni++) {
+                const u = neighbors[ni]!;
+                if (!queued.has(u)) {
+                  queued.add(u);
+                  queue.push(u);
+                }
+              }
+            }
+          }
+          if (labels[j] === -1) labels[j] = cid;
+        }
+      };
+
+      for (let i = 0; i < n; i++) {
+        if (visited[i]) continue;
+        visited[i] = true;
+        const neighbors = regionQuery(i);
+        if (neighbors.length + 1 < minSamples0) {
+          labels[i] = -1;
+        } else {
+          expand(i, clusterId, neighbors);
+          clusterId++;
+        }
+      }
+
+      return { labels, nClusters: clusterId };
+    };
+
+    const res = dbscan2DGrid(pts, eps, minSamples);
+    const labels = res.labels.slice();
+    const counts0 = new Array(res.nClusters).fill(0);
+    for (const cid of labels) if (cid >= 0) counts0[cid] += 1;
     const minClusterSize = Math.max(
       5,
       Math.min(5000, Number(hdbMinClusterSize || 40))
     );
-    const counts0 = new Array(sampleRes.nClusters).fill(0);
-    for (const cid of sampleLabels) if (cid >= 0) counts0[cid] += 1;
-    for (let i = 0; i < sampleLabels.length; i++) {
-      const cid = sampleLabels[i]!;
-      if (cid >= 0 && counts0[cid]! < minClusterSize) sampleLabels[i] = -1;
+    for (let i = 0; i < labels.length; i++) {
+      const cid = labels[i]!;
+      if (cid >= 0 && counts0[cid]! < minClusterSize) labels[i] = -1;
     }
 
     const remap = new Map<number, number>();
     let nextId = 0;
-    for (let i = 0; i < sampleLabels.length; i++) {
-      const cid = sampleLabels[i]!;
+    for (let i = 0; i < labels.length; i++) {
+      const cid = labels[i]!;
       if (cid < 0) continue;
       if (!remap.has(cid)) remap.set(cid, nextId++);
-      sampleLabels[i] = remap.get(cid) as number;
-    }
-
-    const centroids = new Array(nextId)
-      .fill(null)
-      .map(() => new Array(maxDim).fill(0));
-    const centroidCounts = new Array(nextId).fill(0);
-    for (let i = 0; i < sampleLabels.length; i++) {
-      const cid = sampleLabels[i]!;
-      if (cid < 0) continue;
-      centroidCounts[cid] += 1;
-      const vector = sampleVectors[i]!;
-      const centroid = centroids[cid]!;
-      for (let dim = 0; dim < maxDim; dim++) centroid[dim] += vector[dim] || 0;
-    }
-    for (let cid = 0; cid < centroids.length; cid++) {
-      const centroid = centroids[cid]!;
-      const denom = Math.max(1, centroidCounts[cid] || 0);
-      for (let dim = 0; dim < maxDim; dim++) centroid[dim] /= denom;
-    }
-
-    const radii = new Array(nextId).fill(0);
-    for (let i = 0; i < sampleLabels.length; i++) {
-      const cid = sampleLabels[i]!;
-      if (cid < 0) continue;
-      const d = vecDist(sampleVectors[i]!, centroids[cid]!);
-      if (d > radii[cid]!) radii[cid] = d;
-    }
-
-    const sampleIndexLookup = new Map<number, number>();
-    for (let i = 0; i < sampleIndices.length; i++) {
-      sampleIndexLookup.set(sampleIndices[i]!, i);
-    }
-
-    const labels = new Array(stdData.length).fill(-1);
-    for (let i = 0; i < stdData.length; i++) {
-      const sampleIndex = sampleIndexLookup.get(i);
-      if (sampleIndex != null) {
-        labels[i] = sampleLabels[sampleIndex]!;
-        continue;
-      }
-      let bestCid = -1;
-      let bestDistance = Infinity;
-      for (let cid = 0; cid < centroids.length; cid++) {
-        const centroid = centroids[cid];
-        if (!centroid || centroidCounts[cid] <= 0) continue;
-        const distance = vecDist(stdData[i]!, centroid);
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          bestCid = cid;
-        }
-      }
-      if (bestCid >= 0) {
-        const radius = Math.max(eps, radii[bestCid]! * 1.15);
-        labels[i] = bestDistance <= radius ? bestCid : -1;
-      }
+      labels[i] = remap.get(cid) as number;
     }
 
     const clusterPts: Record<string, [number, number][]> = {};
@@ -12367,7 +12291,6 @@ function ClusterMapInner({
   }, [
     aiMethod,
     hdbClusterBasisNodes,
-    lowPowerMode,
     hdbMinSamples,
     hdbEpsQuantile,
     hdbMinClusterSize,
@@ -14848,7 +14771,7 @@ function ClusterMapInner({
       selectedId,
       selectedLink,
       knnEdgeNodes: neighborNodes,
-      knnAllowLegacyFallback: false,
+      knnAllowLegacyFallback: !entryNeighborsOnly,
     }),
     [
       lowPowerMode,
@@ -17834,7 +17757,7 @@ function ClusterMapInner({
           <ClusterMapViewport3D
             nodes={displayNodes}
             knnEdgeNodes={neighborNodes}
-            knnAllowLegacyFallback={false}
+            knnAllowLegacyFallback={!entryNeighborsOnly}
             selectedId={selectedId}
             searchHighlightId={searchHighlightId}
             resetKey={resetKey}

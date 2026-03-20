@@ -463,9 +463,6 @@ type HistoryItem = {
   stopPrice: number;
   outcomePrice: number;
   units: number;
-  neighborVector?: number[] | null;
-  clusterMapVector?: number[] | null;
-  clusterMapVectorSource?: string | null;
 } & BacktestTradeAiEntryMeta;
 
 type ServerTradePayload = {
@@ -484,9 +481,6 @@ type ServerTradePayload = {
   stopPrice: number;
   outcomePrice: number;
   units: number;
-  neighborVector?: number[] | null;
-  clusterMapVector?: number[] | null;
-  clusterMapVectorSource?: string | null;
 } & BacktestTradeAiEntryMeta;
 
 type ServerLibraryPointPayload = {
@@ -660,17 +654,7 @@ const toServerTradePayload = (trade: HistoryItem): ServerTradePayload => ({
       : null,
   closestClusterUid:
     trade.closestClusterUid == null ? null : String(trade.closestClusterUid),
-  entryNeighbors: cloneTradeEntryNeighbors(trade.entryNeighbors),
-  neighborVector: Array.isArray((trade as any).neighborVector)
-    ? ((trade as any).neighborVector as number[])
-    : null,
-  clusterMapVector: Array.isArray((trade as any).clusterMapVector)
-    ? ((trade as any).clusterMapVector as number[])
-    : null,
-  clusterMapVectorSource:
-    (trade as any).clusterMapVectorSource == null
-      ? null
-      : String((trade as any).clusterMapVectorSource)
+  entryNeighbors: cloneTradeEntryNeighbors(trade.entryNeighbors)
 });
 
 const toServerLibraryPointPayload = (point: any): ServerLibraryPointPayload => ({
@@ -18595,16 +18579,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             : null,
         side: trade.side,
         closestClusterUid: (trade as any).closestClusterUid ?? null,
-        neighborVector: Array.isArray((trade as any).neighborVector)
-          ? ((trade as any).neighborVector as number[])
-          : null,
-        clusterMapVector: Array.isArray((trade as any).clusterMapVector)
-          ? ((trade as any).clusterMapVector as number[])
-          : null,
-        clusterMapVectorSource:
-          (trade as any).clusterMapVectorSource == null
-            ? null
-            : String((trade as any).clusterMapVectorSource),
         entryNeighbors: Array.isArray((trade as any).entryNeighbors)
           ? ((trade as any).entryNeighbors as any[])
           : [],

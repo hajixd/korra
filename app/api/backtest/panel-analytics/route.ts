@@ -35,8 +35,6 @@ type HistoryItem = {
   outcomePrice: number;
   units: number;
   neighborVector?: number[] | null;
-  clusterMapVector?: number[] | null;
-  clusterMapVectorSource?: string | null;
 } & BacktestTradeAiEntryMeta;
 
 type TradeAiEntrySnapshot = {
@@ -1261,28 +1259,14 @@ const applyTradeAiEntrySnapshot = (
           ...trade,
           closestClusterUid: trade.closestClusterUid ?? null,
           entryNeighbors: preservedNeighbors,
-          neighborVector: trade.neighborVector ?? buildTradeNeighborVector(trade),
-          clusterMapVector:
-            trade.clusterMapVector ??
-            trade.neighborVector ??
-            buildTradeNeighborVector(trade),
-          clusterMapVectorSource:
-            trade.clusterMapVectorSource ??
-            (trade.clusterMapVector ? "server" : trade.neighborVector ? "panel" : null)
+          neighborVector: trade.neighborVector ?? buildTradeNeighborVector(trade)
         }
       : {
           ...trade,
           aiMode: effectiveAiMode,
           closestClusterUid: trade.closestClusterUid ?? null,
           entryNeighbors: preservedNeighbors,
-          neighborVector: trade.neighborVector ?? buildTradeNeighborVector(trade),
-          clusterMapVector:
-            trade.clusterMapVector ??
-            trade.neighborVector ??
-            buildTradeNeighborVector(trade),
-          clusterMapVectorSource:
-            trade.clusterMapVectorSource ??
-            (trade.clusterMapVector ? "server" : trade.neighborVector ? "panel" : null)
+          neighborVector: trade.neighborVector ?? buildTradeNeighborVector(trade)
         };
   }
 
@@ -1297,14 +1281,7 @@ const applyTradeAiEntrySnapshot = (
     aiMode: snapshot.aiMode,
     closestClusterUid: snapshot.closestClusterUid,
     entryNeighbors,
-    neighborVector: trade.neighborVector ?? buildTradeNeighborVector(trade),
-    clusterMapVector:
-      trade.clusterMapVector ??
-      trade.neighborVector ??
-      buildTradeNeighborVector(trade),
-    clusterMapVectorSource:
-      trade.clusterMapVectorSource ??
-      (trade.clusterMapVector ? "server" : trade.neighborVector ? "panel" : null)
+    neighborVector: trade.neighborVector ?? buildTradeNeighborVector(trade)
   };
 };
 
@@ -1366,12 +1343,7 @@ const normalizeTrade = (value: unknown): HistoryItem | null => {
     closestClusterUid:
       row.closestClusterUid == null ? null : String(row.closestClusterUid),
     entryNeighbors: cloneEntryNeighbors(row.entryNeighbors),
-    neighborVector: toFiniteVector(row.neighborVector ?? row.v),
-    clusterMapVector: toFiniteVector(row.clusterMapVector),
-    clusterMapVectorSource:
-      row.clusterMapVectorSource == null
-        ? null
-        : String(row.clusterMapVectorSource)
+    neighborVector: toFiniteVector(row.neighborVector ?? row.v)
   };
 };
 
