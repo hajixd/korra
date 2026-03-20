@@ -3409,8 +3409,8 @@ function powerIteration(cov, seedKey, iterations = 20) {
   }
   return v;
 }
-function computePCA(stdData) {
-  if (stdData.length === 0) return { pc1: [], pc2: [] };
+function computePCAComponents(stdData, componentCount = 2) {
+  if (stdData.length === 0) return [];
   const n = stdData.length;
   const dim = stdData[0].length;
   const cov = new Array(dim);
@@ -3432,16 +3432,230 @@ function computePCA(stdData) {
       cov[j][i] = cov[i][j];
     }
   }
-  const pc1 = powerIteration(cov, "pc1");
-  const covPc1 = multiplyMatrixVector(cov, pc1);
-  let eig1 = dotProduct(pc1, covPc1);
-  for (let i = 0; i < dim; i++) {
-    for (let j = 0; j < dim; j++) {
-      cov[i][j] -= eig1 * pc1[i] * pc1[j];
+  const components = [];
+  const total = Math.max(1, Math.min(componentCount, dim));
+  for (let componentIndex = 0; componentIndex < total; componentIndex++) {
+    const component = powerIteration(cov, `pc${componentIndex + 1}`);
+    const projected = multiplyMatrixVector(cov, component);
+    const eigenvalue = dotProduct(component, projected);
+    components.push(component);
+    for (let i = 0; i < dim; i++) {
+      for (let j = 0; j < dim; j++) {
+        cov[i][j] -= eigenvalue * component[i] * component[j];
+      }
     }
   }
-  const pc2 = powerIteration(cov, "pc2");
+  return components;
+}
+function computePCA(stdData) {
+  const components = computePCAComponents(stdData, 2);
+  const pc1 = components[0] || [];
+  const pc2 = components[1] || [];
   return { pc1, pc2 };
+}
+
+function hashClusterProjectionString(str) {
+  const text = String(str || "");
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index++) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+function makeClusterProjectionMatrix(seedKey, outDim, inDim) {
+  const rand = mulberry32(seedFromKey(seedKey));
+  const matrix = new Array(outDim);
+  const base = 1 / Math.sqrt(Math.max(1, outDim));
+  const scale = Math.sqrt(3) * base;
+  for (let rowIndex = 0; rowIndex < outDim; rowIndex++) {
+    const row = new Array(inDim);
+    for (let columnIndex = 0; columnIndex < inDim; columnIndex++) {
+      const x = rand();
+      row[columnIndex] = x < 1 / 6 ? scale : x > 5 / 6 ? -scale : 0;
+    }
+    matrix[rowIndex] = row;
+  }
+  return matrix;
+}
+function projectClusterProjectionMatrix(matrix, vec) {
+  const out = new Array(matrix.length);
+  for (let rowIndex = 0; rowIndex < matrix.length; rowIndex++) {
+    const row = matrix[rowIndex];
+    let sum = 0;
+    for (let columnIndex = 0; columnIndex < vec.length; columnIndex++) {
+      sum += row[columnIndex] * vec[columnIndex];
+    }
+    out[rowIndex] = sum;
+  }
+  return out;
+}
+function buildClusterSubsampleIndices(inDim, outDim) {
+  if (outDim <= 1) return [0];
+  const indices = new Array(outDim);
+  for (let index = 0; index < outDim; index++) {
+    indices[index] = Math.round((index * (inDim - 1)) / (outDim - 1));
+  }
+  return indices;
+}
+function applyClusterProjectionIndices(vec, indices) {
+  const out = new Array(indices.length);
+  for (let index = 0; index < indices.length; index++) {
+    out[index] = Number(vec?.[indices[index]] ?? 0);
+  }
+  return out;
+}
+function hashClusterProjectionVector(vec, outDim, seedKey) {
+  const out = new Array(outDim).fill(0);
+  const base = hashClusterProjectionString(seedKey);
+  for (let index = 0; index < vec.length; index++) {
+    const hash = (base ^ Math.imul(index + 1, 2654435761)) >>> 0;
+    const targetIndex = hash % outDim;
+    const sign = hash & 1 ? 1 : -1;
+    out[targetIndex] += sign * Number(vec[index] || 0);
+  }
+  return out;
+}
+function computeClusterVarianceIndices(rawData, outDim) {
+  if (!Array.isArray(rawData) || rawData.length === 0) return null;
+  const inDim = rawData[0]?.length ?? 0;
+  if (!inDim) return null;
+  const mean = new Array(inDim).fill(0);
+  const variance = new Array(inDim).fill(0);
+  let count = 0;
+  for (const row of rawData) {
+    if (!Array.isArray(row) || row.length !== inDim) continue;
+    count += 1;
+    for (let index = 0; index < inDim; index++) {
+      mean[index] += Number(row[index] || 0);
+    }
+  }
+  if (!count) return null;
+  for (let index = 0; index < inDim; index++) {
+    mean[index] /= count;
+  }
+  for (const row of rawData) {
+    if (!Array.isArray(row) || row.length !== inDim) continue;
+    for (let index = 0; index < inDim; index++) {
+      const delta = Number(row[index] || 0) - mean[index];
+      variance[index] += delta * delta;
+    }
+  }
+  for (let index = 0; index < inDim; index++) {
+    variance[index] /= Math.max(1, count - 1);
+  }
+  const indices = Array.from({ length: inDim }, (_, index) => index);
+  indices.sort((left, right) => variance[right] - variance[left]);
+  return indices.slice(0, outDim);
+}
+function normalizeClusterCompressionMethod(value) {
+  const method = String(value || "").trim().toLowerCase();
+  if (
+    method === "pca" ||
+    method === "jl" ||
+    method === "hash" ||
+    method === "variance" ||
+    method === "subsample"
+  ) {
+    return method;
+  }
+  return "jl";
+}
+function padClusterProjectionVector(vec, targetDim) {
+  const out = new Array(targetDim).fill(0);
+  const safeVec = Array.isArray(vec) ? vec : [];
+  const length = Math.min(targetDim, safeVec.length);
+  for (let index = 0; index < length; index++) {
+    out[index] = Number.isFinite(Number(safeVec[index])) ? Number(safeVec[index]) : 0;
+  }
+  return out;
+}
+function createClusterMapProjection({
+  rawData,
+  stdData,
+  targetDim,
+  method,
+  seedKey,
+}) {
+  const safeTargetDim = Math.max(1, Math.floor(Number(targetDim) || 1));
+  if (!Array.isArray(stdData) || stdData.length === 0) {
+    return {
+      emb: [],
+      project: () => new Array(safeTargetDim).fill(0),
+    };
+  }
+
+  const inDim = stdData[0]?.length ?? 0;
+  if (!inDim) {
+    return {
+      emb: [],
+      project: () => new Array(safeTargetDim).fill(0),
+    };
+  }
+
+  const outDim = Math.max(1, Math.min(safeTargetDim, inDim));
+  const normalizedMethod = normalizeClusterCompressionMethod(method);
+
+  if (outDim >= inDim) {
+    return {
+      emb: stdData.map((row) => padClusterProjectionVector(row, safeTargetDim)),
+      project: (vec) => padClusterProjectionVector(vec, safeTargetDim),
+    };
+  }
+
+  if (normalizedMethod === "pca") {
+    const components = computePCAComponents(stdData, outDim);
+    const project = (vec) =>
+      padClusterProjectionVector(
+        components.map((component) => dotProduct(component, vec)),
+        safeTargetDim
+      );
+    return {
+      emb: stdData.map((row) => project(row)),
+      project,
+    };
+  }
+
+  if (normalizedMethod === "jl") {
+    const matrix = makeClusterProjectionMatrix(seedKey, outDim, inDim);
+    const project = (vec) =>
+      padClusterProjectionVector(
+        projectClusterProjectionMatrix(matrix, vec),
+        safeTargetDim
+      );
+    return {
+      emb: stdData.map((row) => project(row)),
+      project,
+    };
+  }
+
+  if (normalizedMethod === "hash") {
+    const hashKey = `${seedKey}|hash|${inDim}|${outDim}`;
+    const project = (vec) =>
+      padClusterProjectionVector(
+        hashClusterProjectionVector(vec, outDim, hashKey),
+        safeTargetDim
+      );
+    return {
+      emb: stdData.map((row) => project(row)),
+      project,
+    };
+  }
+
+  const indices =
+    normalizedMethod === "variance"
+      ? computeClusterVarianceIndices(rawData, outDim) ||
+        buildClusterSubsampleIndices(inDim, outDim)
+      : buildClusterSubsampleIndices(inDim, outDim);
+  const project = (vec) =>
+    padClusterProjectionVector(
+      applyClusterProjectionIndices(vec, indices),
+      safeTargetDim
+    );
+  return {
+    emb: stdData.map((row) => project(row)),
+    project,
+  };
 }
 
 // --- UMAP (2D) embedding for Cluster Map ------------------------------------
@@ -9633,6 +9847,7 @@ const areClusterMapPropsEqual = (prev: any, next: any) => {
     prev.kEntry === next.kEntry &&
     prev.knnNeighborSpace === next.knnNeighborSpace &&
     prev.distanceMetric === next.distanceMetric &&
+    prev.compressionMethod === next.compressionMethod &&
     prev.hdbDomainDistinction === next.hdbDomainDistinction &&
     prev.hdbMinClusterSize === next.hdbMinClusterSize &&
     prev.hdbMinSamples === next.hdbMinSamples &&
@@ -9646,6 +9861,144 @@ const areClusterMapPropsEqual = (prev: any, next: any) => {
     prev.headless === next.headless
   );
 };
+
+const DEFAULT_CLUSTER_MAP_COMPRESSION_OPTIONS = [
+  { value: "pca", label: "PCA" },
+  { value: "jl", label: "Random Projection" },
+  { value: "hash", label: "Feature Hashing" },
+  { value: "variance", label: "Top Variance" },
+  { value: "subsample", label: "Uniform Subsample" },
+];
+
+function ClusterMapMenuDropdown({
+  label,
+  value,
+  options,
+  onChange,
+  disabled = false,
+  minWidth = 180,
+}) {
+  const rootRef = useRef<any>(null);
+  const [open, setOpen] = useState(false);
+  const selected =
+    (options || []).find(
+      (option: any) => String(option?.value ?? "") === String(value ?? "")
+    ) ||
+    (options || [])[0] || { value, label: value };
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <div style={{ fontSize: 10, opacity: 0.75 }}>{label}</div>
+      <div ref={rootRef} style={{ position: "relative" }}>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => {
+            if (!disabled) setOpen((current) => !current);
+          }}
+          style={{
+            minWidth,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            padding: "6px 8px",
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,0.14)",
+            background: "rgba(0,0,0,0.30)",
+            color: "rgba(255,255,255,0.92)",
+            fontSize: 10,
+            fontWeight: 800,
+            cursor: disabled ? "not-allowed" : "pointer",
+            opacity: disabled ? 0.55 : 1,
+          }}
+        >
+          <span>{selected?.label ?? String(value ?? "")}</span>
+          <span style={{ opacity: 0.72, fontSize: 9 }}>v</span>
+        </button>
+
+        {open ? (
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              top: "calc(100% + 6px)",
+              minWidth,
+              borderRadius: 14,
+              border: "1px solid rgba(255,255,255,0.14)",
+              background: "rgba(6,10,20,0.96)",
+              backdropFilter: "blur(10px)",
+              boxShadow: "0 18px 40px rgba(0,0,0,0.7)",
+              overflow: "hidden",
+              zIndex: 60,
+            }}
+          >
+            {(options || []).map((option: any) => {
+              const active = String(option?.value ?? "") === String(value ?? "");
+              return (
+                <button
+                  key={String(option?.value ?? option?.label ?? "")}
+                  type="button"
+                  onClick={() => {
+                    onChange?.(option?.value);
+                    setOpen(false);
+                  }}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    padding: "9px 10px",
+                    border: "none",
+                    borderTop: "1px solid rgba(255,255,255,0.06)",
+                    background: active
+                      ? "linear-gradient(135deg, rgba(90,170,255,0.22), rgba(120,220,255,0.14))"
+                      : "rgba(0,0,0,0)",
+                    color: active
+                      ? "rgba(255,255,255,0.98)"
+                      : "rgba(255,255,255,0.84)",
+                    fontSize: 11,
+                    fontWeight: active ? 900 : 700,
+                    textAlign: "left",
+                    cursor: "pointer",
+                  }}
+                >
+                  <span>{option?.label ?? String(option?.value ?? "")}</span>
+                  {active ? (
+                    <span style={{ fontSize: 10, color: "rgba(150,220,255,0.92)" }}>
+                      Selected
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 function ClusterMapInner({
   candles,
@@ -9673,6 +10026,8 @@ function ClusterMapInner({
   kEntry,
   knnNeighborSpace = "post",
   distanceMetric = "euclidean",
+  compressionMethod = "jl",
+  compressionOptions = DEFAULT_CLUSTER_MAP_COMPRESSION_OPTIONS,
   hdbDomainDistinction,
   hdbMinClusterSize,
   hdbMinSamples,
@@ -9704,10 +10059,26 @@ function ClusterMapInner({
     null
   );
   const deferredSliderValue = useDeferredValue(sliderValue);
+  const [viewCompressionMethod, setViewCompressionMethod] = useState(() =>
+    normalizeClusterCompressionMethod(compressionMethod)
+  );
+  const clusterCompressionOptions = useMemo(() => {
+    const source =
+      Array.isArray(compressionOptions) && compressionOptions.length > 0
+        ? compressionOptions
+        : DEFAULT_CLUSTER_MAP_COMPRESSION_OPTIONS;
+    return source.map((option: any) => ({
+      value: normalizeClusterCompressionMethod(option?.value),
+      label: String(option?.label ?? option?.value ?? "").trim() || "Unknown",
+    }));
+  }, [compressionOptions]);
   const searchHighlightIdRef = useRef<string | null>(null);
   useEffect(() => {
     searchHighlightIdRef.current = searchHighlightId;
   }, [searchHighlightId]);
+  useEffect(() => {
+    setViewCompressionMethod(normalizeClusterCompressionMethod(compressionMethod));
+  }, [compressionMethod]);
   // Box selection (2D only)
   // - Toggle selection mode with Option+T (and a clickable UI toggle; Option+T is less likely to be blocked by the browser)
   // - In selection mode: click (left or right) to set corner A, move mouse to preview, click again to set corner B.
@@ -11134,39 +11505,33 @@ function ClusterMapInner({
     const allVectors = goodEntries.map((e) => e.v);
     const { stdData, mean, stdev } = standardiseVectors(allVectors);
 
-    // UMAP embedding for the Cluster Map (better preserves local neighborhood structure than PCA).
-    // We keep PCA2 around for fast approximate "transform" and for initialization.
-    const { pc1, pc2 } = computePCA(stdData);
-    const umap2dMaxN = lowPowerMode ? 1200 : 2000;
-    const umap2dSampleN = lowPowerMode ? 900 : 1500;
-    const umap2dEpochs = lowPowerMode ? 120 : 200;
-    const um = computeUMAPEmbedding2D(stdData, pc1, pc2, {
-      seedKey: "cluster-map",
-      nNeighbors: 18,
-      nEpochs: umap2dEpochs,
-      negRate: 4,
-      learningRate: 1.0,
-      maxN: umap2dMaxN,
-      sampleN: umap2dSampleN,
+    const projection2d = createClusterMapProjection({
+      rawData: allVectors,
+      stdData,
+      targetDim: 2,
+      method: viewCompressionMethod,
+      seedKey: `cluster-map|${viewCompressionMethod}|2d`,
     });
-    const embedding = um.emb;
+    const embedding = projection2d.emb.map((coords) => ({
+      x: Number(coords?.[0] ?? 0),
+      y: Number(coords?.[1] ?? 0),
+    }));
     const shouldEmbed3D =
       clusterMapView === "3d" || (knnActive && knnSpaceKey === "3d");
-    const umap3dMaxN = lowPowerMode ? 1500 : 2500;
-    const umap3dSampleN = lowPowerMode ? 1000 : 1600;
-    const umap3dEpochs = lowPowerMode ? 140 : 220;
-    const um3 = shouldEmbed3D
-      ? computeUMAPEmbedding3D(stdData, pc1, pc2, {
-          seedKey: "cluster-map-3d",
-          nNeighbors: 18,
-          nEpochs: umap3dEpochs,
-          negRate: 4,
-          learningRate: 1.0,
-          maxN: umap3dMaxN,
-          sampleN: umap3dSampleN,
+    const projection3d = shouldEmbed3D
+      ? createClusterMapProjection({
+          rawData: allVectors,
+          stdData,
+          targetDim: 3,
+          method: viewCompressionMethod,
+          seedKey: `cluster-map|${viewCompressionMethod}|3d`,
         })
       : null;
-    const embedding3 = (um3 as any)?.emb || [];
+    const embedding3 = (projection3d?.emb || []).map((coords) => ({
+      x: Number(coords?.[0] ?? 0),
+      y: Number(coords?.[1] ?? 0),
+      z: Number(coords?.[2] ?? 0),
+    }));
 
     let minX = Infinity,
       maxX = -Infinity,
@@ -11240,13 +11605,9 @@ function ClusterMapInner({
     projectionRef.current = {
       mean,
       stdev,
-      pc1,
-      pc2,
-      sampleIdx: um.sampleIdx,
-      samplePcaX: um.samplePcaX,
-      samplePcaY: um.samplePcaY,
-      sampleEmbX: um.sampleEmbX,
-      sampleEmbY: um.sampleEmbY,
+      project2d: projection2d.project,
+      project3d: projection3d?.project ?? null,
+      compressionMethod: viewCompressionMethod,
       chunkLen: maxChunkLen,
       dim: goodEntries[0]?.v?.length ?? 0,
       minX,
@@ -11386,6 +11747,7 @@ function ClusterMapInner({
     activeModSet,
     distanceMetric,
     knnNeighborSpace,
+    viewCompressionMethod,
   ]);
 
   const tradeNodeByUidAll = useMemo(() => {
@@ -11800,41 +12162,12 @@ function ClusterMapInner({
           stdVec[j] = (chC[j] - (proj as any).mean[j]) / (proj as any).stdev[j];
         }
 
-        let pcaX = 0;
-        let pcaY = 0;
-        for (let j = 0; j < stdVec.length; j++) {
-          const val = stdVec[j];
-          pcaX += val * (proj as any).pc1[j];
-          pcaY += val * (proj as any).pc2[j];
-        }
-
-        const spx = (proj as any).samplePcaX || [];
-        const spy = (proj as any).samplePcaY || [];
-        let best = 0;
-        let bestD = Infinity;
-        const m0 = Math.min(
-          ((proj as any).sampleEmbX || []).length,
-          spx.length,
-          spy.length
-        );
-        for (let t = 0; t < m0; t++) {
-          const dx = pcaX - spx[t];
-          const dy = pcaY - spy[t];
-          const d2 = dx * dx + dy * dy;
-          if (d2 < bestD) {
-            bestD = d2;
-            best = t;
-          }
-        }
-
-        const rawX =
-          ((proj as any).sampleEmbX && (proj as any).sampleEmbX[best]) != null
-            ? (proj as any).sampleEmbX[best]
-            : 0;
-        const rawY =
-          ((proj as any).sampleEmbY && (proj as any).sampleEmbY[best]) != null
-            ? (proj as any).sampleEmbY[best]
-            : 0;
+        const projectedVec =
+          typeof (proj as any).project2d === "function"
+            ? (proj as any).project2d(stdVec)
+            : [0, 0];
+        const rawX = Number(projectedVec?.[0] ?? 0);
+        const rawY = Number(projectedVec?.[1] ?? 0);
 
         const normX =
           ((rawX - (proj as any).minX) / (proj as any).dx - 0.5) * 2000;
@@ -17705,6 +18038,17 @@ function ClusterMapInner({
               alignItems: "center",
             }}
           >
+            <ClusterMapMenuDropdown
+              label="Compression"
+              value={viewCompressionMethod}
+              options={clusterCompressionOptions}
+              onChange={(nextValue: string) => {
+                setViewCompressionMethod(
+                  normalizeClusterCompressionMethod(nextValue)
+                );
+              }}
+            />
+
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <div style={{ fontSize: 10, opacity: 0.75 }}>Direction</div>
               <select
@@ -35536,6 +35880,7 @@ export default function App() {
                 activeLibraries={aiActiveLibraries}
                 libraryCounts={aiLibraryCounts}
                 aiDomains={aiDomains}
+                compressionMethod={compressionMethod}
                 hdbDomainDistinction={hdbDomainDistinction}
                 onResetClusterMap={() => setClusterResetKey((k) => k + 1)}
                 clusterMapView={clusterMapView}
@@ -35583,6 +35928,7 @@ export default function App() {
                 activeLibraries={aiActiveLibraries}
                 libraryCounts={aiLibraryCounts}
                 aiDomains={aiDomains}
+                compressionMethod={compressionMethod}
                 hdbDomainDistinction={hdbDomainDistinction}
                 onResetClusterMap={() => setClusterResetKey((k) => k + 1)}
                 clusterMapView={clusterMapView}

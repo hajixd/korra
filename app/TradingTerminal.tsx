@@ -3615,9 +3615,144 @@ const KNN_NEIGHBOR_SPACE_OPTIONS: Array<{
 }> = [
   { value: "high", label: "High Dimensional Space" },
   { value: "post", label: "Post-Compressed Space" },
-  { value: "2d", label: "2 Dimensions" },
-  { value: "3d", label: "3 Dimensions" }
+  { value: "3d", label: "3 Dimensions" },
+  { value: "2d", label: "2 Dimensions" }
 ];
+const AI_COMPRESSION_METHOD_OPTIONS: Array<{
+  value: AiCompressionMethod;
+  label: string;
+}> = [
+  { value: "pca", label: "PCA" },
+  { value: "jl", label: "Random Projection" },
+  { value: "hash", label: "Feature Hashing" },
+  { value: "variance", label: "Top Variance" },
+  { value: "subsample", label: "Uniform Subsample" }
+];
+
+function AiZipMenuSelect({
+  value,
+  options,
+  onChange,
+  disabled = false
+}: {
+  value: string;
+  options: readonly { value: string; label: string }[];
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const selected =
+    options.find((option) => option.value === value) ??
+    options[0] ?? { value, label: value };
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (disabled) {
+      setOpen(false);
+    }
+  }, [disabled]);
+
+  return (
+    <div ref={rootRef} style={{ position: "relative" }}>
+      <button
+        type="button"
+        className="ai-zip-input"
+        disabled={disabled}
+        onClick={() => {
+          if (!disabled) {
+            setOpen((current) => !current);
+          }
+        }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "0.5rem",
+          cursor: disabled ? "not-allowed" : "pointer"
+        }}
+      >
+        <span>{selected.label}</span>
+        <span aria-hidden="true" style={{ opacity: 0.72, fontSize: "0.68rem" }}>
+          v
+        </span>
+      </button>
+
+      {open ? (
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            top: "calc(100% + 0.4rem)",
+            width: "100%",
+            borderRadius: 12,
+            border: "1px solid rgba(255, 255, 255, 0.14)",
+            background: "rgba(7, 11, 20, 0.98)",
+            boxShadow: "0 16px 34px rgba(0, 0, 0, 0.52)",
+            overflow: "hidden",
+            zIndex: 50
+          }}
+        >
+          {options.map((option, index) => {
+            const active = option.value === value;
+
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+                style={{
+                  width: "100%",
+                  padding: "0.55rem 0.62rem",
+                  border: "none",
+                  borderTop:
+                    index === 0 ? "none" : "1px solid rgba(255, 255, 255, 0.08)",
+                  background: active
+                    ? "rgba(90, 170, 255, 0.16)"
+                    : "rgba(0, 0, 0, 0)",
+                  color: active
+                    ? "rgba(245, 248, 255, 0.98)"
+                    : "rgba(255, 255, 255, 0.84)",
+                  fontSize: "0.75rem",
+                  fontWeight: active ? 900 : 800,
+                  textAlign: "left",
+                  cursor: "pointer"
+                }}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const normalizeAiValidationMode = (value: unknown): AiValidationMode => {
   const mode = String(value ?? "").trim().toLowerCase();
@@ -22622,6 +22757,17 @@ function TradingTerminalWorkspace({
                         <div className="ai-zip-toggle-grid ai-zip-data-grid">
                           <button
                             type="button"
+                            className={`ai-zip-button ${
+                              selectedAiLibraryCount > 0 ? "active" : ""
+                            }`}
+                            style={{ gridColumn: "1 / -1" }}
+                            disabled={aiDisabled}
+                            onClick={() => setLibrariesModalOpen(true)}
+                          >
+                            Libraries ({selectedAiLibraryCount})
+                          </button>
+                          <button
+                            type="button"
                             className={`ai-zip-button ${selectedAiModelCount > 0 ? "active" : ""}`}
                             onClick={() => setModelsModalOpen(true)}
                           >
@@ -22634,16 +22780,6 @@ function TradingTerminalWorkspace({
                             onClick={() => setFeaturesModalOpen(true)}
                           >
                             Features ({selectedAiFeatureCount})
-                          </button>
-                          <button
-                            type="button"
-                            className={`ai-zip-button ${
-                              selectedAiLibraryCount > 0 ? "active" : ""
-                            }`}
-                            disabled={aiDisabled}
-                            onClick={() => setLibrariesModalOpen(true)}
-                          >
-                            Libraries ({selectedAiLibraryCount})
                           </button>
                           <button
                             type="button"
@@ -22712,7 +22848,10 @@ function TradingTerminalWorkspace({
                       <div style={{ display: "grid", gap: "0.55rem" }}>
                         <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
                           <div className="ai-zip-label">Neighbor Calculation Space</div>
-                          <div className="ai-zip-toggle-grid tiles compact">
+                          <div
+                            className="ai-zip-toggle-grid"
+                            style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
+                          >
                             {KNN_NEIGHBOR_SPACE_OPTIONS.map((option) => (
                               <button
                                 key={option.value}
@@ -22720,6 +22859,7 @@ function TradingTerminalWorkspace({
                                 className={`ai-zip-button pill ${
                                   knnNeighborSpace === option.value ? "active" : ""
                                 }`}
+                                style={{ width: "100%" }}
                                 disabled={aiDisabled}
                                 onClick={() => setKnnNeighborSpace(option.value)}
                               >
@@ -22768,23 +22908,17 @@ function TradingTerminalWorkspace({
                           />
                         </label>
 
-                        <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
+                        <div className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
                           <span className="ai-zip-label">Compression Method</span>
-                          <select
+                          <AiZipMenuSelect
                             value={compressionMethod}
+                            options={AI_COMPRESSION_METHOD_OPTIONS}
                             disabled={aiDisabled}
-                            onChange={(event) => {
-                              setCompressionMethod(event.target.value as AiCompressionMethod);
+                            onChange={(nextValue) => {
+                              setCompressionMethod(nextValue as AiCompressionMethod);
                             }}
-                            className="ai-zip-input"
-                          >
-                            <option value="pca">PCA</option>
-                            <option value="jl">Random Projection</option>
-                            <option value="hash">Feature Hashing</option>
-                            <option value="variance">Top Variance</option>
-                            <option value="subsample">Uniform Subsample</option>
-                          </select>
-                        </label>
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -24367,6 +24501,8 @@ function TradingTerminalWorkspace({
                       aiDomains={appliedBacktestSettings.selectedAiDomains}
                       knnNeighborSpace={appliedBacktestSettings.knnNeighborSpace}
                       distanceMetric={appliedBacktestSettings.distanceMetric}
+                      compressionMethod={appliedBacktestSettings.compressionMethod}
+                      compressionOptions={AI_COMPRESSION_METHOD_OPTIONS}
                       kEntry={appliedBacktestSettings.kEntry}
                       knnVoteMode={appliedBacktestSettings.knnVoteMode}
                       useEntryNeighborsOnly
