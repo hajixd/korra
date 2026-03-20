@@ -95,10 +95,8 @@ export const canRunAizipLibraries = (params: {
   selectedModelCount: number;
 }): boolean => {
   const ids = Array.isArray(params.libraryIds) ? params.libraryIds : [];
-  if (ids.some((libraryId) => isBaseSeedingLibraryId(libraryId))) {
-    return true;
-  }
-  return params.selectedModelCount > 0;
+  // Any active library should be attempted during backtests; individual loaders can still resolve to 0 results.
+  return ids.some((libraryId) => String(libraryId ?? "").trim().length > 0);
 };
 
 export const canRunAizipLibrariesForSettings = (params: {

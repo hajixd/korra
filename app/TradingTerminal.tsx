@@ -10161,14 +10161,14 @@ function TradingTerminalWorkspace({
     clearStatsRefreshResetTimeout();
     setAppliedBacktestSettings(nextSettings);
     if (needsHistoryRecompute) {
+      const hasActiveLibraries = (nextSettings.selectedAiLibraries?.length ?? 0) > 0;
       const hasAiAnalysisPhase =
-        nextSettings.aiMode !== "off" &&
-        (nextSettings.antiCheatEnabled ||
-          ((nextSettings.selectedAiLibraries?.length ?? 0) > 0 &&
-            canRunAizipLibrariesForSettings({
-              libraryIds: nextSettings.selectedAiLibraries,
-              aiModelStates: nextSettings.aiModelStates
-            })));
+        nextSettings.antiCheatEnabled ||
+        (hasActiveLibraries &&
+          canRunAizipLibrariesForSettings({
+            libraryIds: nextSettings.selectedAiLibraries,
+            aiModelStates: nextSettings.aiModelStates
+          }));
       setBacktestRunCount((current) => current + 1);
       setBacktestRefreshNowMs(nextRefreshMs);
       setBacktestHistorySeedReady(!needsHistorySeedReload);
@@ -13717,13 +13717,12 @@ function TradingTerminalWorkspace({
     const appliedSettingsSnapshot = appliedBacktestSettingsRef.current;
     const hasActiveLibraries = (appliedSettingsSnapshot.selectedAiLibraries?.length ?? 0) > 0;
     const hasAiAnalysisPass =
-      appliedSettingsSnapshot.aiMode !== "off" &&
-      (appliedSettingsSnapshot.antiCheatEnabled ||
-        (hasActiveLibraries &&
+      appliedSettingsSnapshot.antiCheatEnabled ||
+      (hasActiveLibraries &&
         canRunAizipLibrariesForSettings({
           libraryIds: appliedSettingsSnapshot.selectedAiLibraries,
           aiModelStates: appliedSettingsSnapshot.aiModelStates
-        })));
+        }));
     const aiAnalysisStatus = hasActiveLibraries
       ? "Loading AI Libraries"
       : "Applying AI Analysis";
@@ -17771,17 +17770,17 @@ function TradingTerminalWorkspace({
       }
 
       const computePromise = (async () => {
+        const selectedModels = resolveLibraryModelProfiles(settings);
+        if (selectedModels.length === 0) {
+          return [];
+        }
+
         const { candleSeriesBySymbol, oneMinuteCandlesBySymbol } =
           await ensureLibraryHistorySeed(settings);
         const candles = candleSeriesBySymbol[settings.symbol] ?? EMPTY_CANDLES;
         const minimumSeedBars = getMinimumAizipSeedBars(settings.chunkBars);
 
         if (!hasUsableAizipSeedCandles(candles, minimumSeedBars)) {
-          return [];
-        }
-
-        const selectedModels = resolveLibraryModelProfiles(settings);
-        if (selectedModels.length === 0) {
           return [];
         }
 
