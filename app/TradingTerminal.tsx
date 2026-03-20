@@ -18460,14 +18460,48 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return filteredBacktestHistory.slice(startIndex, startIndex + BACKTEST_HISTORY_PAGE_SIZE);
   }, [filteredBacktestHistory, visibleBacktestHistoryPage]);
 
-  const aiZipClusterCandleCount = selectedChartCandles.length;
+  const aiZipClusterSourceCandles = useMemo(() => {
+    if (!isClusterBacktestTabActive) {
+      return [] as Candle[];
+    }
+
+    let bestCandles: Candle[] = selectedChartCandles;
+
+    const selectedSymbolCandles = getHistoryCandlesForSymbol(selectedSymbol);
+    if (selectedSymbolCandles.length > bestCandles.length) {
+      bestCandles = selectedSymbolCandles;
+    }
+
+    const visitedSymbols = new Set<string>();
+    for (const trade of backtestTrades) {
+      const symbol = String(trade.symbol ?? "").trim();
+      if (!symbol || visitedSymbols.has(symbol)) {
+        continue;
+      }
+      visitedSymbols.add(symbol);
+
+      const tradeCandles = getHistoryCandlesForSymbol(symbol);
+      if (tradeCandles.length > bestCandles.length) {
+        bestCandles = tradeCandles;
+      }
+    }
+
+    return bestCandles;
+  }, [
+    backtestTrades,
+    getHistoryCandlesForSymbol,
+    isClusterBacktestTabActive,
+    selectedChartCandles,
+    selectedSymbol
+  ]);
+  const aiZipClusterCandleCount = aiZipClusterSourceCandles.length;
   const aiZipClusterFirstCandleTime =
     aiZipClusterCandleCount > 0
-      ? Number(selectedChartCandles[0]?.time ?? NaN)
+      ? Number(aiZipClusterSourceCandles[0]?.time ?? NaN)
       : NaN;
   const aiZipClusterLastCandleTime =
     aiZipClusterCandleCount > 0
-      ? Number(selectedChartCandles[aiZipClusterCandleCount - 1]?.time ?? NaN)
+      ? Number(aiZipClusterSourceCandles[aiZipClusterCandleCount - 1]?.time ?? NaN)
       : NaN;
   const aiZipClusterCandleWindowKey = useMemo(() => {
     if (!isClusterBacktestTabActive) {
@@ -18504,7 +18538,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       return aiZipClusterCandlesCacheRef.current.value;
     }
 
-    const nextCandles = selectedChartCandles.map((candle) => ({
+    const nextCandles = aiZipClusterSourceCandles.map((candle) => ({
       ...candle,
       time: Number(candle.time)
     }));
@@ -18513,23 +18547,36 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       value: nextCandles
     };
     return nextCandles;
-  }, [aiZipClusterCandleWindowKey, isClusterBacktestTabActive, selectedChartCandles]);
+  }, [aiZipClusterCandleWindowKey, aiZipClusterSourceCandles, isClusterBacktestTabActive]);
+  const aiZipClusterCandleIndexByUnix = useMemo(() => {
+    const map = new Map<number, number>();
+
+    for (let i = 0; i < aiZipClusterCandles.length; i += 1) {
+      map.set(toUtcTimestamp(aiZipClusterCandles[i].time), i);
+    }
+
+    return map;
+  }, [aiZipClusterCandles]);
 
   const aiZipClusterTrades = useMemo(() => {
     if (!isClusterBacktestTabActive) {
       return [];
     }
 
-    const maxIndex = Math.max(0, selectedChartCandles.length - 1);
+    const maxIndex = Math.max(0, aiZipClusterCandles.length - 1);
 
-    return deferredBacktestAnalyticsTrades.map((trade, index) => {
+    return backtestTrades.map((trade, index) => {
       const fallbackIndex =
         maxIndex > 0
-          ? Math.round((index / Math.max(1, deferredBacktestAnalyticsTrades.length - 1)) * maxIndex)
+          ? Math.round((index / Math.max(1, backtestTrades.length - 1)) * maxIndex)
           : 0;
-      const entryIndex = clamp(candleIndexByUnix.get(Number(trade.entryTime)) ?? fallbackIndex, 0, maxIndex);
+      const entryIndex = clamp(
+        aiZipClusterCandleIndexByUnix.get(Number(trade.entryTime)) ?? fallbackIndex,
+        0,
+        maxIndex
+      );
       const exitIndex = clamp(
-        candleIndexByUnix.get(Number(trade.exitTime)) ??
+        aiZipClusterCandleIndexByUnix.get(Number(trade.exitTime)) ??
           Math.min(maxIndex, entryIndex + Math.max(1, Math.floor((Number(trade.exitTime) - Number(trade.entryTime)) / 60))),
         0,
         maxIndex
@@ -18585,11 +18632,35 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       };
     });
   }, [
-    candleIndexByUnix,
-    deferredBacktestAnalyticsTrades,
+    aiZipClusterCandleIndexByUnix,
+    aiZipClusterCandles.length,
+    backtestTrades,
     getEffectiveTradeConfidenceScore,
-    isClusterBacktestTabActive,
-    selectedChartCandles.length
+    isClusterBacktestTabActive
+  ]);
+  const aiZipClusterMapDataKey = useMemo(() => {
+    if (!isClusterBacktestTabActive) {
+      return "inactive";
+    }
+
+    const firstTradeId = backtestTrades[0]?.id ?? "na";
+    const lastTradeId = backtestTrades[backtestTrades.length - 1]?.id ?? "na";
+    return [
+      aiZipClusterCandleWindowKey,
+      backtestTrades.length,
+      firstTradeId,
+      lastTradeId,
+      appliedBacktestSettings.aiMode,
+      appliedBacktestSettings.validationMode,
+      appliedBacktestSettings.antiCheatEnabled ? "ac1" : "ac0"
+    ].join("|");
+  }, [
+    aiZipClusterCandleWindowKey,
+    appliedBacktestSettings.aiMode,
+    appliedBacktestSettings.antiCheatEnabled,
+    appliedBacktestSettings.validationMode,
+    backtestTrades,
+    isClusterBacktestTabActive
   ]);
 
   useEffect(() => {
@@ -23312,6 +23383,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 <div className="backtest-grid">
                   <div className="backtest-card">
                     <AIZipClusterMap
+                      key={aiZipClusterMapDataKey}
                       candles={aiZipClusterCandles}
                       trades={aiZipClusterTrades}
                       ghostEntries={[]}

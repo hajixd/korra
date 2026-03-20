@@ -10723,7 +10723,6 @@ function ClusterMapInner({
     const libraryPointsForMap: any[] = (() => {
       const src = Array.isArray(libraryPoints) ? (libraryPoints as any[]) : [];
       if (src.length > 0) return src;
-      if (entryNeighborsOnly) return src;
 
       const byLib = Object.entries((libraryCounts as any) || {}).filter(
         ([, v]) => Number(v || 0) > 0
