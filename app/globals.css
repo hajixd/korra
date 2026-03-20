@@ -1091,9 +1091,12 @@ button {
   --backtest-visible-cards: 8;
   --backtest-stat-card-width: 182px;
   --backtest-stat-item-count: 16;
+  --backtest-summary-loop-buffer: 8px;
   --backtest-summary-scroll-duration: calc(var(--backtest-stat-item-count) * 4.25s);
   --backtest-summary-cycle-width: calc(
-    (var(--backtest-stat-item-count) * var(--backtest-stat-card-width)) + (var(--backtest-stat-item-count) * var(--backtest-stat-gap))
+    (var(--backtest-stat-item-count) * var(--backtest-stat-card-width)) +
+      (var(--backtest-stat-item-count) * var(--backtest-stat-gap)) +
+      var(--backtest-summary-loop-buffer)
   );
   overflow: hidden;
   container-type: inline-size;
@@ -1111,7 +1114,7 @@ button {
   flex: 0 0 auto;
   display: flex;
   gap: var(--backtest-stat-gap);
-  padding-right: var(--backtest-stat-gap);
+  padding-right: calc(var(--backtest-stat-gap) + var(--backtest-summary-loop-buffer));
 }
 
 .backtest-summary-strip-sequence .backtest-summary-card {
@@ -4033,8 +4036,14 @@ button {
   --main-kpi-gap: 0.6rem;
   --main-kpi-visible-cards: 6;
   --main-kpi-card-width: 198px;
+  --main-kpi-item-count: 12;
+  --main-kpi-loop-buffer: 8px;
   --main-kpi-scroll-duration: 68s;
-  --main-kpi-cycle-width: calc((12 * var(--main-kpi-card-width)) + (12 * var(--main-kpi-gap)));
+  --main-kpi-cycle-width: calc(
+    (var(--main-kpi-item-count) * var(--main-kpi-card-width)) +
+      (var(--main-kpi-item-count) * var(--main-kpi-gap)) +
+      var(--main-kpi-loop-buffer)
+  );
   overflow: hidden;
   container-type: inline-size;
 }
@@ -4051,7 +4060,7 @@ button {
   flex: 0 0 auto;
   display: flex;
   gap: var(--main-kpi-gap);
-  padding-right: var(--main-kpi-gap);
+  padding-right: calc(var(--main-kpi-gap) + var(--main-kpi-loop-buffer));
 }
 
 .main-settings-kpi-strip-sequence .main-settings-kpi-card {
@@ -4454,6 +4463,13 @@ button {
   border-radius: 14px;
   padding: 10px 12px;
   font-size: 12px;
+}
+
+.ai-zip-library-action.run-active {
+  width: auto;
+  min-width: 176px;
+  align-self: center;
+  padding-inline: 14px;
 }
 
 .ai-zip-library-action.compact {

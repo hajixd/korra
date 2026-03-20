@@ -22448,7 +22448,15 @@ function TradingTerminalWorkspace({
               {selectedSurfaceTab === "settings" ||
               (selectedSurfaceTab === "backtest" && selectedBacktestTab === "mainSettings") ? (
                 <div className="backtest-grid" style={{ gap: "0.75rem" }}>
-                  <div className="main-settings-kpi-strip" aria-label="AI rolling statistics">
+                  <div
+                    className="main-settings-kpi-strip"
+                    aria-label="AI rolling statistics"
+                    style={
+                      {
+                        "--main-kpi-item-count": Math.max(1, appliedMainSettingsAiStats.length)
+                      } as React.CSSProperties
+                    }
+                  >
                     <div className="main-settings-kpi-strip-track">
                       {[0, 1].map((sequenceIndex) => (
                         <div
@@ -23262,7 +23270,7 @@ function TradingTerminalWorkspace({
                       </div>
                       <button
                         type="button"
-                        className="ai-zip-library-action primary wide"
+                        className="ai-zip-library-action primary run-active"
                         disabled={!effectiveAiLibraryReadyToRun || aiLibraryAnyLoading}
                         onClick={() =>
                           runAllActiveLibraries({

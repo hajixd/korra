@@ -7260,7 +7260,7 @@ function drawClusterMapCanvas(
 
           if (selectedEdge) {
             col = "rgba(255,222,132,0.98)";
-            width = lowPowerMode ? 2.6 : 3.9;
+            width = lowPowerMode ? 1.05 : 1.55;
           } else if (dimEdge) {
             const alpha = lowPowerMode ? 0.08 : 0.12;
             col = `rgba(110,110,110,${alpha})`;
@@ -7529,11 +7529,11 @@ function drawClusterMapCanvas(
             focusModeActive &&
             (isNodeInFocus(parentId) || isNodeInFocus(childId));
           if (selectedEdge) {
-            ctx.lineWidth = lowPowerMode ? 2.8 : 4.3;
+            ctx.lineWidth = lowPowerMode ? 1.1 : 1.65;
             ctx.strokeStyle = "rgba(255,222,132,0.98)";
             if (!lowPowerMode) {
               ctx.shadowColor = "rgba(255,224,130,0.8)";
-              ctx.shadowBlur = 12;
+              ctx.shadowBlur = 8;
             }
           } else if (focusModeActive && !focusedLink) {
             ctx.lineWidth = lowPowerMode ? 1.05 : 1.35;
