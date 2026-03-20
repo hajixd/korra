@@ -18810,10 +18810,11 @@ function TradingTerminalWorkspace({
     }
     return total;
   }, [aiLibraryCounts, appliedVisibleAiLibraries]);
-  const totalSimulatedLiveTrades = backtestSourceTrades.length;
+  const totalPreAiLiveTrades = backtestTimeFilteredTrades.length;
+  const acceptedLiveTrades = backtestTrades.length;
   const liveTradeAcceptanceRatePct =
-    totalSimulatedLiveTrades > 0
-      ? (backtestTrades.length / totalSimulatedLiveTrades) * 100
+    totalPreAiLiveTrades > 0
+      ? (acceptedLiveTrades / totalPreAiLiveTrades) * 100
       : 0;
 
   const mainStatsTitle = "Main Statistics";
@@ -22887,8 +22888,8 @@ function TradingTerminalWorkspace({
                     <strong>{backtestDateRangeEndLabel}</strong>
                   </span>
                   <span className="backtest-toolbar-note-meta">
-                    Total Live Trades: <strong>{totalSimulatedLiveTrades.toLocaleString("en-US")}</strong> ·
-                    {" "}Accepted Live Trades: <strong>{backtestTrades.length.toLocaleString("en-US")}</strong> ·
+                    Total Live Trades: <strong>{totalPreAiLiveTrades.toLocaleString("en-US")}</strong> ·
+                    {" "}Accepted Live Trades: <strong>{acceptedLiveTrades.toLocaleString("en-US")}</strong> ·
                     {" "}Acceptance Rate: <strong>{liveTradeAcceptanceRatePct.toFixed(1)}%</strong> ·
                     {" "}Total Library Trades:{" "}
                     <strong>{totalLoadedLibraryTrades.toLocaleString("en-US")}</strong>
