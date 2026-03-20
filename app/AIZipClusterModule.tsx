@@ -25372,16 +25372,7 @@ export default function App() {
             ) {
               diagnosticCodes.push("ENTRY_NEIGHBORS_PRESENT_BUT_IDS_MISSING");
             }
-            if (
-              diagnosticCodes.length > 0 ||
-              (Array.isArray(aiActiveLibraries) && aiActiveLibraries.length === 0)
-            ) {
-              if (
-                Array.isArray(aiActiveLibraries) &&
-                aiActiveLibraries.length === 0
-              ) {
-                diagnosticCodes.push("AI_LIBRARIES_EMPTY");
-              }
+            if (diagnosticCodes.length > 0) {
               console.error(
                 `[AIZip][WorkerPayloadDiagnostics] ${diagnosticCodes.join(", ")}`
               );

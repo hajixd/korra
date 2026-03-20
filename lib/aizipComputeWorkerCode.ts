@@ -2960,9 +2960,12 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
     const aiLibrariesActive = Array.isArray(settings.aiLibrariesActive)
       ? settings.aiLibrariesActive.map((x) => String(x))
       : [];
-    // Nearest-neighbor metadata (entryNeighbors / MIT) depends on the library pool too,
-    // even when the run itself is a plain model backtest with AI filtering disabled.
-    const shouldBuildNeighborLibraries = aiLibrariesActive.length > 0;
+    // Nearest-neighbor metadata (entryNeighbors / MIT) should always be available.
+    // When no explicit library is selected, fall back to the base seeding pool so
+    // a plain backtest still stamps nearest neighbors and the MIT ID.
+    const effectiveAiLibraries = aiLibrariesActive.length
+      ? aiLibrariesActive
+      : ["base"];
     const aiLibrariesSettings = (settings && settings.aiLibrariesSettings) ? settings.aiLibrariesSettings : {};
     const libSetting = (id) => (aiLibrariesSettings && aiLibrariesSettings[id]) ? (aiLibrariesSettings[id] || {}) : {};
     const libEnabled = (_id) => true; // Active libraries are always enabled.
@@ -2974,15 +2977,15 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
     };
     const libMaxSamples = (id, defN = 20000) => clamp(Math.floor(Number(libSetting(id).maxSamples ?? defN) || defN), 0, 1000000);
 
-    const coreEnabled = aiLibrariesActive.includes("core");
+    const coreEnabled = effectiveAiLibraries.includes("core");
     const coreWeight = libWeight("core", 100);
     const coreStride = clamp(Math.floor(Number(libSetting("core").stride ?? 0) || 0), 0, 5000);
 
-    const suppressedEnabled = aiLibrariesActive.includes("suppressed");
+    const suppressedEnabled = effectiveAiLibraries.includes("suppressed");
     const suppressedWeight = libWeight("suppressed", 100);
     const suppressedStride = clamp(Math.floor(Number(libSetting("suppressed").stride ?? 0) || 0), 0, 5000);
 
-    const recentEnabled = aiLibrariesActive.includes("recent");
+    const recentEnabled = effectiveAiLibraries.includes("recent");
     const recentWeight = libWeight("recent", 100);
     const recentWindowTrades = clamp(Math.floor(Number(libSetting("recent").windowTrades ?? 1500) || 1500), 0, 500000);
     const recentStride = clamp(Math.floor(Number(libSetting("recent").stride ?? 0) || 0), 0, 5000);
@@ -3566,7 +3569,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
     // These points are training-only and never appear as "real trades" (stats/calendar/etc).
     const libs = {};
     let usedModels = [];
-    if (aiEntryOn || aiExitOn || shouldBuildNeighborLibraries) {
+    {
       postMessage({ type: "progress", phase: "Embedding", pct: 0 });
 
       usedModels = Array.from(new Set([...entryModels, ...bothModels]));
@@ -3599,7 +3602,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
       const cacheGet = (k) => cachedLibsMap[k];
       const cacheSet = (k, v) => { cachedLibsMap[k] = v; };
 
-      const useLib = (libId) => aiLibrariesActive.includes(libId);
+      const useLib = (libId) => effectiveAiLibraries.includes(libId);
 
       for (const modelKey of usedModels) {
         let staticPool = [];
