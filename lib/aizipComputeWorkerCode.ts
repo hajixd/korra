@@ -2960,6 +2960,9 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
     const aiLibrariesActive = Array.isArray(settings.aiLibrariesActive)
       ? settings.aiLibrariesActive.map((x) => String(x))
       : [];
+    // Nearest-neighbor metadata (entryNeighbors / MIT) depends on the library pool too,
+    // even when the run itself is a plain model backtest with AI filtering disabled.
+    const shouldBuildNeighborLibraries = aiLibrariesActive.length > 0;
     const aiLibrariesSettings = (settings && settings.aiLibrariesSettings) ? settings.aiLibrariesSettings : {};
     const libSetting = (id) => (aiLibrariesSettings && aiLibrariesSettings[id]) ? (aiLibrariesSettings[id] || {}) : {};
     const libEnabled = (_id) => true; // Active libraries are always enabled.
@@ -3563,7 +3566,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
     // These points are training-only and never appear as "real trades" (stats/calendar/etc).
     const libs = {};
     let usedModels = [];
-    if (aiEntryOn || aiExitOn) {
+    if (aiEntryOn || aiExitOn || shouldBuildNeighborLibraries) {
       postMessage({ type: "progress", phase: "Embedding", pct: 0 });
 
       usedModels = Array.from(new Set([...entryModels, ...bothModels]));
