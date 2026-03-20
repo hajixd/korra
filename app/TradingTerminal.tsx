@@ -79,10 +79,18 @@ import {
   buildStrategyReplayTradeBlueprints
 } from "../lib/strategyModelBacktest";
 import {
+  computeEntryExitChartData,
+  computeEntryExitStats,
+  computePerformanceStatsTemporalCharts,
+  EMPTY_PERFORMANCE_STATS_TEMPORAL_CHARTS,
+  getBacktestExitLabel,
   getTradeDayKey as getBacktestStatsTradeDayKey,
   getTradeMonthKey as getBacktestStatsTradeMonthKey,
   getTradeWeekKey as getBacktestStatsTradeWeekKey,
-  summarizeBacktestTrades as summarizeBacktestTradesShared
+  summarizeBacktestTrades as summarizeBacktestTradesShared,
+  type EntryExitChartRow,
+  type EntryExitStats,
+  type PerformanceStatsTemporalCharts
 } from "../lib/backtestStats";
 import {
   firebaseClientConfigReady,
@@ -528,11 +536,53 @@ type ServerLibraryPointPayload = {
 };
 
 const normalizeBacktestHistoryRows = (rows: BacktestHistoryRow[]): HistoryItem[] => {
-  return rows.map((row) => ({
-    ...row,
-    entryTime: row.entryTime as UTCTimestamp,
-    exitTime: row.exitTime as UTCTimestamp
-  }));
+  return rows.map((row) =>
+    normalizeHistoryItemDisplayFields({
+      ...row,
+      entryTime: row.entryTime as UTCTimestamp,
+      exitTime: row.exitTime as UTCTimestamp
+    })
+  );
+};
+
+const normalizeHistoryItemDisplayFields = (trade: HistoryItem): HistoryItem => {
+  const entryTime = Number(trade.entryTime);
+  const exitTime = Number(trade.exitTime);
+  const entryAt =
+    typeof trade.entryAt === "string" && trade.entryAt.trim().length > 0
+      ? trade.entryAt
+      : Number.isFinite(entryTime) && entryTime > 0
+        ? formatDateTime(entryTime * 1000)
+        : "";
+  const exitAt =
+    typeof trade.exitAt === "string" && trade.exitAt.trim().length > 0
+      ? trade.exitAt
+      : Number.isFinite(exitTime) && exitTime > 0
+        ? formatDateTime(exitTime * 1000)
+        : "";
+
+  return {
+    ...trade,
+    exitReason: typeof trade.exitReason === "string" ? trade.exitReason : "",
+    time:
+      typeof trade.time === "string" && trade.time.trim().length > 0
+        ? trade.time
+        : exitAt || entryAt,
+    entryAt,
+    exitAt,
+    entryTime: entryTime as UTCTimestamp,
+    exitTime: exitTime as UTCTimestamp
+  };
+};
+
+const normalizeHistoryItems = (value: unknown): HistoryItem[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((trade) =>
+    normalizeHistoryItemDisplayFields(trade as HistoryItem)
+  );
 };
 
 const cloneTradeEntryNeighbors = (value: unknown): BacktestEntryNeighbor[] => {
@@ -887,20 +937,14 @@ const computePanelAnalyticsOnServer = async (
 
       const data = (await response.json()) as Partial<PanelAnalyticsServerResponse>;
       const normalized: PanelAnalyticsServerResponse = {
-        dateFilteredTrades: Array.isArray(data.dateFilteredTrades) ? data.dateFilteredTrades : [],
-        libraryCandidateTrades: Array.isArray(data.libraryCandidateTrades)
-          ? data.libraryCandidateTrades
-          : [],
-        timeFilteredTrades: Array.isArray(data.timeFilteredTrades) ? data.timeFilteredTrades : [],
+        dateFilteredTrades: normalizeHistoryItems(data.dateFilteredTrades),
+        libraryCandidateTrades: normalizeHistoryItems(data.libraryCandidateTrades),
+        timeFilteredTrades: normalizeHistoryItems(data.timeFilteredTrades),
         confidenceByIdEntries: Array.isArray(data.confidenceByIdEntries)
           ? (data.confidenceByIdEntries as Array<[string, number]>)
           : [],
-        chartPanelHistoryRows: Array.isArray(data.chartPanelHistoryRows)
-          ? data.chartPanelHistoryRows
-          : [],
-        activePanelHistoryRows: Array.isArray(data.activePanelHistoryRows)
-          ? data.activePanelHistoryRows
-          : []
+        chartPanelHistoryRows: normalizeHistoryItems(data.chartPanelHistoryRows),
+        activePanelHistoryRows: normalizeHistoryItems(data.activePanelHistoryRows)
       };
 
       panelAnalyticsClientCache.set(cacheKey, {
@@ -1158,20 +1202,6 @@ type MainStatsMonthRow = {
   avgPerTrade: number;
 };
 
-type TemporalChartRow = {
-  bucket: string;
-  pnl: number;
-  count: number;
-};
-
-type PerformanceStatsTemporalCharts = {
-  hours: TemporalChartRow[];
-  weekday: TemporalChartRow[];
-  month: TemporalChartRow[];
-  year: TemporalChartRow[];
-  hasData: boolean;
-};
-
 type BacktestAnalyticsServerPayload = {
   backtestTrades: HistoryItem[];
   baselineMainStatsTrades: HistoryItem[];
@@ -1203,13 +1233,10 @@ type BacktestAnalyticsServerResponse = {
   selectedBacktestDayTrades: HistoryItem[];
   performanceStatsModelOptions: string[];
   performanceStatsTemporalCharts: PerformanceStatsTemporalCharts;
-  entryExitStats: {
-    entry: Array<[string, number]>;
-    exit: Array<[string, number]>;
-  };
+  entryExitStats: EntryExitStats;
   entryExitChartData: {
-    entry: Array<{ bucket: string; count: number; share: number }>;
-    exit: Array<{ bucket: string; count: number; share: number }>;
+    entry: EntryExitChartRow[];
+    exit: EntryExitChartRow[];
   };
   backtestClusterData: {
     total: number;
@@ -1222,6 +1249,13 @@ type BacktestAnalyticsServerResponse = {
     weekdays: number[];
     hours: number[];
   };
+};
+
+type EntryExitExcursionAnalytics = {
+  peak: EntryExitChartRow[];
+  drawdown: EntryExitChartRow[];
+  measuredTrades: number;
+  totalTrades: number;
 };
 
 const EMPTY_BACKTEST_SUMMARY_STATS: BacktestSummaryStats = {
@@ -1265,14 +1299,6 @@ const EMPTY_BACKTEST_SUMMARY_STATS: BacktestSummaryStats = {
   worstDay: null
 };
 
-const EMPTY_PERFORMANCE_STATS_TEMPORAL_CHARTS: PerformanceStatsTemporalCharts = {
-  hours: [],
-  weekday: [],
-  month: [],
-  year: [],
-  hasData: false
-};
-
 const EMPTY_BACKTEST_ANALYTICS_RESPONSE: BacktestAnalyticsServerResponse = {
   backtestSummary: { ...EMPTY_BACKTEST_SUMMARY_STATS },
   baselineMainStatsSummary: { ...EMPTY_BACKTEST_SUMMARY_STATS },
@@ -1307,6 +1333,13 @@ const EMPTY_BACKTEST_ANALYTICS_RESPONSE: BacktestAnalyticsServerResponse = {
     weekdays: [],
     hours: []
   }
+};
+
+const EMPTY_ENTRY_EXIT_EXCURSION_ANALYTICS: EntryExitExcursionAnalytics = {
+  peak: [],
+  drawdown: [],
+  measuredTrades: 0,
+  totalTrades: 0
 };
 
 const getTradeWeekKey = (timestampSeconds: UTCTimestamp): string => {
@@ -1440,6 +1473,7 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
   selectedBacktestDateKey: string;
   statsDateStart: string;
   statsDateEnd: string;
+  performanceStatsModel: string;
   aiMode: BacktestSettingsSnapshot["aiMode"];
   confidenceGateDisabled: boolean;
   confidenceResolver: (trade: HistoryItem) => number;
@@ -1450,6 +1484,7 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
     selectedBacktestDateKey,
     statsDateStart,
     statsDateEnd,
+    performanceStatsModel,
     aiMode,
     confidenceGateDisabled,
     confidenceResolver
@@ -1491,27 +1526,12 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
     ? backtestTrades.filter((trade) => getTradeDayKey(trade.exitTime) === selectedBacktestDateKey)
     : [];
 
-  const entryCounts: Record<string, number> = {};
-  const exitCounts: Record<string, number> = {};
-  for (const trade of backtestTrades) {
-    const entryKey = trade.entrySource || "Unknown";
-    const exitKey = trade.exitReason || "None";
-    entryCounts[entryKey] = (entryCounts[entryKey] ?? 0) + 1;
-    exitCounts[exitKey] = (exitCounts[exitKey] ?? 0) + 1;
-  }
-
-  const entryExitStats = {
-    entry: Object.entries(entryCounts).sort((left, right) => right[1] - left[1]),
-    exit: Object.entries(exitCounts).sort((left, right) => right[1] - left[1])
-  };
-  const toRows = (source: Array<[string, number]>) => {
-    const total = source.reduce((sum, [, count]) => sum + count, 0);
-    return source.map(([bucket, count]) => ({
-      bucket,
-      count,
-      share: total > 0 ? (count / total) * 100 : 0
-    }));
-  };
+  const entryExitStats = computeEntryExitStats(backtestTrades, true);
+  const performanceStats = computePerformanceStatsTemporalCharts(
+    backtestTrades,
+    performanceStatsModel,
+    true
+  );
 
   const confidenceDiff =
     baselineMainStatsTrades.length > 0
@@ -1540,11 +1560,10 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
     availableBacktestMonths: monthKeys,
     calendarActivityEntries: Array.from(dayMap.entries()),
     selectedBacktestDayTrades,
+    performanceStatsModelOptions: performanceStats.modelOptions,
+    performanceStatsTemporalCharts: performanceStats.charts,
     entryExitStats,
-    entryExitChartData: {
-      entry: toRows(entryExitStats.entry),
-      exit: toRows(entryExitStats.exit)
-    }
+    entryExitChartData: computeEntryExitChartData(entryExitStats)
   };
 };
 
@@ -4607,6 +4626,10 @@ const mergeLivePriceIntoCandles = (
     return candles;
   }
 
+  if (bucketTime > last.time && hasExcessiveTradingGap(last.time, bucketTime, timeframe)) {
+    return candles;
+  }
+
   if (bucketTime === last.time) {
     next[next.length - 1] = {
       ...last,
@@ -4693,6 +4716,25 @@ const mergeRecentCandles = (
   }
 
   return deduped.slice(-maxBars);
+};
+
+const pickPreferredCandlesAcrossGap = (
+  historical: Candle[],
+  recent: Candle[],
+  maxBars: number
+): Candle[] => {
+  const trimmedHistorical = historical.slice(-maxBars);
+  const trimmedRecent = recent.slice(-maxBars);
+
+  if (trimmedRecent.length >= MIN_SEED_CANDLES) {
+    return trimmedRecent;
+  }
+
+  if (trimmedHistorical.length >= MIN_SEED_CANDLES) {
+    return trimmedHistorical;
+  }
+
+  return trimmedRecent.length >= trimmedHistorical.length ? trimmedRecent : trimmedHistorical;
 };
 
 const aggregateCandlesToTimeframe = (candles: Candle[], timeframe: Timeframe): Candle[] => {
@@ -4788,7 +4830,8 @@ const mergeHistoricalAndRecentCandles = (
     recentFirstTime > historicalLastTime &&
     hasExcessiveTradingGap(historicalLastTime, recentFirstTime, timeframe)
   ) {
-    return (historical.length >= recent.length ? historical : recent).slice(-maxBars);
+    // Prefer the fresh live window over stitching a synthetic blank span onto stale history.
+    return pickPreferredCandlesAcrossGap(historical, recent, maxBars);
   }
 
   return mergeRecentCandles(historical, recent, maxBars, timeframe);
@@ -5101,7 +5144,7 @@ const fetchHybridHistoryCandles = async (
 
     const mergedWithRecentCandles =
       recentTimeframeCandles.length > 0
-        ? mergeRecentCandles(
+        ? mergeHistoricalAndRecentCandles(
             historyCandles,
             recentTimeframeCandles,
             Math.max(targetBars, historyCandles.length + recentTimeframeCandles.length),
@@ -5749,77 +5792,6 @@ const getHistoryTradeDurationMinutes = (trade: HistoryItem): number => {
   return Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
 };
 
-const normalizeBacktestExitReason = (reason?: string | null): string => {
-  if (!reason) {
-    return "";
-  }
-
-  const raw = String(reason).trim();
-
-  if (!raw || raw === "-") {
-    return "";
-  }
-
-  const upper = raw.toUpperCase();
-
-  if (upper === "TP" || upper.includes("TAKE")) {
-    return "Take Profit";
-  }
-
-  if (
-    upper === "BE" ||
-    upper === "BREAKEVEN" ||
-    upper === "BREAK-EVEN" ||
-    upper.includes("BREAK EVEN")
-  ) {
-    return "Break Even";
-  }
-
-  if (upper === "TSL" || upper.includes("TRAIL")) {
-    return "Trailing Stop";
-  }
-
-  if (upper === "SL" || upper.includes("STOP")) {
-    return "Stop Loss";
-  }
-
-  if (upper.includes("MIM") || upper.includes("MIT")) {
-    return "MIT";
-  }
-
-  if (upper.includes("AI")) {
-    return "AI";
-  }
-
-  if (upper.includes("MODEL")) {
-    return "Model Exit";
-  }
-
-  return raw;
-};
-
-const getBacktestExitLabel = (trade: HistoryItem): string => {
-  const normalized = normalizeBacktestExitReason(trade.exitReason);
-
-  if (normalized) {
-    return normalized;
-  }
-
-  const targetGap = Math.abs(trade.targetPrice - trade.entryPrice);
-  const stopGap = Math.abs(trade.entryPrice - trade.stopPrice);
-  const realizedGap = Math.abs(trade.outcomePrice - trade.entryPrice);
-
-  if (trade.result === "Win" && realizedGap >= targetGap * 0.84) {
-    return "Take Profit";
-  }
-
-  if (trade.result === "Loss" && realizedGap >= stopGap * 0.84) {
-    return "Stop Loss";
-  }
-
-  return "Model Exit";
-};
-
 const getEntryExitBarFill = (bucket: string): string => {
   const normalized = bucket.trim().toLowerCase();
 
@@ -5876,6 +5848,12 @@ const getEntryExitBarFill = (bucket: string): string => {
   }
 
   return "rgba(90,170,255,0.88)";
+};
+
+const getEntryExitExcursionBarFill = (kind: "peak" | "drawdown"): string => {
+  return kind === "peak"
+    ? "rgba(34,197,94,0.88)"
+    : "rgba(248,113,113,0.88)";
 };
 
 const getPerformanceStatsBarFill = (pnl: number, opacity = 0.88): string => {
@@ -6901,6 +6879,90 @@ const resolveTradeMiniChartCandles = (
   }
 
   return EMPTY_CANDLES;
+};
+
+const ENTRY_EXIT_EXCURSION_BUCKETS = [
+  { label: "0-0.10%", max: 0.1 },
+  { label: "0.10-0.25%", max: 0.25 },
+  { label: "0.25-0.50%", max: 0.5 },
+  { label: "0.50-1.00%", max: 1 },
+  { label: "1.00-2.00%", max: 2 },
+  { label: "2.00%+", max: Number.POSITIVE_INFINITY }
+] as const;
+
+const createEmptyExcursionBucketCounts = () => {
+  return ENTRY_EXIT_EXCURSION_BUCKETS.reduce<Record<string, number>>((accumulator, bucket) => {
+    accumulator[bucket.label] = 0;
+    return accumulator;
+  }, {});
+};
+
+const bucketTradeExcursionPct = (value: number): string => {
+  for (const bucket of ENTRY_EXIT_EXCURSION_BUCKETS) {
+    if (value <= bucket.max) {
+      return bucket.label;
+    }
+  }
+
+  return ENTRY_EXIT_EXCURSION_BUCKETS[ENTRY_EXIT_EXCURSION_BUCKETS.length - 1]!.label;
+};
+
+const buildEntryExitExcursionChartRows = (
+  counts: Record<string, number>
+): EntryExitChartRow[] => {
+  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+
+  return ENTRY_EXIT_EXCURSION_BUCKETS.map((bucket) => {
+    const count = counts[bucket.label] ?? 0;
+
+    return {
+      bucket: bucket.label,
+      count,
+      share: total > 0 ? (count / total) * 100 : 0
+    };
+  });
+};
+
+const measureTradeExcursionPct = (
+  trade: Pick<HistoryItem, "side" | "entryTime" | "exitTime" | "entryPrice">,
+  candles: Candle[]
+): { peakPct: number; drawdownPct: number } | null => {
+  if (!doesTradeFitCandles(trade, candles)) {
+    return null;
+  }
+
+  const entryIndex = findCandleIndexAtOrBefore(candles, Number(trade.entryTime) * 1000);
+  const exitIndex = findCandleIndexAtOrBefore(candles, Number(trade.exitTime) * 1000);
+
+  if (entryIndex < 0 || exitIndex < entryIndex) {
+    return null;
+  }
+
+  let maxFavorableDistance = 0;
+  let maxAdverseDistance = 0;
+
+  for (let index = entryIndex; index <= exitIndex; index += 1) {
+    const candle = candles[index];
+
+    if (!candle) {
+      continue;
+    }
+
+    if (trade.side === "Long") {
+      maxFavorableDistance = Math.max(maxFavorableDistance, candle.high - trade.entryPrice);
+      maxAdverseDistance = Math.max(maxAdverseDistance, trade.entryPrice - candle.low);
+    } else {
+      maxFavorableDistance = Math.max(maxFavorableDistance, trade.entryPrice - candle.low);
+      maxAdverseDistance = Math.max(maxAdverseDistance, candle.high - trade.entryPrice);
+    }
+  }
+
+  const denominator = Math.max(0.000001, Math.abs(trade.entryPrice));
+
+  return {
+    peakPct: (Math.max(0, maxFavorableDistance) / denominator) * 100,
+    drawdownPct: (Math.max(0, maxAdverseDistance) / denominator) * 100
+  };
 };
 
 const humanizeDurationMinutes = (totalMin: number): string => {
@@ -8384,6 +8446,10 @@ const getStatsRefreshPhaseDurationMs = (status: string): number => {
 };
 
 const isStatsRefreshAutoFinishPhase = (status: string): boolean => {
+  if (status === "Loading Cluster Map") {
+    return false;
+  }
+
   const phaseKey = getStatsRefreshPhaseKey(status);
   return phaseKey === "finalize" && status !== "Finalizing Statistics";
 };
@@ -8426,6 +8492,10 @@ const getStatsRefreshStatusDetail = (
 
   if (status === "Finalizing Statistics") {
     return "Aggregating performance metrics and updating panels.";
+  }
+
+  if (status === "Loading Cluster Map") {
+    return "Rendering cluster nodes, trades, and overlays for the current map view.";
   }
 
   if (status === "No Trades In Selected Range") {
@@ -8735,15 +8805,35 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   if (!authReady) {
     return (
-      <main className="terminal account-screen">
-        <section className="account-screen-shell">
-          <div className="account-shell-panel">
-            <div className="account-shell-header">
-              <h1>Connecting account</h1>
-              <p>Checking your Firebase session before loading the terminal.</p>
+      <main className="terminal" aria-busy="true">
+        <div className="stats-refresh-loading-overlay" aria-live="polite" aria-atomic="true">
+          <div className="stats-refresh-loading-shell">
+            <div className="stats-refresh-loading-head">
+              <div className="stats-refresh-loading-status">Loading Terminal</div>
+              <div className="stats-refresh-loading-pct">28%</div>
+            </div>
+            <div className="stats-refresh-loading-meta">
+              <span>Phase 1 of 1 · Initialize Session</span>
+              <span>Korra Terminal</span>
+            </div>
+            <div className="stats-refresh-loading-detail">
+              Restoring your terminal workspace.
+            </div>
+            <div
+              className="stats-refresh-loading-track"
+              role="progressbar"
+              aria-label="Loading terminal"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={28}
+            >
+              <div
+                className="stats-refresh-loading-fill"
+                style={{ width: "28%" }}
+              />
             </div>
           </div>
-        </section>
+        </div>
       </main>
     );
   }
@@ -9052,6 +9142,7 @@ function TradingTerminalWorkspace({
   const [aiZipClusterMapView, setAiZipClusterMapView] = useState<"2d" | "3d">("2d");
   const [aiZipClusterResetKey, setAiZipClusterResetKey] = useState(0);
   const [aiZipClusterTimelineIdx, setAiZipClusterTimelineIdx] = useState(0);
+  const [backtestClusterMapRenderReady, setBacktestClusterMapRenderReady] = useState(false);
   const [enabledBacktestWeekdays, setEnabledBacktestWeekdays] = useState<string[]>([
     ...backtestWeekdayLabels
   ]);
@@ -9941,6 +10032,22 @@ function TradingTerminalWorkspace({
       return;
     }
 
+    if (statsRefreshStatus === "Loading Cluster Map") {
+      const rangeSnapshot = statsRefreshTimelineRangeRef.current;
+      const rangeStartMs = Number.isFinite(rangeSnapshot.startMs)
+        ? rangeSnapshot.startMs
+        : backtestRefreshNowMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000;
+      const rangeEndMs = Number.isFinite(rangeSnapshot.endMs)
+        ? Math.max(rangeStartMs + 60_000, rangeSnapshot.endMs)
+        : backtestRefreshNowMs;
+      const lockedProgress = backtestClusterMapRenderReady ? 100 : 99;
+
+      setStatsRefreshProgress(lockedProgress);
+      setStatsRefreshLoadingDisplayProgress(lockedProgress);
+      setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(rangeEndMs));
+      return;
+    }
+
     const durationMs = getStatsRefreshPhaseDurationMs(statsRefreshStatus);
     const statusSnapshot = statsRefreshStatus;
     const phasePlanSnapshot =
@@ -10006,6 +10113,7 @@ function TradingTerminalWorkspace({
       }
     };
   }, [
+    backtestClusterMapRenderReady,
     backtestRefreshNowMs,
     finishStatsRefreshLoading,
     statsRefreshOverlayMode,
@@ -10701,18 +10809,12 @@ function TradingTerminalWorkspace({
             [key]: (() => {
               const current = prev[key] ?? [];
               const currentLastTime = current[current.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
-              const firstLiveTime = liveCandles[0]?.time ?? Number.POSITIVE_INFINITY;
-
-              if (
-                Number.isFinite(currentLastTime) &&
-                Number.isFinite(firstLiveTime) &&
-                firstLiveTime > currentLastTime &&
-                hasExcessiveTradingGap(currentLastTime, firstLiveTime, selectedTimeframe)
-              ) {
-                return current;
-              }
-
-              const merged = mergeRecentCandles(current, liveCandles, historyLimit, selectedTimeframe);
+              const merged = mergeHistoricalAndRecentCandles(
+                current,
+                liveCandles,
+                historyLimit,
+                selectedTimeframe
+              );
               const mergedLastTime = merged[merged.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
               return mergedLastTime < currentLastTime ? current : merged;
             })()
@@ -11878,7 +11980,7 @@ function TradingTerminalWorkspace({
       return deepHistory;
     }
 
-    return mergeRecentCandles(
+    return mergeHistoricalAndRecentCandles(
       deepHistory,
       selectedCandles,
       Math.max(deepHistory.length + selectedCandles.length, selectedCandles.length),
@@ -16493,12 +16595,26 @@ function TradingTerminalWorkspace({
   const isBacktestHistorySeedBlocked =
     statsRefreshStatus === "Historical Candle Range Unavailable";
   const isBacktestTabHistoryPending = backtestHasRun && !backtestHistorySeedReady;
+  const isBacktestClusterMapRenderPending =
+    selectedSurfaceTab === "backtest" &&
+    selectedBacktestTab === "cluster" &&
+    backtestHasRun &&
+    !isBacktestTabDataPending &&
+    !isBacktestTabHistoryPending &&
+    !isBacktestHistorySeedBlocked &&
+    !backtestClusterMapRenderReady;
   const shouldShowBacktestInlineLoader =
     isBacktestSurfaceSettled &&
     backtestInlineLoaderTabs.has(selectedBacktestTab) &&
-    (isBacktestTabDataPending || (isBacktestTabHistoryPending && !isBacktestHistorySeedBlocked));
+    (
+      isBacktestTabDataPending ||
+      (isBacktestTabHistoryPending && !isBacktestHistorySeedBlocked) ||
+      isBacktestClusterMapRenderPending
+    );
   const backtestInlineLoaderLabel =
-    selectedBacktestTab === "dimensions"
+    selectedBacktestTab === "cluster"
+      ? "Loading Cluster Map..."
+      : selectedBacktestTab === "dimensions"
       ? "Building dimension statistics..."
       : isBacktestTabHistoryPending
         ? "Loading backtest data..."
@@ -16509,6 +16625,8 @@ function TradingTerminalWorkspace({
     statsRefreshOverlayMode === "loading" &&
     isBacktestAnalyticsVisible &&
     shouldComputeBacktestAnalyticsOnServer;
+  const statsRefreshNeedsClusterMapRender =
+    statsRefreshOverlayMode === "loading" && isBacktestClusterMapRenderPending;
   const statsRefreshPanelAnalyticsSettled =
     !statsRefreshNeedsPanelAnalytics ||
     panelAnalyticsStatus === "ready" ||
@@ -16519,17 +16637,55 @@ function TradingTerminalWorkspace({
     backtestAnalyticsStatus === "ready" ||
     backtestAnalyticsStatus === "error" ||
     backtestAnalyticsStatus === "idle";
+  const statsRefreshClusterMapSettled =
+    !statsRefreshNeedsClusterMapRender || backtestClusterMapRenderReady;
   const statsRefreshCompletionReady =
     statsRefreshReplaySettled &&
     statsRefreshPanelAnalyticsSettled &&
-    statsRefreshBacktestAnalyticsSettled;
+    statsRefreshBacktestAnalyticsSettled &&
+    statsRefreshClusterMapSettled;
 
   useEffect(() => {
     if (statsRefreshOverlayMode !== "loading") {
       return;
     }
 
-    if (statsRefreshStatus !== "Finalizing Statistics") {
+    if (!statsRefreshNeedsClusterMapRender || backtestClusterMapRenderReady) {
+      return;
+    }
+
+    if (
+      !statsRefreshReplaySettled ||
+      !statsRefreshPanelAnalyticsSettled ||
+      !statsRefreshBacktestAnalyticsSettled
+    ) {
+      return;
+    }
+
+    if (statsRefreshStatus === "Loading Cluster Map") {
+      return;
+    }
+
+    setStatsRefreshStatus("Loading Cluster Map");
+  }, [
+    backtestClusterMapRenderReady,
+    statsRefreshBacktestAnalyticsSettled,
+    statsRefreshNeedsClusterMapRender,
+    statsRefreshOverlayMode,
+    statsRefreshPanelAnalyticsSettled,
+    statsRefreshReplaySettled,
+    statsRefreshStatus
+  ]);
+
+  useEffect(() => {
+    if (statsRefreshOverlayMode !== "loading") {
+      return;
+    }
+
+    if (
+      statsRefreshStatus !== "Finalizing Statistics" &&
+      statsRefreshStatus !== "Loading Cluster Map"
+    ) {
       return;
     }
 
@@ -16656,6 +16812,7 @@ function TradingTerminalWorkspace({
           selectedBacktestDateKey,
           statsDateStart: appliedBacktestSettings.statsDateStart,
           statsDateEnd: appliedBacktestSettings.statsDateEnd,
+          performanceStatsModel,
           aiMode: appliedBacktestSettings.aiMode,
           confidenceGateDisabled: appliedConfidenceGateDisabled,
           confidenceResolver: getEffectiveTradeConfidenceScore
@@ -16705,6 +16862,7 @@ function TradingTerminalWorkspace({
             selectedBacktestDateKey,
             statsDateStart: appliedBacktestSettings.statsDateStart,
             statsDateEnd: appliedBacktestSettings.statsDateEnd,
+            performanceStatsModel,
             aiMode: appliedBacktestSettings.aiMode,
             confidenceGateDisabled: appliedConfidenceGateDisabled,
             confidenceResolver: getEffectiveTradeConfidenceScore
@@ -16746,8 +16904,69 @@ function TradingTerminalWorkspace({
   const mainStatsAiEfficiency = backtestAnalyticsData.mainStatsAiEfficiency;
   const mainStatsAiEffectivenessPct = backtestAnalyticsData.mainStatsAiEffectivenessPct;
   const mainStatsAiEfficacyPct = backtestAnalyticsData.mainStatsAiEfficacyPct;
-  const entryExitStats = backtestAnalyticsData.entryExitStats;
-  const entryExitChartData = backtestAnalyticsData.entryExitChartData;
+  const entryExitDerivedStats = useMemo(() => {
+    return computeEntryExitStats(
+      backtestTrades,
+      isEntryExitBacktestTabActive && backtestHasRun && backtestHistorySeedReady
+    );
+  }, [
+    backtestHasRun,
+    backtestHistorySeedReady,
+    backtestTrades,
+    isEntryExitBacktestTabActive
+  ]);
+  const entryExitDerivedChartData = useMemo(() => {
+    return computeEntryExitChartData(entryExitDerivedStats);
+  }, [entryExitDerivedStats]);
+  const entryExitExcursionAnalytics = useMemo<EntryExitExcursionAnalytics>(() => {
+    if (!isEntryExitBacktestTabActive || !backtestHasRun || !backtestHistorySeedReady) {
+      return {
+        ...EMPTY_ENTRY_EXIT_EXCURSION_ANALYTICS,
+        totalTrades: backtestTrades.length
+      };
+    }
+
+    const peakCounts = createEmptyExcursionBucketCounts();
+    const drawdownCounts = createEmptyExcursionBucketCounts();
+    let measuredTrades = 0;
+
+    for (const trade of backtestTrades) {
+      const oneMinuteCandles = backtestOneMinuteCandlesBySymbol[trade.symbol] ?? EMPTY_CANDLES;
+      const timeframeCandles = backtestHistorySeriesBySymbol[trade.symbol] ?? EMPTY_CANDLES;
+      const tradeCandles = resolveTradeMiniChartCandles(
+        trade,
+        appliedBacktestSettings.minutePreciseEnabled ? oneMinuteCandles : timeframeCandles,
+        appliedBacktestSettings.minutePreciseEnabled ? timeframeCandles : oneMinuteCandles
+      );
+      const excursion = measureTradeExcursionPct(trade, tradeCandles);
+
+      if (!excursion) {
+        continue;
+      }
+
+      measuredTrades += 1;
+      peakCounts[bucketTradeExcursionPct(excursion.peakPct)] += 1;
+      drawdownCounts[bucketTradeExcursionPct(excursion.drawdownPct)] += 1;
+    }
+
+    return {
+      peak: buildEntryExitExcursionChartRows(peakCounts),
+      drawdown: buildEntryExitExcursionChartRows(drawdownCounts),
+      measuredTrades,
+      totalTrades: backtestTrades.length
+    };
+  }, [
+    appliedBacktestSettings.minutePreciseEnabled,
+    backtestHasRun,
+    backtestHistorySeedReady,
+    backtestHistorySeriesBySymbol,
+    backtestOneMinuteCandlesBySymbol,
+    backtestTrades,
+    isEntryExitBacktestTabActive
+  ]);
+  const entryExitChartData = isEntryExitBacktestTabActive
+    ? entryExitDerivedChartData
+    : backtestAnalyticsData.entryExitChartData;
   const copytradeDashboardSeed = useMemo(() => {
     if (!backtestHasRun || !backtestHistorySeedReady) {
       return null;
@@ -19552,6 +19771,18 @@ function TradingTerminalWorkspace({
     backtestTrades,
     isClusterBacktestTabActive
   ]);
+  const handleBacktestClusterMapRenderReady = useCallback(() => {
+    setBacktestClusterMapRenderReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (selectedSurfaceTab !== "backtest" || selectedBacktestTab !== "cluster") {
+      setBacktestClusterMapRenderReady(false);
+      return;
+    }
+
+    setBacktestClusterMapRenderReady(false);
+  }, [aiZipClusterMapDataKey, selectedBacktestTab, selectedSurfaceTab]);
 
   useEffect(() => {
     if (!isClusterBacktestTabActive) {
@@ -20763,7 +20994,11 @@ function TradingTerminalWorkspace({
     `${appliedBacktestSettings.aiMode === "off" ? "AI Off" : "AI On"}`;
   const isGideonSurface = selectedSurfaceTab === "ai";
   const backtestSurfaceLoadingLabel =
-    selectedSurfaceTab === "models" ? "Loading Models..." : "Preparing Backtest...";
+    selectedSurfaceTab === "models"
+      ? "Loading Models..."
+      : selectedBacktestTab === "cluster"
+      ? "Loading Cluster Map..."
+      : "Preparing Backtest...";
 
   return (
     <main className={`terminal${isGideonSurface ? " terminal-gideon" : ""}`}>
@@ -24359,6 +24594,7 @@ function TradingTerminalWorkspace({
                       onToggleClusterMapView={() =>
                         setAiZipClusterMapView((current) => (current === "3d" ? "2d" : "3d"))
                       }
+                      onRenderReady={handleBacktestClusterMapRenderReady}
                       onPostHocTrades={() => {}}
                       onPostHocProgress={() => {}}
                       onMitMap={() => {}}
@@ -25013,6 +25249,214 @@ function TradingTerminalWorkspace({
                         </div>
                       </div>
                     ))}
+
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          alignItems: "baseline",
+                          justifyContent: "space-between",
+                          gap: 8
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 900,
+                            opacity: 0.82,
+                            letterSpacing: "0.06em",
+                            textTransform: "uppercase"
+                          }}
+                        >
+                          Peak / Drawdown Distribution
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            opacity: 0.66
+                          }}
+                        >
+                          {entryExitExcursionAnalytics.measuredTrades > 0
+                            ? `Measured ${entryExitExcursionAnalytics.measuredTrades} / ${entryExitExcursionAnalytics.totalTrades} trades from loaded candles`
+                            : entryExitExcursionAnalytics.totalTrades > 0
+                              ? "Trade path candles unavailable for the selected range"
+                              : "No trades in the selected range"}
+                        </div>
+                      </div>
+
+                      <div style={{ display: "grid", gap: 12 }}>
+                        {([
+                          {
+                            key: "peak",
+                            label: "Peak Excursion (MFE)",
+                            hint: "Best unrealized move from entry during the trade.",
+                            data: entryExitExcursionAnalytics.peak
+                          },
+                          {
+                            key: "drawdown",
+                            label: "Max Drawdown (MAE)",
+                            hint: "Worst adverse move from entry during the trade.",
+                            data: entryExitExcursionAnalytics.drawdown
+                          }
+                        ] as const).map((chart) => (
+                          <div
+                            key={chart.key}
+                            style={{
+                              borderRadius: 18,
+                              border: "1px solid rgba(255,255,255,0.10)",
+                              background:
+                                "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.15))",
+                              padding: 12
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                flexWrap: "wrap",
+                                justifyContent: "space-between",
+                                gap: 6,
+                                marginBottom: 8
+                              }}
+                            >
+                              <div
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 900,
+                                  opacity: 0.85,
+                                  letterSpacing: "0.04em"
+                                }}
+                              >
+                                {chart.label}
+                              </div>
+                              <div style={{ fontSize: 11, opacity: 0.62 }}>{chart.hint}</div>
+                            </div>
+
+                            <div style={{ height: 250 }}>
+                              {entryExitExcursionAnalytics.measuredTrades === 0 ? (
+                                <div
+                                  style={{
+                                    height: "100%",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    fontSize: 12,
+                                    opacity: 0.75
+                                  }}
+                                >
+                                  No measured trade paths available.
+                                </div>
+                              ) : (
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <BarChart data={chart.data} margin={{ top: 8, right: 10, left: 0, bottom: 6 }}>
+                                    <XAxis
+                                      dataKey="bucket"
+                                      tick={{
+                                        fontSize: 11,
+                                        fill: "rgba(255,255,255,0.70)"
+                                      }}
+                                      axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                      tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                    />
+                                    <YAxis
+                                      allowDecimals={false}
+                                      tick={{
+                                        fontSize: 11,
+                                        fill: "rgba(255,255,255,0.70)"
+                                      }}
+                                      axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                      tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
+                                    />
+                                    <Tooltip
+                                      content={(props: any) => {
+                                        const { active, payload, label } = props;
+
+                                        if (!active || !Array.isArray(payload) || payload.length === 0) {
+                                          return null;
+                                        }
+
+                                        const count = Number(payload[0]?.value ?? 0);
+                                        const share = Number(payload[0]?.payload?.share ?? 0);
+                                        return (
+                                          <div
+                                            style={{
+                                              background: "rgba(255,255,255,0.96)",
+                                              border: "1px solid rgba(15,23,42,0.12)",
+                                              borderRadius: 12,
+                                              padding: "8px 10px",
+                                              boxShadow: "0 10px 30px rgba(0,0,0,0.28)",
+                                              color: "rgba(15,23,42,0.95)",
+                                              fontSize: 12,
+                                              minWidth: 160
+                                            }}
+                                          >
+                                            <div style={{ fontWeight: 900, marginBottom: 6 }}>
+                                              {String(label ?? "")}
+                                            </div>
+                                            <div
+                                              style={{
+                                                display: "flex",
+                                                justifyContent: "space-between",
+                                                gap: 12
+                                              }}
+                                            >
+                                              <span style={{ opacity: 0.7 }}>Count</span>
+                                              <span style={{ fontWeight: 900, color: "rgba(15,23,42,0.92)" }}>
+                                                {count}
+                                              </span>
+                                            </div>
+                                            <div
+                                              style={{
+                                                display: "flex",
+                                                justifyContent: "space-between",
+                                                gap: 12,
+                                                marginTop: 4
+                                              }}
+                                            >
+                                              <span style={{ opacity: 0.7 }}>Share</span>
+                                              <span style={{ fontWeight: 900, color: "rgba(15,23,42,0.92)" }}>
+                                                {share.toFixed(1)}%
+                                              </span>
+                                            </div>
+                                          </div>
+                                        );
+                                      }}
+                                    />
+                                    <Bar
+                                      dataKey="count"
+                                      radius={0}
+                                      isAnimationActive={false}
+                                      shape={(props: any) => {
+                                        const { x, y, width, height } = props;
+                                        const resolvedWidth = Number(width);
+                                        const resolvedHeight = Number(height);
+
+                                        if (
+                                          !Number.isFinite(resolvedWidth) ||
+                                          !Number.isFinite(resolvedHeight)
+                                        ) {
+                                          return null;
+                                        }
+
+                                        return (
+                                          <rect
+                                            x={x}
+                                            y={y}
+                                            width={Math.max(0, resolvedWidth)}
+                                            height={Math.max(0, resolvedHeight)}
+                                            fill={getEntryExitExcursionBarFill(chart.key)}
+                                          />
+                                        );
+                                      }}
+                                    />
+                                  </BarChart>
+                                </ResponsiveContainer>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 </div>
               ) : null}
