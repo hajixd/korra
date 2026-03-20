@@ -7455,6 +7455,10 @@ function drawClusterMapCanvas(
         isLib && !isSearch
           ? Math.max(2.4, baseRadius * (isHovered ? 0.96 : 0.84))
           : baseRadius;
+      const libraryRingWidth =
+        isLib && !isSearch
+          ? Math.max(0.95, visibleRadius * (isHovered ? 0.22 : 0.18))
+          : 0;
       ctx.save();
       const dimAlpha = selectionFocusActive ? 0.18 : 0.36;
       ctx.globalAlpha = dimNode ? dimAlpha : 1;
@@ -7468,13 +7472,30 @@ function drawClusterMapCanvas(
         isLib && !isSearch
           ? Math.max(0.42, strokeWidthBase * (isHovered ? 0.32 : 0.22))
           : strokeWidthBase;
-      ctx.lineWidth = strokeWidth;
-      ctx.beginPath();
-      ctx.arc(sx, sy, visibleRadius, 0, Math.PI * 2);
-      ctx.fillStyle = fill;
-      ctx.fill();
-      ctx.strokeStyle = outline;
-      ctx.stroke();
+      if (isLib && !isSearch) {
+        ctx.beginPath();
+        ctx.arc(sx, sy, visibleRadius, 0, Math.PI * 2);
+        ctx.fillStyle = outline;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(
+          sx,
+          sy,
+          Math.max(1.25, visibleRadius - libraryRingWidth),
+          0,
+          Math.PI * 2
+        );
+        ctx.fillStyle = fill;
+        ctx.fill();
+      } else {
+        ctx.lineWidth = strokeWidth;
+        ctx.beginPath();
+        ctx.arc(sx, sy, visibleRadius, 0, Math.PI * 2);
+        ctx.fillStyle = fill;
+        ctx.fill();
+        ctx.strokeStyle = outline;
+        ctx.stroke();
+      }
       if (dimNode) {
         if (isLib && !isSearch) {
           const dimR = Math.max(2.2, visibleRadius * 1.06);
@@ -8446,7 +8467,7 @@ function ClusterMapViewport3D({
     const sizeMul = Math.max(0.25, Math.min(4, Number(nodeSizeMul) || 1));
     const outlineMul = Math.max(0.25, Math.min(4, Number(nodeOutlineMul) || 1));
     const outlineScaleMul = 1 + 0.12 * outlineMul;
-    const libraryOutlineScaleMul = 1 + 0.018 * outlineMul;
+    const libraryOutlineScaleMul = 1 + 0.03 * outlineMul;
     const selectedSet = selectedIdsRef.current;
 
     for (let i = 0; i < rawPts.length; i++) {
