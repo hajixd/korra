@@ -1387,7 +1387,7 @@ const computeMainStatsModelRowsFallback = (trades: HistoryItem[]): MainStatsBuck
   const map = new Map<string, MainStatsBucketRow>();
 
   for (const trade of trades) {
-    const label = getBacktestEntryLabel(trade);
+    const label = trade.entrySource || "Unknown";
     const current = map.get(label) ?? { label, total: 0, trades: 0 };
     current.total += trade.pnlUsd;
     current.trades += 1;
@@ -1440,7 +1440,6 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
   selectedBacktestDateKey: string;
   statsDateStart: string;
   statsDateEnd: string;
-  performanceStatsModel: string;
   aiMode: BacktestSettingsSnapshot["aiMode"];
   confidenceGateDisabled: boolean;
   confidenceResolver: (trade: HistoryItem) => number;
@@ -1451,7 +1450,6 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
     selectedBacktestDateKey,
     statsDateStart,
     statsDateEnd,
-    performanceStatsModel,
     aiMode,
     confidenceGateDisabled,
     confidenceResolver
@@ -1492,11 +1490,28 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
   const selectedBacktestDayTrades = selectedBacktestDateKey
     ? backtestTrades.filter((trade) => getTradeDayKey(trade.exitTime) === selectedBacktestDateKey)
     : [];
-  const performanceStats = computePerformanceStatsTemporalChartsFallback(
-    backtestTrades,
-    performanceStatsModel
-  );
-  const entryExitStats = computeEntryExitStatsFallback(backtestTrades);
+
+  const entryCounts: Record<string, number> = {};
+  const exitCounts: Record<string, number> = {};
+  for (const trade of backtestTrades) {
+    const entryKey = trade.entrySource || "Unknown";
+    const exitKey = trade.exitReason || "None";
+    entryCounts[entryKey] = (entryCounts[entryKey] ?? 0) + 1;
+    exitCounts[exitKey] = (exitCounts[exitKey] ?? 0) + 1;
+  }
+
+  const entryExitStats = {
+    entry: Object.entries(entryCounts).sort((left, right) => right[1] - left[1]),
+    exit: Object.entries(exitCounts).sort((left, right) => right[1] - left[1])
+  };
+  const toRows = (source: Array<[string, number]>) => {
+    const total = source.reduce((sum, [, count]) => sum + count, 0);
+    return source.map(([bucket, count]) => ({
+      bucket,
+      count,
+      share: total > 0 ? (count / total) * 100 : 0
+    }));
+  };
 
   const confidenceDiff =
     baselineMainStatsTrades.length > 0
@@ -1525,12 +1540,10 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
     availableBacktestMonths: monthKeys,
     calendarActivityEntries: Array.from(dayMap.entries()),
     selectedBacktestDayTrades,
-    performanceStatsModelOptions: performanceStats.modelOptions,
-    performanceStatsTemporalCharts: performanceStats.charts,
     entryExitStats,
     entryExitChartData: {
-      entry: computeEntryExitChartRows(entryExitStats.entry),
-      exit: computeEntryExitChartRows(entryExitStats.exit)
+      entry: toRows(entryExitStats.entry),
+      exit: toRows(entryExitStats.exit)
     }
   };
 };
@@ -5807,11 +5820,6 @@ const getBacktestExitLabel = (trade: HistoryItem): string => {
   return "Model Exit";
 };
 
-const getBacktestEntryLabel = (trade: Pick<HistoryItem, "entrySource">): string => {
-  const raw = String(trade.entrySource ?? "").trim();
-  return raw || "Settings";
-};
-
 const getEntryExitBarFill = (bucket: string): string => {
   const normalized = bucket.trim().toLowerCase();
 
@@ -5868,195 +5876,6 @@ const getEntryExitBarFill = (bucket: string): string => {
   }
 
   return "rgba(90,170,255,0.88)";
-};
-
-const computePerformanceStatsTemporalChartsFallback = (
-  trades: HistoryItem[],
-  performanceStatsModel: string
-): {
-  modelOptions: string[];
-  charts: PerformanceStatsTemporalCharts;
-} => {
-  const models = Array.from(
-    new Set(
-      trades
-        .map((trade) => getBacktestEntryLabel(trade))
-        .filter((name) => name.length > 0)
-    )
-  );
-  const modelOptions = ["All", ...models];
-  const modelTrades = trades.filter((trade) => {
-    const modelName = getBacktestEntryLabel(trade);
-    return performanceStatsModel === "All" ? true : modelName === performanceStatsModel;
-  });
-
-  const buildSeries = (range: "hours" | "weekday" | "month" | "year") => {
-    const buckets = new Map<string, { pnl: number; count: number }>();
-
-    for (const trade of modelTrades) {
-      const timestampSeconds = Number(trade.entryTime ?? trade.exitTime);
-
-      if (!Number.isFinite(timestampSeconds)) {
-        continue;
-      }
-
-      const date = new Date(timestampSeconds * 1000);
-      let key = "";
-
-      if (range === "hours") {
-        key = backtestHourLabels[date.getUTCHours()] ?? String(date.getUTCHours());
-      } else if (range === "weekday") {
-        key = backtestWeekdayLabels[date.getUTCDay()] ?? String(date.getUTCDay());
-      } else if (range === "month") {
-        key = backtestMonthLabels[date.getUTCMonth()] ?? String(date.getUTCMonth() + 1);
-      } else {
-        key = String(date.getUTCFullYear());
-      }
-
-      const current = buckets.get(key) ?? { pnl: 0, count: 0 };
-      buckets.set(key, {
-        pnl: current.pnl + trade.pnlUsd,
-        count: current.count + 1
-      });
-    }
-
-    let orderedBuckets: string[] = [];
-
-    if (range === "hours") {
-      orderedBuckets = [...backtestHourLabels];
-    } else if (range === "weekday") {
-      orderedBuckets = [...backtestWeekdayLabels];
-    } else if (range === "month") {
-      orderedBuckets = [...backtestMonthLabels];
-    } else {
-      orderedBuckets = Array.from(buckets.keys())
-        .map((bucket) => Number(bucket))
-        .filter((value) => Number.isFinite(value))
-        .sort((left, right) => left - right)
-        .map((value) => String(value));
-    }
-
-    return orderedBuckets.map((bucket) => {
-      const record = buckets.get(bucket) ?? { pnl: 0, count: 0 };
-      return {
-        bucket,
-        pnl: Number(record.pnl.toFixed(2)),
-        count: record.count
-      };
-    });
-  };
-
-  const hours = buildSeries("hours");
-  const weekday = buildSeries("weekday");
-  const month = buildSeries("month");
-  const year = buildSeries("year");
-
-  return {
-    modelOptions,
-    charts: {
-      hours,
-      weekday,
-      month,
-      year,
-      hasData: [hours, weekday, month, year].some((series) =>
-        series.some((row) => row.count > 0)
-      )
-    }
-  };
-};
-
-const computeEntryExitStatsFallback = (
-  trades: HistoryItem[]
-): { entry: Array<[string, number]>; exit: Array<[string, number]> } => {
-  const entryCounts: Record<string, number> = {};
-  const exitCounts: Record<string, number> = {};
-
-  for (const trade of trades) {
-    const entryKey = getBacktestEntryLabel(trade);
-    const exitKey = getBacktestExitLabel(trade);
-    entryCounts[entryKey] = (entryCounts[entryKey] ?? 0) + 1;
-    exitCounts[exitKey] = (exitCounts[exitKey] ?? 0) + 1;
-  }
-
-  const toSorted = (counts: Record<string, number>) =>
-    Object.entries(counts).sort((left, right) => right[1] - left[1]);
-
-  return {
-    entry: toSorted(entryCounts),
-    exit: toSorted(exitCounts)
-  };
-};
-
-const computeEntryExitChartRows = (source: Array<[string, number]>) => {
-  const total = source.reduce((sum, [, count]) => sum + count, 0);
-  return source.map(([bucket, count]) => ({
-    bucket,
-    count,
-    share: total > 0 ? (count / total) * 100 : 0
-  }));
-};
-
-const getDistributionBucketStep = (maxValue: number, targetBins = 8): number => {
-  if (!Number.isFinite(maxValue) || maxValue <= 0) {
-    return 1;
-  }
-
-  const rawStep = maxValue / Math.max(1, targetBins);
-  const magnitude = 10 ** Math.floor(Math.log10(Math.max(rawStep, 1)));
-  const normalized = rawStep / magnitude;
-
-  if (normalized <= 1) {
-    return magnitude;
-  }
-
-  if (normalized <= 2) {
-    return magnitude * 2;
-  }
-
-  if (normalized <= 5) {
-    return magnitude * 5;
-  }
-
-  return magnitude * 10;
-};
-
-const buildExcursionDistributionRows = (values: number[]) => {
-  const normalized = values.filter((value) => Number.isFinite(value) && value >= 0);
-
-  if (normalized.length === 0) {
-    return [] as Array<{
-      bucket: string;
-      count: number;
-      share: number;
-      rangeStart: number;
-      rangeEnd: number;
-    }>;
-  }
-
-  const maxValue = Math.max(...normalized, 0);
-  const bucketStep = getDistributionBucketStep(maxValue);
-  const bucketCount = Math.max(1, Math.ceil(maxValue / Math.max(bucketStep, 1)));
-  const counts = Array.from({ length: bucketCount }, () => 0);
-
-  for (const value of normalized) {
-    const bucketIndex = Math.min(
-      counts.length - 1,
-      Math.max(0, Math.floor(value / Math.max(bucketStep, 1)))
-    );
-    counts[bucketIndex] += 1;
-  }
-
-  return counts.map((count, index) => {
-    const rangeStart = index * bucketStep;
-    const rangeEnd = (index + 1) * bucketStep;
-    return {
-      bucket: `${formatChartUsd(rangeStart)}-${formatChartUsd(rangeEnd)}`,
-      count,
-      share: normalized.length > 0 ? (count / normalized.length) * 100 : 0,
-      rangeStart,
-      rangeEnd
-    };
-  });
 };
 
 const getPerformanceStatsBarFill = (pnl: number, opacity = 0.88): string => {
@@ -16837,7 +16656,6 @@ function TradingTerminalWorkspace({
           selectedBacktestDateKey,
           statsDateStart: appliedBacktestSettings.statsDateStart,
           statsDateEnd: appliedBacktestSettings.statsDateEnd,
-          performanceStatsModel,
           aiMode: appliedBacktestSettings.aiMode,
           confidenceGateDisabled: appliedConfidenceGateDisabled,
           confidenceResolver: getEffectiveTradeConfidenceScore
@@ -16887,7 +16705,6 @@ function TradingTerminalWorkspace({
             selectedBacktestDateKey,
             statsDateStart: appliedBacktestSettings.statsDateStart,
             statsDateEnd: appliedBacktestSettings.statsDateEnd,
-            performanceStatsModel,
             aiMode: appliedBacktestSettings.aiMode,
             confidenceGateDisabled: appliedConfidenceGateDisabled,
             confidenceResolver: getEffectiveTradeConfidenceScore
@@ -16929,99 +16746,8 @@ function TradingTerminalWorkspace({
   const mainStatsAiEfficiency = backtestAnalyticsData.mainStatsAiEfficiency;
   const mainStatsAiEffectivenessPct = backtestAnalyticsData.mainStatsAiEffectivenessPct;
   const mainStatsAiEfficacyPct = backtestAnalyticsData.mainStatsAiEfficacyPct;
+  const entryExitStats = backtestAnalyticsData.entryExitStats;
   const entryExitChartData = backtestAnalyticsData.entryExitChartData;
-  const entryExitExcursionDistributions = useMemo(() => {
-    if (!isEntryExitBacktestTabActive || backtestTrades.length === 0) {
-      return { peak: [], drawdown: [], sampleCount: 0 };
-    }
-
-    const peakValues: number[] = [];
-    const drawdownValues: number[] = [];
-
-    for (const trade of backtestTrades) {
-      const preferredTimeframe =
-        appliedBacktestSettings.minutePreciseEnabled &&
-        appliedBacktestSettings.timeframe !== "1m"
-          ? "1m"
-          : appliedBacktestSettings.timeframe;
-      const preferredKey = symbolTimeframeKey(trade.symbol, preferredTimeframe);
-      const timeframeKey = symbolTimeframeKey(trade.symbol, appliedBacktestSettings.timeframe);
-      const candles = pickLongestCandleSeries(
-        backtestSeriesMap[preferredKey],
-        seriesMap[preferredKey],
-        backtestSeriesMap[timeframeKey],
-        seriesMap[timeframeKey],
-        backtestHistorySeriesBySymbol[trade.symbol]
-      );
-      const units = Math.max(0.000001, Math.abs(trade.units) || 1);
-      const targetUsd = Math.abs(trade.targetPrice - trade.entryPrice) * units;
-      const stopUsd = Math.abs(trade.entryPrice - trade.stopPrice) * units;
-      let peakUsd = Math.max(Math.max(trade.pnlUsd, 0), targetUsd);
-      let drawdownUsd = Math.max(Math.abs(Math.min(trade.pnlUsd, 0)), stopUsd);
-
-      if (candles.length > 0) {
-        const entryIndex = findCandleIndexAtOrBefore(candles, Number(trade.entryTime) * 1000);
-        const rawExitIndex = findCandleIndexAtOrBefore(candles, Number(trade.exitTime) * 1000);
-
-        if (entryIndex >= 0) {
-          const exitIndex = Math.max(entryIndex, rawExitIndex >= 0 ? rawExitIndex : entryIndex);
-          let usedPricePath = false;
-          let candlePeakUsd = 0;
-          let candleDrawdownUsd = 0;
-
-          for (
-            let candleIndex = entryIndex;
-            candleIndex <= Math.min(exitIndex, candles.length - 1);
-            candleIndex += 1
-          ) {
-            const candle = candles[candleIndex];
-            if (!candle) {
-              continue;
-            }
-
-            const high = Number.isFinite(candle.high) ? candle.high : candle.close;
-            const low = Number.isFinite(candle.low) ? candle.low : candle.close;
-
-            if (!Number.isFinite(high) || !Number.isFinite(low)) {
-              continue;
-            }
-
-            usedPricePath = true;
-
-            if (trade.side === "Long") {
-              candlePeakUsd = Math.max(candlePeakUsd, (high - trade.entryPrice) * units);
-              candleDrawdownUsd = Math.max(candleDrawdownUsd, (trade.entryPrice - low) * units);
-            } else {
-              candlePeakUsd = Math.max(candlePeakUsd, (trade.entryPrice - low) * units);
-              candleDrawdownUsd = Math.max(candleDrawdownUsd, (high - trade.entryPrice) * units);
-            }
-          }
-
-          if (usedPricePath) {
-            peakUsd = Math.max(peakUsd, candlePeakUsd);
-            drawdownUsd = Math.max(drawdownUsd, candleDrawdownUsd);
-          }
-        }
-      }
-
-      peakValues.push(Number(Math.max(0, peakUsd).toFixed(2)));
-      drawdownValues.push(Number(Math.max(0, drawdownUsd).toFixed(2)));
-    }
-
-    return {
-      peak: buildExcursionDistributionRows(peakValues),
-      drawdown: buildExcursionDistributionRows(drawdownValues),
-      sampleCount: Math.min(peakValues.length, drawdownValues.length)
-    };
-  }, [
-    appliedBacktestSettings.minutePreciseEnabled,
-    appliedBacktestSettings.timeframe,
-    backtestHistorySeriesBySymbol,
-    backtestSeriesMap,
-    backtestTrades,
-    isEntryExitBacktestTabActive,
-    seriesMap
-  ]);
   const copytradeDashboardSeed = useMemo(() => {
     if (!backtestHasRun || !backtestHistorySeedReady) {
       return null;
@@ -25285,232 +25011,6 @@ function TradingTerminalWorkspace({
                             </div>
                           )}
                         </div>
-                        {chart.key === "exit" ? (
-                          <div style={{ display: "grid", gap: 10 }}>
-                            <div
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 900,
-                                opacity: 0.74,
-                                letterSpacing: "0.04em"
-                              }}
-                            >
-                              Intratrade excursion distribution · {entryExitExcursionDistributions.sampleCount} trades
-                            </div>
-                            <div
-                              style={{
-                                display: "grid",
-                                gap: 10,
-                                gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))"
-                              }}
-                            >
-                              {([
-                                {
-                                  key: "peak",
-                                  label: "Peak (MFE)",
-                                  tone: "up",
-                                  data: entryExitExcursionDistributions.peak,
-                                  description: "Best unrealized profit reached during each trade."
-                                },
-                                {
-                                  key: "drawdown",
-                                  label: "Max Drawdown (MAE)",
-                                  tone: "down",
-                                  data: entryExitExcursionDistributions.drawdown,
-                                  description: "Worst pullback seen before the trade closed."
-                                }
-                              ] as const).map((distribution) => (
-                                <div
-                                  key={distribution.key}
-                                  style={{
-                                    borderRadius: 18,
-                                    border: "1px solid rgba(255,255,255,0.10)",
-                                    background:
-                                      "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.15))",
-                                    padding: 12
-                                  }}
-                                >
-                                  <div
-                                    style={{
-                                      display: "flex",
-                                      flexDirection: "column",
-                                      gap: 4,
-                                      marginBottom: 8
-                                    }}
-                                  >
-                                    <div
-                                      style={{
-                                        fontSize: 11,
-                                        fontWeight: 900,
-                                        opacity: 0.85,
-                                        letterSpacing: "0.04em"
-                                      }}
-                                    >
-                                      {distribution.label}
-                                    </div>
-                                    <div style={{ fontSize: 11, opacity: 0.66 }}>
-                                      {distribution.description}
-                                    </div>
-                                  </div>
-                                  <div style={{ height: 220 }}>
-                                    {distribution.data.length === 0 ? (
-                                      <div
-                                        style={{
-                                          height: "100%",
-                                          display: "flex",
-                                          alignItems: "center",
-                                          justifyContent: "center",
-                                          fontSize: 12,
-                                          opacity: 0.75
-                                        }}
-                                      >
-                                        No candle path data available.
-                                      </div>
-                                    ) : (
-                                      <div style={{ width: "100%", height: "100%", overflowX: "auto" }}>
-                                        <div
-                                          style={{
-                                            minWidth: `${Math.max(distribution.data.length * 92, 360)}px`,
-                                            height: "100%"
-                                          }}
-                                        >
-                                          <ResponsiveContainer width="100%" height="100%">
-                                            <BarChart
-                                              data={distribution.data}
-                                              margin={{ top: 8, right: 10, left: 0, bottom: 6 }}
-                                            >
-                                              <XAxis
-                                                dataKey="bucket"
-                                                tick={{
-                                                  fontSize: 10,
-                                                  fill: "rgba(255,255,255,0.68)"
-                                                }}
-                                                axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
-                                                tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
-                                              />
-                                              <YAxis
-                                                allowDecimals={false}
-                                                tick={{
-                                                  fontSize: 11,
-                                                  fill: "rgba(255,255,255,0.70)"
-                                                }}
-                                                axisLine={{ stroke: "rgba(255,255,255,0.10)" }}
-                                                tickLine={{ stroke: "rgba(255,255,255,0.10)" }}
-                                              />
-                                              <Tooltip
-                                                content={(props: any) => {
-                                                  const { active, payload } = props;
-
-                                                  if (
-                                                    !active ||
-                                                    !Array.isArray(payload) ||
-                                                    payload.length === 0
-                                                  ) {
-                                                    return null;
-                                                  }
-
-                                                  const point = payload[0]?.payload;
-                                                  const count = Number(payload[0]?.value ?? 0);
-                                                  const share = Number(point?.share ?? 0);
-                                                  const rangeStart = Number(point?.rangeStart ?? 0);
-                                                  const rangeEnd = Number(point?.rangeEnd ?? 0);
-                                                  const valueColor =
-                                                    distribution.tone === "up"
-                                                      ? "rgba(22,163,74,0.92)"
-                                                      : "rgba(220,38,38,0.92)";
-
-                                                  return (
-                                                    <div
-                                                      style={{
-                                                        background: "rgba(255,255,255,0.96)",
-                                                        border: "1px solid rgba(15,23,42,0.12)",
-                                                        borderRadius: 12,
-                                                        padding: "8px 10px",
-                                                        boxShadow: "0 10px 30px rgba(0,0,0,0.28)",
-                                                        color: "rgba(15,23,42,0.95)",
-                                                        fontSize: 12,
-                                                        minWidth: 170
-                                                      }}
-                                                    >
-                                                      <div style={{ fontWeight: 900, marginBottom: 6 }}>
-                                                        {formatChartUsd(rangeStart)} to {formatChartUsd(rangeEnd)}
-                                                      </div>
-                                                      <div
-                                                        style={{
-                                                          display: "flex",
-                                                          justifyContent: "space-between",
-                                                          gap: 12
-                                                        }}
-                                                      >
-                                                        <span style={{ opacity: 0.7 }}>Count</span>
-                                                        <span
-                                                          style={{
-                                                            fontWeight: 900,
-                                                            color: "rgba(15,23,42,0.92)"
-                                                          }}
-                                                        >
-                                                          {count}
-                                                        </span>
-                                                      </div>
-                                                      <div
-                                                        style={{
-                                                          display: "flex",
-                                                          justifyContent: "space-between",
-                                                          gap: 12,
-                                                          marginTop: 4
-                                                        }}
-                                                      >
-                                                        <span style={{ opacity: 0.7 }}>Share</span>
-                                                        <span style={{ fontWeight: 900, color: valueColor }}>
-                                                          {share.toFixed(1)}%
-                                                        </span>
-                                                      </div>
-                                                    </div>
-                                                  );
-                                                }}
-                                              />
-                                              <Bar
-                                                dataKey="count"
-                                                radius={0}
-                                                isAnimationActive={false}
-                                                shape={(props: any) => {
-                                                  const { x, y, width, height } = props;
-                                                  const resolvedWidth = Number(width);
-                                                  const resolvedHeight = Number(height);
-
-                                                  if (
-                                                    !Number.isFinite(resolvedWidth) ||
-                                                    !Number.isFinite(resolvedHeight)
-                                                  ) {
-                                                    return null;
-                                                  }
-
-                                                  return (
-                                                    <rect
-                                                      x={x}
-                                                      y={y}
-                                                      width={Math.max(0, resolvedWidth)}
-                                                      height={Math.max(0, resolvedHeight)}
-                                                      fill={
-                                                        distribution.tone === "up"
-                                                          ? "rgba(34,197,94,0.88)"
-                                                          : "rgba(239,68,68,0.88)"
-                                                      }
-                                                    />
-                                                  );
-                                                }}
-                                              />
-                                            </BarChart>
-                                          </ResponsiveContainer>
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ) : null}
                       </div>
                     ))}
                   </div>

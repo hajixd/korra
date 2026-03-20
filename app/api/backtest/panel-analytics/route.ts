@@ -25,7 +25,6 @@ type HistoryItem = {
   side: "Long" | "Short";
   result: "Win" | "Loss";
   entrySource: string;
-  exitReason: string;
   pnlPct: number;
   pnlUsd: number;
   entryTime: number;
@@ -1304,7 +1303,6 @@ const normalizeTrade = (value: unknown): HistoryItem | null => {
     side: row.side === "Short" ? "Short" : "Long",
     result: row.result === "Loss" ? "Loss" : "Win",
     entrySource: String(row.entrySource ?? "Settings"),
-    exitReason: String(row.exitReason ?? ""),
     pnlPct: toNumeric(row.pnlPct),
     pnlUsd: toNumeric(row.pnlUsd),
     entryTime: toNumeric(row.entryTime),

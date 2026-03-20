@@ -330,82 +330,6 @@ const getTradeConfidenceScore = (trade: HistoryItem): number => {
   return clamp(base + rrScore + pnlScore + durationScore + sideBias, 0.05, 0.96);
 };
 
-const getTradeEntryLabel = (trade: Pick<HistoryItem, "entrySource">): string => {
-  const raw = String(trade.entrySource ?? "").trim();
-  return raw || "Settings";
-};
-
-const normalizeBacktestExitReason = (reason?: string | null): string => {
-  const raw = String(reason ?? "").trim();
-  if (!raw) {
-    return "";
-  }
-
-  const upper = raw.toUpperCase();
-
-  if (upper === "TP" || upper.includes("TAKE")) {
-    return "Take Profit";
-  }
-
-  if (
-    upper === "BE" ||
-    upper === "BREAKEVEN" ||
-    upper === "BREAK-EVEN" ||
-    upper.includes("BREAK EVEN")
-  ) {
-    return "Break Even";
-  }
-
-  if (upper === "TSL" || upper.includes("TRAIL")) {
-    return "Trailing Stop";
-  }
-
-  if (upper === "SL" || upper.includes("STOP")) {
-    return "Stop Loss";
-  }
-
-  if (upper.includes("MIM") || upper.includes("MIT")) {
-    return "MIT";
-  }
-
-  if (upper.includes("AI")) {
-    return "AI";
-  }
-
-  if (upper.includes("MODEL")) {
-    return "Model Exit";
-  }
-
-  return raw;
-};
-
-const getTradeExitLabel = (
-  trade: Pick<
-    HistoryItem,
-    "exitReason" | "result" | "targetPrice" | "stopPrice" | "entryPrice" | "outcomePrice"
-  >
-): string => {
-  const normalized = normalizeBacktestExitReason(trade.exitReason);
-
-  if (normalized) {
-    return normalized;
-  }
-
-  const targetGap = Math.abs(trade.targetPrice - trade.entryPrice);
-  const stopGap = Math.abs(trade.entryPrice - trade.stopPrice);
-  const realizedGap = Math.abs(trade.outcomePrice - trade.entryPrice);
-
-  if (trade.result === "Win" && realizedGap >= targetGap * 0.84) {
-    return "Take Profit";
-  }
-
-  if (trade.result === "Loss" && realizedGap >= stopGap * 0.84) {
-    return "Stop Loss";
-  }
-
-  return "Model Exit";
-};
-
 const normalizeTrade = (value: unknown): HistoryItem | null => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -660,7 +584,7 @@ const computeMainStatsModelRows = (trades: HistoryItem[]): MainStatsBucketRow[] 
   const map = new Map<string, MainStatsBucketRow>();
 
   for (const trade of trades) {
-    const label = getTradeEntryLabel(trade);
+    const label = trade.entrySource || "Unknown";
     const current = map.get(label) ?? { label, total: 0, trades: 0 };
     current.total += trade.pnlUsd;
     current.trades += 1;
@@ -781,7 +705,7 @@ const computePerformanceStatsTemporalCharts = (
   const models = Array.from(
     new Set(
       trades
-        .map((trade) => getTradeEntryLabel(trade))
+        .map((trade) => trade.entrySource.trim())
         .filter((name) => name.length > 0)
     )
   );
@@ -789,7 +713,11 @@ const computePerformanceStatsTemporalCharts = (
   const modelOptions = ["All", ...models];
 
   const modelTrades = trades.filter((trade) => {
-    const modelName = getTradeEntryLabel(trade);
+    const modelName = trade.entrySource.trim();
+
+    if (!modelName) {
+      return false;
+    }
 
     if (performanceStatsModel === "All") {
       return true;
@@ -981,8 +909,8 @@ const computeEntryExitStats = (
   const exitCounts: Record<string, number> = {};
 
   for (const trade of trades) {
-    const entryKey = getTradeEntryLabel(trade);
-    const exitKey = getTradeExitLabel(trade);
+    const entryKey = trade.entrySource || "Unknown";
+    const exitKey = trade.exitReason || "None";
     entryCounts[entryKey] = (entryCounts[entryKey] ?? 0) + 1;
     exitCounts[exitKey] = (exitCounts[exitKey] ?? 0) + 1;
   }
