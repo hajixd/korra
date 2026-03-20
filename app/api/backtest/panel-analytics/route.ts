@@ -25,12 +25,8 @@ type HistoryItem = {
   side: "Long" | "Short";
   result: "Win" | "Loss";
   entrySource: string;
-  exitReason: string;
   pnlPct: number;
   pnlUsd: number;
-  time: string;
-  entryAt: string;
-  exitAt: string;
   entryTime: number;
   exitTime: number;
   entryPrice: number;
@@ -947,52 +943,6 @@ const toNumeric = (value: unknown, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const isMeaningfulTradeLabel = (value: unknown) => {
-  const raw = String(value ?? "").trim();
-  if (!raw) {
-    return false;
-  }
-
-  const upper = raw.toUpperCase();
-  return (
-    upper !== "-" &&
-    upper !== "NONE" &&
-    upper !== "NULL" &&
-    upper !== "UNDEFINED" &&
-    upper !== "SETTINGS"
-  );
-};
-
-const resolveTradeEntrySource = (row: Record<string, unknown>) => {
-  const candidates = [
-    row.entrySource,
-    row.entryModel,
-    row.chunkType,
-    row.model,
-    row.entryReason
-  ];
-
-  for (const candidate of candidates) {
-    if (isMeaningfulTradeLabel(candidate)) {
-      return String(candidate).trim();
-    }
-  }
-
-  return String(row.entrySource ?? "").trim() || "Unknown";
-};
-
-const resolveTradeExitReason = (row: Record<string, unknown>) => {
-  const candidates = [row.exitReason, row.exitBy, row.exitMethod, row.exitModel];
-
-  for (const candidate of candidates) {
-    if (isMeaningfulTradeLabel(candidate)) {
-      return String(candidate).trim();
-    }
-  }
-
-  return String(row.exitReason ?? "").trim();
-};
-
 const normalizeTradeAiMode = (value: unknown): BacktestTradeAiMode | null => {
   return value === "knn" || value === "hdbscan" || value === "off" ? value : null;
 };
@@ -1352,13 +1302,9 @@ const normalizeTrade = (value: unknown): HistoryItem | null => {
     symbol: String(row.symbol ?? ""),
     side: row.side === "Short" ? "Short" : "Long",
     result: row.result === "Loss" ? "Loss" : "Win",
-    entrySource: resolveTradeEntrySource(row),
-    exitReason: resolveTradeExitReason(row),
+    entrySource: String(row.entrySource ?? "Settings"),
     pnlPct: toNumeric(row.pnlPct),
     pnlUsd: toNumeric(row.pnlUsd),
-    time: String(row.time ?? ""),
-    entryAt: String(row.entryAt ?? ""),
-    exitAt: String(row.exitAt ?? ""),
     entryTime: toNumeric(row.entryTime),
     exitTime: toNumeric(row.exitTime),
     entryPrice: Math.max(0.000001, toNumeric(row.entryPrice)),

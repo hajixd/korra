@@ -269,101 +269,6 @@ const toNumeric = (value: unknown, fallback = 0): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const isMeaningfulBacktestLabel = (value: unknown): boolean => {
-  const raw = String(value ?? "").trim();
-  if (!raw) {
-    return false;
-  }
-
-  const upper = raw.toUpperCase();
-  return (
-    upper !== "-" &&
-    upper !== "NONE" &&
-    upper !== "NULL" &&
-    upper !== "UNDEFINED" &&
-    upper !== "SETTINGS"
-  );
-};
-
-const resolveBacktestEntrySource = (row: Record<string, unknown>): string => {
-  const candidates = [
-    row.entrySource,
-    row.entryModel,
-    row.chunkType,
-    row.model,
-    row.entryReason
-  ];
-
-  for (const candidate of candidates) {
-    if (isMeaningfulBacktestLabel(candidate)) {
-      return String(candidate).trim();
-    }
-  }
-
-  const fallback = String(row.entrySource ?? "").trim();
-  return fallback || "Unknown";
-};
-
-const normalizeBacktestExitReason = (value: unknown): string => {
-  const raw = String(value ?? "").trim();
-  if (!raw || raw === "-") {
-    return "";
-  }
-
-  const upper = raw.toUpperCase();
-
-  if (upper === "NONE" || upper === "NULL" || upper === "UNDEFINED") {
-    return "";
-  }
-  if (upper === "TP" || upper.includes("TAKE")) {
-    return "Take Profit";
-  }
-  if (
-    upper === "BE" ||
-    upper === "BREAKEVEN" ||
-    upper === "BREAK-EVEN" ||
-    upper.includes("BREAK")
-  ) {
-    return "Break Even";
-  }
-  if (upper === "TSL" || upper.includes("TRAIL")) {
-    return "Trailing Stop";
-  }
-  if (upper === "SL" || upper.includes("STOP")) {
-    return "Stop Loss";
-  }
-  if (upper.includes("MIM") || upper.includes("MIT")) {
-    return "MIT";
-  }
-  if (upper.includes("LIB")) {
-    return "Library";
-  }
-  if (upper.includes("AI")) {
-    return "AI";
-  }
-  if (upper.includes("MODEL")) {
-    return "Model Exit";
-  }
-
-  return raw;
-};
-
-const resolveBacktestExitReason = (row: Record<string, unknown>): string => {
-  const direct = normalizeBacktestExitReason(
-    row.exitReason ?? row.exitBy ?? row.exitMethod ?? row.exitModel
-  );
-
-  if (direct) {
-    return direct;
-  }
-
-  if (isMeaningfulBacktestLabel(row.exitModel)) {
-    return "Model Exit";
-  }
-
-  return "";
-};
-
 const hashSeedFromText = (seedText: string): number => {
   let seed = 0;
   for (let i = 0; i < seedText.length; i += 1) {
@@ -445,8 +350,8 @@ const normalizeTrade = (value: unknown): HistoryItem | null => {
     symbol: String(row.symbol ?? ""),
     side,
     result,
-    entrySource: resolveBacktestEntrySource(row),
-    exitReason: resolveBacktestExitReason(row),
+    entrySource: String(row.entrySource ?? "Settings"),
+    exitReason: String(row.exitReason ?? ""),
     pnlPct: toNumeric(row.pnlPct),
     pnlUsd: toNumeric(row.pnlUsd),
     time: String(row.time ?? ""),
@@ -800,7 +705,7 @@ const computePerformanceStatsTemporalCharts = (
   const models = Array.from(
     new Set(
       trades
-        .map((trade) => String(trade.entrySource ?? "").trim())
+        .map((trade) => trade.entrySource.trim())
         .filter((name) => name.length > 0)
     )
   );
@@ -808,7 +713,7 @@ const computePerformanceStatsTemporalCharts = (
   const modelOptions = ["All", ...models];
 
   const modelTrades = trades.filter((trade) => {
-    const modelName = String(trade.entrySource ?? "").trim();
+    const modelName = trade.entrySource.trim();
 
     if (!modelName) {
       return false;
@@ -1003,31 +908,9 @@ const computeEntryExitStats = (
   const entryCounts: Record<string, number> = {};
   const exitCounts: Record<string, number> = {};
 
-  const resolveExitLabel = (trade: HistoryItem) => {
-    const normalized = normalizeBacktestExitReason(trade.exitReason);
-
-    if (normalized) {
-      return normalized;
-    }
-
-    const targetGap = Math.abs(trade.targetPrice - trade.entryPrice);
-    const stopGap = Math.abs(trade.entryPrice - trade.stopPrice);
-    const realizedGap = Math.abs(trade.outcomePrice - trade.entryPrice);
-
-    if (trade.result === "Win" && realizedGap >= targetGap * 0.84) {
-      return "Take Profit";
-    }
-
-    if (trade.result === "Loss" && realizedGap >= stopGap * 0.84) {
-      return "Stop Loss";
-    }
-
-    return "Model Exit";
-  };
-
   for (const trade of trades) {
-    const entryKey = String(trade.entrySource ?? "").trim() || "Unknown";
-    const exitKey = resolveExitLabel(trade);
+    const entryKey = trade.entrySource || "Unknown";
+    const exitKey = trade.exitReason || "None";
     entryCounts[entryKey] = (entryCounts[entryKey] ?? 0) + 1;
     exitCounts[exitKey] = (exitCounts[exitKey] ?? 0) + 1;
   }
