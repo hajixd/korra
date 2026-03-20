@@ -8736,7 +8736,7 @@ const getStatsRefreshStatusDetail = (
   }
 
   if (status === "Loading AI Libraries") {
-    return "Applying selected AI libraries to replayed backtest results.";
+    return "Loading the selected AI libraries before replay so they are available as neighbor candidates.";
   }
 
   if (status === "Applying AI Analysis") {
@@ -8760,10 +8760,12 @@ const getStatsRefreshStatusDetail = (
 
 const buildStatsRefreshPhasePlan = ({
   needsHistorySeedReload,
-  loadingLibraries
+  loadingLibraries,
+  preloadLibrariesBeforeReplay = false
 }: {
   needsHistorySeedReload: boolean;
   loadingLibraries: boolean;
+  preloadLibrariesBeforeReplay?: boolean;
 }): StatsRefreshPhaseKey[] => {
   const phases: StatsRefreshPhaseKey[] = [];
 
@@ -8772,9 +8774,14 @@ const buildStatsRefreshPhasePlan = ({
   }
 
   phases.push("prepare");
+
+  if (loadingLibraries && preloadLibrariesBeforeReplay) {
+    phases.push("ai");
+  }
+
   phases.push("replay");
 
-  if (loadingLibraries) {
+  if (loadingLibraries && !preloadLibrariesBeforeReplay) {
     phases.push("ai");
   }
 
@@ -9446,6 +9453,19 @@ function TradingTerminalWorkspace({
   const aiLibraryPoolInFlightRef = useRef<Map<string, Promise<HistoryItem[]>>>(new Map());
   const aiLibraryHistoryInFlightRef = useRef<Map<string, Promise<AiLibraryHistorySeed>>>(new Map());
   const aiLibraryRunTokenRef = useRef<Record<string, number>>({});
+  const aiLibraryAutoRunSignatureRef = useRef<string>("");
+  const resetAiLibraryRunState = useCallback(() => {
+    aiLibraryPoolCacheRef.current.clear();
+    aiLibraryPoolInFlightRef.current.clear();
+    aiLibraryHistoryInFlightRef.current.clear();
+    aiLibraryPointsByIdRef.current = {};
+    aiLibraryRunTokenRef.current = {};
+    aiLibraryAutoRunSignatureRef.current = "";
+    setAiLibraryPoints([]);
+    setAiLibraryCounts({});
+    setAiLibraryBaselineWinRates({});
+    setAiLibraryRunStatus({});
+  }, []);
   const [aiBulkScope, setAiBulkScope] = useState<"active" | "all">("active");
   const [aiBulkWeight, setAiBulkWeight] = useState(100);
   const [aiBulkStride, setAiBulkStride] = useState(0);
@@ -10159,16 +10179,18 @@ function TradingTerminalWorkspace({
     const nextRefreshMs = floorToTimeframe(Date.now(), "1m");
 
     clearStatsRefreshResetTimeout();
+    resetAiLibraryRunState();
     setAppliedBacktestSettings(nextSettings);
     if (needsHistoryRecompute) {
       const hasActiveLibraries = (nextSettings.selectedAiLibraries?.length ?? 0) > 0;
+      const hasLibraryPreloadPhase =
+        hasActiveLibraries &&
+        canRunAizipLibrariesForSettings({
+          libraryIds: nextSettings.selectedAiLibraries,
+          aiModelStates: nextSettings.aiModelStates
+        });
       const hasAiAnalysisPhase =
-        nextSettings.antiCheatEnabled ||
-        (hasActiveLibraries &&
-          canRunAizipLibrariesForSettings({
-            libraryIds: nextSettings.selectedAiLibraries,
-            aiModelStates: nextSettings.aiModelStates
-          }));
+        nextSettings.antiCheatEnabled || hasLibraryPreloadPhase;
       setBacktestRunCount((current) => current + 1);
       setBacktestRefreshNowMs(nextRefreshMs);
       setBacktestHistorySeedReady(!needsHistorySeedReload);
@@ -10180,7 +10202,8 @@ function TradingTerminalWorkspace({
       setStatsRefreshLoadingDisplayProgress(0);
       const nextPhasePlan = buildStatsRefreshPhasePlan({
         needsHistorySeedReload,
-        loadingLibraries: hasAiAnalysisPhase
+        loadingLibraries: hasAiAnalysisPhase,
+        preloadLibrariesBeforeReplay: hasLibraryPreloadPhase
       });
       setStatsRefreshPhasePlanValue(nextPhasePlan);
       setStatsRefreshStatus(
@@ -10226,6 +10249,7 @@ function TradingTerminalWorkspace({
     appliedBacktestSettings,
     backtestRunCount,
     clearStatsRefreshResetTimeout,
+    resetAiLibraryRunState,
     setStatsRefreshPhasePlanValue,
     setStatsRefreshTimelineRangeValue,
     updateStatsRefreshOverlayMode
@@ -10484,6 +10508,11 @@ function TradingTerminalWorkspace({
   const appliedVisibleAiLibraries = useMemo(() => {
     return getVisibleAizipLibraryIds(appliedBacktestSettings.selectedAiLibraries);
   }, [appliedBacktestSettings.selectedAiLibraries]);
+  const appliedAutoRunAiLibraryIds = useMemo(() => {
+    return (appliedBacktestSettings.selectedAiLibraries ?? [])
+      .map((libraryId) => String(libraryId).trim())
+      .filter((libraryId) => libraryId.length > 0 && Boolean(aiLibraryDefById[libraryId]));
+  }, [aiLibraryDefById, appliedBacktestSettings.selectedAiLibraries]);
   const selectedAiLibraryCount = visibleAiLibraries.length;
   const availableAiLibraries = useMemo(() => {
     return aiLibraryDefs.filter(
@@ -13715,17 +13744,19 @@ function TradingTerminalWorkspace({
     const trailingDistPctSnapshot = appliedBacktestTrailingDistPctRef.current;
     const minutePreciseEnabledSnapshot = appliedBacktestMinutePreciseEnabledRef.current;
     const appliedSettingsSnapshot = appliedBacktestSettingsRef.current;
-    const hasActiveLibraries = (appliedSettingsSnapshot.selectedAiLibraries?.length ?? 0) > 0;
+    const activeLibraryIds = (appliedSettingsSnapshot.selectedAiLibraries ?? [])
+      .map((libraryId) => String(libraryId).trim())
+      .filter((libraryId) => libraryId.length > 0);
+    const shouldPreloadAiLibraries =
+      activeLibraryIds.length > 0 &&
+      canRunAizipLibrariesForSettings({
+        libraryIds: activeLibraryIds,
+        aiModelStates: appliedSettingsSnapshot.aiModelStates
+      });
     const hasAiAnalysisPass =
-      appliedSettingsSnapshot.antiCheatEnabled ||
-      (hasActiveLibraries &&
-        canRunAizipLibrariesForSettings({
-          libraryIds: appliedSettingsSnapshot.selectedAiLibraries,
-          aiModelStates: appliedSettingsSnapshot.aiModelStates
-        }));
-    const aiAnalysisStatus = hasActiveLibraries
-      ? "Loading AI Libraries"
-      : "Applying AI Analysis";
+      appliedSettingsSnapshot.antiCheatEnabled || shouldPreloadAiLibraries;
+    const shouldShowPostReplayAiPhase =
+      hasAiAnalysisPass && !shouldPreloadAiLibraries;
     const statsDateStartSnapshot = appliedBacktestStatsDateStartRef.current;
     const statsDateEndSnapshot = appliedBacktestStatsDateEndRef.current;
 
@@ -13795,7 +13826,8 @@ function TradingTerminalWorkspace({
         ? [...statsRefreshPhasePlanRef.current]
         : buildStatsRefreshPhasePlan({
             needsHistorySeedReload: false,
-            loadingLibraries: hasAiAnalysisPass
+            loadingLibraries: hasAiAnalysisPass,
+            preloadLibrariesBeforeReplay: shouldPreloadAiLibraries
           });
     let lastLoadingProgressRatio = 0;
     const setLoadingProgressFromRatio = (ratio: number) => {
@@ -13907,12 +13939,12 @@ function TradingTerminalWorkspace({
         commitRows(rows);
       };
 
-      if (hasAiAnalysisPass) {
-        setStatsRefreshStatus(aiAnalysisStatus);
+      if (shouldShowPostReplayAiPhase) {
+        setStatsRefreshStatus("Applying AI Analysis");
         clearPhaseTransitionTimeout();
         phaseTransitionTimeoutId = window.setTimeout(() => {
           commitFinalizingPhase();
-        }, getStatsRefreshPhaseDurationMs(aiAnalysisStatus));
+        }, getStatsRefreshPhaseDurationMs("Applying AI Analysis"));
         return;
       }
 
@@ -13943,40 +13975,64 @@ function TradingTerminalWorkspace({
       }, 0);
     };
 
-    setStatsRefreshStatus("Replaying Backtest Trades");
-    setLoadingProgressFromRatio(0);
-    setLoadingProgressFromRatio(0.1);
-    progressTimeoutId = window.setTimeout(() => {
-      setLoadingProgressFromRatio(0.6);
-    }, 350);
-    requestTimeoutId = window.setTimeout(() => {
-      requestController.abort();
-      recoverReplayLocally();
-    }, 90_000);
+    const nextAutoRunSignature = `${backtestRunCount}|${serializeBacktestSettingsSnapshot(appliedSettingsSnapshot)}`;
+    const startReplay = () => {
+      if (cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
+        return;
+      }
 
-    computeBacktestRowsOnServer(
-      replayPayload,
-      requestController.signal
-    )
-      .then((finalizedRows) => {
-        if (
-          cancelled ||
-          settled ||
-          requestController.signal.aborted ||
-          backtestHistoryJobIdRef.current !== nextJobId
-        ) {
-          return;
-        }
-
-        finalizeReplayRows(finalizedRows);
-      })
-      .catch(() => {
-        if (cancelled || requestController.signal.aborted) {
-          return;
-        }
-
+      setStatsRefreshStatus("Replaying Backtest Trades");
+      setLoadingProgressFromRatio(0);
+      setLoadingProgressFromRatio(0.1);
+      progressTimeoutId = window.setTimeout(() => {
+        setLoadingProgressFromRatio(0.6);
+      }, 350);
+      requestTimeoutId = window.setTimeout(() => {
+        requestController.abort();
         recoverReplayLocally();
-      });
+      }, 90_000);
+
+      computeBacktestRowsOnServer(
+        replayPayload,
+        requestController.signal
+      )
+        .then((finalizedRows) => {
+          if (
+            cancelled ||
+            settled ||
+            requestController.signal.aborted ||
+            backtestHistoryJobIdRef.current !== nextJobId
+          ) {
+            return;
+          }
+
+          finalizeReplayRows(finalizedRows);
+        })
+        .catch(() => {
+          if (cancelled || requestController.signal.aborted) {
+            return;
+          }
+
+          recoverReplayLocally();
+        });
+    };
+
+    void (async () => {
+      if (shouldPreloadAiLibraries) {
+        aiLibraryAutoRunSignatureRef.current = nextAutoRunSignature;
+        setStatsRefreshStatus("Loading AI Libraries");
+        await runAllLibrariesRef.current({
+          libraryIds: activeLibraryIds,
+          settingsSource: appliedSettingsSnapshot.selectedAiLibrarySettings,
+          backtestSettings: appliedSettingsSnapshot
+        });
+        if (cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
+          return;
+        }
+      }
+
+      startReplay();
+    })();
 
     return () => {
       cancelled = true;
@@ -17041,10 +17097,23 @@ function TradingTerminalWorkspace({
     backtestAnalyticsStatus === "ready" ||
     backtestAnalyticsStatus === "error" ||
     backtestAnalyticsStatus === "idle";
+  const statsRefreshNeedsAiLibraries =
+    statsRefreshOverlayMode === "loading" &&
+    backtestHasRun &&
+    backtestHistorySeedReady &&
+    appliedAiLibraryReadyToRun &&
+    appliedAutoRunAiLibraryIds.length > 0;
+  const statsRefreshAiLibrariesSettled =
+    !statsRefreshNeedsAiLibraries ||
+    appliedAutoRunAiLibraryIds.every((libraryId) => {
+      const status = aiLibraryRunStatus[libraryId] ?? "idle";
+      return status === "ready" || status === "error";
+    });
   const statsRefreshCompletionReady =
     statsRefreshReplaySettled &&
     statsRefreshPanelAnalyticsSettled &&
-    statsRefreshBacktestAnalyticsSettled;
+    statsRefreshBacktestAnalyticsSettled &&
+    statsRefreshAiLibrariesSettled;
 
   useEffect(() => {
     if (statsRefreshOverlayMode !== "loading") {
@@ -18551,27 +18620,13 @@ function TradingTerminalWorkspace({
   );
 
   const runAllLibrariesRef = useRef(runAllActiveLibraries);
-  const aiLibraryAutoRunSignatureRef = useRef<string>("");
   useEffect(() => {
     runAllLibrariesRef.current = runAllActiveLibraries;
   }, [runAllActiveLibraries]);
 
   useEffect(() => {
-    aiLibraryPoolCacheRef.current.clear();
-    aiLibraryPoolInFlightRef.current.clear();
-    aiLibraryHistoryInFlightRef.current.clear();
-    setAiLibraryRunStatus((current) => {
-      const next = { ...current };
-      let changed = false;
-      for (const [libraryId, status] of Object.entries(next)) {
-        if (status === "loading") {
-          next[libraryId] = "idle";
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-  }, [backtestRunCount]);
+    resetAiLibraryRunState();
+  }, [backtestRunCount, resetAiLibraryRunState]);
 
   useEffect(() => {
     if (!backtestHasRun || !backtestHistorySeedReady) {
@@ -18585,8 +18640,8 @@ function TradingTerminalWorkspace({
     if (aiLibraryAutoRunSignatureRef.current === nextAutoRunSignature) {
       return;
     }
+    resetAiLibraryRunState();
     aiLibraryAutoRunSignatureRef.current = nextAutoRunSignature;
-
     const appliedSettingsSnapshot = appliedBacktestSettingsRef.current;
     runAllLibrariesRef.current({
       libraryIds: appliedSettingsSnapshot.selectedAiLibraries,
@@ -18598,7 +18653,8 @@ function TradingTerminalWorkspace({
     backtestHistorySeedReady,
     appliedAiLibraryReadyToRun,
     appliedAiLibraryRunInputsSignature,
-    backtestRunCount
+    backtestRunCount,
+    resetAiLibraryRunState
   ]);
   const appliedVisibleAiLibrariesSettled = useMemo(() => {
     if (appliedVisibleAiLibraries.length === 0) {
