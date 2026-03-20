@@ -1,4 +1,10 @@
 import { NextResponse } from "next/server";
+import {
+  getTradeDayKey,
+  getTradeMonthKey,
+  getTradeWeekKey,
+  summarizeBacktestTrades
+} from "../../../../lib/backtestStats";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -271,24 +277,6 @@ const hashSeedFromText = (seedText: string): number => {
   return seed;
 };
 
-const getTradeDayKey = (timestampSeconds: number): string => {
-  return new Date(Number(timestampSeconds) * 1000).toISOString().slice(0, 10);
-};
-
-const getTradeMonthKey = (timestampSeconds: number): string => {
-  return getTradeDayKey(timestampSeconds).slice(0, 7);
-};
-
-const getTradeWeekKey = (timestampSeconds: number): string => {
-  const date = new Date(Number(timestampSeconds) * 1000);
-  const day = date.getUTCDay();
-  const weekStart = new Date(
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - day)
-  );
-
-  return weekStart.toISOString().slice(0, 10);
-};
-
 const getTradeMonthIndex = (timestampSeconds: number): number => {
   return new Date(Number(timestampSeconds) * 1000).getUTCMonth();
 };
@@ -454,159 +442,6 @@ const emptyBacktestSummary = (): BacktestSummaryStats => ({
   bestDay: null,
   worstDay: null
 });
-
-const summarizeBacktestTrades = (
-  trades: HistoryItem[],
-  confidenceResolver: (trade: HistoryItem) => number
-): BacktestSummaryStats => {
-  let netPnl = 0;
-  let grossWins = 0;
-  let grossLosses = 0;
-  let wins = 0;
-  let losses = 0;
-  let totalHoldMinutes = 0;
-  let totalWinHoldMinutes = 0;
-  let totalLossHoldMinutes = 0;
-  let maxWin = 0;
-  let maxLoss = 0;
-  let totalR = 0;
-  let totalConfidence = 0;
-  let estimatedPeakTotal = 0;
-  let estimatedDrawdownTotal = 0;
-  let estimatedProfitMinutes = 0;
-  let estimatedDeficitMinutes = 0;
-  let runningPnl = 0;
-  let peakPnl = 0;
-  let maxDrawdown = 0;
-  const dayMap = new Map<string, { key: string; count: number; pnl: number }>();
-  const weekMap = new Map<string, { key: string; count: number; pnl: number }>();
-  const monthMap = new Map<string, { key: string; count: number; pnl: number }>();
-  const pnlSeries: number[] = [];
-
-  for (const trade of trades) {
-    const holdMinutes = Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
-    const targetPotentialUsd = Math.abs(trade.targetPrice - trade.entryPrice) * Math.max(1, trade.units);
-    const stopPotentialUsd = Math.abs(trade.entryPrice - trade.stopPrice) * Math.max(1, trade.units);
-    const favorableShare = trade.result === "Win" ? 0.68 : 0.32;
-    netPnl += trade.pnlUsd;
-    runningPnl += trade.pnlUsd;
-    peakPnl = Math.max(peakPnl, runningPnl);
-    maxDrawdown = Math.min(maxDrawdown, runningPnl - peakPnl);
-    maxWin = Math.max(maxWin, trade.pnlUsd);
-    maxLoss = Math.min(maxLoss, trade.pnlUsd);
-    totalHoldMinutes += holdMinutes;
-    totalConfidence += confidenceResolver(trade) * 100;
-    estimatedPeakTotal += Math.max(Math.max(trade.pnlUsd, 0), targetPotentialUsd);
-    estimatedDrawdownTotal += Math.max(Math.abs(Math.min(trade.pnlUsd, 0)), stopPotentialUsd);
-    estimatedProfitMinutes += holdMinutes * favorableShare;
-    estimatedDeficitMinutes += holdMinutes * (1 - favorableShare);
-    pnlSeries.push(trade.pnlUsd);
-
-    if (trade.pnlUsd >= 0) {
-      grossWins += trade.pnlUsd;
-      totalWinHoldMinutes += holdMinutes;
-    } else {
-      grossLosses += trade.pnlUsd;
-      losses += 1;
-      totalLossHoldMinutes += holdMinutes;
-    }
-
-    if (trade.result === "Win") {
-      wins += 1;
-    }
-
-    const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
-    const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
-    totalR += rewardDistance / riskDistance;
-
-    const dayKey = getTradeDayKey(trade.exitTime);
-    const currentDay = dayMap.get(dayKey) ?? { key: dayKey, count: 0, pnl: 0 };
-    currentDay.count += 1;
-    currentDay.pnl += trade.pnlUsd;
-    dayMap.set(dayKey, currentDay);
-
-    const weekKey = getTradeWeekKey(trade.exitTime);
-    const currentWeek = weekMap.get(weekKey) ?? { key: weekKey, count: 0, pnl: 0 };
-    currentWeek.count += 1;
-    currentWeek.pnl += trade.pnlUsd;
-    weekMap.set(weekKey, currentWeek);
-
-    const monthKey = getTradeMonthKey(trade.exitTime);
-    const currentMonth = monthMap.get(monthKey) ?? { key: monthKey, count: 0, pnl: 0 };
-    currentMonth.count += 1;
-    currentMonth.pnl += trade.pnlUsd;
-    monthMap.set(monthKey, currentMonth);
-  }
-
-  const dayRows = Array.from(dayMap.values()).sort((a, b) => a.key.localeCompare(b.key));
-  const weekRows = Array.from(weekMap.values()).sort((a, b) => a.key.localeCompare(b.key));
-  const monthRows = Array.from(monthMap.values()).sort((a, b) => a.key.localeCompare(b.key));
-  const bestDay = [...dayRows].sort((a, b) => b.pnl - a.pnl)[0] ?? null;
-  const worstDay = [...dayRows].sort((a, b) => a.pnl - b.pnl)[0] ?? null;
-  const tradeCount = trades.length;
-  const avgPnl = tradeCount > 0 ? netPnl / tradeCount : 0;
-  const avgWin = wins > 0 ? grossWins / wins : 0;
-  const avgLoss = losses > 0 ? grossLosses / losses : 0;
-  const mean = avgPnl;
-  const variance =
-    tradeCount > 0
-      ? pnlSeries.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(1, tradeCount)
-      : 0;
-  const stdDev = Math.sqrt(variance);
-  const downsideValues = pnlSeries.filter((value) => value < 0);
-  const downsideVariance =
-    downsideValues.length > 0
-      ? downsideValues.reduce((sum, value) => sum + value ** 2, 0) / downsideValues.length
-      : 0;
-  const downsideDeviation = Math.sqrt(downsideVariance);
-  const positiveDays = dayRows.filter((row) => row.pnl >= 0).length;
-  const positiveWeeks = weekRows.filter((row) => row.pnl >= 0).length;
-  const positiveMonths = monthRows.filter((row) => row.pnl >= 0).length;
-  const sharpe = stdDev > 0 ? mean / stdDev : 0;
-  const sortino = downsideDeviation > 0 ? mean / downsideDeviation : 0;
-
-  return {
-    tradeCount,
-    netPnl,
-    totalPnl: netPnl,
-    winRate: tradeCount > 0 ? (wins / tradeCount) * 100 : 0,
-    profitFactor:
-      grossLosses === 0 ? (grossWins > 0 ? grossWins : 0) : grossWins / Math.abs(grossLosses),
-    avgPnl,
-    avgHoldMinutes: tradeCount > 0 ? totalHoldMinutes / tradeCount : 0,
-    avgWinDurationMin: wins > 0 ? totalWinHoldMinutes / wins : 0,
-    avgLossDurationMin: losses > 0 ? totalLossHoldMinutes / losses : 0,
-    avgR: tradeCount > 0 ? totalR / tradeCount : 0,
-    avgWin,
-    avgLoss,
-    averageConfidence: tradeCount > 0 ? totalConfidence / tradeCount : 0,
-    tradesPerDay: dayRows.length > 0 ? tradeCount / dayRows.length : 0,
-    tradesPerWeek: weekRows.length > 0 ? tradeCount / weekRows.length : 0,
-    tradesPerMonth: monthRows.length > 0 ? tradeCount / monthRows.length : 0,
-    consistencyPerDay: dayRows.length > 0 ? (positiveDays / dayRows.length) * 100 : 0,
-    consistencyPerWeek: weekRows.length > 0 ? (positiveWeeks / weekRows.length) * 100 : 0,
-    consistencyPerMonth: monthRows.length > 0 ? (positiveMonths / monthRows.length) * 100 : 0,
-    consistencyPerTrade: tradeCount > 0 ? (wins / tradeCount) * 100 : 0,
-    avgPnlPerDay: dayRows.length > 0 ? netPnl / dayRows.length : 0,
-    avgPnlPerWeek: weekRows.length > 0 ? netPnl / weekRows.length : 0,
-    avgPnlPerMonth: monthRows.length > 0 ? netPnl / monthRows.length : 0,
-    avgPeakPerTrade: tradeCount > 0 ? estimatedPeakTotal / tradeCount : 0,
-    avgMaxDrawdownPerTrade: tradeCount > 0 ? estimatedDrawdownTotal / tradeCount : 0,
-    avgTimeInProfitMin: tradeCount > 0 ? estimatedProfitMinutes / tradeCount : 0,
-    avgTimeInDeficitMin: tradeCount > 0 ? estimatedDeficitMinutes / tradeCount : 0,
-    sharpe,
-    sortino,
-    wins,
-    losses,
-    grossWins,
-    grossLosses,
-    maxWin,
-    maxLoss,
-    maxDrawdown,
-    bestDay,
-    worstDay
-  };
-};
 
 const buildBacktestClusterGroups = (nodes: BacktestClusterNode[]): BacktestClusterGroup[] => {
   const groupMap = new Map<
@@ -1228,6 +1063,8 @@ export async function POST(request: Request) {
       : "off";
   const confidenceGateDisabled = body.confidenceGateDisabled === true;
   const selectedBacktestDateKey = String(body.selectedBacktestDateKey ?? "");
+  const statsDateStart = typeof body.statsDateStart === "string" ? body.statsDateStart : "";
+  const statsDateEnd = typeof body.statsDateEnd === "string" ? body.statsDateEnd : "";
   const performanceStatsModel = String(body.performanceStatsModel ?? "All");
   const isCalendarBacktestTabActive = body.isCalendarBacktestTabActive === true;
   const isPerformanceStatsBacktestTabActive = body.isPerformanceStatsBacktestTabActive === true;
@@ -1238,12 +1075,26 @@ export async function POST(request: Request) {
     return confidenceById.get(trade.id) ?? getTradeConfidenceScore(trade);
   };
 
-  const backtestSummary = summarizeBacktestTrades(backtestTrades, resolveConfidenceScore);
+  const summaryRange = {
+    startYmd: statsDateStart,
+    endYmd: statsDateEnd
+  };
+
+  const backtestSummary = summarizeBacktestTrades(
+    backtestTrades,
+    resolveConfidenceScore,
+    summaryRange
+  );
   const baselineMainStatsSummary = summarizeBacktestTrades(
     baselineMainStatsTrades,
-    resolveConfidenceScore
+    resolveConfidenceScore,
+    summaryRange
   );
-  const mainStatsSummary = summarizeBacktestTrades(backtestTrades, resolveConfidenceScore);
+  const mainStatsSummary = summarizeBacktestTrades(
+    backtestTrades,
+    resolveConfidenceScore,
+    summaryRange
+  );
 
   const mainStatsSessionRows = computeMainStatsSessionRows(backtestTrades);
   const mainStatsModelRows = computeMainStatsModelRows(backtestTrades);

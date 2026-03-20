@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import type {
   CSSProperties,
+  FormEvent,
   PointerEvent as ReactPointerEvent,
   ReactNode
 } from "react";
@@ -17,6 +18,18 @@ import {
   useRef,
   useState
 } from "react";
+import {
+  EmailAuthProvider,
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  reauthenticateWithCredential,
+  signInWithEmailAndPassword,
+  signOut,
+  updatePassword,
+  updateProfile,
+  type User
+} from "firebase/auth";
+import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import type {
   AutoscaleInfo,
   CandlestickData,
@@ -64,6 +77,18 @@ import {
   buildStrategyBacktestSurfaceSummary,
   buildStrategyReplayTradeBlueprints
 } from "../lib/strategyModelBacktest";
+import {
+  getTradeDayKey as getBacktestStatsTradeDayKey,
+  getTradeMonthKey as getBacktestStatsTradeMonthKey,
+  getTradeWeekKey as getBacktestStatsTradeWeekKey,
+  summarizeBacktestTrades as summarizeBacktestTradesShared
+} from "../lib/backtestStats";
+import {
+  firebaseClientConfigReady,
+  firebaseClientMissingEnvVars,
+  getFirebaseClientAuth,
+  getFirebaseClientDb
+} from "../lib/firebase";
 import {
   AIZIP_BACKTEST_HISTORY_FETCH_TIMEOUT_MS,
   BASE_SEEDING_LIBRARY_IDS,
@@ -1153,6 +1178,8 @@ type BacktestAnalyticsServerPayload = {
   aiMode: "off" | "knn" | "hdbscan";
   confidenceGateDisabled: boolean;
   selectedBacktestDateKey: string;
+  statsDateStart: string;
+  statsDateEnd: string;
   performanceStatsModel: string;
   isCalendarBacktestTabActive: boolean;
   isPerformanceStatsBacktestTabActive: boolean;
@@ -1282,166 +1309,18 @@ const EMPTY_BACKTEST_ANALYTICS_RESPONSE: BacktestAnalyticsServerResponse = {
 };
 
 const getTradeWeekKey = (timestampSeconds: UTCTimestamp): string => {
-  const date = new Date(Number(timestampSeconds) * 1000);
-  const day = date.getUTCDay();
-  const weekStart = new Date(
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - day)
-  );
-
-  return weekStart.toISOString().slice(0, 10);
+  return getBacktestStatsTradeWeekKey(Number(timestampSeconds));
 };
 
 const summarizeBacktestTradesFallback = (
   trades: HistoryItem[],
-  confidenceResolver: (trade: HistoryItem) => number
-): BacktestSummaryStats => {
-  let netPnl = 0;
-  let grossWins = 0;
-  let grossLosses = 0;
-  let wins = 0;
-  let losses = 0;
-  let totalHoldMinutes = 0;
-  let totalWinHoldMinutes = 0;
-  let totalLossHoldMinutes = 0;
-  let maxWin = 0;
-  let maxLoss = 0;
-  let totalR = 0;
-  let totalConfidence = 0;
-  let estimatedPeakTotal = 0;
-  let estimatedDrawdownTotal = 0;
-  let estimatedProfitMinutes = 0;
-  let estimatedDeficitMinutes = 0;
-  let runningPnl = 0;
-  let peakPnl = 0;
-  let maxDrawdown = 0;
-  const dayMap = new Map<string, { key: string; count: number; pnl: number }>();
-  const weekMap = new Map<string, { key: string; count: number; pnl: number }>();
-  const monthMap = new Map<string, { key: string; count: number; pnl: number }>();
-  const pnlSeries: number[] = [];
-
-  for (const trade of trades) {
-    const holdMinutes = Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
-    const targetPotentialUsd = Math.abs(trade.targetPrice - trade.entryPrice) * Math.max(1, trade.units);
-    const stopPotentialUsd = Math.abs(trade.entryPrice - trade.stopPrice) * Math.max(1, trade.units);
-    const favorableShare = trade.result === "Win" ? 0.68 : 0.32;
-    netPnl += trade.pnlUsd;
-    runningPnl += trade.pnlUsd;
-    peakPnl = Math.max(peakPnl, runningPnl);
-    maxDrawdown = Math.min(maxDrawdown, runningPnl - peakPnl);
-    maxWin = Math.max(maxWin, trade.pnlUsd);
-    maxLoss = Math.min(maxLoss, trade.pnlUsd);
-    totalHoldMinutes += holdMinutes;
-    totalConfidence += confidenceResolver(trade) * 100;
-    estimatedPeakTotal += Math.max(Math.max(trade.pnlUsd, 0), targetPotentialUsd);
-    estimatedDrawdownTotal += Math.max(Math.abs(Math.min(trade.pnlUsd, 0)), stopPotentialUsd);
-    estimatedProfitMinutes += holdMinutes * favorableShare;
-    estimatedDeficitMinutes += holdMinutes * (1 - favorableShare);
-    pnlSeries.push(trade.pnlUsd);
-
-    if (trade.pnlUsd >= 0) {
-      grossWins += trade.pnlUsd;
-      totalWinHoldMinutes += holdMinutes;
-    } else {
-      grossLosses += trade.pnlUsd;
-      losses += 1;
-      totalLossHoldMinutes += holdMinutes;
-    }
-
-    if (trade.result === "Win") {
-      wins += 1;
-    }
-
-    const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
-    const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
-    totalR += rewardDistance / riskDistance;
-
-    const dayKey = getTradeDayKey(trade.exitTime);
-    const currentDay = dayMap.get(dayKey) ?? { key: dayKey, count: 0, pnl: 0 };
-    currentDay.count += 1;
-    currentDay.pnl += trade.pnlUsd;
-    dayMap.set(dayKey, currentDay);
-
-    const weekKey = getTradeWeekKey(trade.exitTime);
-    const currentWeek = weekMap.get(weekKey) ?? { key: weekKey, count: 0, pnl: 0 };
-    currentWeek.count += 1;
-    currentWeek.pnl += trade.pnlUsd;
-    weekMap.set(weekKey, currentWeek);
-
-    const monthKey = getTradeMonthKey(trade.exitTime);
-    const currentMonth = monthMap.get(monthKey) ?? { key: monthKey, count: 0, pnl: 0 };
-    currentMonth.count += 1;
-    currentMonth.pnl += trade.pnlUsd;
-    monthMap.set(monthKey, currentMonth);
+  confidenceResolver: (trade: HistoryItem) => number,
+  range?: {
+    startYmd?: string | null;
+    endYmd?: string | null;
   }
-
-  const dayRows = Array.from(dayMap.values()).sort((a, b) => a.key.localeCompare(b.key));
-  const weekRows = Array.from(weekMap.values()).sort((a, b) => a.key.localeCompare(b.key));
-  const monthRows = Array.from(monthMap.values()).sort((a, b) => a.key.localeCompare(b.key));
-  const bestDay = [...dayRows].sort((a, b) => b.pnl - a.pnl)[0] ?? null;
-  const worstDay = [...dayRows].sort((a, b) => a.pnl - b.pnl)[0] ?? null;
-  const tradeCount = trades.length;
-  const avgPnl = tradeCount > 0 ? netPnl / tradeCount : 0;
-  const avgWin = wins > 0 ? grossWins / wins : 0;
-  const avgLoss = losses > 0 ? grossLosses / losses : 0;
-  const mean = avgPnl;
-  const variance =
-    tradeCount > 0
-      ? pnlSeries.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(1, tradeCount)
-      : 0;
-  const stdDev = Math.sqrt(variance);
-  const downsideValues = pnlSeries.filter((value) => value < 0);
-  const downsideVariance =
-    downsideValues.length > 0
-      ? downsideValues.reduce((sum, value) => sum + value ** 2, 0) / downsideValues.length
-      : 0;
-  const downsideDeviation = Math.sqrt(downsideVariance);
-  const positiveDays = dayRows.filter((row) => row.pnl >= 0).length;
-  const positiveWeeks = weekRows.filter((row) => row.pnl >= 0).length;
-  const positiveMonths = monthRows.filter((row) => row.pnl >= 0).length;
-  const sharpe = stdDev > 0 ? mean / stdDev : 0;
-  const sortino = downsideDeviation > 0 ? mean / downsideDeviation : 0;
-
-  return {
-    tradeCount,
-    netPnl,
-    totalPnl: netPnl,
-    winRate: tradeCount > 0 ? (wins / tradeCount) * 100 : 0,
-    profitFactor:
-      grossLosses === 0 ? (grossWins > 0 ? grossWins : 0) : grossWins / Math.abs(grossLosses),
-    avgPnl,
-    avgHoldMinutes: tradeCount > 0 ? totalHoldMinutes / tradeCount : 0,
-    avgWinDurationMin: wins > 0 ? totalWinHoldMinutes / wins : 0,
-    avgLossDurationMin: losses > 0 ? totalLossHoldMinutes / losses : 0,
-    avgR: tradeCount > 0 ? totalR / tradeCount : 0,
-    avgWin,
-    avgLoss,
-    averageConfidence: tradeCount > 0 ? totalConfidence / tradeCount : 0,
-    tradesPerDay: dayRows.length > 0 ? tradeCount / dayRows.length : 0,
-    tradesPerWeek: weekRows.length > 0 ? tradeCount / weekRows.length : 0,
-    tradesPerMonth: monthRows.length > 0 ? tradeCount / monthRows.length : 0,
-    consistencyPerDay: dayRows.length > 0 ? (positiveDays / dayRows.length) * 100 : 0,
-    consistencyPerWeek: weekRows.length > 0 ? (positiveWeeks / weekRows.length) * 100 : 0,
-    consistencyPerMonth: monthRows.length > 0 ? (positiveMonths / monthRows.length) * 100 : 0,
-    consistencyPerTrade: tradeCount > 0 ? (wins / tradeCount) * 100 : 0,
-    avgPnlPerDay: dayRows.length > 0 ? netPnl / dayRows.length : 0,
-    avgPnlPerWeek: weekRows.length > 0 ? netPnl / weekRows.length : 0,
-    avgPnlPerMonth: monthRows.length > 0 ? netPnl / monthRows.length : 0,
-    avgPeakPerTrade: tradeCount > 0 ? estimatedPeakTotal / tradeCount : 0,
-    avgMaxDrawdownPerTrade: tradeCount > 0 ? estimatedDrawdownTotal / tradeCount : 0,
-    avgTimeInProfitMin: tradeCount > 0 ? estimatedProfitMinutes / tradeCount : 0,
-    avgTimeInDeficitMin: tradeCount > 0 ? estimatedDeficitMinutes / tradeCount : 0,
-    sharpe,
-    sortino,
-    wins,
-    losses,
-    grossWins,
-    grossLosses,
-    maxWin,
-    maxLoss,
-    maxDrawdown,
-    bestDay,
-    worstDay
-  };
+): BacktestSummaryStats => {
+  return summarizeBacktestTradesShared(trades, confidenceResolver, range);
 };
 
 const buildModelRunChartData = (trades: HistoryItem[]): ModelRunChartPoint[] => {
@@ -1558,6 +1437,8 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
   backtestTrades: HistoryItem[];
   baselineMainStatsTrades: HistoryItem[];
   selectedBacktestDateKey: string;
+  statsDateStart: string;
+  statsDateEnd: string;
   aiMode: BacktestSettingsSnapshot["aiMode"];
   confidenceGateDisabled: boolean;
   confidenceResolver: (trade: HistoryItem) => number;
@@ -1566,20 +1447,35 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
     backtestTrades,
     baselineMainStatsTrades,
     selectedBacktestDateKey,
+    statsDateStart,
+    statsDateEnd,
     aiMode,
     confidenceGateDisabled,
     confidenceResolver
   } = params;
-  const backtestSummary = summarizeBacktestTradesFallback(backtestTrades, confidenceResolver);
+  const summaryRange = {
+    startYmd: statsDateStart,
+    endYmd: statsDateEnd
+  };
+  const backtestSummary = summarizeBacktestTradesFallback(
+    backtestTrades,
+    confidenceResolver,
+    summaryRange
+  );
   const baselineMainStatsSummary = summarizeBacktestTradesFallback(
     baselineMainStatsTrades,
-    confidenceResolver
+    confidenceResolver,
+    summaryRange
   );
-  const mainStatsSummary = summarizeBacktestTradesFallback(backtestTrades, confidenceResolver);
+  const mainStatsSummary = summarizeBacktestTradesFallback(
+    backtestTrades,
+    confidenceResolver,
+    summaryRange
+  );
 
   const dayMap = new Map<string, { count: number; wins: number; pnl: number }>();
   for (const trade of backtestTrades) {
-    const dayKey = getTradeDayKey(trade.entryTime);
+    const dayKey = getTradeDayKey(trade.exitTime);
     const current = dayMap.get(dayKey) ?? { count: 0, wins: 0, pnl: 0 };
     current.count += 1;
     current.wins += trade.result === "Win" ? 1 : 0;
@@ -1588,10 +1484,10 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
   }
 
   const monthKeys = Array.from(
-    new Set(backtestTrades.map((trade) => getTradeDayKey(trade.entryTime).slice(0, 7)))
+    new Set(backtestTrades.map((trade) => getTradeDayKey(trade.exitTime).slice(0, 7)))
   ).sort((a, b) => b.localeCompare(a));
   const selectedBacktestDayTrades = selectedBacktestDateKey
-    ? backtestTrades.filter((trade) => getTradeDayKey(trade.entryTime) === selectedBacktestDateKey)
+    ? backtestTrades.filter((trade) => getTradeDayKey(trade.exitTime) === selectedBacktestDateKey)
     : [];
 
   const entryCounts: Record<string, number> = {};
@@ -2317,6 +2213,122 @@ type ModelProfile = {
 
 type TradingTerminalProps = {
   aiZipModelNames: string[];
+};
+
+type TerminalAccountUser = {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL: string | null;
+};
+
+type TradingTerminalWorkspaceProps = TradingTerminalProps & {
+  currentUser: TerminalAccountUser;
+  onChangeDisplayName: (value: string) => Promise<void>;
+  onChangePassword: (input: {
+    currentPassword: string;
+    newPassword: string;
+  }) => Promise<void>;
+  onLogOut: () => Promise<void>;
+};
+
+type AccountAuthMode = "login" | "create" | null;
+
+type AccountAuthFormState = {
+  username: string;
+  email: string;
+  password: string;
+  confirmPassword: string;
+};
+
+type AccountPasswordFormState = {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+};
+
+const EMPTY_ACCOUNT_AUTH_FORM: AccountAuthFormState = {
+  username: "",
+  email: "",
+  password: "",
+  confirmPassword: ""
+};
+
+const EMPTY_ACCOUNT_PASSWORD_FORM: AccountPasswordFormState = {
+  currentPassword: "",
+  newPassword: "",
+  confirmPassword: ""
+};
+
+const MIN_ACCOUNT_PASSWORD_LENGTH = 6;
+
+const scopeStorageKey = (baseKey: string, userId: string): string => {
+  return `${baseKey}:${userId}`;
+};
+
+const resolveUserDisplayName = (user: Pick<User, "displayName" | "email">): string => {
+  const displayName = String(user.displayName ?? "").trim();
+  if (displayName) {
+    return displayName;
+  }
+
+  const emailName = String(user.email ?? "").trim().split("@")[0]?.trim();
+  return emailName || "Trader";
+};
+
+const resolveUserInitials = (user: Pick<User, "displayName" | "email">): string => {
+  const source = resolveUserDisplayName(user);
+  const parts = source
+    .split(/[\s._-]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return "K";
+  }
+
+  if (parts.length === 1) {
+    return parts[0]!.slice(0, 2).toUpperCase();
+  }
+
+  return `${parts[0]![0] ?? ""}${parts[1]![0] ?? ""}`.toUpperCase();
+};
+
+const toTerminalAccountUser = (user: User): TerminalAccountUser => ({
+  uid: user.uid,
+  email: user.email ?? null,
+  displayName: user.displayName ?? null,
+  photoURL: user.photoURL ?? null
+});
+
+const formatFirebaseAuthError = (error: unknown): string => {
+  const message =
+    error && typeof error === "object" && "code" in error
+      ? String((error as { code?: unknown }).code ?? "")
+      : "";
+
+  switch (message) {
+    case "auth/invalid-email":
+      return "Enter a valid email address.";
+    case "auth/missing-password":
+      return "Enter your password.";
+    case "auth/email-already-in-use":
+      return "That email is already being used.";
+    case "auth/weak-password":
+      return `Use at least ${MIN_ACCOUNT_PASSWORD_LENGTH} characters for the password.`;
+    case "auth/invalid-credential":
+    case "auth/user-not-found":
+    case "auth/wrong-password":
+      return "The email or password is incorrect.";
+    case "auth/too-many-requests":
+      return "Too many attempts. Try again in a moment.";
+    case "auth/requires-recent-login":
+      return "Log in again before changing the password.";
+    case "auth/network-request-failed":
+      return "Network error. Check your connection and try again.";
+    default:
+      return error instanceof Error ? error.message : "Something went wrong.";
+  }
 };
 
 type TradeBlueprint = {
@@ -5286,11 +5298,11 @@ const formatAggressorPressure = (value: number): string => {
 };
 
 const getTradeDayKey = (timestampSeconds: UTCTimestamp): string => {
-  return new Date(Number(timestampSeconds) * 1000).toISOString().slice(0, 10);
+  return getBacktestStatsTradeDayKey(Number(timestampSeconds));
 };
 
 const getTradeMonthKey = (timestampSeconds: UTCTimestamp): string => {
-  return getTradeDayKey(timestampSeconds).slice(0, 7);
+  return getBacktestStatsTradeMonthKey(Number(timestampSeconds));
 };
 
 const getTradeMonthIndex = (timestampSeconds: UTCTimestamp): number => {
@@ -8351,6 +8363,423 @@ const buildStatsRefreshPhasePlan = ({
 };
 
 export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProps) {
+  const firebaseAuth = useMemo(() => getFirebaseClientAuth(), []);
+  const firebaseDb = useMemo(() => getFirebaseClientDb(), []);
+  const [authReady, setAuthReady] = useState(!firebaseClientConfigReady);
+  const [currentUser, setCurrentUser] = useState<TerminalAccountUser | null>(null);
+  const [authMode, setAuthMode] = useState<AccountAuthMode>(null);
+  const [authForm, setAuthForm] = useState<AccountAuthFormState>(EMPTY_ACCOUNT_AUTH_FORM);
+  const [authBusy, setAuthBusy] = useState<"login" | "create" | null>(null);
+  const [authError, setAuthError] = useState("");
+  const firebaseSetupMessage = firebaseClientConfigReady
+    ? ""
+    : `Add ${firebaseClientMissingEnvVars.join(", ")} to .env.local to enable Firebase auth.`;
+
+  const syncAccountProfile = useCallback(
+    async (user: User, explicitDisplayName?: string): Promise<string> => {
+      const preferredDisplayName =
+        explicitDisplayName?.trim() ||
+        String(user.displayName ?? "").trim() ||
+        resolveUserDisplayName(user);
+
+      if (!firebaseDb) {
+        return preferredDisplayName;
+      }
+
+      const userRef = doc(firebaseDb, "users", user.uid);
+      let existingDisplayName = "";
+      let hasExistingProfile = false;
+
+      try {
+        const snapshot = await getDoc(userRef);
+        hasExistingProfile = snapshot.exists();
+        const snapshotData = hasExistingProfile ? snapshot.data() : null;
+        existingDisplayName = snapshotData
+          ? String(snapshotData.displayName ?? "").trim()
+          : "";
+      } catch {
+        existingDisplayName = "";
+      }
+
+      const displayName = preferredDisplayName || existingDisplayName || resolveUserDisplayName(user);
+      const payload: Record<string, unknown> = {
+        uid: user.uid,
+        email: user.email ?? "",
+        displayName,
+        photoURL: user.photoURL ?? null,
+        updatedAt: serverTimestamp()
+      };
+
+      if (!hasExistingProfile) {
+        payload.createdAt = serverTimestamp();
+      }
+
+      await setDoc(userRef, payload, { merge: true });
+
+      if (displayName !== String(user.displayName ?? "").trim()) {
+        await updateProfile(user, { displayName });
+      }
+
+      return displayName;
+    },
+    [firebaseDb]
+  );
+
+  useEffect(() => {
+    if (!firebaseAuth) {
+      setAuthReady(true);
+      return;
+    }
+
+    let active = true;
+    const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
+      if (!active) {
+        return;
+      }
+
+      if (!user) {
+        setCurrentUser(null);
+        setAuthReady(true);
+        return;
+      }
+
+      try {
+        const displayName = await syncAccountProfile(user);
+        if (!active) {
+          return;
+        }
+        setCurrentUser({
+          ...toTerminalAccountUser(user),
+          displayName
+        });
+      } catch {
+        if (!active) {
+          return;
+        }
+        setCurrentUser(toTerminalAccountUser(user));
+      } finally {
+        if (active) {
+          setAuthReady(true);
+        }
+      }
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [firebaseAuth, syncAccountProfile]);
+
+  const handleAuthSubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+
+      if (!authMode) {
+        return;
+      }
+
+      if (!firebaseAuth || !firebaseClientConfigReady) {
+        setAuthError(firebaseSetupMessage || "Firebase auth is not configured yet.");
+        return;
+      }
+
+      const email = authForm.email.trim();
+      const password = authForm.password;
+
+      if (!email || !password) {
+        setAuthError("Enter your email and password.");
+        return;
+      }
+
+      if (authMode === "create") {
+        const username = authForm.username.trim();
+
+        if (!username) {
+          setAuthError("Choose a username.");
+          return;
+        }
+
+        if (password.length < MIN_ACCOUNT_PASSWORD_LENGTH) {
+          setAuthError(
+            `Use at least ${MIN_ACCOUNT_PASSWORD_LENGTH} characters for the password.`
+          );
+          return;
+        }
+
+        if (authForm.confirmPassword !== password) {
+          setAuthError("Passwords do not match.");
+          return;
+        }
+      }
+
+      setAuthBusy(authMode);
+      setAuthError("");
+
+      try {
+        if (authMode === "login") {
+          await signInWithEmailAndPassword(firebaseAuth, email, password);
+        } else {
+          const created = await createUserWithEmailAndPassword(firebaseAuth, email, password);
+          const username = authForm.username.trim();
+
+          await updateProfile(created.user, { displayName: username });
+          await syncAccountProfile(created.user, username);
+        }
+
+        setAuthForm(EMPTY_ACCOUNT_AUTH_FORM);
+      } catch (error) {
+        setAuthError(formatFirebaseAuthError(error));
+      } finally {
+        setAuthBusy(null);
+      }
+    },
+    [authForm, authMode, firebaseAuth, firebaseSetupMessage, syncAccountProfile]
+  );
+
+  const handleChangeDisplayName = useCallback(
+    async (value: string) => {
+      if (!firebaseAuth?.currentUser) {
+        throw new Error("No signed-in user found.");
+      }
+
+      const nextDisplayName = value.trim();
+
+      if (!nextDisplayName) {
+        throw new Error("Username cannot be empty.");
+      }
+
+      const syncedDisplayName = await syncAccountProfile(firebaseAuth.currentUser, nextDisplayName);
+      setCurrentUser((current) =>
+        current
+          ? {
+              ...current,
+              displayName: syncedDisplayName
+            }
+          : current
+      );
+    },
+    [firebaseAuth, syncAccountProfile]
+  );
+
+  const handleChangePassword = useCallback(
+    async (input: { currentPassword: string; newPassword: string }) => {
+      if (!firebaseAuth?.currentUser) {
+        throw new Error("No signed-in user found.");
+      }
+
+      const email = String(firebaseAuth.currentUser.email ?? "").trim();
+      if (!email) {
+        throw new Error("This account is missing an email address.");
+      }
+
+      const credential = EmailAuthProvider.credential(email, input.currentPassword);
+      await reauthenticateWithCredential(firebaseAuth.currentUser, credential);
+      await updatePassword(firebaseAuth.currentUser, input.newPassword);
+    },
+    [firebaseAuth]
+  );
+
+  const handleLogOut = useCallback(async () => {
+    if (!firebaseAuth) {
+      return;
+    }
+
+    await signOut(firebaseAuth);
+    setCurrentUser(null);
+    setAuthMode(null);
+    setAuthForm(EMPTY_ACCOUNT_AUTH_FORM);
+    setAuthError("");
+  }, [firebaseAuth]);
+
+  if (!authReady) {
+    return (
+      <main className="terminal account-screen">
+        <section className="account-screen-shell">
+          <div className="account-shell-panel">
+            <div className="account-shell-header">
+              <span className="account-shell-kicker">Korra</span>
+              <h1>Connecting account</h1>
+              <p>Checking your Firebase session before loading the terminal.</p>
+            </div>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (!currentUser) {
+    const modeLabel =
+      authMode === "login" ? "Log In" : authMode === "create" ? "Create Account" : "Account";
+    const formDisabled = authBusy !== null || !firebaseClientConfigReady;
+
+    return (
+      <main className="terminal account-screen">
+        <section className="account-screen-shell">
+          <div className="account-shell-panel">
+            <div className="account-shell-header">
+              <span className="account-shell-kicker">Korra</span>
+              <h1>Private workspace access</h1>
+              <p>Sign in before the terminal, models, and backtests become visible.</p>
+            </div>
+
+            <div className="account-mode-grid">
+              <button
+                type="button"
+                className={`account-mode-btn${authMode === "login" ? " active" : ""}`}
+                onClick={() => {
+                  setAuthMode("login");
+                  setAuthError("");
+                }}
+              >
+                Log In
+              </button>
+              <button
+                type="button"
+                className={`account-mode-btn${authMode === "create" ? " active" : ""}`}
+                onClick={() => {
+                  setAuthMode("create");
+                  setAuthError("");
+                }}
+              >
+                Create Account
+              </button>
+            </div>
+
+            {firebaseSetupMessage ? (
+              <div className="account-inline-note">{firebaseSetupMessage}</div>
+            ) : null}
+
+            {authMode ? (
+              <form className="account-form" onSubmit={handleAuthSubmit}>
+                <div className="account-form-header">
+                  <strong>{modeLabel}</strong>
+                  <button
+                    type="button"
+                    className="settings-io-btn"
+                    onClick={() => {
+                      setAuthMode(null);
+                      setAuthError("");
+                    }}
+                  >
+                    <span className="settings-io-label">Back</span>
+                  </button>
+                </div>
+
+                {authMode === "create" ? (
+                  <label className="account-field">
+                    <span>Username</span>
+                    <input
+                      className="account-input"
+                      value={authForm.username}
+                      onChange={(event) =>
+                        setAuthForm((current) => ({
+                          ...current,
+                          username: event.target.value
+                        }))
+                      }
+                      placeholder="How your profile should appear"
+                      autoComplete="username"
+                      disabled={formDisabled}
+                    />
+                  </label>
+                ) : null}
+
+                <label className="account-field">
+                  <span>Email</span>
+                  <input
+                    className="account-input"
+                    type="email"
+                    value={authForm.email}
+                    onChange={(event) =>
+                      setAuthForm((current) => ({
+                        ...current,
+                        email: event.target.value
+                      }))
+                    }
+                    placeholder="trader@korra.space"
+                    autoComplete="email"
+                    disabled={formDisabled}
+                  />
+                </label>
+
+                <label className="account-field">
+                  <span>Password</span>
+                  <input
+                    className="account-input"
+                    type="password"
+                    value={authForm.password}
+                    onChange={(event) =>
+                      setAuthForm((current) => ({
+                        ...current,
+                        password: event.target.value
+                      }))
+                    }
+                    placeholder="••••••••"
+                    autoComplete={authMode === "login" ? "current-password" : "new-password"}
+                    disabled={formDisabled}
+                  />
+                </label>
+
+                {authMode === "create" ? (
+                  <label className="account-field">
+                    <span>Confirm Password</span>
+                    <input
+                      className="account-input"
+                      type="password"
+                      value={authForm.confirmPassword}
+                      onChange={(event) =>
+                        setAuthForm((current) => ({
+                          ...current,
+                          confirmPassword: event.target.value
+                        }))
+                      }
+                      placeholder="Repeat your password"
+                      autoComplete="new-password"
+                      disabled={formDisabled}
+                    />
+                  </label>
+                ) : null}
+
+                {authError ? <div className="account-form-error">{authError}</div> : null}
+
+                <button
+                  type="submit"
+                  className="account-submit-btn"
+                  disabled={formDisabled}
+                >
+                  {authBusy === authMode
+                    ? authMode === "login"
+                      ? "Logging In..."
+                      : "Creating Account..."
+                    : modeLabel}
+                </button>
+              </form>
+            ) : null}
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <TradingTerminalWorkspace
+      key={currentUser.uid}
+      aiZipModelNames={aiZipModelNames}
+      currentUser={currentUser}
+      onChangeDisplayName={handleChangeDisplayName}
+      onChangePassword={handleChangePassword}
+      onLogOut={handleLogOut}
+    />
+  );
+}
+
+function TradingTerminalWorkspace({
+  aiZipModelNames,
+  currentUser,
+  onChangeDisplayName,
+  onChangePassword,
+  onLogOut
+}: TradingTerminalWorkspaceProps) {
   const modelProfiles = useMemo(() => {
     return buildModelProfiles(aiZipModelNames);
   }, [aiZipModelNames]);
@@ -8364,6 +8793,28 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     return names.length > 0 ? names : [...AI_MODEL_FALLBACK_NAMES];
   }, [aiZipModelNames]);
+  const scopedTerminalViewStateStorageKey = useMemo(
+    () => scopeStorageKey(TERMINAL_VIEW_STATE_STORAGE_KEY, currentUser.uid),
+    [currentUser.uid]
+  );
+  const scopedSettingsStorageKey = useMemo(
+    () => scopeStorageKey(SETTINGS_STORAGE_KEY, currentUser.uid),
+    [currentUser.uid]
+  );
+  const scopedUiPreferencesStorageKey = useMemo(
+    () => scopeStorageKey(UI_PREFERENCES_STORAGE_KEY, currentUser.uid),
+    [currentUser.uid]
+  );
+  const scopedPresetsStorageKey = useMemo(
+    () => scopeStorageKey(PRESETS_STORAGE_KEY, currentUser.uid),
+    [currentUser.uid]
+  );
+  const scopedUploadedStrategyModelsStorageKey = useMemo(
+    () => scopeStorageKey(UPLOADED_STRATEGY_MODELS_STORAGE_KEY, currentUser.uid),
+    [currentUser.uid]
+  );
+  const currentUserDisplayName = useMemo(() => resolveUserDisplayName(currentUser), [currentUser]);
+  const currentUserInitials = useMemo(() => resolveUserInitials(currentUser), [currentUser]);
   const aiLibraryDefs = useMemo(() => {
     return buildAiLibraryDefs(availableAiModelNames);
   }, [availableAiModelNames]);
@@ -8419,6 +8870,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [chartPanelLiveSimulationEnabled, setChartPanelLiveSimulationEnabled] = useState(false);
   const [activePanelLiveSimulationEnabled, setActivePanelLiveSimulationEnabled] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [profileDialogMode, setProfileDialogMode] = useState<"username" | "password" | null>(null);
+  const [profileUsernameInput, setProfileUsernameInput] = useState(currentUserDisplayName);
+  const [profilePasswordForm, setProfilePasswordForm] = useState<AccountPasswordFormState>(
+    EMPTY_ACCOUNT_PASSWORD_FORM
+  );
+  const [profileDialogStatus, setProfileDialogStatus] = useState("");
+  const [profileDialogBusy, setProfileDialogBusy] = useState(false);
   const [seenNotificationIds, setSeenNotificationIds] = useState<string[]>([]);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [chartContextMenu, setChartContextMenu] = useState<MainChartContextMenuState | null>(null);
@@ -8699,7 +9158,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     }
 
     try {
-      const raw = localStorage.getItem(TERMINAL_VIEW_STATE_STORAGE_KEY);
+      const raw = localStorage.getItem(scopedTerminalViewStateStorageKey);
       if (!raw) {
         return;
       }
@@ -8736,7 +9195,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setPerformanceStatsCollapsed,
     setShowActiveTradeOnChart,
     setShowAllTradesOnChart,
-    setWorkspacePanelWidth
+    setWorkspacePanelWidth,
+    scopedTerminalViewStateStorageKey
   ]);
 
   useEffect(() => {
@@ -8746,7 +9206,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     try {
       localStorage.setItem(
-        TERMINAL_VIEW_STATE_STORAGE_KEY,
+        scopedTerminalViewStateStorageKey,
         JSON.stringify({
           surfaceTab: selectedSurfaceTab,
           backtestTab: selectedBacktestTab
@@ -8755,7 +9215,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     } catch {
       // Ignore storage write failures.
     }
-  }, [selectedBacktestTab, selectedSurfaceTab, terminalViewStateReady]);
+  }, [
+    scopedTerminalViewStateStorageKey,
+    selectedBacktestTab,
+    selectedSurfaceTab,
+    terminalViewStateReady
+  ]);
 
   useEffect(() => {
     setAiModelStates((current) => syncAiModelStates(current, settingsModelNames));
@@ -8801,6 +9266,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const selectionRef = useRef<string>("");
   const focusTradeIdRef = useRef<string | null>(null);
   const notificationRef = useRef<HTMLDivElement | null>(null);
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<EventSource | null>(null);
   const aggressorPressurePointsRef = useRef<AggressorPressurePoint[]>([]);
   const aggressorTrainingPeaksRef = useRef<AggressorTrainingPeak[]>([]);
@@ -13428,7 +13894,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      const raw = localStorage.getItem(scopedSettingsStorageKey);
       if (raw) {
         const parsed = JSON.parse(raw) as Record<string, unknown>;
         const migrated = { ...parsed } as Record<string, unknown>;
@@ -13453,11 +13919,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
     } catch { /* corrupt data – ignore */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [scopedSettingsStorageKey]);
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(UI_PREFERENCES_STORAGE_KEY);
+      const raw = localStorage.getItem(scopedUiPreferencesStorageKey);
       if (!raw) {
         return;
       }
@@ -13467,26 +13933,29 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     } catch {
       // Ignore corrupted UI preference data.
     }
-  }, [applyUiPreferences]);
+  }, [applyUiPreferences, scopedUiPreferencesStorageKey]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(collectSettings()));
+      localStorage.setItem(scopedSettingsStorageKey, JSON.stringify(collectSettings()));
     } catch { /* storage full – ignore */ }
-  }, [collectSettings]);
+  }, [collectSettings, scopedSettingsStorageKey]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(UI_PREFERENCES_STORAGE_KEY, JSON.stringify(collectUiPreferences()));
+      localStorage.setItem(
+        scopedUiPreferencesStorageKey,
+        JSON.stringify(collectUiPreferences())
+      );
     } catch {
       // Ignore persistence failures (for example quota exceeded).
     }
-  }, [collectUiPreferences]);
+  }, [collectUiPreferences, scopedUiPreferencesStorageKey]);
 
 
   const handleResetSettings = useCallback(() => {
-    localStorage.removeItem(SETTINGS_STORAGE_KEY);
-    localStorage.removeItem(UI_PREFERENCES_STORAGE_KEY);
+    localStorage.removeItem(scopedSettingsStorageKey);
+    localStorage.removeItem(scopedUiPreferencesStorageKey);
     setSelectedSymbol(futuresAssets[0].symbol);
     setSelectedTimeframe("15m");
     setSelectedBacktestTimeframe("15m");
@@ -13567,12 +14036,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setStatsDatePreset("pastYear");
     setStatsDateStart(defaultDateRange.startDate);
     setStatsDateEnd(defaultDateRange.endDate);
-  }, [aiLibraryDefs, settingsModelNames]);
+  }, [
+    aiLibraryDefs,
+    scopedSettingsStorageKey,
+    scopedUiPreferencesStorageKey,
+    settingsModelNames
+  ]);
 
   const persistPresets = useCallback((presets: SavedPreset[]) => {
     setSavedPresets(presets);
-    try { localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(presets)); } catch { /* full */ }
-  }, []);
+    try {
+      localStorage.setItem(scopedPresetsStorageKey, JSON.stringify(presets));
+    } catch {
+      /* full */
+    }
+  }, [scopedPresetsStorageKey]);
 
   const handleSavePreset = useCallback(() => {
     const name = presetNameInput.trim();
@@ -13618,6 +14096,66 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     reader.readAsText(file);
     e.target.value = "";
   }, [applySettings]);
+
+  const handleSaveProfileUsername = useCallback(async () => {
+    const nextUsername = profileUsernameInput.trim();
+
+    if (!nextUsername) {
+      setProfileDialogStatus("Username cannot be empty.");
+      return;
+    }
+
+    setProfileDialogBusy(true);
+    setProfileDialogStatus("");
+
+    try {
+      await onChangeDisplayName(nextUsername);
+      setProfileDialogStatus("Username updated.");
+      setProfileDialogMode(null);
+    } catch (error) {
+      setProfileDialogStatus(formatFirebaseAuthError(error));
+    } finally {
+      setProfileDialogBusy(false);
+    }
+  }, [onChangeDisplayName, profileUsernameInput]);
+
+  const handleSaveProfilePassword = useCallback(async () => {
+    const currentPassword = profilePasswordForm.currentPassword;
+    const newPassword = profilePasswordForm.newPassword;
+
+    if (!currentPassword || !newPassword) {
+      setProfileDialogStatus("Enter your current password and a new password.");
+      return;
+    }
+
+    if (newPassword.length < MIN_ACCOUNT_PASSWORD_LENGTH) {
+      setProfileDialogStatus(
+        `Use at least ${MIN_ACCOUNT_PASSWORD_LENGTH} characters for the password.`
+      );
+      return;
+    }
+
+    if (newPassword !== profilePasswordForm.confirmPassword) {
+      setProfileDialogStatus("New passwords do not match.");
+      return;
+    }
+
+    setProfileDialogBusy(true);
+    setProfileDialogStatus("");
+
+    try {
+      await onChangePassword({
+        currentPassword,
+        newPassword
+      });
+      setProfileDialogStatus("Password updated.");
+      setProfileDialogMode(null);
+    } catch (error) {
+      setProfileDialogStatus(formatFirebaseAuthError(error));
+    } finally {
+      setProfileDialogBusy(false);
+    }
+  }, [onChangePassword, profilePasswordForm]);
 
   const handleOpenModelUpload = useCallback(() => {
     modelsUploadInputRef.current?.click();
@@ -13894,7 +14432,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         startDate,
         endDate
       );
-      const summary = summarizeBacktestTradesFallback(trades, () => 0.5);
+      const summary = summarizeBacktestTradesFallback(trades, () => 0.5, {
+        startYmd: startDate,
+        endYmd: endDate
+      });
       const result: ModelRunResult = {
         request,
         trades,
@@ -13933,14 +14474,14 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(PRESETS_STORAGE_KEY);
+      const raw = localStorage.getItem(scopedPresetsStorageKey);
       if (raw) setSavedPresets(JSON.parse(raw));
     } catch { /* corrupt */ }
-  }, []);
+  }, [scopedPresetsStorageKey]);
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(UPLOADED_STRATEGY_MODELS_STORAGE_KEY);
+      const raw = localStorage.getItem(scopedUploadedStrategyModelsStorageKey);
 
       if (!raw) {
         setUploadedStrategyModelsReady(true);
@@ -13970,7 +14511,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     } finally {
       setUploadedStrategyModelsReady(true);
     }
-  }, []);
+  }, [scopedUploadedStrategyModelsStorageKey]);
 
   useEffect(() => {
     if (!uploadedStrategyModelsReady) {
@@ -13979,13 +14520,57 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
     try {
       localStorage.setItem(
-        UPLOADED_STRATEGY_MODELS_STORAGE_KEY,
+        scopedUploadedStrategyModelsStorageKey,
         JSON.stringify(uploadedStrategyModels)
       );
     } catch {
       // Ignore storage quota failures and keep the in-memory model library usable.
     }
-  }, [uploadedStrategyModels, uploadedStrategyModelsReady]);
+  }, [
+    scopedUploadedStrategyModelsStorageKey,
+    uploadedStrategyModels,
+    uploadedStrategyModelsReady
+  ]);
+
+  useEffect(() => {
+    setProfileUsernameInput(currentUserDisplayName);
+  }, [currentUserDisplayName]);
+
+  useEffect(() => {
+    if (!profileMenuOpen) {
+      return;
+    }
+
+    const onPointerDown = (event: MouseEvent) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target as Node)) {
+        setProfileMenuOpen(false);
+      }
+    };
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setProfileMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onEscape);
+
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onEscape);
+    };
+  }, [profileMenuOpen]);
+
+  useEffect(() => {
+    if (profileDialogMode) {
+      return;
+    }
+
+    setProfileDialogStatus("");
+    setProfileDialogBusy(false);
+    setProfilePasswordForm(EMPTY_ACCOUNT_PASSWORD_FORM);
+    setProfileUsernameInput(currentUserDisplayName);
+  }, [currentUserDisplayName, profileDialogMode]);
 
   useEffect(() => {
     if (!presetMenuOpen) return;
@@ -15775,6 +16360,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           backtestTrades,
           baselineMainStatsTrades,
           selectedBacktestDateKey,
+          statsDateStart: appliedBacktestSettings.statsDateStart,
+          statsDateEnd: appliedBacktestSettings.statsDateEnd,
           aiMode: appliedBacktestSettings.aiMode,
           confidenceGateDisabled: appliedConfidenceGateDisabled,
           confidenceResolver: getEffectiveTradeConfidenceScore
@@ -15794,6 +16381,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         aiMode: appliedBacktestSettings.aiMode,
         confidenceGateDisabled: appliedConfidenceGateDisabled,
         selectedBacktestDateKey,
+        statsDateStart: appliedBacktestSettings.statsDateStart,
+        statsDateEnd: appliedBacktestSettings.statsDateEnd,
         performanceStatsModel,
         isCalendarBacktestTabActive,
         isPerformanceStatsBacktestTabActive,
@@ -15817,6 +16406,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             backtestTrades,
             baselineMainStatsTrades,
             selectedBacktestDateKey,
+            statsDateStart: appliedBacktestSettings.statsDateStart,
+            statsDateEnd: appliedBacktestSettings.statsDateEnd,
             aiMode: appliedBacktestSettings.aiMode,
             confidenceGateDisabled: appliedConfidenceGateDisabled,
             confidenceResolver: getEffectiveTradeConfidenceScore
@@ -15830,6 +16421,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [
     appliedBacktestSettings.aiMode,
+    appliedBacktestSettings.statsDateEnd,
+    appliedBacktestSettings.statsDateStart,
     appliedConfidenceGateDisabled,
     baselineMainStatsTrades,
     backtestHasRun,
@@ -19878,7 +20471,67 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   return (
     <main className={`terminal${isGideonSurface ? " terminal-gideon" : ""}`}>
       <div className="surface-strip">
-        <span className="site-tag surface-brand">Korra&apos;s Space</span>
+        <div className="surface-brand profile-menu-wrap" ref={profileMenuRef}>
+          <button
+            type="button"
+            className="profile-avatar-btn"
+            aria-label="Profile menu"
+            onClick={() => setProfileMenuOpen((open) => !open)}
+          >
+            {currentUser.photoURL ? (
+              <span
+                className="profile-avatar-photo"
+                style={{ backgroundImage: `url("${currentUser.photoURL}")` }}
+                aria-hidden
+              />
+            ) : (
+              <span className="profile-avatar-fallback">{currentUserInitials}</span>
+            )}
+          </button>
+
+          {profileMenuOpen ? (
+            <div className="profile-menu-popover">
+              <div className="profile-menu-header">
+                <strong>{currentUserDisplayName}</strong>
+                <span>{currentUser.email ?? "Signed in"}</span>
+              </div>
+              <button
+                type="button"
+                className="profile-menu-item"
+                onClick={() => {
+                  setProfileUsernameInput(currentUserDisplayName);
+                  setProfileDialogStatus("");
+                  setProfileDialogMode("username");
+                  setProfileMenuOpen(false);
+                }}
+              >
+                Change Username
+              </button>
+              <button
+                type="button"
+                className="profile-menu-item"
+                onClick={() => {
+                  setProfilePasswordForm(EMPTY_ACCOUNT_PASSWORD_FORM);
+                  setProfileDialogStatus("");
+                  setProfileDialogMode("password");
+                  setProfileMenuOpen(false);
+                }}
+              >
+                Change Password
+              </button>
+              <button
+                type="button"
+                className="profile-menu-item danger"
+                onClick={() => {
+                  setProfileMenuOpen(false);
+                  void onLogOut();
+                }}
+              >
+                Log Out
+              </button>
+            </div>
+          ) : null}
+        </div>
         <nav className="surface-tabs" aria-label="primary views">
           {surfaceTabs.map((tab) => (
             <button
@@ -24919,6 +25572,150 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           </div>
         )}
         </footer>
+      ) : null}
+
+      {profileDialogMode ? (
+        <div
+          className="profile-dialog-backdrop"
+          role="presentation"
+          onClick={() => setProfileDialogMode(null)}
+        >
+          <div
+            className="profile-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={profileDialogMode === "username" ? "Change username" : "Change password"}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="profile-dialog-header">
+              <strong>
+                {profileDialogMode === "username" ? "Change Username" : "Change Password"}
+              </strong>
+              <button
+                type="button"
+                className="profile-dialog-close"
+                onClick={() => setProfileDialogMode(null)}
+                aria-label="Close profile dialog"
+              >
+                ×
+              </button>
+            </div>
+
+            {profileDialogMode === "username" ? (
+              <>
+                <label className="account-field">
+                  <span>Username</span>
+                  <input
+                    className="account-input"
+                    value={profileUsernameInput}
+                    onChange={(event) => setProfileUsernameInput(event.target.value)}
+                    placeholder="How your profile should appear"
+                    autoFocus
+                    disabled={profileDialogBusy}
+                  />
+                </label>
+                {profileDialogStatus ? (
+                  <div className="account-form-error">{profileDialogStatus}</div>
+                ) : null}
+                <div className="profile-dialog-actions">
+                  <button
+                    type="button"
+                    className="settings-io-btn"
+                    onClick={() => setProfileDialogMode(null)}
+                    disabled={profileDialogBusy}
+                  >
+                    <span className="settings-io-label">Cancel</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="account-submit-btn"
+                    onClick={() => {
+                      void handleSaveProfileUsername();
+                    }}
+                    disabled={profileDialogBusy}
+                  >
+                    {profileDialogBusy ? "Saving..." : "Save Username"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <label className="account-field">
+                  <span>Current Password</span>
+                  <input
+                    className="account-input"
+                    type="password"
+                    value={profilePasswordForm.currentPassword}
+                    onChange={(event) =>
+                      setProfilePasswordForm((current) => ({
+                        ...current,
+                        currentPassword: event.target.value
+                      }))
+                    }
+                    autoFocus
+                    autoComplete="current-password"
+                    disabled={profileDialogBusy}
+                  />
+                </label>
+                <label className="account-field">
+                  <span>New Password</span>
+                  <input
+                    className="account-input"
+                    type="password"
+                    value={profilePasswordForm.newPassword}
+                    onChange={(event) =>
+                      setProfilePasswordForm((current) => ({
+                        ...current,
+                        newPassword: event.target.value
+                      }))
+                    }
+                    autoComplete="new-password"
+                    disabled={profileDialogBusy}
+                  />
+                </label>
+                <label className="account-field">
+                  <span>Confirm Password</span>
+                  <input
+                    className="account-input"
+                    type="password"
+                    value={profilePasswordForm.confirmPassword}
+                    onChange={(event) =>
+                      setProfilePasswordForm((current) => ({
+                        ...current,
+                        confirmPassword: event.target.value
+                      }))
+                    }
+                    autoComplete="new-password"
+                    disabled={profileDialogBusy}
+                  />
+                </label>
+                {profileDialogStatus ? (
+                  <div className="account-form-error">{profileDialogStatus}</div>
+                ) : null}
+                <div className="profile-dialog-actions">
+                  <button
+                    type="button"
+                    className="settings-io-btn"
+                    onClick={() => setProfileDialogMode(null)}
+                    disabled={profileDialogBusy}
+                  >
+                    <span className="settings-io-label">Cancel</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="account-submit-btn"
+                    onClick={() => {
+                      void handleSaveProfilePassword();
+                    }}
+                    disabled={profileDialogBusy}
+                  >
+                    {profileDialogBusy ? "Saving..." : "Save Password"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       ) : null}
 
       {activeBacktestTradeDetails ? (

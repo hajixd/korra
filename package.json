@@ -15,6 +15,7 @@
     "@deck.gl/core": "^9.2.11",
     "@deck.gl/layers": "^9.2.11",
     "@deck.gl/react": "^9.2.11",
+    "firebase": "^12.11.0",
     "lightweight-charts": "^4.2.3",
     "log4js": "^6.9.1",
     "metaapi.cloud-sdk": "^29.3.3",

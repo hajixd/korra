@@ -25257,34 +25257,11 @@ export default function App() {
     const avgPnlPerWeek = totalPnl / (spanDays / 7);
     const avgPnlPerMonth = totalPnl / (spanDays / 30.4375);
 
-    const stdDev = (arr) => {
-      const a = (arr || []).filter((v) => Number.isFinite(v));
-      const n = a.length;
-      if (n <= 1) return 0;
-      const mean = a.reduce((s, v) => s + v, 0) / n;
-      let varSum = 0;
-      for (const v of a) varSum += (v - mean) * (v - mean);
-      return Math.sqrt(varSum / (n - 1));
-    };
-
-    // Consistency (0..100): higher % = less variability.
-    // We use coefficient-of-variation style scaling: pct = 100 / (1 + (std / meanAbs)).
-    const meanAbs = (arr) => {
-      const a = (arr || []).filter((v) => Number.isFinite(v));
-      const n = a.length;
-      if (n === 0) return 0;
-      let s = 0;
-      for (const v of a) s += Math.abs(v);
-      return s / n;
-    };
     const consistencyPct = (arr) => {
       const a = (arr || []).filter((v) => Number.isFinite(v));
-      const sd = stdDev(a);
-      if (!Number.isFinite(sd) || sd <= 1e-8) return 100;
-      const ma = meanAbs(a);
-      if (!Number.isFinite(ma) || ma <= 1e-8) return 0;
-      const cv = sd / ma;
-      return clamp(100 / (1 + cv), 0, 100);
+      if (a.length === 0) return 0;
+      const positiveBuckets = a.filter((value) => value > 0).length;
+      return clamp((positiveBuckets / a.length) * 100, 0, 100);
     };
     const pnlPerTrade = closed
       .map((t) => Number(t.pnl ?? 0))
