@@ -1,16 +1,9 @@
 import { NextResponse } from "next/server";
 import {
-  computeEntryExitChartData,
-  computeEntryExitStats,
-  computePerformanceStatsTemporalCharts,
-  EMPTY_PERFORMANCE_STATS_TEMPORAL_CHARTS,
   getTradeDayKey,
   getTradeMonthKey,
   getTradeWeekKey,
-  summarizeBacktestTrades,
-  type EntryExitChartRow,
-  type EntryExitStats,
-  type PerformanceStatsTemporalCharts
+  summarizeBacktestTrades
 } from "../../../../lib/backtestStats";
 
 export const runtime = "nodejs";
@@ -138,6 +131,20 @@ type BacktestSummaryStats = {
   worstDay: { key: string; count: number; pnl: number } | null;
 };
 
+type TemporalChartRow = {
+  bucket: string;
+  pnl: number;
+  count: number;
+};
+
+type PerformanceStatsTemporalCharts = {
+  hours: TemporalChartRow[];
+  weekday: TemporalChartRow[];
+  month: TemporalChartRow[];
+  year: TemporalChartRow[];
+  hasData: boolean;
+};
+
 type CalendarActivityEntry = {
   count: number;
   wins: number;
@@ -159,10 +166,13 @@ type BacktestAnalyticsResponseBody = {
   selectedBacktestDayTrades: HistoryItem[];
   performanceStatsModelOptions: string[];
   performanceStatsTemporalCharts: PerformanceStatsTemporalCharts;
-  entryExitStats: EntryExitStats;
+  entryExitStats: {
+    entry: Array<[string, number]>;
+    exit: Array<[string, number]>;
+  };
   entryExitChartData: {
-    entry: EntryExitChartRow[];
-    exit: EntryExitChartRow[];
+    entry: Array<{ bucket: string; count: number; share: number }>;
+    exit: Array<{ bucket: string; count: number; share: number }>;
   };
   backtestClusterData: {
     total: number;
@@ -177,7 +187,26 @@ type BacktestAnalyticsResponseBody = {
   };
 };
 
+const backtestWeekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const backtestSessionLabels = ["Tokyo", "London", "New York", "Sydney"] as const;
+const backtestMonthLabels = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec"
+] as const;
+const backtestHourLabels = Array.from(
+  { length: 24 },
+  (_, hour) => `${String(hour).padStart(2, "0")}:00`
+);
 
 const BACKTEST_CLUSTER_META: Record<
   BacktestClusterGroupId,
@@ -655,6 +684,118 @@ const computeMainStatsAiEfficiency = (
   return clamp(auc, 0, 1);
 };
 
+const computePerformanceStatsTemporalCharts = (
+  trades: HistoryItem[],
+  performanceStatsModel: string,
+  enabled: boolean
+): { modelOptions: string[]; charts: PerformanceStatsTemporalCharts } => {
+  if (!enabled) {
+    return {
+      modelOptions: ["All"],
+      charts: {
+        hours: [],
+        weekday: [],
+        month: [],
+        year: [],
+        hasData: false
+      }
+    };
+  }
+
+  const models = Array.from(
+    new Set(
+      trades
+        .map((trade) => trade.entrySource.trim())
+        .filter((name) => name.length > 0)
+    )
+  );
+
+  const modelOptions = ["All", ...models];
+
+  const modelTrades = trades.filter((trade) => {
+    const modelName = trade.entrySource.trim();
+
+    if (!modelName) {
+      return false;
+    }
+
+    if (performanceStatsModel === "All") {
+      return true;
+    }
+
+    return modelName === performanceStatsModel;
+  });
+
+  const buildSeries = (range: "hours" | "weekday" | "month" | "year") => {
+    const buckets = new Map<string, { pnl: number; count: number }>();
+
+    for (const trade of modelTrades) {
+      const timestampSeconds = Number(trade.entryTime ?? trade.exitTime);
+
+      if (!Number.isFinite(timestampSeconds)) {
+        continue;
+      }
+
+      const date = new Date(timestampSeconds * 1000);
+      let key = "";
+
+      if (range === "hours") {
+        key = backtestHourLabels[date.getUTCHours()] ?? String(date.getUTCHours());
+      } else if (range === "weekday") {
+        key = backtestWeekdayLabels[date.getUTCDay()] ?? String(date.getUTCDay());
+      } else if (range === "month") {
+        key = backtestMonthLabels[date.getUTCMonth()] ?? String(date.getUTCMonth() + 1);
+      } else {
+        key = String(date.getUTCFullYear());
+      }
+
+      const current = buckets.get(key) ?? { pnl: 0, count: 0 };
+      buckets.set(key, {
+        pnl: current.pnl + trade.pnlUsd,
+        count: current.count + 1
+      });
+    }
+
+    let orderedBuckets: string[] = [];
+
+    if (range === "hours") {
+      orderedBuckets = [...backtestHourLabels];
+    } else if (range === "weekday") {
+      orderedBuckets = [...backtestWeekdayLabels];
+    } else if (range === "month") {
+      orderedBuckets = [...backtestMonthLabels];
+    } else {
+      orderedBuckets = Array.from(buckets.keys())
+        .map((bucket) => Number(bucket))
+        .filter((value) => Number.isFinite(value))
+        .sort((left, right) => left - right)
+        .map((value) => String(value));
+    }
+
+    return orderedBuckets.map((bucket) => {
+      const record = buckets.get(bucket) ?? { pnl: 0, count: 0 };
+      return {
+        bucket,
+        pnl: Number(record.pnl.toFixed(2)),
+        count: record.count
+      };
+    });
+  };
+
+  const hours = buildSeries("hours");
+  const weekday = buildSeries("weekday");
+  const month = buildSeries("month");
+  const year = buildSeries("year");
+  const hasData = [hours, weekday, month, year].some((series) =>
+    series.some((row) => row.count > 0)
+  );
+
+  return {
+    modelOptions,
+    charts: { hours, weekday, month, year, hasData }
+  };
+};
+
 const computeBacktestClusterData = (
   trades: HistoryItem[],
   confidenceResolver: (trade: HistoryItem) => number,
@@ -753,6 +894,56 @@ const computeBacktestClusterData = (
   };
 };
 
+const computeEntryExitStats = (
+  trades: HistoryItem[],
+  enabled: boolean
+): { entry: Array<[string, number]>; exit: Array<[string, number]> } => {
+  if (!enabled) {
+    return {
+      entry: [],
+      exit: []
+    };
+  }
+
+  const entryCounts: Record<string, number> = {};
+  const exitCounts: Record<string, number> = {};
+
+  for (const trade of trades) {
+    const entryKey = trade.entrySource || "Unknown";
+    const exitKey = trade.exitReason || "None";
+    entryCounts[entryKey] = (entryCounts[entryKey] ?? 0) + 1;
+    exitCounts[exitKey] = (exitCounts[exitKey] ?? 0) + 1;
+  }
+
+  const toSorted = (counts: Record<string, number>) => {
+    return Object.entries(counts).sort((left, right) => right[1] - left[1]);
+  };
+
+  return {
+    entry: toSorted(entryCounts),
+    exit: toSorted(exitCounts)
+  };
+};
+
+const computeEntryExitChartData = (entryExitStats: {
+  entry: Array<[string, number]>;
+  exit: Array<[string, number]>;
+}) => {
+  const toRows = (source: Array<[string, number]>) => {
+    const total = source.reduce((sum, [, count]) => sum + count, 0);
+    return source.map(([bucket, count]) => ({
+      bucket,
+      count,
+      share: total > 0 ? (count / total) * 100 : 0
+    }));
+  };
+
+  return {
+    entry: toRows(entryExitStats.entry),
+    exit: toRows(entryExitStats.exit)
+  };
+};
+
 const buildCalendarData = (
   trades: HistoryItem[],
   selectedBacktestDateKey: string,
@@ -817,7 +1008,13 @@ const emptyResponse = (): BacktestAnalyticsResponseBody => ({
   calendarActivityEntries: [],
   selectedBacktestDayTrades: [],
   performanceStatsModelOptions: ["All"],
-  performanceStatsTemporalCharts: { ...EMPTY_PERFORMANCE_STATS_TEMPORAL_CHARTS },
+  performanceStatsTemporalCharts: {
+    hours: [],
+    weekday: [],
+    month: [],
+    year: [],
+    hasData: false
+  },
   entryExitStats: {
     entry: [],
     exit: []

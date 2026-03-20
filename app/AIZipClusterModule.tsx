@@ -7462,7 +7462,7 @@ function drawClusterMapCanvas(
         outlineBase * (Number(nodeOutlineMul) || 1) * focusOutlineMul * dimOutlineMul;
       const strokeWidth =
         isLib && !isSearch
-          ? Math.max(0.22, strokeWidthBase * (isHovered ? 0.14 : 0.1))
+          ? Math.max(0.55, strokeWidthBase * (isHovered ? 0.42 : 0.32))
           : strokeWidthBase;
       ctx.lineWidth = strokeWidth;
       ctx.beginPath();
@@ -7688,7 +7688,6 @@ function ClusterMapViewport3D({
   knnLinkOpacity = 0.34,
   mapSpreadMul,
   onSelectId,
-  onRenderReady,
   onSelectionIdsChange,
   selectionClearNonce,
 }: {
@@ -7714,11 +7713,6 @@ function ClusterMapViewport3D({
   knnLinkOpacity?: number;
   mapSpreadMul: number;
   onSelectId: (id: string | null) => void;
-  onRenderReady?: (payload?: {
-    view: "3d";
-    nodeCount: number;
-    renderedAt: number;
-  }) => void;
   onSelectionIdsChange?: (ids: string[]) => void;
   selectionClearNonce?: number;
 }) {
@@ -8462,7 +8456,7 @@ function ClusterMapViewport3D({
     const sizeMul = Math.max(0.25, Math.min(4, Number(nodeSizeMul) || 1));
     const outlineMul = Math.max(0.25, Math.min(4, Number(nodeOutlineMul) || 1));
     const outlineScaleMul = 1 + 0.12 * outlineMul;
-    const libraryOutlineScaleMul = 1 + 0.015 * outlineMul;
+    const libraryOutlineScaleMul = 1 + 0.04 * outlineMul;
     const selectedSet = selectedIdsRef.current;
 
     for (let i = 0; i < rawPts.length; i++) {
@@ -9416,45 +9410,6 @@ function ClusterMapViewport3D({
     requestRender,
   ]);
 
-  useEffect(() => {
-    if (!runtimeReady || runtimeError || typeof onRenderReady !== "function") {
-      return;
-    }
-
-    if (!rendererRef.current || !canvasRef.current) {
-      return;
-    }
-
-    let cancelled = false;
-    let outerRaf = 0;
-    let innerRaf = 0;
-
-    requestRender();
-    outerRaf = window.requestAnimationFrame(() => {
-      innerRaf = window.requestAnimationFrame(() => {
-        if (cancelled) {
-          return;
-        }
-
-        onRenderReady({
-          view: "3d",
-          nodeCount: Array.isArray(nodes) ? nodes.length : 0,
-          renderedAt: Date.now(),
-        });
-      });
-    });
-
-    return () => {
-      cancelled = true;
-      if (outerRaf) {
-        window.cancelAnimationFrame(outerRaf);
-      }
-      if (innerRaf) {
-        window.cancelAnimationFrame(innerRaf);
-      }
-    };
-  }, [nodes, onRenderReady, requestRender, runtimeError, runtimeReady]);
-
   return (
     <div style={{ position: "absolute", inset: 0 }}>
       <canvas
@@ -9703,7 +9658,6 @@ function ClusterMapInner({
   onPostHocTrades,
   onPostHocProgress,
   onMitMap,
-  onRenderReady,
   aiMethod,
   aiDomains,
   knnVoteMode = "majority",
@@ -15140,21 +15094,8 @@ function ClusterMapInner({
         : [];
       if (!memberNodes.length) return [];
 
-      const stableNodeKey = (node: any) =>
-        String(
-          (node as any)?.uid ??
-            (node as any)?.tradeUid ??
-            (node as any)?.tradeId ??
-            (node as any)?.id ??
-            (node as any)?.metaOrigUid ??
-            (node as any)?.metaOrigId ??
-            (node as any)?.metaUid ??
-            (node as any)?.metaTradeUid ??
-            ""
-        ).trim();
       const focusKey = focusNode
-        ? stableNodeKey(focusNode) ||
-          String((focusNode as any)?.id ?? "").trim()
+        ? tradeKey(focusNode) || String((focusNode as any)?.id ?? "").trim()
         : "";
       const focusId = String((focusNode as any)?.id ?? "").trim();
       const rows: any[] = [];
@@ -15162,8 +15103,7 @@ function ClusterMapInner({
 
       for (const node of memberNodes) {
         if (!node) continue;
-        const stableKey =
-          stableNodeKey(node) || String((node as any)?.id ?? "").trim();
+        const stableKey = tradeKey(node) || String((node as any)?.id ?? "").trim();
         if (!stableKey || seen.has(stableKey)) continue;
         seen.add(stableKey);
 
@@ -16044,45 +15984,6 @@ function ClusterMapInner({
     mapSpreadMul,
     drawRenderOpts,
   ]);
-
-  useEffect(() => {
-    if (headless || is3dMapActive || typeof onRenderReady !== "function") {
-      return;
-    }
-
-    if (!canvasRef.current) {
-      return;
-    }
-
-    let cancelled = false;
-    let outerRaf = 0;
-    let innerRaf = 0;
-
-    outerRaf = window.requestAnimationFrame(() => {
-      innerRaf = window.requestAnimationFrame(() => {
-        if (cancelled) {
-          return;
-        }
-
-        onRenderReady({
-          view: "2d",
-          nodeCount: Array.isArray(displayNodes) ? displayNodes.length : 0,
-          tradeCount: Array.isArray(postHocTrades) ? postHocTrades.length : 0,
-          renderedAt: Date.now(),
-        });
-      });
-    });
-
-    return () => {
-      cancelled = true;
-      if (outerRaf) {
-        window.cancelAnimationFrame(outerRaf);
-      }
-      if (innerRaf) {
-        window.cancelAnimationFrame(innerRaf);
-      }
-    };
-  }, [displayNodes, headless, is3dMapActive, onRenderReady, postHocTrades]);
   useEffect(() => {
     if (is3dMapActive) return;
     const canvas = canvasRef.current;
@@ -18181,7 +18082,6 @@ function ClusterMapInner({
             knnLinkOpacity={knnLinkOpacity}
             mapSpreadMul={mapSpreadMul}
             onSelectId={handle3dSelectId}
-            onRenderReady={onRenderReady}
             onSelectionIdsChange={handle3dSelectionIds}
             selectionClearNonce={selectionClearNonce3d}
           />
