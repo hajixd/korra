@@ -442,22 +442,25 @@ button {
 }
 
 .profile-avatar-btn {
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
   border: 1px solid #273247;
-  border-radius: 999px;
-  background: linear-gradient(180deg, #162137 0%, #0e1523 100%);
-  color: #f0f5ff;
+  border-radius: 4px;
+  background: #101726;
+  color: #c4cee2;
   display: grid;
   place-items: center;
   padding: 0;
   cursor: pointer;
   overflow: hidden;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 
 .profile-avatar-btn:hover {
-  background: linear-gradient(180deg, #1a2944 0%, #111b2d 100%);
+  background: #162137;
+  border-color: #355489;
+  color: #dce5f6;
 }
 
 .profile-avatar-photo {
@@ -469,7 +472,7 @@ button {
 }
 
 .profile-avatar-fallback {
-  font-size: 0.62rem;
+  font-size: 0.55rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
   letter-spacing: 0.04em;
   font-weight: 600;
@@ -584,6 +587,13 @@ button {
   display: flex;
   justify-content: flex-end;
   gap: 0.55rem;
+}
+
+.profile-save-btn {
+  min-width: 168px;
+  height: 28px;
+  padding: 0 1rem;
+  justify-content: center;
 }
 
 .top-utility {
@@ -7193,11 +7203,10 @@ button {
   }
 
   .profile-dialog-actions {
-    flex-direction: column-reverse;
+    justify-content: stretch;
   }
 
-  .profile-dialog-actions .settings-io-btn,
-  .profile-dialog-actions .account-submit-btn {
+  .profile-dialog-actions .profile-save-btn {
     width: 100%;
   }
 

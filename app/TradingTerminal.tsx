@@ -25678,21 +25678,15 @@ function TradingTerminalWorkspace({
                 <div className="profile-dialog-actions">
                   <button
                     type="button"
-                    className="settings-io-btn"
-                    onClick={() => setProfileDialogMode(null)}
-                    disabled={profileDialogBusy}
-                  >
-                    <span className="settings-io-label">Cancel</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="account-submit-btn"
+                    className="settings-io-btn profile-save-btn"
                     onClick={() => {
                       void handleSaveProfileUsername();
                     }}
                     disabled={profileDialogBusy}
                   >
-                    {profileDialogBusy ? "Saving..." : "Save Username"}
+                    <span className="settings-io-label">
+                      {profileDialogBusy ? "Saving..." : "Save Username"}
+                    </span>
                   </button>
                 </div>
               </>
@@ -25737,21 +25731,15 @@ function TradingTerminalWorkspace({
                 <div className="profile-dialog-actions">
                   <button
                     type="button"
-                    className="settings-io-btn"
-                    onClick={() => setProfileDialogMode(null)}
-                    disabled={profileDialogBusy}
-                  >
-                    <span className="settings-io-label">Cancel</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="account-submit-btn"
+                    className="settings-io-btn profile-save-btn"
                     onClick={() => {
                       void handleSaveProfilePassword();
                     }}
                     disabled={profileDialogBusy}
                   >
-                    {profileDialogBusy ? "Saving..." : "Save Password"}
+                    <span className="settings-io-label">
+                      {profileDialogBusy ? "Saving..." : "Save Password"}
+                    </span>
                   </button>
                 </div>
               </>
