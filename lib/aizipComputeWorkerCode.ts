@@ -117,9 +117,9 @@ export const AIZIP_COMPUTE_WORKER_CODE = String.raw`
   let AI_METHOD = "knn"; // "off" | "knn" | "hdbscan"
 
 // HDBSCAN settings (density clustering)
-let HDB_MIN_CLUSTER_SIZE = 40;
-let HDB_MIN_SAMPLES = 12;
-let HDB_EPS_QUANTILE = 0.85;
+let HDB_MIN_CLUSTER_SIZE = 5;
+let HDB_MIN_SAMPLES = 5;
+let HDB_EPS_QUANTILE = 0.5;
 let HDB_SAMPLE_CAP = 3000;
 
 // HDBSCAN domain distinction
@@ -2774,9 +2774,9 @@ const _nA = candles.length;
     const am = settings.aiMethod;
     AI_METHOD = am === "hdbscan" ? "hdbscan" : am === "knn" ? "knn" : "off";
 
-    HDB_MIN_CLUSTER_SIZE = clampInt(Number(settings.hdbMinClusterSize || 0) || 40, 5, 5000);
-    HDB_MIN_SAMPLES = clampInt(Number(settings.hdbMinSamples || 0) || 12, 2, 200);
-    HDB_EPS_QUANTILE = clamp(Number(settings.hdbEpsQuantile || 0) || 0.85, 0.5, 0.99);
+    HDB_MIN_CLUSTER_SIZE = clampInt(Number(settings.hdbMinClusterSize || 0) || 5, 5, 5000);
+    HDB_MIN_SAMPLES = clampInt(Number(settings.hdbMinSamples || 0) || 5, 2, 200);
+    HDB_EPS_QUANTILE = clamp(Number(settings.hdbEpsQuantile || 0) || 0.5, 0.5, 0.99);
     HDB_SAMPLE_CAP = clampInt(Number(settings.hdbSampleCap || 0) || 3000, 200, 200000);
     HDB_DOMAIN_DISTINCTION =
       settings.hdbDomainDistinction === "conceptual" ? "conceptual" : "real";

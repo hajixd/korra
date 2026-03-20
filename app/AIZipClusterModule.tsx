@@ -5889,12 +5889,13 @@ function resolvePrimaryNeighborRawId(src: any): string | null {
 
 // Deterministic color for libraries / overlays (used by canvas + legends).
 // Kept in the outer scope so helper functions like drawClusterMapCanvas can call it safely.
+// The legend is the source of truth for library hues, so map nodes reuse the same swatch.
 function colorForLibrary(key: string) {
   const k = String(key ?? "");
   if (k.toLowerCase() === "suppressed") return "rgba(140,140,140,1)";
-  const hue = Math.floor(stableHashToUnit("libColor:" + String(key)) * 360);
+  const hue = Math.floor(stableHashToUnit("libLegend:" + String(key)) * 360);
   // Slightly translucent so it layers nicely over the map.
-  return `hsla(${hue}, 92%, 62%, 0.98)`;
+  return `hsla(${hue}, 92%, 64%, 0.98)`;
 }
 
 // Utility: force a CSS color string to a specific alpha (supports rgba()/rgb() and hsla()/hsl()).
@@ -6983,7 +6984,7 @@ function drawClusterMapCanvas(
     };
     const selectedIsBaseLibrary =
       selectedNodeObj != null && isBaseLibraryNode(selectedNodeObj);
-    const knnLinksVisible = knnLinkOpacity > 0;
+    const knnLinksVisible = aiMethod2d !== "hdbscan" && knnLinkOpacity > 0;
     const selectionFocusActive = selectedNodeId != null;
     const knnFocusActive = knnLinksVisible && selectedNodeId != null;
 
@@ -7457,8 +7458,12 @@ function drawClusterMapCanvas(
       const focusOutlineMul =
         isSelectedNode ? 1.15 : isKnnNeighbor ? 1.1 : isHdbFocused ? 1.08 : 1;
       const dimOutlineMul = dimNode ? 0.82 : 1;
-      const strokeWidth =
+      const strokeWidthBase =
         outlineBase * (Number(nodeOutlineMul) || 1) * focusOutlineMul * dimOutlineMul;
+      const strokeWidth =
+        isLib && !isSearch
+          ? Math.max(0.55, strokeWidthBase * (isHovered ? 0.42 : 0.32))
+          : strokeWidthBase;
       ctx.lineWidth = strokeWidth;
       ctx.beginPath();
       ctx.arc(sx, sy, baseRadius, 0, Math.PI * 2);
@@ -7471,8 +7476,8 @@ function drawClusterMapCanvas(
         ctx.arc(sx, sy, Math.max(2.2, baseRadius * 0.34), 0, Math.PI * 2);
         ctx.fillStyle = libraryOutcomeColor;
         ctx.fill();
-        ctx.lineWidth = Math.max(1.2, strokeWidth * 0.42);
-        ctx.strokeStyle = "rgba(255,255,255,0.92)";
+        ctx.lineWidth = Math.max(0.32, strokeWidth * 0.22);
+        ctx.strokeStyle = outline;
         ctx.stroke();
       }
       if (dimNode) {
@@ -7662,6 +7667,7 @@ function drawClusterMapCanvas(
 
 function ClusterMapViewport3D({
   nodes,
+  aiMethod,
   knnEdgeNodes,
   knnAllowLegacyFallback = true,
   selectedId,
@@ -7682,10 +7688,12 @@ function ClusterMapViewport3D({
   knnLinkOpacity = 0.34,
   mapSpreadMul,
   onSelectId,
+  onRenderReady,
   onSelectionIdsChange,
   selectionClearNonce,
 }: {
   nodes: any[];
+  aiMethod: "off" | "knn" | "hdbscan";
   knnEdgeNodes?: any[];
   knnAllowLegacyFallback?: boolean;
   selectedId: string | null;
@@ -7706,6 +7714,11 @@ function ClusterMapViewport3D({
   knnLinkOpacity?: number;
   mapSpreadMul: number;
   onSelectId: (id: string | null) => void;
+  onRenderReady?: (payload?: {
+    view: "3d";
+    nodeCount: number;
+    renderedAt: number;
+  }) => void;
   onSelectionIdsChange?: (ids: string[]) => void;
   selectionClearNonce?: number;
 }) {
@@ -8449,6 +8462,7 @@ function ClusterMapViewport3D({
     const sizeMul = Math.max(0.25, Math.min(4, Number(nodeSizeMul) || 1));
     const outlineMul = Math.max(0.25, Math.min(4, Number(nodeOutlineMul) || 1));
     const outlineScaleMul = 1 + 0.12 * outlineMul;
+    const libraryOutlineScaleMul = 1 + 0.04 * outlineMul;
     const selectedSet = selectedIdsRef.current;
 
     for (let i = 0; i < rawPts.length; i++) {
@@ -8486,15 +8500,15 @@ function ClusterMapViewport3D({
         selectedSet.has(id);
       const r = isHighlighted ? baseR * 1.42 : baseR;
 
-      tmpObj.position.set(x, y, z);
-      tmpObj.scale.setScalar(r * outlineScaleMul);
-      tmpObj.updateMatrix();
-      instOutlineNow.setMatrixAt(i, tmpObj.matrix);
       const dir = Number((n as any)?.dir ?? (n as any)?.direction ?? 0);
       const isLib =
         String((n as any)?.kind || "").toLowerCase() === "library" ||
         (n as any)?.libId != null ||
         String((n as any)?.id || "").startsWith("lib|");
+      tmpObj.position.set(x, y, z);
+      tmpObj.scale.setScalar(r * (isLib ? libraryOutlineScaleMul : outlineScaleMul));
+      tmpObj.updateMatrix();
+      instOutlineNow.setMatrixAt(i, tmpObj.matrix);
       let outlineHex = isHighlighted ? 0xffffff : 0x9ca3af;
       if (!isHighlighted && isLib && THREE) {
         const libKey = String(
@@ -8573,16 +8587,18 @@ function ClusterMapViewport3D({
     clearLayer(heatLayer);
 
     const heatOn = !!heatmapOn;
+    const knnLinksEnabled = String(aiMethod ?? "").toLowerCase() !== "hdbscan";
     const knnKInt = Math.max(0, Math.min(36, Math.floor(Number(knnLinkK) || 0)));
     const knnAlpha = Math.max(0, Math.min(1, Number(knnLinkOpacity ?? 0.34)));
     instNow.visible = !heatOn;
     instOutlineNow.visible = !heatOn;
     if (overlayLayer) overlayLayer.visible = !heatOn;
-    if (knnLayer) knnLayer.visible = !heatOn;
+    if (knnLayer) knnLayer.visible = !heatOn && knnLinksEnabled;
     if (heatLayer) heatLayer.visible = heatOn;
 
     if (
       !heatOn &&
+      knnLinksEnabled &&
       knnLayer &&
       knnKInt > 0 &&
       knnAlpha > 0 &&
@@ -9387,6 +9403,7 @@ function ClusterMapViewport3D({
     knnLinkK,
     knnLinkOpacity,
     knnAllowLegacyFallback,
+    aiMethod,
     knnEdgeNodes,
     mapSpreadMul,
     hdbOverlay,
@@ -9398,6 +9415,45 @@ function ClusterMapViewport3D({
     onSelectionIdsChange,
     requestRender,
   ]);
+
+  useEffect(() => {
+    if (!runtimeReady || runtimeError || typeof onRenderReady !== "function") {
+      return;
+    }
+
+    if (!rendererRef.current || !canvasRef.current) {
+      return;
+    }
+
+    let cancelled = false;
+    let outerRaf = 0;
+    let innerRaf = 0;
+
+    requestRender();
+    outerRaf = window.requestAnimationFrame(() => {
+      innerRaf = window.requestAnimationFrame(() => {
+        if (cancelled) {
+          return;
+        }
+
+        onRenderReady({
+          view: "3d",
+          nodeCount: Array.isArray(nodes) ? nodes.length : 0,
+          renderedAt: Date.now(),
+        });
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      if (outerRaf) {
+        window.cancelAnimationFrame(outerRaf);
+      }
+      if (innerRaf) {
+        window.cancelAnimationFrame(innerRaf);
+      }
+    };
+  }, [nodes, onRenderReady, requestRender, runtimeError, runtimeReady]);
 
   return (
     <div style={{ position: "absolute", inset: 0 }}>
@@ -9647,6 +9703,7 @@ function ClusterMapInner({
   onPostHocTrades,
   onPostHocProgress,
   onMitMap,
+  onRenderReady,
   aiMethod,
   aiDomains,
   knnVoteMode = "majority",
@@ -11937,7 +11994,7 @@ function ClusterMapInner({
     const N = pts.length;
     if (N < 10) return null;
 
-    const minSamples = Math.max(2, Math.min(200, Number(hdbMinSamples || 12)));
+    const minSamples = Math.max(2, Math.min(200, Number(hdbMinSamples || 5)));
     const coreCap = 1400;
     let sampleIndices: number[] = [];
     if (N > coreCap) {
@@ -11975,7 +12032,7 @@ function ClusterMapInner({
 
     let eps = quantile1D(
       coreD,
-      Math.max(0.5, Math.min(0.99, Number(hdbEpsQuantile || 0.85)))
+      Math.max(0.5, Math.min(0.99, Number(hdbEpsQuantile || 0.5)))
     );
     if (!Number.isFinite(eps) || eps <= 0) eps = quantile1D(coreD, 0.75) || 1;
 
@@ -12078,7 +12135,7 @@ function ClusterMapInner({
     for (const cid of labels) if (cid >= 0) counts0[cid] += 1;
     const minClusterSize = Math.max(
       5,
-      Math.min(5000, Number(hdbMinClusterSize || 40))
+      Math.min(5000, Number(hdbMinClusterSize || 5))
     );
     for (let i = 0; i < labels.length; i++) {
       const cid = labels[i]!;
@@ -15049,6 +15106,165 @@ function ClusterMapInner({
     [buildNeighborListForNode, selectedAiSnapshotSource]
   );
 
+  const hdbClustersById = useMemo(() => {
+    const out = new Map<number, any>();
+    const clusters: any[] = ((hdbOverlay as any)?.clusters as any[]) || [];
+    for (const cluster of clusters) {
+      const cid = Number((cluster as any)?.id);
+      if (!Number.isFinite(cid)) continue;
+      out.set(cid, cluster);
+    }
+    return out;
+  }, [hdbOverlay]);
+
+  const selectedHdbClusterInfo = useMemo(
+    () => (aiMethod === "hdbscan" ? hdbClusterInfoForNode(selectedNode) : null),
+    [aiMethod, hdbClusterInfoForNode, selectedNode]
+  );
+
+  const selectedHdbCluster = useMemo(() => {
+    const cid = Number((selectedHdbClusterInfo as any)?.clusterId);
+    return Number.isFinite(cid) ? hdbClustersById.get(cid) ?? null : null;
+  }, [hdbClustersById, selectedHdbClusterInfo]);
+
+  const currentHdbCluster = useMemo(() => {
+    if (aiMethod !== "hdbscan") return null;
+    const cid = Number((currentGroupHit as any)?.id);
+    return Number.isFinite(cid) ? hdbClustersById.get(cid) ?? null : null;
+  }, [aiMethod, currentGroupHit, hdbClustersById]);
+
+  const buildHdbGroupMemberList = React.useCallback(
+    (cluster: any, focusNode?: any) => {
+      const memberNodes = Array.isArray((cluster as any)?.memberNodes)
+        ? ((cluster as any).memberNodes as any[])
+        : [];
+      if (!memberNodes.length) return [];
+
+      const stableNodeKey = (node: any) =>
+        String(
+          (node as any)?.uid ??
+            (node as any)?.tradeUid ??
+            (node as any)?.tradeId ??
+            (node as any)?.id ??
+            (node as any)?.metaOrigUid ??
+            (node as any)?.metaOrigId ??
+            (node as any)?.metaUid ??
+            (node as any)?.metaTradeUid ??
+            ""
+        ).trim();
+      const focusKey = focusNode
+        ? stableNodeKey(focusNode) ||
+          String((focusNode as any)?.id ?? "").trim()
+        : "";
+      const focusId = String((focusNode as any)?.id ?? "").trim();
+      const rows: any[] = [];
+      const seen = new Set<string>();
+
+      for (const node of memberNodes) {
+        if (!node) continue;
+        const stableKey =
+          stableNodeKey(node) || String((node as any)?.id ?? "").trim();
+        if (!stableKey || seen.has(stableKey)) continue;
+        seen.add(stableKey);
+
+        const kind = String((node as any)?.kind || "").toLowerCase();
+        const isSuppressed =
+          kind === "library" &&
+          (!!(node as any)?.suppressed ||
+            !!(node as any)?.metaSuppressed ||
+            String(
+              (node as any)?.libId ??
+                (node as any)?.metaLib ??
+                (node as any)?.library ??
+                (node as any)?.metaLibrary ??
+                ""
+            )
+              .toLowerCase()
+              .trim() === "suppressed");
+        const dir = Number((node as any)?.dir ?? (node as any)?.direction ?? 0);
+        const pnlRaw =
+          typeof (node as any)?.unrealizedPnl === "number" &&
+          Number.isFinite((node as any)?.unrealizedPnl)
+            ? Number((node as any).unrealizedPnl)
+            : typeof (node as any)?.pnl === "number" &&
+              Number.isFinite((node as any)?.pnl)
+            ? Number((node as any).pnl)
+            : typeof (node as any)?.closePnl === "number" &&
+              Number.isFinite((node as any)?.closePnl)
+            ? Number((node as any).closePnl)
+            : null;
+        const sortIndex = Number(
+          (node as any)?.entryIndex ??
+            (node as any)?.signalIndex ??
+            (node as any)?.exitIndex ??
+            NaN
+        );
+
+        rows.push({
+          key: stableKey,
+          displayId: displayIdForNode(node),
+          dirLabel: dir === 1 ? "LONG" : dir === -1 ? "SHORT" : "",
+          kindLabel:
+            kind === "trade"
+              ? "Trade"
+              : isSuppressed
+              ? "Suppressed"
+              : kind === "library"
+              ? "Library"
+              : kind
+              ? `${kind.slice(0, 1).toUpperCase()}${kind.slice(1)}`
+              : "Node",
+          timeLabel: (() => {
+            const raw =
+              (node as any)?.entryTime ??
+              (node as any)?.metaTime ??
+              (node as any)?.time ??
+              null;
+            return raw ? formatDateTime(raw, parseMode) : "";
+          })(),
+          sessionLabel: normalizeLabel(
+            (node as any)?.session ?? (node as any)?.metaSession
+          ),
+          pnlLabel: pnlRaw == null ? "" : fmtUSD(pnlRaw),
+          tone:
+            pnlRaw == null
+              ? "neutral"
+              : pnlRaw >= 0
+              ? "green"
+              : "red",
+          sortIndex,
+          isFocus:
+            !!focusNode &&
+            (stableKey === focusKey ||
+              String((node as any)?.id ?? "").trim() === focusId),
+        });
+      }
+
+      rows.sort((a, b) => {
+        if (!!a.isFocus !== !!b.isFocus) return a.isFocus ? -1 : 1;
+        const aIdx = Number(a.sortIndex);
+        const bIdx = Number(b.sortIndex);
+        if (Number.isFinite(aIdx) && Number.isFinite(bIdx) && aIdx !== bIdx) {
+          return bIdx - aIdx;
+        }
+        return String(a.displayId || "").localeCompare(String(b.displayId || ""));
+      });
+
+      return rows;
+    },
+    [parseMode]
+  );
+
+  const selectedHdbGroupMembers = useMemo(
+    () => buildHdbGroupMemberList(selectedHdbCluster, selectedNode),
+    [buildHdbGroupMemberList, selectedHdbCluster, selectedNode]
+  );
+
+  const currentHdbGroupMembers = useMemo(
+    () => buildHdbGroupMemberList(currentHdbCluster),
+    [buildHdbGroupMemberList, currentHdbCluster]
+  );
+
   const resolveNonHdbConfidence = React.useCallback(
     (node: any) => {
       if (!node) return null;
@@ -15071,6 +15287,157 @@ function ClusterMapInner({
     },
     []
   );
+
+  const renderHdbGroupMemberList = (
+    rows: any[],
+    emptyLabel: string,
+    maxHeight = 180
+  ) => (
+    <div
+      style={{
+        marginTop: 6,
+        maxHeight,
+        overflowY: "auto",
+        overscrollBehavior: "contain",
+        borderRadius: 10,
+        border: "1px solid rgba(255,255,255,0.10)",
+        background: "rgba(0,0,0,0.20)",
+        padding: 6,
+      }}
+    >
+      {rows && rows.length ? (
+        <div style={{ display: "grid", gap: 6 }}>
+          {rows.map((row, idx) => {
+            const focusBorder = "1px solid rgba(120,190,255,0.38)";
+            const greenBorder = "1px solid rgba(60,220,120,0.35)";
+            const redBorder = "1px solid rgba(230,80,80,0.35)";
+            const neutralBorder = "1px solid rgba(255,255,255,0.08)";
+            const focusBg = "rgba(90,170,255,0.16)";
+            const greenBg = "rgba(60,220,120,0.12)";
+            const redBg = "rgba(230,80,80,0.12)";
+            const neutralBg = "rgba(255,255,255,0.03)";
+            return (
+              <div
+                key={String(row.key || idx)}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  padding: "6px 8px",
+                  borderRadius: 8,
+                  border: row.isFocus
+                    ? focusBorder
+                    : row.tone === "green"
+                    ? greenBorder
+                    : row.tone === "red"
+                    ? redBorder
+                    : neutralBorder,
+                  background: row.isFocus
+                    ? focusBg
+                    : row.tone === "green"
+                    ? greenBg
+                    : row.tone === "red"
+                    ? redBg
+                    : neutralBg,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 8,
+                    minWidth: 0,
+                    flex: 1,
+                  }}
+                >
+                  <div
+                    style={{
+                      ...mono(),
+                      width: 18,
+                      textAlign: "right",
+                      opacity: 0.65,
+                    }}
+                  >
+                    {String(idx + 1).padStart(2, "0")}
+                  </div>
+                  <div style={{ minWidth: 0, display: "grid", gap: 2 }}>
+                    <div
+                      title={row.displayId}
+                      style={{
+                        ...mono(),
+                        fontSize: 11,
+                        fontWeight: 900,
+                        opacity: 0.92,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {row.displayId}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 10,
+                        color: "rgba(255,255,255,0.66)",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {[
+                        row.kindLabel,
+                        row.dirLabel,
+                        row.sessionLabel,
+                        row.isFocus ? "Selected" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" · ") || "—"}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                  {row.pnlLabel ? (
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 900,
+                        color:
+                          row.tone === "green"
+                            ? "rgba(60,220,120,0.95)"
+                            : row.tone === "red"
+                            ? "rgba(230,80,80,0.95)"
+                            : "rgba(255,255,255,0.92)",
+                      }}
+                    >
+                      {row.pnlLabel}
+                    </div>
+                  ) : null}
+                  <div
+                    style={{
+                      fontSize: 10,
+                      color: "rgba(255,255,255,0.58)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {row.timeLabel || "—"}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div style={{ fontSize: 10, opacity: 0.65 }}>{emptyLabel}</div>
+      )}
+    </div>
+  );
+
+  useEffect(() => {
+    if (aiMethod !== "hdbscan") return;
+    if (String((selectedLink as any)?.type ?? "").toLowerCase() !== "knn") return;
+    setSelectedLink(null);
+  }, [aiMethod, selectedLink]);
 
   const selectionDiagnosticKeyRef = useRef("");
 
@@ -15677,6 +16044,45 @@ function ClusterMapInner({
     mapSpreadMul,
     drawRenderOpts,
   ]);
+
+  useEffect(() => {
+    if (headless || is3dMapActive || typeof onRenderReady !== "function") {
+      return;
+    }
+
+    if (!canvasRef.current) {
+      return;
+    }
+
+    let cancelled = false;
+    let outerRaf = 0;
+    let innerRaf = 0;
+
+    outerRaf = window.requestAnimationFrame(() => {
+      innerRaf = window.requestAnimationFrame(() => {
+        if (cancelled) {
+          return;
+        }
+
+        onRenderReady({
+          view: "2d",
+          nodeCount: Array.isArray(displayNodes) ? displayNodes.length : 0,
+          tradeCount: Array.isArray(postHocTrades) ? postHocTrades.length : 0,
+          renderedAt: Date.now(),
+        });
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      if (outerRaf) {
+        window.cancelAnimationFrame(outerRaf);
+      }
+      if (innerRaf) {
+        window.cancelAnimationFrame(innerRaf);
+      }
+    };
+  }, [displayNodes, headless, is3dMapActive, onRenderReady, postHocTrades]);
   useEffect(() => {
     if (is3dMapActive) return;
     const canvas = canvasRef.current;
@@ -15844,7 +16250,10 @@ function ClusterMapInner({
         }
       };
 
-      if (effectiveK > 0 && knnOpacity > 0) {
+      const knnLinksEnabled =
+        String((drawRenderOpts as any)?.aiMethod ?? "").toLowerCase() !==
+        "hdbscan";
+      if (knnLinksEnabled && effectiveK > 0 && knnOpacity > 0) {
         const edges = getKnnEdgesForClusterMap(
           neighborNodes as any[],
           effectiveK,
@@ -17271,11 +17680,7 @@ function ClusterMapInner({
                               const name = def
                                 ? def.name || def.label || def.id
                                 : String(lid);
-                              const hue = Math.floor(
-                                stableHashToUnit("libLegend:" + String(lid)) *
-                                  360
-                              );
-                              const col = `hsla(${hue}, 92%, 64%, 0.98)`;
+                              const col = colorForLibrary(String(lid));
                               const isSupp =
                                 String(lid).toLowerCase() === "suppressed";
                               const showCnt = isSupp
@@ -17755,6 +18160,7 @@ function ClusterMapInner({
         ) : (
           <ClusterMapViewport3D
             nodes={displayNodes}
+            aiMethod={aiMethod}
             knnEdgeNodes={neighborNodes}
             knnAllowLegacyFallback={!entryNeighborsOnly}
             selectedId={selectedId}
@@ -17775,6 +18181,7 @@ function ClusterMapInner({
             knnLinkOpacity={knnLinkOpacity}
             mapSpreadMul={mapSpreadMul}
             onSelectId={handle3dSelectId}
+            onRenderReady={onRenderReady}
             onSelectionIdsChange={handle3dSelectionIds}
             selectionClearNonce={selectionClearNonce3d}
           />
@@ -18909,7 +19316,9 @@ function ClusterMapInner({
                     })()}
                   </div>
 
-                  <div style={{ opacity: 0.65 }}>MIT ID</div>
+                  <div style={{ opacity: 0.65 }}>
+                    {aiMethod === "hdbscan" ? "Cluster Group" : "MIT ID"}
+                  </div>
                   <div
                     style={{
                       ...mono(),
@@ -18919,6 +19328,14 @@ function ClusterMapInner({
                     }}
                   >
                     {(() => {
+                      if (aiMethod === "hdbscan") {
+                        const cid = Number(
+                          (selectedHdbClusterInfo as any)?.clusterId
+                        );
+                        return Number.isFinite(cid)
+                          ? `HDB #${cid}`
+                          : "Noise / No cluster";
+                      }
                       const k = String(
                         (selectedNode as any)?.kind || ""
                       ).toLowerCase();
@@ -18991,90 +19408,106 @@ function ClusterMapInner({
                       color: "rgba(255,255,255,0.70)",
                     }}
                   >
-                    <div>Nearest Neighbors</div>
+                    <div>
+                      {aiMethod === "hdbscan"
+                        ? "Cluster Group Members"
+                        : "Nearest Neighbors"}
+                    </div>
                     <div style={{ ...mono(), opacity: 0.7 }}>
-                      k=
-                      {isSelectedLib
+                      {aiMethod === "hdbscan" ? "n=" : "k="}
+                      {aiMethod === "hdbscan"
+                        ? selectedHdbGroupMembers.length
+                        : isSelectedLib
                         ? 0
                         : selectedNeighborCap || selectedNeighborList.length || 0}
                     </div>
                   </div>
-                  <div
-                    style={{
-                      marginTop: 6,
-                      maxHeight: 140,
-                      overflowY: "auto",
-                      overscrollBehavior: "contain",
-                      borderRadius: 10,
-                      border: "1px solid rgba(255,255,255,0.10)",
-                      background: "rgba(0,0,0,0.20)",
-                      padding: 6,
-                    }}
-                  >
-                    {selectedNeighborList && selectedNeighborList.length ? (
-                      <div style={{ display: "grid", gap: 6 }}>
-                        {selectedNeighborList.map((row, idx) => (
-                          <div
-                            key={String(row.key || row.id || idx)}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 8,
-                              padding: "4px 6px",
-                              borderRadius: 8,
-                              border:
-                                row.tone === "green"
-                                  ? "1px solid rgba(60,220,120,0.35)"
-                                  : row.tone === "red"
-                                  ? "1px solid rgba(230,80,80,0.35)"
-                                  : "1px solid rgba(255,255,255,0.08)",
-                              background:
-                                row.tone === "green"
-                                  ? "rgba(60,220,120,0.12)"
-                                  : row.tone === "red"
-                                  ? "rgba(230,80,80,0.12)"
-                                  : "rgba(255,255,255,0.03)",
-                            }}
-                          >
-                            <div
-                              style={{
-                                ...mono(),
-                                width: 18,
-                                textAlign: "right",
-                                opacity: 0.65,
-                              }}
-                            >
-                              {String(idx + 1).padStart(2, "0")}
+                  {aiMethod === "hdbscan"
+                    ? renderHdbGroupMemberList(
+                        selectedHdbGroupMembers,
+                        "This point is not inside any HDBSCAN group.",
+                        160
+                      )
+                    : (
+                        <div
+                          style={{
+                            marginTop: 6,
+                            maxHeight: 140,
+                            overflowY: "auto",
+                            overscrollBehavior: "contain",
+                            borderRadius: 10,
+                            border: "1px solid rgba(255,255,255,0.10)",
+                            background: "rgba(0,0,0,0.20)",
+                            padding: 6,
+                          }}
+                        >
+                          {selectedNeighborList && selectedNeighborList.length ? (
+                            <div style={{ display: "grid", gap: 6 }}>
+                              {selectedNeighborList.map((row, idx) => (
+                                <div
+                                  key={String(row.key || row.id || idx)}
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    padding: "4px 6px",
+                                    borderRadius: 8,
+                                    border:
+                                      row.tone === "green"
+                                        ? "1px solid rgba(60,220,120,0.35)"
+                                        : row.tone === "red"
+                                        ? "1px solid rgba(230,80,80,0.35)"
+                                        : "1px solid rgba(255,255,255,0.08)",
+                                    background:
+                                      row.tone === "green"
+                                        ? "rgba(60,220,120,0.12)"
+                                        : row.tone === "red"
+                                        ? "rgba(230,80,80,0.12)"
+                                        : "rgba(255,255,255,0.03)",
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      ...mono(),
+                                      width: 18,
+                                      textAlign: "right",
+                                      opacity: 0.65,
+                                    }}
+                                  >
+                                    {String(idx + 1).padStart(2, "0")}
+                                  </div>
+                                  <div
+                                    title={row.displayId}
+                                    style={{
+                                      ...mono(),
+                                      fontSize: 11,
+                                      fontWeight: 900,
+                                      opacity: 0.92,
+                                      whiteSpace: "nowrap",
+                                      overflow: "hidden",
+                                      textOverflow: "ellipsis",
+                                    }}
+                                  >
+                                    {row.displayId}
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                            <div
-                              title={row.displayId}
-                              style={{
-                                ...mono(),
-                                fontSize: 11,
-                                fontWeight: 900,
-                                opacity: 0.92,
-                                whiteSpace: "nowrap",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                              }}
-                            >
-                              {row.displayId}
+                          ) : (
+                            <div style={{ fontSize: 10, opacity: 0.65 }}>
+                              No neighbors available.
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: 10, opacity: 0.65 }}>
-                        No neighbors available.
-                      </div>
-                    )}
-                  </div>
+                          )}
+                        </div>
+                      )}
                 </div>
               </div>
             );
           })()}
 
         {selectedLink &&
+          (aiMethod !== "hdbscan" ||
+            String((selectedLink as any)?.type ?? "").toLowerCase() !== "knn") &&
           !selectedNode &&
           (() => {
             const aId = String((selectedLink as any)?.aId ?? "").trim();
@@ -19882,51 +20315,53 @@ function ClusterMapInner({
             />
           </div>
 
-          <div
-            className="rounded-xl border border-neutral-800"
-            style={{
-              padding: "8px 10px",
-              background:
-                "linear-gradient(180deg, rgba(16,34,58,0.66), rgba(8,16,34,0.72))",
-            }}
-          >
+          {aiMethod !== "hdbscan" ? (
             <div
+              className="rounded-xl border border-neutral-800"
               style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: 10,
-                color: "rgba(255,255,255,0.78)",
+                padding: "8px 10px",
+                background:
+                  "linear-gradient(180deg, rgba(16,34,58,0.66), rgba(8,16,34,0.72))",
               }}
             >
-              <span>KNN Link Opacity</span>
-              <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>
-                {Math.round(
-                  Math.max(0, Math.min(1, Number(knnLinkOpacity) || 0)) * 100
-                )}
-                %
-              </span>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  fontSize: 10,
+                  color: "rgba(255,255,255,0.78)",
+                }}
+              >
+                <span>KNN Link Opacity</span>
+                <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>
+                  {Math.round(
+                    Math.max(0, Math.min(1, Number(knnLinkOpacity) || 0)) * 100
+                  )}
+                  %
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={knnLinkOpacity}
+                onChange={(e) =>
+                  setKnnLinkOpacity(Number((e as any).target.value))
+                }
+                className="theme-slider"
+                style={{
+                  ...sliderVars(knnLinkOpacity, 0, 1),
+                  width: "100%",
+                  height: 6,
+                  cursor: "pointer",
+                }}
+              />
+              <div style={{ marginTop: 3, fontSize: 9, opacity: 0.72 }}>
+                Topology count follows K Entry. Nearer neighbors render thicker.
+              </div>
             </div>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={knnLinkOpacity}
-              onChange={(e) =>
-                setKnnLinkOpacity(Number((e as any).target.value))
-              }
-              className="theme-slider"
-              style={{
-                ...sliderVars(knnLinkOpacity, 0, 1),
-                width: "100%",
-                height: 6,
-                cursor: "pointer",
-              }}
-            />
-            <div style={{ marginTop: 3, fontSize: 9, opacity: 0.72 }}>
-              Topology count follows K Entry. Nearer neighbors render thicker.
-            </div>
-          </div>
+          ) : null}
 
           {/* Row 4 (span) */}
           <div
@@ -20097,18 +20532,9 @@ function ClusterMapInner({
                   ? def.name || def.label || def.id
                   : String(lid);
                 const isSupp = String(lid).toLowerCase() === "suppressed";
-                const hue = Math.floor(
-                  stableHashToUnit("libLegend:" + String(lid)) * 360
-                );
-                const c0 = isSupp
-                  ? "rgba(140,140,140,1)"
-                  : `hsla(${hue}, 92%, 64%, 1)`;
-                const bg0 = isSupp
-                  ? "rgba(140,140,140,0.18)"
-                  : `hsla(${hue}, 92%, 64%, 0.18)`;
-                const br0 = isSupp
-                  ? "rgba(140,140,140,0.55)"
-                  : `hsla(${hue}, 92%, 64%, 0.55)`;
+                const c0 = colorForLibrary(String(lid));
+                const bg0 = cssColorWithAlpha(c0, 0.18);
+                const br0 = cssColorWithAlpha(c0, 0.55);
                 const cntRaw = Number(
                   (counts as any)?.libraryById?.[String(lid)] ?? 0
                 );
@@ -21530,9 +21956,9 @@ export default function App() {
   const [useAI, setUseAI] = useState(false);
   const [checkEveryBar, setCheckEveryBar] = useState(false);
   const [aiMethod, setAiMethod] = useState<"off" | "knn" | "hdbscan">("off");
-  const [hdbMinClusterSize, setHdbMinClusterSize] = useState(40);
-  const [hdbMinSamples, setHdbMinSamples] = useState(12);
-  const [hdbEpsQuantile, setHdbEpsQuantile] = useState(0.85); // 0.50..0.99 (k-distance quantile)
+  const [hdbMinClusterSize, setHdbMinClusterSize] = useState(5);
+  const [hdbMinSamples, setHdbMinSamples] = useState(5);
+  const [hdbEpsQuantile, setHdbEpsQuantile] = useState(0.5); // 0.50..0.99 (k-distance quantile)
   const [hdbSampleCap, setHdbSampleCap] = useState(3000);
   const [hdbDomainDistinction, setHdbDomainDistinction] = useState<
     "conceptual" | "real"
@@ -28576,7 +29002,7 @@ export default function App() {
                           : "No price"}
                       </div>
                     </div>
-                    {isAIFilter ? (
+                    {isAIFilter && aiMethod !== "hdbscan" ? (
                       <div
                         style={{
                           fontSize: 9,
@@ -28841,12 +29267,18 @@ export default function App() {
                   <SectionTitle
                     icon="🧠"
                     title={
-                      !isActive && !canEnterNextBar
+                      aiMethod === "hdbscan"
+                        ? "Cluster Group"
+                        : !isActive && !canEnterNextBar
                         ? "Nearest Neighbors"
                         : "AI Signal"
                     }
                     right={
-                      !isActive && !canEnterNextBar ? (
+                      aiMethod === "hdbscan" ? (
+                        <Pill tone="neutral">
+                          n={currentHdbGroupMembers.length}
+                        </Pill>
+                      ) : !isActive && !canEnterNextBar ? (
                         <Pill tone="neutral">
                           k={entryNeighborsCap || entryNeighborsForUi.length}
                         </Pill>
@@ -29038,6 +29470,29 @@ export default function App() {
                                 </Pill>
                               </div>
                             ) : null}
+
+                            <div style={{ marginTop: 12 }}>
+                              <div
+                                style={{
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  alignItems: "center",
+                                  gap: 10,
+                                }}
+                              >
+                                <div style={{ fontSize: 11, fontWeight: 1000 }}>
+                                  Group members
+                                </div>
+                                <Pill tone="neutral" size="sm">
+                                  n={currentHdbGroupMembers.length}
+                                </Pill>
+                              </div>
+                              {renderHdbGroupMemberList(
+                                currentHdbGroupMembers,
+                                "The current point is not inside any HDBSCAN group.",
+                                220
+                              )}
+                            </div>
                           </>
                         );
                       })()}
@@ -32527,7 +32982,7 @@ export default function App() {
                               onChange={(e) =>
                                 setHdbMinSamples(
                                   clampInt(
-                                    Number((e.target as any).value || 0),
+                                    Number((e.target as any).value || 5),
                                     2,
                                     200
                                   )
@@ -32555,7 +33010,7 @@ export default function App() {
                                     0.5,
                                     Math.min(
                                       0.99,
-                                      Number((e.target as any).value || 0.85)
+                                      Number((e.target as any).value || 0.5)
                                     )
                                   )
                                 )
