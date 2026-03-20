@@ -7453,7 +7453,7 @@ function drawClusterMapCanvas(
       const baseRadius = r * (isHovered ? 1.25 : 1.0) * focusScale;
       const visibleRadius =
         isLib && !isSearch
-          ? Math.max(2.4, baseRadius * (isHovered ? 0.88 : 0.72))
+          ? Math.max(2.4, baseRadius * (isHovered ? 0.92 : 0.78))
           : baseRadius;
       ctx.save();
       const dimAlpha = selectionFocusActive ? 0.18 : 0.36;
@@ -7466,7 +7466,7 @@ function drawClusterMapCanvas(
         outlineBase * (Number(nodeOutlineMul) || 1) * focusOutlineMul * dimOutlineMul;
       const strokeWidth =
         isLib && !isSearch
-          ? Math.max(0.22, strokeWidthBase * (isHovered ? 0.18 : 0.1))
+          ? Math.max(0.3, strokeWidthBase * (isHovered ? 0.24 : 0.15))
           : strokeWidthBase;
       ctx.lineWidth = strokeWidth;
       ctx.beginPath();
@@ -8446,7 +8446,7 @@ function ClusterMapViewport3D({
     const sizeMul = Math.max(0.25, Math.min(4, Number(nodeSizeMul) || 1));
     const outlineMul = Math.max(0.25, Math.min(4, Number(nodeOutlineMul) || 1));
     const outlineScaleMul = 1 + 0.12 * outlineMul;
-    const libraryOutlineScaleMul = 1 + 0.0075 * outlineMul;
+    const libraryOutlineScaleMul = 1 + 0.012 * outlineMul;
     const selectedSet = selectedIdsRef.current;
 
     for (let i = 0; i < rawPts.length; i++) {
