@@ -1258,15 +1258,13 @@ const applyTradeAiEntrySnapshot = (
       ? {
           ...trade,
           closestClusterUid: trade.closestClusterUid ?? null,
-          entryNeighbors: preservedNeighbors,
-          neighborVector: trade.neighborVector ?? buildTradeNeighborVector(trade)
+          entryNeighbors: preservedNeighbors
         }
       : {
           ...trade,
           aiMode: effectiveAiMode,
           closestClusterUid: trade.closestClusterUid ?? null,
-          entryNeighbors: preservedNeighbors,
-          neighborVector: trade.neighborVector ?? buildTradeNeighborVector(trade)
+          entryNeighbors: preservedNeighbors
         };
   }
 
@@ -1280,8 +1278,7 @@ const applyTradeAiEntrySnapshot = (
     margin: snapshot.margin,
     aiMode: snapshot.aiMode,
     closestClusterUid: snapshot.closestClusterUid,
-    entryNeighbors,
-    neighborVector: trade.neighborVector ?? buildTradeNeighborVector(trade)
+    entryNeighbors
   };
 };
 
