@@ -33052,8 +33052,8 @@ export default function App() {
                         cursor: aiAllOff ? "not-allowed" : "pointer",
                       }}
                     >
-                      <option value="high">High Dimensional Space</option>
-                      <option value="post">Post-Compressed Space</option>
+                      <option value="high">Full Dimensional Space</option>
+                      <option value="post">Custom Dimensional Space</option>
                       <option value="2d">2 Dimensions</option>
                       <option value="3d">3 Dimensions</option>
                     </select>

@@ -3668,8 +3668,8 @@ const KNN_NEIGHBOR_SPACE_OPTIONS: Array<{
   value: KnnNeighborSpace;
   label: string;
 }> = [
-  { value: "high", label: "High Dimensional Space" },
-  { value: "post", label: "Post-Compressed Space" },
+  { value: "high", label: "Full Dimensional Space" },
+  { value: "post", label: "Custom Dimensional Space" },
   { value: "3d", label: "3 Dimensions" },
   { value: "2d", label: "2 Dimensions" }
 ];
@@ -16907,6 +16907,7 @@ function TradingTerminalWorkspace({
     backtestTimeFilteredTrades,
     getEffectiveTradeConfidenceScore
   ]);
+  const deferredDimensionStatsSourceTrades = useDeferredValue(backtestTimeFilteredTrades);
   const deferredBacktestTab = useDeferredValue(selectedBacktestTab);
   const deferredBacktestAnalyticsTrades = useDeferredValue(backtestTrades);
   const isBacktestAnalyticsVisible = selectedSurfaceTab === "backtest";
@@ -20277,7 +20278,7 @@ function TradingTerminalWorkspace({
       return null;
     }
 
-    const sortedTrades = [...deferredBacktestAnalyticsTrades].sort(
+    const sortedTrades = [...deferredDimensionStatsSourceTrades].sort(
       (left, right) => Number(left.entryTime) - Number(right.entryTime)
     );
     const splitAllowed =
@@ -20489,7 +20490,15 @@ function TradingTerminalWorkspace({
 
     const inDim = dimensions.length;
     const outDim =
-      inDim > 0 ? clamp(Math.round(appliedBacktestSettings.dimensionAmount), 2, inDim) : 0;
+      inDim <= 0
+        ? 0
+        : appliedBacktestSettings.knnNeighborSpace === "high"
+          ? inDim
+          : appliedBacktestSettings.knnNeighborSpace === "3d"
+            ? Math.min(3, inDim)
+            : appliedBacktestSettings.knnNeighborSpace === "2d"
+              ? Math.min(2, inDim)
+              : clamp(Math.round(appliedBacktestSettings.dimensionAmount), 2, inDim);
     const dimKeyOrder = dimensions.map((dimension) => dimension.key);
     let keptKeys = dimKeyOrder;
 
@@ -20535,11 +20544,12 @@ function TradingTerminalWorkspace({
     appliedBacktestSettings.chunkBars,
     appliedBacktestSettings.compressionMethod,
     appliedBacktestSettings.dimensionAmount,
+    appliedBacktestSettings.knnNeighborSpace,
     appliedBacktestSettings.timeframe,
     appliedBacktestSettings.validationMode,
     backtestSeriesMap,
     deferredBacktestTab,
-    deferredBacktestAnalyticsTrades,
+    deferredDimensionStatsSourceTrades,
     isBacktestAnalyticsVisible,
     seriesMap,
   ]);
@@ -23159,6 +23169,23 @@ function TradingTerminalWorkspace({
                       <div className="ai-zip-section-title">Dimensionality</div>
                       <div style={{ display: "grid", gap: "0.55rem" }}>
                         <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
+                          <div className="ai-zip-label">Distance Metric</div>
+                          <select
+                            value={distanceMetric}
+                            disabled={aiDisabled}
+                            onChange={(event) => {
+                              setDistanceMetric(event.target.value as AiDistanceMetric);
+                            }}
+                            className="ai-zip-input"
+                          >
+                            <option value="euclidean">Euclidean</option>
+                            <option value="cosine">Cosine similarity</option>
+                            <option value="manhattan">Manhattan (L1)</option>
+                            <option value="chebyshev">Chebyshev (L-infinity)</option>
+                          </select>
+                        </div>
+
+                        <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
                           <div className="ai-zip-label">Neighbor Calculation Space</div>
                           <div
                             className="ai-zip-toggle-grid"
@@ -23181,24 +23208,25 @@ function TradingTerminalWorkspace({
                           </div>
                         </div>
 
-                        <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
-                          <span className="ai-zip-label">Distance Metric</span>
-                          <select
-                            value={distanceMetric}
+                        <div className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
+                          <span className="ai-zip-label">Compression Method</span>
+                          <AiZipMenuSelect
+                            value={compressionMethod}
+                            options={AI_COMPRESSION_METHOD_OPTIONS}
                             disabled={aiDisabled}
-                            onChange={(event) => {
-                              setDistanceMetric(event.target.value as AiDistanceMetric);
+                            onChange={(nextValue) => {
+                              setCompressionMethod(nextValue as AiCompressionMethod);
                             }}
-                            className="ai-zip-input"
-                          >
-                            <option value="euclidean">Euclidean</option>
-                            <option value="cosine">Cosine similarity</option>
-                            <option value="manhattan">Manhattan (L1)</option>
-                            <option value="chebyshev">Chebyshev (L-infinity)</option>
-                          </select>
-                        </label>
+                          />
+                        </div>
 
-                        <label className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
+                        <label
+                          className={`ai-zip-field ${
+                            aiDisabled || knnNeighborSpace !== "post"
+                              ? "ai-zip-control disabled"
+                              : ""
+                          }`}
+                        >
                           <span className="ai-zip-label">Dimension Amount</span>
                           <input
                             type="number"
@@ -23206,7 +23234,7 @@ function TradingTerminalWorkspace({
                             max={Math.max(2, configuredAiFeatureDimensionCount)}
                             step={1}
                             value={dimensionAmount}
-                            disabled={aiDisabled}
+                            disabled={aiDisabled || knnNeighborSpace !== "post"}
                             onChange={(event) => {
                               setDimensionAmount(
                                 clamp(
@@ -23219,18 +23247,6 @@ function TradingTerminalWorkspace({
                             className="ai-zip-input"
                           />
                         </label>
-
-                        <div className={`ai-zip-field ${aiDisabled ? "ai-zip-control disabled" : ""}`}>
-                          <span className="ai-zip-label">Compression Method</span>
-                          <AiZipMenuSelect
-                            value={compressionMethod}
-                            options={AI_COMPRESSION_METHOD_OPTIONS}
-                            disabled={aiDisabled}
-                            onChange={(nextValue) => {
-                              setCompressionMethod(nextValue as AiCompressionMethod);
-                            }}
-                          />
-                        </div>
                       </div>
                     </div>
                   </div>
@@ -25513,9 +25529,20 @@ function TradingTerminalWorkspace({
                               color: "rgba(255,255,255,0.55)"
                             }}
                           >
-                            Using TEST set (Split: {dimensionStats.split}% train)
+                            Using TEST set from all filtered trades (Split: {dimensionStats.split}% train)
                           </div>
-                        ) : null}
+                        ) : (
+                          <div
+                            style={{
+                              marginTop: 4,
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: "rgba(255,255,255,0.55)"
+                            }}
+                          >
+                            Using all filtered trades before confidence gating
+                          </div>
+                        )}
                       </div>
 
                       <div
