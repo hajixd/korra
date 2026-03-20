@@ -4708,6 +4708,8 @@ button {
 .ai-zip-field {
   display: grid;
   gap: 4px;
+  position: relative;
+  overflow: visible;
 }
 
 .backtest-slider {

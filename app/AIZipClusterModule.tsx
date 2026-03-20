@@ -3551,6 +3551,7 @@ function computeClusterVarianceIndices(rawData, outDim) {
 function normalizeClusterCompressionMethod(value) {
   const method = String(value || "").trim().toLowerCase();
   if (
+    method === "umap" ||
     method === "pca" ||
     method === "jl" ||
     method === "hash" ||
@@ -9863,6 +9864,7 @@ const areClusterMapPropsEqual = (prev: any, next: any) => {
 };
 
 const DEFAULT_CLUSTER_MAP_COMPRESSION_OPTIONS = [
+  { value: "umap", label: "UMAP" },
   { value: "pca", label: "PCA" },
   { value: "jl", label: "Random Projection" },
   { value: "hash", label: "Feature Hashing" },
@@ -11504,34 +11506,121 @@ function ClusterMapInner({
 
     const allVectors = goodEntries.map((e) => e.v);
     const { stdData, mean, stdev } = standardiseVectors(allVectors);
-
-    const projection2d = createClusterMapProjection({
-      rawData: allVectors,
-      stdData,
-      targetDim: 2,
-      method: viewCompressionMethod,
-      seedKey: `cluster-map|${viewCompressionMethod}|2d`,
-    });
-    const embedding = projection2d.emb.map((coords) => ({
-      x: Number(coords?.[0] ?? 0),
-      y: Number(coords?.[1] ?? 0),
-    }));
     const shouldEmbed3D =
       clusterMapView === "3d" || (knnActive && knnSpaceKey === "3d");
-    const projection3d = shouldEmbed3D
-      ? createClusterMapProjection({
+    let embedding: Array<{ x: number; y: number }> = [];
+    let embedding3: Array<{ x: number; y: number; z: number }> = [];
+    let projection2dProject: ((vec: number[]) => number[]) | null = null;
+    let projection3dProject: ((vec: number[]) => number[]) | null = null;
+    let projectionMetadata: Record<string, any> = {};
+
+    if (viewCompressionMethod === "umap") {
+      const { pc1, pc2 } = computePCA(stdData);
+      const umap2dMaxN = lowPowerMode ? 1200 : 2000;
+      const umap2dSampleN = lowPowerMode ? 900 : 1500;
+      const umap2dEpochs = lowPowerMode ? 120 : 200;
+      const um = computeUMAPEmbedding2D(stdData, pc1, pc2, {
+        seedKey: "cluster-map",
+        nNeighbors: 18,
+        nEpochs: umap2dEpochs,
+        negRate: 4,
+        learningRate: 1.0,
+        maxN: umap2dMaxN,
+        sampleN: umap2dSampleN,
+      });
+
+      projection2dProject = (vec: number[]) => {
+        let pcaX = 0;
+        let pcaY = 0;
+        for (let index = 0; index < vec.length; index++) {
+          const value = Number(vec[index] ?? 0);
+          pcaX += value * Number(pc1[index] ?? 0);
+          pcaY += value * Number(pc2[index] ?? 0);
+        }
+
+        const spx = um.samplePcaX || [];
+        const spy = um.samplePcaY || [];
+        const sampleEmbX = um.sampleEmbX || [];
+        const sampleEmbY = um.sampleEmbY || [];
+        let best = 0;
+        let bestD = Infinity;
+        const count = Math.min(sampleEmbX.length, spx.length, spy.length);
+        for (let sampleIndex = 0; sampleIndex < count; sampleIndex++) {
+          const dx = pcaX - spx[sampleIndex];
+          const dy = pcaY - spy[sampleIndex];
+          const distance = dx * dx + dy * dy;
+          if (distance < bestD) {
+            bestD = distance;
+            best = sampleIndex;
+          }
+        }
+        return [Number(sampleEmbX[best] ?? 0), Number(sampleEmbY[best] ?? 0)];
+      };
+
+      embedding = (um.emb || []).map((point: any) => ({
+        x: Number(point?.x ?? 0),
+        y: Number(point?.y ?? 0),
+      }));
+
+      if (shouldEmbed3D) {
+        const umap3dMaxN = lowPowerMode ? 1500 : 2500;
+        const umap3dSampleN = lowPowerMode ? 1000 : 1600;
+        const umap3dEpochs = lowPowerMode ? 140 : 220;
+        const um3 = computeUMAPEmbedding3D(stdData, pc1, pc2, {
+          seedKey: "cluster-map-3d",
+          nNeighbors: 18,
+          nEpochs: umap3dEpochs,
+          negRate: 4,
+          learningRate: 1.0,
+          maxN: umap3dMaxN,
+          sampleN: umap3dSampleN,
+        });
+        embedding3 = ((um3 as any)?.emb || []).map((point: any) => ({
+          x: Number(point?.x ?? 0),
+          y: Number(point?.y ?? 0),
+          z: Number(point?.z ?? 0),
+        }));
+      }
+
+      projectionMetadata = {
+        pc1,
+        pc2,
+        sampleIdx: um.sampleIdx,
+        samplePcaX: um.samplePcaX,
+        samplePcaY: um.samplePcaY,
+        sampleEmbX: um.sampleEmbX,
+        sampleEmbY: um.sampleEmbY,
+      };
+    } else {
+      const projection2d = createClusterMapProjection({
+        rawData: allVectors,
+        stdData,
+        targetDim: 2,
+        method: viewCompressionMethod,
+        seedKey: `cluster-map|${viewCompressionMethod}|2d`,
+      });
+      projection2dProject = projection2d.project;
+      embedding = projection2d.emb.map((coords) => ({
+        x: Number(coords?.[0] ?? 0),
+        y: Number(coords?.[1] ?? 0),
+      }));
+
+      if (shouldEmbed3D) {
+        const projection3d = createClusterMapProjection({
           rawData: allVectors,
           stdData,
           targetDim: 3,
           method: viewCompressionMethod,
           seedKey: `cluster-map|${viewCompressionMethod}|3d`,
-        })
-      : null;
-    const embedding3 = (projection3d?.emb || []).map((coords) => ({
-      x: Number(coords?.[0] ?? 0),
-      y: Number(coords?.[1] ?? 0),
-      z: Number(coords?.[2] ?? 0),
-    }));
+        });
+        projection3dProject = projection3d.project;
+        embedding3 = (projection3d.emb || []).map((coords) => ({
+          x: Number(coords?.[0] ?? 0),
+          y: Number(coords?.[1] ?? 0),
+          z: Number(coords?.[2] ?? 0),
+        }));
+      }
+    }
 
     let minX = Infinity,
       maxX = -Infinity,
@@ -11605,8 +11694,8 @@ function ClusterMapInner({
     projectionRef.current = {
       mean,
       stdev,
-      project2d: projection2d.project,
-      project3d: projection3d?.project ?? null,
+      project2d: projection2dProject,
+      project3d: projection3dProject,
       compressionMethod: viewCompressionMethod,
       chunkLen: maxChunkLen,
       dim: goodEntries[0]?.v?.length ?? 0,
@@ -11616,6 +11705,7 @@ function ClusterMapInner({
       minY,
       maxY,
       dy,
+      ...projectionMetadata,
     };
 
     const JITTER_PX = 50;
@@ -21839,12 +21929,12 @@ export default function App() {
       );
     if (typeof data.compressionMethod === "string") {
       const v = String(data.compressionMethod || "");
-      const ok = ["pca", "jl", "hash", "variance", "subsample"];
+      const ok = ["umap", "pca", "jl", "hash", "variance", "subsample"];
       setCompressionMethod(ok.includes(v) ? v : "jl");
     }
     if (typeof data.compressionMethod === "string") {
       const v = String(data.compressionMethod || "");
-      const ok = ["pca", "jl", "hash", "variance", "subsample"];
+      const ok = ["umap", "pca", "jl", "hash", "variance", "subsample"];
       setCompressionMethod(ok.includes(v) ? v : "jl");
     }
     if (typeof data.distanceMetric === "string") {
@@ -22966,7 +23056,7 @@ export default function App() {
   >("post");
   const [dimStyle, setDimStyle] = useState("recommended"); // "manual" | "recommended" | "all"
   const [dimManualAmount, setDimManualAmount] = useState(24);
-  const [compressionMethod, setCompressionMethod] = useState("jl"); // "pca" | "jl" | "hash" | "variance" | "subsample"
+  const [compressionMethod, setCompressionMethod] = useState("jl"); // "umap" | "pca" | "jl" | "hash" | "variance" | "subsample"
   const [distanceMetric, setDistanceMetric] = useState("euclidean"); // "euclidean" | "cosine" | "manhattan" | "chebyshev" | "mahalanobis"
   const [dimWeightMode, setDimWeightMode] = useState("uniform"); // "uniform" | "proportional"
   const [dimWeightsBump, setDimWeightsBump] = useState(0);
@@ -33120,6 +33210,7 @@ export default function App() {
                         fontWeight: 800,
                       }}
                     >
+                      <option value="umap">UMAP</option>
                       <option value="pca">
                         PCA (Principal Component Analysis)
                       </option>

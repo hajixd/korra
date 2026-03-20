@@ -2521,7 +2521,7 @@ type PropFirmStats = {
 
 type AiValidationMode = "off" | "split" | "synthetic";
 type AiDistanceMetric = "euclidean" | "cosine" | "manhattan" | "chebyshev";
-type AiCompressionMethod = "pca" | "jl" | "hash" | "variance" | "subsample";
+type AiCompressionMethod = "umap" | "pca" | "jl" | "hash" | "variance" | "subsample";
 type KnnVoteMode = "distance" | "majority";
 type KnnNeighborSpace = "high" | "post" | "3d" | "2d";
 
@@ -3622,6 +3622,7 @@ const AI_COMPRESSION_METHOD_OPTIONS: Array<{
   value: AiCompressionMethod;
   label: string;
 }> = [
+  { value: "umap", label: "UMAP" },
   { value: "pca", label: "PCA" },
   { value: "jl", label: "Random Projection" },
   { value: "hash", label: "Feature Hashing" },
@@ -3676,7 +3677,14 @@ function AiZipMenuSelect({
   }, [disabled]);
 
   return (
-    <div ref={rootRef} style={{ position: "relative" }}>
+    <div
+      ref={rootRef}
+      style={{
+        position: "relative",
+        zIndex: open ? 80 : 1,
+        overflow: "visible"
+      }}
+    >
       <button
         type="button"
         className="ai-zip-input"
@@ -3753,6 +3761,21 @@ function AiZipMenuSelect({
     </div>
   );
 }
+
+const normalizeAiCompressionMethod = (value: unknown): AiCompressionMethod => {
+  const method = String(value ?? "").trim().toLowerCase();
+  if (
+    method === "umap" ||
+    method === "pca" ||
+    method === "jl" ||
+    method === "hash" ||
+    method === "variance" ||
+    method === "subsample"
+  ) {
+    return method;
+  }
+  return "jl";
+};
 
 const normalizeAiValidationMode = (value: unknown): AiValidationMode => {
   const mode = String(value ?? "").trim().toLowerCase();
@@ -14138,7 +14161,9 @@ function TradingTerminalWorkspace({
     if (s.knnNeighborSpace != null) setKnnNeighborSpace(s.knnNeighborSpace);
     if (s.selectedAiDomains != null) setSelectedAiDomains(s.selectedAiDomains);
     if (s.dimensionAmount != null) setDimensionAmount(s.dimensionAmount);
-    if (s.compressionMethod != null) setCompressionMethod(s.compressionMethod);
+    if (s.compressionMethod != null) {
+      setCompressionMethod(normalizeAiCompressionMethod(s.compressionMethod));
+    }
     if (s.kEntry != null) setKEntry(s.kEntry);
     if (s.kExit != null) setKExit(s.kExit);
     if (s.knnVoteMode != null) setKnnVoteMode("majority");
