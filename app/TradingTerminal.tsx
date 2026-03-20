@@ -25,6 +25,7 @@ import {
   reauthenticateWithCredential,
   signInWithEmailAndPassword,
   signOut,
+  updateEmail,
   updatePassword,
   updateProfile,
   type User
@@ -2235,35 +2236,80 @@ type TradingTerminalWorkspaceProps = TradingTerminalProps & {
 type AccountAuthMode = "login" | "create" | null;
 
 type AccountAuthFormState = {
+  identifier: string;
   username: string;
-  email: string;
   password: string;
-  confirmPassword: string;
 };
 
 type AccountPasswordFormState = {
   currentPassword: string;
   newPassword: string;
-  confirmPassword: string;
 };
 
 const EMPTY_ACCOUNT_AUTH_FORM: AccountAuthFormState = {
+  identifier: "",
   username: "",
-  email: "",
-  password: "",
-  confirmPassword: ""
+  password: ""
 };
 
 const EMPTY_ACCOUNT_PASSWORD_FORM: AccountPasswordFormState = {
   currentPassword: "",
-  newPassword: "",
-  confirmPassword: ""
+  newPassword: ""
 };
 
 const MIN_ACCOUNT_PASSWORD_LENGTH = 6;
+const MANAGED_ACCOUNT_AUTH_EMAIL_DOMAIN = "users.korra.space";
 
 const scopeStorageKey = (baseKey: string, userId: string): string => {
   return `${baseKey}:${userId}`;
+};
+
+const normalizeManagedAccountValue = (value: string): string => {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+};
+
+const hashManagedAccountValue = (value: string): string => {
+  let hash = 2166136261;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0).toString(36);
+};
+
+// Firebase Auth still needs an email, so username accounts map to a stable hidden address.
+const buildManagedAccountAuthEmail = (username: string): string => {
+  const normalized = normalizeManagedAccountValue(username);
+  const baseHandle = normalized
+    .replace(/[^a-z0-9]+/g, ".")
+    .replace(/^\.+|\.+$/g, "")
+    .replace(/\.{2,}/g, ".");
+
+  if (!baseHandle) {
+    return "";
+  }
+
+  return `${baseHandle}.${hashManagedAccountValue(normalized)}@${MANAGED_ACCOUNT_AUTH_EMAIL_DOMAIN}`;
+};
+
+const resolveAuthIdentifierEmail = (identifier: string): string => {
+  const trimmed = identifier.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  return trimmed.includes("@") ? trimmed.toLowerCase() : buildManagedAccountAuthEmail(trimmed);
+};
+
+const isManagedAccountAuthEmail = (value: string | null | undefined): boolean => {
+  const email = String(value ?? "").trim().toLowerCase();
+  return email.endsWith(`@${MANAGED_ACCOUNT_AUTH_EMAIL_DOMAIN}`);
 };
 
 const resolveUserDisplayName = (user: Pick<User, "displayName" | "email">): string => {
@@ -2272,7 +2318,12 @@ const resolveUserDisplayName = (user: Pick<User, "displayName" | "email">): stri
     return displayName;
   }
 
-  const emailName = String(user.email ?? "").trim().split("@")[0]?.trim();
+  const rawEmail = String(user.email ?? "").trim();
+  if (isManagedAccountAuthEmail(rawEmail)) {
+    return "Trader";
+  }
+
+  const emailName = rawEmail.split("@")[0]?.trim();
   return emailName || "Trader";
 };
 
@@ -2296,7 +2347,7 @@ const resolveUserInitials = (user: Pick<User, "displayName" | "email">): string 
 
 const toTerminalAccountUser = (user: User): TerminalAccountUser => ({
   uid: user.uid,
-  email: user.email ?? null,
+  email: isManagedAccountAuthEmail(user.email) ? null : user.email ?? null,
   displayName: user.displayName ?? null,
   photoURL: user.photoURL ?? null
 });
@@ -2309,21 +2360,21 @@ const formatFirebaseAuthError = (error: unknown): string => {
 
   switch (message) {
     case "auth/invalid-email":
-      return "Enter a valid email address.";
+      return "That login is not valid.";
     case "auth/missing-password":
       return "Enter your password.";
     case "auth/email-already-in-use":
-      return "That email is already being used.";
+      return "That username is already taken.";
     case "auth/weak-password":
       return `Use at least ${MIN_ACCOUNT_PASSWORD_LENGTH} characters for the password.`;
     case "auth/invalid-credential":
     case "auth/user-not-found":
     case "auth/wrong-password":
-      return "The email or password is incorrect.";
+      return "That username or password is incorrect.";
     case "auth/too-many-requests":
       return "Too many attempts. Try again in a moment.";
     case "auth/requires-recent-login":
-      return "Log in again before changing the password.";
+      return "Log in again before updating this account setting.";
     case "auth/network-request-failed":
       return "Network error. Check your connection and try again.";
     default:
@@ -8402,9 +8453,12 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       const displayName = preferredDisplayName || existingDisplayName || resolveUserDisplayName(user);
+      const authEmail = String(user.email ?? "").trim();
       const payload: Record<string, unknown> = {
         uid: user.uid,
-        email: user.email ?? "",
+        email: isManagedAccountAuthEmail(authEmail) ? "" : authEmail,
+        authEmail,
+        usesManagedAuthEmail: isManagedAccountAuthEmail(authEmail),
         displayName,
         photoURL: user.photoURL ?? null,
         updatedAt: serverTimestamp()
@@ -8483,19 +8537,29 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         return;
       }
 
-      const email = authForm.email.trim();
       const password = authForm.password;
 
-      if (!email || !password) {
-        setAuthError("Enter your email and password.");
+      if (!password) {
+        setAuthError("Enter your password.");
         return;
       }
 
       if (authMode === "create") {
         const username = authForm.username.trim();
+        const managedAuthEmail = buildManagedAccountAuthEmail(username);
 
         if (!username) {
           setAuthError("Choose a username.");
+          return;
+        }
+
+        if (username.includes("@")) {
+          setAuthError("Usernames cannot include @.");
+          return;
+        }
+
+        if (!managedAuthEmail) {
+          setAuthError("Use at least one letter or number in the username.");
           return;
         }
 
@@ -8505,11 +8569,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           );
           return;
         }
-
-        if (authForm.confirmPassword !== password) {
-          setAuthError("Passwords do not match.");
-          return;
-        }
+      } else if (!authForm.identifier.trim()) {
+        setAuthError("Enter your username or email and password.");
+        return;
       }
 
       setAuthBusy(authMode);
@@ -8517,10 +8579,21 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
       try {
         if (authMode === "login") {
-          await signInWithEmailAndPassword(firebaseAuth, email, password);
+          const resolvedEmail = resolveAuthIdentifierEmail(authForm.identifier);
+          if (!resolvedEmail) {
+            setAuthError("Enter a valid username or email.");
+            setAuthBusy(null);
+            return;
+          }
+          await signInWithEmailAndPassword(firebaseAuth, resolvedEmail, password);
         } else {
-          const created = await createUserWithEmailAndPassword(firebaseAuth, email, password);
           const username = authForm.username.trim();
+          const managedAuthEmail = buildManagedAccountAuthEmail(username);
+          const created = await createUserWithEmailAndPassword(
+            firebaseAuth,
+            managedAuthEmail,
+            password
+          );
 
           await updateProfile(created.user, { displayName: username });
           await syncAccountProfile(created.user, username);
@@ -8548,7 +8621,25 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         throw new Error("Username cannot be empty.");
       }
 
-      const syncedDisplayName = await syncAccountProfile(firebaseAuth.currentUser, nextDisplayName);
+      if (nextDisplayName.includes("@")) {
+        throw new Error("Usernames cannot include @.");
+      }
+
+      const currentAuthUser = firebaseAuth.currentUser;
+      const nextManagedEmail = buildManagedAccountAuthEmail(nextDisplayName);
+
+      if (!nextManagedEmail) {
+        throw new Error("Use at least one letter or number in the username.");
+      }
+
+      if (
+        isManagedAccountAuthEmail(currentAuthUser.email) &&
+        String(currentAuthUser.email ?? "").trim().toLowerCase() !== nextManagedEmail
+      ) {
+        await updateEmail(currentAuthUser, nextManagedEmail);
+      }
+
+      const syncedDisplayName = await syncAccountProfile(currentAuthUser, nextDisplayName);
       setCurrentUser((current) =>
         current
           ? {
@@ -8618,8 +8709,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
           <div className="account-shell-panel">
             <div className="account-shell-header">
               <span className="account-shell-kicker">Korra</span>
-              <h1>Private workspace access</h1>
-              <p>Sign in before the terminal, models, and backtests become visible.</p>
             </div>
 
             <div className="account-mode-grid">
@@ -8628,6 +8717,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 className={`account-mode-btn${authMode === "login" ? " active" : ""}`}
                 onClick={() => {
                   setAuthMode("login");
+                  setAuthForm(EMPTY_ACCOUNT_AUTH_FORM);
                   setAuthError("");
                 }}
               >
@@ -8638,6 +8728,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 className={`account-mode-btn${authMode === "create" ? " active" : ""}`}
                 onClick={() => {
                   setAuthMode("create");
+                  setAuthForm(EMPTY_ACCOUNT_AUTH_FORM);
                   setAuthError("");
                 }}
               >
@@ -8658,6 +8749,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     className="settings-io-btn"
                     onClick={() => {
                       setAuthMode(null);
+                      setAuthForm(EMPTY_ACCOUNT_AUTH_FORM);
                       setAuthError("");
                     }}
                   >
@@ -8682,25 +8774,24 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                       disabled={formDisabled}
                     />
                   </label>
-                ) : null}
-
-                <label className="account-field">
-                  <span>Email</span>
-                  <input
-                    className="account-input"
-                    type="email"
-                    value={authForm.email}
-                    onChange={(event) =>
-                      setAuthForm((current) => ({
-                        ...current,
-                        email: event.target.value
-                      }))
-                    }
-                    placeholder="trader@korra.space"
-                    autoComplete="email"
-                    disabled={formDisabled}
-                  />
-                </label>
+                ) : (
+                  <label className="account-field">
+                    <span>Username or Email</span>
+                    <input
+                      className="account-input"
+                      value={authForm.identifier}
+                      onChange={(event) =>
+                        setAuthForm((current) => ({
+                          ...current,
+                          identifier: event.target.value
+                        }))
+                      }
+                      placeholder="username or email"
+                      autoComplete="username"
+                      disabled={formDisabled}
+                    />
+                  </label>
+                )}
 
                 <label className="account-field">
                   <span>Password</span>
@@ -8719,26 +8810,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                     disabled={formDisabled}
                   />
                 </label>
-
-                {authMode === "create" ? (
-                  <label className="account-field">
-                    <span>Confirm Password</span>
-                    <input
-                      className="account-input"
-                      type="password"
-                      value={authForm.confirmPassword}
-                      onChange={(event) =>
-                        setAuthForm((current) => ({
-                          ...current,
-                          confirmPassword: event.target.value
-                        }))
-                      }
-                      placeholder="Repeat your password"
-                      autoComplete="new-password"
-                      disabled={formDisabled}
-                    />
-                  </label>
-                ) : null}
 
                 {authError ? <div className="account-form-error">{authError}</div> : null}
 
@@ -14132,11 +14203,6 @@ function TradingTerminalWorkspace({
       setProfileDialogStatus(
         `Use at least ${MIN_ACCOUNT_PASSWORD_LENGTH} characters for the password.`
       );
-      return;
-    }
-
-    if (newPassword !== profilePasswordForm.confirmPassword) {
-      setProfileDialogStatus("New passwords do not match.");
       return;
     }
 
@@ -20493,7 +20559,7 @@ function TradingTerminalWorkspace({
             <div className="profile-menu-popover">
               <div className="profile-menu-header">
                 <strong>{currentUserDisplayName}</strong>
-                <span>{currentUser.email ?? "Signed in"}</span>
+                <span>{currentUser.email ?? "Workspace account"}</span>
               </div>
               <button
                 type="button"
@@ -25667,22 +25733,6 @@ function TradingTerminalWorkspace({
                       setProfilePasswordForm((current) => ({
                         ...current,
                         newPassword: event.target.value
-                      }))
-                    }
-                    autoComplete="new-password"
-                    disabled={profileDialogBusy}
-                  />
-                </label>
-                <label className="account-field">
-                  <span>Confirm Password</span>
-                  <input
-                    className="account-input"
-                    type="password"
-                    value={profilePasswordForm.confirmPassword}
-                    onChange={(event) =>
-                      setProfilePasswordForm((current) => ({
-                        ...current,
-                        confirmPassword: event.target.value
                       }))
                     }
                     autoComplete="new-password"
