@@ -8384,10 +8384,6 @@ const getStatsRefreshPhaseDurationMs = (status: string): number => {
 };
 
 const isStatsRefreshAutoFinishPhase = (status: string): boolean => {
-  if (status === "Loading Cluster Map") {
-    return false;
-  }
-
   const phaseKey = getStatsRefreshPhaseKey(status);
   return phaseKey === "finalize" && status !== "Finalizing Statistics";
 };
@@ -8430,10 +8426,6 @@ const getStatsRefreshStatusDetail = (
 
   if (status === "Finalizing Statistics") {
     return "Aggregating performance metrics and updating panels.";
-  }
-
-  if (status === "Loading Cluster Map") {
-    return "Rendering cluster nodes, trades, and overlays for the current map view.";
   }
 
   if (status === "No Trades In Selected Range") {
@@ -8743,35 +8735,15 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   if (!authReady) {
     return (
-      <main className="terminal" aria-busy="true">
-        <div className="stats-refresh-loading-overlay" aria-live="polite" aria-atomic="true">
-          <div className="stats-refresh-loading-shell">
-            <div className="stats-refresh-loading-head">
-              <div className="stats-refresh-loading-status">Loading Terminal</div>
-              <div className="stats-refresh-loading-pct">28%</div>
-            </div>
-            <div className="stats-refresh-loading-meta">
-              <span>Phase 1 of 1 · Initialize Session</span>
-              <span>Korra Terminal</span>
-            </div>
-            <div className="stats-refresh-loading-detail">
-              Restoring your terminal workspace.
-            </div>
-            <div
-              className="stats-refresh-loading-track"
-              role="progressbar"
-              aria-label="Loading terminal"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={28}
-            >
-              <div
-                className="stats-refresh-loading-fill"
-                style={{ width: "28%" }}
-              />
+      <main className="terminal account-screen">
+        <section className="account-screen-shell">
+          <div className="account-shell-panel">
+            <div className="account-shell-header">
+              <h1>Connecting account</h1>
+              <p>Checking your Firebase session before loading the terminal.</p>
             </div>
           </div>
-        </div>
+        </section>
       </main>
     );
   }
@@ -9080,7 +9052,6 @@ function TradingTerminalWorkspace({
   const [aiZipClusterMapView, setAiZipClusterMapView] = useState<"2d" | "3d">("2d");
   const [aiZipClusterResetKey, setAiZipClusterResetKey] = useState(0);
   const [aiZipClusterTimelineIdx, setAiZipClusterTimelineIdx] = useState(0);
-  const [backtestClusterMapRenderReady, setBacktestClusterMapRenderReady] = useState(false);
   const [enabledBacktestWeekdays, setEnabledBacktestWeekdays] = useState<string[]>([
     ...backtestWeekdayLabels
   ]);
@@ -9970,22 +9941,6 @@ function TradingTerminalWorkspace({
       return;
     }
 
-    if (statsRefreshStatus === "Loading Cluster Map") {
-      const rangeSnapshot = statsRefreshTimelineRangeRef.current;
-      const rangeStartMs = Number.isFinite(rangeSnapshot.startMs)
-        ? rangeSnapshot.startMs
-        : backtestRefreshNowMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000;
-      const rangeEndMs = Number.isFinite(rangeSnapshot.endMs)
-        ? Math.max(rangeStartMs + 60_000, rangeSnapshot.endMs)
-        : backtestRefreshNowMs;
-      const lockedProgress = backtestClusterMapRenderReady ? 100 : 99;
-
-      setStatsRefreshProgress(lockedProgress);
-      setStatsRefreshLoadingDisplayProgress(lockedProgress);
-      setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(rangeEndMs));
-      return;
-    }
-
     const durationMs = getStatsRefreshPhaseDurationMs(statsRefreshStatus);
     const statusSnapshot = statsRefreshStatus;
     const phasePlanSnapshot =
@@ -10051,7 +10006,6 @@ function TradingTerminalWorkspace({
       }
     };
   }, [
-    backtestClusterMapRenderReady,
     backtestRefreshNowMs,
     finishStatsRefreshLoading,
     statsRefreshOverlayMode,
@@ -16539,26 +16493,12 @@ function TradingTerminalWorkspace({
   const isBacktestHistorySeedBlocked =
     statsRefreshStatus === "Historical Candle Range Unavailable";
   const isBacktestTabHistoryPending = backtestHasRun && !backtestHistorySeedReady;
-  const isBacktestClusterMapRenderPending =
-    selectedSurfaceTab === "backtest" &&
-    selectedBacktestTab === "cluster" &&
-    backtestHasRun &&
-    !isBacktestTabDataPending &&
-    !isBacktestTabHistoryPending &&
-    !isBacktestHistorySeedBlocked &&
-    !backtestClusterMapRenderReady;
   const shouldShowBacktestInlineLoader =
     isBacktestSurfaceSettled &&
     backtestInlineLoaderTabs.has(selectedBacktestTab) &&
-    (
-      isBacktestTabDataPending ||
-      (isBacktestTabHistoryPending && !isBacktestHistorySeedBlocked) ||
-      isBacktestClusterMapRenderPending
-    );
+    (isBacktestTabDataPending || (isBacktestTabHistoryPending && !isBacktestHistorySeedBlocked));
   const backtestInlineLoaderLabel =
-    selectedBacktestTab === "cluster"
-      ? "Loading Cluster Map..."
-      : selectedBacktestTab === "dimensions"
+    selectedBacktestTab === "dimensions"
       ? "Building dimension statistics..."
       : isBacktestTabHistoryPending
         ? "Loading backtest data..."
@@ -16569,8 +16509,6 @@ function TradingTerminalWorkspace({
     statsRefreshOverlayMode === "loading" &&
     isBacktestAnalyticsVisible &&
     shouldComputeBacktestAnalyticsOnServer;
-  const statsRefreshNeedsClusterMapRender =
-    statsRefreshOverlayMode === "loading" && isBacktestClusterMapRenderPending;
   const statsRefreshPanelAnalyticsSettled =
     !statsRefreshNeedsPanelAnalytics ||
     panelAnalyticsStatus === "ready" ||
@@ -16581,55 +16519,17 @@ function TradingTerminalWorkspace({
     backtestAnalyticsStatus === "ready" ||
     backtestAnalyticsStatus === "error" ||
     backtestAnalyticsStatus === "idle";
-  const statsRefreshClusterMapSettled =
-    !statsRefreshNeedsClusterMapRender || backtestClusterMapRenderReady;
   const statsRefreshCompletionReady =
     statsRefreshReplaySettled &&
     statsRefreshPanelAnalyticsSettled &&
-    statsRefreshBacktestAnalyticsSettled &&
-    statsRefreshClusterMapSettled;
+    statsRefreshBacktestAnalyticsSettled;
 
   useEffect(() => {
     if (statsRefreshOverlayMode !== "loading") {
       return;
     }
 
-    if (!statsRefreshNeedsClusterMapRender || backtestClusterMapRenderReady) {
-      return;
-    }
-
-    if (
-      !statsRefreshReplaySettled ||
-      !statsRefreshPanelAnalyticsSettled ||
-      !statsRefreshBacktestAnalyticsSettled
-    ) {
-      return;
-    }
-
-    if (statsRefreshStatus === "Loading Cluster Map") {
-      return;
-    }
-
-    setStatsRefreshStatus("Loading Cluster Map");
-  }, [
-    backtestClusterMapRenderReady,
-    statsRefreshBacktestAnalyticsSettled,
-    statsRefreshNeedsClusterMapRender,
-    statsRefreshOverlayMode,
-    statsRefreshPanelAnalyticsSettled,
-    statsRefreshReplaySettled,
-    statsRefreshStatus
-  ]);
-
-  useEffect(() => {
-    if (statsRefreshOverlayMode !== "loading") {
-      return;
-    }
-
-    if (
-      statsRefreshStatus !== "Finalizing Statistics" &&
-      statsRefreshStatus !== "Loading Cluster Map"
-    ) {
+    if (statsRefreshStatus !== "Finalizing Statistics") {
       return;
     }
 
@@ -19652,18 +19552,6 @@ function TradingTerminalWorkspace({
     backtestTrades,
     isClusterBacktestTabActive
   ]);
-  const handleBacktestClusterMapRenderReady = useCallback(() => {
-    setBacktestClusterMapRenderReady(true);
-  }, []);
-
-  useEffect(() => {
-    if (selectedSurfaceTab !== "backtest" || selectedBacktestTab !== "cluster") {
-      setBacktestClusterMapRenderReady(false);
-      return;
-    }
-
-    setBacktestClusterMapRenderReady(false);
-  }, [aiZipClusterMapDataKey, selectedBacktestTab, selectedSurfaceTab]);
 
   useEffect(() => {
     if (!isClusterBacktestTabActive) {
@@ -20875,11 +20763,7 @@ function TradingTerminalWorkspace({
     `${appliedBacktestSettings.aiMode === "off" ? "AI Off" : "AI On"}`;
   const isGideonSurface = selectedSurfaceTab === "ai";
   const backtestSurfaceLoadingLabel =
-    selectedSurfaceTab === "models"
-      ? "Loading Models..."
-      : selectedBacktestTab === "cluster"
-      ? "Loading Cluster Map..."
-      : "Preparing Backtest...";
+    selectedSurfaceTab === "models" ? "Loading Models..." : "Preparing Backtest...";
 
   return (
     <main className={`terminal${isGideonSurface ? " terminal-gideon" : ""}`}>
@@ -24475,7 +24359,6 @@ function TradingTerminalWorkspace({
                       onToggleClusterMapView={() =>
                         setAiZipClusterMapView((current) => (current === "3d" ? "2d" : "3d"))
                       }
-                      onRenderReady={handleBacktestClusterMapRenderReady}
                       onPostHocTrades={() => {}}
                       onPostHocProgress={() => {}}
                       onMitMap={() => {}}
