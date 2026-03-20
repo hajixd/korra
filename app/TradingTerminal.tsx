@@ -18810,10 +18810,11 @@ function TradingTerminalWorkspace({
     }
     return total;
   }, [aiLibraryCounts, appliedVisibleAiLibraries]);
-  const totalSimulatedLiveTrades = backtestSourceTrades.length;
+  const totalPreAiLiveTrades = backtestTimeFilteredTrades.length;
+  const acceptedLiveTrades = backtestTrades.length;
   const liveTradeAcceptanceRatePct =
-    totalSimulatedLiveTrades > 0
-      ? (backtestTrades.length / totalSimulatedLiveTrades) * 100
+    totalPreAiLiveTrades > 0
+      ? (acceptedLiveTrades / totalPreAiLiveTrades) * 100
       : 0;
 
   const mainStatsTitle = "Main Statistics";
@@ -19005,30 +19006,32 @@ function TradingTerminalWorkspace({
         meta: appliedConfGateDisabled ? "Gate disabled" : "Minimum confidence threshold"
       },
       {
-        label: "Avg Confidence",
-        value: `${backtestSummary.averageConfidence.toFixed(1)}%`,
+        label: "Acceptance Rate",
+        value: `${liveTradeAcceptanceRatePct.toFixed(1)}%`,
         tone:
-          backtestSummary.averageConfidence >= 60
+          liveTradeAcceptanceRatePct >= 60
             ? "up"
-            : backtestSummary.averageConfidence >= 40
+            : liveTradeAcceptanceRatePct >= 40
               ? "neutral"
               : "down",
         valueStyle: {
           color:
-            backtestSummary.averageConfidence >= 60
+            liveTradeAcceptanceRatePct >= 60
               ? "#34d399"
-              : backtestSummary.averageConfidence >= 40
+              : liveTradeAcceptanceRatePct >= 40
                 ? "#facc15"
                 : "#f87171"
         },
-        meta: "Mean confidence across executed trades"
+        meta: appliedConfGateDisabled
+          ? "All pre-AI trades are accepted"
+          : `${acceptedLiveTrades.toLocaleString("en-US")} of ${totalPreAiLiveTrades.toLocaleString("en-US")} trades passed the AI threshold`
       },
       {
-        label: "Visible Trades",
-        value: backtestTrades.length.toLocaleString("en-US"),
+        label: "Total Live",
+        value: totalPreAiLiveTrades.toLocaleString("en-US"),
         tone: "neutral",
         valueStyle: { color: "#60a5fa" },
-        meta: "Trades after current filters"
+        meta: "Trades before the AI confidence threshold"
       },
       {
         label: "Anti-Cheat",
@@ -19094,7 +19097,13 @@ function TradingTerminalWorkspace({
     }
 
     return stats;
-  }, [appliedBacktestSettings, backtestHasRun, backtestSummary.averageConfidence, backtestTrades.length]);
+  }, [
+    acceptedLiveTrades,
+    appliedBacktestSettings,
+    backtestHasRun,
+    liveTradeAcceptanceRatePct,
+    totalPreAiLiveTrades
+  ]);
 
 
   const activeMainStatsModelPnlIndex =
@@ -22887,8 +22896,8 @@ function TradingTerminalWorkspace({
                     <strong>{backtestDateRangeEndLabel}</strong>
                   </span>
                   <span className="backtest-toolbar-note-meta">
-                    Total Live Trades: <strong>{totalSimulatedLiveTrades.toLocaleString("en-US")}</strong> ·
-                    {" "}Accepted Live Trades: <strong>{backtestTrades.length.toLocaleString("en-US")}</strong> ·
+                    Total Live Trades (Pre-AI): <strong>{totalPreAiLiveTrades.toLocaleString("en-US")}</strong> ·
+                    {" "}Accepted Live Trades: <strong>{acceptedLiveTrades.toLocaleString("en-US")}</strong> ·
                     {" "}Acceptance Rate: <strong>{liveTradeAcceptanceRatePct.toFixed(1)}%</strong> ·
                     {" "}Total Library Trades:{" "}
                     <strong>{totalLoadedLibraryTrades.toLocaleString("en-US")}</strong>
