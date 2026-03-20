@@ -621,146 +621,6 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
     return p.__knnV || p.v;
   }
 
-  function _isFiniteVector(vec){
-    if(!Array.isArray(vec) || vec.length <= 0) return false;
-    for(let i=0;i<vec.length;i++){
-      if(!Number.isFinite(vec[i])) return false;
-    }
-    return true;
-  }
-
-  function _padVector(vec, outDim){
-    const dim = Math.max(1, Math.floor(Number(outDim) || 0));
-    const out = new Array(dim).fill(0);
-    const take = Math.min(dim, Array.isArray(vec) ? vec.length : 0);
-    for(let i=0;i<take;i++){
-      const x = Number(vec[i]);
-      out[i] = Number.isFinite(x) ? x : 0;
-    }
-    return out;
-  }
-
-  function _sampleFiniteVectors(vectors, maxN){
-    if(!Array.isArray(vectors) || vectors.length <= 0) return [];
-    const cap = Math.max(1, Math.floor(Number(maxN) || 1));
-    const out = [];
-    const step = Math.max(1, Math.floor(vectors.length / cap));
-    for(let i=0;i<vectors.length;i+=step){
-      const v = vectors[i];
-      if(!_isFiniteVector(v)) continue;
-      out.push(v);
-      if(out.length >= cap) break;
-    }
-    return out;
-  }
-
-  function _fitWorkerMapBasis(vectors, outDim, key){
-    const dim = Math.max(1, Math.floor(Number(outDim) || 0));
-    if(!Array.isArray(vectors) || vectors.length <= 0) return null;
-    let inDim = 0;
-    const usable = [];
-    for(let i=0;i<vectors.length;i++){
-      const v = vectors[i];
-      if(!_isFiniteVector(v)) continue;
-      if(!inDim) inDim = v.length;
-      if(v.length !== inDim) continue;
-      usable.push(v);
-    }
-    if(!usable.length || !inDim) return null;
-    if(inDim <= dim){
-      return { type: "identity", inDim: inDim, outDim: dim };
-    }
-    const sample = _sampleFiniteVectors(usable, 4000);
-    const basis = _fitPCA(sample, dim, String(key || "") + "|worker_map|" + String(dim) + "|" + String(sample.length));
-    if(!basis){
-      return { type: "identity", inDim: inDim, outDim: dim };
-    }
-    return { type: "pca", inDim: inDim, outDim: dim, basis: basis };
-  }
-
-  function _applyWorkerMapBasis(basis, vec){
-    if(!basis || !_isFiniteVector(vec)) return null;
-    if(vec.length !== basis.inDim) return null;
-    if(basis.type === "pca" && basis.basis){
-      const out = _applyPCA(basis.basis, vec);
-      return _isFiniteVector(out) ? out : null;
-    }
-    return _padVector(vec, basis.outDim);
-  }
-
-  function _buildWorkerMapTransform(projected, outDim, boxW, boxH, boxD){
-    const dim = Math.max(1, Math.floor(Number(outDim) || 0));
-    const pts = [];
-    for(let i=0;i<(projected || []).length;i++){
-      const v = projected[i];
-      if(!_isFiniteVector(v)) continue;
-      pts.push(v);
-    }
-    if(!pts.length){
-      return {
-        cx: 0,
-        cy: 0,
-        cz: 0,
-        scale: 1,
-      };
-    }
-
-    let minX = Infinity, maxX = -Infinity;
-    let minY = Infinity, maxY = -Infinity;
-    let minZ = Infinity, maxZ = -Infinity;
-    for(let i=0;i<pts.length;i++){
-      const v = pts[i];
-      const x = Number(v[0] || 0);
-      const y = Number(v[1] || 0);
-      const z = dim >= 3 ? Number(v[2] || 0) : 0;
-      if(x < minX) minX = x;
-      if(x > maxX) maxX = x;
-      if(y < minY) minY = y;
-      if(y > maxY) maxY = y;
-      if(z < minZ) minZ = z;
-      if(z > maxZ) maxZ = z;
-    }
-
-    const spanX = Math.max(1e-6, maxX - minX);
-    const spanY = Math.max(1e-6, maxY - minY);
-    const spanZ = dim >= 3 ? Math.max(1e-6, maxZ - minZ) : 1;
-    let scale = Math.min(
-      Math.max(1, Number(boxW) || 1) / spanX,
-      Math.max(1, Number(boxH) || 1) / spanY
-    );
-    if(dim >= 3){
-      scale = Math.min(scale, Math.max(1, Number(boxD) || 1) / spanZ);
-    }
-    if(!Number.isFinite(scale) || scale <= 0) scale = 1;
-
-    return {
-      cx: (minX + maxX) * 0.5,
-      cy: (minY + maxY) * 0.5,
-      cz: dim >= 3 ? (minZ + maxZ) * 0.5 : 0,
-      scale: scale,
-    };
-  }
-
-  function _applyWorkerMapTransform(projected, transform, centerX, centerY, centerZ){
-    if(!_isFiniteVector(projected) || !transform) return null;
-    const x = (Number(projected[0] || 0) - transform.cx) * transform.scale + Number(centerX || 0);
-    const y = (Number(projected[1] || 0) - transform.cy) * transform.scale + Number(centerY || 0);
-    const z = (Number(projected[2] || 0) - transform.cz) * transform.scale + Number(centerZ || 0);
-    if(!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
-    return { x: x, y: y, z: z };
-  }
-
-  function resolveWorkerTradeModelKey(trade){
-    if(!trade) return "";
-    const origModel = String(trade.origModel || "").trim();
-    if(origModel) return origModel;
-    const entryModel = String(trade.entryModel || trade.model || "").trim();
-    if(entryModel) return entryModel;
-    const chunkType = String(trade.chunkType || "").trim();
-    if(chunkType && chunkType !== "AI Model") return chunkType;
-    return "";
-  }
-
   function parseDateFromString(raw, parseMode){
     if(!raw) return null;
     let s = String(raw).trim();
@@ -5576,204 +5436,14 @@ function flushSuppressedNeighbors(uptoIndex){
       }
     } catch(_e) {}
 
-    const workerMapVectorByObject = new WeakMap();
-    const mapModelPools = {};
-    const mapVectorsByModel = {};
-
-    const pushWorkerMapVector = function(modelKey, vec){
-      const mk = String(modelKey || "").trim();
-      if(!mk || !_isFiniteVector(vec)) return;
-      if(!mapVectorsByModel[mk]) mapVectorsByModel[mk] = [];
-      mapVectorsByModel[mk].push(vec);
-    };
-
-    const buildWorkerMapQueryVector = function(modelKey, signalIndex){
-      const mk = String(modelKey || "").trim();
-      const pool = mapModelPools[mk];
-      if(!mk || !pool || !pool.length) return null;
-      const idxNum = Number(signalIndex);
-      if(!Number.isFinite(idxNum)) return null;
-      const safeSignalIndex = Math.max(0, Math.min(n - 1, Math.floor(idxNum)));
-      const q = buildChunkVector(candles, safeSignalIndex, chunkBars, mk, parseMode);
-      if(!_isFiniteVector(q)) return null;
-      const qz = standardizeVector(mk, q);
-      const qk = knnProjectQuery(pool, qz);
-      return _isFiniteVector(qk) ? qk : null;
-    };
-
-    const seedMapModels = Array.isArray(usedModels) && usedModels.length
-      ? usedModels.slice()
-      : Object.keys(libs || {});
-    for(let mi=0; mi<seedMapModels.length; mi++){
-      const mk = String(seedMapModels[mi] || "").trim();
-      if(!mk) continue;
-      const pool = libs[mk] || [];
-      if(!Array.isArray(pool) || pool.length <= 0) continue;
-      prepareKnnNeighborSpace(mk, pool);
-      mapModelPools[mk] = pool;
-      for(let pi=0; pi<pool.length; pi++){
-        const pointVec = knnVecForPoint(pool[pi]);
-        pushWorkerMapVector(mk, pointVec);
-      }
-    }
-
-    const attachWorkerMapQueryVector = function(target, modelKey, signalIndex){
-      if(!target) return;
-      const vec = buildWorkerMapQueryVector(modelKey, signalIndex);
-      if(!_isFiniteVector(vec)) return;
-      workerMapVectorByObject.set(target, vec);
-      pushWorkerMapVector(modelKey, vec);
-    };
-
-    for(let ti=0; ti<trades.length; ti++){
-      const trade = trades[ti];
-      attachWorkerMapQueryVector(
-        trade,
-        resolveWorkerTradeModelKey(trade),
-        trade && trade.signalIndex
-      );
-    }
-
-    for(let gi=0; gi<ghostEntries.length; gi++){
-      const ghost = ghostEntries[gi];
-      attachWorkerMapQueryVector(
-        ghost,
-        ghost && ghost.model,
-        ghost && ghost.signalIndex
-      );
-    }
-
-    if(pp && pp.potential){
-      attachWorkerMapQueryVector(
-        pp.potential,
-        pp.potential.model,
-        pp.potential.signalIndex
-      );
-    }
-    if(openTradePotential){
-      attachWorkerMapQueryVector(
-        openTradePotential,
-        openTradePotential.model,
-        openTradePotential.signalIndex
-      );
-    }
-
-    const workerMapProjectors = {};
-    const workerMapModelKeys = Object.keys(mapVectorsByModel).sort();
-    const workerMapCols = Math.max(1, Math.ceil(Math.sqrt(Math.max(1, workerMapModelKeys.length))));
-    const workerMapRows = Math.max(1, Math.ceil(workerMapModelKeys.length / workerMapCols));
-    const workerMapIslandSpacingX = 2500;
-    const workerMapIslandSpacingY = 1900;
-    const workerMapBox2W = 1400;
-    const workerMapBox2H = 760;
-    const workerMapBox3W = 1400;
-    const workerMapBox3H = 760;
-    const workerMapBox3D = 900;
-
-    for(let mi=0; mi<workerMapModelKeys.length; mi++){
-      const mk = workerMapModelKeys[mi];
-      const vectors = mapVectorsByModel[mk] || [];
-      if(!vectors.length) continue;
-      const basis2 = _fitWorkerMapBasis(vectors, 2, mk + "|2d");
-      const basis3 = _fitWorkerMapBasis(vectors, 3, mk + "|3d");
-      if(!basis2 || !basis3) continue;
-
-      const projected2 = [];
-      const projected3 = [];
-      for(let vi=0; vi<vectors.length; vi++){
-        const vec = vectors[vi];
-        const p2 = _applyWorkerMapBasis(basis2, vec);
-        const p3 = _applyWorkerMapBasis(basis3, vec);
-        if(p2) projected2.push(p2);
-        if(p3) projected3.push(p3);
-      }
-
-      const col = mi % workerMapCols;
-      const row = Math.floor(mi / workerMapCols);
-      const centerX = (col - (workerMapCols - 1) * 0.5) * workerMapIslandSpacingX;
-      const centerY = (row - (workerMapRows - 1) * 0.5) * workerMapIslandSpacingY;
-      const tf2 = _buildWorkerMapTransform(projected2, 2, workerMapBox2W, workerMapBox2H, 1);
-      const tf3 = _buildWorkerMapTransform(projected3, 3, workerMapBox3W, workerMapBox3H, workerMapBox3D);
-
-      workerMapProjectors[mk] = {
-        modelKey: mk,
-        project2: function(vec){
-          const projected = _applyWorkerMapBasis(basis2, vec);
-          if(!projected) return null;
-          const placed = _applyWorkerMapTransform(projected, tf2, centerX, centerY, 0);
-          if(!placed) return null;
-          return { x: placed.x, y: placed.y };
-        },
-        project3: function(vec){
-          const projected = _applyWorkerMapBasis(basis3, vec);
-          if(!projected) return null;
-          return _applyWorkerMapTransform(projected, tf3, centerX, centerY, 0);
-        },
-      };
-    }
-
-    const applyWorkerMapCoords = function(target, modelKey, vec){
-      if(!target) return;
-      const mk = String(modelKey || "").trim();
-      const projector = workerMapProjectors[mk];
-      if(!mk || !projector || !_isFiniteVector(vec)) return;
-      const p2 = projector.project2(vec);
-      const p3 = projector.project3(vec);
-      if(p2 && Number.isFinite(p2.x) && Number.isFinite(p2.y)){
-        target.mapX = p2.x;
-        target.mapY = p2.y;
-      }
-      if(p3 && Number.isFinite(p3.x) && Number.isFinite(p3.y) && Number.isFinite(p3.z)){
-        target.mapX3 = p3.x;
-        target.mapY3 = p3.y;
-        target.mapZ3 = p3.z;
-      }
-      target.mapSource = "worker";
-      target.mapModelKey = mk;
-    };
-
-    for(let ti=0; ti<trades.length; ti++){
-      const trade = trades[ti];
-      applyWorkerMapCoords(
-        trade,
-        resolveWorkerTradeModelKey(trade),
-        workerMapVectorByObject.get(trade)
-      );
-    }
-
-    for(let gi=0; gi<ghostEntries.length; gi++){
-      const ghost = ghostEntries[gi];
-      applyWorkerMapCoords(
-        ghost,
-        ghost && ghost.model,
-        workerMapVectorByObject.get(ghost)
-      );
-    }
-
-    if(pp && pp.potential){
-      applyWorkerMapCoords(
-        pp.potential,
-        pp.potential.model,
-        workerMapVectorByObject.get(pp.potential)
-      );
-    }
-    if(openTradePotential){
-      applyWorkerMapCoords(
-        openTradePotential,
-        openTradePotential.model,
-        workerMapVectorByObject.get(openTradePotential)
-      );
-    }
-
-
     // Sampled library points (for Cluster Map visualization only)
     const libraryPoints = [];
     try {
       const perLibCap = Number.POSITIVE_INFINITY;
       const totalCap = Number.POSITIVE_INFINITY;
       const perLib = {};
-      for (const mk in mapModelPools) {
-        const arr = mapModelPools[mk] || [];
+      for (const mk in libs) {
+        const arr = libs[mk] || [];
         if (!arr || arr.length === 0) continue;
 
         // Scan with a step to avoid huge loops when libraries are very large.
@@ -5818,7 +5488,7 @@ function flushSuppressedNeighbors(uptoIndex){
           const label = lb > 0 ? 1 : -1;
           const sid = sIdx == null ? "na" : String(sIdx);
 
-          const libraryPoint = {
+          libraryPoints.push({
             id: "lib|" + lid + "|" + mk + "|" + sid + "|" + String(i),
             uid: p.uid ?? null,
             metaUid: p.metaUid ?? p.uid ?? null,
@@ -5833,9 +5503,7 @@ function flushSuppressedNeighbors(uptoIndex){
             result: label > 0 ? "TP" : "SL",
             trainingOnly: true,
             v: hasVec ? vec : undefined,
-          };
-          applyWorkerMapCoords(libraryPoint, mk, knnVecForPoint(p));
-          libraryPoints.push(libraryPoint);
+          });
 
           perLib[lid] = (perLib[lid] || 0) + 1;
         }

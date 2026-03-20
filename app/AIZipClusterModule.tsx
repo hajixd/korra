@@ -35249,7 +35249,7 @@ export default function App() {
               when toggling views. HDBSCAN still mounts while collapsed so
               post-hoc trades remain in sync with stats/calendar/history.
             */}
-            {aiMethod === "hdbscan" || aiMethod === "knn" ? (
+            {aiMethod === "hdbscan" ? (
               <ClusterMap
                 headless={isClusterCollapsed}
                 candles={candles}
