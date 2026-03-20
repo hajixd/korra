@@ -243,14 +243,7 @@ button {
   justify-items: center;
   gap: 1rem;
   padding: 1.5rem;
-  background:
-    linear-gradient(rgba(36, 50, 75, 0.18) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(36, 50, 75, 0.18) 1px, transparent 1px),
-    radial-gradient(circle at top left, rgba(45, 108, 255, 0.16), transparent 34%),
-    radial-gradient(circle at bottom right, rgba(27, 174, 138, 0.1), transparent 32%),
-    linear-gradient(180deg, #070c13 0%, #080b10 100%);
-  background-size: 120px 120px, 120px 120px, auto, auto, auto;
-  background-position: center center, center center, center, center, center;
+  background: #080b10;
 }
 
 .account-shell-panel {
@@ -263,22 +256,6 @@ button {
   display: grid;
   justify-items: center;
   gap: 0.55rem;
-}
-
-.account-shell-kicker {
-  min-height: 23px;
-  border: 1px solid #273247;
-  border-radius: 4px;
-  background: #101726;
-  color: #c4cee2;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 0.72rem;
-  font-size: 0.58rem;
-  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .account-shell-header h1 {
@@ -306,11 +283,10 @@ button {
 
 .account-mode-btn {
   height: 42px;
-  border: 1px solid #273247;
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 8px;
-  background: #101726;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  color: #c7d1e4;
+  background: #080b10;
+  color: #f5f7fa;
   font-size: 0.63rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
   letter-spacing: 0.08em;
@@ -325,19 +301,17 @@ button {
 }
 
 .account-mode-btn:hover {
-  border-color: #355489;
-  background: #162137;
-  color: #e7eefc;
+  border-color: rgba(255, 255, 255, 0.46);
+  background: #11151b;
+  color: #ffffff;
   transform: translateY(-1px);
 }
 
 .account-mode-btn.active {
-  border-color: rgba(88, 166, 255, 0.52);
-  background: linear-gradient(180deg, rgba(22, 33, 55, 0.96), rgba(14, 21, 34, 0.96));
-  color: #f2f6ff;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 0 0 1px rgba(88, 166, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.6);
+  background: #0f1318;
+  color: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .account-inline-note {
@@ -360,16 +334,29 @@ button {
 .account-form-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 0.75rem;
 }
 
-.account-form-header strong {
-  color: #8fa2c8;
-  font-size: 0.58rem;
+.account-back-btn {
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: #080b10;
+  color: rgba(255, 255, 255, 0.88);
+  padding: 0 0.75rem;
+  font-size: 0.56rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.account-back-btn:hover {
+  border-color: rgba(255, 255, 255, 0.38);
+  background: #101318;
+  color: #ffffff;
 }
 
 .account-field {
@@ -388,11 +375,11 @@ button {
 .account-input {
   width: 100%;
   height: 42px;
-  border: 1px solid #273247;
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
-  background: rgba(9, 17, 27, 0.86);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
-  color: #e2e9f6;
+  background: #080b10;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.015);
+  color: #f4f7fb;
   padding: 0 0.8rem;
   font-size: 0.76rem;
   outline: none;
@@ -400,8 +387,8 @@ button {
 }
 
 .account-input:focus {
-  border-color: rgba(45, 108, 255, 0.66);
-  background: #0c1522;
+  border-color: rgba(255, 255, 255, 0.5);
+  background: #0d1116;
 }
 
 .account-input::placeholder {
@@ -410,11 +397,10 @@ button {
 
 .account-submit-btn {
   height: 42px;
-  border: 1px solid rgba(88, 166, 255, 0.46);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 8px;
-  background: linear-gradient(180deg, #162137 0%, #101726 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  color: #f3f7ff;
+  background: #f3f5f7;
+  color: #080b10;
   font-size: 0.64rem;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
   letter-spacing: 0.08em;
@@ -425,12 +411,13 @@ button {
 
 .account-submit-btn:hover {
   transform: translateY(-1px);
-  filter: brightness(1.05);
+  filter: brightness(0.97);
 }
 
 .account-submit-btn:disabled,
 .account-input:disabled,
-.account-mode-btn:disabled {
+.account-mode-btn:disabled,
+.account-back-btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
   transform: none;

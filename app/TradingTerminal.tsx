@@ -8688,7 +8688,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         <section className="account-screen-shell">
           <div className="account-shell-panel">
             <div className="account-shell-header">
-              <span className="account-shell-kicker">Korra</span>
               <h1>Connecting account</h1>
               <p>Checking your Firebase session before loading the terminal.</p>
             </div>
@@ -8699,42 +8698,38 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   }
 
   if (!currentUser) {
-    const modeLabel =
-      authMode === "login" ? "Log In" : authMode === "create" ? "Create Account" : "Account";
     const formDisabled = authBusy !== null || !firebaseClientConfigReady;
 
     return (
       <main className="terminal account-screen">
         <section className="account-screen-shell">
           <div className="account-shell-panel">
-            <div className="account-shell-header">
-              <span className="account-shell-kicker">Korra</span>
-            </div>
-
-            <div className="account-mode-grid">
-              <button
-                type="button"
-                className={`account-mode-btn${authMode === "login" ? " active" : ""}`}
-                onClick={() => {
-                  setAuthMode("login");
-                  setAuthForm(EMPTY_ACCOUNT_AUTH_FORM);
-                  setAuthError("");
-                }}
-              >
-                Log In
-              </button>
-              <button
-                type="button"
-                className={`account-mode-btn${authMode === "create" ? " active" : ""}`}
-                onClick={() => {
-                  setAuthMode("create");
-                  setAuthForm(EMPTY_ACCOUNT_AUTH_FORM);
-                  setAuthError("");
-                }}
-              >
-                Create Account
-              </button>
-            </div>
+            {!authMode ? (
+              <div className="account-mode-grid">
+                <button
+                  type="button"
+                  className="account-mode-btn"
+                  onClick={() => {
+                    setAuthMode("login");
+                    setAuthForm(EMPTY_ACCOUNT_AUTH_FORM);
+                    setAuthError("");
+                  }}
+                >
+                  Log In
+                </button>
+                <button
+                  type="button"
+                  className="account-mode-btn"
+                  onClick={() => {
+                    setAuthMode("create");
+                    setAuthForm(EMPTY_ACCOUNT_AUTH_FORM);
+                    setAuthError("");
+                  }}
+                >
+                  Create Account
+                </button>
+              </div>
+            ) : null}
 
             {firebaseSetupMessage ? (
               <div className="account-inline-note">{firebaseSetupMessage}</div>
@@ -8743,17 +8738,16 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
             {authMode ? (
               <form className="account-form" onSubmit={handleAuthSubmit}>
                 <div className="account-form-header">
-                  <strong>{modeLabel}</strong>
                   <button
                     type="button"
-                    className="settings-io-btn"
+                    className="account-back-btn"
                     onClick={() => {
                       setAuthMode(null);
                       setAuthForm(EMPTY_ACCOUNT_AUTH_FORM);
                       setAuthError("");
                     }}
                   >
-                    <span className="settings-io-label">Back</span>
+                    Back
                   </button>
                 </div>
 
@@ -8819,10 +8813,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   disabled={formDisabled}
                 >
                   {authBusy === authMode
-                    ? authMode === "login"
-                      ? "Logging In..."
-                      : "Creating Account..."
-                    : modeLabel}
+                    ? "Loading..."
+                    : "Continue"}
                 </button>
               </form>
             ) : null}
