@@ -8385,7 +8385,7 @@ const getStatsRefreshPhaseDurationMs = (status: string): number => {
 
 const isStatsRefreshAutoFinishPhase = (status: string): boolean => {
   const phaseKey = getStatsRefreshPhaseKey(status);
-  return phaseKey === "finalize";
+  return phaseKey === "finalize" && status !== "Finalizing Statistics";
 };
 
 const getStatsRefreshStatusDetail = (
@@ -9188,6 +9188,7 @@ function TradingTerminalWorkspace({
   const [statsRefreshStatus, setStatsRefreshStatus] = useState("Updating Backtest Statistics");
   const [statsRefreshPhasePlan, setStatsRefreshPhasePlan] = useState<StatsRefreshPhaseKey[]>([]);
   const [statsRefreshProgressLabel, setStatsRefreshProgressLabel] = useState("");
+  const [statsRefreshReplaySettled, setStatsRefreshReplaySettled] = useState(true);
   const [statsRefreshTimelineRange, setStatsRefreshTimelineRange] = useState<{
     startMs: number;
     endMs: number;
@@ -9770,6 +9771,7 @@ function TradingTerminalWorkspace({
       setStatsRefreshStatus("Updating Backtest Statistics");
       setStatsRefreshPhasePlanValue([]);
       setStatsRefreshProgressLabel("");
+      setStatsRefreshReplaySettled(true);
       return;
     }
 
@@ -9797,6 +9799,9 @@ function TradingTerminalWorkspace({
       setBacktestRunCount((current) => current + 1);
       setBacktestRefreshNowMs(nextRefreshMs);
       setBacktestHistorySeedReady(!needsHistorySeedReload);
+      setStatsRefreshReplaySettled(false);
+      setPanelAnalyticsStatus("loading");
+      setBacktestAnalyticsStatus("loading");
       updateStatsRefreshOverlayMode("loading");
       setStatsRefreshProgress(0);
       setStatsRefreshLoadingDisplayProgress(0);
@@ -9840,6 +9845,7 @@ function TradingTerminalWorkspace({
       setStatsRefreshStatus("Updating Backtest Statistics");
       setStatsRefreshPhasePlanValue([]);
       setStatsRefreshProgressLabel("");
+      setStatsRefreshReplaySettled(true);
     }
     setPropResult(null);
     setPropStats(null);
@@ -12803,6 +12809,8 @@ function TradingTerminalWorkspace({
     activePanelHistoryRows: []
   });
   const [panelAnalyticsStatus, setPanelAnalyticsStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [backtestAnalyticsStatus, setBacktestAnalyticsStatus] =
+    useState<"idle" | "loading" | "ready" | "error">("idle");
   const fallbackChartPanelHistoryRows = useMemo(() => {
     return filterHistoryRowsLocally({
       sourceTrades: panelSourceTrades,
@@ -13269,6 +13277,7 @@ function TradingTerminalWorkspace({
 
     if (tradeBlueprintsSnapshot.length === 0 || backtestTargetTradesSnapshot <= 0) {
       setStatsRefreshStatus("No Trades In Selected Range");
+      setStatsRefreshReplaySettled(true);
       startTransition(() => {
         setHistoryRows([]);
       });
@@ -13362,6 +13371,7 @@ function TradingTerminalWorkspace({
       clearProgressTimeout();
       clearRequestTimeout();
       clearPhaseTransitionTimeout();
+      setStatsRefreshReplaySettled(true);
       startTransition(() => {
         setHistoryRows(rows);
       });
@@ -16493,6 +16503,48 @@ function TradingTerminalWorkspace({
       : isBacktestTabHistoryPending
         ? "Loading backtest data..."
         : "Loading tab data...";
+  const statsRefreshNeedsPanelAnalytics =
+    statsRefreshOverlayMode === "loading" && shouldComputePanelAnalyticsOnServer;
+  const statsRefreshNeedsBacktestAnalytics =
+    statsRefreshOverlayMode === "loading" &&
+    isBacktestAnalyticsVisible &&
+    shouldComputeBacktestAnalyticsOnServer;
+  const statsRefreshPanelAnalyticsSettled =
+    !statsRefreshNeedsPanelAnalytics ||
+    panelAnalyticsStatus === "ready" ||
+    panelAnalyticsStatus === "error" ||
+    panelAnalyticsStatus === "idle";
+  const statsRefreshBacktestAnalyticsSettled =
+    !statsRefreshNeedsBacktestAnalytics ||
+    backtestAnalyticsStatus === "ready" ||
+    backtestAnalyticsStatus === "error" ||
+    backtestAnalyticsStatus === "idle";
+  const statsRefreshCompletionReady =
+    statsRefreshReplaySettled &&
+    statsRefreshPanelAnalyticsSettled &&
+    statsRefreshBacktestAnalyticsSettled;
+
+  useEffect(() => {
+    if (statsRefreshOverlayMode !== "loading") {
+      return;
+    }
+
+    if (statsRefreshStatus !== "Finalizing Statistics") {
+      return;
+    }
+
+    if (!statsRefreshCompletionReady) {
+      return;
+    }
+
+    finishStatsRefreshLoading(formatStatsRefreshDateLabel(statsRefreshTimelineRange.endMs));
+  }, [
+    finishStatsRefreshLoading,
+    statsRefreshCompletionReady,
+    statsRefreshOverlayMode,
+    statsRefreshStatus,
+    statsRefreshTimelineRange.endMs
+  ]);
 
   const baselineMainStatsTrades = useMemo(
     () => backtestTimeFilteredTrades,
@@ -16596,6 +16648,7 @@ function TradingTerminalWorkspace({
       !shouldComputeBacktestAnalyticsOnServer ||
       (backtestTrades.length === 0 && baselineMainStatsTrades.length === 0)
     ) {
+      setBacktestAnalyticsStatus("ready");
       setBacktestAnalyticsData(
         buildBacktestAnalyticsFallbackResponse({
           backtestTrades,
@@ -16613,6 +16666,7 @@ function TradingTerminalWorkspace({
 
     const controller = new AbortController();
     let cancelled = false;
+    setBacktestAnalyticsStatus("loading");
 
     computeBacktestAnalyticsOnServer(
       {
@@ -16636,12 +16690,14 @@ function TradingTerminalWorkspace({
         if (cancelled || controller.signal.aborted) {
           return;
         }
+        setBacktestAnalyticsStatus("ready");
         setBacktestAnalyticsData(result);
       })
       .catch(() => {
         if (cancelled || controller.signal.aborted) {
           return;
         }
+        setBacktestAnalyticsStatus("error");
         setBacktestAnalyticsData(
           buildBacktestAnalyticsFallbackResponse({
             backtestTrades,
