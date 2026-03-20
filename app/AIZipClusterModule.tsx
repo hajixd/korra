@@ -11,6 +11,7 @@ import React, {
   useCallback,
   useDeferredValue,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   ComposedChart,
   CartesianGrid,
@@ -9881,17 +9882,49 @@ function ClusterMapMenuDropdown({
   minWidth = 180,
 }) {
   const rootRef = useRef<any>(null);
+  const menuRef = useRef<any>(null);
   const [open, setOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<any>(null);
   const selected =
     (options || []).find(
       (option: any) => String(option?.value ?? "") === String(value ?? "")
     ) ||
     (options || [])[0] || { value, label: value };
 
+  const updateMenuPosition = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    const rect = root.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const width = Math.min(
+      Math.max(minWidth, rect.width),
+      Math.max(minWidth, viewportWidth - 32)
+    );
+    const left = Math.min(
+      Math.max(16, rect.left),
+      Math.max(16, viewportWidth - width - 16)
+    );
+    const estimatedHeight = Math.min(340, (options || []).length * 44 + 10);
+    const shouldOpenUpward =
+      rect.bottom + 8 + estimatedHeight > viewportHeight - 16 &&
+      rect.top >= estimatedHeight + 16;
+    const top = shouldOpenUpward
+      ? Math.max(16, rect.top - estimatedHeight - 8)
+      : Math.min(viewportHeight - estimatedHeight - 16, rect.bottom + 6);
+
+    setMenuPosition({ left, top, width });
+  }, [minWidth, options]);
+
   useEffect(() => {
     if (!open) return;
     const handlePointerDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target)) {
+      const target = event.target as Node;
+      if (
+        !rootRef.current?.contains(target) &&
+        !menuRef.current?.contains(target)
+      ) {
         setOpen(false);
       }
     };
@@ -9900,59 +9933,42 @@ function ClusterMapMenuDropdown({
         setOpen(false);
       }
     };
+    const handleViewportChange = () => {
+      updateMenuPosition();
+    };
+    updateMenuPosition();
     document.addEventListener("mousedown", handlePointerDown);
     window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
     return () => {
       document.removeEventListener("mousedown", handlePointerDown);
       window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
     };
-  }, [open]);
+  }, [open, updateMenuPosition]);
 
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      <div style={{ fontSize: 10, opacity: 0.75 }}>{label}</div>
-      <div ref={rootRef} style={{ position: "relative" }}>
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => {
-            if (!disabled) setOpen((current) => !current);
-          }}
-          style={{
-            minWidth,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 8,
-            padding: "6px 8px",
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,0.14)",
-            background: "rgba(0,0,0,0.30)",
-            color: "rgba(255,255,255,0.92)",
-            fontSize: 10,
-            fontWeight: 800,
-            cursor: disabled ? "not-allowed" : "pointer",
-            opacity: disabled ? 0.55 : 1,
-          }}
-        >
-          <span>{selected?.label ?? String(value ?? "")}</span>
-          <span style={{ opacity: 0.72, fontSize: 9 }}>v</span>
-        </button>
-
-        {open ? (
+  const dropdownMenu =
+    open && menuPosition
+      ? createPortal(
           <div
+            ref={menuRef}
             style={{
-              position: "absolute",
-              left: 0,
-              top: "calc(100% + 6px)",
-              minWidth,
+              position: "fixed",
+              left: menuPosition.left,
+              top: menuPosition.top,
+              width: menuPosition.width,
+              maxWidth: "calc(100vw - 32px)",
+              maxHeight: "min(340px, calc(100vh - 32px))",
               borderRadius: 14,
               border: "1px solid rgba(255,255,255,0.14)",
-              background: "rgba(6,10,20,0.96)",
+              background: "rgba(6,10,20,0.98)",
               backdropFilter: "blur(10px)",
-              boxShadow: "0 18px 40px rgba(0,0,0,0.7)",
-              overflow: "hidden",
-              zIndex: 60,
+              boxShadow: "0 20px 44px rgba(0,0,0,0.72)",
+              overflowY: "auto",
+              overflowX: "hidden",
+              zIndex: 24000,
             }}
           >
             {(options || []).map((option: any) => {
@@ -9995,8 +10011,42 @@ function ClusterMapMenuDropdown({
                 </button>
               );
             })}
-          </div>
-        ) : null}
+          </div>,
+          document.body
+        )
+      : null;
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <div style={{ fontSize: 10, opacity: 0.75 }}>{label}</div>
+      <div ref={rootRef} style={{ position: "relative", zIndex: open ? 1200 : 1 }}>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => {
+            if (!disabled) setOpen((current) => !current);
+          }}
+          style={{
+            minWidth,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            padding: "6px 8px",
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,0.14)",
+            background: "rgba(0,0,0,0.30)",
+            color: "rgba(255,255,255,0.92)",
+            fontSize: 10,
+            fontWeight: 800,
+            cursor: disabled ? "not-allowed" : "pointer",
+            opacity: disabled ? 0.55 : 1,
+          }}
+        >
+          <span>{selected?.label ?? String(value ?? "")}</span>
+          <span style={{ opacity: 0.72, fontSize: 9 }}>v</span>
+        </button>
+        {dropdownMenu}
       </div>
     </div>
   );

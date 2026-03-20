@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { createPortal } from "react-dom";
 import type {
   CSSProperties,
   FormEvent,
@@ -3696,16 +3697,52 @@ function AiZipMenuSelect({
   disabled?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<{
+    left: number;
+    top: number;
+    width: number;
+  } | null>(null);
   const selected =
     options.find((option) => option.value === value) ??
     options[0] ?? { value, label: value };
+
+  const updateMenuPosition = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) {
+      return;
+    }
+
+    const rect = root.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const width = Math.min(rect.width, Math.max(220, viewportWidth - 32));
+    const left = Math.min(
+      Math.max(16, rect.left),
+      Math.max(16, viewportWidth - width - 16)
+    );
+    const estimatedHeight = Math.min(320, options.length * 42 + 10);
+    const shouldOpenUpward =
+      rect.bottom + 8 + estimatedHeight > viewportHeight - 16 &&
+      rect.top >= estimatedHeight + 16;
+    const top = shouldOpenUpward
+      ? Math.max(16, rect.top - estimatedHeight - 8)
+      : Math.min(viewportHeight - estimatedHeight - 16, rect.bottom + 6);
+
+    setMenuPosition({ left, top, width });
+  }, [options.length]);
 
   useEffect(() => {
     if (!open) return;
 
     const handlePointerDown = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (
+        rootRef.current &&
+        !rootRef.current.contains(target) &&
+        !menuRef.current?.contains(target)
+      ) {
         setOpen(false);
       }
     };
@@ -3714,15 +3751,23 @@ function AiZipMenuSelect({
         setOpen(false);
       }
     };
+    const handleViewportChange = () => {
+      updateMenuPosition();
+    };
 
+    updateMenuPosition();
     document.addEventListener("mousedown", handlePointerDown);
     window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
 
     return () => {
       document.removeEventListener("mousedown", handlePointerDown);
       window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
     };
-  }, [open]);
+  }, [open, updateMenuPosition]);
 
   useEffect(() => {
     if (disabled) {
@@ -3730,12 +3775,71 @@ function AiZipMenuSelect({
     }
   }, [disabled]);
 
+  const dropdownMenu =
+    open && menuPosition
+      ? createPortal(
+          <div
+            ref={menuRef}
+            style={{
+              position: "fixed",
+              left: menuPosition.left,
+              top: menuPosition.top,
+              width: menuPosition.width,
+              maxWidth: "calc(100vw - 32px)",
+              maxHeight: "min(320px, calc(100vh - 32px))",
+              borderRadius: 12,
+              border: "1px solid rgba(255, 255, 255, 0.14)",
+              background: "rgba(7, 11, 20, 0.98)",
+              boxShadow: "0 18px 42px rgba(0, 0, 0, 0.62)",
+              overflowY: "auto",
+              overflowX: "hidden",
+              zIndex: 24000
+            }}
+          >
+            {options.map((option, index) => {
+              const active = option.value === value;
+
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => {
+                    onChange(option.value);
+                    setOpen(false);
+                  }}
+                  style={{
+                    width: "100%",
+                    padding: "0.55rem 0.62rem",
+                    border: "none",
+                    borderTop:
+                      index === 0 ? "none" : "1px solid rgba(255, 255, 255, 0.08)",
+                    background: active
+                      ? "rgba(90, 170, 255, 0.16)"
+                      : "rgba(0, 0, 0, 0)",
+                    color: active
+                      ? "rgba(245, 248, 255, 0.98)"
+                      : "rgba(255, 255, 255, 0.84)",
+                    fontSize: "0.75rem",
+                    fontWeight: active ? 900 : 800,
+                    textAlign: "left",
+                    cursor: "pointer"
+                  }}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>,
+          document.body
+        )
+      : null;
+
   return (
     <div
       ref={rootRef}
       style={{
         position: "relative",
-        zIndex: open ? 80 : 1,
+        zIndex: open ? 1200 : 1,
         overflow: "visible"
       }}
     >
@@ -3761,57 +3865,7 @@ function AiZipMenuSelect({
           v
         </span>
       </button>
-
-      {open ? (
-        <div
-          style={{
-            position: "absolute",
-            left: 0,
-            top: "calc(100% + 0.4rem)",
-            width: "100%",
-            borderRadius: 12,
-            border: "1px solid rgba(255, 255, 255, 0.14)",
-            background: "rgba(7, 11, 20, 0.98)",
-            boxShadow: "0 16px 34px rgba(0, 0, 0, 0.52)",
-            overflow: "hidden",
-            zIndex: 50
-          }}
-        >
-          {options.map((option, index) => {
-            const active = option.value === value;
-
-            return (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                }}
-                style={{
-                  width: "100%",
-                  padding: "0.55rem 0.62rem",
-                  border: "none",
-                  borderTop:
-                    index === 0 ? "none" : "1px solid rgba(255, 255, 255, 0.08)",
-                  background: active
-                    ? "rgba(90, 170, 255, 0.16)"
-                    : "rgba(0, 0, 0, 0)",
-                  color: active
-                    ? "rgba(245, 248, 255, 0.98)"
-                    : "rgba(255, 255, 255, 0.84)",
-                  fontSize: "0.75rem",
-                  fontWeight: active ? 900 : 800,
-                  textAlign: "left",
-                  cursor: "pointer"
-                }}
-              >
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+      {dropdownMenu}
     </div>
   );
 }
@@ -9020,32 +9074,30 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       <main className="terminal account-screen">
         <section className="account-screen-shell">
           <div className="account-shell-panel">
-            {!authMode ? (
-              <div className="account-mode-grid">
-                <button
-                  type="button"
-                  className="account-mode-btn"
-                  onClick={() => {
-                    setAuthMode("login");
-                    setAuthForm(EMPTY_ACCOUNT_AUTH_FORM);
-                    setAuthError("");
-                  }}
-                >
-                  Log In
-                </button>
-                <button
-                  type="button"
-                  className="account-mode-btn"
-                  onClick={() => {
-                    setAuthMode("create");
-                    setAuthForm(EMPTY_ACCOUNT_AUTH_FORM);
-                    setAuthError("");
-                  }}
-                >
-                  Create Account
-                </button>
-              </div>
-            ) : null}
+            <div className="account-mode-grid">
+              <button
+                type="button"
+                className={`account-mode-btn${authMode === "create" ? " active" : ""}`}
+                onClick={() => {
+                  setAuthMode("create");
+                  setAuthForm(EMPTY_ACCOUNT_AUTH_FORM);
+                  setAuthError("");
+                }}
+              >
+                Create Account
+              </button>
+              <button
+                type="button"
+                className={`account-mode-btn${authMode === "login" ? " active" : ""}`}
+                onClick={() => {
+                  setAuthMode("login");
+                  setAuthForm(EMPTY_ACCOUNT_AUTH_FORM);
+                  setAuthError("");
+                }}
+              >
+                Log In
+              </button>
+            </div>
 
             {firebaseSetupMessage ? (
               <div className="account-inline-note">{firebaseSetupMessage}</div>
@@ -9053,20 +9105,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
             {authMode ? (
               <form className="account-form" onSubmit={handleAuthSubmit}>
-                <div className="account-form-header">
-                  <button
-                    type="button"
-                    className="account-back-btn"
-                    onClick={() => {
-                      setAuthMode(null);
-                      setAuthForm(EMPTY_ACCOUNT_AUTH_FORM);
-                      setAuthError("");
-                    }}
-                  >
-                    Back
-                  </button>
-                </div>
-
                 {authMode === "create" ? (
                   <label className="account-field">
                     <span>Username</span>
@@ -9130,7 +9168,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 >
                   {authBusy === authMode
                     ? "Loading..."
-                    : "Continue"}
+                    : authMode === "create"
+                      ? "Create Account"
+                      : "Log In"}
                 </button>
               </form>
             ) : null}
@@ -18690,6 +18730,10 @@ function TradingTerminalWorkspace({
     return total;
   }, [aiLibraryCounts, appliedVisibleAiLibraries]);
   const totalSimulatedLiveTrades = backtestSourceTrades.length;
+  const liveTradeAcceptanceRatePct =
+    totalSimulatedLiveTrades > 0
+      ? (backtestTrades.length / totalSimulatedLiveTrades) * 100
+      : 0;
 
   const mainStatsTitle = "Main Statistics";
 
@@ -22367,6 +22411,7 @@ function TradingTerminalWorkspace({
                   <span className="backtest-toolbar-note-meta">
                     Total Live Trades: <strong>{totalSimulatedLiveTrades.toLocaleString("en-US")}</strong> ·
                     {" "}Accepted Live Trades: <strong>{backtestTrades.length.toLocaleString("en-US")}</strong> ·
+                    {" "}Acceptance Rate: <strong>{liveTradeAcceptanceRatePct.toFixed(1)}%</strong> ·
                     {" "}Total Library Trades:{" "}
                     <strong>{totalLoadedLibraryTrades.toLocaleString("en-US")}</strong>
                   </span>
