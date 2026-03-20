@@ -10544,6 +10544,11 @@ function ClusterMapInner({
         entryPrice: t.entryPrice,
         suppressed: !!(t as any).suppressed,
         entryNeighbors: (t as any).entryNeighbors ?? [],
+        mapX: (t as any).mapX ?? null,
+        mapY: (t as any).mapY ?? null,
+        mapX3: (t as any).mapX3 ?? null,
+        mapY3: (t as any).mapY3 ?? null,
+        mapZ3: (t as any).mapZ3 ?? null,
       });
     }
     const hasLiveOpenTrade = trades.some((t) => !!t.isOpen);
@@ -10602,6 +10607,11 @@ function ClusterMapInner({
           entryTime: tRaw,
           chunkType: potential.model,
           entryNeighbors: (potential as any).entryNeighbors ?? [],
+          mapX: (potential as any).mapX ?? null,
+          mapY: (potential as any).mapY ?? null,
+          mapX3: (potential as any).mapX3 ?? null,
+          mapY3: (potential as any).mapY3 ?? null,
+          mapZ3: (potential as any).mapZ3 ?? null,
         });
       }
     }
@@ -10707,6 +10717,11 @@ function ClusterMapInner({
             (g as any).labelUid ?? (g as any).closestClusterUid ?? null,
           closestCluster: (g as any).label ?? undefined,
           chunkType: g.model,
+          mapX: (g as any).mapX ?? null,
+          mapY: (g as any).mapY ?? null,
+          mapX3: (g as any).mapX3 ?? null,
+          mapY3: (g as any).mapY3 ?? null,
+          mapZ3: (g as any).mapZ3 ?? null,
         });
       }
     }
@@ -11045,6 +11060,11 @@ function ClusterMapInner({
         exitReason: "Library",
         entryPrice: (p as any).entryPrice ?? null,
         suppressed: false,
+        mapX: (p as any).mapX ?? null,
+        mapY: (p as any).mapY ?? null,
+        mapX3: (p as any).mapX3 ?? null,
+        mapY3: (p as any).mapY3 ?? null,
+        mapZ3: (p as any).mapZ3 ?? null,
       });
       libraryNodeDiagnostics.createdCount += 1;
       libraryNodeDiagnostics.createdByLibrary[libId] =
@@ -11054,6 +11074,73 @@ function ClusterMapInner({
     if (entries.length === 0) {
       libraryPointDiagnosticsRef.current = libraryNodeDiagnostics;
       return [];
+    }
+
+    const allEntriesHaveWorkerCoords =
+      entries.length > 0 &&
+      (entries as any[]).every((e) => {
+        return (
+          Number.isFinite(Number((e as any).mapX)) &&
+          Number.isFinite(Number((e as any).mapY))
+        );
+      });
+    if (allEntriesHaveWorkerCoords) {
+      projectionRef.current = null;
+      const out: any[] = [];
+      for (let i = 0; i < entries.length; i++) {
+        const e: any = entries[i];
+        const x = Number((e as any).mapX);
+        const y = Number((e as any).mapY);
+        const x3 = Number.isFinite(Number((e as any).mapX3))
+          ? Number((e as any).mapX3)
+          : x;
+        const y3 = Number.isFinite(Number((e as any).mapY3))
+          ? Number((e as any).mapY3)
+          : y;
+        const z3 = Number.isFinite(Number((e as any).mapZ3))
+          ? Number((e as any).mapZ3)
+          : 0;
+        const r = (e.baseR ?? 7.2) * 1.25;
+        out.push({
+          id: e.id,
+          uid: (e as any).uid || (e as any).tradeUid || e.id || null,
+          metaUid: (e as any).metaUid ?? null,
+          libId: (e as any).libId ?? null,
+          x,
+          y,
+          x3,
+          y3,
+          z3,
+          r,
+          kind: e.kind,
+          pnl: e.pnl,
+          win: e.win,
+          isOpen: e.isOpen,
+          dir: e.dir,
+          entryTime: e.entryTime,
+          exitTime: e.exitTime,
+          session: e.session,
+          closestCluster: e.closestCluster,
+          closestClusterUid: (e as any).closestClusterUid ?? null,
+          entryMargin: (e as any).entryMargin ?? null,
+          entryConfidence: (e as any).entryConfidence ?? null,
+          aiConfidence: (e as any).aiConfidence ?? null,
+          confidence: (e as any).confidence ?? null,
+          aiMargin: (e as any).aiMargin ?? null,
+          margin: (e as any).margin ?? null,
+          aiMode: (e as any).aiMode ?? null,
+          potentialMargin: e.potentialMargin,
+          chunkType: e.chunkType,
+          exitReason: e.exitReason,
+          signalIndex: e.signalIndex,
+          entryIndex: e.entryIndex,
+          exitIndex: e.exitIndex,
+          entryPrice: e.entryPrice,
+          entryNeighbors: (e as any).entryNeighbors ?? [],
+        });
+      }
+      libraryPointDiagnosticsRef.current = libraryNodeDiagnostics;
+      return out;
     }
 
     // Skip any nodes whose CHUNK vector contains non‑finite values (no PCA2 fallback).
