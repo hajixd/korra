@@ -9507,6 +9507,7 @@ function TradingTerminalWorkspace({
   const [savedPresets, setSavedPresets] = useState<SavedPreset[]>([]);
   const [presetMenuOpen, setPresetMenuOpen] = useState<"save" | "load" | null>(null);
   const [presetNameInput, setPresetNameInput] = useState("");
+  const [isMobileWorkspace, setIsMobileWorkspace] = useState(false);
   const [aggressorPressure, setAggressorPressure] = useState<AggressorPressureSnapshot>(() => ({
     buyPressure: 0,
     sellPressure: 0,
@@ -9678,6 +9679,47 @@ function TradingTerminalWorkspace({
     }
   }, [selectedBacktestTab, selectedSurfaceTab]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const mobileUserAgentPattern =
+      /android|iphone|ipad|ipod|mobile|blackberry|iemobile|opera mini|webos/i;
+    const widthQuery = window.matchMedia("(max-width: 860px)");
+    const pointerQuery = window.matchMedia("(pointer: coarse)");
+    const evaluateMobileWorkspace = () => {
+      const mobileByViewport = widthQuery.matches;
+      const coarsePointer = pointerQuery.matches;
+      const hasTouch = navigator.maxTouchPoints > 0;
+      const mobileByUa = mobileUserAgentPattern.test(navigator.userAgent);
+      setIsMobileWorkspace(mobileByUa || (mobileByViewport && (coarsePointer || hasTouch)));
+    };
+    const addQueryListener = (
+      query: MediaQueryList,
+      listener: () => void
+    ) => {
+      if (typeof query.addEventListener === "function") {
+        query.addEventListener("change", listener);
+        return () => query.removeEventListener("change", listener);
+      }
+
+      query.addListener(listener);
+      return () => query.removeListener(listener);
+    };
+
+    evaluateMobileWorkspace();
+    const removeWidthListener = addQueryListener(widthQuery, evaluateMobileWorkspace);
+    const removePointerListener = addQueryListener(pointerQuery, evaluateMobileWorkspace);
+    window.addEventListener("resize", evaluateMobileWorkspace);
+
+    return () => {
+      removeWidthListener();
+      removePointerListener();
+      window.removeEventListener("resize", evaluateMobileWorkspace);
+    };
+  }, []);
+
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const gaplessToRealRef = useRef<Map<number, number>>(new Map());
@@ -9775,6 +9817,7 @@ function TradingTerminalWorkspace({
   const settingsFileInputRef = useRef<HTMLInputElement | null>(null);
   const modelsUploadInputRef = useRef<HTMLInputElement | null>(null);
   const presetMenuRef = useRef<HTMLDivElement | null>(null);
+  const presetAutoRunTimeoutRef = useRef(0);
   const chartSourceLengthRef = useRef(0);
   const previousChartSourceLengthRef = useRef(0);
   const requestChartVisibleRangeRef = useRef<(visibleRange: ChartDataWindow) => void>(() => {});
@@ -14642,7 +14685,13 @@ function TradingTerminalWorkspace({
   const handleLoadPreset = useCallback((preset: SavedPreset) => {
     applySettings(preset.settings);
     setPresetMenuOpen(null);
-  }, [applySettings]);
+    if (presetAutoRunTimeoutRef.current) {
+      window.clearTimeout(presetAutoRunTimeoutRef.current);
+    }
+    presetAutoRunTimeoutRef.current = window.setTimeout(() => {
+      applyBacktestSettingsSnapshot({ forceFullReload: true });
+    }, 0);
+  }, [applyBacktestSettingsSnapshot, applySettings]);
 
   const handleDeletePreset = useCallback((name: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -15282,6 +15331,14 @@ function TradingTerminalWorkspace({
       window.removeEventListener("keydown", onEscape);
     };
   }, [presetMenuOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (presetAutoRunTimeoutRef.current) {
+        window.clearTimeout(presetAutoRunTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedHistoryId) {
@@ -19796,6 +19853,14 @@ function TradingTerminalWorkspace({
     const startIndex = (visibleBacktestHistoryPage - 1) * BACKTEST_HISTORY_PAGE_SIZE;
     return filteredBacktestHistory.slice(startIndex, startIndex + BACKTEST_HISTORY_PAGE_SIZE);
   }, [filteredBacktestHistory, visibleBacktestHistoryPage]);
+  const mobileRecentTrades = useMemo(() => {
+    return [...deferredBacktestAnalyticsTrades]
+      .sort((a, b) => Number(b.exitTime) - Number(a.exitTime))
+      .slice(0, 10);
+  }, [deferredBacktestAnalyticsTrades]);
+  const mobileSavedPresets = useMemo(() => {
+    return [...savedPresets].sort((a, b) => b.savedAt - a.savedAt);
+  }, [savedPresets]);
 
   const aiZipClusterSourceCandles = useMemo(() => {
     if (!isClusterBacktestTabActive) {
@@ -21220,6 +21285,395 @@ function TradingTerminalWorkspace({
   const isGideonSurface = selectedSurfaceTab === "ai";
   const backtestSurfaceLoadingLabel =
     selectedSurfaceTab === "models" ? "Loading Models..." : "Preparing Backtest...";
+
+  if (isMobileWorkspace) {
+    return (
+      <main className="terminal mobile-terminal-shell">
+        <section className="mobile-terminal-panel">
+          <header className="mobile-terminal-hero">
+            <div className="mobile-terminal-copy">
+              <span className="mobile-terminal-kicker">Korra Mobile</span>
+              <h1>Recent trade feed</h1>
+              <p>
+                Mobile stays focused on account access, preset loading, and the latest trade
+                history. Loading a preset reruns the backtest automatically.
+              </p>
+            </div>
+            <div className="profile-menu-wrap mobile-profile-wrap" ref={profileMenuRef}>
+              <button
+                type="button"
+                className="profile-avatar-btn"
+                aria-label="Profile menu"
+                onClick={() => setProfileMenuOpen((open) => !open)}
+              >
+                {currentUser.photoURL ? (
+                  <span
+                    className="profile-avatar-photo"
+                    style={{ backgroundImage: `url("${currentUser.photoURL}")` }}
+                    aria-hidden
+                  />
+                ) : (
+                  <span className="profile-avatar-fallback">{currentUserInitials}</span>
+                )}
+              </button>
+
+              {profileMenuOpen ? (
+                <div className="profile-menu-popover">
+                  <div className="profile-menu-header">
+                    <strong>{`Welcome ${currentUserDisplayName}`}</strong>
+                  </div>
+                  <button
+                    type="button"
+                    className="profile-menu-item"
+                    onClick={() => {
+                      setProfileUsernameInput(currentUserDisplayName);
+                      setProfileDialogStatus("");
+                      setProfileDialogMode("username");
+                      setProfileMenuOpen(false);
+                    }}
+                  >
+                    Change Username
+                  </button>
+                  <button
+                    type="button"
+                    className="profile-menu-item"
+                    onClick={() => {
+                      setProfilePasswordForm(EMPTY_ACCOUNT_PASSWORD_FORM);
+                      setProfileDialogStatus("");
+                      setProfileDialogMode("password");
+                      setProfileMenuOpen(false);
+                    }}
+                  >
+                    Change Password
+                  </button>
+                  <button
+                    type="button"
+                    className="profile-menu-item danger"
+                    onClick={() => {
+                      setProfileMenuOpen(false);
+                      void onLogOut();
+                    }}
+                  >
+                    Log Out
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </header>
+
+          <div className="mobile-terminal-banner">
+            Analysis stays on desktop. This mobile view keeps presets and the freshest trade
+            activity in a compact feed.
+          </div>
+
+          <div className="mobile-terminal-card" ref={presetMenuRef}>
+            <div className="mobile-terminal-section-head">
+              <div>
+                <span className="mobile-terminal-eyebrow">Presets</span>
+                <h2>Load Preset</h2>
+                <p>Pick any saved preset and the backtest refresh starts immediately.</p>
+              </div>
+              <button
+                type="button"
+                className={`mobile-terminal-action${presetMenuOpen === "load" ? " active" : ""}`}
+                onClick={() => setPresetMenuOpen((current) => (current === "load" ? null : "load"))}
+              >
+                {presetMenuOpen === "load" ? "Close" : "Load Preset"}
+              </button>
+            </div>
+
+            {presetMenuOpen === "load" ? (
+              mobileSavedPresets.length === 0 ? (
+                <div className="mobile-empty-state compact">
+                  <strong>No saved presets yet.</strong>
+                  <span>Save presets on desktop first, then load them here from mobile.</span>
+                </div>
+              ) : (
+                <div className="mobile-preset-list">
+                  {mobileSavedPresets.map((preset) => (
+                    <button
+                      key={preset.name}
+                      type="button"
+                      className="mobile-preset-item"
+                      onClick={() => handleLoadPreset(preset)}
+                    >
+                      <span className="mobile-preset-copy">
+                        <strong>{preset.name}</strong>
+                        <small>{new Date(preset.savedAt).toLocaleDateString()}</small>
+                      </span>
+                      <span className="mobile-preset-cta">Load</span>
+                    </button>
+                  ))}
+                </div>
+              )
+            ) : (
+              <div className="mobile-terminal-card-note">
+                {statsRefreshOverlayMode === "loading"
+                  ? "Refreshing the selected preset now."
+                  : backtestHasRun
+                    ? `${mobileRecentTrades.length.toLocaleString("en-US")} recent accepted trades are ready below.`
+                    : "Load one of your saved presets to populate the mobile trade feed."}
+              </div>
+            )}
+          </div>
+
+          <div className="mobile-terminal-card">
+            <div className="mobile-terminal-section-head">
+              <div>
+                <span className="mobile-terminal-eyebrow">History</span>
+                <h2>Recent Trades</h2>
+                <p>Newest accepted trades from the active preset.</p>
+              </div>
+              <span className="mobile-terminal-count">
+                {mobileRecentTrades.length.toLocaleString("en-US")}
+              </span>
+            </div>
+
+            {statsRefreshOverlayMode === "loading" ? (
+              <div className="mobile-loading-note">
+                Running the preset and rebuilding recent trade history.
+              </div>
+            ) : mobileRecentTrades.length === 0 ? (
+              <div className="mobile-empty-state">
+                <strong>
+                  {backtestHasRun ? "No recent trades for this preset yet." : "No backtest has run yet."}
+                </strong>
+                <span>
+                  {mobileSavedPresets.length > 0
+                    ? "Use Load Preset above to rerun one of your saved setups."
+                    : "Save a preset on desktop first, then load it here to refresh this feed."}
+                </span>
+              </div>
+            ) : (
+              <div className="mobile-trade-feed">
+                {mobileRecentTrades.map((trade) => {
+                  const durationMinutes = Math.max(
+                    1,
+                    (Number(trade.exitTime) - Number(trade.entryTime)) / 60
+                  );
+                  const confidencePct = Math.round(getEffectiveTradeConfidenceScore(trade) * 100);
+
+                  return (
+                    <button
+                      key={trade.id}
+                      type="button"
+                      className="mobile-trade-card"
+                      onClick={() => openBacktestTradeDetails(trade)}
+                    >
+                      <div className="mobile-trade-card-head">
+                        <div className="mobile-trade-card-copy">
+                          <strong className="mobile-trade-card-id">
+                            {getAiZipTradeDisplayId(trade)}
+                          </strong>
+                          <span>
+                            {trade.symbol} · {trade.side === "Long" ? "Buy" : "Sell"} ·{" "}
+                            {getSessionLabel(trade.entryTime)}
+                          </span>
+                        </div>
+                        <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
+                          {formatSignedUsd(trade.pnlUsd)}
+                        </strong>
+                      </div>
+
+                      <div className="mobile-trade-card-grid">
+                        <div>
+                          <span>Entry</span>
+                          <strong>{getHistoryTradeEntryLabel(trade)}</strong>
+                        </div>
+                        <div>
+                          <span>Exit</span>
+                          <strong>{getHistoryTradeExitLabel(trade)}</strong>
+                        </div>
+                        <div>
+                          <span>Duration</span>
+                          <strong>{formatMinutesCompact(durationMinutes)}</strong>
+                        </div>
+                        <div>
+                          <span>Confidence</span>
+                          <strong>{`${confidencePct}%`}</strong>
+                        </div>
+                      </div>
+
+                      <div className="mobile-trade-card-footer">
+                        <span>{trade.entrySource}</span>
+                        <span>{getBacktestExitLabel(trade)}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </section>
+
+        {statsRefreshOverlayVisible && statsRefreshOverlayMode === "loading" ? (
+          <div className="stats-refresh-overlay" aria-live="polite" aria-atomic="true">
+            <div className="stats-refresh-loading-card">
+              <div className="stats-refresh-loading-topline">
+                <div className="stats-refresh-loading-status">{statsRefreshStatus}</div>
+                <div className="stats-refresh-loading-progress-value">
+                  {`${Math.round(statsRefreshDisplayProgress)}%`}
+                </div>
+              </div>
+              <div className="stats-refresh-loading-phase">
+                <span>{statsRefreshPhaseLabel}</span>
+                <span>{statsRefreshContextLabel}</span>
+              </div>
+              <div className="stats-refresh-loading-detail">{statsRefreshStatusDetail}</div>
+              <div
+                key={statsRefreshStatus}
+                className="stats-refresh-loading-track"
+                role="progressbar"
+                aria-label="Updating backtest statistics"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(statsRefreshDisplayProgress)}
+              >
+                <div
+                  className="stats-refresh-loading-fill"
+                  style={{ width: `${statsRefreshDisplayProgress}%` }}
+                />
+              </div>
+              <div className="stats-refresh-loading-range">
+                <span>{statsRefreshRangeStartLabel}</span>
+                <span>{statsRefreshCurrentDateLabel}</span>
+                <span>{statsRefreshRangeEndLabel}</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {profileDialogMode ? (
+          <div
+            className="profile-dialog-backdrop"
+            role="presentation"
+            onClick={() => setProfileDialogMode(null)}
+          >
+            <div
+              className="profile-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-label={profileDialogMode === "username" ? "Change username" : "Change password"}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="profile-dialog-header">
+                <strong>
+                  {profileDialogMode === "username" ? "Change Username" : "Change Password"}
+                </strong>
+                <button
+                  type="button"
+                  className="profile-dialog-close"
+                  onClick={() => setProfileDialogMode(null)}
+                  aria-label="Close profile dialog"
+                >
+                  ×
+                </button>
+              </div>
+
+              {profileDialogMode === "username" ? (
+                <>
+                  <label className="account-field">
+                    <span>Username</span>
+                    <input
+                      className="account-input"
+                      value={profileUsernameInput}
+                      onChange={(event) => setProfileUsernameInput(event.target.value)}
+                      placeholder="How your profile should appear"
+                      autoFocus
+                      disabled={profileDialogBusy}
+                    />
+                  </label>
+                  {profileDialogStatus ? (
+                    <div className="account-form-error">{profileDialogStatus}</div>
+                  ) : null}
+                  <div className="profile-dialog-actions">
+                    <button
+                      type="button"
+                      className="settings-io-btn profile-save-btn"
+                      onClick={() => {
+                        void handleSaveProfileUsername();
+                      }}
+                      disabled={profileDialogBusy}
+                    >
+                      <span className="settings-io-label">
+                        {profileDialogBusy ? "Saving..." : "Save Username"}
+                      </span>
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <label className="account-field">
+                    <span>Current Password</span>
+                    <input
+                      className="account-input"
+                      type="password"
+                      value={profilePasswordForm.currentPassword}
+                      onChange={(event) =>
+                        setProfilePasswordForm((current) => ({
+                          ...current,
+                          currentPassword: event.target.value
+                        }))
+                      }
+                      placeholder="Current password"
+                      autoFocus
+                      disabled={profileDialogBusy}
+                    />
+                  </label>
+                  <label className="account-field">
+                    <span>New Password</span>
+                    <input
+                      className="account-input"
+                      type="password"
+                      value={profilePasswordForm.newPassword}
+                      onChange={(event) =>
+                        setProfilePasswordForm((current) => ({
+                          ...current,
+                          newPassword: event.target.value
+                        }))
+                      }
+                      placeholder="New password"
+                      disabled={profileDialogBusy}
+                    />
+                  </label>
+                  {profileDialogStatus ? (
+                    <div className="account-form-error">{profileDialogStatus}</div>
+                  ) : null}
+                  <div className="profile-dialog-actions">
+                    <button
+                      type="button"
+                      className="settings-io-btn profile-save-btn"
+                      onClick={() => {
+                        void handleSaveProfilePassword();
+                      }}
+                      disabled={profileDialogBusy}
+                    >
+                      <span className="settings-io-label">
+                        {profileDialogBusy ? "Saving..." : "Save Password"}
+                      </span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        {activeBacktestTradeDetails ? (
+          <AIZipTradeDetailsModal
+            trade={activeBacktestTradeDetails}
+            candles={activeBacktestTradeCandles}
+            dollarsPerMove={dollarsPerMove}
+            interval={selectedTimeframe}
+            parseMode="utc"
+            tpDist={0}
+            slDist={0}
+            onClose={() => setActiveBacktestTradeDetails(null)}
+          />
+        ) : null}
+      </main>
+    );
+  }
 
   return (
     <main className={`terminal${isGideonSurface ? " terminal-gideon" : ""}`}>

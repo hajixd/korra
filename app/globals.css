@@ -596,6 +596,431 @@ button {
   justify-content: center;
 }
 
+.mobile-terminal-shell {
+  display: block;
+  min-height: 100vh;
+  height: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.09), transparent 34%),
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.05), transparent 28%),
+    linear-gradient(180deg, #020202 0%, #060606 52%, #020202 100%);
+}
+
+.mobile-terminal-panel {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 480px);
+  margin: 0 auto;
+  padding: 1rem 0.88rem 4rem;
+  display: grid;
+  gap: 0.8rem;
+}
+
+.mobile-terminal-hero,
+.mobile-terminal-card,
+.mobile-terminal-banner {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(16, 16, 16, 0.96), rgba(6, 6, 6, 0.98)),
+    rgba(0, 0, 0, 0.92);
+  box-shadow:
+    0 24px 50px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(18px);
+}
+
+.mobile-terminal-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.85rem;
+  padding: 1rem;
+}
+
+.mobile-terminal-copy {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.mobile-terminal-kicker,
+.mobile-terminal-eyebrow {
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 0.58rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.mobile-terminal-copy h1,
+.mobile-terminal-section-head h2 {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.98);
+  letter-spacing: -0.03em;
+}
+
+.mobile-terminal-copy h1 {
+  font-size: clamp(1.55rem, 5.2vw, 2rem);
+  line-height: 0.94;
+}
+
+.mobile-terminal-section-head h2 {
+  font-size: 1rem;
+  line-height: 1.05;
+}
+
+.mobile-terminal-copy p,
+.mobile-terminal-section-head p,
+.mobile-terminal-card-note,
+.mobile-loading-note,
+.mobile-empty-state span,
+.mobile-terminal-banner {
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.mobile-terminal-copy p,
+.mobile-terminal-section-head p {
+  margin: 0;
+}
+
+.mobile-terminal-banner {
+  padding: 0.82rem 1rem;
+}
+
+.mobile-terminal-card {
+  padding: 0.95rem;
+  display: grid;
+  gap: 0.78rem;
+}
+
+.mobile-terminal-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.mobile-terminal-section-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 0.24rem;
+}
+
+.mobile-terminal-action,
+.mobile-terminal-count {
+  flex: 0 0 auto;
+  min-height: 36px;
+  border-radius: 999px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mobile-terminal-action {
+  min-width: 112px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.92);
+  padding: 0 0.9rem;
+  font-size: 0.63rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    color 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+
+.mobile-terminal-action:hover {
+  border-color: rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.98);
+  transform: translateY(-1px);
+}
+
+.mobile-terminal-action.active {
+  border-color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.96);
+  color: #050505;
+}
+
+.mobile-terminal-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  padding: 0 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.94);
+  font-size: 0.64rem;
+  font-weight: 800;
+}
+
+.mobile-terminal-card-note {
+  padding: 0.12rem 0.1rem 0;
+}
+
+.mobile-preset-list,
+.mobile-trade-feed {
+  display: grid;
+  gap: 0.62rem;
+}
+
+.mobile-preset-item,
+.mobile-trade-card {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+  color: inherit;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+.mobile-preset-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.82rem 0.88rem;
+  text-align: left;
+}
+
+.mobile-preset-item:hover,
+.mobile-trade-card:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+  transform: translateY(-1px);
+}
+
+.mobile-preset-copy {
+  min-width: 0;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.mobile-preset-copy strong,
+.mobile-empty-state strong,
+.mobile-trade-card-copy strong,
+.mobile-trade-card-grid strong {
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.mobile-preset-copy small,
+.mobile-preset-cta {
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 0.61rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mobile-preset-cta {
+  flex: 0 0 auto;
+}
+
+.mobile-empty-state,
+.mobile-loading-note {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.9rem;
+  border-radius: 18px;
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.mobile-empty-state.compact {
+  padding: 0.85rem;
+}
+
+.mobile-trade-card {
+  padding: 0.9rem;
+  text-align: left;
+  display: grid;
+  gap: 0.8rem;
+}
+
+.mobile-trade-card-head,
+.mobile-trade-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.mobile-trade-card-copy {
+  min-width: 0;
+  display: grid;
+  gap: 0.16rem;
+}
+
+.mobile-trade-card-id {
+  font-size: 0.74rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.04em;
+}
+
+.mobile-trade-card-copy span,
+.mobile-trade-card-footer span,
+.mobile-trade-card-grid span {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 0.63rem;
+}
+
+.mobile-trade-card-head > strong {
+  flex: 0 0 auto;
+  font-size: 0.88rem;
+}
+
+.mobile-trade-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.62rem;
+}
+
+.mobile-trade-card-grid > div {
+  display: grid;
+  gap: 0.18rem;
+  padding: 0.68rem 0.72rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.mobile-trade-card-grid strong {
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.mobile-trade-card-footer {
+  padding-top: 0.02rem;
+}
+
+.mobile-trade-card-footer span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-terminal-shell .profile-avatar-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 14px;
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.mobile-terminal-shell .profile-avatar-btn:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.98);
+}
+
+.mobile-terminal-shell .profile-menu-popover {
+  left: auto;
+  right: 0;
+  border-color: rgba(255, 255, 255, 0.12);
+  background: linear-gradient(180deg, rgba(13, 13, 13, 0.98), rgba(4, 4, 4, 0.99));
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+}
+
+.mobile-terminal-shell .profile-menu-header {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.mobile-terminal-shell .profile-menu-item {
+  color: rgba(255, 255, 255, 0.84);
+}
+
+.mobile-terminal-shell .profile-menu-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.98);
+}
+
+.mobile-terminal-shell .profile-dialog-backdrop {
+  background: rgba(2, 2, 2, 0.76);
+}
+
+.mobile-terminal-shell .profile-dialog {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: linear-gradient(180deg, rgba(12, 12, 12, 0.98), rgba(4, 4, 4, 0.99));
+  box-shadow:
+    0 20px 48px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+}
+
+.mobile-terminal-shell .profile-dialog-header strong,
+.mobile-terminal-shell .account-field span {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.mobile-terminal-shell .profile-dialog-close {
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.mobile-terminal-shell .profile-dialog-close:hover {
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.mobile-terminal-shell .account-input {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.mobile-terminal-shell .account-input:focus {
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.mobile-terminal-shell .settings-io-btn.profile-save-btn {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.mobile-terminal-shell .settings-io-btn.profile-save-btn:hover {
+  border-color: rgba(255, 255, 255, 0.26);
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.98);
+}
+
+@media (max-width: 460px) {
+  .mobile-terminal-panel {
+    padding: 0.82rem 0.72rem 3rem;
+  }
+
+  .mobile-terminal-hero,
+  .mobile-terminal-section-head,
+  .mobile-trade-card-head,
+  .mobile-trade-card-footer {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .mobile-terminal-action {
+    width: 100%;
+  }
+
+  .mobile-trade-card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .top-utility {
   display: flex;
   align-items: center;
