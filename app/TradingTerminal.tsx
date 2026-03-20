@@ -19856,7 +19856,7 @@ function TradingTerminalWorkspace({
   const mobileRecentTrades = useMemo(() => {
     return [...deferredBacktestAnalyticsTrades]
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime))
-      .slice(0, 10);
+      .slice(0, 3);
   }, [deferredBacktestAnalyticsTrades]);
   const mobileSavedPresets = useMemo(() => {
     return [...savedPresets].sort((a, b) => b.savedAt - a.savedAt);
@@ -21293,11 +21293,8 @@ function TradingTerminalWorkspace({
           <header className="mobile-terminal-hero">
             <div className="mobile-terminal-copy">
               <span className="mobile-terminal-kicker">Korra Mobile</span>
-              <h1>Recent trade feed</h1>
-              <p>
-                Mobile stays focused on account access, preset loading, and the latest trade
-                history. Loading a preset reruns the backtest automatically.
-              </p>
+              <h1>Presets and recent trades</h1>
+              <p>Load a preset, rerun it instantly, and keep the latest activity in view.</p>
             </div>
             <div className="profile-menu-wrap mobile-profile-wrap" ref={profileMenuRef}>
               <button
@@ -21361,68 +21358,68 @@ function TradingTerminalWorkspace({
             </div>
           </header>
 
-          <div className="mobile-terminal-banner">
-            Analysis stays on desktop. This mobile view keeps presets and the freshest trade
-            activity in a compact feed.
-          </div>
-
-          <div className="mobile-terminal-card" ref={presetMenuRef}>
-            <div className="mobile-terminal-section-head">
-              <div>
-                <span className="mobile-terminal-eyebrow">Presets</span>
-                <h2>Load Preset</h2>
-                <p>Pick any saved preset and the backtest refresh starts immediately.</p>
+          <div className="mobile-preset-dock" ref={presetMenuRef}>
+            <div className="mobile-terminal-card mobile-terminal-card-compact">
+              <div className="mobile-terminal-section-head compact">
+                <div>
+                  <span className="mobile-terminal-eyebrow">Preset</span>
+                  <h2>Load Preset</h2>
+                </div>
+                <button
+                  type="button"
+                  className={`mobile-terminal-action${presetMenuOpen === "load" ? " active" : ""}`}
+                  onClick={() => setPresetMenuOpen((current) => (current === "load" ? null : "load"))}
+                >
+                  {presetMenuOpen === "load" ? "Close" : "Load"}
+                </button>
               </div>
-              <button
-                type="button"
-                className={`mobile-terminal-action${presetMenuOpen === "load" ? " active" : ""}`}
-                onClick={() => setPresetMenuOpen((current) => (current === "load" ? null : "load"))}
-              >
-                {presetMenuOpen === "load" ? "Close" : "Load Preset"}
-              </button>
-            </div>
-
-            {presetMenuOpen === "load" ? (
-              mobileSavedPresets.length === 0 ? (
-                <div className="mobile-empty-state compact">
-                  <strong>No saved presets yet.</strong>
-                  <span>Save presets on desktop first, then load them here from mobile.</span>
-                </div>
-              ) : (
-                <div className="mobile-preset-list">
-                  {mobileSavedPresets.map((preset) => (
-                    <button
-                      key={preset.name}
-                      type="button"
-                      className="mobile-preset-item"
-                      onClick={() => handleLoadPreset(preset)}
-                    >
-                      <span className="mobile-preset-copy">
-                        <strong>{preset.name}</strong>
-                        <small>{new Date(preset.savedAt).toLocaleDateString()}</small>
-                      </span>
-                      <span className="mobile-preset-cta">Load</span>
-                    </button>
-                  ))}
-                </div>
-              )
-            ) : (
-              <div className="mobile-terminal-card-note">
+              <div className="mobile-terminal-card-note compact">
                 {statsRefreshOverlayMode === "loading"
                   ? "Refreshing the selected preset now."
                   : backtestHasRun
-                    ? `${mobileRecentTrades.length.toLocaleString("en-US")} recent accepted trades are ready below.`
-                    : "Load one of your saved presets to populate the mobile trade feed."}
+                    ? `${mobileRecentTrades.length.toLocaleString("en-US")} latest trades are pinned below.`
+                    : "Choose any saved preset and the backtest refresh starts immediately."}
               </div>
-            )}
+            </div>
+
+            {presetMenuOpen === "load" ? (
+              <div className="mobile-preset-sheet">
+                <div className="mobile-preset-sheet-head">
+                  <strong>Saved Presets</strong>
+                  <span>Tap one to load and rerun it.</span>
+                </div>
+                {mobileSavedPresets.length === 0 ? (
+                  <div className="mobile-empty-state compact">
+                    <strong>No saved presets yet.</strong>
+                    <span>Save presets on desktop first, then load them here from mobile.</span>
+                  </div>
+                ) : (
+                  <div className="mobile-preset-list">
+                    {mobileSavedPresets.map((preset) => (
+                      <button
+                        key={preset.name}
+                        type="button"
+                        className="mobile-preset-item"
+                        onClick={() => handleLoadPreset(preset)}
+                      >
+                        <span className="mobile-preset-copy">
+                          <strong>{preset.name}</strong>
+                          <small>{new Date(preset.savedAt).toLocaleDateString()}</small>
+                        </span>
+                        <span className="mobile-preset-cta">Load</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
 
-          <div className="mobile-terminal-card">
-            <div className="mobile-terminal-section-head">
+          <div className="mobile-terminal-card mobile-terminal-history">
+            <div className="mobile-terminal-section-head compact">
               <div>
                 <span className="mobile-terminal-eyebrow">History</span>
                 <h2>Recent Trades</h2>
-                <p>Newest accepted trades from the active preset.</p>
               </div>
               <span className="mobile-terminal-count">
                 {mobileRecentTrades.length.toLocaleString("en-US")}
@@ -21475,26 +21472,20 @@ function TradingTerminalWorkspace({
                         </strong>
                       </div>
 
-                      <div className="mobile-trade-card-grid">
-                        <div>
-                          <span>Entry</span>
-                          <strong>{getHistoryTradeEntryLabel(trade)}</strong>
-                        </div>
-                        <div>
-                          <span>Exit</span>
-                          <strong>{getHistoryTradeExitLabel(trade)}</strong>
-                        </div>
-                        <div>
-                          <span>Duration</span>
-                          <strong>{formatMinutesCompact(durationMinutes)}</strong>
-                        </div>
-                        <div>
-                          <span>Confidence</span>
-                          <strong>{`${confidencePct}%`}</strong>
-                        </div>
+                      <div className="mobile-trade-card-meta">
+                        <span>{trade.symbol}</span>
+                        <span>{trade.side === "Long" ? "Buy" : "Sell"}</span>
+                        <span>{getSessionLabel(trade.entryTime)}</span>
                       </div>
 
-                      <div className="mobile-trade-card-footer">
+                      <div className="mobile-trade-card-chips">
+                        <span>{`En ${getHistoryTradeEntryLabel(trade)}`}</span>
+                        <span>{`Ex ${getHistoryTradeExitLabel(trade)}`}</span>
+                        <span>{formatMinutesCompact(durationMinutes)}</span>
+                        <span>{`${confidencePct}%`}</span>
+                      </div>
+
+                      <div className="mobile-trade-card-footer compact">
                         <span>{trade.entrySource}</span>
                         <span>{getBacktestExitLabel(trade)}</span>
                       </div>
