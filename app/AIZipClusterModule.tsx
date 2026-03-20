@@ -29,6 +29,10 @@ import {
   Legend,
   Customized,
 } from "recharts";
+import {
+  fitClusterMapViewToNodes,
+  projectClusterMapAxis,
+} from "../lib/aizipClusterMapLayout";
 
 let THREE: any = null;
 let OrbitControls: any = null;
@@ -11273,21 +11277,21 @@ function ClusterMapInner({
       const jy = (jySeed - 0.5) * JITTER_PX;
       const jz = (jzSeed - 0.5) * JITTER_PX;
       const r = (e.baseR ?? 7.2) * 1.25;
-      const x2 = ((p.x - minX) / dx - 0.5) * mapWidth + jx;
-      const y2 = ((p.y - minY) / dy - 0.5) * mapHeight + jy;
+      const x2 = projectClusterMapAxis(p.x, minX, maxX, mapWidth) + jx;
+      const y2 = projectClusterMapAxis(p.y, minY, maxY, mapHeight) + jy;
       const has3 =
         p3 &&
         Number.isFinite((p3 as any).x) &&
         Number.isFinite((p3 as any).y) &&
         Number.isFinite((p3 as any).z);
       const x3 = has3
-        ? (((p3 as any).x - minX3) / dx3 - 0.5) * mapWidth + jx
+        ? projectClusterMapAxis((p3 as any).x, minX3, maxX3, mapWidth) + jx
         : x2;
       const y3 = has3
-        ? (((p3 as any).y - minY3) / dy3 - 0.5) * mapHeight + jy
+        ? projectClusterMapAxis((p3 as any).y, minY3, maxY3, mapHeight) + jy
         : y2;
       const z3 = has3
-        ? (((p3 as any).z - minZ3) / dz3 - 0.5) * mapDepth + jz
+        ? projectClusterMapAxis((p3 as any).z, minZ3, maxZ3, mapDepth) + jz
         : (((Number(e.signalIndex ?? e.entryIndex ?? i) % 180) - 90) / 40) *
             120 +
           jz;
@@ -13308,6 +13312,29 @@ function ClusterMapInner({
   const [isDragging, setIsDragging] = useState(false);
   const is3dMapActive = clusterMapView === "3d";
   const boxSelectMode = is3dMapActive ? boxSelectMode3d : boxSelectMode2d;
+
+  useEffect(() => {
+    const wrap = canvasWrapRef.current as HTMLDivElement | null;
+    const width = wrap?.clientWidth ?? canvasRef.current?.clientWidth ?? 1200;
+    const height = wrap?.clientHeight ?? canvasRef.current?.clientHeight ?? 640;
+    const nextView = fitClusterMapViewToNodes(
+      nodes as any[],
+      width,
+      height,
+      mapSpreadMulRef.current
+    );
+    setView((prev) => {
+      if (
+        Math.abs((prev?.scale ?? 1) - nextView.scale) < 1e-9 &&
+        Math.abs((prev?.ox ?? 0) - nextView.ox) < 1e-6 &&
+        Math.abs((prev?.oy ?? 0) - nextView.oy) < 1e-6
+      ) {
+        return prev;
+      }
+      return nextView;
+    });
+    viewRef.current = nextView;
+  }, [nodes, resetKey]);
 
   useEffect(() => {
     setTooltip(null);
@@ -24363,6 +24390,7 @@ export default function App() {
           setAiLibraryCounts(res && res.libraryCounts ? res.libraryCounts : {});
           setAiLibraryWinRates(res && res.libraryWinRates ? res.libraryWinRates : {});
           setAiLibraryPoints(res && res.libraryPoints ? res.libraryPoints : []);
+          setClusterTimelineIdx(Math.max(0, candles.length - 1));
           const rawTrades0 = res.trades || [];
 
           const isDateLikeUid = (v: string) => {
