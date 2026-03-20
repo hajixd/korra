@@ -25,8 +25,12 @@ type HistoryItem = {
   side: "Long" | "Short";
   result: "Win" | "Loss";
   entrySource: string;
+  exitReason: string;
   pnlPct: number;
   pnlUsd: number;
+  time: string;
+  entryAt: string;
+  exitAt: string;
   entryTime: number;
   exitTime: number;
   entryPrice: number;
@@ -1285,6 +1289,43 @@ const applyTradeAiEntrySnapshot = (
   };
 };
 
+const toTradeTimestampMs = (value: unknown): number | null => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return null;
+  }
+
+  return numeric > 1_000_000_000_000 ? Math.floor(numeric) : Math.floor(numeric * 1000);
+};
+
+const formatTradeTimeLabel = (timestampMs: number): string => {
+  return new Date(timestampMs).toLocaleString("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "UTC"
+  });
+};
+
+const resolveTradeTimeLabel = (label: unknown, timestamp: unknown): string => {
+  const normalizedLabel =
+    typeof label === "string"
+      ? label.trim()
+      : label == null
+        ? ""
+        : String(label).trim();
+
+  if (normalizedLabel) {
+    return normalizedLabel;
+  }
+
+  const timestampMs = toTradeTimestampMs(timestamp);
+  return timestampMs == null ? "" : formatTradeTimeLabel(timestampMs);
+};
+
 const normalizeTrade = (value: unknown): HistoryItem | null => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -1297,16 +1338,25 @@ const normalizeTrade = (value: unknown): HistoryItem | null => {
     return null;
   }
 
+  const entryTime = toNumeric(row.entryTime);
+  const exitTime = toNumeric(row.exitTime);
+  const entryAt = resolveTradeTimeLabel(row.entryAt, entryTime);
+  const exitAt = resolveTradeTimeLabel(row.exitAt, exitTime);
+
   return {
     id,
     symbol: String(row.symbol ?? ""),
     side: row.side === "Short" ? "Short" : "Long",
     result: row.result === "Loss" ? "Loss" : "Win",
     entrySource: String(row.entrySource ?? "Settings"),
+    exitReason: String(row.exitReason ?? ""),
     pnlPct: toNumeric(row.pnlPct),
     pnlUsd: toNumeric(row.pnlUsd),
-    entryTime: toNumeric(row.entryTime),
-    exitTime: toNumeric(row.exitTime),
+    time: resolveTradeTimeLabel(row.time, exitTime) || exitAt,
+    entryAt,
+    exitAt,
+    entryTime,
+    exitTime,
     entryPrice: Math.max(0.000001, toNumeric(row.entryPrice)),
     targetPrice: Math.max(0.000001, toNumeric(row.targetPrice)),
     stopPrice: Math.max(0.000001, toNumeric(row.stopPrice)),

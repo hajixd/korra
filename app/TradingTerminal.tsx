@@ -527,12 +527,66 @@ type ServerLibraryPointPayload = {
   v?: number[] | null;
 };
 
+const toHistoryLabelTimestampMs = (value: unknown): number | null => {
+  const numeric = Number(value);
+
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return null;
+  }
+
+  return numeric > 1_000_000_000_000 ? Math.floor(numeric) : Math.floor(numeric * 1000);
+};
+
+const resolveHistoryTradeTimeLabel = (label: unknown, timestamp: unknown): string => {
+  const normalizedLabel =
+    typeof label === "string"
+      ? label.trim()
+      : label == null
+        ? ""
+        : String(label).trim();
+
+  if (normalizedLabel) {
+    return normalizedLabel;
+  }
+
+  const timestampMs = toHistoryLabelTimestampMs(timestamp);
+  return timestampMs == null ? "" : formatDateTime(timestampMs);
+};
+
+const getHistoryTradeEntryLabel = (trade: Pick<HistoryItem, "entryAt" | "entryTime">): string => {
+  return resolveHistoryTradeTimeLabel(trade.entryAt, trade.entryTime);
+};
+
+const getHistoryTradeExitLabel = (trade: Pick<HistoryItem, "exitAt" | "exitTime">): string => {
+  return resolveHistoryTradeTimeLabel(trade.exitAt, trade.exitTime);
+};
+
+const getHistoryTradeTimeLabel = (
+  trade: Pick<HistoryItem, "time" | "exitAt" | "exitTime">
+): string => {
+  return (
+    resolveHistoryTradeTimeLabel(trade.time, trade.exitTime) ||
+    getHistoryTradeExitLabel(trade)
+  );
+};
+
 const normalizeBacktestHistoryRows = (rows: BacktestHistoryRow[]): HistoryItem[] => {
-  return rows.map((row) => ({
-    ...row,
-    entryTime: row.entryTime as UTCTimestamp,
-    exitTime: row.exitTime as UTCTimestamp
-  }));
+  return rows.map((row) => {
+    const entryTime = row.entryTime as UTCTimestamp;
+    const exitTime = row.exitTime as UTCTimestamp;
+    const entryAt = resolveHistoryTradeTimeLabel(row.entryAt, entryTime);
+    const exitAt = resolveHistoryTradeTimeLabel(row.exitAt, exitTime);
+
+    return {
+      ...row,
+      exitReason: String(row.exitReason ?? ""),
+      time: resolveHistoryTradeTimeLabel(row.time, exitTime) || exitAt,
+      entryAt,
+      exitAt,
+      entryTime,
+      exitTime
+    };
+  });
 };
 
 const cloneTradeEntryNeighbors = (value: unknown): BacktestEntryNeighbor[] => {
@@ -4853,6 +4907,36 @@ const mergeRecentCandles = (
   return deduped.slice(-maxBars);
 };
 
+const mergeCandleSeries = (
+  seriesList: Array<Candle[] | undefined | null>,
+  maxBars = Number.POSITIVE_INFINITY
+): Candle[] => {
+  const mergedByTime = new Map<number, Candle>();
+
+  for (const series of seriesList) {
+    if (!Array.isArray(series) || series.length === 0) {
+      continue;
+    }
+
+    for (const candle of series) {
+      if (!candle || !Number.isFinite(candle.time)) {
+        continue;
+      }
+
+      mergedByTime.set(candle.time, candle);
+    }
+  }
+
+  if (mergedByTime.size === 0) {
+    return EMPTY_CANDLES;
+  }
+
+  const combined = [...mergedByTime.values()].sort((left, right) => left.time - right.time);
+  return Number.isFinite(maxBars) && combined.length > maxBars
+    ? combined.slice(-Math.max(0, Math.floor(maxBars)))
+    : combined;
+};
+
 const aggregateCandlesToTimeframe = (candles: Candle[], timeframe: Timeframe): Candle[] => {
   if (candles.length === 0) {
     return [];
@@ -5431,7 +5515,7 @@ const formatPrice = (value: number): string => {
   });
 };
 
-const formatDateTime = (timestampMs: number): string => {
+function formatDateTime(timestampMs: number): string {
   return new Date(timestampMs).toLocaleString("en-US", {
     year: "numeric",
     month: "2-digit",
@@ -5441,7 +5525,7 @@ const formatDateTime = (timestampMs: number): string => {
     hour12: false,
     timeZone: "UTC"
   });
-};
+}
 
 const formatStatsDateLabel = (ymd: string): string => {
   return new Date(`${ymd}T00:00:00Z`).toLocaleDateString("en-US", {
@@ -5722,6 +5806,29 @@ const estimateHistoryBarsForDateRange = (
 
   const baseBars = Math.ceil((endExclusiveMs - startMs) / Math.max(60_000, getTimeframeMs(timeframe)));
   return clamp(baseBars + Math.max(12, Math.floor(paddingBars)), MIN_SEED_CANDLES, BACKTEST_MAX_HISTORY_CANDLES);
+};
+
+const estimateHistoryBarsForTimeWindow = (
+  startMs: number,
+  endMs: number,
+  timeframe: Timeframe,
+  paddingBars = 0
+): number => {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return clamp(
+      chartHistoryCountByTimeframe[timeframe] + Math.max(12, Math.floor(paddingBars)),
+      MIN_SEED_CANDLES,
+      CLICKHOUSE_MAX_HISTORY_CANDLES
+    );
+  }
+
+  const stepMs = Math.max(60_000, getTimeframeMs(timeframe));
+  const baseBars = Math.ceil((endMs - startMs) / stepMs);
+  return clamp(
+    baseBars + Math.max(12, Math.floor(paddingBars)),
+    MIN_SEED_CANDLES,
+    CLICKHOUSE_MAX_HISTORY_CANDLES
+  );
 };
 
 const candlesCoverDateRange = (
@@ -9159,6 +9266,7 @@ function TradingTerminalWorkspace({
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [chartContextMenu, setChartContextMenu] = useState<MainChartContextMenuState | null>(null);
   const [seriesMap, setSeriesMap] = useState<Record<string, Candle[]>>({});
+  const [chartBridgeSeriesMap, setChartBridgeSeriesMap] = useState<Record<string, Candle[]>>({});
   const [chartHistoryLoadingKey, setChartHistoryLoadingKey] = useState<string | null>(null);
   const [backtestSeriesMap, setBacktestSeriesMap] = useState<Record<string, Candle[]>>({});
   const [backtestOneMinuteSeriesMap, setBacktestOneMinuteSeriesMap] = useState<Record<string, Candle[]>>({});
@@ -9543,6 +9651,7 @@ function TradingTerminalWorkspace({
   const tradePathLineRef = useRef<ISeriesApi<"Line"> | null>(null);
   const multiTradeSeriesRef = useRef<MultiTradeOverlaySeries[]>([]);
   const chartHistoryReadyByKeyRef = useRef<Record<string, true>>({});
+  const chartBridgeInFlightRef = useRef<Record<string, true>>({});
   const chartResetAfterLoadKeyRef = useRef<string | null>(null);
   const selectionRef = useRef<string>("");
   const focusTradeIdRef = useRef<string | null>(null);
@@ -12021,6 +12130,138 @@ function TradingTerminalWorkspace({
     ? pickLongestCandleSeries(backtestSeriesMap[selectedKey], seriesMap[selectedKey])
     : null;
   const usesDeepChartHistory = (deepChartCandles?.length ?? 0) > 0;
+  const selectedChartBridgeKey = useMemo(() => {
+    if (
+      !shouldHydrateBacktestChartData ||
+      !usesDeepChartHistory ||
+      !isChartSurface ||
+      selectedCandles.length === 0
+    ) {
+      return "";
+    }
+
+    const deepHistory = deepChartCandles ?? EMPTY_CANDLES;
+    const deepLastTime = deepHistory[deepHistory.length - 1]?.time ?? Number.NaN;
+    const liveFirstTime = selectedCandles[0]?.time ?? Number.NaN;
+
+    if (
+      !Number.isFinite(deepLastTime) ||
+      !Number.isFinite(liveFirstTime) ||
+      liveFirstTime <= deepLastTime ||
+      !hasExcessiveTradingGap(deepLastTime, liveFirstTime, selectedTimeframe)
+    ) {
+      return "";
+    }
+
+    return `${selectedKey}__${Math.floor(deepLastTime)}__${Math.floor(liveFirstTime)}`;
+  }, [
+    deepChartCandles,
+    isChartSurface,
+    selectedCandles,
+    selectedKey,
+    selectedTimeframe,
+    shouldHydrateBacktestChartData,
+    usesDeepChartHistory
+  ]);
+  const selectedChartBridgeCandles =
+    selectedChartBridgeKey && chartBridgeSeriesMap[selectedChartBridgeKey]
+      ? chartBridgeSeriesMap[selectedChartBridgeKey]!
+      : EMPTY_CANDLES;
+
+  useEffect(() => {
+    if (!selectedChartBridgeKey) {
+      return;
+    }
+
+    if (
+      chartBridgeSeriesMap[selectedChartBridgeKey] !== undefined ||
+      chartBridgeInFlightRef.current[selectedChartBridgeKey]
+    ) {
+      return;
+    }
+
+    const deepHistory = deepChartCandles ?? EMPTY_CANDLES;
+    const deepLastTime = deepHistory[deepHistory.length - 1]?.time ?? Number.NaN;
+    const liveFirstTime = selectedCandles[0]?.time ?? Number.NaN;
+
+    if (
+      !Number.isFinite(deepLastTime) ||
+      !Number.isFinite(liveFirstTime) ||
+      liveFirstTime <= deepLastTime
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    chartBridgeInFlightRef.current[selectedChartBridgeKey] = true;
+    const stepMs = Math.max(60_000, getTimeframeMs(selectedTimeframe));
+    const bridgeBars = estimateHistoryBarsForTimeWindow(
+      deepLastTime,
+      liveFirstTime,
+      selectedTimeframe,
+      48
+    );
+
+    void fetchHistoryApiCandles(
+      selectedTimeframe,
+      bridgeBars,
+      CLIENT_CANDLE_FETCH_TIMEOUT_MS * 2,
+      {
+        startIso: new Date(Math.max(0, deepLastTime - stepMs)).toISOString(),
+        endIso: new Date(liveFirstTime + stepMs).toISOString()
+      }
+    )
+      .then((candles) => {
+        if (cancelled) {
+          return;
+        }
+
+        const bridgeCandles = candles.filter(
+          (candle) => candle.time > deepLastTime && candle.time < liveFirstTime
+        );
+
+        setChartBridgeSeriesMap((prev) => {
+          if (prev[selectedChartBridgeKey] !== undefined) {
+            return prev;
+          }
+
+          return {
+            ...prev,
+            [selectedChartBridgeKey]: bridgeCandles
+          };
+        });
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+
+        setChartBridgeSeriesMap((prev) => {
+          if (prev[selectedChartBridgeKey] !== undefined) {
+            return prev;
+          }
+
+          return {
+            ...prev,
+            [selectedChartBridgeKey]: EMPTY_CANDLES
+          };
+        });
+      })
+      .finally(() => {
+        delete chartBridgeInFlightRef.current[selectedChartBridgeKey];
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    chartBridgeSeriesMap,
+    deepChartCandles,
+    selectedCandles,
+    selectedChartBridgeKey,
+    selectedTimeframe
+  ]);
+
   const selectedChartCandles = useMemo(() => {
     if (!shouldHydrateBacktestChartData) {
       return selectedCandles;
@@ -12036,17 +12277,18 @@ function TradingTerminalWorkspace({
       return deepHistory;
     }
 
-    return mergeRecentCandles(
-      deepHistory,
-      selectedCandles,
-      Math.max(deepHistory.length + selectedCandles.length, selectedCandles.length),
-      selectedTimeframe
+    return mergeCandleSeries(
+      [deepHistory, selectedChartBridgeCandles, selectedCandles],
+      Math.max(
+        deepHistory.length + selectedChartBridgeCandles.length + selectedCandles.length,
+        selectedCandles.length
+      )
     );
   }, [
     deepChartCandles,
     isChartSurface,
+    selectedChartBridgeCandles,
     selectedCandles,
-    selectedTimeframe,
     shouldHydrateBacktestChartData,
     usesDeepChartHistory
   ]);
@@ -13219,7 +13461,7 @@ function TradingTerminalWorkspace({
       targetPrice: trade.targetPrice,
       stopPrice: trade.stopPrice,
       openedAt: trade.entryTime,
-      openedAtLabel: trade.entryAt,
+      openedAtLabel: getHistoryTradeEntryLabel(trade),
       elapsed: formatElapsed(Number(trade.entryTime), elapsedToSec),
       pnlPct,
       pnlValue,
@@ -13818,7 +14060,7 @@ function TradingTerminalWorkspace({
           2
         )}%) @ ${formatPrice(trade.outcomePrice)}`,
         timestamp: trade.exitTime,
-        time: trade.exitAt
+        time: getHistoryTradeExitLabel(trade)
       });
     }
 
@@ -17750,7 +17992,7 @@ function TradingTerminalWorkspace({
         const entryTime =
           Number.isFinite(entryTimeRaw) && entryTimeRaw > 0
             ? entryTimeRaw
-            : trade.entryAt || trade.time;
+            : getHistoryTradeEntryLabel(trade) || getHistoryTradeTimeLabel(trade);
         const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
         const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
         const holdMinutes = Math.max(
@@ -19467,8 +19709,8 @@ function TradingTerminalWorkspace({
           trade.result,
           getSessionLabel(trade.entryTime),
           getBacktestExitLabel(trade),
-          trade.entryAt,
-          trade.exitAt,
+          getHistoryTradeEntryLabel(trade),
+          getHistoryTradeExitLabel(trade),
           formatSignedUsd(trade.pnlUsd),
           formatSignedPercent(trade.pnlPct)
         ]
@@ -24160,8 +24402,8 @@ function TradingTerminalWorkspace({
                                         {trade.side === "Long" ? "Buy" : "Sell"}
                                       </td>
                                       <td style={cell(4)}>{getSessionLabel(trade.entryTime)}</td>
-                                      <td style={cell(5)}>{trade.entryAt}</td>
-                                      <td style={cell(6)}>{trade.exitAt}</td>
+                                      <td style={cell(5)}>{getHistoryTradeEntryLabel(trade)}</td>
+                                      <td style={cell(6)}>{getHistoryTradeExitLabel(trade)}</td>
                                       <td style={cell(7)}>
                                         {formatMinutesCompact(durationMinutes)}
                                       </td>
@@ -24409,7 +24651,7 @@ function TradingTerminalWorkspace({
                                         Entry ({executionFrameLabel}):
                                       </span>
                                       <span className="backtest-calendar-trade-inline-value">
-                                        {trade.entryAt}
+                                        {getHistoryTradeEntryLabel(trade)}
                                       </span>
                                       <span className="backtest-calendar-trade-inline-price">
                                         @ {formatPrice(trade.entryPrice)}
@@ -24420,7 +24662,7 @@ function TradingTerminalWorkspace({
                                         Exit ({executionFrameLabel}):
                                       </span>
                                       <span className="backtest-calendar-trade-inline-value">
-                                        {trade.exitAt}
+                                        {getHistoryTradeExitLabel(trade)}
                                       </span>
                                       <span className="backtest-calendar-trade-inline-price">
                                         @ {formatPrice(trade.outcomePrice)}
