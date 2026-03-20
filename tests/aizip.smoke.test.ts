@@ -180,6 +180,8 @@ test("core library excludes the selected live trade from its own neighbor list",
     panelSourceTrades: trades,
     panelLibraryPoints: [],
     panelBacktestFilterSettings: baseFilterSettings({
+      antiCheatEnabled: true,
+      validationMode: "off",
       selectedAiLibraries: ["core"]
     }),
     panelConfidenceGateDisabled: true,
@@ -195,6 +197,66 @@ test("core library excludes the selected live trade from its own neighbor list",
   const firstNeighborUid =
     stampedTrade.entryNeighbors[0]?.metaUid ?? stampedTrade.entryNeighbors[0]?.uid ?? null;
   assert.notEqual(firstNeighborUid, String(stampedTrade.id));
+  assert.equal(stampedTrade.closestClusterUid, firstNeighborUid);
+});
+
+test("anti-cheat off keeps the full live neighbor pool available", async () => {
+  const trades = [
+    makeTrade({
+      id: "live-1",
+      entryIso: "2025-03-01T00:00:00Z",
+      exitIso: "2025-03-01T01:00:00Z",
+      neighborVector: [0, 0, 0, 0, 0, 0]
+    }),
+    makeTrade({
+      id: "live-2",
+      entryIso: "2025-03-01T02:00:00Z",
+      exitIso: "2025-03-01T03:00:00Z",
+      result: "Loss",
+      pnlUsd: -100,
+      pnlPct: -0.2,
+      outcomePrice: 99,
+      neighborVector: [10, 10, 10, 10, 10, 10]
+    }),
+    makeTrade({
+      id: "live-3",
+      entryIso: "2025-03-01T04:00:00Z",
+      exitIso: "2025-03-01T05:00:00Z",
+      neighborVector: [10, 10, 10, 10, 10, 10]
+    })
+  ];
+
+  const payload = await postPanelAnalytics({
+    panelSourceTrades: trades,
+    panelLibraryPoints: [],
+    panelBacktestFilterSettings: baseFilterSettings({
+      antiCheatEnabled: false,
+      validationMode: "synthetic",
+      selectedAiLibraries: ["core"]
+    }),
+    panelConfidenceGateDisabled: true,
+    panelEffectiveConfidenceThreshold: 0,
+    aiLibraryDefaultsById: {
+      core: { weight: 100, maxSamples: 1000 }
+    }
+  });
+
+  const stampedTrade = payload.timeFilteredTrades[1];
+  assert.ok(stampedTrade, "expected a stamped trade");
+  assert.ok(Array.isArray(stampedTrade.entryNeighbors) && stampedTrade.entryNeighbors.length > 0);
+  const firstNeighborUid =
+    stampedTrade.entryNeighbors[0]?.metaUid ?? stampedTrade.entryNeighbors[0]?.uid ?? null;
+  const neighborIds = stampedTrade.entryNeighbors
+    .map((neighbor: { metaUid?: string | null; uid?: string | null }) => (
+      neighbor?.metaUid ?? neighbor?.uid ?? null
+    ))
+    .filter((value: string | null): value is string => typeof value === "string");
+
+  assert.notEqual(firstNeighborUid, "live-1");
+  assert.ok(
+    neighborIds.includes("live-2") || neighborIds.includes("live-3"),
+    "expected the unrestricted pool to include the selected or future live trade"
+  );
   assert.equal(stampedTrade.closestClusterUid, firstNeighborUid);
 });
 

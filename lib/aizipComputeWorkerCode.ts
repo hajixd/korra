@@ -1214,7 +1214,9 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
 
   function filterUsableNeighbors(points, excludeTime){
     let usable = points || [];
-    if(excludeTime) usable = usable.filter(p=>p.metaTime !== excludeTime);
+    if(!CHRONOLOGICAL_NEIGHBOR_FILTER || excludeTime == null) return usable;
+
+    usable = usable.filter(p=>p.metaTime !== excludeTime);
 
     const cutoffIndex = resolveChronologyCutoffIndex(excludeTime);
     if(cutoffIndex == null) return usable;
@@ -2532,7 +2534,8 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
     const antiCheatEnabled = !!settings.antiCheatEnabled;
     const rawValidationMode = settings.validationMode || "off";
     const validationMode =
-      rawValidationMode === "split" || rawValidationMode === "synthetic"
+      antiCheatEnabled &&
+      (rawValidationMode === "split" || rawValidationMode === "synthetic")
         ? rawValidationMode
         : "off";
     const useMimExit = !!settings.useMimExit;

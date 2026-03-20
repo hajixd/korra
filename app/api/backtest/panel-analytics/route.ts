@@ -1537,9 +1537,11 @@ const computeAntiCheatBacktestContext = (params: {
   );
   const confidenceById = new Map<string, number>();
   const aiEntrySnapshotById = new Map<string, TradeAiEntrySnapshot>();
+  const effectiveValidationMode = panelBacktestFilterSettings.antiCheatEnabled
+    ? panelBacktestFilterSettings.validationMode
+    : "off";
   const usesSplitValidation =
-    panelBacktestFilterSettings.antiCheatEnabled &&
-    panelBacktestFilterSettings.validationMode === "split";
+    effectiveValidationMode === "split";
   const resolveSplitTimestampMs = (): number | null => {
     if (startMs !== null && endExclusiveMs !== null && endExclusiveMs > startMs) {
       return startMs + Math.floor((endExclusiveMs - startMs) * 0.5);
@@ -1774,7 +1776,7 @@ const computeAntiCheatBacktestContext = (params: {
   };
 
   const resolveCandidateOutcomeScore = (candidate: LibrarySourceCandidate) => {
-    return panelBacktestFilterSettings.validationMode === "synthetic" && candidate.trade
+    return effectiveValidationMode === "synthetic" && candidate.trade
       ? getSyntheticWinProb(candidate.trade)
       : getCandidateOutcomeScore(candidate);
   };
@@ -1890,11 +1892,13 @@ const computeAntiCheatBacktestContext = (params: {
     const trade = chronologicalTrades[index]!;
     const tradeQueryVector = trade.neighborVector ?? buildTradeNeighborVector(trade);
     const basePool =
-      panelBacktestFilterSettings.validationMode === "split"
+      effectiveValidationMode === "split"
         ? splitTrainingTrades
-        : panelBacktestFilterSettings.validationMode === "synthetic"
+        : effectiveValidationMode === "synthetic"
           ? chronologicalTrades.filter((_, candidateIndex) => candidateIndex !== index)
-          : chronologicalTrades.slice(0, index);
+          : panelBacktestFilterSettings.antiCheatEnabled
+            ? chronologicalTrades.slice(0, index)
+            : chronologicalTrades;
 
     if (basePool.length === 0 && !hasCanonicalLibraryCandidates) {
       const confidence = getSyntheticWinProb(trade);

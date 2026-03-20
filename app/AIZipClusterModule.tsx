@@ -24417,10 +24417,7 @@ export default function App() {
         antiCheatEnabled,
         trainingSplit: antiCheatEnabled ? trainingSplit : 100,
         preventAiLeak: antiCheatEnabled ? preventAiLeak : false,
-        validationMode:
-          !antiCheatEnabled && validationMode === "split"
-            ? "off"
-            : validationMode,
+        validationMode: antiCheatEnabled ? validationMode : "off",
         useMimExit,
         complexity,
 
