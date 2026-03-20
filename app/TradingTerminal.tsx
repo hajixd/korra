@@ -9508,6 +9508,7 @@ function TradingTerminalWorkspace({
   const [presetMenuOpen, setPresetMenuOpen] = useState<"save" | "load" | null>(null);
   const [presetNameInput, setPresetNameInput] = useState("");
   const [isMobileWorkspace, setIsMobileWorkspace] = useState(false);
+  const [mobileTradeLimit, setMobileTradeLimit] = useState(3);
   const [aggressorPressure, setAggressorPressure] = useState<AggressorPressureSnapshot>(() => ({
     buyPressure: 0,
     sellPressure: 0,
@@ -9694,6 +9695,7 @@ function TradingTerminalWorkspace({
       const hasTouch = navigator.maxTouchPoints > 0;
       const mobileByUa = mobileUserAgentPattern.test(navigator.userAgent);
       setIsMobileWorkspace(mobileByUa || (mobileByViewport && (coarsePointer || hasTouch)));
+      setMobileTradeLimit(window.innerHeight <= 760 ? 2 : 3);
     };
     const addQueryListener = (
       query: MediaQueryList,
@@ -9719,6 +9721,27 @@ function TradingTerminalWorkspace({
       window.removeEventListener("resize", evaluateMobileWorkspace);
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const html = document.documentElement;
+    const body = document.body;
+
+    if (isMobileWorkspace) {
+      html.classList.add("mobile-terminal-viewport-lock");
+      body.classList.add("mobile-terminal-viewport-lock");
+      return () => {
+        html.classList.remove("mobile-terminal-viewport-lock");
+        body.classList.remove("mobile-terminal-viewport-lock");
+      };
+    }
+
+    html.classList.remove("mobile-terminal-viewport-lock");
+    body.classList.remove("mobile-terminal-viewport-lock");
+  }, [isMobileWorkspace]);
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -19856,8 +19879,8 @@ function TradingTerminalWorkspace({
   const mobileRecentTrades = useMemo(() => {
     return [...deferredBacktestAnalyticsTrades]
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime))
-      .slice(0, 3);
-  }, [deferredBacktestAnalyticsTrades]);
+      .slice(0, mobileTradeLimit);
+  }, [deferredBacktestAnalyticsTrades, mobileTradeLimit]);
   const mobileSavedPresets = useMemo(() => {
     return [...savedPresets].sort((a, b) => b.savedAt - a.savedAt);
   }, [savedPresets]);
