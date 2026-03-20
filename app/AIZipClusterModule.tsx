@@ -2747,6 +2747,152 @@ function canonicalModelName(name: any): string {
   if (norm.includes("ai") && norm.includes("model")) return "AI Model";
   return String(name ?? "");
 }
+
+const isMeaningfulStatsLabel = (value: any): boolean => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return false;
+  const upper = raw.toUpperCase();
+  return (
+    upper !== "-" &&
+    upper !== "NONE" &&
+    upper !== "NULL" &&
+    upper !== "UNDEFINED"
+  );
+};
+
+const resolveTradeEntryStatsLabel = (trade: any): string => {
+  const candidates = [
+    trade?.origModel,
+    trade?.chunkType === "AI Model" ? trade?.origModel : null,
+    trade?.entryModel,
+    trade?.chunkType,
+    trade?.model,
+    trade?.entrySource,
+    trade?.entryReason,
+  ];
+
+  for (const candidate of candidates) {
+    if (!isMeaningfulStatsLabel(candidate)) continue;
+    const canonical = canonicalModelName(candidate);
+    if (isMeaningfulStatsLabel(canonical)) {
+      return canonical;
+    }
+    return String(candidate).trim();
+  }
+
+  return "Unknown";
+};
+
+const normalizeTradeExitStatsLabel = (value: any): string => {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw === "-") return "";
+  const upper = raw.toUpperCase();
+
+  if (upper === "NONE" || upper === "NULL" || upper === "UNDEFINED") {
+    return "";
+  }
+  if (upper === "TP" || upper.includes("TAKE")) return "TP";
+  if (
+    upper === "BE" ||
+    upper === "BREAKEVEN" ||
+    upper === "BREAK-EVEN" ||
+    upper.includes("BREAK")
+  )
+    return "BE";
+  if (upper === "TSL" || upper.includes("TRAIL")) return "TSL";
+  if (upper === "SL" || upper.includes("STOP")) return "SL";
+  if (upper.includes("MIM") || upper.includes("MIT")) return "MIT";
+  if (upper.includes("LIB")) return "Library";
+  if (upper.includes("AI")) return "AI";
+  if (upper.includes("MODEL")) return "Model";
+
+  return raw;
+};
+
+const resolveTradeExitStatsLabel = (trade: any): string => {
+  const explicit = normalizeTradeExitStatsLabel(
+    trade?.exitReason ??
+      trade?.exit_reason ??
+      trade?.reasonExit ??
+      trade?.exitTag ??
+      trade?.exit_source ??
+      trade?.exitSource ??
+      trade?.exitBy ??
+      trade?.exitMethod
+  );
+  if (explicit) return explicit;
+
+  if (isMeaningfulStatsLabel(trade?.exitModel)) {
+    return "Model";
+  }
+
+  if (trade?.isOpen) {
+    return "Open";
+  }
+
+  const exitPrice = pickTradeNum(
+    trade?.exitPrice,
+    trade?.closePrice,
+    trade?.exit,
+    trade?.close,
+    trade?.priceExit,
+    trade?.exitPx
+  );
+  const tpPrice = pickTradeNum(
+    trade?.tpPrice,
+    trade?.tp,
+    trade?.takeProfitPrice,
+    trade?.takeProfit
+  );
+  const slPrice = pickTradeNum(
+    trade?.slPrice,
+    trade?.sl,
+    trade?.stopLossPrice,
+    trade?.stopLoss
+  );
+  const priceTolerance = Math.max(
+    1e-6,
+    Math.abs(Number(exitPrice) || 0) * 0.0005
+  );
+
+  if (
+    Number.isFinite(exitPrice) &&
+    Number.isFinite(tpPrice) &&
+    Math.abs(Number(exitPrice) - Number(tpPrice)) <= priceTolerance
+  ) {
+    return "TP";
+  }
+
+  if (
+    Number.isFinite(exitPrice) &&
+    Number.isFinite(slPrice) &&
+    Math.abs(Number(exitPrice) - Number(slPrice)) <= priceTolerance
+  ) {
+    return "SL";
+  }
+
+  const resultRaw = String(trade?.result ?? "").trim().toUpperCase();
+  if (resultRaw === "TP" || resultRaw === "WIN") {
+    return "TP";
+  }
+  if (resultRaw === "SL" || resultRaw === "LOSS") {
+    return "SL";
+  }
+
+  const label = tradeNum(trade?.label);
+  if (label === 1) return "TP";
+  if (label === -1) return "SL";
+
+  if (
+    Number.isFinite(exitPrice) &&
+    (Number.isFinite(tpPrice) || Number.isFinite(slPrice))
+  ) {
+    return "Model";
+  }
+
+  return "Model";
+};
+
 function translateChecklist(model, items, type) {
   const m = checklistLabelMap[model];
   if (!m) return items;
@@ -25426,8 +25572,7 @@ export default function App() {
       statsDateEnd,
       parseMode
     ).filter((t: any) => {
-      const modelKey = String(t?.origModel ?? t?.chunkType ?? t?.model ?? "").trim();
-      return modelKey.length > 0;
+      return resolveTradeEntryStatsLabel(t) !== "Unknown";
     });
 
     const buildSeries = (rangeKey: "hours" | "weekday" | "month" | "year") => {
@@ -25702,10 +25847,10 @@ export default function App() {
       : [];
 
     for (const t of trades as any[]) {
-      const entryKey = (t && (t.origModel || t.chunkType)) || "Unknown";
+      const entryKey = resolveTradeEntryStatsLabel(t);
       entryCounts[entryKey] = (entryCounts[entryKey] || 0) + 1;
 
-      const exitKey = (t && t.exitReason) || "None";
+      const exitKey = resolveTradeExitStatsLabel(t);
       exitCounts[exitKey] = (exitCounts[exitKey] || 0) + 1;
     }
 
@@ -25741,9 +25886,10 @@ export default function App() {
     if (s === "be" || s.includes("break even") || s.includes("breakeven"))
       return "rgba(234,179,8,0.88)";
     if (s.includes("trail")) return "rgba(251,146,60,0.88)";
-    if (s.includes("mim") || s.includes("model exit"))
+    if (s.includes("mim") || s.includes("model exit") || s === "model")
       return "rgba(99,102,241,0.88)";
     if (s.includes("ai")) return "rgba(56,189,248,0.88)";
+    if (s.includes("library")) return "rgba(255,175,90,0.88)";
     if (s === "none" || s === "manual") return "rgba(148,163,184,0.88)";
 
     // Entries (best-effort)

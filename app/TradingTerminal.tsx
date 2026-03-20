@@ -1387,7 +1387,7 @@ const computeMainStatsModelRowsFallback = (trades: HistoryItem[]): MainStatsBuck
   const map = new Map<string, MainStatsBucketRow>();
 
   for (const trade of trades) {
-    const label = trade.entrySource || "Unknown";
+    const label = getBacktestEntryLabel(trade);
     const current = map.get(label) ?? { label, total: 0, trades: 0 };
     current.total += trade.pnlUsd;
     current.trades += 1;
@@ -1440,6 +1440,7 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
   selectedBacktestDateKey: string;
   statsDateStart: string;
   statsDateEnd: string;
+  performanceStatsModel: string;
   aiMode: BacktestSettingsSnapshot["aiMode"];
   confidenceGateDisabled: boolean;
   confidenceResolver: (trade: HistoryItem) => number;
@@ -1450,6 +1451,7 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
     selectedBacktestDateKey,
     statsDateStart,
     statsDateEnd,
+    performanceStatsModel,
     aiMode,
     confidenceGateDisabled,
     confidenceResolver
@@ -1494,8 +1496,8 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
   const entryCounts: Record<string, number> = {};
   const exitCounts: Record<string, number> = {};
   for (const trade of backtestTrades) {
-    const entryKey = trade.entrySource || "Unknown";
-    const exitKey = trade.exitReason || "None";
+    const entryKey = getBacktestEntryLabel(trade);
+    const exitKey = getBacktestExitLabel(trade);
     entryCounts[entryKey] = (entryCounts[entryKey] ?? 0) + 1;
     exitCounts[exitKey] = (exitCounts[exitKey] ?? 0) + 1;
   }
@@ -1517,6 +1519,10 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
     baselineMainStatsTrades.length > 0
       ? backtestSummary.averageConfidence - baselineMainStatsSummary.averageConfidence
       : null;
+  const performanceStats = computeBacktestPerformanceStatsTemporalChartsFallback(
+    backtestTrades,
+    performanceStatsModel
+  );
   const canComputeAiDeltas =
     aiMode !== "off" &&
     !confidenceGateDisabled &&
@@ -1540,6 +1546,8 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
     availableBacktestMonths: monthKeys,
     calendarActivityEntries: Array.from(dayMap.entries()),
     selectedBacktestDayTrades,
+    performanceStatsModelOptions: performanceStats.modelOptions,
+    performanceStatsTemporalCharts: performanceStats.charts,
     entryExitStats,
     entryExitChartData: {
       entry: toRows(entryExitStats.entry),
@@ -5749,7 +5757,39 @@ const getHistoryTradeDurationMinutes = (trade: HistoryItem): number => {
   return Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
 };
 
-const normalizeBacktestExitReason = (reason?: string | null): string => {
+function getBacktestEntryLabel(trade: HistoryItem): string {
+  const candidates = [
+    trade.entrySource,
+    (trade as any).entryModel,
+    (trade as any).chunkType,
+    (trade as any).model,
+    (trade as any).entryReason
+  ];
+
+  for (const candidate of candidates) {
+    const raw = String(candidate ?? "").trim();
+    if (!raw) {
+      continue;
+    }
+
+    const upper = raw.toUpperCase();
+    if (
+      upper === "-" ||
+      upper === "NONE" ||
+      upper === "NULL" ||
+      upper === "UNDEFINED" ||
+      upper === "SETTINGS"
+    ) {
+      continue;
+    }
+
+    return raw;
+  }
+
+  return String(trade.entrySource ?? "").trim() || "Unknown";
+}
+
+function normalizeBacktestExitReason(reason?: string | null): string {
   if (!reason) {
     return "";
   }
@@ -5796,13 +5836,17 @@ const normalizeBacktestExitReason = (reason?: string | null): string => {
   }
 
   return raw;
-};
+}
 
-const getBacktestExitLabel = (trade: HistoryItem): string => {
+function getBacktestExitLabel(trade: HistoryItem): string {
   const normalized = normalizeBacktestExitReason(trade.exitReason);
 
   if (normalized) {
     return normalized;
+  }
+
+  if (String((trade as any).exitModel ?? "").trim()) {
+    return "Model Exit";
   }
 
   const targetGap = Math.abs(trade.targetPrice - trade.entryPrice);
@@ -5818,7 +5862,108 @@ const getBacktestExitLabel = (trade: HistoryItem): string => {
   }
 
   return "Model Exit";
-};
+}
+
+function computeBacktestPerformanceStatsTemporalChartsFallback(
+  trades: HistoryItem[],
+  performanceStatsModel: string
+): { modelOptions: string[]; charts: PerformanceStatsTemporalCharts } {
+  const models = Array.from(
+    new Set(
+      trades
+        .map((trade) => getBacktestEntryLabel(trade))
+        .filter((name) => name.length > 0)
+    )
+  );
+  const modelOptions = ["All", ...models];
+
+  const modelTrades = trades.filter((trade) => {
+    const modelName = getBacktestEntryLabel(trade);
+
+    if (!modelName) {
+      return false;
+    }
+
+    if (performanceStatsModel === "All") {
+      return true;
+    }
+
+    return modelName === performanceStatsModel;
+  });
+
+  const buildSeries = (range: "hours" | "weekday" | "month" | "year") => {
+    const buckets = new Map<string, { pnl: number; count: number }>();
+
+    for (const trade of modelTrades) {
+      const timestampSeconds = Number(trade.entryTime ?? trade.exitTime);
+
+      if (!Number.isFinite(timestampSeconds)) {
+        continue;
+      }
+
+      const date = new Date(timestampSeconds * 1000);
+      let key = "";
+
+      if (range === "hours") {
+        key = backtestHourLabels[date.getUTCHours()] ?? String(date.getUTCHours());
+      } else if (range === "weekday") {
+        key = backtestWeekdayLabels[date.getUTCDay()] ?? String(date.getUTCDay());
+      } else if (range === "month") {
+        key = backtestMonthLabels[date.getUTCMonth()] ?? String(date.getUTCMonth() + 1);
+      } else {
+        key = String(date.getUTCFullYear());
+      }
+
+      const current = buckets.get(key) ?? { pnl: 0, count: 0 };
+      buckets.set(key, {
+        pnl: current.pnl + trade.pnlUsd,
+        count: current.count + 1
+      });
+    }
+
+    let orderedBuckets: string[] = [];
+
+    if (range === "hours") {
+      orderedBuckets = [...backtestHourLabels];
+    } else if (range === "weekday") {
+      orderedBuckets = [...backtestWeekdayLabels];
+    } else if (range === "month") {
+      orderedBuckets = [...backtestMonthLabels];
+    } else {
+      orderedBuckets = Array.from(buckets.keys())
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value))
+        .sort((left, right) => left - right)
+        .map((value) => String(value));
+    }
+
+    return orderedBuckets.map((bucket) => {
+      const entry = buckets.get(bucket) ?? { pnl: 0, count: 0 };
+      return {
+        bucket,
+        pnl: Number(entry.pnl.toFixed(2)),
+        count: entry.count
+      };
+    });
+  };
+
+  const charts = {
+    hours: buildSeries("hours"),
+    weekday: buildSeries("weekday"),
+    month: buildSeries("month"),
+    year: buildSeries("year"),
+    hasData: false
+  };
+
+  charts.hasData = [charts.hours, charts.weekday, charts.month, charts.year].some((series) =>
+    series.some((row) => Number(row.count) > 0)
+  );
+
+  return {
+    modelOptions,
+    charts
+  };
+}
 
 const getEntryExitBarFill = (bucket: string): string => {
   const normalized = bucket.trim().toLowerCase();
@@ -5839,12 +5984,16 @@ const getEntryExitBarFill = (bucket: string): string => {
     return "rgba(251,146,60,0.88)";
   }
 
-  if (normalized.includes("mim") || normalized.includes("model exit")) {
+  if (normalized.includes("mim") || normalized.includes("model exit") || normalized === "model") {
     return "rgba(99,102,241,0.88)";
   }
 
   if (normalized.includes("ai")) {
     return "rgba(56,189,248,0.88)";
+  }
+
+  if (normalized.includes("library")) {
+    return "rgba(255,175,90,0.88)";
   }
 
   if (normalized === "none" || normalized === "manual") {
@@ -16656,6 +16805,7 @@ function TradingTerminalWorkspace({
           selectedBacktestDateKey,
           statsDateStart: appliedBacktestSettings.statsDateStart,
           statsDateEnd: appliedBacktestSettings.statsDateEnd,
+          performanceStatsModel,
           aiMode: appliedBacktestSettings.aiMode,
           confidenceGateDisabled: appliedConfidenceGateDisabled,
           confidenceResolver: getEffectiveTradeConfidenceScore
@@ -16705,6 +16855,7 @@ function TradingTerminalWorkspace({
             selectedBacktestDateKey,
             statsDateStart: appliedBacktestSettings.statsDateStart,
             statsDateEnd: appliedBacktestSettings.statsDateEnd,
+            performanceStatsModel,
             aiMode: appliedBacktestSettings.aiMode,
             confidenceGateDisabled: appliedConfidenceGateDisabled,
             confidenceResolver: getEffectiveTradeConfidenceScore
