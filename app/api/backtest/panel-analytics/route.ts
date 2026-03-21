@@ -127,6 +127,8 @@ type PanelAnalyticsResponseBody = {
 
 const AI_LIBRARY_TARGET_WIN_RATE_KEY = "targetWinRate";
 const AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY = "targetWinRateMode";
+const AI_LIBRARY_TARGET_BUY_RATE_KEY = "targetBuyRate";
+const AI_LIBRARY_TARGET_BUY_RATE_MODE_KEY = "targetBuyRateMode";
 
 const clamp = (value: number, min: number, max: number): number => {
   return Math.min(max, Math.max(min, value));
@@ -593,21 +595,40 @@ const getVectorDistance = (
   return Math.sqrt(total);
 };
 
-const getAiLibraryTargetWinRateMode = (
+const getAiLibraryTargetBalanceMode = (
   value: AiLibrarySettingValue | undefined
 ): "natural" | "artificial" => {
   return value === "artificial" ? "artificial" : "natural";
 };
 
-const getNaturalAiLibraryTargetWinRate = (
-  baselineWinRate: number,
+const getNaturalAiLibraryTargetBalance = (
+  baselineRate: number,
   loadedNeighborCount: number
 ): number => {
-  if (loadedNeighborCount <= 0 || !Number.isFinite(baselineWinRate)) {
+  if (loadedNeighborCount <= 0 || !Number.isFinite(baselineRate)) {
     return 50;
   }
 
-  return clamp(baselineWinRate, 0, 100);
+  return clamp(baselineRate, 0, 100);
+};
+
+const resolveAiLibraryTargetBalance = (
+  settings: Record<string, AiLibrarySettingValue>,
+  targetKey: string,
+  modeKey: string,
+  baselineRate: number,
+  loadedNeighborCount: number
+): number => {
+  const mode = getAiLibraryTargetBalanceMode(settings[modeKey]);
+
+  if (mode === "natural") {
+    return getNaturalAiLibraryTargetBalance(baselineRate, loadedNeighborCount);
+  }
+
+  const rawTargetRate = Number(settings[targetKey]);
+  return Number.isFinite(rawTargetRate)
+    ? clamp(rawTargetRate, 0, 100)
+    : clamp(baselineRate, 0, 100);
 };
 
 const resolveAiLibraryTargetWinRate = (
@@ -615,84 +636,95 @@ const resolveAiLibraryTargetWinRate = (
   baselineWinRate: number,
   loadedNeighborCount: number
 ): number => {
-  const mode = getAiLibraryTargetWinRateMode(settings[AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY]);
-
-  if (mode === "natural") {
-    return getNaturalAiLibraryTargetWinRate(baselineWinRate, loadedNeighborCount);
-  }
-
-  const rawTargetWinRate = Number(settings[AI_LIBRARY_TARGET_WIN_RATE_KEY]);
-  return Number.isFinite(rawTargetWinRate)
-    ? clamp(rawTargetWinRate, 0, 100)
-    : clamp(baselineWinRate, 0, 100);
+  return resolveAiLibraryTargetBalance(
+    settings,
+    AI_LIBRARY_TARGET_WIN_RATE_KEY,
+    AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY,
+    baselineWinRate,
+    loadedNeighborCount
+  );
 };
 
-const getOutcomeWinRatePercent = <T,>(
+const resolveAiLibraryTargetBuyRate = (
+  settings: Record<string, AiLibrarySettingValue>,
+  baselineBuyRate: number,
+  loadedNeighborCount: number
+): number => {
+  return resolveAiLibraryTargetBalance(
+    settings,
+    AI_LIBRARY_TARGET_BUY_RATE_KEY,
+    AI_LIBRARY_TARGET_BUY_RATE_MODE_KEY,
+    baselineBuyRate,
+    loadedNeighborCount
+  );
+};
+
+const getMatchingRatePercent = <T,>(
   items: readonly T[],
-  isWin: (item: T) => boolean
+  isMatch: (item: T) => boolean
 ): number => {
   if (items.length === 0) {
     return 50;
   }
 
-  let wins = 0;
+  let matches = 0;
 
   for (const item of items) {
-    if (isWin(item)) {
-      wins += 1;
+    if (isMatch(item)) {
+      matches += 1;
     }
   }
 
-  return (wins / items.length) * 100;
+  return (matches / items.length) * 100;
 };
 
-const findTargetBalancedOutcomeCounts = (
-  winCount: number,
-  lossCount: number,
+const findTargetBalancedItemCounts = (
+  matchingCount: number,
+  otherCount: number,
   maxSamples: number,
-  targetWinRatePercent: number
+  targetRatePercent: number
 ) => {
-  const availableWins = Math.max(0, Math.floor(Number(winCount) || 0));
-  const availableLosses = Math.max(0, Math.floor(Number(lossCount) || 0));
+  const availableMatches = Math.max(0, Math.floor(Number(matchingCount) || 0));
+  const availableOthers = Math.max(0, Math.floor(Number(otherCount) || 0));
   const totalCap = Math.min(
     Math.max(0, Math.floor(Number(maxSamples) || 0)),
-    availableWins + availableLosses
+    availableMatches + availableOthers
   );
 
   if (totalCap <= 0) {
-    return { winCount: 0, lossCount: 0 };
+    return { matchCount: 0, otherCount: 0 };
   }
 
-  const target = clamp(targetWinRatePercent, 0, 100) / 100;
-  let bestWins = 0;
+  const target = clamp(targetRatePercent, 0, 100) / 100;
+  let bestMatches = 0;
   let bestTotal = 0;
   let bestDiff = Number.POSITIVE_INFINITY;
 
   for (let total = totalCap; total >= 1; total -= 1) {
-    const minWins = Math.max(0, total - availableLosses);
-    const maxWins = Math.min(availableWins, total);
-    let candidateWins = Math.round(target * total);
-    candidateWins = clamp(candidateWins, minWins, maxWins);
-    const diff = Math.abs(candidateWins / total - target);
+    const minMatches = Math.max(0, total - availableOthers);
+    const maxMatches = Math.min(availableMatches, total);
+    let candidateMatches = Math.round(target * total);
+    candidateMatches = clamp(candidateMatches, minMatches, maxMatches);
+    const diff = Math.abs(candidateMatches / total - target);
 
     if (diff < bestDiff - 1e-9) {
       bestDiff = diff;
-      bestWins = candidateWins;
+      bestMatches = candidateMatches;
       bestTotal = total;
     }
   }
 
   return {
-    winCount: bestWins,
-    lossCount: Math.max(0, bestTotal - bestWins)
+    matchCount: bestMatches,
+    otherCount: Math.max(0, bestTotal - bestMatches)
   };
 };
 
-const rebalanceItemsToTargetWinRate = <T,>(
+const rebalanceItemsToTargetRate = <T,>(
   items: readonly T[],
   maxSamples: number,
-  targetWinRatePercent: number,
-  isWin: (item: T) => boolean,
+  targetRatePercent: number,
+  isMatch: (item: T) => boolean,
   preferFront = false
 ): T[] => {
   const cap = Math.max(0, Math.floor(Number(maxSamples) || 0));
@@ -704,19 +736,22 @@ const rebalanceItemsToTargetWinRate = <T,>(
   const indexedItems = items.map((item, index) => ({
     item,
     index,
-    win: isWin(item)
+    match: isMatch(item)
   }));
   const orderedItems = preferFront ? indexedItems : [...indexedItems].reverse();
-  const wins = orderedItems.filter((entry) => entry.win);
-  const losses = orderedItems.filter((entry) => !entry.win);
-  const balancedCounts = findTargetBalancedOutcomeCounts(
-    wins.length,
-    losses.length,
+  const matches = orderedItems.filter((entry) => entry.match);
+  const others = orderedItems.filter((entry) => !entry.match);
+  const balancedCounts = findTargetBalancedItemCounts(
+    matches.length,
+    others.length,
     cap,
-    targetWinRatePercent
+    targetRatePercent
   );
 
-  return [...wins.slice(0, balancedCounts.winCount), ...losses.slice(0, balancedCounts.lossCount)]
+  return [
+    ...matches.slice(0, balancedCounts.matchCount),
+    ...others.slice(0, balancedCounts.otherCount)
+  ]
     .sort((left, right) => left.index - right.index)
     .map((entry) => entry.item);
 };
@@ -1790,9 +1825,20 @@ const computeAntiCheatBacktestContext = (params: {
       stride
     });
 
-    const baselineWinRate = getOutcomeWinRatePercent(
+    const baselineBuyRate = getMatchingRatePercent(
+      source,
+      (candidate) => candidate.side === "Long"
+    );
+    const baselineWinRate = getMatchingRatePercent(
       source,
       (candidate) => candidate.result === "Win"
+    );
+    const buySellBalanced = rebalanceItemsToTargetRate(
+      source,
+      maxSamples,
+      resolveAiLibraryTargetBuyRate(settings, baselineBuyRate, source.length),
+      (candidate) => candidate.side === "Long",
+      false
     );
     const targetWinRate = resolveAiLibraryTargetWinRate(
       settings,
@@ -1800,8 +1846,8 @@ const computeAntiCheatBacktestContext = (params: {
       source.length
     );
 
-    const balanced = rebalanceItemsToTargetWinRate(
-      source,
+    const balanced = rebalanceItemsToTargetRate(
+      buySellBalanced,
       maxSamples,
       targetWinRate,
       (candidate) => candidate.result === "Win",

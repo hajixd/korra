@@ -3334,7 +3334,9 @@ const buildModelAiLibraryDefs = (modelNames: readonly string[]): AiLibraryDef[] 
 
 const AI_LIBRARY_TARGET_WIN_RATE_KEY = "targetWinRate";
 const AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY = "targetWinRateMode";
-type AiLibraryTargetWinRateMode = "natural" | "artificial";
+const AI_LIBRARY_TARGET_BUY_RATE_KEY = "targetBuyRate";
+const AI_LIBRARY_TARGET_BUY_RATE_MODE_KEY = "targetBuyRateMode";
+type AiLibraryTargetBalanceMode = "natural" | "artificial";
 const AI_LIBRARY_HIDE_CURRENT_VALUE_KEYS = new Set([
   "stride",
   "tpDollars",
@@ -3349,22 +3351,62 @@ const AI_LIBRARY_TARGET_WIN_RATE_FIELD: AiLibraryField = {
   max: 100,
   step: 1
 };
+const AI_LIBRARY_TARGET_BUY_RATE_FIELD: AiLibraryField = {
+  key: AI_LIBRARY_TARGET_BUY_RATE_KEY,
+  label: "Target Buy Rate (%)",
+  type: "number",
+  min: 0,
+  max: 100,
+  step: 1
+};
+const AI_LIBRARY_TARGET_BALANCE_FIELDS: Array<{
+  field: AiLibraryField;
+  modeKey: string;
+}> = [
+  {
+    field: AI_LIBRARY_TARGET_WIN_RATE_FIELD,
+    modeKey: AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY
+  },
+  {
+    field: AI_LIBRARY_TARGET_BUY_RATE_FIELD,
+    modeKey: AI_LIBRARY_TARGET_BUY_RATE_MODE_KEY
+  }
+];
 
-const getAiLibraryTargetWinRateMode = (
+const getAiLibraryTargetBalanceMode = (
   value: AiLibrarySettingValue | undefined
-): AiLibraryTargetWinRateMode => {
+): AiLibraryTargetBalanceMode => {
   return value === "artificial" ? "artificial" : "natural";
 };
 
-const getNaturalAiLibraryTargetWinRate = (
-  baselineWinRate: number,
+const getNaturalAiLibraryTargetBalance = (
+  baselineRate: number,
   loadedNeighborCount: number
 ): number => {
-  if (loadedNeighborCount <= 0 || !Number.isFinite(baselineWinRate)) {
+  if (loadedNeighborCount <= 0 || !Number.isFinite(baselineRate)) {
     return 50;
   }
 
-  return clamp(baselineWinRate, 0, 100);
+  return clamp(baselineRate, 0, 100);
+};
+
+const resolveAiLibraryTargetBalance = (
+  settings: Record<string, AiLibrarySettingValue>,
+  targetKey: string,
+  modeKey: string,
+  baselineRate: number,
+  loadedNeighborCount: number
+): number => {
+  const mode = getAiLibraryTargetBalanceMode(settings[modeKey]);
+
+  if (mode === "natural") {
+    return getNaturalAiLibraryTargetBalance(baselineRate, loadedNeighborCount);
+  }
+
+  const rawTargetRate = Number(settings[targetKey]);
+  return Number.isFinite(rawTargetRate)
+    ? clamp(rawTargetRate, 0, 100)
+    : clamp(baselineRate, 0, 100);
 };
 
 const resolveAiLibraryTargetWinRate = (
@@ -3372,37 +3414,51 @@ const resolveAiLibraryTargetWinRate = (
   baselineWinRate: number,
   loadedNeighborCount: number
 ): number => {
-  const mode = getAiLibraryTargetWinRateMode(settings[AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY]);
-
-  if (mode === "natural") {
-    return getNaturalAiLibraryTargetWinRate(baselineWinRate, loadedNeighborCount);
-  }
-
-  const rawTargetWinRate = Number(settings[AI_LIBRARY_TARGET_WIN_RATE_KEY]);
-  return Number.isFinite(rawTargetWinRate)
-    ? clamp(rawTargetWinRate, 0, 100)
-    : clamp(baselineWinRate, 0, 100);
+  return resolveAiLibraryTargetBalance(
+    settings,
+    AI_LIBRARY_TARGET_WIN_RATE_KEY,
+    AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY,
+    baselineWinRate,
+    loadedNeighborCount
+  );
 };
 
-const withAiLibraryTargetWinRateField = (definition: AiLibraryDef): AiLibraryDef => {
+const resolveAiLibraryTargetBuyRate = (
+  settings: Record<string, AiLibrarySettingValue>,
+  baselineBuyRate: number,
+  loadedNeighborCount: number
+): number => {
+  return resolveAiLibraryTargetBalance(
+    settings,
+    AI_LIBRARY_TARGET_BUY_RATE_KEY,
+    AI_LIBRARY_TARGET_BUY_RATE_MODE_KEY,
+    baselineBuyRate,
+    loadedNeighborCount
+  );
+};
+
+const withAiLibraryTargetBalanceFields = (definition: AiLibraryDef): AiLibraryDef => {
   const defaults = {
-    ...definition.defaults,
-    [AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY]: getAiLibraryTargetWinRateMode(
-      definition.defaults[AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY]
-    )
+    ...definition.defaults
   };
 
-  if (definition.fields.some((field) => field.key === AI_LIBRARY_TARGET_WIN_RATE_KEY)) {
-    return {
-      ...definition,
-      defaults
-    };
+  for (const { modeKey } of AI_LIBRARY_TARGET_BALANCE_FIELDS) {
+    defaults[modeKey] = getAiLibraryTargetBalanceMode(definition.defaults[modeKey]);
   }
 
   const fields = [...definition.fields];
   const maxSamplesIndex = fields.findIndex((field) => field.key === "maxSamples");
   const insertAt = maxSamplesIndex >= 0 ? maxSamplesIndex : fields.length;
-  fields.splice(insertAt, 0, AI_LIBRARY_TARGET_WIN_RATE_FIELD);
+  let addedFieldCount = 0;
+
+  for (const { field } of AI_LIBRARY_TARGET_BALANCE_FIELDS) {
+    if (fields.some((existingField) => existingField.key === field.key)) {
+      continue;
+    }
+    fields.splice(insertAt + addedFieldCount, 0, field);
+    addedFieldCount += 1;
+  }
+
   return {
     ...definition,
     defaults,
@@ -3412,7 +3468,7 @@ const withAiLibraryTargetWinRateField = (definition: AiLibraryDef): AiLibraryDef
 
 const buildAiLibraryDefs = (modelNames: readonly string[]): AiLibraryDef[] => {
   return [...BASE_AI_LIBRARY_DEFS, ...buildModelAiLibraryDefs(modelNames)].map(
-    withAiLibraryTargetWinRateField
+    withAiLibraryTargetBalanceFields
   );
 };
 
@@ -3571,72 +3627,72 @@ const normalizeResolvedAiLibrarySettings = (
   return merged;
 };
 
-const getOutcomeWinRatePercent = <T,>(
+const getMatchingRatePercent = <T,>(
   items: readonly T[],
-  isWin: (item: T) => boolean
+  isMatch: (item: T) => boolean
 ): number => {
   if (items.length === 0) {
     return 50;
   }
 
-  let wins = 0;
+  let matches = 0;
 
   for (const item of items) {
-    if (isWin(item)) {
-      wins += 1;
+    if (isMatch(item)) {
+      matches += 1;
     }
   }
 
-  return (wins / items.length) * 100;
+  return (matches / items.length) * 100;
 };
 
-const findTargetBalancedOutcomeCounts = (
-  winCount: number,
-  lossCount: number,
+const findTargetBalancedItemCounts = (
+  matchingCount: number,
+  otherCount: number,
   maxSamples: number,
-  targetWinRatePercent: number
+  targetRatePercent: number
 ) => {
-  const availableWins = Math.max(0, Math.floor(Number(winCount) || 0));
-  const availableLosses = Math.max(0, Math.floor(Number(lossCount) || 0));
+  const availableMatches = Math.max(0, Math.floor(Number(matchingCount) || 0));
+  const availableOthers = Math.max(0, Math.floor(Number(otherCount) || 0));
   const totalCap = Math.min(
     Math.max(0, Math.floor(Number(maxSamples) || 0)),
-    availableWins + availableLosses
+    availableMatches + availableOthers
   );
 
   if (totalCap <= 0) {
-    return { winCount: 0, lossCount: 0 };
+    return { matchCount: 0, otherCount: 0 };
   }
 
-  const target = clamp(targetWinRatePercent, 0, 100) / 100;
-  let bestWins = 0;
+  const target = clamp(targetRatePercent, 0, 100) / 100;
+  let bestMatches = 0;
   let bestTotal = 0;
   let bestDiff = Number.POSITIVE_INFINITY;
 
   for (let total = totalCap; total >= 1; total -= 1) {
-    const minWins = Math.max(0, total - availableLosses);
-    const maxWins = Math.min(availableWins, total);
-    let candidateWins = Math.round(target * total);
-    candidateWins = clamp(candidateWins, minWins, maxWins);
-    const diff = Math.abs(candidateWins / total - target);
+    const minMatches = Math.max(0, total - availableOthers);
+    const maxMatches = Math.min(availableMatches, total);
+    let candidateMatches = Math.round(target * total);
+    candidateMatches = clamp(candidateMatches, minMatches, maxMatches);
+    const diff = Math.abs(candidateMatches / total - target);
 
     if (diff < bestDiff - 1e-9) {
       bestDiff = diff;
-      bestWins = candidateWins;
+      bestMatches = candidateMatches;
       bestTotal = total;
     }
   }
 
   return {
-    winCount: bestWins,
-    lossCount: Math.max(0, bestTotal - bestWins)
+    matchCount: bestMatches,
+    otherCount: Math.max(0, bestTotal - bestMatches)
   };
 };
 
-const rebalanceItemsToTargetWinRate = <T,>(
+const rebalanceItemsToTargetRate = <T,>(
   items: readonly T[],
   maxSamples: number,
-  targetWinRatePercent: number,
-  isWin: (item: T) => boolean,
+  targetRatePercent: number,
+  isMatch: (item: T) => boolean,
   preferFront = false
 ): T[] => {
   const cap = Math.max(0, Math.floor(Number(maxSamples) || 0));
@@ -3648,19 +3704,22 @@ const rebalanceItemsToTargetWinRate = <T,>(
   const indexedItems = items.map((item, index) => ({
     item,
     index,
-    win: isWin(item)
+    match: isMatch(item)
   }));
   const orderedItems = preferFront ? indexedItems : [...indexedItems].reverse();
-  const wins = orderedItems.filter((entry) => entry.win);
-  const losses = orderedItems.filter((entry) => !entry.win);
-  const balancedCounts = findTargetBalancedOutcomeCounts(
-    wins.length,
-    losses.length,
+  const matches = orderedItems.filter((entry) => entry.match);
+  const others = orderedItems.filter((entry) => !entry.match);
+  const balancedCounts = findTargetBalancedItemCounts(
+    matches.length,
+    others.length,
     cap,
-    targetWinRatePercent
+    targetRatePercent
   );
 
-  return [...wins.slice(0, balancedCounts.winCount), ...losses.slice(0, balancedCounts.lossCount)]
+  return [
+    ...matches.slice(0, balancedCounts.matchCount),
+    ...others.slice(0, balancedCounts.otherCount)
+  ]
     .sort((left, right) => left.index - right.index)
     .map((entry) => entry.item);
 };
@@ -9546,6 +9605,9 @@ function TradingTerminalWorkspace({
   const [aiLibraryRunStatus, setAiLibraryRunStatus] = useState<Record<string, AiLibraryRunStatus>>({});
   const [aiLibraryCounts, setAiLibraryCounts] = useState<Record<string, number>>({});
   const [aiLibraryBaselineWinRates, setAiLibraryBaselineWinRates] = useState<Record<string, number>>({});
+  const [aiLibraryBaselineBuyRates, setAiLibraryBaselineBuyRates] = useState<Record<string, number>>(
+    {}
+  );
   const [aiLibraryPoints, setAiLibraryPoints] = useState<any[]>([]);
   const aiLibraryPointsByIdRef = useRef<Record<string, any[]>>({});
   const aiLibraryPoolCacheRef = useRef<Map<string, HistoryItem[]>>(new Map());
@@ -9563,6 +9625,7 @@ function TradingTerminalWorkspace({
     setAiLibraryPoints([]);
     setAiLibraryCounts({});
     setAiLibraryBaselineWinRates({});
+    setAiLibraryBaselineBuyRates({});
     setAiLibraryRunStatus({});
   }, []);
   const [chunkBars, setChunkBars] = useState(24);
@@ -18235,21 +18298,33 @@ function TradingTerminalWorkspace({
         });
       }
 
-      const baselineWinRate = getOutcomeWinRatePercent(
+      const baselineBuyRate = getMatchingRatePercent(
+        source,
+        (trade) => trade.side === "Long"
+      );
+      const baselineWinRate = getMatchingRatePercent(
         source,
         (trade) => trade.result === "Win"
+      );
+      const preferFront = definition.id === "terrific" || definition.id === "terrible";
+      const buySellBalanced = rebalanceItemsToTargetRate(
+        source,
+        maxSamples,
+        resolveAiLibraryTargetBuyRate(settings, baselineBuyRate, source.length),
+        (trade) => trade.side === "Long",
+        preferFront
       );
       const targetWinRate = resolveAiLibraryTargetWinRate(
         settings,
         baselineWinRate,
         source.length
       );
-      const balanced = rebalanceItemsToTargetWinRate(
-        source,
+      const balanced = rebalanceItemsToTargetRate(
+        buySellBalanced,
         maxSamples,
         targetWinRate,
         (trade) => trade.result === "Win",
-        definition.id === "terrific" || definition.id === "terrible"
+        preferFront
       );
 
       const points: any[] = [];
@@ -18313,6 +18388,7 @@ function TradingTerminalWorkspace({
       }
 
       return {
+        baselineBuyRate,
         baselineWinRate,
         sourceCount: source.length,
         count: balanced.length,
@@ -18446,6 +18522,10 @@ function TradingTerminalWorkspace({
         setAiLibraryCounts((current) => ({
           ...current,
           [libraryId]: result.count
+        }));
+        setAiLibraryBaselineBuyRates((current) => ({
+          ...current,
+          [libraryId]: result.baselineBuyRate
         }));
         setAiLibraryBaselineWinRates((current) => ({
           ...current,
@@ -18707,12 +18787,19 @@ function TradingTerminalWorkspace({
     ? ({
         ...selectedAiLibrary.defaults,
         ...(selectedAiLibrarySettings[selectedAiLibrary.id] ?? {}),
-        [AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY]: getAiLibraryTargetWinRateMode(
+        [AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY]: getAiLibraryTargetBalanceMode(
           selectedAiLibrarySettings[selectedAiLibrary.id]?.[AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY]
+        ),
+        [AI_LIBRARY_TARGET_BUY_RATE_MODE_KEY]: getAiLibraryTargetBalanceMode(
+          selectedAiLibrarySettings[selectedAiLibrary.id]?.[AI_LIBRARY_TARGET_BUY_RATE_MODE_KEY]
         ),
         [AI_LIBRARY_TARGET_WIN_RATE_KEY]:
           selectedAiLibrarySettings[selectedAiLibrary.id]?.[AI_LIBRARY_TARGET_WIN_RATE_KEY] ??
           aiLibraryBaselineWinRates[selectedAiLibrary.id] ??
+          50,
+        [AI_LIBRARY_TARGET_BUY_RATE_KEY]:
+          selectedAiLibrarySettings[selectedAiLibrary.id]?.[AI_LIBRARY_TARGET_BUY_RATE_KEY] ??
+          aiLibraryBaselineBuyRates[selectedAiLibrary.id] ??
           50
       } as Record<string, AiLibrarySettingValue>)
     : null;
@@ -18739,14 +18826,25 @@ function TradingTerminalWorkspace({
   const aiLibraryAnyLoading = useMemo(() => {
     return Object.values(aiLibraryRunStatus).some((status) => status === "loading");
   }, [aiLibraryRunStatus]);
-  const selectedAiLibraryTargetWinRateMode: AiLibraryTargetWinRateMode = selectedAiLibraryConfig
-    ? getAiLibraryTargetWinRateMode(
+  const selectedAiLibraryTargetWinRateMode: AiLibraryTargetBalanceMode = selectedAiLibraryConfig
+    ? getAiLibraryTargetBalanceMode(
         selectedAiLibraryConfig[AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY]
       )
     : "natural";
+  const selectedAiLibraryTargetBuyRateMode: AiLibraryTargetBalanceMode = selectedAiLibraryConfig
+    ? getAiLibraryTargetBalanceMode(
+        selectedAiLibraryConfig[AI_LIBRARY_TARGET_BUY_RATE_MODE_KEY]
+      )
+    : "natural";
   const selectedAiLibraryNaturalTargetWinRate = selectedAiLibrary
-    ? getNaturalAiLibraryTargetWinRate(
+    ? getNaturalAiLibraryTargetBalance(
         aiLibraryBaselineWinRates[selectedAiLibrary.id] ?? 50,
+        selectedAiLibraryLoadedCount
+      )
+    : 50;
+  const selectedAiLibraryNaturalTargetBuyRate = selectedAiLibrary
+    ? getNaturalAiLibraryTargetBalance(
+        aiLibraryBaselineBuyRates[selectedAiLibrary.id] ?? 50,
         selectedAiLibraryLoadedCount
       )
     : 50;
@@ -24537,13 +24635,28 @@ function TradingTerminalWorkspace({
                               const step = typeof field.step === "number" ? field.step : 1;
                               const parsedValue = Number(fieldValue ?? 0);
                               const numericValue = Number.isFinite(parsedValue) ? parsedValue : 0;
-                              const isTargetWinRateField =
-                                field.key === AI_LIBRARY_TARGET_WIN_RATE_KEY;
-                              const isNaturalTargetWinRateMode =
-                                isTargetWinRateField &&
-                                selectedAiLibraryTargetWinRateMode === "natural";
-                              const displayedNumericValue = isNaturalTargetWinRateMode
-                                ? selectedAiLibraryNaturalTargetWinRate
+                              const balanceModeKey =
+                                field.key === AI_LIBRARY_TARGET_WIN_RATE_KEY
+                                  ? AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY
+                                  : field.key === AI_LIBRARY_TARGET_BUY_RATE_KEY
+                                    ? AI_LIBRARY_TARGET_BUY_RATE_MODE_KEY
+                                    : null;
+                              const selectedBalanceMode =
+                                field.key === AI_LIBRARY_TARGET_WIN_RATE_KEY
+                                  ? selectedAiLibraryTargetWinRateMode
+                                  : field.key === AI_LIBRARY_TARGET_BUY_RATE_KEY
+                                    ? selectedAiLibraryTargetBuyRateMode
+                                    : null;
+                              const naturalBalanceValue =
+                                field.key === AI_LIBRARY_TARGET_WIN_RATE_KEY
+                                  ? selectedAiLibraryNaturalTargetWinRate
+                                  : field.key === AI_LIBRARY_TARGET_BUY_RATE_KEY
+                                    ? selectedAiLibraryNaturalTargetBuyRate
+                                    : numericValue;
+                              const isNaturalTargetBalanceMode =
+                                balanceModeKey != null && selectedBalanceMode === "natural";
+                              const displayedNumericValue = isNaturalTargetBalanceMode
+                                ? naturalBalanceValue
                                 : numericValue;
                               const canRange =
                                 min != null &&
@@ -24574,15 +24687,15 @@ function TradingTerminalWorkspace({
                               return (
                                 <label key={field.key} className="ai-zip-library-field-block">
                                   <span className="ai-zip-library-field-label">{field.label}</span>
-                                  {isTargetWinRateField ? (
+                                  {balanceModeKey ? (
                                     <div className="ai-zip-library-actions">
                                       <button
                                         type="button"
-                                        className={`ai-zip-library-action ${selectedAiLibraryTargetWinRateMode === "natural" ? "primary" : ""}`}
+                                        className={`ai-zip-library-action ${selectedBalanceMode === "natural" ? "primary" : ""}`}
                                         onClick={() => {
                                           updateAiLibrarySetting(
                                             selectedAiLibrary.id,
-                                            AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY,
+                                            balanceModeKey,
                                             "natural"
                                           );
                                         }}
@@ -24591,11 +24704,11 @@ function TradingTerminalWorkspace({
                                       </button>
                                       <button
                                         type="button"
-                                        className={`ai-zip-library-action ${selectedAiLibraryTargetWinRateMode === "artificial" ? "primary" : ""}`}
+                                        className={`ai-zip-library-action ${selectedBalanceMode === "artificial" ? "primary" : ""}`}
                                         onClick={() => {
                                           updateAiLibrarySetting(
                                             selectedAiLibrary.id,
-                                            AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY,
+                                            balanceModeKey,
                                             "artificial"
                                           );
                                         }}
@@ -24610,7 +24723,7 @@ function TradingTerminalWorkspace({
                                     min={min}
                                     max={max}
                                     step={step}
-                                    disabled={isNaturalTargetWinRateMode}
+                                    disabled={isNaturalTargetBalanceMode}
                                     onChange={(event) => {
                                       const raw = Number(event.target.value);
                                       const nextValue = Number.isFinite(raw) ? raw : 0;
@@ -24631,7 +24744,7 @@ function TradingTerminalWorkspace({
                                     }}
                                     className="ai-zip-library-input"
                                     style={
-                                      isNaturalTargetWinRateMode
+                                      isNaturalTargetBalanceMode
                                         ? ({
                                             opacity: 0.55,
                                             cursor: "not-allowed"
@@ -24646,7 +24759,7 @@ function TradingTerminalWorkspace({
                                       max={max}
                                       step={step}
                                       value={displayedNumericValue}
-                                      disabled={isNaturalTargetWinRateMode}
+                                      disabled={isNaturalTargetBalanceMode}
                                       onChange={(event) => {
                                         updateAiLibrarySetting(
                                           selectedAiLibrary.id,
@@ -24658,7 +24771,7 @@ function TradingTerminalWorkspace({
                                       style={
                                         {
                                           "--p": `${sliderPercent}%`,
-                                          ...(isNaturalTargetWinRateMode
+                                          ...(isNaturalTargetBalanceMode
                                             ? ({
                                                 opacity: 0.4,
                                                 filter: "grayscale(0.9)",
