@@ -2045,18 +2045,19 @@ body.mobile-terminal-viewport-lock {
 }
 
 .backtest-stats-range-main {
+  --backtest-settings-control-width: 272px;
   width: 100%;
   margin-left: auto;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   justify-content: flex-end;
-  gap: 0.32rem;
+  gap: 0.56rem;
 }
 
 .backtest-date-input-row {
   width: 100%;
-  max-width: 286px;
+  max-width: var(--backtest-settings-control-width);
   margin-left: auto;
   display: flex;
   align-items: center;
@@ -2066,13 +2067,13 @@ body.mobile-terminal-viewport-lock {
 
 .backtest-date-preset-row {
   width: 100%;
-  max-width: 272px;
+  max-width: var(--backtest-settings-control-width);
   margin-left: auto;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   justify-content: flex-end;
-  gap: 0.32rem;
+  gap: 0.56rem;
 }
 
 .backtest-date-preset-wrap {
@@ -2360,7 +2361,7 @@ body.mobile-terminal-viewport-lock {
 }
 
 .backtest-toolbar-note {
-  margin-top: -0.08rem;
+  margin-top: 0.18rem;
   font-size: 0.66rem;
   color: rgba(255, 255, 255, 0.62);
 }
@@ -2369,7 +2370,7 @@ body.mobile-terminal-viewport-lock {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.2rem;
+  gap: 0.48rem;
 }
 
 .backtest-toolbar-note-range,
@@ -7891,7 +7892,7 @@ body.mobile-terminal-viewport-lock {
     flex-direction: column;
     align-items: stretch;
     max-width: none;
-    gap: 0.32rem;
+    gap: 0.56rem;
   }
 
   .backtest-date-input-row {

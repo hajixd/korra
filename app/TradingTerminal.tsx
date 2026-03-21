@@ -22970,17 +22970,6 @@ function TradingTerminalWorkspace({
                     </span>
                     End Date: <strong>{backtestDateRangeEndLabel}</strong>
                   </span>
-                  <span className="backtest-toolbar-note-meta">
-                    Total Live Trades: <strong>{totalPreAiLiveTrades.toLocaleString("en-US")}</strong>
-                    <span className="backtest-toolbar-note-separator" aria-hidden="true">
-                      &middot;
-                    </span>
-                    Accepted Live Trades: <strong>{acceptedLiveTrades.toLocaleString("en-US")}</strong>
-                    <span className="backtest-toolbar-note-separator" aria-hidden="true">
-                      &middot;
-                    </span>
-                    Acceptance Rate: <strong>{liveTradeAcceptanceRatePct.toFixed(1)}%</strong>
-                  </span>
                   <span className="backtest-toolbar-note-meta backtest-toolbar-note-library-line">
                     Total Library Trades:{" "}
                     <strong>{totalLoadedLibraryTrades.toLocaleString("en-US")}</strong>
@@ -22997,6 +22986,17 @@ function TradingTerminalWorkspace({
                         </span>
                       </span>
                     ))}
+                  </span>
+                  <span className="backtest-toolbar-note-meta">
+                    Total Live Trades: <strong>{totalPreAiLiveTrades.toLocaleString("en-US")}</strong>
+                    <span className="backtest-toolbar-note-separator" aria-hidden="true">
+                      &middot;
+                    </span>
+                    Accepted Live Trades: <strong>{acceptedLiveTrades.toLocaleString("en-US")}</strong>
+                    <span className="backtest-toolbar-note-separator" aria-hidden="true">
+                      &middot;
+                    </span>
+                    Acceptance Rate: <strong>{liveTradeAcceptanceRatePct.toFixed(1)}%</strong>
                   </span>
                 </div>
                 </div>
