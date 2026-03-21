@@ -15474,6 +15474,43 @@ function ClusterMapInner({
     return selectedNodeCheated;
   }, [selectedNode, selectedNodeCheated]);
 
+  const isLibraryLikeNode = React.useCallback((node: any, row?: any) => {
+    if (!node && !row) return false;
+
+    const targetNode = node ?? (row as any)?.targetNode ?? row;
+    const kind = String((targetNode as any)?.kind || "").toLowerCase();
+    return (
+      kind === "library" ||
+      (targetNode as any)?.libId != null ||
+      (targetNode as any)?.metaLib != null ||
+      String((targetNode as any)?.id || (row as any)?.id || "").startsWith("lib|")
+    );
+  }, []);
+
+  const getRowEntryTimeSeconds = React.useCallback((row: any) => {
+    const targetNode = (row as any)?.targetNode ?? row;
+    return normalizeTradeTimestampSeconds(
+      (row as any)?.entryTimeRaw ??
+        (targetNode as any)?.entryTime ??
+        (targetNode as any)?.metaTime ??
+        (targetNode as any)?.time ??
+        null
+    );
+  }, []);
+
+  const selectedMetricReferenceTimeSec = useMemo(() => {
+    const referenceNode = isLibraryLikeNode(selectedNode)
+      ? selectedNode
+      : (selectedAiSnapshotSource as any) ?? (selectedNode as any);
+    if (!referenceNode) return null;
+    return normalizeTradeTimestampSeconds(
+      (referenceNode as any)?.entryTime ??
+        (referenceNode as any)?.metaTime ??
+        (referenceNode as any)?.time ??
+        null
+    );
+  }, [isLibraryLikeNode, selectedAiSnapshotSource, selectedNode]);
+
   const selectedNeighborList = useMemo(
     () => buildNeighborListForNode(selectedAiSnapshotSource),
     [buildNeighborListForNode, selectedAiSnapshotSource]
@@ -15513,137 +15550,8 @@ function ClusterMapInner({
     selectedTradeCheated,
   ]);
 
-  const selectedLibraryInfluencedRows = useMemo(() => {
-    if (aiMethod === "hdbscan") return [];
-    if (!selectedNode) return [];
-
-    const kind = String((selectedNode as any)?.kind || "").toLowerCase();
-    const isLib =
-      kind === "library" ||
-      (selectedNode as any)?.libId != null ||
-      (selectedNode as any)?.metaLib != null ||
-      String((selectedNode as any)?.id || "").startsWith("lib|");
-    if (!isLib) return [];
-
-    const selectedNodeId = normalizeClusterMapToken((selectedNode as any)?.id);
-    if (!selectedNodeId) return [];
-
-    const effectiveK = Math.max(
-      0,
-      Math.min(36, Math.floor(Number(knnLinkK) || 0))
-    );
-    if (!effectiveK) return [];
-
-    const edges = getKnnEdgesForClusterMap(
-      neighborNodes as any[],
-      effectiveK,
-      clusterMapView,
-      { allowLegacyFallback: !entryNeighborsOnly }
-    );
-    if (!Array.isArray(edges) || edges.length === 0) return [];
-
-    const rows: any[] = [];
-    const seen = new Set<string>();
-
-    for (const edge of edges as any[]) {
-      const aId = normalizeClusterMapToken((edge as any)?.a);
-      const bId = normalizeClusterMapToken((edge as any)?.b);
-      if (!aId || !bId) continue;
-
-      const otherId =
-        aId === selectedNodeId ? bId : bId === selectedNodeId ? aId : null;
-      if (!otherId || seen.has(otherId)) continue;
-
-      const otherNode = (nodeById as any).get(otherId) ?? null;
-      if (!otherNode) continue;
-      if (String((otherNode as any)?.kind || "").toLowerCase() !== "trade") continue;
-
-      const dir = Number((otherNode as any)?.dir ?? (otherNode as any)?.direction ?? 0);
-      const pnlRaw =
-        typeof (otherNode as any)?.unrealizedPnl === "number" &&
-        Number.isFinite((otherNode as any)?.unrealizedPnl)
-          ? Number((otherNode as any).unrealizedPnl)
-          : typeof (otherNode as any)?.pnl === "number" &&
-            Number.isFinite((otherNode as any)?.pnl)
-          ? Number((otherNode as any).pnl)
-          : typeof (otherNode as any)?.closePnl === "number" &&
-            Number.isFinite((otherNode as any)?.closePnl)
-          ? Number((otherNode as any).closePnl)
-          : null;
-      const isWin =
-        typeof (otherNode as any)?.win === "boolean"
-          ? !!(otherNode as any).win
-          : pnlRaw != null
-          ? pnlRaw >= 0
-          : false;
-      const sortIndex = Number(
-        (otherNode as any)?.entryIndex ??
-          (otherNode as any)?.signalIndex ??
-          (otherNode as any)?.exitIndex ??
-          NaN
-      );
-
-      rows.push({
-        key: otherId,
-        id: otherId,
-        rawId: otherId,
-        targetNode: otherNode,
-        displayId: displayIdForNode(otherNode),
-        dirLabel: dir === 1 ? "LONG" : dir === -1 ? "SHORT" : "",
-        kindLabel: (otherNode as any)?.isOpen ? "Open Trade" : "Trade",
-        timeLabel: (() => {
-          const raw =
-            (otherNode as any)?.entryTime ??
-            (otherNode as any)?.metaTime ??
-            (otherNode as any)?.time ??
-            null;
-          return raw ? formatDateTime(raw, parseMode) : "";
-        })(),
-        sessionLabel: normalizeLabel(
-          (otherNode as any)?.session ?? (otherNode as any)?.metaSession
-        ),
-        pnlLabel:
-          pnlRaw == null ? "" : pnlRaw > 0 ? `+${fmtUSD(pnlRaw)}` : fmtUSD(pnlRaw),
-        tone: pnlRaw == null ? "neutral" : isWin ? "green" : "red",
-        sortIndex,
-        isWin,
-      });
-
-      seen.add(otherId);
-    }
-
-    rows.sort((a, b) => {
-      const aIdx = Number(a.sortIndex);
-      const bIdx = Number(b.sortIndex);
-      if (Number.isFinite(aIdx) && Number.isFinite(bIdx) && aIdx !== bIdx) {
-        return bIdx - aIdx;
-      }
-      return String(a.displayId || "").localeCompare(String(b.displayId || ""));
-    });
-
-    return rows;
-  }, [
-    aiMethod,
-    clusterMapView,
-    entryNeighborsOnly,
-    knnLinkK,
-    neighborNodes,
-    nodeById,
-    parseMode,
-    selectedNode,
-  ]);
-
-  const selectedLibraryContribution = useMemo(() => {
-    if (!selectedLibraryInfluencedRows.length) return 0;
-    let wins = 0;
-    for (const row of selectedLibraryInfluencedRows) {
-      if ((row as any)?.isWin) wins += 1;
-    }
-    return wins / selectedLibraryInfluencedRows.length;
-  }, [selectedLibraryInfluencedRows]);
-
-  const libraryContributionByNodeId = useMemo(() => {
-    const out = new Map<string, number>();
+  const libraryInfluencedRowsByNodeId = useMemo(() => {
+    const out = new Map<string, any[]>();
     if (aiMethod === "hdbscan") return out;
 
     const effectiveK = Math.max(
@@ -15660,20 +15568,24 @@ function ClusterMapInner({
     );
     if (!Array.isArray(edges) || edges.length === 0) return out;
 
-    const tallies = new Map<
-      string,
-      { total: number; wins: number; seen: Set<string> }
-    >();
+    const seenByLibrary = new Map<string, Set<string>>();
 
     const addInfluencedTrade = (libraryNodeId: string, otherId: string, otherNode: any) => {
-      let tally = tallies.get(libraryNodeId);
-      if (!tally) {
-        tally = { total: 0, wins: 0, seen: new Set<string>() };
-        tallies.set(libraryNodeId, tally);
+      let seen = seenByLibrary.get(libraryNodeId);
+      if (!seen) {
+        seen = new Set<string>();
+        seenByLibrary.set(libraryNodeId, seen);
       }
-      if (tally.seen.has(otherId)) return;
-      tally.seen.add(otherId);
+      if (seen.has(otherId)) return;
+      seen.add(otherId);
 
+      let rows = out.get(libraryNodeId);
+      if (!rows) {
+        rows = [];
+        out.set(libraryNodeId, rows);
+      }
+
+      const dir = Number((otherNode as any)?.dir ?? (otherNode as any)?.direction ?? 0);
       const pnlRaw =
         typeof (otherNode as any)?.unrealizedPnl === "number" &&
         Number.isFinite((otherNode as any)?.unrealizedPnl)
@@ -15691,9 +15603,37 @@ function ClusterMapInner({
           : pnlRaw != null
           ? pnlRaw >= 0
           : false;
+      const sortIndex = Number(
+        (otherNode as any)?.entryIndex ??
+          (otherNode as any)?.signalIndex ??
+          (otherNode as any)?.exitIndex ??
+          NaN
+      );
+      const entryTimeRaw =
+        (otherNode as any)?.entryTime ??
+        (otherNode as any)?.metaTime ??
+        (otherNode as any)?.time ??
+        null;
 
-      tally.total += 1;
-      if (isWin) tally.wins += 1;
+      rows.push({
+        key: otherId,
+        id: otherId,
+        rawId: otherId,
+        targetNode: otherNode,
+        displayId: displayIdForNode(otherNode),
+        dirLabel: dir === 1 ? "LONG" : dir === -1 ? "SHORT" : "",
+        kindLabel: (otherNode as any)?.isOpen ? "Open Trade" : "Trade",
+        entryTimeRaw,
+        timeLabel: entryTimeRaw ? formatDateTime(entryTimeRaw, parseMode) : "",
+        sessionLabel: normalizeLabel(
+          (otherNode as any)?.session ?? (otherNode as any)?.metaSession
+        ),
+        pnlLabel:
+          pnlRaw == null ? "" : pnlRaw > 0 ? `+${fmtUSD(pnlRaw)}` : fmtUSD(pnlRaw),
+        tone: pnlRaw == null ? "neutral" : isWin ? "green" : "red",
+        sortIndex,
+        isWin,
+      });
     };
 
     for (const edge of edges as any[]) {
@@ -15715,8 +15655,15 @@ function ClusterMapInner({
       }
     }
 
-    for (const [libraryNodeId, tally] of tallies) {
-      out.set(libraryNodeId, tally.total > 0 ? tally.wins / tally.total : 0);
+    for (const rows of out.values()) {
+      rows.sort((a, b) => {
+        const aIdx = Number(a.sortIndex);
+        const bIdx = Number(b.sortIndex);
+        if (Number.isFinite(aIdx) && Number.isFinite(bIdx) && aIdx !== bIdx) {
+          return bIdx - aIdx;
+        }
+        return String(a.displayId || "").localeCompare(String(b.displayId || ""));
+      });
     }
 
     return out;
@@ -15727,7 +15674,76 @@ function ClusterMapInner({
     knnLinkK,
     neighborNodes,
     nodeById,
+    parseMode,
   ]);
+
+  const selectedLibraryInfluencedRows = useMemo(() => {
+    if (!selectedNode) return [];
+    if (!isLibraryLikeNode(selectedNode)) return [];
+
+    const selectedNodeId = normalizeClusterMapToken((selectedNode as any)?.id);
+    if (!selectedNodeId) return [];
+
+    return libraryInfluencedRowsByNodeId.get(selectedNodeId) ?? [];
+  }, [isLibraryLikeNode, libraryInfluencedRowsByNodeId, selectedNode]);
+
+  const selectedLibraryContribution = useMemo(() => {
+    if (!selectedLibraryInfluencedRows.length) return 0;
+    let wins = 0;
+    for (const row of selectedLibraryInfluencedRows) {
+      if ((row as any)?.isWin) wins += 1;
+    }
+    return wins / selectedLibraryInfluencedRows.length;
+  }, [selectedLibraryInfluencedRows]);
+
+  const libraryContributionByNodeId = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const [libraryNodeId, rows] of libraryInfluencedRowsByNodeId) {
+      if (!rows.length) continue;
+      let wins = 0;
+      for (const row of rows) {
+        if ((row as any)?.isWin) wins += 1;
+      }
+      out.set(libraryNodeId, wins / rows.length);
+    }
+    return out;
+  }, [libraryInfluencedRowsByNodeId]);
+
+  const resolveLibraryContributionAtTime = React.useCallback(
+    (libraryNodeId: string | null, cutoffTimeSec: number | null) => {
+      const normalizedLibraryNodeId = normalizeClusterMapToken(libraryNodeId);
+      if (!normalizedLibraryNodeId) return null;
+
+      const rows = libraryInfluencedRowsByNodeId.get(normalizedLibraryNodeId) ?? [];
+      if (!rows.length) return null;
+
+      if (cutoffTimeSec == null || !Number.isFinite(Number(cutoffTimeSec))) {
+        return libraryContributionByNodeId.get(normalizedLibraryNodeId) ?? null;
+      }
+
+      let total = 0;
+      let wins = 0;
+      for (const row of rows) {
+        const rowTimeSec = getRowEntryTimeSeconds(row);
+        if (rowTimeSec != null && rowTimeSec > cutoffTimeSec) continue;
+        total += 1;
+        if ((row as any)?.isWin) wins += 1;
+      }
+
+      if (!total) return null;
+      return wins / total;
+    },
+    [getRowEntryTimeSeconds, libraryContributionByNodeId, libraryInfluencedRowsByNodeId]
+  );
+
+  const rowWithinSelectedReferenceTime = React.useCallback(
+    (row: any) => {
+      if (selectedMetricReferenceTimeSec == null) return true;
+      const rowTimeSec = getRowEntryTimeSeconds(row);
+      return rowTimeSec == null || rowTimeSec <= selectedMetricReferenceTimeSec;
+    },
+    [getRowEntryTimeSeconds, selectedMetricReferenceTimeSec]
+  );
 
   const hdbClustersById = useMemo(() => {
     const out = new Map<number, any>();
@@ -15906,12 +15922,7 @@ function ClusterMapInner({
       if (!row) return null;
 
       const targetNode = (row as any)?.targetNode ?? row;
-      const targetKind = String((targetNode as any)?.kind || "").toLowerCase();
-      const isLibraryNode =
-        targetKind === "library" ||
-        (targetNode as any)?.libId != null ||
-        (targetNode as any)?.metaLib != null ||
-        String((targetNode as any)?.id || (row as any)?.id || "").startsWith("lib|");
+      const isLibraryNode = isLibraryLikeNode(targetNode, row);
 
       if (isLibraryNode) {
         const nodeId = normalizeClusterMapToken(
@@ -15937,7 +15948,7 @@ function ClusterMapInner({
             : null,
       };
     },
-    [libraryContributionByNodeId, resolveNonHdbConfidence]
+    [isLibraryLikeNode, libraryContributionByNodeId, resolveNonHdbConfidence]
   );
 
   const selectedAverageNeighborContribution = useMemo(() => {
@@ -15955,6 +15966,35 @@ function ClusterMapInner({
     return values.reduce((sum, value) => sum + value, 0) / values.length;
   }, [resolveSelectedNeighborMetric, selectedNeighborList]);
 
+  const selectedAverageNeighborContributionAtEntry = useMemo(() => {
+    const values: number[] = [];
+
+    for (const row of selectedNeighborList as any[]) {
+      const targetNode = (row as any)?.targetNode ?? row;
+      if (!isLibraryLikeNode(targetNode, row)) continue;
+      if (!rowWithinSelectedReferenceTime(row)) continue;
+
+      const nodeId = normalizeClusterMapToken(
+        (targetNode as any)?.id ?? (row as any)?.id ?? ""
+      );
+      const value = resolveLibraryContributionAtTime(
+        nodeId,
+        selectedMetricReferenceTimeSec
+      );
+      if (!Number.isFinite(Number(value))) continue;
+      values.push(clamp(Number(value), 0, 1));
+    }
+
+    if (!values.length) return null;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  }, [
+    isLibraryLikeNode,
+    resolveLibraryContributionAtTime,
+    rowWithinSelectedReferenceTime,
+    selectedMetricReferenceTimeSec,
+    selectedNeighborList,
+  ]);
+
   const selectedAverageNeighborConfidence = useMemo(() => {
     const values: number[] = [];
 
@@ -15969,6 +16009,26 @@ function ClusterMapInner({
     if (!values.length) return null;
     return values.reduce((sum, value) => sum + value, 0) / values.length;
   }, [resolveSelectedNeighborMetric, selectedLibraryInfluencedRows]);
+
+  const selectedAverageNeighborConfidenceAtEntry = useMemo(() => {
+    const values: number[] = [];
+
+    for (const row of selectedLibraryInfluencedRows as any[]) {
+      if (!rowWithinSelectedReferenceTime(row)) continue;
+
+      const targetNode = (row as any)?.targetNode ?? row;
+      const value = resolveNonHdbConfidence(targetNode);
+      if (!Number.isFinite(Number(value))) continue;
+      values.push(clamp(Number(value), 0, 1));
+    }
+
+    if (!values.length) return null;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  }, [
+    resolveNonHdbConfidence,
+    rowWithinSelectedReferenceTime,
+    selectedLibraryInfluencedRows,
+  ]);
 
   const renderHdbGroupMemberList = (
     rows: any[],
@@ -20205,10 +20265,19 @@ function ClusterMapInner({
                         style={{ fontWeight: 900, color: "rgba(120,190,255,0.92)" }}
                       >
                         {(() => {
-                          const v = isSelectedLib
+                          const entryValue = isSelectedLib
+                            ? selectedAverageNeighborConfidenceAtEntry
+                            : selectedAverageNeighborContributionAtEntry;
+                          const currentValue = isSelectedLib
                             ? selectedAverageNeighborConfidence
                             : selectedAverageNeighborContribution;
-                          return v == null ? "—" : `${Math.round(v * 100)}%`;
+                          const formatAncValue = (value: number | null | undefined) =>
+                            value == null || !Number.isFinite(Number(value))
+                              ? "-"
+                              : `${Math.round(Number(value) * 100)}%`;
+                          return `${formatAncValue(entryValue)} | ${formatAncValue(
+                            currentValue
+                          )}`;
                         })()}
                       </div>
                     </>
