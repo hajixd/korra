@@ -16055,6 +16055,33 @@ function ClusterMapInner({
             const metric = options?.metricForRow?.(row) ?? null;
             const metricValue = Number(metric?.value);
             const hasMetric = !!metric?.label && Number.isFinite(metricValue);
+            const rowNode = (row as any)?.targetNode ?? null;
+            const rowKind = String((rowNode as any)?.kind || "").toLowerCase();
+            const isLibraryRow =
+              rowKind === "library" ||
+              (rowNode as any)?.libId != null ||
+              (rowNode as any)?.metaLib != null ||
+              String((rowNode as any)?.id ?? (row as any)?.id ?? "").startsWith("lib|");
+            const rowColorKey = isLibraryRow
+              ? (rowNode as any)?.groupColorKey ??
+                (rowNode as any)?.clusterColorKey ??
+                (rowNode as any)?.clusterKey ??
+                (rowNode as any)?.groupKey ??
+                (rowNode as any)?.libraryKey ??
+                (rowNode as any)?.libKey ??
+                (rowNode as any)?.library ??
+                (rowNode as any)?.sourceKey ??
+                (rowNode as any)?.source ??
+                (rowNode as any)?.libId ??
+                (rowNode as any)?.metaLib ??
+                (rowNode as any)?.modelKey ??
+                (rowNode as any)?.id ??
+                (row as any)?.id ??
+                "library"
+              : "";
+            const rowDisplayColor = isLibraryRow
+              ? colorForLibrary(String(rowColorKey))
+              : "rgba(255,255,255,0.92)";
             return (
               <div
                 key={String(row.key || idx)}
@@ -16093,7 +16120,7 @@ function ClusterMapInner({
                 <div
                   style={{
                     display: "flex",
-                    alignItems: "flex-start",
+                    alignItems: isLibraryRow ? "stretch" : "flex-start",
                     gap: 8,
                     minWidth: 0,
                     flex: 1,
@@ -16113,14 +16140,24 @@ function ClusterMapInner({
                   >
                     {String(idx + 1).padStart(2, "0")}
                   </div>
-                  <div style={{ minWidth: 0, display: "grid", gap: 2 }}>
+                  <div
+                    style={{
+                      minWidth: 0,
+                      display: "flex",
+                      flexDirection: "column",
+                      justifyContent: isLibraryRow ? "space-between" : "flex-start",
+                      gap: isLibraryRow ? 0 : 2,
+                      minHeight: isLibraryRow ? 30 : undefined,
+                    }}
+                  >
                     <div
                       title={row.displayId}
                       style={{
                         ...mono(),
                         fontSize: 11,
                         fontWeight: 900,
-                        opacity: 0.92,
+                        color: rowDisplayColor,
+                        opacity: 1,
                         whiteSpace: "nowrap",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
@@ -16132,6 +16169,7 @@ function ClusterMapInner({
                       style={{
                         fontSize: 10,
                         color: "rgba(255,255,255,0.66)",
+                        marginTop: isLibraryRow ? 4 : 0,
                         whiteSpace: "nowrap",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
