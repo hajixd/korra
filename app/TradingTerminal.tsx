@@ -5949,52 +5949,19 @@ const getUtcDayEndExclusiveMsFromYmd = (ymd: string): number | null => {
   return startMs + 86_400_000;
 };
 
-const getUtcDayKeyFromTimestampMs = (timestampMs: number): string => {
-  if (!Number.isFinite(timestampMs)) {
-    return "";
-  }
-
-  return new Date(timestampMs).toISOString().slice(0, 10);
-};
-
-const getLatestAvailableCandleStartMs = (
-  timeframe: Timeframe,
-  referenceTimeMs = Date.now()
-): number => {
-  const stepMs = Math.max(60_000, getTimeframeMs(timeframe));
-  let cursorMs = floorToTimeframe(referenceTimeMs, timeframe);
-  const cutoffMs = referenceTimeMs - 7 * 86_400_000;
-
-  while (cursorMs > cutoffMs && !isXauTradingTime(cursorMs)) {
-    cursorMs -= stepMs;
-  }
-
-  return cursorMs;
-};
-
 const getEffectiveUtcDayEndExclusiveMsFromYmd = (
   ymd: string,
-  timeframe: Timeframe,
-  referenceTimeMs = Date.now()
+  timeframe: Timeframe
 ): number | null => {
-  const requestedEndExclusiveMs = getUtcDayEndExclusiveMsFromYmd(ymd);
-  if (requestedEndExclusiveMs === null) {
+  void timeframe;
+  // Treat the selected end date as an exclusive boundary, so history stops at
+  // the close of the prior UTC day.
+  const selectedDayStartMs = getUtcDayStartMsFromYmd(ymd);
+  if (selectedDayStartMs === null) {
     return null;
   }
 
-  const currentUtcDayKey = getUtcDayKeyFromTimestampMs(referenceTimeMs);
-  if (!currentUtcDayKey || ymd < currentUtcDayKey) {
-    return requestedEndExclusiveMs;
-  }
-
-  const latestAvailableCandleStartMs = getLatestAvailableCandleStartMs(
-    timeframe,
-    referenceTimeMs
-  );
-  return Math.min(
-    requestedEndExclusiveMs,
-    latestAvailableCandleStartMs + Math.max(60_000, getTimeframeMs(timeframe))
-  );
+  return selectedDayStartMs;
 };
 
 const buildHistoryApiRequestWindow = (params: {
