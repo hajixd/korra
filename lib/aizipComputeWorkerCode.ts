@@ -3048,20 +3048,45 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
         stat.total += 1;
       }
     };
-    const getPointWinRatePercent = (points) => {
+    const getPointRatePercent = (points, predicate) => {
       if (!Array.isArray(points) || points.length === 0) return 50;
-      let wins = 0;
+      let matches = 0;
       for (const p of points) {
         if (!p) continue;
-        const label = Number(p.label || 0);
-        if (label > 0 || String(p.metaOutcome || "") === "Win") wins += 1;
+        if (predicate(p)) matches += 1;
       }
-      return (wins / points.length) * 100;
+      return (matches / points.length) * 100;
+    };
+    const getLibBalanceMode = (libId, modeKey) => {
+      return (libSetting(libId) || {})[modeKey] === "artificial" ? "artificial" : "natural";
+    };
+    const getLibTargetPercent = (libId, points, modeKey, valueKey, predicate) => {
+      const fallback = getPointRatePercent(points, predicate);
+      if (getLibBalanceMode(libId, modeKey) !== "artificial") return fallback;
+      const raw = Number((libSetting(libId) || {})[valueKey]);
+      return Number.isFinite(raw) ? clamp(raw, 0, 100) : fallback;
     };
     const getLibTargetWinRate = (libId, points) => {
-      const raw = Number((libSetting(libId) || {}).targetWinRate);
-      const fallback = getPointWinRatePercent(points);
-      return Number.isFinite(raw) ? clamp(raw, 0, 100) : fallback;
+      return getLibTargetPercent(
+        libId,
+        points,
+        "targetWinRateMode",
+        "targetWinRate",
+        (point) =>
+          Number((point && point.label) || 0) > 0 ||
+          String((point && point.metaOutcome) || "") === "Win"
+      );
+    };
+    const getLibTargetBuyRate = (libId, points) => {
+      return getLibTargetPercent(
+        libId,
+        points,
+        "targetBuyRateMode",
+        "targetBuyRate",
+        (point) =>
+          Number((point && point.dir) || 0) > 0 ||
+          String((point && point.metaDir) || "") === "Buy"
+      );
     };
     const findBalancedPointCounts = (winsAvail, lossesAvail, cap, targetPct) => {
       const winCount = Math.max(0, Math.floor(Number(winsAvail) || 0));
@@ -3095,39 +3120,64 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
         losses: Math.max(0, bestTotal - bestWins),
       };
     };
-    const rebalancePointsToTargetWinRate = (points, libId, cap, preferFront) => {
+    const rebalancePointsToTargetPercent = (points, cap, targetPct, predicate, preferFront) => {
       const list = Array.isArray(points) ? points : [];
       const maxSamples = Math.max(0, Math.floor(Number(cap) || 0));
       if (maxSamples <= 0 || list.length === 0) return [];
 
-      const targetPct = getLibTargetWinRate(libId, list);
       const indexed = list.map((point, index) => ({
         point,
         index,
-        win:
-          Number((point && point.label) || 0) > 0 ||
-          String((point && point.metaOutcome) || "") === "Win",
+        matches: predicate(point),
       }));
       const ordered = preferFront ? indexed : indexed.slice().reverse();
-      const wins = ordered.filter((entry) => entry.win);
-      const losses = ordered.filter((entry) => !entry.win);
+      const positives = ordered.filter((entry) => entry.matches);
+      const negatives = ordered.filter((entry) => !entry.matches);
       const counts = findBalancedPointCounts(
-        wins.length,
-        losses.length,
+        positives.length,
+        negatives.length,
         maxSamples,
         targetPct
       );
 
-      return wins
+      return positives
         .slice(0, counts.wins)
-        .concat(losses.slice(0, counts.losses))
+        .concat(negatives.slice(0, counts.losses))
         .sort((a, b) => a.index - b.index)
         .map((entry) => entry.point);
+    };
+    const rebalancePointsToTargetBalances = (points, libId, cap, preferFront) => {
+      const list = Array.isArray(points) ? points : [];
+      const maxSamples = Math.max(0, Math.floor(Number(cap) || 0));
+      if (maxSamples <= 0 || list.length === 0) return [];
+
+      const winBalanced = rebalancePointsToTargetPercent(
+        list,
+        maxSamples,
+        getLibTargetWinRate(libId, list),
+        (point) =>
+          Number((point && point.label) || 0) > 0 ||
+          String((point && point.metaOutcome) || "") === "Win",
+        preferFront
+      );
+      return rebalancePointsToTargetPercent(
+        winBalanced,
+        maxSamples,
+        getLibTargetBuyRate(libId, winBalanced),
+        (point) =>
+          Number((point && point.dir) || 0) > 0 ||
+          String((point && point.metaDir) || "") === "Buy",
+        preferFront
+      );
     };
     const balancedDynamicLibraryCache = {};
     const getBalancedDynamicPoints = (libId, modelKey, points, cap, preferFront=false) => {
       const list = Array.isArray(points) ? points : [];
-      const explicitTarget = Number((libSetting(libId) || {}).targetWinRate);
+      const libConfig = libSetting(libId) || {};
+      const explicitWinTarget = Number(libConfig.targetWinRate);
+      const explicitBuyTarget = Number(libConfig.targetBuyRate);
+      const winMode = getLibBalanceMode(libId, "targetWinRateMode");
+      const buyMode = getLibBalanceMode(libId, "targetBuyRateMode");
       const firstUid = list.length ? String((list[0] && list[0].uid) || "") : "";
       const lastUid = list.length ? String((list[list.length - 1] && list[list.length - 1].uid) || "") : "";
       const stateKey =
@@ -3143,13 +3193,19 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
         "|" +
         lastUid +
         "|" +
-        (Number.isFinite(explicitTarget) ? String(clamp(explicitTarget, 0, 100)) : "auto");
+        (winMode === "artificial" && Number.isFinite(explicitWinTarget)
+          ? String(clamp(explicitWinTarget, 0, 100))
+          : "auto") +
+        "|" +
+        (buyMode === "artificial" && Number.isFinite(explicitBuyTarget)
+          ? String(clamp(explicitBuyTarget, 0, 100))
+          : "auto");
       const cacheKey = String(libId || "");
       const cached = balancedDynamicLibraryCache[cacheKey];
       if (cached && cached.stateKey === stateKey) {
         return cached.points;
       }
-      const next = rebalancePointsToTargetWinRate(list, libId, cap, preferFront);
+      const next = rebalancePointsToTargetBalances(list, libId, cap, preferFront);
       balancedDynamicLibraryCache[cacheKey] = { stateKey, points: next };
       return next;
     };
@@ -3654,7 +3710,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             cacheSet(ck, pts);
           }
           addNaturalLibraryWinSamples("base", pts);
-          const loadedPts = rebalancePointsToTargetWinRate(pts, "base", cap, false);
+          const loadedPts = rebalancePointsToTargetBalances(pts, "base", cap, false);
           addStaticLibraryGeneratedCount("base", loadedPts.length);
           for (const p of loadedPts) {
             staticPool.push({ ...p, uid: "base|" + String((p && (p.uid ?? p.metaTime)) || ""), weight: (p.weight || 1) * wt, metaLib: "base", metaTrainingOnly: true });
@@ -3719,7 +3775,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
               cacheSet(ck, pts);
             }
             addNaturalLibraryWinSamples(libId, pts);
-            const loadedPts = rebalancePointsToTargetWinRate(pts, libId, cap, false);
+            const loadedPts = rebalancePointsToTargetBalances(pts, libId, cap, false);
             addStaticLibraryGeneratedCount(libId, loadedPts.length);
 
             for (const p of loadedPts) {
@@ -3765,7 +3821,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             cacheSet(ck, pts);
           }
           addNaturalLibraryWinSamples("terrific", pts);
-          const loadedPts = rebalancePointsToTargetWinRate(pts, "terrific", cap, true);
+          const loadedPts = rebalancePointsToTargetBalances(pts, "terrific", cap, true);
           addStaticLibraryGeneratedCount("terrific", loadedPts.length);
           for (const p of loadedPts) staticPool.push({ ...p, weight: (p.weight || 1) * wt, metaLib: "terrific", metaTrainingOnly: true });
         }
@@ -3794,7 +3850,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             cacheSet(ck, pts);
           }
           addNaturalLibraryWinSamples("terrible", pts);
-          const loadedPts = rebalancePointsToTargetWinRate(pts, "terrible", cap, true);
+          const loadedPts = rebalancePointsToTargetBalances(pts, "terrible", cap, true);
           addStaticLibraryGeneratedCount("terrible", loadedPts.length);
           for (const p of loadedPts) staticPool.push({ ...p, weight: (p.weight || 1) * wt, metaLib: "terrible", metaTrainingOnly: true });
         }
@@ -3826,7 +3882,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             cacheSet(ck, pts);
           }
           addNaturalLibraryWinSamples(modelLibId, pts);
-          const loadedPts = rebalancePointsToTargetWinRate(pts, modelLibId, cap, false);
+          const loadedPts = rebalancePointsToTargetBalances(pts, modelLibId, cap, false);
           addStaticLibraryGeneratedCount(modelLibId, loadedPts.length);
           for (const p of loadedPts) staticPool.push({ ...p, uid: String(modelLibId) + "|" + String((p && (p.uid ?? p.metaTime)) || ""), weight: (p.weight || 1) * wt, metaLib: modelLibId, metaTrainingOnly: true });
         }

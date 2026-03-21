@@ -127,6 +127,8 @@ type PanelAnalyticsResponseBody = {
 
 const AI_LIBRARY_TARGET_WIN_RATE_KEY = "targetWinRate";
 const AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY = "targetWinRateMode";
+const AI_LIBRARY_TARGET_BUY_RATE_KEY = "targetBuyRate";
+const AI_LIBRARY_TARGET_BUY_RATE_MODE_KEY = "targetBuyRateMode";
 
 const clamp = (value: number, min: number, max: number): number => {
   return Math.min(max, Math.max(min, value));
@@ -593,21 +595,40 @@ const getVectorDistance = (
   return Math.sqrt(total);
 };
 
-const getAiLibraryTargetWinRateMode = (
+const getAiLibraryBalanceMode = (
   value: AiLibrarySettingValue | undefined
 ): "natural" | "artificial" => {
   return value === "artificial" ? "artificial" : "natural";
 };
 
-const getNaturalAiLibraryTargetWinRate = (
-  baselineWinRate: number,
+const getNaturalAiLibraryTargetPercent = (
+  baselinePercent: number,
   loadedNeighborCount: number
 ): number => {
-  if (loadedNeighborCount <= 0 || !Number.isFinite(baselineWinRate)) {
+  if (loadedNeighborCount <= 0 || !Number.isFinite(baselinePercent)) {
     return 50;
   }
 
-  return clamp(baselineWinRate, 0, 100);
+  return clamp(baselinePercent, 0, 100);
+};
+
+const resolveAiLibraryTargetPercent = (
+  settings: Record<string, AiLibrarySettingValue>,
+  modeKey: string,
+  valueKey: string,
+  baselinePercent: number,
+  loadedNeighborCount: number
+): number => {
+  const mode = getAiLibraryBalanceMode(settings[modeKey]);
+
+  if (mode === "natural") {
+    return getNaturalAiLibraryTargetPercent(baselinePercent, loadedNeighborCount);
+  }
+
+  const rawTargetPercent = Number(settings[valueKey]);
+  return Number.isFinite(rawTargetPercent)
+    ? clamp(rawTargetPercent, 0, 100)
+    : clamp(baselinePercent, 0, 100);
 };
 
 const resolveAiLibraryTargetWinRate = (
@@ -615,84 +636,95 @@ const resolveAiLibraryTargetWinRate = (
   baselineWinRate: number,
   loadedNeighborCount: number
 ): number => {
-  const mode = getAiLibraryTargetWinRateMode(settings[AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY]);
-
-  if (mode === "natural") {
-    return getNaturalAiLibraryTargetWinRate(baselineWinRate, loadedNeighborCount);
-  }
-
-  const rawTargetWinRate = Number(settings[AI_LIBRARY_TARGET_WIN_RATE_KEY]);
-  return Number.isFinite(rawTargetWinRate)
-    ? clamp(rawTargetWinRate, 0, 100)
-    : clamp(baselineWinRate, 0, 100);
+  return resolveAiLibraryTargetPercent(
+    settings,
+    AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY,
+    AI_LIBRARY_TARGET_WIN_RATE_KEY,
+    baselineWinRate,
+    loadedNeighborCount
+  );
 };
 
-const getOutcomeWinRatePercent = <T,>(
+const resolveAiLibraryTargetBuyRate = (
+  settings: Record<string, AiLibrarySettingValue>,
+  baselineBuyRate: number,
+  loadedNeighborCount: number
+): number => {
+  return resolveAiLibraryTargetPercent(
+    settings,
+    AI_LIBRARY_TARGET_BUY_RATE_MODE_KEY,
+    AI_LIBRARY_TARGET_BUY_RATE_KEY,
+    baselineBuyRate,
+    loadedNeighborCount
+  );
+};
+
+const getPredicateRatePercent = <T,>(
   items: readonly T[],
-  isWin: (item: T) => boolean
+  predicate: (item: T) => boolean
 ): number => {
   if (items.length === 0) {
     return 50;
   }
 
-  let wins = 0;
+  let matches = 0;
 
   for (const item of items) {
-    if (isWin(item)) {
-      wins += 1;
+    if (predicate(item)) {
+      matches += 1;
     }
   }
 
-  return (wins / items.length) * 100;
+  return (matches / items.length) * 100;
 };
 
-const findTargetBalancedOutcomeCounts = (
-  winCount: number,
-  lossCount: number,
+const findTargetBalancedCounts = (
+  positiveCount: number,
+  negativeCount: number,
   maxSamples: number,
-  targetWinRatePercent: number
+  targetPositivePercent: number
 ) => {
-  const availableWins = Math.max(0, Math.floor(Number(winCount) || 0));
-  const availableLosses = Math.max(0, Math.floor(Number(lossCount) || 0));
+  const availablePositives = Math.max(0, Math.floor(Number(positiveCount) || 0));
+  const availableNegatives = Math.max(0, Math.floor(Number(negativeCount) || 0));
   const totalCap = Math.min(
     Math.max(0, Math.floor(Number(maxSamples) || 0)),
-    availableWins + availableLosses
+    availablePositives + availableNegatives
   );
 
   if (totalCap <= 0) {
-    return { winCount: 0, lossCount: 0 };
+    return { positiveCount: 0, negativeCount: 0 };
   }
 
-  const target = clamp(targetWinRatePercent, 0, 100) / 100;
-  let bestWins = 0;
+  const target = clamp(targetPositivePercent, 0, 100) / 100;
+  let bestPositiveCount = 0;
   let bestTotal = 0;
   let bestDiff = Number.POSITIVE_INFINITY;
 
   for (let total = totalCap; total >= 1; total -= 1) {
-    const minWins = Math.max(0, total - availableLosses);
-    const maxWins = Math.min(availableWins, total);
-    let candidateWins = Math.round(target * total);
-    candidateWins = clamp(candidateWins, minWins, maxWins);
-    const diff = Math.abs(candidateWins / total - target);
+    const minPositive = Math.max(0, total - availableNegatives);
+    const maxPositive = Math.min(availablePositives, total);
+    let candidatePositiveCount = Math.round(target * total);
+    candidatePositiveCount = clamp(candidatePositiveCount, minPositive, maxPositive);
+    const diff = Math.abs(candidatePositiveCount / total - target);
 
     if (diff < bestDiff - 1e-9) {
       bestDiff = diff;
-      bestWins = candidateWins;
+      bestPositiveCount = candidatePositiveCount;
       bestTotal = total;
     }
   }
 
   return {
-    winCount: bestWins,
-    lossCount: Math.max(0, bestTotal - bestWins)
+    positiveCount: bestPositiveCount,
+    negativeCount: Math.max(0, bestTotal - bestPositiveCount)
   };
 };
 
-const rebalanceItemsToTargetWinRate = <T,>(
+const rebalanceItemsToTargetPercent = <T,>(
   items: readonly T[],
   maxSamples: number,
-  targetWinRatePercent: number,
-  isWin: (item: T) => boolean,
+  targetPositivePercent: number,
+  predicate: (item: T) => boolean,
   preferFront = false
 ): T[] => {
   const cap = Math.max(0, Math.floor(Number(maxSamples) || 0));
@@ -704,19 +736,22 @@ const rebalanceItemsToTargetWinRate = <T,>(
   const indexedItems = items.map((item, index) => ({
     item,
     index,
-    win: isWin(item)
+    matches: predicate(item)
   }));
   const orderedItems = preferFront ? indexedItems : [...indexedItems].reverse();
-  const wins = orderedItems.filter((entry) => entry.win);
-  const losses = orderedItems.filter((entry) => !entry.win);
-  const balancedCounts = findTargetBalancedOutcomeCounts(
-    wins.length,
-    losses.length,
+  const positives = orderedItems.filter((entry) => entry.matches);
+  const negatives = orderedItems.filter((entry) => !entry.matches);
+  const balancedCounts = findTargetBalancedCounts(
+    positives.length,
+    negatives.length,
     cap,
-    targetWinRatePercent
+    targetPositivePercent
   );
 
-  return [...wins.slice(0, balancedCounts.winCount), ...losses.slice(0, balancedCounts.lossCount)]
+  return [
+    ...positives.slice(0, balancedCounts.positiveCount),
+    ...negatives.slice(0, balancedCounts.negativeCount)
+  ]
     .sort((left, right) => left.index - right.index)
     .map((entry) => entry.item);
 };
@@ -1790,7 +1825,7 @@ const computeAntiCheatBacktestContext = (params: {
       stride
     });
 
-    const baselineWinRate = getOutcomeWinRatePercent(
+    const baselineWinRate = getPredicateRatePercent(
       source,
       (candidate) => candidate.result === "Win"
     );
@@ -1800,11 +1835,27 @@ const computeAntiCheatBacktestContext = (params: {
       source.length
     );
 
-    const balanced = rebalanceItemsToTargetWinRate(
+    const outcomeBalanced = rebalanceItemsToTargetPercent(
       source,
       maxSamples,
       targetWinRate,
       (candidate) => candidate.result === "Win",
+      false
+    );
+    const baselineBuyRate = getPredicateRatePercent(
+      outcomeBalanced,
+      (candidate) => candidate.side === "Long"
+    );
+    const targetBuyRate = resolveAiLibraryTargetBuyRate(
+      settings,
+      baselineBuyRate,
+      outcomeBalanced.length
+    );
+    const balanced = rebalanceItemsToTargetPercent(
+      outcomeBalanced,
+      maxSamples,
+      targetBuyRate,
+      (candidate) => candidate.side === "Long",
       false
     );
 
