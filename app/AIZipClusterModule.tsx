@@ -15548,24 +15548,6 @@ function ClusterMapInner({
     selectedTradeCheated,
   ]);
 
-  const handleSelectionListRowClick = React.useCallback(
-    (row: any) => {
-      if (!row) return;
-
-      const targetId = String((row as any)?.id ?? "").trim();
-      if (!targetId) return;
-
-      const target =
-        (nodeByIdAll as any).get(targetId) ??
-        (nodeByIdRaw as any).get(targetId) ??
-        null;
-      if (!target) return;
-
-      focusNodeSelection(target);
-    },
-    [focusNodeSelection, nodeByIdAll, nodeByIdRaw]
-  );
-
   const selectedLibraryInfluencedRows = useMemo(() => {
     if (aiMethod === "hdbscan") return [];
     if (!selectedNode) return [];
@@ -18119,6 +18101,25 @@ function ClusterMapInner({
       viewNodes,
     ]
   );
+
+  const handleSelectionListRowClick = React.useCallback(
+    (row: any) => {
+      if (!row) return;
+
+      const targetId = String((row as any)?.id ?? "").trim();
+      if (!targetId) return;
+
+      const target =
+        (nodeByIdAll as any).get(targetId) ??
+        (nodeByIdRaw as any).get(targetId) ??
+        null;
+      if (!target) return;
+
+      focusNodeSelection(target);
+    },
+    [focusNodeSelection, nodeByIdAll, nodeByIdRaw]
+  );
+
   const runSearch = (query?: string) => {
     const q = String(query ?? searchUid ?? "").trim();
     if (query !== undefined) setSearchUid(q);
