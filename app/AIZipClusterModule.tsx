@@ -15446,6 +15446,7 @@ function ClusterMapInner({
             const rawFallback = pickRawId(nb);
             const hitNode =
               resolvedId != null ? (nodeByIdAll as any).get(resolvedId) : null;
+            const hitKind = String((hitNode as any)?.kind || "").toLowerCase();
             const rawDisplayId = rawFallback
               ? displayIdFromRaw(rawFallback)
               : "—";
@@ -15459,7 +15460,12 @@ function ClusterMapInner({
             }
 
             const pnlVal = (() => {
-              const v = Number((nb as any)?.metaPnl);
+              const v = Number(
+                (nb as any)?.metaPnl ??
+                  (hitNode as any)?.unrealizedPnl ??
+                  (hitNode as any)?.pnl ??
+                  (hitNode as any)?.closePnl
+              );
               return Number.isFinite(v) ? v : null;
             })();
 
@@ -15467,6 +15473,30 @@ function ClusterMapInner({
             const isWin = voteOutcome === "win";
             const isLoss = voteOutcome === "loss";
             const tone = toneForAIZipNeighborVoteOutcome(voteOutcome);
+            const dirNum = Number(
+              (hitNode as any)?.dir ??
+                (hitNode as any)?.direction ??
+                (nb as any)?.dir ??
+                (nb as any)?.direction ??
+                0
+            );
+            const timeRaw =
+              (hitNode as any)?.entryTime ??
+              (hitNode as any)?.metaTime ??
+              (hitNode as any)?.time ??
+              (nb as any)?.metaTime ??
+              (nb as any)?.time ??
+              null;
+            const kindLabel =
+              hitKind === "trade"
+                ? (hitNode as any)?.isOpen
+                  ? "Open Trade"
+                  : "Trade"
+                : hitKind === "library"
+                ? "Library"
+                : hitKind
+                ? `${hitKind.slice(0, 1).toUpperCase()}${hitKind.slice(1)}`
+                : "Trade";
 
             const d0 = Number((nb as any)?.d);
             const dist = Number.isFinite(d0) ? d0 : Infinity;
@@ -15480,6 +15510,15 @@ function ClusterMapInner({
               id: resolvedId ?? rawFallback ?? null,
               displayId,
               dist,
+              dirLabel: dirNum === 1 ? "LONG" : dirNum === -1 ? "SHORT" : "",
+              kindLabel,
+              timeLabel: timeRaw ? formatDateTime(timeRaw, parseMode) : "",
+              sessionLabel: normalizeLabel(
+                (hitNode as any)?.session ??
+                  (hitNode as any)?.metaSession ??
+                  (nb as any)?.metaSession
+              ),
+              pnlLabel: pnlVal == null ? "" : fmtUSD(pnlVal),
               tone,
               isWin,
               isLoss,
@@ -15507,6 +15546,7 @@ function ClusterMapInner({
     },
     [
       effectiveNeighborK,
+      parseMode,
       neighborAlias,
       nodeByIdAll,
       pickNeighborPayload,
@@ -19951,77 +19991,10 @@ function ClusterMapInner({
                         "No influenced live trades available.",
                         160
                       )
-                    : (
-                        <div
-                          style={{
-                            marginTop: 6,
-                            maxHeight: 140,
-                            overflowY: "auto",
-                            overscrollBehavior: "contain",
-                            borderRadius: 10,
-                            border: "1px solid rgba(255,255,255,0.10)",
-                            background: "rgba(0,0,0,0.20)",
-                            padding: 6,
-                          }}
-                        >
-                          {selectedNeighborList && selectedNeighborList.length ? (
-                            <div style={{ display: "grid", gap: 6 }}>
-                              {selectedNeighborList.map((row, idx) => (
-                                <div
-                                  key={String(row.key || row.id || idx)}
-                                  style={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 8,
-                                    padding: "4px 6px",
-                                    borderRadius: 8,
-                                    border:
-                                      row.tone === "green"
-                                        ? "1px solid rgba(60,220,120,0.35)"
-                                        : row.tone === "red"
-                                        ? "1px solid rgba(230,80,80,0.35)"
-                                        : "1px solid rgba(255,255,255,0.08)",
-                                    background:
-                                      row.tone === "green"
-                                        ? "rgba(60,220,120,0.12)"
-                                        : row.tone === "red"
-                                        ? "rgba(230,80,80,0.12)"
-                                        : "rgba(255,255,255,0.03)",
-                                  }}
-                                >
-                                  <div
-                                    style={{
-                                      ...mono(),
-                                      width: 18,
-                                      textAlign: "right",
-                                      opacity: 0.65,
-                                    }}
-                                  >
-                                    {String(idx + 1).padStart(2, "0")}
-                                  </div>
-                                  <div
-                                    title={row.displayId}
-                                    style={{
-                                      ...mono(),
-                                      fontSize: 11,
-                                      fontWeight: 900,
-                                      opacity: 0.92,
-                                      whiteSpace: "nowrap",
-                                      overflow: "hidden",
-                                      textOverflow: "ellipsis",
-                                    }}
-                                  >
-                                    {row.displayId}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div style={{ fontSize: 10, opacity: 0.65 }}>
-                              No neighbors available.
-                            </div>
-                          )}
-                        </div>
+                    : renderHdbGroupMemberList(
+                        selectedNeighborList,
+                        "No neighbors available.",
+                        140
                       )}
                 </div>
               </div>
