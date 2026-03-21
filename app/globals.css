@@ -129,7 +129,7 @@ button {
 
 .asset-meta p {
   margin: 0.04rem 0 0;
-  color: var(--text-dim);
+  color: #d4af37;
   font-size: 0.6rem;
   white-space: nowrap;
   overflow: hidden;

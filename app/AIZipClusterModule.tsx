@@ -15529,75 +15529,26 @@ function ClusterMapInner({
     [buildNeighborListForNode, selectedAiSnapshotSource]
   );
 
-  const libraryInfluencedRowsById = useMemo(() => {
-    const out = new Map<string, any[]>();
-    if (aiMethod === "hdbscan") return out;
+  const selectedLibraryInfluencedRows = useMemo(() => {
+    if (aiMethod === "hdbscan") return [];
+    if (!selectedNode) return [];
+
+    const kind = String((selectedNode as any)?.kind || "").toLowerCase();
+    const isLib =
+      kind === "library" ||
+      (selectedNode as any)?.libId != null ||
+      (selectedNode as any)?.metaLib != null ||
+      String((selectedNode as any)?.id || "").startsWith("lib|");
+    if (!isLib) return [];
+
+    const selectedNodeId = normalizeClusterMapToken((selectedNode as any)?.id);
+    if (!selectedNodeId) return [];
 
     const effectiveK = Math.max(
       0,
       Math.min(36, Math.floor(Number(knnLinkK) || 0))
     );
-    if (!effectiveK) return out;
-
-    const isLibNode = (node: any) => {
-      const kind = String((node as any)?.kind || "").toLowerCase();
-      return (
-        kind === "library" ||
-        (node as any)?.libId != null ||
-        (node as any)?.metaLib != null ||
-        String((node as any)?.id || "").startsWith("lib|")
-      );
-    };
-
-    const buildTradeRow = (tradeNode: any, tradeId: string) => {
-      const dir = Number((tradeNode as any)?.dir ?? (tradeNode as any)?.direction ?? 0);
-      const pnlRaw =
-        typeof (tradeNode as any)?.unrealizedPnl === "number" &&
-        Number.isFinite((tradeNode as any)?.unrealizedPnl)
-          ? Number((tradeNode as any).unrealizedPnl)
-          : typeof (tradeNode as any)?.pnl === "number" &&
-            Number.isFinite((tradeNode as any)?.pnl)
-          ? Number((tradeNode as any).pnl)
-          : typeof (tradeNode as any)?.closePnl === "number" &&
-            Number.isFinite((tradeNode as any)?.closePnl)
-          ? Number((tradeNode as any).closePnl)
-          : null;
-      const isWin =
-        typeof (tradeNode as any)?.win === "boolean"
-          ? !!(tradeNode as any).win
-          : pnlRaw != null
-          ? pnlRaw >= 0
-          : false;
-      const sortIndex = Number(
-        (tradeNode as any)?.entryIndex ??
-          (tradeNode as any)?.signalIndex ??
-          (tradeNode as any)?.exitIndex ??
-          NaN
-      );
-
-      return {
-        key: tradeId,
-        id: tradeId,
-        displayId: displayIdForNode(tradeNode),
-        dirLabel: dir === 1 ? "LONG" : dir === -1 ? "SHORT" : "",
-        kindLabel: (tradeNode as any)?.isOpen ? "Open Trade" : "Trade",
-        timeLabel: (() => {
-          const raw =
-            (tradeNode as any)?.entryTime ??
-            (tradeNode as any)?.metaTime ??
-            (tradeNode as any)?.time ??
-            null;
-          return raw ? formatDateTime(raw, parseMode) : "";
-        })(),
-        sessionLabel: normalizeLabel(
-          (tradeNode as any)?.session ?? (tradeNode as any)?.metaSession
-        ),
-        pnlLabel: pnlRaw == null ? "" : fmtUSD(pnlRaw),
-        tone: pnlRaw == null ? "neutral" : isWin ? "green" : "red",
-        sortIndex,
-        isWin,
-      };
-    };
+    if (!effectiveK) return [];
 
     const edges = getKnnEdgesForClusterMap(
       neighborNodes as any[],
@@ -15605,52 +15556,85 @@ function ClusterMapInner({
       clusterMapView,
       { allowLegacyFallback: !entryNeighborsOnly }
     );
-    if (!Array.isArray(edges) || edges.length === 0) return out;
+    if (!Array.isArray(edges) || edges.length === 0) return [];
 
-    const seenByLibrary = new Map<string, Set<string>>();
+    const rows: any[] = [];
+    const seen = new Set<string>();
+
     for (const edge of edges as any[]) {
       const aId = normalizeClusterMapToken((edge as any)?.a);
       const bId = normalizeClusterMapToken((edge as any)?.b);
       if (!aId || !bId) continue;
 
-      const aNode = (nodeById as any).get(aId) ?? null;
-      const bNode = (nodeById as any).get(bId) ?? null;
-      if (!aNode || !bNode) continue;
+      const otherId =
+        aId === selectedNodeId ? bId : bId === selectedNodeId ? aId : null;
+      if (!otherId || seen.has(otherId)) continue;
 
-      const aIsLib = isLibNode(aNode);
-      const bIsLib = isLibNode(bNode);
-      if (aIsLib === bIsLib) continue;
+      const otherNode = (nodeById as any).get(otherId) ?? null;
+      if (!otherNode) continue;
+      if (String((otherNode as any)?.kind || "").toLowerCase() !== "trade") continue;
 
-      const libId = aIsLib ? aId : bId;
-      const tradeId = aIsLib ? bId : aId;
-      const tradeNode = aIsLib ? bNode : aNode;
-      if (String((tradeNode as any)?.kind || "").toLowerCase() !== "trade") continue;
+      const dir = Number((otherNode as any)?.dir ?? (otherNode as any)?.direction ?? 0);
+      const pnlRaw =
+        typeof (otherNode as any)?.unrealizedPnl === "number" &&
+        Number.isFinite((otherNode as any)?.unrealizedPnl)
+          ? Number((otherNode as any).unrealizedPnl)
+          : typeof (otherNode as any)?.pnl === "number" &&
+            Number.isFinite((otherNode as any)?.pnl)
+          ? Number((otherNode as any).pnl)
+          : typeof (otherNode as any)?.closePnl === "number" &&
+            Number.isFinite((otherNode as any)?.closePnl)
+          ? Number((otherNode as any).closePnl)
+          : null;
+      const isWin =
+        typeof (otherNode as any)?.win === "boolean"
+          ? !!(otherNode as any).win
+          : pnlRaw != null
+          ? pnlRaw >= 0
+          : false;
+      const sortIndex = Number(
+        (otherNode as any)?.entryIndex ??
+          (otherNode as any)?.signalIndex ??
+          (otherNode as any)?.exitIndex ??
+          NaN
+      );
 
-      let seen = seenByLibrary.get(libId);
-      if (!seen) {
-        seen = new Set<string>();
-        seenByLibrary.set(libId, seen);
-      }
-      if (seen.has(tradeId)) continue;
-      seen.add(tradeId);
-
-      const rows = out.get(libId) ?? [];
-      rows.push(buildTradeRow(tradeNode, tradeId));
-      out.set(libId, rows);
-    }
-
-    for (const rows of out.values()) {
-      rows.sort((a, b) => {
-        const aIdx = Number(a.sortIndex);
-        const bIdx = Number(b.sortIndex);
-        if (Number.isFinite(aIdx) && Number.isFinite(bIdx) && aIdx !== bIdx) {
-          return bIdx - aIdx;
-        }
-        return String(a.displayId || "").localeCompare(String(b.displayId || ""));
+      rows.push({
+        key: otherId,
+        id: otherId,
+        displayId: displayIdForNode(otherNode),
+        dirLabel: dir === 1 ? "LONG" : dir === -1 ? "SHORT" : "",
+        kindLabel: (otherNode as any)?.isOpen ? "Open Trade" : "Trade",
+        timeLabel: (() => {
+          const raw =
+            (otherNode as any)?.entryTime ??
+            (otherNode as any)?.metaTime ??
+            (otherNode as any)?.time ??
+            null;
+          return raw ? formatDateTime(raw, parseMode) : "";
+        })(),
+        sessionLabel: normalizeLabel(
+          (otherNode as any)?.session ?? (otherNode as any)?.metaSession
+        ),
+        pnlLabel: pnlRaw == null ? "" : fmtUSD(pnlRaw),
+        tone: pnlRaw == null ? "neutral" : isWin ? "green" : "red",
+        sortIndex,
+        isWin,
       });
+
+      seen.add(otherId);
     }
 
-    return out;
+    rows.sort((a, b) => {
+      const aIdx = Number(a.sortIndex);
+      const bIdx = Number(b.sortIndex);
+      if (Number.isFinite(aIdx) && Number.isFinite(bIdx) && aIdx !== bIdx) {
+        return bIdx - aIdx;
+      }
+      return String(a.displayId || "").localeCompare(String(b.displayId || ""));
+    });
+
+    return rows;
   }, [
     aiMethod,
     clusterMapView,
@@ -15659,46 +15643,17 @@ function ClusterMapInner({
     neighborNodes,
     nodeById,
     parseMode,
+    selectedNode,
   ]);
 
-  const selectedLibraryInfluencedRows = useMemo(() => {
-    if (!selectedNode) return [];
-    const selectedNodeId = normalizeClusterMapToken((selectedNode as any)?.id);
-    if (!selectedNodeId) return [];
-    return libraryInfluencedRowsById.get(selectedNodeId) ?? [];
-  }, [libraryInfluencedRowsById, selectedNode]);
-
   const selectedLibraryContribution = useMemo(() => {
-    if (!selectedLibraryInfluencedRows.length) return 0;
+    if (!selectedLibraryInfluencedRows.length) return null;
     let wins = 0;
     for (const row of selectedLibraryInfluencedRows) {
       if ((row as any)?.isWin) wins += 1;
     }
     return wins / Math.max(1, selectedLibraryInfluencedRows.length);
   }, [selectedLibraryInfluencedRows]);
-
-  const contributionForLibraryNode = React.useCallback(
-    (node: any) => {
-      if (!node) return null;
-      const kind = String((node as any)?.kind || "").toLowerCase();
-      const isLib =
-        kind === "library" ||
-        (node as any)?.libId != null ||
-        (node as any)?.metaLib != null ||
-        String((node as any)?.id || "").startsWith("lib|");
-      if (!isLib) return null;
-      const nodeId = normalizeClusterMapToken((node as any)?.id);
-      if (!nodeId) return 0;
-      const rows = libraryInfluencedRowsById.get(nodeId) ?? [];
-      if (!rows.length) return 0;
-      let wins = 0;
-      for (const row of rows) {
-        if ((row as any)?.isWin) wins += 1;
-      }
-      return wins / Math.max(1, rows.length);
-    },
-    [libraryInfluencedRowsById]
-  );
 
   const hdbClustersById = useMemo(() => {
     const out = new Map<number, any>();
@@ -16006,81 +15961,6 @@ function ClusterMapInner({
               </div>
             );
           })}
-        </div>
-      ) : (
-        <div style={{ fontSize: 10, opacity: 0.65 }}>{emptyLabel}</div>
-      )}
-    </div>
-  );
-
-  const renderNeighborPillList = (
-    rows: any[],
-    emptyLabel: string,
-    maxHeight = 140
-  ) => (
-    <div
-      style={{
-        marginTop: 6,
-        maxHeight,
-        overflowY: "auto",
-        overscrollBehavior: "contain",
-        borderRadius: 10,
-        border: "1px solid rgba(255,255,255,0.10)",
-        background: "rgba(0,0,0,0.20)",
-        padding: 6,
-      }}
-    >
-      {rows && rows.length ? (
-        <div style={{ display: "grid", gap: 6 }}>
-          {rows.map((row, idx) => (
-            <div
-              key={String(row.key || row.id || idx)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "4px 6px",
-                borderRadius: 8,
-                border:
-                  row.tone === "green"
-                    ? "1px solid rgba(60,220,120,0.35)"
-                    : row.tone === "red"
-                    ? "1px solid rgba(230,80,80,0.35)"
-                    : "1px solid rgba(255,255,255,0.08)",
-                background:
-                  row.tone === "green"
-                    ? "rgba(60,220,120,0.12)"
-                    : row.tone === "red"
-                    ? "rgba(230,80,80,0.12)"
-                    : "rgba(255,255,255,0.03)",
-              }}
-            >
-              <div
-                style={{
-                  ...mono(),
-                  width: 18,
-                  textAlign: "right",
-                  opacity: 0.65,
-                }}
-              >
-                {String(idx + 1).padStart(2, "0")}
-              </div>
-              <div
-                title={row.displayId}
-                style={{
-                  ...mono(),
-                  fontSize: 11,
-                  fontWeight: 900,
-                  opacity: 0.92,
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {row.displayId}
-              </div>
-            </div>
-          ))}
         </div>
       ) : (
         <div style={{ fontSize: 10, opacity: 0.65 }}>{emptyLabel}</div>
@@ -17468,12 +17348,6 @@ function ClusterMapInner({
                   lines.push(`Confidence: ${Math.round(displayConf * 100)}%`);
                   const mods = hdbDomainsForNode(n);
                   if (mods) lines.push(`Domains: ${mods}`);
-                }
-                if (isLibraryNode) {
-                  const contribution = contributionForLibraryNode(n);
-                  lines.push(
-                    `Contribution: ${Math.round(((contribution ?? 0) as number) * 100)}%`
-                  );
                 }
               }
             }
@@ -19934,7 +19808,9 @@ function ClusterMapInner({
                           : `${pct}%`;
                       }
                       if (isSelectedLib) {
-                        return `${Math.round((selectedLibraryContribution ?? 0) * 100)}%`;
+                        return selectedLibraryContribution == null
+                          ? "â€”"
+                          : `${Math.round(selectedLibraryContribution * 100)}%`;
                       }
                       if (isSelectedLib && selectedLibraryContribution == null) {
                         return "-";
@@ -20070,15 +19946,82 @@ function ClusterMapInner({
                         160
                       )
                     : isSelectedLib
-                    ? renderNeighborPillList(
+                    ? renderHdbGroupMemberList(
                         selectedLibraryInfluencedRows,
                         "No influenced live trades available.",
                         160
                       )
-                    : renderNeighborPillList(
-                        selectedNeighborList,
-                        "No neighbors available.",
-                        140
+                    : (
+                        <div
+                          style={{
+                            marginTop: 6,
+                            maxHeight: 140,
+                            overflowY: "auto",
+                            overscrollBehavior: "contain",
+                            borderRadius: 10,
+                            border: "1px solid rgba(255,255,255,0.10)",
+                            background: "rgba(0,0,0,0.20)",
+                            padding: 6,
+                          }}
+                        >
+                          {selectedNeighborList && selectedNeighborList.length ? (
+                            <div style={{ display: "grid", gap: 6 }}>
+                              {selectedNeighborList.map((row, idx) => (
+                                <div
+                                  key={String(row.key || row.id || idx)}
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    padding: "4px 6px",
+                                    borderRadius: 8,
+                                    border:
+                                      row.tone === "green"
+                                        ? "1px solid rgba(60,220,120,0.35)"
+                                        : row.tone === "red"
+                                        ? "1px solid rgba(230,80,80,0.35)"
+                                        : "1px solid rgba(255,255,255,0.08)",
+                                    background:
+                                      row.tone === "green"
+                                        ? "rgba(60,220,120,0.12)"
+                                        : row.tone === "red"
+                                        ? "rgba(230,80,80,0.12)"
+                                        : "rgba(255,255,255,0.03)",
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      ...mono(),
+                                      width: 18,
+                                      textAlign: "right",
+                                      opacity: 0.65,
+                                    }}
+                                  >
+                                    {String(idx + 1).padStart(2, "0")}
+                                  </div>
+                                  <div
+                                    title={row.displayId}
+                                    style={{
+                                      ...mono(),
+                                      fontSize: 11,
+                                      fontWeight: 900,
+                                      opacity: 0.92,
+                                      whiteSpace: "nowrap",
+                                      overflow: "hidden",
+                                      textOverflow: "ellipsis",
+                                    }}
+                                  >
+                                    {row.displayId}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: 10, opacity: 0.65 }}>
+                              No neighbors available.
+                            </div>
+                          )}
+                        </div>
                       )}
                 </div>
               </div>
