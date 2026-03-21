@@ -15947,6 +15947,75 @@ function ClusterMapInner({
     []
   );
 
+  const resolveSelectedNeighborMetric = React.useCallback(
+    (row: any) => {
+      if (!row) return null;
+
+      const targetNode = (row as any)?.targetNode ?? row;
+      const targetKind = String((targetNode as any)?.kind || "").toLowerCase();
+      const isLibraryNode =
+        targetKind === "library" ||
+        (targetNode as any)?.libId != null ||
+        (targetNode as any)?.metaLib != null ||
+        String((targetNode as any)?.id || (row as any)?.id || "").startsWith("lib|");
+
+      if (isLibraryNode) {
+        const nodeId = normalizeClusterMapToken(
+          (targetNode as any)?.id ?? (row as any)?.id ?? ""
+        );
+        const contribution =
+          nodeId != null ? libraryContributionByNodeId.get(nodeId) ?? null : null;
+        return {
+          label: "Contribution",
+          value:
+            typeof contribution === "number" && Number.isFinite(contribution)
+              ? clamp(contribution, 0, 1)
+              : null,
+        };
+      }
+
+      const confidence = resolveNonHdbConfidence(targetNode);
+      return {
+        label: "Confidence",
+        value:
+          typeof confidence === "number" && Number.isFinite(confidence)
+            ? clamp(confidence, 0, 1)
+            : null,
+      };
+    },
+    [libraryContributionByNodeId, resolveNonHdbConfidence]
+  );
+
+  const selectedAverageNeighborContribution = useMemo(() => {
+    const values: number[] = [];
+
+    for (const row of selectedNeighborList as any[]) {
+      const metric = resolveSelectedNeighborMetric(row);
+      if (metric?.label !== "Contribution") continue;
+      const value = Number(metric?.value);
+      if (!Number.isFinite(value)) continue;
+      values.push(clamp(value, 0, 1));
+    }
+
+    if (!values.length) return null;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  }, [resolveSelectedNeighborMetric, selectedNeighborList]);
+
+  const selectedAverageNeighborConfidence = useMemo(() => {
+    const values: number[] = [];
+
+    for (const row of selectedLibraryInfluencedRows as any[]) {
+      const metric = resolveSelectedNeighborMetric(row);
+      if (metric?.label !== "Confidence") continue;
+      const value = Number(metric?.value);
+      if (!Number.isFinite(value)) continue;
+      values.push(clamp(value, 0, 1));
+    }
+
+    if (!values.length) return null;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  }, [resolveSelectedNeighborMetric, selectedLibraryInfluencedRows]);
+
   const renderHdbGroupMemberList = (
     rows: any[],
     emptyLabel: string,
@@ -15954,6 +16023,7 @@ function ClusterMapInner({
     options?: {
       highlightIndexKeys?: Set<string>;
       onRowClick?: (row: any) => void;
+      metricForRow?: (row: any) => { label: string; value: number | null } | null;
     }
   ) => (
     <div
@@ -15982,6 +16052,9 @@ function ClusterMapInner({
             const isClickable =
               typeof options?.onRowClick === "function" &&
               String((row as any)?.id ?? "").trim().length > 0;
+            const metric = options?.metricForRow?.(row) ?? null;
+            const metricValue = Number(metric?.value);
+            const hasMetric = !!metric?.label && Number.isFinite(metricValue);
             return (
               <div
                 key={String(row.key || idx)}
@@ -16091,6 +16164,18 @@ function ClusterMapInner({
                       }}
                     >
                       {row.pnlLabel}
+                    </div>
+                  ) : null}
+                  {hasMetric ? (
+                    <div
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 900,
+                        color: "rgba(120,190,255,0.92)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {metric?.label}: {Math.round(metricValue * 100)}%
                     </div>
                   ) : null}
                   <div
@@ -20121,6 +20206,22 @@ function ClusterMapInner({
                     })()}
                   </div>
 
+                  {aiMethod !== "hdbscan" ? (
+                    <>
+                      <div style={{ opacity: 0.65 }}>ANC</div>
+                      <div
+                        style={{ fontWeight: 900, color: "rgba(120,190,255,0.92)" }}
+                      >
+                        {(() => {
+                          const v = isSelectedLib
+                            ? selectedAverageNeighborConfidence
+                            : selectedAverageNeighborContribution;
+                          return v == null ? "—" : `${Math.round(v * 100)}%`;
+                        })()}
+                      </div>
+                    </>
+                  ) : null}
+
                   {!(isSelectedLib && aiMethod !== "hdbscan") ? (
                     <>
                       <div style={{ opacity: 0.65 }}>
@@ -20245,7 +20346,10 @@ function ClusterMapInner({
                         selectedLibraryInfluencedRows,
                         "No influenced live trades available.",
                         160,
-                        { onRowClick: handleSelectionListRowClick }
+                        {
+                          onRowClick: handleSelectionListRowClick,
+                          metricForRow: resolveSelectedNeighborMetric,
+                        }
                       )
                     : renderHdbGroupMemberList(
                         selectedNeighborList,
@@ -20254,6 +20358,7 @@ function ClusterMapInner({
                         {
                           highlightIndexKeys: selectedFutureNeighborKeys,
                           onRowClick: handleSelectionListRowClick,
+                          metricForRow: resolveSelectedNeighborMetric,
                         }
                       )}
                 </div>
