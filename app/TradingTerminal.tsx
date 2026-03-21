@@ -20568,8 +20568,6 @@ function TradingTerminalWorkspace({
     setSelectedHistoryId(match.id);
   };
 
-  const dimensionStandardizationStd = 50;
-
   const dimensionStats = useMemo<DimensionStatsSummary | null>(() => {
     if (!isBacktestAnalyticsVisible || deferredBacktestTab !== "dimensions") {
       return null;
@@ -20721,9 +20719,7 @@ function TradingTerminalWorkspace({
       const variance = sumSquared / Math.max(1, values.length - 1);
       varianceByKey.set(dimension.key, variance);
       const std = Math.sqrt(Math.max(epsilon, variance));
-      const normalized = values.map(
-        (value) => ((value - mean) / std) * dimensionStandardizationStd
-      );
+      const normalized = values.map((value) => (value - mean) / std);
       const correlation = getBinaryCorrelation(normalized, outcomes);
       const lowThreshold = quantileOf(normalized, 0.1);
       const highThreshold = quantileOf(normalized, 0.9);
@@ -26456,7 +26452,7 @@ function TradingTerminalWorkspace({
                             <div
                               onClick={() => toggleDimSort("optimal")}
                               style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
-                              title="Sort by optimal range (standardized thresholds; 50 = 1 stdev)"
+                              title="Sort by optimal range (z-score thresholds)"
                             >
                               <span>Optimal</span>
                               {dimSortCol === "optimal" ? (
@@ -26541,7 +26537,7 @@ function TradingTerminalWorkspace({
                                     fontWeight: 900,
                                     color: "rgba(255,255,255,0.72)"
                                   }}
-                                  title="Optimal range shown in standardized units (50 = 1 stdev; bottom/top 10% cutoffs)"
+                                  title="Optimal range shown in z-score units (bottom/top 10% cutoffs)"
                                 >
                                   {dimension.optimal}
                                 </div>
@@ -26558,8 +26554,8 @@ function TradingTerminalWorkspace({
 
                         <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.55)" }}>
                           Correlation is computed on the selected dataset (TEST set when split).
-                          Win@Low/High uses the bottom/top 10% of values (50 standardized
-                          units = 1 stdev). Optimal shows which side performs better.
+                          Win@Low/High uses the bottom/top 10% of values (z-scores). Optimal shows
+                          which side performs better.
                         </div>
                       </div>
                     </div>
