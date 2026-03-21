@@ -18474,62 +18474,62 @@ function ClusterMapInner({
                         alignItems: "flex-start",
                       }}
                     >
-                      {miniPill("Buy/Sell", [
+                      {miniPill("Library", [
                         <span key="l1" style={{ opacity: 0.65 }}>
-                          Live
+                          Buy/Sell
                         </span>,
-                        <b key="l2" style={{ color: "rgba(60,220,120,0.95)" }}>
-                          {fmt(liveBuyPct)}
+                        <b key="l2" style={{ color: "rgba(60,220,120,0.85)" }}>
+                          {fmt(libBuyPct)}
                         </b>,
                         <span key="l3" style={{ opacity: 0.65 }}>
                           /
                         </span>,
-                        <b key="l4" style={{ color: "rgba(230,80,80,0.95)" }}>
-                          {fmt(liveSellPct)}
+                        <b key="l4" style={{ color: "rgba(230,80,80,0.85)" }}>
+                          {fmt(libSellPct)}
                         </b>,
                         <span key="l5" style={{ opacity: 0.45 }}>
                           ·
                         </span>,
                         <span key="lb1" style={{ opacity: 0.65 }}>
-                          Lib
+                          Win/Loss
                         </span>,
                         <b key="lb2" style={{ color: "rgba(60,220,120,0.85)" }}>
-                          {fmt(libBuyPct)}
+                          {fmt(libWinPct)}
                         </b>,
                         <span key="lb3" style={{ opacity: 0.65 }}>
                           /
                         </span>,
                         <b key="lb4" style={{ color: "rgba(230,80,80,0.85)" }}>
-                          {fmt(libSellPct)}
+                          {fmt(libLossPct)}
                         </b>,
                       ])}
-                      {miniPill("Win/Loss", [
+                      {miniPill("Live", [
                         <span key="w1" style={{ opacity: 0.65 }}>
-                          Live
+                          Buy/Sell
                         </span>,
                         <b key="w2" style={{ color: "rgba(60,220,120,0.95)" }}>
-                          {fmt(liveWinPct)}
+                          {fmt(liveBuyPct)}
                         </b>,
                         <span key="w3" style={{ opacity: 0.65 }}>
                           /
                         </span>,
                         <b key="w4" style={{ color: "rgba(230,80,80,0.95)" }}>
-                          {fmt(liveLossPct)}
+                          {fmt(liveSellPct)}
                         </b>,
                         <span key="w5" style={{ opacity: 0.45 }}>
                           ·
                         </span>,
                         <span key="wb1" style={{ opacity: 0.65 }}>
-                          Lib
+                          Win/Loss
                         </span>,
-                        <b key="wb2" style={{ color: "rgba(60,220,120,0.85)" }}>
-                          {fmt(libWinPct)}
+                        <b key="wb2" style={{ color: "rgba(60,220,120,0.95)" }}>
+                          {fmt(liveWinPct)}
                         </b>,
                         <span key="wb3" style={{ opacity: 0.65 }}>
                           /
                         </span>,
-                        <b key="wb4" style={{ color: "rgba(230,80,80,0.85)" }}>
-                          {fmt(libLossPct)}
+                        <b key="wb4" style={{ color: "rgba(230,80,80,0.95)" }}>
+                          {fmt(liveLossPct)}
                         </b>,
                       ])}
                     </div>
