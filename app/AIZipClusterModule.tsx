@@ -11194,7 +11194,9 @@ function ClusterMapInner({
       const p: any = libraryPointsForMap[li];
       if (!p) continue;
 
-      const modelKey = String((p as any).model ?? (p as any).chunkType ?? "-");
+      const modelKey = String(
+        (p as any).model ?? (p as any).metaModel ?? (p as any).chunkType ?? "-"
+      );
       const rawVec = Array.isArray((p as any).v)
         ? (p as any).v
         : Array.isArray((p as any).v0)
@@ -14890,6 +14892,13 @@ function ClusterMapInner({
       codes.push("SUPPRESSED_LIBRARY_POINTS_HIDDEN");
     }
 
+    const librariesRelevantToCurrentView =
+      activeLibraryCount > 0 ||
+      libNodeCount > 0 ||
+      timelineLibraryCount > 0 ||
+      displayLibraryCount > 0;
+    if (!librariesRelevantToCurrentView && inputCount > 0) return;
+
     if (codes.length === 0) return;
 
     const signature = JSON.stringify({
@@ -14904,7 +14913,7 @@ function ClusterMapInner({
     if (libraryPointDiagnosticKeyRef.current === signature) return;
     libraryPointDiagnosticKeyRef.current = signature;
 
-    console.error(
+    console.warn(
       `[AIZip][LibraryPointDiagnostics] ${codes.join(", ")}`,
       {
         activeLibraries: Array.isArray(activeLibraries)
@@ -15432,6 +15441,8 @@ function ClusterMapInner({
                 `neighbor-${String(idx + 1).padStart(2, "0")}`,
               payloadIndex: idx,
               id: resolvedId ?? rawFallback ?? null,
+              rawId: rawFallback || null,
+              targetNode: hitNode ?? null,
               entryTimeRaw: timeRaw ?? null,
               displayId,
               dist,
@@ -15621,6 +15632,8 @@ function ClusterMapInner({
       rows.push({
         key: otherId,
         id: otherId,
+        rawId: otherId,
+        targetNode: otherNode,
         displayId: displayIdForNode(otherNode),
         dirLabel: dir === 1 ? "LONG" : dir === -1 ? "SHORT" : "",
         kindLabel: (otherNode as any)?.isOpen ? "Open Trade" : "Trade",
@@ -15845,6 +15858,8 @@ function ClusterMapInner({
         rows.push({
           key: stableKey,
           id: String((node as any)?.id ?? "").trim() || null,
+          rawId: String((node as any)?.id ?? "").trim() || null,
+          targetNode: node,
           displayId: displayIdForNode(node),
           dirLabel: dir === 1 ? "LONG" : dir === -1 ? "SHORT" : "",
           kindLabel:
@@ -15970,9 +15985,11 @@ function ClusterMapInner({
             return (
               <div
                 key={String(row.key || idx)}
-                onClick={
+                onMouseDown={
                   isClickable
-                    ? () => {
+                    ? (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
                         options?.onRowClick?.(row);
                       }
                     : undefined
@@ -17551,6 +17568,14 @@ function ClusterMapInner({
       }
     };
     const endDrag = (e) => {
+      const hadMapPointerGesture =
+        dragging ||
+        lassoRef.current.drawing ||
+        (boxSelectMode && selShape === "rect" && !!boxStart && !boxEnd);
+      if (!hadMapPointerGesture) {
+        return;
+      }
+
       dragging = false;
       setIsDragging(false);
       setView((prev) => {
@@ -17895,6 +17920,7 @@ function ClusterMapInner({
         disp,
         kind,
         value: disp || raw,
+        node: n,
         isLib,
         libKey,
         win,
@@ -18105,19 +18131,31 @@ function ClusterMapInner({
   const handleSelectionListRowClick = React.useCallback(
     (row: any) => {
       if (!row) return;
-
+      const directTarget = (row as any)?.targetNode ?? null;
       const targetId = String((row as any)?.id ?? "").trim();
-      if (!targetId) return;
+      const rawId = String((row as any)?.rawId ?? "").trim();
 
       const target =
-        (nodeByIdAll as any).get(targetId) ??
-        (nodeByIdRaw as any).get(targetId) ??
-        null;
+        directTarget ??
+        (targetId
+          ? (nodeByIdAll as any).get(targetId) ??
+            (nodeByIdRaw as any).get(targetId) ??
+            null
+          : null) ??
+        (rawId
+          ? resolveNodeForSelection({
+              id: rawId,
+              uid: rawId,
+              tradeUid: rawId,
+              metaUid: rawId,
+              metaTradeUid: rawId,
+            })
+          : null);
       if (!target) return;
 
       focusNodeSelection(target);
     },
-    [focusNodeSelection, nodeByIdAll, nodeByIdRaw]
+    [focusNodeSelection, nodeByIdAll, nodeByIdRaw, resolveNodeForSelection]
   );
 
   const runSearch = (query?: string) => {
@@ -18770,7 +18808,13 @@ function ClusterMapInner({
                           key={String(s.id || s.value || title)}
                           onMouseDown={(e) => {
                             e.preventDefault();
-                            runSearch(String(s.value || s.disp || s.raw || ""));
+                            e.stopPropagation();
+                            setSearchUid(String(s.value || s.disp || s.raw || ""));
+                            focusNodeSelection((s as any)?.node ?? s, {
+                              setSearchStatus: true,
+                              setSearchHighlight: true,
+                              closeSearchSuggestions: true,
+                            });
                           }}
                           style={{
                             padding: "8px 10px",
@@ -19877,7 +19921,9 @@ function ClusterMapInner({
             return (
               <div
                 onMouseDown={(e) => e.stopPropagation()}
+                onMouseUp={(e) => e.stopPropagation()}
                 onPointerDown={(e) => e.stopPropagation()}
+                onPointerUp={(e) => e.stopPropagation()}
                 onClick={(e) => e.stopPropagation()}
                 style={{
                   position: "absolute",
