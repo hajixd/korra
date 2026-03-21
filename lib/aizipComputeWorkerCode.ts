@@ -5505,8 +5505,14 @@ function flushSuppressedNeighbors(uptoIndex){
           let sIdx =
             p.metaSignalIndex != null
               ? p.metaSignalIndex
-              : p.metaEntryIndex != null
+              : null;
+          let entryIdx =
+            p.metaEntryIndex != null
               ? p.metaEntryIndex
+              : null;
+          const exitIdx =
+            p.metaExitIndex != null
+              ? p.metaExitIndex
               : null;
           const vec = Array.isArray(p.v)
             ? p.v
@@ -5520,19 +5526,29 @@ function flushSuppressedNeighbors(uptoIndex){
           const hasVec = Array.isArray(vec) && vec.length >= 2;
 
           // Backfill index from timestamp when metadata was trimmed by upstream transforms.
-          if (sIdx == null) {
-            const tKey = String(p.metaTime ?? p.time ?? p.entryTime ?? "");
-            if (tKey) {
-              const inferred = CANDLE_INDEX_BY_TIME.get(tKey);
-              if (Number.isFinite(inferred)) sIdx = inferred;
-            }
+          const tKey = String(p.metaTime ?? p.time ?? p.entryTime ?? "");
+          if (entryIdx == null && tKey) {
+            const inferredEntry = CANDLE_INDEX_BY_TIME.get(tKey);
+            if (Number.isFinite(inferredEntry)) entryIdx = inferredEntry;
           }
+          if (sIdx == null && entryIdx != null) sIdx = entryIdx;
           if (sIdx == null && !hasVec) continue;
 
           const pnl = typeof p.metaPnl === "number" ? p.metaPnl : 0;
           const lb = typeof p.label === "number" ? p.label : 0;
           const label = lb > 0 ? 1 : -1;
-          const sid = sIdx == null ? "na" : String(sIdx);
+          const sid = sIdx == null ? (entryIdx == null ? "na" : String(entryIdx)) : String(sIdx);
+          const entryTime =
+            p.metaTime ??
+            (typeof entryIdx === "number" ? candles?.[entryIdx]?.time ?? "" : "") ??
+            "";
+          const exitTime =
+            p.exitTime ??
+            p.exit_time ??
+            p.closeTime ??
+            p.endTime ??
+            (typeof exitIdx === "number" ? candles?.[exitIdx]?.time ?? "" : "") ??
+            "";
 
           libraryPoints.push({
             id: "lib|" + lid + "|" + mk + "|" + sid + "|" + String(i),
@@ -5541,8 +5557,11 @@ function flushSuppressedNeighbors(uptoIndex){
             libId: lid,
             model: mk,
             signalIndex: sIdx,
-            entryTime: p.metaTime ?? "",
-            metaTime: p.metaTime ?? "",
+            entryIndex: entryIdx,
+            exitIndex: exitIdx,
+            entryTime,
+            exitTime,
+            metaTime: entryTime,
             dir: p.dir,
             label,
             pnl,

@@ -11182,102 +11182,7 @@ function ClusterMapInner({
 
     const libraryPointsForMap: any[] = (() => {
       const src = Array.isArray(libraryPoints) ? (libraryPoints as any[]) : [];
-      if (src.length > 0) return src;
-
-      const byLib = Object.entries((libraryCounts as any) || {}).filter(
-        ([, v]) => Number(v || 0) > 0
-      ) as Array<[string, number]>;
-      if (!byLib.length) return src;
-
-      const anchors = ((trades as any[]) || [])
-        .map((t: any, i: number) => {
-          const sIdxRaw = Number(
-            (t as any)?.signalIndex ?? (t as any)?.entryIndex ?? i
-          );
-          const sIdx = Number.isFinite(sIdxRaw)
-            ? Math.max(
-                0,
-                Math.min(Math.max(0, candles.length - 1), Math.floor(sIdxRaw))
-              )
-            : i % Math.max(1, candles.length);
-          const entryTime = String(
-            (t as any)?.entryTime ??
-              candles?.[Math.min(candles.length - 1, Math.max(0, sIdx + 1))]
-                ?.time ??
-              candles?.[sIdx]?.time ??
-              ""
-          );
-          return {
-            signalIndex: sIdx,
-            model: String(
-              (t as any)?.chunkType ??
-                (t as any)?.entryModel ??
-                (t as any)?.model ??
-                (t as any)?.origModel ??
-                "Momentum"
-            ),
-            dir:
-              Number((t as any)?.direction ?? (t as any)?.dir ?? 1) === -1
-                ? -1
-                : 1,
-            pnl: Number((t as any)?.pnl ?? (t as any)?.unrealizedPnl ?? 0) || 0,
-            entryTime,
-          };
-        })
-        .filter(Boolean);
-
-      const requested = byLib.reduce(
-        (s, [, v]) => s + Math.max(0, Math.floor(Number(v || 0))),
-        0
-      );
-      const hardCap = 4000;
-      const scale = requested > hardCap ? hardCap / requested : 1;
-
-      const out: any[] = [];
-      libraryNodeDiagnostics.usedSyntheticFallback = true;
-      let aPos = 0;
-      let seq = 0;
-      for (const [libIdRaw, cntRaw] of byLib) {
-        const lid = String(libIdRaw || "unknown").trim() || "unknown";
-        const want = Math.max(
-          1,
-          Math.floor(Math.max(0, Number(cntRaw || 0)) * scale)
-        );
-        for (let i = 0; i < want; i++) {
-          const a =
-            anchors.length > 0 ? anchors[aPos++ % anchors.length] : null;
-          const sIdx = a
-            ? a.signalIndex
-            : seq % Math.max(1, Math.max(1, candles.length - 1));
-          const dir = a ? a.dir : i % 2 === 0 ? 1 : -1;
-          const pnl = a ? a.pnl : dir === 1 ? 1 : -1;
-          const entryTime = a
-            ? a.entryTime
-            : String(
-                candles?.[Math.min(candles.length - 1, Math.max(0, sIdx + 1))]
-                  ?.time ??
-                  candles?.[Math.max(0, sIdx)]?.time ??
-                  ""
-              );
-          out.push({
-            id: `lib-fallback|${lid}|${String(seq)}`,
-            uid: `lib-fallback|${lid}|${String(seq)}`,
-            libId: lid,
-            model: a ? a.model : "Momentum",
-            signalIndex: sIdx,
-            entryTime,
-            metaTime: entryTime,
-            dir,
-            label: pnl >= 0 ? 1 : -1,
-            pnl,
-            result: pnl >= 0 ? "TP" : "SL",
-            trainingOnly: true,
-            metaFallbackLibraryPoint: true,
-          });
-          seq++;
-        }
-      }
-      return out;
+      return src;
     })();
 
     // Library neighbor points (active libraries) – shown on the Cluster Map for context.
@@ -11296,35 +11201,47 @@ function ClusterMapInner({
         ? (p as any).chunk
         : null;
 
-      const sIdxRaw =
+      const signalIdxRaw =
         (p as any).signalIndex ??
         (p as any).metaSignalIndex ??
+        null;
+      const signalIdxNum = Number(signalIdxRaw);
+      const hasSignalIdx = Number.isFinite(signalIdxNum);
+      const entryIdxRaw =
+        (p as any).entryIndex ??
         (p as any).metaEntryIndex ??
         null;
-      const sIdxNum = Number(sIdxRaw);
-      const hasSIdx = Number.isFinite(sIdxNum);
+      const entryIdxNum = Number(entryIdxRaw);
+      const hasEntryIdx = Number.isFinite(entryIdxNum);
       const entryTimeFromP = (p as any).entryTime ?? (p as any).metaTime ?? "";
       const entryMs = entryTimeFromP ? parseTradeTimeMs(entryTimeFromP) : null;
-      const inferredIdx =
-        !hasSIdx && entryMs != null
+      const inferredEntryIdx =
+        !hasEntryIdx && entryMs != null
           ? findNearestTradeIndexByTime(candles, entryMs)
           : null;
-      const sIdxClamped = hasSIdx
+      const entryIdxClamped = hasEntryIdx
         ? Math.min(
-            Math.max(0, Math.floor(sIdxNum)),
+            Math.max(0, Math.floor(entryIdxNum)),
             Math.max(0, candles.length - 1)
           )
-        : inferredIdx != null
+        : inferredEntryIdx != null
         ? Math.min(
-            Math.max(0, Math.floor(inferredIdx)),
+            Math.max(0, Math.floor(inferredEntryIdx)),
             Math.max(0, candles.length - 1)
           )
-        : 0;
+        : null;
+      const sIdxClamped = hasSignalIdx
+        ? Math.min(
+            Math.max(0, Math.floor(signalIdxNum)),
+            Math.max(0, candles.length - 1)
+          )
+        : entryIdxClamped;
+      const vectorIdx = sIdxClamped ?? entryIdxClamped;
 
       // Require either a usable candle-based descriptor (signal index + model)
       // or a direct vector payload from the neighbor store.
       const hasDirectVector = Array.isArray(rawVec) && rawVec.length >= 2;
-      const canBuildFromCandle = hasSIdx && !!modelKey && modelKey !== "-";
+      const canBuildFromCandle = vectorIdx != null && !!modelKey && modelKey !== "-";
       if (!hasDirectVector && !canBuildFromCandle) {
         libraryNodeDiagnostics.skippedMissingVectorOrDescriptor += 1;
         continue;
@@ -11352,10 +11269,7 @@ function ClusterMapInner({
 
       const entryTime =
         entryTimeFromP ||
-        (candles?.[Math.min(candles.length - 1, Math.max(0, sIdxClamped + 1))]
-          ?.time ??
-          candles?.[sIdxClamped]?.time ??
-          "");
+        (entryIdxClamped != null ? candles?.[entryIdxClamped]?.time ?? "" : "");
       // Try to preserve real exit info for library points when available.
       const exitIdxFromP =
         typeof (p as any).exitIndex === "number"
@@ -11376,13 +11290,16 @@ function ClusterMapInner({
 
       const inferredExitIndex =
         exitIdxFromP != null
-          ? exitIdxFromP
-          : holdBarsFromP > 0
-          ? sIdxClamped + holdBarsFromP
-          : Math.min(
-              sIdxClamped + 1,
-              (candles?.length ?? sIdxClamped + 2) - 1
-            );
+          ? Math.min(
+              Math.max(0, Math.floor(exitIdxFromP)),
+              Math.max(0, candles.length - 1)
+            )
+          : holdBarsFromP > 0 && entryIdxClamped != null
+          ? Math.min(
+              Math.max(0, Math.floor(entryIdxClamped + holdBarsFromP)),
+              Math.max(0, candles.length - 1)
+            )
+          : null;
 
       const exitTimeFromP =
         (p as any).exitTime ??
@@ -11398,7 +11315,8 @@ function ClusterMapInner({
         "";
 
       const inferredExitTime =
-        exitTimeFromP || candles?.[inferredExitIndex]?.time || "";
+        exitTimeFromP ||
+        (inferredExitIndex != null ? candles?.[inferredExitIndex]?.time || "" : "");
 
       // Keep libraries visible regardless of Cluster Map dropdown filters.
       // These points represent loaded neighbor memory; filtering them out can make the
@@ -11416,7 +11334,7 @@ function ClusterMapInner({
       } else {
         const baseV = buildMapVector(
           candles,
-          sIdxClamped,
+          vectorIdx!,
           chunkBarsDeb,
           modelKey,
           pseudo,
@@ -11455,7 +11373,9 @@ function ClusterMapInner({
         id:
           (p as any).id ??
           (p as any).uid ??
-          `lib-${libId}-${modelKey}-${String(sIdxClamped)}-${String(li)}`,
+          `lib-${libId}-${modelKey}-${String(
+            sIdxClamped ?? entryIdxClamped ?? "na"
+          )}-${String(li)}`,
         uid: (p as any).uid ?? (p as any).metaUid ?? null,
         metaUid: (p as any).metaUid ?? (p as any).uid ?? null,
         chunk,
@@ -11465,7 +11385,7 @@ function ClusterMapInner({
         kind: "library",
         libId,
         signalIndex: sIdxClamped,
-        entryIndex: sIdxClamped,
+        entryIndex: entryIdxClamped,
         exitIndex: inferredExitIndex,
         dir: pseudo.direction,
         pnl,
@@ -19619,7 +19539,21 @@ function ClusterMapInner({
                 : "rgba(255,255,255,0.90)";
             const entryTimeRaw =
               (selectedNode as any).entryTime ||
-              candles?.[selectedNode.signalIndex]?.time ||
+              (selectedNode as any).entry_time ||
+              (selectedNode as any).entryTimestamp ||
+              (selectedNode as any).entryTs ||
+              (selectedNode as any).openTime ||
+              (selectedNode as any).trade?.entryTime ||
+              (selectedNode as any).trade?.entry_time ||
+              (selectedNode as any).trade?.entryTimestamp ||
+              (selectedNode as any).trade?.entryTs ||
+              (selectedNode as any).trade?.openTime ||
+              (typeof (selectedNode as any).entryIndex === "number"
+                ? candles?.[(selectedNode as any).entryIndex]?.time
+                : "") ||
+              (typeof (selectedNode as any).trade?.entryIndex === "number"
+                ? candles?.[(selectedNode as any).trade.entryIndex]?.time
+                : "") ||
               (selectedNode as any).time ||
               "";
             const exitTimeRaw =
