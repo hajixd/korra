@@ -15529,6 +15529,132 @@ function ClusterMapInner({
     [buildNeighborListForNode, selectedAiSnapshotSource]
   );
 
+  const selectedLibraryInfluencedRows = useMemo(() => {
+    if (aiMethod === "hdbscan") return [];
+    if (!selectedNode) return [];
+
+    const kind = String((selectedNode as any)?.kind || "").toLowerCase();
+    const isLib =
+      kind === "library" ||
+      (selectedNode as any)?.libId != null ||
+      (selectedNode as any)?.metaLib != null ||
+      String((selectedNode as any)?.id || "").startsWith("lib|");
+    if (!isLib) return [];
+
+    const selectedNodeId = normalizeClusterMapToken((selectedNode as any)?.id);
+    if (!selectedNodeId) return [];
+
+    const effectiveK = Math.max(
+      0,
+      Math.min(36, Math.floor(Number(knnLinkK) || 0))
+    );
+    if (!effectiveK) return [];
+
+    const edges = getKnnEdgesForClusterMap(
+      neighborNodes as any[],
+      effectiveK,
+      clusterMapView,
+      { allowLegacyFallback: !entryNeighborsOnly }
+    );
+    if (!Array.isArray(edges) || edges.length === 0) return [];
+
+    const rows: any[] = [];
+    const seen = new Set<string>();
+
+    for (const edge of edges as any[]) {
+      const aId = normalizeClusterMapToken((edge as any)?.a);
+      const bId = normalizeClusterMapToken((edge as any)?.b);
+      if (!aId || !bId) continue;
+
+      const otherId =
+        aId === selectedNodeId ? bId : bId === selectedNodeId ? aId : null;
+      if (!otherId || seen.has(otherId)) continue;
+
+      const otherNode = (nodeById as any).get(otherId) ?? null;
+      if (!otherNode) continue;
+      if (String((otherNode as any)?.kind || "").toLowerCase() !== "trade") continue;
+
+      const dir = Number((otherNode as any)?.dir ?? (otherNode as any)?.direction ?? 0);
+      const pnlRaw =
+        typeof (otherNode as any)?.unrealizedPnl === "number" &&
+        Number.isFinite((otherNode as any)?.unrealizedPnl)
+          ? Number((otherNode as any).unrealizedPnl)
+          : typeof (otherNode as any)?.pnl === "number" &&
+            Number.isFinite((otherNode as any)?.pnl)
+          ? Number((otherNode as any).pnl)
+          : typeof (otherNode as any)?.closePnl === "number" &&
+            Number.isFinite((otherNode as any)?.closePnl)
+          ? Number((otherNode as any).closePnl)
+          : null;
+      const isWin =
+        typeof (otherNode as any)?.win === "boolean"
+          ? !!(otherNode as any).win
+          : pnlRaw != null
+          ? pnlRaw >= 0
+          : false;
+      const sortIndex = Number(
+        (otherNode as any)?.entryIndex ??
+          (otherNode as any)?.signalIndex ??
+          (otherNode as any)?.exitIndex ??
+          NaN
+      );
+
+      rows.push({
+        key: otherId,
+        id: otherId,
+        displayId: displayIdForNode(otherNode),
+        dirLabel: dir === 1 ? "LONG" : dir === -1 ? "SHORT" : "",
+        kindLabel: (otherNode as any)?.isOpen ? "Open Trade" : "Trade",
+        timeLabel: (() => {
+          const raw =
+            (otherNode as any)?.entryTime ??
+            (otherNode as any)?.metaTime ??
+            (otherNode as any)?.time ??
+            null;
+          return raw ? formatDateTime(raw, parseMode) : "";
+        })(),
+        sessionLabel: normalizeLabel(
+          (otherNode as any)?.session ?? (otherNode as any)?.metaSession
+        ),
+        pnlLabel: pnlRaw == null ? "" : fmtUSD(pnlRaw),
+        tone: pnlRaw == null ? "neutral" : isWin ? "green" : "red",
+        sortIndex,
+        isWin,
+      });
+
+      seen.add(otherId);
+    }
+
+    rows.sort((a, b) => {
+      const aIdx = Number(a.sortIndex);
+      const bIdx = Number(b.sortIndex);
+      if (Number.isFinite(aIdx) && Number.isFinite(bIdx) && aIdx !== bIdx) {
+        return bIdx - aIdx;
+      }
+      return String(a.displayId || "").localeCompare(String(b.displayId || ""));
+    });
+
+    return rows;
+  }, [
+    aiMethod,
+    clusterMapView,
+    entryNeighborsOnly,
+    knnLinkK,
+    neighborNodes,
+    nodeById,
+    parseMode,
+    selectedNode,
+  ]);
+
+  const selectedLibraryContribution = useMemo(() => {
+    if (!selectedLibraryInfluencedRows.length) return null;
+    let wins = 0;
+    for (const row of selectedLibraryInfluencedRows) {
+      if ((row as any)?.isWin) wins += 1;
+    }
+    return wins / Math.max(1, selectedLibraryInfluencedRows.length);
+  }, [selectedLibraryInfluencedRows]);
+
   const hdbClustersById = useMemo(() => {
     const out = new Map<number, any>();
     const clusters: any[] = ((hdbOverlay as any)?.clusters as any[]) || [];
@@ -17114,6 +17240,7 @@ function ClusterMapInner({
         if (n) {
           const lines = [];
           const kind = String((n as any).kind ?? "").toLowerCase();
+          const isLibraryNode = kind === "library";
           const wantsNeighborConfidence =
             aiMethod !== "hdbscan" &&
             kind !== "potential" &&
@@ -17148,15 +17275,6 @@ function ClusterMapInner({
               }`
             );
             lines.push(`ID: ${displayIdForNode(n)}`);
-            if (aiMethod !== "hdbscan") {
-              if (
-                typeof displayGate === "number" &&
-                Number.isFinite(displayGate)
-              ) {
-                lines.push(`Gate: ${Math.round(displayGate * 100)}%`);
-              }
-            }
-
             if (aiMethod === "hdbscan") {
               const info = hdbInfo(n);
               const wr = info?.wr ?? 0.01;
@@ -17224,12 +17342,6 @@ function ClusterMapInner({
                 if (mods) lines.push(`Domains: ${mods}`);
               } else {
                 if (
-                  typeof displayGate === "number" &&
-                  Number.isFinite(displayGate)
-                ) {
-                  lines.push(`Gate: ${Math.round(displayGate * 100)}%`);
-                }
-                if (
                   displayConf != null &&
                   Number.isFinite(Number(displayConf))
                 ) {
@@ -17239,7 +17351,9 @@ function ClusterMapInner({
                 }
               }
             }
-            if (n.closestCluster) lines.push(`Closest: ${n.closestCluster}`);
+            if (!isLibraryNode && n.closestCluster) {
+              lines.push(`Closest: ${n.closestCluster}`);
+            }
             const mitUid = resolvePrimaryNeighborRawId(n);
             if (mitUid)
               lines.push(
@@ -19673,7 +19787,11 @@ function ClusterMapInner({
                   </div>
 
                   <div style={{ opacity: 0.65 }}>
-                    {aiMethod === "hdbscan" ? "Cluster Win Rate" : "Confidence"}
+                    {aiMethod === "hdbscan"
+                      ? "Cluster Win Rate"
+                      : isSelectedLib
+                      ? "Contribution"
+                      : "Confidence"}
                   </div>
                   <div
                     style={{ fontWeight: 900, color: "rgba(120,190,255,0.92)" }}
@@ -19689,6 +19807,14 @@ function ClusterMapInner({
                           ? `${pct}% (HD #${cid})`
                           : `${pct}%`;
                       }
+                      if (isSelectedLib && selectedLibraryContribution == null) {
+                        return "-";
+                      }
+                      if (isSelectedLib) {
+                        return selectedLibraryContribution == null
+                          ? "â€”"
+                          : `${Math.round(selectedLibraryContribution * 100)}%`;
+                      }
                       const v = resolveNonHdbConfidence(
                         selectedAiSnapshotSource ?? selectedNode
                       );
@@ -19696,9 +19822,11 @@ function ClusterMapInner({
                     })()}
                   </div>
 
-                  <div style={{ opacity: 0.65 }}>
+                  {!(isSelectedLib && aiMethod !== "hdbscan") ? (
+                    <>
+                      <div style={{ opacity: 0.65 }}>
                     {aiMethod === "hdbscan" ? "Cluster Group" : "MIT ID"}
-                  </div>
+                      </div>
                   <div
                     style={{
                       ...mono(),
@@ -19751,6 +19879,8 @@ function ClusterMapInner({
                         : displayIdFromRaw(rawMitId);
                     })()}
                   </div>
+                    </>
+                  ) : null}
 
                   <div style={{ opacity: 0.65 }}>Exit Method</div>
                   <div style={{ fontWeight: 950, color: exitColor }}>
@@ -19787,25 +19917,33 @@ function ClusterMapInner({
                       letterSpacing: "0.02em",
                       color: "rgba(255,255,255,0.70)",
                     }}
-                  >
-                    <div>
-                      {aiMethod === "hdbscan"
-                        ? "Cluster Group Members"
-                        : "Nearest Neighbors"}
+                    >
+                      <div>
+                        {aiMethod === "hdbscan"
+                          ? "Cluster Group Members"
+                          : isSelectedLib
+                          ? "Neighbors Influenced"
+                          : "Nearest Neighbors"}
+                      </div>
+                      <div style={{ ...mono(), opacity: 0.7 }}>
+                        {aiMethod === "hdbscan" || isSelectedLib ? "n=" : "k="}
+                        {aiMethod === "hdbscan"
+                          ? selectedHdbGroupMembers.length
+                          : isSelectedLib
+                          ? selectedLibraryInfluencedRows.length
+                          : selectedNeighborCap || selectedNeighborList.length || 0}
+                      </div>
                     </div>
-                    <div style={{ ...mono(), opacity: 0.7 }}>
-                      {aiMethod === "hdbscan" ? "n=" : "k="}
-                      {aiMethod === "hdbscan"
-                        ? selectedHdbGroupMembers.length
-                        : isSelectedLib
-                        ? 0
-                        : selectedNeighborCap || selectedNeighborList.length || 0}
-                    </div>
-                  </div>
                   {aiMethod === "hdbscan"
                     ? renderHdbGroupMemberList(
                         selectedHdbGroupMembers,
                         "This point is not inside any HDBSCAN group.",
+                        160
+                      )
+                    : isSelectedLib
+                    ? renderHdbGroupMemberList(
+                        selectedLibraryInfluencedRows,
+                        "No influenced live trades available.",
                         160
                       )
                     : (
