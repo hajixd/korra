@@ -32976,54 +32976,6 @@ export default function App() {
                 }}
               >
                 <div>
-                  <div style={ui.label}>AI Confidence Threshold</div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    step={1}
-                    value={effectiveConfidenceThreshold}
-                    onChange={(e) => {
-                      const v = clamp(Number(e.target.value) || 0, 0, 100);
-                      setConfidenceThreshold(v);
-                    }}
-                    className="theme-slider"
-                    style={{ ...sliderVars(effectiveConfidenceThreshold, 0, 100) }}
-                  />
-                  <div style={{ ...ui.tiny, marginTop: 4 }}>
-                    {effectiveConfidenceThreshold}
-                  </div>
-                </div>
-
-                <div style={{ height: 8 }} />
-
-                <div>
-                  <div style={ui.label}>ANC Confidence Threshold</div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    step={1}
-                    value={effectiveAncConfidenceThreshold}
-                    onChange={(e) => {
-                      const v = clamp(Number(e.target.value) || 0, 0, 100);
-                      setAncConfidenceThreshold(v);
-                    }}
-                    className="theme-slider"
-                    style={{
-                      ...sliderVars(effectiveAncConfidenceThreshold, 0, 100),
-                    }}
-                  />
-                  <div style={{ ...ui.tiny, marginTop: 4 }}>
-                    {effectiveAncConfidenceThreshold === 0
-                      ? "0 (OFF)"
-                      : effectiveAncConfidenceThreshold}
-                  </div>
-                </div>
-
-                <div style={{ height: 8 }} />
-
-                <div>
                   <div style={ui.label}>AI Exit Strictness</div>
                   <input
                     type="range"
@@ -33303,6 +33255,68 @@ export default function App() {
                   pointerEvents: aiAllOff ? "none" : "auto",
                 }}
               >
+                <div
+                  style={{
+                    opacity: confidenceGateDisabled ? 0.45 : 1,
+                    pointerEvents: confidenceGateDisabled ? "none" : "auto",
+                    marginBottom: 10,
+                  }}
+                >
+                  <div style={{ ...ui.label, marginBottom: 8 }}>
+                    Confidence Thresholds
+                  </div>
+
+                  <div>
+                    <div style={ui.label}>AI Confidence Threshold</div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={effectiveConfidenceThreshold}
+                      onChange={(e) => {
+                        const v = clamp(Number(e.target.value) || 0, 0, 100);
+                        setConfidenceThreshold(v);
+                      }}
+                      className="theme-slider"
+                      style={{
+                        ...sliderVars(effectiveConfidenceThreshold, 0, 100),
+                      }}
+                    />
+                    <div style={{ ...ui.tiny, marginTop: 4 }}>
+                      {effectiveConfidenceThreshold}
+                    </div>
+                  </div>
+
+                  <div style={{ height: 8 }} />
+
+                  <div>
+                    <div style={ui.label}>ANC Confidence Threshold</div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={effectiveAncConfidenceThreshold}
+                      onChange={(e) => {
+                        const v = clamp(Number(e.target.value) || 0, 0, 100);
+                        setAncConfidenceThreshold(v);
+                      }}
+                      className="theme-slider"
+                      style={{
+                        ...sliderVars(effectiveAncConfidenceThreshold, 0, 100),
+                      }}
+                    />
+                    <div style={{ ...ui.tiny, marginTop: 4 }}>
+                      {effectiveAncConfidenceThreshold === 0
+                        ? "0 (OFF)"
+                        : effectiveAncConfidenceThreshold}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ height: 8 }} />
+
                 <div style={{ ...ui.label, marginBottom: 8 }}>Embedding</div>
 
                 <div style={ui.row2}>
