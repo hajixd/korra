@@ -111,6 +111,7 @@ export const AIZIP_COMPUTE_WORKER_CODE = String.raw`
   let KNN_NEIGHBOR_SPACE = "post";
   let DIST_METRIC = "euclidean";
   let LIB_VAR = {};
+  const STANDARDIZED_DIM_STD_TARGET = 50;
 
   // Dimension weighting (applied in raw space, pre-compression)
   let DIM_WEIGHT_MODE = "uniform"; // "uniform" | "proportional"
@@ -511,7 +512,7 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
     lib.__zN = 0;
   }
 
-  // Standardize dimensions (z-score): mean 0, std 1 per dimension, computed from the library.
+  // Standardize dimensions (z-score): mean 0, std 50 per dimension, computed from the library.
   // We store per-model stats so queries can be standardized the same way.
   const LIB_Z = {}; // modelKey -> { mean: number[], std: number[] }
 
@@ -549,10 +550,11 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
     }
     LIB_Z[modelKey] = { mean: meanArr, std: stdArr };
 
-    // In standardized space, per-dimension variance is ~1. Keep Mahalanobis stable.
-    const ones = new Array(dim);
-    for(let i=0;i<dim;i++) ones[i] = 1;
-    LIB_VAR[modelKey] = ones;
+    // In standardized space, per-dimension variance is ~target^2. Keep Mahalanobis stable.
+    const standardizedVar = STANDARDIZED_DIM_STD_TARGET * STANDARDIZED_DIM_STD_TARGET;
+    const vars = new Array(dim);
+    for(let i=0;i<dim;i++) vars[i] = standardizedVar;
+    LIB_VAR[modelKey] = vars;
   }
 
   function standardizeVector(modelKey, vec){
@@ -563,7 +565,7 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
     for(let i=0;i<dim;i++){
       const x = (vec && Number.isFinite(vec[i])) ? vec[i] : 0;
       const sd = z.std[i] || 1;
-      out[i] = (x - z.mean[i]) / sd;
+      out[i] = ((x - z.mean[i]) / sd) * STANDARDIZED_DIM_STD_TARGET;
     }
     return out;
   }
@@ -1467,7 +1469,7 @@ function buildHdbCache(usable, phase, modelKey, datasetKey){
     const zv = new Array(d);
     for(let j=0;j<d;j++){
       const x = Number.isFinite(v[j]) ? v[j] : 0;
-      zv[j] = (x - mean[j]) / std[j];
+      zv[j] = ((x - mean[j]) / std[j]) * STANDARDIZED_DIM_STD_TARGET;
     }
     z.push(zv);
   }
@@ -1723,7 +1725,7 @@ function hdbscanMargin(points, q, phase, dirFilter, excludeTime, modelKey, qMeta
   const qz = new Array(d);
   for(let j=0;j<d;j++){
     const x = (qStd && Number.isFinite(qStd[j])) ? qStd[j] : 0;
-    qz[j] = (x - cache.mean[j]) / cache.std[j];
+    qz[j] = ((x - cache.mean[j]) / cache.std[j]) * STANDARDIZED_DIM_STD_TARGET;
   }
 
   // Assign query to a cluster (or -1 = noise)
