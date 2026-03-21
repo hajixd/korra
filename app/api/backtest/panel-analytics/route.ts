@@ -1000,10 +1000,10 @@ const cloneEntryNeighbors = (value: unknown): BacktestEntryNeighbor[] => {
       metaTime: Number.isFinite(metaTime) ? metaTime : null,
       metaPnl: Number.isFinite(metaPnl) ? metaPnl : null,
       metaOutcome:
-        tradeRef?.result != null
-          ? String(tradeRef.result)
-          : row.metaOutcome != null
-            ? String(row.metaOutcome)
+        row.metaOutcome != null
+          ? String(row.metaOutcome)
+          : tradeRef?.result != null
+            ? String(tradeRef.result)
             : null,
       metaSession:
         tradeRef?.session != null
@@ -1198,7 +1198,7 @@ const buildEntryNeighbor = (
     metaUid: candidate.uid,
     metaTime: candidate.entryTime,
     metaPnl: candidate.pnlUsd,
-    metaOutcome: candidate.result,
+    metaOutcome: label === 1 ? "Win" : label === -1 ? "Loss" : candidate.result,
     metaSession: candidate.session,
     dir,
     label,

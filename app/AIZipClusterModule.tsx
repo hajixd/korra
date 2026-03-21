@@ -20,6 +20,11 @@ import {
   AI_LIBRARY_MAX_SAMPLES,
 } from "../lib/aiLibrarySettings";
 import {
+  labelForAIZipNeighborVoteOutcome,
+  resolveAIZipNeighborVoteOutcome,
+  toneForAIZipNeighborVoteOutcome,
+} from "../lib/aizipNeighborOutcome";
+import {
   ComposedChart,
   CartesianGrid,
   Line,
@@ -15458,40 +15463,10 @@ function ClusterMapInner({
               return Number.isFinite(v) ? v : null;
             })();
 
-            const outcomeStr = String(
-              (nb as any)?.metaOutcome ??
-                (nb as any)?.outcome ??
-                (nb as any)?.result ??
-                (nb as any)?.metaResult ??
-                ""
-            ).toUpperCase();
-            const labelRaw = Number(
-              (nb as any)?.label ??
-                (nb as any)?.metaLabel ??
-                (nb as any)?.outcomeLabel ??
-                (nb as any)?.metaOutcomeLabel ??
-                NaN
-            );
-            const label = Number.isFinite(labelRaw) ? labelRaw : null;
-            const hasOutcomeSignal =
-              !!outcomeStr ||
-              label != null ||
-              (pnlVal != null && Number.isFinite(pnlVal));
-            const isWinFromPayload =
-              outcomeStr === "TP" ||
-              outcomeStr === "WIN" ||
-              outcomeStr.includes("WIN") ||
-              label === 1 ||
-              (pnlVal != null && pnlVal >= 0);
-            const isLossFromPayload =
-              outcomeStr === "SL" ||
-              outcomeStr === "LOSS" ||
-              outcomeStr.includes("LOSS") ||
-              label === -1 ||
-              (pnlVal != null && pnlVal < 0);
-            const isWin = hasOutcomeSignal ? isWinFromPayload : false;
-            const isLoss = hasOutcomeSignal ? isLossFromPayload : false;
-            const tone = isWin ? "green" : isLoss ? "red" : "neutral";
+            const voteOutcome = resolveAIZipNeighborVoteOutcome(nb);
+            const isWin = voteOutcome === "win";
+            const isLoss = voteOutcome === "loss";
+            const tone = toneForAIZipNeighborVoteOutcome(voteOutcome);
 
             const d0 = Number((nb as any)?.d);
             const dist = Number.isFinite(d0) ? d0 : Infinity;
@@ -24498,56 +24473,9 @@ export default function App() {
       for (const nb of ordered as any[]) {
         if (!nb) continue;
 
-        const outcomeStr = String(
-          (nb as any)?.metaOutcome ??
-            (nb as any)?.outcome ??
-            (nb as any)?.result ??
-            (nb as any)?.metaResult ??
-            ""
-        ).toUpperCase();
-        const labelRaw = Number(
-          (nb as any)?.label ??
-            (nb as any)?.metaLabel ??
-            (nb as any)?.outcomeLabel ??
-            (nb as any)?.metaOutcomeLabel ??
-            (nb as any)?.t?.label ??
-            NaN
-        );
-        const label = Number.isFinite(labelRaw) ? labelRaw : null;
-        const pnlRaw =
-          (nb as any)?.metaPnl ??
-          (nb as any)?.pnl ??
-          (nb as any)?.profit ??
-          (nb as any)?.netPnl ??
-          (nb as any)?.pnlUsd ??
-          (nb as any)?.t?.pnl ??
-          (nb as any)?.t?.unrealizedPnl ??
-          null;
-        const pnlVal =
-          pnlRaw == null || pnlRaw === "" ? NaN : Number(pnlRaw);
-
-        const hasOutcomeSignal =
-          !!outcomeStr ||
-          label != null ||
-          (Number.isFinite(pnlVal) ? true : false);
-        const isWinFromPayload =
-          outcomeStr === "TP" ||
-          outcomeStr === "WIN" ||
-          outcomeStr.includes("WIN") ||
-          label === 1 ||
-          (Number.isFinite(pnlVal) && pnlVal >= 0);
-        const isLossFromPayload =
-          outcomeStr === "SL" ||
-          outcomeStr === "LOSS" ||
-          outcomeStr.includes("LOSS") ||
-          label === -1 ||
-          (Number.isFinite(pnlVal) && pnlVal < 0);
-        const nodeWin =
-          typeof (nb as any)?.t?.win === "boolean"
-            ? (nb as any).t.win
-            : null;
-        const isWin = hasOutcomeSignal ? isWinFromPayload : nodeWin === true;
-        const isLoss = hasOutcomeSignal ? isLossFromPayload : nodeWin === false;
+        const voteOutcome = resolveAIZipNeighborVoteOutcome(nb);
+        const isWin = voteOutcome === "win";
+        const isLoss = voteOutcome === "loss";
         if (!isWin && !isLoss) continue;
 
         if (isWin) win += 1;
@@ -29199,19 +29127,12 @@ export default function App() {
               return Number.isFinite(v) ? v : null;
             })();
 
-            const label = Number(
-              nbAny.label ?? nbAny.metaLabel ?? tr.label ?? NaN
-            );
-            const outcomeStr = String(
-              nbAny.metaOutcome ?? tr.result ?? ""
-            ).toUpperCase();
-
             const isWin =
-              outcomeStr === "TP" ||
-              outcomeStr === "WIN" ||
-              outcomeStr.includes("WIN") ||
-              label === 1 ||
-              (pnlVal != null && pnlVal >= 0);
+              resolveAIZipNeighborVoteOutcome({
+                ...nbAny,
+                metaPnl: pnlVal,
+                t: tr,
+              }) === "win";
 
             if (!isWin) continue;
 
@@ -29968,23 +29889,16 @@ export default function App() {
                                   return Number.isFinite(v) ? v : null;
                                 })();
 
-                                const outcomeRaw = String(
-                                  nbAny.metaOutcome ??
-                                    tr.result ??
-                                    (nbAny.label === 1
-                                      ? "Win"
-                                      : nbAny.label === -1
-                                      ? "Loss"
-                                      : "")
-                                ).toUpperCase();
-
+                                const voteOutcome =
+                                  resolveAIZipNeighborVoteOutcome({
+                                    ...nbAny,
+                                    metaPnl: pnlVal,
+                                    t: tr,
+                                  });
                                 const outcome =
-                                  outcomeRaw ||
-                                  (pnlVal != null
-                                    ? pnlVal >= 0
-                                      ? "WIN"
-                                      : "LOSS"
-                                    : "-");
+                                  labelForAIZipNeighborVoteOutcome(
+                                    voteOutcome
+                                  );
 
                                 const suppressed = !!(
                                   nbAny.metaSuppressed ?? tr.suppressed
@@ -30000,11 +29914,7 @@ export default function App() {
                                     : null;
 
                                 const toneOutcome =
-                                  outcome === "TP" || outcome === "WIN"
-                                    ? "green"
-                                    : outcome === "SL" || outcome === "LOSS"
-                                    ? "red"
-                                    : "neutral";
+                                  toneForAIZipNeighborVoteOutcome(voteOutcome);
 
                                 const rowBorder =
                                   toneOutcome === "green"

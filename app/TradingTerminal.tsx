@@ -637,10 +637,10 @@ const cloneTradeEntryNeighbors = (value: unknown): BacktestEntryNeighbor[] => {
       metaTime: Number.isFinite(metaTime) ? metaTime : null,
       metaPnl: Number.isFinite(metaPnl) ? metaPnl : null,
       metaOutcome:
-        rawTradeRef?.result != null
-          ? String(rawTradeRef.result)
-          : row.metaOutcome != null
-            ? String(row.metaOutcome)
+        row.metaOutcome != null
+          ? String(row.metaOutcome)
+          : rawTradeRef?.result != null
+            ? String(rawTradeRef.result)
             : null,
       metaSession:
         rawTradeRef?.session != null

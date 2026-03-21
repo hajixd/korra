@@ -694,6 +694,62 @@ test("panel analytics honors selected AI domains when filtering neighbors", asyn
   assertApprox(Number(stampedTrade.entryConfidence), 1);
 });
 
+test("panel analytics stamps remapped opposite-direction neighbors as effective losses", async () => {
+  const trades = [
+    makeTrade({
+      id: "live-1",
+      entryIso: "2025-03-01T00:00:00Z",
+      exitIso: "2025-03-01T01:00:00Z",
+      side: "Long",
+    }),
+    makeTrade({
+      id: "live-2",
+      entryIso: "2025-03-01T02:00:00Z",
+      exitIso: "2025-03-01T03:00:00Z",
+      side: "Long",
+      neighborVector: [0, 0, 0, 0, 0, 0],
+    }),
+  ];
+
+  const libraryPoints = [
+    {
+      uid: "lib|base|opposite-win|0",
+      libId: "base",
+      metaTime: Math.floor(Date.parse("2025-02-28T00:00:00Z") / 1000),
+      metaPnl: 140,
+      metaOutcome: "Win",
+      metaSession: "London",
+      dir: -1,
+      label: 1,
+      v: [0, 0, 0, 0, 0, 0.01],
+    },
+  ];
+
+  const payload = await postPanelAnalytics({
+    panelSourceTrades: trades,
+    panelLibraryPoints: libraryPoints,
+    panelBacktestFilterSettings: baseFilterSettings({
+      selectedAiLibraries: ["base"],
+      selectedAiDomains: [],
+      kEntry: 1,
+      knnVoteMode: "majority",
+      remapOppositeOutcomes: true,
+    }),
+    panelConfidenceGateDisabled: true,
+    panelEffectiveConfidenceThreshold: 0,
+    aiLibraryDefaultsById: {
+      base: { weight: 100, maxSamples: 1000 },
+    },
+  });
+
+  const stampedTrade = payload.timeFilteredTrades[1];
+  assert.ok(stampedTrade, "expected a second stamped trade");
+  assert.equal(stampedTrade.closestClusterUid, "lib|base|opposite-win|0");
+  assert.equal(stampedTrade.entryNeighbors[0]?.label, -1);
+  assert.equal(stampedTrade.entryNeighbors[0]?.metaOutcome, "Loss");
+  assertApprox(Number(stampedTrade.entryConfidence), 0);
+});
+
 test("base seeding neighbors still populate when Model domain is selected", async () => {
   const trades = [
     makeTrade({
