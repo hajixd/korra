@@ -22610,7 +22610,7 @@ function TradingTerminalWorkspace({
                     <div className="tab-view">
                       <div className="watchlist-head">
                         <div>
-                          <h2>XAUUSD</h2>
+                          <h2 className="watchlist-symbol-title">XAUUSD</h2>
                           <p>ClickHouse history + market live feed</p>
                         </div>
                       </div>

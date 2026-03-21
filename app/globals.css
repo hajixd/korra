@@ -5828,6 +5828,10 @@ body.mobile-terminal-viewport-lock {
   font-weight: 600;
 }
 
+.watchlist-symbol-title {
+  font-size: 0.72rem;
+}
+
 .watchlist-head p {
   margin: 0.16rem 0 0;
   color: var(--text-dim);
