@@ -24,6 +24,7 @@ import {
   resolveAIZipNeighborVoteOutcome,
   toneForAIZipNeighborVoteOutcome,
 } from "../lib/aizipNeighborOutcome";
+import { isTradeCheatedByFutureDependency } from "../lib/aiTradeCheating";
 import {
   ComposedChart,
   CartesianGrid,
@@ -15484,6 +15485,19 @@ function ClusterMapInner({
     [selectedNode, selectedSourceTrade]
   );
 
+  const selectedTradeCheated = useMemo(() => {
+    if (!selectedNode) return null;
+
+    const kind = String((selectedNode as any)?.kind || "").toLowerCase();
+    if (kind !== "trade") {
+      return null;
+    }
+
+    return isTradeCheatedByFutureDependency(
+      (selectedAiSnapshotSource as any) ?? (selectedNode as any)
+    );
+  }, [selectedAiSnapshotSource, selectedNode]);
+
   const selectedNeighborList = useMemo(
     () => buildNeighborListForNode(selectedAiSnapshotSource),
     [buildNeighborListForNode, selectedAiSnapshotSource]
@@ -19775,6 +19789,22 @@ function ClusterMapInner({
                       {displayIdForNode(selectedNode as any)}
                     </div>
                   </div>
+
+                  {selectedTradeCheated != null ? (
+                    <>
+                      <div style={{ opacity: 0.65 }}>Cheated</div>
+                      <div
+                        style={{
+                          fontWeight: 900,
+                          color: selectedTradeCheated
+                            ? "rgba(239,68,68,0.96)"
+                            : "rgba(255,255,255,0.90)",
+                        }}
+                      >
+                        {selectedTradeCheated ? "Yes" : "No"}
+                      </div>
+                    </>
+                  ) : null}
 
                   <div style={{ opacity: 0.65 }}>Kind</div>
                   <div style={{ fontWeight: 900, color: th.accent }}>

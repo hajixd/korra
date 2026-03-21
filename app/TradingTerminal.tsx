@@ -85,6 +85,7 @@ import {
   getTradeWeekKey as getBacktestStatsTradeWeekKey,
   summarizeBacktestTrades as summarizeBacktestTradesShared
 } from "../lib/backtestStats";
+import { isTradeCheatedByFutureDependency } from "../lib/aiTradeCheating";
 import {
   firebaseClientConfigReady,
   firebaseClientMissingEnvVars,
@@ -705,47 +706,6 @@ const cloneTradeEntryNeighbors = (value: unknown): BacktestEntryNeighbor[] => {
   }
 
   return out;
-};
-
-const normalizeTradeTimestampSeconds = (value: unknown): number | null => {
-  const numeric = Number(value);
-
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    return null;
-  }
-
-  return numeric > 1_000_000_000_000 ? Math.floor(numeric / 1000) : numeric;
-};
-
-const resolveEntryNeighborTimestampSeconds = (
-  neighbor: BacktestEntryNeighbor | null | undefined
-): number | null => {
-  if (!neighbor) {
-    return null;
-  }
-
-  return normalizeTradeTimestampSeconds(neighbor.metaTime ?? neighbor.t?.entryTime ?? null);
-};
-
-const isTradeCheatedByFutureDependency = (
-  trade: Pick<HistoryItem, "entryTime" | "entryNeighbors">
-): boolean => {
-  const tradeEntryTime = normalizeTradeTimestampSeconds(trade.entryTime);
-  if (tradeEntryTime == null) {
-    return false;
-  }
-
-  const neighbors = Array.isArray(trade.entryNeighbors) ? trade.entryNeighbors : [];
-
-  // Saved entry neighbors are the persisted dependency list for accepted trades.
-  for (const neighbor of neighbors) {
-    const neighborEntryTime = resolveEntryNeighborTimestampSeconds(neighbor);
-    if (neighborEntryTime != null && neighborEntryTime > tradeEntryTime) {
-      return true;
-    }
-  }
-
-  return false;
 };
 
 const toServerTradePayload = (trade: HistoryItem): ServerTradePayload => ({
@@ -19848,6 +19808,18 @@ function TradingTerminalWorkspace({
     }
 
     const query = backtestHistoryQuery.trim().toLowerCase();
+    const requireCheated =
+      /\b(?:not[\s-]?cheated|uncheated|clean)\b/.test(query)
+        ? false
+        : /\b(?:cheated|cheat)\b/.test(query)
+          ? true
+          : null;
+    const normalizedQuery = query
+      .replace(/\b(?:not[\s-]?cheated|uncheated|clean)\b/g, " ")
+      .replace(/\b(?:cheated|cheat)\b/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const searchTokens = normalizedQuery ? normalizedQuery.split(" ") : [];
 
     if (!query) {
       return [...deferredBacktestAnalyticsTrades].sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
@@ -19855,6 +19827,11 @@ function TradingTerminalWorkspace({
 
     return [...deferredBacktestAnalyticsTrades]
       .filter((trade) => {
+        const cheated = isTradeCheatedByFutureDependency(trade);
+        if (requireCheated != null && cheated !== requireCheated) {
+          return false;
+        }
+
         const haystack = [
           trade.id,
           getAiZipTradeDisplayId(trade),
@@ -19868,12 +19845,18 @@ function TradingTerminalWorkspace({
           getHistoryTradeEntryLabel(trade),
           getHistoryTradeExitLabel(trade),
           formatSignedUsd(trade.pnlUsd),
-          formatSignedPercent(trade.pnlPct)
+          formatSignedPercent(trade.pnlPct),
+          cheated ? "yes" : "no",
+          cheated ? "future-data" : "clean-trade"
         ]
           .join(" ")
           .toLowerCase();
 
-        return haystack.includes(query);
+        if (searchTokens.length === 0) {
+          return true;
+        }
+
+        return searchTokens.every((token) => haystack.includes(token));
       })
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
   }, [backtestHistoryQuery, deferredBacktestAnalyticsTrades, isHistoryBacktestTabActive]);
@@ -24800,7 +24783,7 @@ function TradingTerminalWorkspace({
                             type="search"
                             value={backtestHistoryQuery}
                             onChange={(event) => setBacktestHistoryQuery(event.target.value)}
-                            placeholder="Search trades (ID, model, session, direction, dates...)"
+                            placeholder="Search trades (ID, model, cheated, session, dates...)"
                             aria-label="search trading history"
                             style={{
                               flex: 1,
@@ -24952,6 +24935,7 @@ function TradingTerminalWorkspace({
                                 <th style={aiZipBacktestHistoryHeadCell}>Exit</th>
                                 <th style={aiZipBacktestHistoryHeadCell}>Duration</th>
                                 <th style={aiZipBacktestHistoryHeadCell}>Exit By</th>
+                                <th style={aiZipBacktestHistoryHeadCell}>Cheated</th>
                                 <th style={aiZipBacktestHistoryHeadCell}>PnL ($)</th>
                                 <th style={aiZipBacktestHistoryHeadCell}>Confidence</th>
                               </tr>
@@ -24960,7 +24944,7 @@ function TradingTerminalWorkspace({
                               {pagedBacktestHistory.length === 0 ? (
                                 <tr>
                                   <td
-                                    colSpan={11}
+                                    colSpan={12}
                                     style={{
                                       padding: 10,
                                       textAlign: "center",
@@ -24986,6 +24970,10 @@ function TradingTerminalWorkspace({
                                   const pnlColor = pnlPositive
                                     ? "rgba(60,220,120,0.95)"
                                     : "rgba(230,80,80,0.95)";
+                                  const cheated = isTradeCheatedByFutureDependency(trade);
+                                  const cheatedColor = cheated
+                                    ? "rgba(239,68,68,0.96)"
+                                    : "rgba(255,255,255,0.82)";
                                   const isHovered = hoveredBacktestHistoryId === trade.id;
                                   const cell = (
                                     col: number,
@@ -25004,7 +24992,7 @@ function TradingTerminalWorkspace({
                                         ? `1px solid ${outlineColor}`
                                         : undefined,
                                     borderRight:
-                                      isHovered && col === 10
+                                      isHovered && col === 11
                                         ? `1px solid ${outlineColor}`
                                         : undefined
                                   });
@@ -25064,6 +25052,14 @@ function TradingTerminalWorkspace({
                                       <td style={cell(8)}>{getBacktestExitLabel(trade)}</td>
                                       <td
                                         style={cell(9, {
+                                          color: cheatedColor,
+                                          fontWeight: 800
+                                        })}
+                                      >
+                                        {cheated ? "Yes" : "No"}
+                                      </td>
+                                      <td
+                                        style={cell(10, {
                                           color: pnlColor,
                                           fontWeight: 800
                                         })}
@@ -25072,7 +25068,7 @@ function TradingTerminalWorkspace({
                                           Math.abs(trade.pnlUsd)
                                         )}`}
                                       </td>
-                                      <td style={cell(10)}>
+                                      <td style={cell(11)}>
                                         {`${Math.round(getEffectiveTradeConfidenceScore(trade) * 100)}%`}
                                       </td>
                                     </tr>
