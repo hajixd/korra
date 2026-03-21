@@ -15569,26 +15569,25 @@ function ClusterMapInner({
     [buildNeighborListForNode, selectedAiSnapshotSource]
   );
 
-  const selectedLibraryInfluencedRows = useMemo(() => {
-    if (aiMethod === "hdbscan") return [];
-    if (!selectedNode) return [];
-
-    const kind = String((selectedNode as any)?.kind || "").toLowerCase();
-    const isLib =
+  const isLibraryClusterNode = React.useCallback((node: any) => {
+    const kind = String((node as any)?.kind || "").toLowerCase();
+    return (
       kind === "library" ||
-      (selectedNode as any)?.libId != null ||
-      (selectedNode as any)?.metaLib != null ||
-      String((selectedNode as any)?.id || "").startsWith("lib|");
-    if (!isLib) return [];
+      (node as any)?.libId != null ||
+      (node as any)?.metaLib != null ||
+      String((node as any)?.id || "").startsWith("lib|")
+    );
+  }, []);
 
-    const selectedNodeId = normalizeClusterMapToken((selectedNode as any)?.id);
-    if (!selectedNodeId) return [];
+  const libraryInfluencedRowsById = useMemo(() => {
+    const rowsById = new Map<string, any[]>();
+    if (aiMethod === "hdbscan") return rowsById;
 
     const effectiveK = Math.max(
       0,
       Math.min(36, Math.floor(Number(knnLinkK) || 0))
     );
-    if (!effectiveK) return [];
+    if (!effectiveK) return rowsById;
 
     const edges = getKnnEdgesForClusterMap(
       neighborNodes as any[],
@@ -15596,23 +15595,20 @@ function ClusterMapInner({
       clusterMapView,
       { allowLegacyFallback: !entryNeighborsOnly }
     );
-    if (!Array.isArray(edges) || edges.length === 0) return [];
+    if (!Array.isArray(edges) || edges.length === 0) return rowsById;
 
-    const rows: any[] = [];
-    const seen = new Set<string>();
+    const seenByLibraryId = new Map<string, Set<string>>();
 
-    for (const edge of edges as any[]) {
-      const aId = normalizeClusterMapToken((edge as any)?.a);
-      const bId = normalizeClusterMapToken((edge as any)?.b);
-      if (!aId || !bId) continue;
+    const pushTradeRow = (libraryId: string, otherId: string, otherNode: any) => {
+      if (!libraryId || !otherId || !otherNode) return;
+      if (String((otherNode as any)?.kind || "").toLowerCase() !== "trade") return;
 
-      const otherId =
-        aId === selectedNodeId ? bId : bId === selectedNodeId ? aId : null;
-      if (!otherId || seen.has(otherId)) continue;
-
-      const otherNode = (nodeById as any).get(otherId) ?? null;
-      if (!otherNode) continue;
-      if (String((otherNode as any)?.kind || "").toLowerCase() !== "trade") continue;
+      let seen = seenByLibraryId.get(libraryId);
+      if (!seen) {
+        seen = new Set<string>();
+        seenByLibraryId.set(libraryId, seen);
+      }
+      if (seen.has(otherId)) return;
 
       const dir = Number((otherNode as any)?.dir ?? (otherNode as any)?.direction ?? 0);
       const pnlRaw =
@@ -15639,6 +15635,7 @@ function ClusterMapInner({
           NaN
       );
 
+      const rows = rowsById.get(libraryId) ?? [];
       rows.push({
         key: otherId,
         id: otherId,
@@ -15661,39 +15658,83 @@ function ClusterMapInner({
         sortIndex,
         isWin,
       });
-
+      rowsById.set(libraryId, rows);
       seen.add(otherId);
+    };
+
+    for (const edge of edges as any[]) {
+      const aId = normalizeClusterMapToken((edge as any)?.a);
+      const bId = normalizeClusterMapToken((edge as any)?.b);
+      if (!aId || !bId) continue;
+
+      const aNode = (nodeById as any).get(aId) ?? null;
+      const bNode = (nodeById as any).get(bId) ?? null;
+
+      if (aNode && isLibraryClusterNode(aNode)) pushTradeRow(aId, bId, bNode);
+      if (bNode && isLibraryClusterNode(bNode)) pushTradeRow(bId, aId, aNode);
     }
 
-    rows.sort((a, b) => {
-      const aIdx = Number(a.sortIndex);
-      const bIdx = Number(b.sortIndex);
-      if (Number.isFinite(aIdx) && Number.isFinite(bIdx) && aIdx !== bIdx) {
-        return bIdx - aIdx;
-      }
-      return String(a.displayId || "").localeCompare(String(b.displayId || ""));
-    });
+    for (const rows of rowsById.values()) {
+      rows.sort((a, b) => {
+        const aIdx = Number(a.sortIndex);
+        const bIdx = Number(b.sortIndex);
+        if (Number.isFinite(aIdx) && Number.isFinite(bIdx) && aIdx !== bIdx) {
+          return bIdx - aIdx;
+        }
+        return String(a.displayId || "").localeCompare(String(b.displayId || ""));
+      });
+    }
 
-    return rows;
+    return rowsById;
   }, [
     aiMethod,
     clusterMapView,
     entryNeighborsOnly,
+    isLibraryClusterNode,
     knnLinkK,
     neighborNodes,
     nodeById,
     parseMode,
-    selectedNode,
   ]);
 
-  const selectedLibraryContribution = useMemo(() => {
-    if (!selectedLibraryInfluencedRows.length) return null;
-    let wins = 0;
-    for (const row of selectedLibraryInfluencedRows) {
-      if ((row as any)?.isWin) wins += 1;
+  const selectedLibraryInfluencedRows = useMemo(() => {
+    if (!selectedNode || !isLibraryClusterNode(selectedNode)) return [];
+    const selectedNodeId = normalizeClusterMapToken((selectedNode as any)?.id);
+    if (!selectedNodeId) return [];
+    return libraryInfluencedRowsById.get(selectedNodeId) ?? [];
+  }, [isLibraryClusterNode, libraryInfluencedRowsById, selectedNode]);
+
+  const libraryContributionById = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const [libraryId, rows] of libraryInfluencedRowsById.entries()) {
+      let wins = 0;
+      for (const row of rows) {
+        if ((row as any)?.isWin) wins += 1;
+      }
+      out.set(libraryId, wins / Math.max(1, rows.length));
     }
-    return wins / Math.max(1, selectedLibraryInfluencedRows.length);
-  }, [selectedLibraryInfluencedRows]);
+    return out;
+  }, [libraryInfluencedRowsById]);
+
+  const libraryContributionForNode = React.useCallback(
+    (node: any) => {
+      if (!node || !isLibraryClusterNode(node)) return 0;
+      const nodeId = normalizeClusterMapToken((node as any)?.id);
+      if (!nodeId) return 0;
+      return libraryContributionById.get(nodeId) ?? 0;
+    },
+    [isLibraryClusterNode, libraryContributionById]
+  );
+
+  const formatLibraryContributionPct = React.useCallback((value: unknown) => {
+    const n = Number(value);
+    return `${Math.round((Number.isFinite(n) ? n : 0) * 100)}%`;
+  }, []);
+
+  const selectedLibraryContribution = useMemo(() => {
+    if (!selectedNode || !isLibraryClusterNode(selectedNode)) return null;
+    return libraryContributionForNode(selectedNode);
+  }, [isLibraryClusterNode, libraryContributionForNode, selectedNode]);
 
   const hdbClustersById = useMemo(() => {
     const out = new Map<number, any>();
@@ -17280,11 +17321,11 @@ function ClusterMapInner({
         if (n) {
           const lines = [];
           const kind = String((n as any).kind ?? "").toLowerCase();
-          const isLibraryNode = kind === "library";
+          const isLibraryNode = isLibraryClusterNode(n);
           const wantsNeighborConfidence =
             aiMethod !== "hdbscan" &&
             kind !== "potential" &&
-            kind !== "library";
+            !isLibraryNode;
           const displayConf = wantsNeighborConfidence
             ? resolveNonHdbConfidence(n)
             : null;
@@ -17339,7 +17380,9 @@ function ClusterMapInner({
           } else {
             const isLiveNode = kind === "close";
             const isOpenEntry = kind === "trade" && !!n.isOpen;
-            const label = isLiveNode
+            const label = isLibraryNode
+              ? "Library"
+              : isLiveNode
               ? "Live Trade"
               : isOpenEntry
               ? "Open Trade"
@@ -17357,6 +17400,13 @@ function ClusterMapInner({
               }`
             );
             lines.push(`ID: ${displayIdForNode(n)}`);
+            if (isLibraryNode && aiMethod !== "hdbscan") {
+              lines.push(
+                `Contribution: ${formatLibraryContributionPct(
+                  libraryContributionForNode(n)
+                )}`
+              );
+            }
             {
               const am = (n as any).aiMode;
               const aLab =
@@ -19846,6 +19896,11 @@ function ClusterMapInner({
                         return cid != null && Number.isFinite(cid)
                           ? `${pct}% (HD #${cid})`
                           : `${pct}%`;
+                      }
+                      if (isSelectedLib) {
+                        return formatLibraryContributionPct(
+                          selectedLibraryContribution
+                        );
                       }
                       if (isSelectedLib) {
                         return selectedLibraryContribution == null
