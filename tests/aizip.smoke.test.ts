@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { POST as panelAnalyticsPost } from "../app/api/backtest/panel-analytics/route";
+import { isTradeCheatedByFutureDependency } from "../lib/aiTradeCheating";
 
 const ALL_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const ALL_SESSIONS = ["Tokyo", "Sydney", "London", "New York"];
@@ -259,6 +260,77 @@ test("anti-cheat off keeps the full live neighbor pool available", async () => {
     "expected the unrestricted pool to include the selected or future live trade"
   );
   assert.equal(stampedTrade.closestClusterUid, firstNeighborUid);
+});
+
+test("online validation excludes future canonical library points from neighbors", async () => {
+  const trades = [
+    makeTrade({
+      id: "live-1",
+      entryIso: "2025-03-01T00:00:00Z",
+      exitIso: "2025-03-01T01:00:00Z"
+    }),
+    makeTrade({
+      id: "live-2",
+      entryIso: "2025-03-01T02:00:00Z",
+      exitIso: "2025-03-01T03:00:00Z",
+      neighborVector: [0, 0, 0, 0, 0, 0]
+    })
+  ];
+
+  const libraryPoints = [
+    {
+      uid: "lib|base|past|0",
+      libId: "base",
+      metaTime: Math.floor(Date.parse("2025-02-28T00:00:00Z") / 1000),
+      metaPnl: 100,
+      metaOutcome: "Win",
+      metaSession: "London",
+      dir: 1,
+      label: 1,
+      v: [0, 0, 0, 0, 0, 0.02]
+    },
+    {
+      uid: "lib|base|future|1",
+      libId: "base",
+      metaTime: Math.floor(Date.parse("2025-03-01T05:00:00Z") / 1000),
+      metaPnl: 100,
+      metaOutcome: "Win",
+      metaSession: "London",
+      dir: 1,
+      label: 1,
+      v: [0, 0, 0, 0, 0, 0.01]
+    }
+  ];
+
+  const payload = await postPanelAnalytics({
+    panelSourceTrades: trades,
+    panelLibraryPoints: libraryPoints,
+    panelBacktestFilterSettings: baseFilterSettings({
+      antiCheatEnabled: true,
+      validationMode: "off",
+      selectedAiLibraries: ["base"]
+    }),
+    panelConfidenceGateDisabled: true,
+    panelEffectiveConfidenceThreshold: 0,
+    aiLibraryDefaultsById: {
+      base: { weight: 100, maxSamples: 1000 }
+    }
+  });
+
+  const stampedTrade = payload.timeFilteredTrades[1];
+  assert.ok(stampedTrade, "expected an online-evaluated trade");
+  assert.ok(Array.isArray(stampedTrade.entryNeighbors) && stampedTrade.entryNeighbors.length > 0);
+
+  const neighborIds = stampedTrade.entryNeighbors
+    .map((neighbor: { metaUid?: string | null; uid?: string | null }) => (
+      neighbor?.metaUid ?? neighbor?.uid ?? null
+    ))
+    .filter((value: string | null): value is string => typeof value === "string");
+
+  assert.ok(neighborIds.includes("lib|base|past|0"));
+  assert.equal(neighborIds.includes("lib|base|future|1"), false);
+  assert.equal(stampedTrade.closestClusterUid, "lib|base|past|0");
+  assert.equal(isTradeCheatedByFutureDependency(stampedTrade), false);
 });
 
 test("canonical library points stamp MIT to nearest neighbor #1", async () => {

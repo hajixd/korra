@@ -1989,6 +1989,25 @@ const computeAntiCheatBacktestContext = (params: {
   >();
   const staticLibraryVectorSpaceById = new Map<string, StaticCandidateVectorSpace>();
   const selectedAiDomains = new Set(panelBacktestFilterSettings.selectedAiDomains);
+  const filterStaticLibrarySourceByEntryTime = (
+    source: Array<{ candidate: LibrarySourceCandidate; sourceIndex: number; libraryId: string }>,
+    cutoffEntryTime: number
+  ) => {
+    if (!Number.isFinite(cutoffEntryTime)) {
+      return source;
+    }
+
+    const filtered = source.filter(({ candidate }) => {
+      const candidateEntryTime = candidate.entryTime;
+      return (
+        candidateEntryTime != null &&
+        Number.isFinite(candidateEntryTime) &&
+        candidateEntryTime < cutoffEntryTime
+      );
+    });
+
+    return filtered.length === source.length ? source : filtered;
+  };
 
   for (const libraryId of activeLibraryIds) {
     const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
@@ -2068,8 +2087,17 @@ const computeAntiCheatBacktestContext = (params: {
         continue;
       }
 
-      const staticSource = staticLibrarySourceById.get(libraryId);
-      const staticVectorSpace = staticLibraryVectorSpaceById.get(libraryId);
+      const fullStaticSource = staticLibrarySourceById.get(libraryId);
+      const staticSource =
+        fullStaticSource != null &&
+        panelBacktestFilterSettings.antiCheatEnabled &&
+        effectiveValidationMode === "off"
+          ? filterStaticLibrarySourceByEntryTime(fullStaticSource, Number(trade.entryTime))
+          : fullStaticSource;
+      const staticVectorSpace =
+        staticSource != null && staticSource === fullStaticSource
+          ? staticLibraryVectorSpaceById.get(libraryId)
+          : undefined;
       const source = staticSource ?? pickLibrarySource(libraryId, basePool, trade);
       if (source.length === 0) {
         continue;
