@@ -12,7 +12,7 @@ import {
   usesAizipEveryCandleMode
 } from "../app/aizipRuntime";
 
-test("base seeding libraries can run without selected models", () => {
+test("selected libraries can run without selected models", () => {
   assert.equal(
     canRunAizipLibraries({
       libraryIds: ["base"],
@@ -25,11 +25,11 @@ test("base seeding libraries can run without selected models", () => {
       libraryIds: ["recent"],
       selectedModelCount: 0
     }),
-    false
+    true
   );
 });
 
-test("library readiness is derived from the applied model snapshot", () => {
+test("library readiness follows the selected library set", () => {
   assert.equal(
     canRunAizipLibrariesForSettings({
       libraryIds: ["recent"],
@@ -48,7 +48,7 @@ test("library readiness is derived from the applied model snapshot", () => {
         Reversal: 0
       }
     }),
-    false
+    true
   );
   assert.equal(
     canRunAizipLibrariesForSettings({
