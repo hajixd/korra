@@ -15687,12 +15687,12 @@ function ClusterMapInner({
   ]);
 
   const selectedLibraryContribution = useMemo(() => {
-    if (!selectedLibraryInfluencedRows.length) return null;
+    if (!selectedLibraryInfluencedRows.length) return 0;
     let wins = 0;
     for (const row of selectedLibraryInfluencedRows) {
       if ((row as any)?.isWin) wins += 1;
     }
-    return wins / Math.max(1, selectedLibraryInfluencedRows.length);
+    return wins / selectedLibraryInfluencedRows.length;
   }, [selectedLibraryInfluencedRows]);
 
   const hdbClustersById = useMemo(() => {
