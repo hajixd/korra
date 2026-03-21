@@ -31045,17 +31045,9 @@ export default function App() {
                               typeof f.max === "number" ? f.max : undefined;
                             let step0 = typeof f.step === "number" ? f.step : 1;
 
-                            // Amount of Samples: cap used for this library (we also show the max available loaded samples)
+                            // Amount of Samples: user-requested cap for this library.
                             if (f.key === "maxSamples") {
-                              const lid = String(def.id || "");
-                              const loadedMax = Number(
-                                ((aiLibraryCounts as any) || {})[lid] || 0
-                              );
-                              // slider max follows loaded count when known, otherwise falls back
-                              max0 =
-                                loadedMax > 0
-                                  ? Math.min(loadedMax, AI_LIBRARY_MAX_SAMPLES)
-                                  : AI_LIBRARY_MAX_SAMPLES;
+                              max0 = AI_LIBRARY_MAX_SAMPLES;
                               step0 = typeof f.step === "number" ? f.step : 1;
                             }
 
@@ -31064,6 +31056,19 @@ export default function App() {
                             const step = step0;
                             const vv = Number(v ?? 0);
                             const vNum = Number.isFinite(vv) ? vv : 0;
+                            const decimalPlaces =
+                              step != null && step > 0 && step < 1
+                                ? Math.min(4, String(step).split(".")[1]?.length ?? 0)
+                                : 0;
+                            const formattedValue = vNum.toLocaleString("en-US", {
+                              minimumFractionDigits: decimalPlaces,
+                              maximumFractionDigits: decimalPlaces,
+                            });
+                            const shouldShowGroupedValue =
+                              Number.isFinite(vNum) &&
+                              (Math.abs(vNum) >= 1000 ||
+                                Math.abs(min ?? 0) >= 1000 ||
+                                Math.abs(max ?? 0) >= 1000);
                             const canRange =
                               f.key === "maxSamples"
                                 ? true
@@ -31143,6 +31148,17 @@ export default function App() {
                                       }}
                                     >
                                       {f.help}
+                                    </div>
+                                  ) : null}
+                                  {shouldShowGroupedValue ? (
+                                    <div
+                                      style={{
+                                        fontSize: 10,
+                                        opacity: 0.68,
+                                        lineHeight: 1.35,
+                                      }}
+                                    >
+                                      Current value: {formattedValue}
                                     </div>
                                   ) : null}
                                   {f.key === AI_LIBRARY_TARGET_WIN_RATE_KEY ? (

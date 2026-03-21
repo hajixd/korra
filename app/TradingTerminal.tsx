@@ -5949,6 +5949,54 @@ const getUtcDayEndExclusiveMsFromYmd = (ymd: string): number | null => {
   return startMs + 86_400_000;
 };
 
+const getUtcDayKeyFromTimestampMs = (timestampMs: number): string => {
+  if (!Number.isFinite(timestampMs)) {
+    return "";
+  }
+
+  return new Date(timestampMs).toISOString().slice(0, 10);
+};
+
+const getLatestAvailableCandleStartMs = (
+  timeframe: Timeframe,
+  referenceTimeMs = Date.now()
+): number => {
+  const stepMs = Math.max(60_000, getTimeframeMs(timeframe));
+  let cursorMs = floorToTimeframe(referenceTimeMs, timeframe);
+  const cutoffMs = referenceTimeMs - 7 * 86_400_000;
+
+  while (cursorMs > cutoffMs && !isXauTradingTime(cursorMs)) {
+    cursorMs -= stepMs;
+  }
+
+  return cursorMs;
+};
+
+const getEffectiveUtcDayEndExclusiveMsFromYmd = (
+  ymd: string,
+  timeframe: Timeframe,
+  referenceTimeMs = Date.now()
+): number | null => {
+  const requestedEndExclusiveMs = getUtcDayEndExclusiveMsFromYmd(ymd);
+  if (requestedEndExclusiveMs === null) {
+    return null;
+  }
+
+  const currentUtcDayKey = getUtcDayKeyFromTimestampMs(referenceTimeMs);
+  if (!currentUtcDayKey || ymd < currentUtcDayKey) {
+    return requestedEndExclusiveMs;
+  }
+
+  const latestAvailableCandleStartMs = getLatestAvailableCandleStartMs(
+    timeframe,
+    referenceTimeMs
+  );
+  return Math.min(
+    requestedEndExclusiveMs,
+    latestAvailableCandleStartMs + Math.max(60_000, getTimeframeMs(timeframe))
+  );
+};
+
 const buildHistoryApiRequestWindow = (params: {
   timeframe: Timeframe;
   startYmd: string;
@@ -5957,7 +6005,7 @@ const buildHistoryApiRequestWindow = (params: {
 }) => {
   const { timeframe, startYmd, endYmd, leadingBars = 0 } = params;
   const startMs = getUtcDayStartMsFromYmd(startYmd);
-  const endExclusiveMs = getUtcDayEndExclusiveMsFromYmd(endYmd);
+  const endExclusiveMs = getEffectiveUtcDayEndExclusiveMsFromYmd(endYmd, timeframe);
 
   if (startMs === null || endExclusiveMs === null || endExclusiveMs <= startMs) {
     return null;
@@ -5981,7 +6029,7 @@ const estimateHistoryBarsForDateRange = (
 ): number => {
   const fallbackBars = chartHistoryCountByTimeframe[timeframe];
   const startMs = getUtcDayStartMsFromYmd(startYmd);
-  const endExclusiveMs = getUtcDayEndExclusiveMsFromYmd(endYmd);
+  const endExclusiveMs = getEffectiveUtcDayEndExclusiveMsFromYmd(endYmd, timeframe);
 
   if (startMs === null || endExclusiveMs === null || endExclusiveMs <= startMs) {
     return fallbackBars;
@@ -6026,7 +6074,7 @@ const candlesCoverDateRange = (
   }
 
   const startMs = getUtcDayStartMsFromYmd(startYmd);
-  const endExclusiveMs = getUtcDayEndExclusiveMsFromYmd(endYmd);
+  const endExclusiveMs = getEffectiveUtcDayEndExclusiveMsFromYmd(endYmd, timeframe);
 
   if (startMs === null || endExclusiveMs === null) {
     return false;
@@ -6069,7 +6117,7 @@ const filterCandlesToDateRange = (
   leadingBars = 0
 ): Candle[] => {
   const startMs = getUtcDayStartMsFromYmd(startYmd);
-  const endExclusiveMs = getUtcDayEndExclusiveMsFromYmd(endYmd);
+  const endExclusiveMs = getEffectiveUtcDayEndExclusiveMsFromYmd(endYmd, timeframe);
 
   if (startMs === null || endExclusiveMs === null) {
     return candles;
@@ -24494,6 +24542,22 @@ function TradingTerminalWorkspace({
                                 min != null &&
                                 max != null &&
                                 (field.key === "maxSamples" || max - min <= 50000);
+                              const decimalPlaces =
+                                step > 0 && step < 1
+                                  ? Math.min(4, String(step).split(".")[1]?.length ?? 0)
+                                  : 0;
+                              const formattedDisplayedNumericValue = displayedNumericValue.toLocaleString(
+                                "en-US",
+                                {
+                                  minimumFractionDigits: decimalPlaces,
+                                  maximumFractionDigits: decimalPlaces
+                                }
+                              );
+                              const shouldShowGroupedNumericValue =
+                                Number.isFinite(displayedNumericValue) &&
+                                (Math.abs(displayedNumericValue) >= 1000 ||
+                                  Math.abs(min ?? 0) >= 1000 ||
+                                  Math.abs(max ?? 0) >= 1000);
                               const sliderPercent =
                                 min != null && max != null && max > min
                                   ? ((displayedNumericValue - min) / (max - min)) * 100
@@ -24599,6 +24663,11 @@ function TradingTerminalWorkspace({
                                   ) : null}
                                   {field.help ? (
                                     <p className="ai-zip-library-field-help">{field.help}</p>
+                                  ) : null}
+                                  {shouldShowGroupedNumericValue ? (
+                                    <p className="ai-zip-library-field-help">
+                                      Current value: {formattedDisplayedNumericValue}
+                                    </p>
                                   ) : null}
                                   {isTargetWinRateField ? (
                                     <p className="ai-zip-library-field-help">

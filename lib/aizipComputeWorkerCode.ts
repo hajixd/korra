@@ -1,4 +1,6 @@
 import {
+  AI_LIBRARY_DEFAULT_MAX_SAMPLES,
+  AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES,
   AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT,
   AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES,
   AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW,
@@ -7,6 +9,8 @@ import {
 
 export const AIZIP_COMPUTE_WORKER_CODE = String.raw`
   const AI_EPS = 1e-8;
+  const AI_LIBRARY_DEFAULT_MAX_SAMPLES = ${AI_LIBRARY_DEFAULT_MAX_SAMPLES};
+  const AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES = ${AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES};
   const AI_LIBRARY_MAX_SAMPLES = ${AI_LIBRARY_MAX_SAMPLES};
   const AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES = ${AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES};
   const AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT = ${AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT};
@@ -3635,7 +3639,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
           const strideRaw = (s && (s.stride != null)) ? Number(s.stride) : NaN;
           const stride = clamp(Math.floor(Number.isFinite(strideRaw) ? strideRaw : 0), 0, 5000);
           const strideEff = Number.isFinite(strideRaw) ? stride : seedStride;
-          const cap = libMaxSamples("base", 20000);
+          const cap = libMaxSamples("base", AI_LIBRARY_DEFAULT_MAX_SAMPLES);
           const wt = libWeight("base", 100);
 
           const ck = "base|" + modelKey + "|" + String(chunkBars) + "|" + String(tpD) + "|" + String(slD) + "|" + String(look) + "|" + String(strideEff) + "|" + parseMode + "|" + String(maxSeedIndexForSeed ?? "");
@@ -3673,7 +3677,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             const strideRaw = (s && (s.stride != null)) ? Number(s.stride) : NaN;
             const stride = clamp(Math.floor(Number.isFinite(strideRaw) ? strideRaw : 0), 0, 5000);
             const strideEff = Number.isFinite(strideRaw) ? stride : seedStride;
-            const cap = libMaxSamples(libId, 20000);
+            const cap = libMaxSamples(libId, AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES);
             const wt = libWeight(libId, 100);
 
             if (!(wt > 0)) return;
@@ -3799,7 +3803,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
         const modelLibId = slugLibraryId(modelKey);
         if (useLib(modelLibId)) {
           const wt = libWeight(modelLibId, 1);
-          const cap = libMaxSamples(modelLibId, 12000);
+          const cap = libMaxSamples(modelLibId, AI_LIBRARY_DEFAULT_MAX_SAMPLES);
           const s = libSetting(modelLibId);
           const strideRaw = (s && (s.stride != null)) ? Number(s.stride) : NaN;
           const stride = clamp(Math.floor(Number.isFinite(strideRaw) ? strideRaw : 0), 0, 5000);
@@ -3906,13 +3910,13 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             for (const p of stat) out.push(p);
 
             if (coreEnabled && onlineCore[m] && onlineCore[m].length) {
-              const capCore = libMaxSamples("core", 20000);
+              const capCore = libMaxSamples("core", AI_LIBRARY_DEFAULT_MAX_SAMPLES);
               const arrCore = getBalancedDynamicPoints("core", m, onlineCore[m], capCore, false);
               for (const p of arrCore) out.push(p);
             }
 
             if (suppressedEnabled && onlineSuppressed[m] && onlineSuppressed[m].length) {
-              const capSup = libMaxSamples("suppressed", 20000);
+              const capSup = libMaxSamples("suppressed", AI_LIBRARY_DEFAULT_MAX_SAMPLES);
               const arrSup = getBalancedDynamicPoints("suppressed", m, onlineSuppressed[m], capSup, false);
               for (const p of arrSup) out.push(p);
             }
@@ -3921,7 +3925,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
               const raw = onlineRaw[m] || [];
               const win = Math.min(recentWindowTrades, raw.length);
               const slice0 = win > 0 ? raw.slice(raw.length - win) : [];
-              const capRec = libMaxSamples("recent", 20000);
+              const capRec = libMaxSamples("recent", AI_LIBRARY_DEFAULT_MAX_SAMPLES);
               const slice = getBalancedDynamicPoints("recent", m, slice0, capRec, false);
               for (const bp of slice) {
                 // clone with recent weighting (training-only)
@@ -5437,7 +5441,7 @@ function flushSuppressedNeighbors(uptoIndex){
     try {
       for (const mk of usedModels) {
         if (coreEnabled && onlineCore[mk] && onlineCore[mk].length) {
-          const capCore = libMaxSamples("core", 20000);
+          const capCore = libMaxSamples("core", AI_LIBRARY_DEFAULT_MAX_SAMPLES);
           const arrCore = getBalancedDynamicPoints("core", mk, onlineCore[mk], capCore, false);
           if (arrCore.length) {
             libraryCounts.core = (libraryCounts.core || 0) + arrCore.length;
@@ -5446,7 +5450,7 @@ function flushSuppressedNeighbors(uptoIndex){
         }
 
         if (suppressedEnabled && onlineSuppressed[mk] && onlineSuppressed[mk].length) {
-          const capSup = libMaxSamples("suppressed", 20000);
+          const capSup = libMaxSamples("suppressed", AI_LIBRARY_DEFAULT_MAX_SAMPLES);
           const arrSup = getBalancedDynamicPoints("suppressed", mk, onlineSuppressed[mk], capSup, false);
           if (arrSup.length) {
             libraryCounts.suppressed =
@@ -5459,7 +5463,7 @@ function flushSuppressedNeighbors(uptoIndex){
           const raw = onlineRaw[mk] || [];
           const win = Math.min(recentWindowTrades, raw.length);
           const slice0 = win > 0 ? raw.slice(raw.length - win) : [];
-          const capRec = libMaxSamples("recent", 20000);
+          const capRec = libMaxSamples("recent", AI_LIBRARY_DEFAULT_MAX_SAMPLES);
           const slice = getBalancedDynamicPoints("recent", mk, slice0, capRec, false);
           if (slice.length) {
             libraryCounts.recent = (libraryCounts.recent || 0) + slice.length;
