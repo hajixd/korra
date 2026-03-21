@@ -5013,13 +5013,6 @@ body.mobile-terminal-viewport-lock {
   font-size: 12px;
 }
 
-.ai-zip-library-action.run-active {
-  width: auto;
-  min-width: 176px;
-  align-self: center;
-  padding-inline: 14px;
-}
-
 .ai-zip-library-action.compact {
   width: auto;
   min-width: 132px;

@@ -15695,6 +15695,93 @@ function ClusterMapInner({
     return wins / selectedLibraryInfluencedRows.length;
   }, [selectedLibraryInfluencedRows]);
 
+  const libraryContributionByNodeId = useMemo(() => {
+    const out = new Map<string, number>();
+    if (aiMethod === "hdbscan") return out;
+
+    const effectiveK = Math.max(
+      0,
+      Math.min(36, Math.floor(Number(knnLinkK) || 0))
+    );
+    if (!effectiveK) return out;
+
+    const edges = getKnnEdgesForClusterMap(
+      neighborNodes as any[],
+      effectiveK,
+      clusterMapView,
+      { allowLegacyFallback: !entryNeighborsOnly }
+    );
+    if (!Array.isArray(edges) || edges.length === 0) return out;
+
+    const tallies = new Map<
+      string,
+      { total: number; wins: number; seen: Set<string> }
+    >();
+
+    const addInfluencedTrade = (libraryNodeId: string, otherId: string, otherNode: any) => {
+      let tally = tallies.get(libraryNodeId);
+      if (!tally) {
+        tally = { total: 0, wins: 0, seen: new Set<string>() };
+        tallies.set(libraryNodeId, tally);
+      }
+      if (tally.seen.has(otherId)) return;
+      tally.seen.add(otherId);
+
+      const pnlRaw =
+        typeof (otherNode as any)?.unrealizedPnl === "number" &&
+        Number.isFinite((otherNode as any)?.unrealizedPnl)
+          ? Number((otherNode as any).unrealizedPnl)
+          : typeof (otherNode as any)?.pnl === "number" &&
+            Number.isFinite((otherNode as any)?.pnl)
+          ? Number((otherNode as any).pnl)
+          : typeof (otherNode as any)?.closePnl === "number" &&
+            Number.isFinite((otherNode as any).closePnl)
+          ? Number((otherNode as any).closePnl)
+          : null;
+      const isWin =
+        typeof (otherNode as any)?.win === "boolean"
+          ? !!(otherNode as any).win
+          : pnlRaw != null
+          ? pnlRaw >= 0
+          : false;
+
+      tally.total += 1;
+      if (isWin) tally.wins += 1;
+    };
+
+    for (const edge of edges as any[]) {
+      const aId = normalizeClusterMapToken((edge as any)?.a);
+      const bId = normalizeClusterMapToken((edge as any)?.b);
+      if (!aId || !bId) continue;
+
+      const aNode = (nodeById as any).get(aId) ?? null;
+      const bNode = (nodeById as any).get(bId) ?? null;
+      if (!aNode || !bNode) continue;
+
+      const aKind = String((aNode as any)?.kind || "").toLowerCase();
+      const bKind = String((bNode as any)?.kind || "").toLowerCase();
+      if (aKind === "library" && bKind === "trade") {
+        addInfluencedTrade(aId, bId, bNode);
+      }
+      if (bKind === "library" && aKind === "trade") {
+        addInfluencedTrade(bId, aId, aNode);
+      }
+    }
+
+    for (const [libraryNodeId, tally] of tallies) {
+      out.set(libraryNodeId, tally.total > 0 ? tally.wins / tally.total : 0);
+    }
+
+    return out;
+  }, [
+    aiMethod,
+    clusterMapView,
+    entryNeighborsOnly,
+    knnLinkK,
+    neighborNodes,
+    nodeById,
+  ]);
+
   const hdbClustersById = useMemo(() => {
     const out = new Map<number, any>();
     const clusters: any[] = ((hdbOverlay as any)?.clusters as any[]) || [];
@@ -17285,6 +17372,11 @@ function ClusterMapInner({
             aiMethod !== "hdbscan" &&
             kind !== "potential" &&
             kind !== "library";
+          const libraryContribution = isLibraryNode
+            ? libraryContributionByNodeId.get(
+                normalizeClusterMapToken((n as any)?.id) || ""
+              ) ?? 0
+            : null;
           const displayConf = wantsNeighborConfidence
             ? resolveNonHdbConfidence(n)
             : null;
@@ -17339,7 +17431,9 @@ function ClusterMapInner({
           } else {
             const isLiveNode = kind === "close";
             const isOpenEntry = kind === "trade" && !!n.isOpen;
-            const label = isLiveNode
+            const label = isLibraryNode
+              ? "Library"
+              : isLiveNode
               ? "Live Trade"
               : isOpenEntry
               ? "Open Trade"
@@ -17390,6 +17484,11 @@ function ClusterMapInner({
                   if (mods) lines.push(`Domains: ${mods}`);
                 }
               }
+            }
+            if (isLibraryNode && aiMethod !== "hdbscan") {
+              lines.push(
+                `Contribution: ${Math.round((libraryContribution ?? 0) * 100)}%`
+              );
             }
             if (!isLibraryNode && n.closestCluster) {
               lines.push(`Closest: ${n.closestCluster}`);
@@ -17689,6 +17788,7 @@ function ClusterMapInner({
     heatmapSmoothness,
     drawRenderOpts,
     buildNeighborListForNode,
+    libraryContributionByNodeId,
     resolveNonHdbConfidence,
     entryNeighborsOnly,
     gateConfidenceForNode,

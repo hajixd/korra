@@ -94,10 +94,8 @@ import {
 import {
   AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT,
   AI_LIBRARY_DEFAULT_MAX_SAMPLES,
-  AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES,
   AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES,
   AI_LIBRARY_LEGACY_EXTREME_TRADE_COUNT,
-  AI_LIBRARY_LEGACY_RECENT_WINDOW_TRADES,
   AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW,
   AI_LIBRARY_MAX_SAMPLES
 } from "../lib/aiLibrarySettings";
@@ -3072,37 +3070,6 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     ]
   },
   {
-    id: "recent",
-    name: "Recent Window",
-    description: "Bias the nearest, freshest examples.",
-    defaults: {
-      weight: 100,
-      windowTrades: AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES,
-      maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES,
-      stride: 0
-    },
-    fields: [
-      { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
-      { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
-      {
-        key: "windowTrades",
-        label: "Window (trades)",
-        type: "number",
-        min: 50,
-        step: 50,
-        help: "How many most-recent trades are eligible."
-      },
-      {
-        key: "maxSamples",
-        label: "Amount of Samples",
-        type: "number",
-        min: 0,
-        max: AI_LIBRARY_MAX_SAMPLES,
-        step: 100
-      }
-    ]
-  },
-  {
     id: "base",
     name: "Base Seeding",
     description: "Seed a starter library before live trades.",
@@ -3138,8 +3105,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
       {
         key: "jumpToResolution",
         label: "Jump to resolution",
-        type: "boolean",
-        help: "If ON, the seeder places the next pair of trades when the prior trade resolves."
+        type: "boolean"
       },
       {
         key: "maxSamples",
@@ -3370,6 +3336,12 @@ const buildModelAiLibraryDefs = (modelNames: readonly string[]): AiLibraryDef[] 
 const AI_LIBRARY_TARGET_WIN_RATE_KEY = "targetWinRate";
 const AI_LIBRARY_TARGET_WIN_RATE_MODE_KEY = "targetWinRateMode";
 type AiLibraryTargetWinRateMode = "natural" | "artificial";
+const AI_LIBRARY_HIDE_CURRENT_VALUE_KEYS = new Set([
+  "stride",
+  "tpDollars",
+  "slDollars",
+  "maxSamples"
+]);
 const AI_LIBRARY_TARGET_WIN_RATE_FIELD: AiLibraryField = {
   key: AI_LIBRARY_TARGET_WIN_RATE_KEY,
   label: "Target Win Rate (%)",
@@ -3498,33 +3470,6 @@ const normalizeStoredAiLibrarySettings = (
     );
     if (merged.maxSamples !== normalizedMaxSamples) {
       merged.maxSamples = normalizedMaxSamples;
-    }
-
-    if (definition.id === "recent") {
-      const rawWindowTrades = Number(merged.windowTrades);
-      let normalizedWindowTrades = clamp(
-        Math.floor(
-          Number.isFinite(rawWindowTrades)
-            ? rawWindowTrades
-            : AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES
-        ),
-        0,
-        AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW
-      );
-
-      if (
-        rawWindowTrades === AI_LIBRARY_LEGACY_RECENT_WINDOW_TRADES &&
-        normalizedMaxSamples > AI_LIBRARY_LEGACY_RECENT_WINDOW_TRADES
-      ) {
-        normalizedWindowTrades = Math.max(
-          normalizedWindowTrades,
-          AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES
-        );
-      }
-
-      if (merged.windowTrades !== normalizedWindowTrades) {
-        merged.windowTrades = normalizedWindowTrades;
-      }
     }
 
     if (definition.id === "terrific" || definition.id === "terrible") {
@@ -18208,27 +18153,6 @@ function TradingTerminalWorkspace({
           cap: maxSamples,
           stride
         });
-      } else if (normalizedId === "recent") {
-        const rawWindowTrades = Number(settings.windowTrades);
-        const windowTrades = clamp(
-          Math.floor(
-            Number.isFinite(rawWindowTrades)
-              ? rawWindowTrades
-              : AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES
-          ),
-          0,
-          AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW
-        );
-        const startIndex = Math.max(0, libraryCandidatePool.length - windowTrades);
-        source =
-          windowTrades > 0
-            ? collectCappedItems(libraryCandidatePool, {
-                cap: maxSamples,
-                stride,
-                startIndex,
-                endIndex: libraryCandidatePool.length
-              })
-            : [];
       } else if (normalizedId === "terrific") {
         const rawCount = Number(settings.count);
         const count = clamp(
@@ -24267,7 +24191,6 @@ function TradingTerminalWorkspace({
 
               <AiSettingsModal
                 title="LIBRARY"
-                subtitle="Available, active, and full AI.zip controls"
                 size="xwide"
                 bodyClassName="ai-zip-library-modal-body"
                 open={librariesModalOpen}
@@ -24277,7 +24200,6 @@ function TradingTerminalWorkspace({
                     <section className="ai-zip-library-column">
                       <header>
                         <strong>Available Libraries</strong>
-                        <span>Click Add to activate.</span>
                       </header>
                       <div className="ai-zip-library-scroll">
                         {availableAiLibraries.length === 0 ? (
@@ -24305,7 +24227,6 @@ function TradingTerminalWorkspace({
                     <section className="ai-zip-library-column">
                       <header>
                         <strong>Active Libraries</strong>
-                        <span>Select one to edit settings.</span>
                       </header>
                       <div className="ai-zip-library-scroll">
                       {visibleAiLibraries.length === 0 ? (
@@ -24374,7 +24295,7 @@ function TradingTerminalWorkspace({
                       </div>
                       <button
                         type="button"
-                        className="ai-zip-library-action primary run-active"
+                        className="ai-zip-library-action primary compact"
                         disabled={!effectiveAiLibraryReadyToRun || aiLibraryAnyLoading}
                         onClick={() =>
                           runAllActiveLibraries({
@@ -24522,6 +24443,7 @@ function TradingTerminalWorkspace({
                               );
                               const shouldShowGroupedNumericValue =
                                 Number.isFinite(displayedNumericValue) &&
+                                !AI_LIBRARY_HIDE_CURRENT_VALUE_KEYS.has(field.key) &&
                                 (Math.abs(displayedNumericValue) >= 1000 ||
                                   Math.abs(min ?? 0) >= 1000 ||
                                   Math.abs(max ?? 0) >= 1000);
@@ -24634,17 +24556,6 @@ function TradingTerminalWorkspace({
                                   {shouldShowGroupedNumericValue ? (
                                     <p className="ai-zip-library-field-help">
                                       Current value: {formattedDisplayedNumericValue}
-                                    </p>
-                                  ) : null}
-                                  {isTargetWinRateField ? (
-                                    <p className="ai-zip-library-field-help">
-                                      {isNaturalTargetWinRateMode
-                                        ? selectedAiLibraryLoadedCount > 0
-                                          ? `Natural mode auto-uses ${selectedAiLibraryNaturalTargetWinRate.toFixed(
-                                              1
-                                            )}% from loaded neighbors.`
-                                          : "Natural mode locks to 50% until neighbors are loaded."
-                                        : "Artificial mode lets you set the target manually."}
                                     </p>
                                   ) : null}
                                 </label>
