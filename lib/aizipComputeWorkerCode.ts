@@ -1,5 +1,16 @@
+import {
+  AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT,
+  AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES,
+  AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW,
+  AI_LIBRARY_MAX_SAMPLES
+} from "./aiLibrarySettings";
+
 export const AIZIP_COMPUTE_WORKER_CODE = String.raw`
   const AI_EPS = 1e-8;
+  const AI_LIBRARY_MAX_SAMPLES = ${AI_LIBRARY_MAX_SAMPLES};
+  const AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES = ${AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES};
+  const AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT = ${AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT};
+  const AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW = ${AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW};
   const K_ENTRY = 21;
   const K_EXIT = 11;
   const SEED_LOOKAHEAD_BARS = 96;
@@ -2975,7 +2986,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
       const pct = raw <= 10 ? raw * 100 : raw; // backward compat: old "1.0" => 100%
       return clamp(pct, 0, 5000) / 100;
     };
-    const libMaxSamples = (id, defN = 20000) => clamp(Math.floor(Number(libSetting(id).maxSamples ?? defN) || defN), 0, 1000000);
+    const libMaxSamples = (id, defN = AI_LIBRARY_MAX_SAMPLES) => clamp(Math.floor(Number(libSetting(id).maxSamples ?? defN) || defN), 0, AI_LIBRARY_MAX_SAMPLES);
 
     const coreEnabled = effectiveAiLibraries.includes("core");
     const coreWeight = libWeight("core", 100);
@@ -2987,7 +2998,15 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
 
     const recentEnabled = effectiveAiLibraries.includes("recent");
     const recentWeight = libWeight("recent", 100);
-    const recentWindowTrades = clamp(Math.floor(Number(libSetting("recent").windowTrades ?? 1500) || 1500), 0, 500000);
+    const recentWindowTrades = clamp(
+      Math.floor(
+        Number.isFinite(Number(libSetting("recent").windowTrades))
+          ? Number(libSetting("recent").windowTrades)
+          : AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES
+      ),
+      0,
+      AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW
+    );
     const recentStride = clamp(Math.floor(Number(libSetting("recent").stride ?? 0) || 0), 0, 5000);
 
     // Library-driven suppression behavior:
@@ -3720,9 +3739,17 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
         // Terrific / Terrible
         if (useLib("terrific")) {
           const s = libSetting("terrific");
-          const cap = libMaxSamples("terrific", 8000);
+          const cap = libMaxSamples("terrific", AI_LIBRARY_MAX_SAMPLES);
           const wt = libWeight("terrific", 100);
-          const count = clamp(Math.floor(Number(s.count ?? 0) || 0), 0, 500000);
+          const count = clamp(
+            Math.floor(
+              Number.isFinite(Number(s.count))
+                ? Number(s.count)
+                : AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT
+            ),
+            0,
+            AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW
+          );
           const pivotSpan = clamp(Math.floor(Number(s.pivotSpan ?? 4) || 4), 2, 20);
           const strideRaw = (s && (s.stride != null)) ? Number(s.stride) : NaN;
           const stride = clamp(Math.floor(Number.isFinite(strideRaw) ? strideRaw : 0), 0, 5000);
@@ -3741,9 +3768,17 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
 
         if (useLib("terrible")) {
           const s = libSetting("terrible");
-          const cap = libMaxSamples("terrible", 8000);
+          const cap = libMaxSamples("terrible", AI_LIBRARY_MAX_SAMPLES);
           const wt = libWeight("terrible", 100);
-          const count = clamp(Math.floor(Number(s.count ?? 0) || 0), 0, 500000);
+          const count = clamp(
+            Math.floor(
+              Number.isFinite(Number(s.count))
+                ? Number(s.count)
+                : AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT
+            ),
+            0,
+            AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW
+          );
           const pivotSpan = clamp(Math.floor(Number(s.pivotSpan ?? 4) || 4), 2, 20);
           const strideRaw = (s && (s.stride != null)) ? Number(s.stride) : NaN;
           const stride = clamp(Math.floor(Number.isFinite(strideRaw) ? strideRaw : 0), 0, 5000);

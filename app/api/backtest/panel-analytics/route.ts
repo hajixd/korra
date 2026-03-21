@@ -4,6 +4,10 @@ import type {
   BacktestTradeAiEntryMeta,
   BacktestTradeAiMode
 } from "../../../backtestHistoryShared";
+import {
+  AI_LIBRARY_DEFAULT_MAX_SAMPLES,
+  AI_LIBRARY_MAX_SAMPLES
+} from "../../../../lib/aiLibrarySettings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1701,11 +1705,12 @@ const computeAntiCheatBacktestContext = (params: {
     );
   };
 
-  const getLibraryMaxSamples = (libraryId: string, fallback = 96) => {
+  const getLibraryMaxSamples = (libraryId: string, fallback = AI_LIBRARY_DEFAULT_MAX_SAMPLES) => {
+    const raw = Number(getLibrarySettings(libraryId).maxSamples ?? fallback);
     return clamp(
-      Math.floor(Number(getLibrarySettings(libraryId).maxSamples ?? fallback) || fallback),
+      Math.floor(Number.isFinite(raw) ? raw : fallback),
       0,
-      100000
+      AI_LIBRARY_MAX_SAMPLES
     );
   };
 
@@ -1778,7 +1783,7 @@ const computeAntiCheatBacktestContext = (params: {
       return [];
     }
 
-    const maxSamples = getLibraryMaxSamples(libraryId, 96);
+    const maxSamples = getLibraryMaxSamples(libraryId, AI_LIBRARY_DEFAULT_MAX_SAMPLES);
     const stride = getLibraryStride(libraryId);
     const source = collectCappedItems(pool, {
       cap: maxSamples,

@@ -92,6 +92,16 @@ import {
   getFirebaseClientDb
 } from "../lib/firebase";
 import {
+  AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT,
+  AI_LIBRARY_DEFAULT_MAX_SAMPLES,
+  AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES,
+  AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES,
+  AI_LIBRARY_LEGACY_EXTREME_TRADE_COUNT,
+  AI_LIBRARY_LEGACY_RECENT_WINDOW_TRADES,
+  AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW,
+  AI_LIBRARY_MAX_SAMPLES
+} from "../lib/aiLibrarySettings";
+import {
   AIZIP_BACKTEST_HISTORY_FETCH_TIMEOUT_MS,
   BASE_SEEDING_LIBRARY_IDS,
   buildSeededLibraryTradePoolFromCandles,
@@ -3012,7 +3022,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     id: "core",
     name: "Online Learning",
     description: "Primary rolling trade memory.",
-    defaults: { weight: 100, maxSamples: 10000, stride: 0 },
+    defaults: { weight: 100, maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES, stride: 0 },
     fields: [
       {
         key: "weight",
@@ -3036,7 +3046,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100,
         help: "Soft cap on the number of examples kept for this library."
       }
@@ -3047,7 +3057,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     name: "Suppressed",
     description:
       "Trades rejected because AI confidence is below the entry threshold (training-only neighbors).",
-    defaults: { weight: 100, maxSamples: 10000, stride: 0 },
+    defaults: { weight: 100, maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES, stride: 0 },
     fields: [
       { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
       { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
@@ -3056,7 +3066,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100
       }
     ]
@@ -3065,7 +3075,12 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     id: "recent",
     name: "Recent Window",
     description: "Bias the nearest, freshest examples.",
-    defaults: { weight: 100, windowTrades: 1500, maxSamples: 10000, stride: 0 },
+    defaults: {
+      weight: 100,
+      windowTrades: AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES,
+      maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES,
+      stride: 0
+    },
     fields: [
       { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
       { key: "stride", label: "Stride", type: "number", min: 0, max: 5000, step: 1 },
@@ -3082,7 +3097,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100
       }
     ]
@@ -3093,7 +3108,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     description: "Seed a starter library before live trades.",
     defaults: {
       weight: 100,
-      maxSamples: 10000,
+      maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES,
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
@@ -3131,7 +3146,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100
       }
     ]
@@ -3142,7 +3157,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     description: "Base seeding restricted to the Tokyo session.",
     defaults: {
       weight: 100,
-      maxSamples: 8000,
+      maxSamples: AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES,
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
@@ -3159,7 +3174,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100
       }
     ]
@@ -3170,7 +3185,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     description: "Base seeding restricted to the Sydney session.",
     defaults: {
       weight: 100,
-      maxSamples: 8000,
+      maxSamples: AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES,
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
@@ -3187,7 +3202,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100
       }
     ]
@@ -3198,7 +3213,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     description: "Base seeding restricted to the London session.",
     defaults: {
       weight: 100,
-      maxSamples: 8000,
+      maxSamples: AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES,
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
@@ -3215,7 +3230,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100
       }
     ]
@@ -3226,7 +3241,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     description: "Base seeding restricted to the New York session.",
     defaults: {
       weight: 100,
-      maxSamples: 8000,
+      maxSamples: AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES,
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
@@ -3243,7 +3258,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100
       }
     ]
@@ -3254,8 +3269,8 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     description: "Hand-picked high quality trades.",
     defaults: {
       weight: 100,
-      maxSamples: 10000,
-      count: 500,
+      maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES,
+      count: AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT,
       stride: 0,
       pivotSpan: 4
     },
@@ -3269,7 +3284,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100
       }
     ]
@@ -3280,8 +3295,8 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     description: "Counterexamples for contrast.",
     defaults: {
       weight: 100,
-      maxSamples: 10000,
-      count: 500,
+      maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES,
+      count: AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT,
       stride: 0,
       pivotSpan: 4
     },
@@ -3295,7 +3310,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100
       }
     ]
@@ -3316,7 +3331,7 @@ const buildModelAiLibraryDefs = (modelNames: readonly string[]): AiLibraryDef[] 
     description: `Similarity pool for ${model}.`,
     defaults: {
       weight: 100,
-      maxSamples: 10000,
+      maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES,
       stride: 0,
       model,
       kind: "model_sim"
@@ -3344,7 +3359,7 @@ const buildModelAiLibraryDefs = (modelNames: readonly string[]): AiLibraryDef[] 
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100,
         help: "Caps how many examples are pulled from this library."
       }
@@ -3436,6 +3451,120 @@ const buildDefaultAiLibrarySettings = (libraryDefs: readonly AiLibraryDef[]): Ai
 
   for (const definition of libraryDefs) {
     next[definition.id] = { ...definition.defaults };
+  }
+
+  return next;
+};
+
+const areAiLibrarySettingRecordsEqual = (
+  left: Record<string, AiLibrarySettingValue>,
+  right: Record<string, AiLibrarySettingValue>
+) => {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+
+  for (const key of rightKeys) {
+    if (left[key] !== right[key]) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const normalizeStoredAiLibrarySettings = (
+  settings: AiLibrarySettings,
+  libraryDefsById: Record<string, AiLibraryDef>
+): AiLibrarySettings => {
+  let changed = false;
+  const next: AiLibrarySettings = {};
+
+  for (const definition of Object.values(libraryDefsById)) {
+    const current = settings[definition.id] ?? {};
+    const merged = {
+      ...definition.defaults,
+      ...current
+    } as Record<string, AiLibrarySettingValue>;
+
+    const rawMaxSamples = Number(merged.maxSamples);
+    const normalizedMaxSamples = clamp(
+      Math.floor(Number.isFinite(rawMaxSamples) ? rawMaxSamples : AI_LIBRARY_DEFAULT_MAX_SAMPLES),
+      0,
+      AI_LIBRARY_MAX_SAMPLES
+    );
+    if (merged.maxSamples !== normalizedMaxSamples) {
+      merged.maxSamples = normalizedMaxSamples;
+    }
+
+    if (definition.id === "recent") {
+      const rawWindowTrades = Number(merged.windowTrades);
+      let normalizedWindowTrades = clamp(
+        Math.floor(
+          Number.isFinite(rawWindowTrades)
+            ? rawWindowTrades
+            : AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES
+        ),
+        0,
+        AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW
+      );
+
+      if (
+        rawWindowTrades === AI_LIBRARY_LEGACY_RECENT_WINDOW_TRADES &&
+        normalizedMaxSamples > AI_LIBRARY_LEGACY_RECENT_WINDOW_TRADES
+      ) {
+        normalizedWindowTrades = Math.max(
+          normalizedWindowTrades,
+          AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES
+        );
+      }
+
+      if (merged.windowTrades !== normalizedWindowTrades) {
+        merged.windowTrades = normalizedWindowTrades;
+      }
+    }
+
+    if (definition.id === "terrific" || definition.id === "terrible") {
+      const rawCount = Number(merged.count);
+      let normalizedCount = clamp(
+        Math.floor(
+          Number.isFinite(rawCount) ? rawCount : AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT
+        ),
+        0,
+        AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW
+      );
+
+      if (
+        rawCount === AI_LIBRARY_LEGACY_EXTREME_TRADE_COUNT &&
+        normalizedMaxSamples > AI_LIBRARY_LEGACY_EXTREME_TRADE_COUNT
+      ) {
+        normalizedCount = Math.max(
+          normalizedCount,
+          AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT
+        );
+      }
+
+      if (merged.count !== normalizedCount) {
+        merged.count = normalizedCount;
+      }
+    }
+
+    if (!areAiLibrarySettingRecordsEqual(current, merged)) {
+      changed = true;
+    }
+
+    next[definition.id] = merged;
+  }
+
+  if (!changed) {
+    const settingKeys = Object.keys(settings);
+    const nextKeys = Object.keys(next);
+    if (settingKeys.length === nextKeys.length && settingKeys.every((key) => key in next)) {
+      return settings;
+    }
   }
 
   return next;
@@ -9467,10 +9596,6 @@ function TradingTerminalWorkspace({
     setAiLibraryBaselineWinRates({});
     setAiLibraryRunStatus({});
   }, []);
-  const [aiBulkScope, setAiBulkScope] = useState<"active" | "all">("active");
-  const [aiBulkWeight, setAiBulkWeight] = useState(100);
-  const [aiBulkStride, setAiBulkStride] = useState(0);
-  const [aiBulkMaxSamples, setAiBulkMaxSamples] = useState(10000);
   const [chunkBars, setChunkBars] = useState(24);
   const [distanceMetric, setDistanceMetric] = useState<AiDistanceMetric>("euclidean");
   const [knnNeighborSpace, setKnnNeighborSpace] = useState<KnnNeighborSpace>("post");
@@ -10798,42 +10923,6 @@ function TradingTerminalWorkspace({
     });
   }, [aiLibraryDefById, aiLibraryDefs]);
 
-  const applyAiBulkLibrarySettings = () => {
-    const scopeIds =
-      aiBulkScope === "active" ? selectedAiLibraries : aiLibraryDefs.map((definition) => definition.id);
-
-    setSelectedAiLibrarySettings((current) => {
-      const next: AiLibrarySettings = { ...(current ?? {}) };
-
-      for (const libraryId of scopeIds) {
-        const definition = aiLibraryDefById[libraryId];
-
-        if (!definition) {
-          continue;
-        }
-
-        const fieldKeys = new Set(definition.fields.map((field) => field.key));
-        const currentSettings = { ...((next[libraryId] ?? definition.defaults) as Record<string, AiLibrarySettingValue>) };
-
-        if (fieldKeys.has("weight")) {
-          currentSettings.weight = aiBulkWeight;
-        }
-
-        if (fieldKeys.has("stride")) {
-          currentSettings.stride = aiBulkStride;
-        }
-
-        if (fieldKeys.has("maxSamples")) {
-          currentSettings.maxSamples = aiBulkMaxSamples;
-        }
-
-        next[libraryId] = currentSettings;
-      }
-
-      return next;
-    });
-  };
-
   const addAiLibrary = (libraryId: string) => {
     const definition = aiLibraryDefById[libraryId];
 
@@ -10979,6 +11068,12 @@ function TradingTerminalWorkspace({
 
       return filtered;
     });
+  }, [aiLibraryDefById]);
+
+  useEffect(() => {
+    setSelectedAiLibrarySettings((current) =>
+      normalizeStoredAiLibrarySettings(current, aiLibraryDefById)
+    );
   }, [aiLibraryDefById]);
 
   useEffect(() => {
@@ -14469,10 +14564,6 @@ function TradingTerminalWorkspace({
     selectedAiLibraries,
     selectedAiLibrarySettings,
     selectedAiLibraryId,
-    aiBulkScope,
-    aiBulkWeight,
-    aiBulkStride,
-    aiBulkMaxSamples,
     chunkBars,
     distanceMetric,
     knnNeighborSpace,
@@ -14505,8 +14596,8 @@ function TradingTerminalWorkspace({
     aiExitWinTolerance, useMitExit, complexity, volatilityPercentile, tpDollars, slDollars,
     dollarsPerMove, maxBarsInTrade, maxConcurrentTrades, stopMode, breakEvenTriggerPct, trailingStartPct,
     trailingDistPct, aiModelStates, aiFeatureLevels, aiFeatureModes,
-    selectedAiLibraries, selectedAiLibrarySettings, selectedAiLibraryId, aiBulkScope,
-    aiBulkWeight, aiBulkStride, aiBulkMaxSamples, chunkBars, distanceMetric, knnNeighborSpace,
+    selectedAiLibraries, selectedAiLibrarySettings, selectedAiLibraryId, chunkBars, distanceMetric,
+    knnNeighborSpace,
     selectedAiDomains, dimensionAmount, compressionMethod,
     kEntry, kExit, knnVoteMode, hdbMinClusterSize, hdbMinSamples, hdbEpsQuantile,
     hdbSampleCap, antiCheatEnabled, validationMode, realismLevel, propInitialBalance,
@@ -14568,7 +14659,11 @@ function TradingTerminalWorkspace({
     if (nextSelectedAiLibraries != null) {
       setSelectedAiLibraries(nextSelectedAiLibraries);
     }
-    if (s.selectedAiLibrarySettings != null) setSelectedAiLibrarySettings(s.selectedAiLibrarySettings);
+    if (s.selectedAiLibrarySettings != null) {
+      setSelectedAiLibrarySettings(
+        normalizeStoredAiLibrarySettings(s.selectedAiLibrarySettings, aiLibraryDefById)
+      );
+    }
     if (nextSelectedAiLibraries != null) {
       setSelectedAiLibraryId((current) => {
         const rawId =
@@ -14582,10 +14677,6 @@ function TradingTerminalWorkspace({
     } else if (s.selectedAiLibraryId != null) {
       setSelectedAiLibraryId(String(s.selectedAiLibraryId ?? ""));
     }
-    if (s.aiBulkScope != null) setAiBulkScope(s.aiBulkScope);
-    if (s.aiBulkWeight != null) setAiBulkWeight(s.aiBulkWeight);
-    if (s.aiBulkStride != null) setAiBulkStride(s.aiBulkStride);
-    if (s.aiBulkMaxSamples != null) setAiBulkMaxSamples(s.aiBulkMaxSamples);
     if (s.chunkBars != null) setChunkBars(s.chunkBars);
     if (s.distanceMetric != null) setDistanceMetric(s.distanceMetric);
     if (s.knnNeighborSpace != null) setKnnNeighborSpace(s.knnNeighborSpace);
@@ -14612,7 +14703,7 @@ function TradingTerminalWorkspace({
     if (isBacktestDatePreset(s.statsDatePreset)) setStatsDatePreset(s.statsDatePreset);
     if (s.statsDateStart != null) setStatsDateStart(s.statsDateStart);
     if (s.statsDateEnd != null) setStatsDateEnd(s.statsDateEnd);
-  }, [normalizeSelectedAiLibraries]);
+  }, [aiLibraryDefById, normalizeSelectedAiLibraries]);
 
   useEffect(() => {
     try {
@@ -14719,10 +14810,6 @@ function TradingTerminalWorkspace({
     setSelectedAiLibraries([]);
     setSelectedAiLibraryId("");
     setSelectedAiLibrarySettings(buildDefaultAiLibrarySettings(aiLibraryDefs));
-    setAiBulkScope("active");
-    setAiBulkWeight(100);
-    setAiBulkStride(0);
-    setAiBulkMaxSamples(10000);
     setChunkBars(24);
     setDistanceMetric("euclidean");
     setKnnNeighborSpace("post");
@@ -18087,9 +18174,9 @@ function TradingTerminalWorkspace({
         5000
       );
       const maxSamples = clamp(
-        Math.floor(Number(settings.maxSamples ?? 96) || 96),
+        Math.floor(Number(settings.maxSamples ?? AI_LIBRARY_DEFAULT_MAX_SAMPLES) || AI_LIBRARY_DEFAULT_MAX_SAMPLES),
         0,
-        100000
+        AI_LIBRARY_MAX_SAMPLES
       );
       const suppressedTradePool = libraryCandidatePool.filter(
         (trade) => !executedTradeIds.has(trade.id)
@@ -18107,10 +18194,15 @@ function TradingTerminalWorkspace({
           stride
         });
       } else if (normalizedId === "recent") {
+        const rawWindowTrades = Number(settings.windowTrades);
         const windowTrades = clamp(
-          Math.floor(Number(settings.windowTrades ?? 1500) || 1500),
+          Math.floor(
+            Number.isFinite(rawWindowTrades)
+              ? rawWindowTrades
+              : AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES
+          ),
           0,
-          5000
+          AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW
         );
         const startIndex = Math.max(0, libraryCandidatePool.length - windowTrades);
         source =
@@ -18123,10 +18215,13 @@ function TradingTerminalWorkspace({
               })
             : [];
       } else if (normalizedId === "terrific") {
+        const rawCount = Number(settings.count);
         const count = clamp(
-          Math.floor(Number(settings.count ?? 96) || 96),
+          Math.floor(
+            Number.isFinite(rawCount) ? rawCount : AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT
+          ),
           0,
-          100000
+          AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW
         );
         const effectiveCap = Math.min(maxSamples, count);
         const capped = collectCappedItems(libraryCandidatePool, {
@@ -18137,10 +18232,13 @@ function TradingTerminalWorkspace({
           stride
         );
       } else if (normalizedId === "terrible") {
+        const rawCount = Number(settings.count);
         const count = clamp(
-          Math.floor(Number(settings.count ?? 96) || 96),
+          Math.floor(
+            Number.isFinite(rawCount) ? rawCount : AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT
+          ),
           0,
-          100000
+          AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW
         );
         const effectiveCap = Math.min(maxSamples, count);
         const capped = collectCappedItems(libraryCandidatePool, {
@@ -24274,67 +24372,6 @@ function TradingTerminalWorkspace({
                       <div className="ai-zip-library-scroll">
                         {selectedAiLibrary && selectedAiLibraryConfig ? (
                           <div className="ai-zip-library-detail">
-                            <div className="ai-zip-library-settings-panel">
-                              <div className="ai-zip-library-settings-title">
-                                Bulk settings (apply to many libraries)
-                              </div>
-                              <div className="ai-zip-library-settings-grid">
-                                <label className="ai-zip-library-field">
-                                  <span>Scope</span>
-                                  <select
-                                    value={aiBulkScope}
-                                    onChange={(event) => {
-                                      setAiBulkScope((event.target.value as "active" | "all") || "active");
-                                    }}
-                                    className="ai-zip-library-input"
-                                  >
-                                    <option value="active">Active libraries only</option>
-                                    <option value="all">All libraries</option>
-                                  </select>
-                                </label>
-                                <label className="ai-zip-library-field">
-                                  <span>Weight (%)</span>
-                                  <input
-                                    type="number"
-                                    value={aiBulkWeight}
-                                    onChange={(event) => {
-                                      setAiBulkWeight(Math.max(0, Number(event.target.value) || 0));
-                                    }}
-                                    className="ai-zip-library-input"
-                                  />
-                                </label>
-                                <label className="ai-zip-library-field">
-                                  <span>Stride</span>
-                                  <input
-                                    type="number"
-                                    value={aiBulkStride}
-                                    onChange={(event) => {
-                                      setAiBulkStride(Math.max(0, Number(event.target.value) || 0));
-                                    }}
-                                    className="ai-zip-library-input"
-                                  />
-                                </label>
-                                <label className="ai-zip-library-field">
-                                  <span>Amount of Samples</span>
-                                  <input
-                                    type="number"
-                                    value={aiBulkMaxSamples}
-                                    onChange={(event) => {
-                                      setAiBulkMaxSamples(Math.max(0, Number(event.target.value) || 0));
-                                    }}
-                                    className="ai-zip-library-input"
-                                  />
-                                </label>
-                              </div>
-                              <button
-                                type="button"
-                                className="ai-zip-library-action primary wide"
-                                onClick={applyAiBulkLibrarySettings}
-                              >
-                                Apply to {aiBulkScope === "active" ? "active" : "all"} libraries
-                              </button>
-                            </div>
-
                             {selectedAiLibrary.fields.map((field) => {
                               const fieldValue = selectedAiLibraryConfig[field.key];
 

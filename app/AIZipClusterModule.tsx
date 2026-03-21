@@ -13,6 +13,13 @@ import React, {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT,
+  AI_LIBRARY_DEFAULT_MAX_SAMPLES,
+  AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES,
+  AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES,
+  AI_LIBRARY_MAX_SAMPLES,
+} from "../lib/aiLibrarySettings";
+import {
   ComposedChart,
   CartesianGrid,
   Line,
@@ -4297,7 +4304,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     id: "core",
     name: "Online Learning",
     description: "",
-    defaults: { weight: 100, maxSamples: 10000, stride: 0 },
+    defaults: { weight: 100, maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES, stride: 0 },
     fields: [
       {
         key: "weight",
@@ -4321,7 +4328,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100,
         help: "Soft cap on the number of examples kept for this library.",
       },
@@ -4332,7 +4339,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     name: "Suppressed",
     description:
       "Trades rejected because AI confidence is below the entry threshold (training-only neighbors).",
-    defaults: { weight: 100, maxSamples: 10000, stride: 0 },
+    defaults: { weight: 100, maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES, stride: 0 },
     fields: [
       {
         key: "weight",
@@ -4355,7 +4362,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100,
       },
     ],
@@ -4364,7 +4371,12 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     id: "recent",
     name: "Recent Window",
     description: "",
-    defaults: { weight: 100, windowTrades: 1500, maxSamples: 10000, stride: 0 },
+    defaults: {
+      weight: 100,
+      windowTrades: AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES,
+      maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES,
+      stride: 0,
+    },
     fields: [
       {
         key: "weight",
@@ -4395,7 +4407,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100,
       },
     ],
@@ -4406,7 +4418,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     description: "",
     defaults: {
       weight: 100,
-      maxSamples: 10000,
+      maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES,
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
@@ -4458,7 +4470,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100,
       },
     ],
@@ -4469,7 +4481,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     description: "Base seeding restricted to the Tokyo session.",
     defaults: {
       weight: 100,
-      maxSamples: 8000,
+      maxSamples: AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES,
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
@@ -4486,7 +4498,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100,
       },
     ],
@@ -4497,7 +4509,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     description: "Base seeding restricted to the Sydney session.",
     defaults: {
       weight: 100,
-      maxSamples: 8000,
+      maxSamples: AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES,
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
@@ -4514,7 +4526,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100,
       },
     ],
@@ -4525,7 +4537,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     description: "Base seeding restricted to the London session.",
     defaults: {
       weight: 100,
-      maxSamples: 8000,
+      maxSamples: AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES,
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
@@ -4542,7 +4554,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100,
       },
     ],
@@ -4553,7 +4565,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     description: "Base seeding restricted to the New York session.",
     defaults: {
       weight: 100,
-      maxSamples: 8000,
+      maxSamples: AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES,
       stride: 0,
       tpDollars: 250,
       slDollars: 250,
@@ -4570,7 +4582,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100,
       },
     ],
@@ -4581,8 +4593,8 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     description: "",
     defaults: {
       weight: 100,
-      maxSamples: 10000,
-      count: 500,
+      maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES,
+      count: AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT,
       stride: 0,
       pivotSpan: 4,
     },
@@ -4624,7 +4636,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100,
       },
     ],
@@ -4635,8 +4647,8 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     description: "",
     defaults: {
       weight: 100,
-      maxSamples: 10000,
-      count: 500,
+      maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES,
+      count: AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT,
       stride: 0,
       pivotSpan: 4,
     },
@@ -4678,7 +4690,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         label: "Amount of Samples",
         type: "number",
         min: 0,
-        max: 100000,
+        max: AI_LIBRARY_MAX_SAMPLES,
         step: 100,
       },
     ],
@@ -4717,7 +4729,7 @@ const MODEL_AI_LIBRARY_DEFS: AiLibraryDef[] = MODELS.map((model) => {
       label: "Amount of Samples",
       type: "number",
       min: 0,
-      max: 100000,
+      max: AI_LIBRARY_MAX_SAMPLES,
       step: 100,
       help: "Caps how many examples are pulled from this library.",
     },
@@ -4729,7 +4741,7 @@ const MODEL_AI_LIBRARY_DEFS: AiLibraryDef[] = MODELS.map((model) => {
     description: "",
     defaults: {
       weight: 100,
-      maxSamples: 10000,
+      maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES,
       stride: 0,
       model,
       kind: "model_sim",
@@ -21841,10 +21853,6 @@ export default function App() {
     // Libraries
     aiLibrariesActive: aiActiveLibraries,
     aiLibrariesSettings: aiLibrarySettings,
-    aiBulkScope,
-    aiBulkWeight,
-    aiBulkStride,
-    aiBulkMaxSamples,
     aiSelectedLibrary,
   });
 
@@ -22110,22 +22118,6 @@ export default function App() {
       setAiLibrarySettings(next);
     }
 
-    if (typeof (data as any).aiBulkScope === "string")
-      setAiBulkScope(String((data as any).aiBulkScope || "active"));
-    if (typeof (data as any).aiBulkWeight === "number")
-      setAiBulkWeight(clamp(Number((data as any).aiBulkWeight) || 0, 0, 200));
-    if (typeof (data as any).aiBulkStride === "number")
-      setAiBulkStride(
-        clamp(Math.floor(Number((data as any).aiBulkStride) || 0), 0, 512)
-      );
-    if (typeof (data as any).aiBulkMaxSamples === "number")
-      setAiBulkMaxSamples(
-        clamp(
-          Math.floor(Number((data as any).aiBulkMaxSamples) || 10000),
-          0,
-          100000
-        )
-      );
   };
   const importSettingsInputRef = useRef(null);
   const exportSettingsFile = () => {
@@ -22266,10 +22258,6 @@ export default function App() {
     setAiActiveLibraries([]);
     setAiLibrarySettings({ ...DEFAULT_AI_LIBRARY_SETTINGS });
     setAiSelectedLibrary("");
-    setAiBulkScope("active");
-    setAiBulkWeight(100);
-    setAiBulkStride(0);
-    setAiBulkMaxSamples(10000);
     setAiLibraryCounts({});
     setAiLibraryWinRates({});
     setAiLibraryPoints([]);
@@ -23133,40 +23121,6 @@ export default function App() {
     Record<string, number>
   >({});
   const [aiLibraryPoints, setAiLibraryPoints] = useState<any[]>([]);
-
-  // Bulk adjust (apply settings across multiple libraries)
-  const [aiBulkScope, setAiBulkScope] = useState<"active" | "all">("active");
-  const [aiBulkWeight, setAiBulkWeight] = useState<number>(100);
-  const [aiBulkStride, setAiBulkStride] = useState<number>(0);
-  const [aiBulkMaxSamples, setAiBulkMaxSamples] = useState<number>(10000);
-
-  const applyAiBulkSettings = React.useCallback(() => {
-    const scopeIds =
-      aiBulkScope === "active"
-        ? aiActiveLibraries
-        : Object.keys(AI_LIBRARY_DEF_BY_ID);
-
-    setAiLibrarySettings((prev) => {
-      const next: any = { ...(prev || {}) };
-      for (const id of scopeIds) {
-        const def = AI_LIBRARY_DEF_BY_ID[id];
-        if (!def) continue;
-        const keys = new Set((def.fields || []).map((f: any) => f.key));
-        const cur = { ...((next && next[id]) || {}) };
-        if (keys.has("weight")) cur.weight = aiBulkWeight;
-        if (keys.has("stride")) cur.stride = aiBulkStride;
-        if (keys.has("maxSamples")) cur.maxSamples = aiBulkMaxSamples;
-        next[id] = cur;
-      }
-      return next;
-    });
-  }, [
-    aiBulkScope,
-    aiBulkWeight,
-    aiBulkStride,
-    aiBulkMaxSamples,
-    aiActiveLibraries,
-  ]);
 
   const addAiLibrary = React.useCallback((id: string) => {
     const def = AI_LIBRARY_DEF_BY_ID[id];
@@ -24201,10 +24155,6 @@ export default function App() {
     enabledHours,
     aiActiveLibraries,
     aiLibrarySettings,
-    aiBulkScope,
-    aiBulkWeight,
-    aiBulkStride,
-    aiBulkMaxSamples,
     aiSelectedLibrary,
   ]);
   // In HDBSCAN mode, the Cluster Map applies a post-hoc gate that can promote/demote entries.
@@ -30963,180 +30913,6 @@ export default function App() {
                       };
                       return (
                         <div style={{ display: "grid", gap: 10 }}>
-                          <div
-                            style={{
-                              borderRadius: 14,
-                              border: "1px solid rgba(255,255,255,0.10)",
-                              background: "rgba(0,0,0,0.22)",
-                              padding: 10,
-                            }}
-                          >
-                            <div
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 1000,
-                                marginBottom: 8,
-                              }}
-                            >
-                              Bulk settings (apply to many libraries)
-                            </div>
-
-                            <div
-                              style={{
-                                display: "grid",
-                                gridTemplateColumns: "1fr 1fr",
-                                gap: 10,
-                              }}
-                            >
-                              <div>
-                                <div
-                                  style={{
-                                    fontSize: 10,
-                                    opacity: 0.72,
-                                    marginBottom: 4,
-                                  }}
-                                >
-                                  Scope
-                                </div>
-                                <select
-                                  value={aiBulkScope}
-                                  onChange={(e) =>
-                                    setAiBulkScope(
-                                      (e.target.value as any) || "active"
-                                    )
-                                  }
-                                  style={{
-                                    width: "100%",
-                                    padding: "8px 10px",
-                                    borderRadius: 12,
-                                    border: "1px solid rgba(255,255,255,0.12)",
-                                    background: "rgba(0,0,0,0.35)",
-                                    color: "rgba(255,255,255,0.92)",
-                                    fontSize: 11,
-                                    outline: "none",
-                                  }}
-                                >
-                                  <option value="active">
-                                    Active libraries only
-                                  </option>
-                                  <option value="all">All libraries</option>
-                                </select>
-                              </div>
-
-                              <div>
-                                <div
-                                  style={{
-                                    fontSize: 10,
-                                    opacity: 0.72,
-                                    marginBottom: 4,
-                                  }}
-                                >
-                                  Weight (%)
-                                </div>
-                                <input
-                                  type="number"
-                                  value={aiBulkWeight}
-                                  onChange={(e) =>
-                                    setAiBulkWeight(Number(e.target.value) || 0)
-                                  }
-                                  style={{
-                                    width: "100%",
-                                    padding: "8px 10px",
-                                    borderRadius: 12,
-                                    border: "1px solid rgba(255,255,255,0.12)",
-                                    background: "rgba(0,0,0,0.35)",
-                                    color: "rgba(255,255,255,0.92)",
-                                    fontSize: 11,
-                                    outline: "none",
-                                  }}
-                                />
-                              </div>
-
-                              <div>
-                                <div
-                                  style={{
-                                    fontSize: 10,
-                                    opacity: 0.72,
-                                    marginBottom: 4,
-                                  }}
-                                >
-                                  Stride
-                                </div>
-                                <input
-                                  type="number"
-                                  value={aiBulkStride}
-                                  onChange={(e) =>
-                                    setAiBulkStride(Number(e.target.value) || 0)
-                                  }
-                                  style={{
-                                    width: "100%",
-                                    padding: "8px 10px",
-                                    borderRadius: 12,
-                                    border: "1px solid rgba(255,255,255,0.12)",
-                                    background: "rgba(0,0,0,0.35)",
-                                    color: "rgba(255,255,255,0.92)",
-                                    fontSize: 11,
-                                    outline: "none",
-                                  }}
-                                />
-                              </div>
-
-                              <div>
-                                <div
-                                  style={{
-                                    fontSize: 10,
-                                    opacity: 0.72,
-                                    marginBottom: 4,
-                                  }}
-                                >
-                                  Amount of Samples
-                                </div>
-                                <input
-                                  type="number"
-                                  value={aiBulkMaxSamples}
-                                  onChange={(e) =>
-                                    setAiBulkMaxSamples(
-                                      Number(e.target.value) || 0
-                                    )
-                                  }
-                                  style={{
-                                    width: "100%",
-                                    padding: "8px 10px",
-                                    borderRadius: 12,
-                                    border: "1px solid rgba(255,255,255,0.12)",
-                                    background: "rgba(0,0,0,0.35)",
-                                    color: "rgba(255,255,255,0.92)",
-                                    fontSize: 11,
-                                    outline: "none",
-                                  }}
-                                />
-                              </div>
-                            </div>
-
-                            <div style={{ height: 10 }} />
-                            <button
-                              onClick={applyAiBulkSettings}
-                              style={{
-                                width: "100%",
-                                padding: "10px 12px",
-                                borderRadius: 14,
-                                border: "1px solid rgba(90,170,255,0.32)",
-                                background:
-                                  "linear-gradient(135deg, rgba(90,170,255,0.18), rgba(160,90,255,0.12))",
-                                color: "rgba(235,245,255,0.98)",
-                                fontSize: 12,
-                                fontWeight: 1000,
-                                cursor: "pointer",
-                                boxShadow: "0 14px 34px rgba(0,0,0,0.55)",
-                              }}
-                            >
-                              Apply to{" "}
-                              {aiBulkScope === "active" ? "active" : "all"}{" "}
-                              libraries
-                            </button>
-                          </div>
-
-                          <div style={{ height: 6 }} />
                           {def.fields.map((f) => {
                             const v = s[f.key];
                             if (f.type === "boolean") {
@@ -31276,7 +31052,10 @@ export default function App() {
                                 ((aiLibraryCounts as any) || {})[lid] || 0
                               );
                               // slider max follows loaded count when known, otherwise falls back
-                              max0 = loadedMax > 0 ? loadedMax : 100000;
+                              max0 =
+                                loadedMax > 0
+                                  ? Math.min(loadedMax, AI_LIBRARY_MAX_SAMPLES)
+                                  : AI_LIBRARY_MAX_SAMPLES;
                               step0 = typeof f.step === "number" ? f.step : 1;
                             }
 
