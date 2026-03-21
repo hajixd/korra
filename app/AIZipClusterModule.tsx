@@ -15,7 +15,6 @@ import { createPortal } from "react-dom";
 import {
   AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT,
   AI_LIBRARY_DEFAULT_MAX_SAMPLES,
-  AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES,
   AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES,
   AI_LIBRARY_MAX_SAMPLES,
 } from "../lib/aiLibrarySettings";
@@ -4365,51 +4364,6 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         min: 0,
         max: 5000,
         step: 1,
-      },
-      {
-        key: "maxSamples",
-        label: "Amount of Samples",
-        type: "number",
-        min: 0,
-        max: AI_LIBRARY_MAX_SAMPLES,
-        step: 100,
-      },
-    ],
-  },
-  {
-    id: "recent",
-    name: "Recent Window",
-    description: "",
-    defaults: {
-      weight: 100,
-      windowTrades: AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES,
-      maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES,
-      stride: 0,
-    },
-    fields: [
-      {
-        key: "weight",
-        label: "Weight (%)",
-        type: "number",
-        min: 0,
-        max: 500,
-        step: 5,
-      },
-      {
-        key: "stride",
-        label: "Stride",
-        type: "number",
-        min: 0,
-        max: 5000,
-        step: 1,
-      },
-      {
-        key: "windowTrades",
-        label: "Window (trades)",
-        type: "number",
-        min: 50,
-        step: 50,
-        help: "How many most-recent trades are eligible.",
       },
       {
         key: "maxSamples",

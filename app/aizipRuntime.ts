@@ -45,6 +45,7 @@ export type AIZipHistorySeedSettings = {
 
 export const ONLINE_LEARNING_LIBRARY_ID = "core";
 export const GHOST_LEARNING_LIBRARY_ID = "suppressed";
+export const REMOVED_AIZIP_LIBRARY_IDS = new Set(["recent"]);
 export const BASE_SEEDING_LIBRARY_IDS = new Set([
   "base",
   "tokyo",
@@ -55,6 +56,10 @@ export const BASE_SEEDING_LIBRARY_IDS = new Set([
 
 export const AI_LIBRARY_SEED_LOOKAHEAD_BARS = 96;
 export const AIZIP_BACKTEST_HISTORY_FETCH_TIMEOUT_MS = 12000;
+export const SYNTHETIC_LIBRARY_START_MS = Date.UTC(1999, 0, 1, 0, 0, 0, 0);
+export const SYNTHETIC_LIBRARY_BAR_INTERVAL_MS = 15 * 60 * 1000;
+export const SYNTHETIC_LIBRARY_MIN_BARS = 2048;
+export const SYNTHETIC_LIBRARY_MAX_BARS = 8192;
 
 export const isBaseSeedingLibraryId = (libraryId: string): boolean => {
   return BASE_SEEDING_LIBRARY_IDS.has(String(libraryId || "").trim().toLowerCase());
@@ -68,8 +73,16 @@ export const isGhostLearningLibraryId = (libraryId: string): boolean => {
   return String(libraryId || "").trim().toLowerCase() === GHOST_LEARNING_LIBRARY_ID;
 };
 
+export const isRemovedAizipLibraryId = (libraryId: string): boolean => {
+  return REMOVED_AIZIP_LIBRARY_IDS.has(String(libraryId || "").trim().toLowerCase());
+};
+
 export const isVisibleAizipLibraryId = (libraryId: string): boolean => {
-  return !isOnlineLearningLibraryId(libraryId) && !isGhostLearningLibraryId(libraryId);
+  return (
+    !isOnlineLearningLibraryId(libraryId) &&
+    !isGhostLearningLibraryId(libraryId) &&
+    !isRemovedAizipLibraryId(libraryId)
+  );
 };
 
 export const getVisibleAizipLibraryIds = (
@@ -97,7 +110,10 @@ export const canRunAizipLibraries = (params: {
 }): boolean => {
   const ids = Array.isArray(params.libraryIds) ? params.libraryIds : [];
   // Any active library should be attempted during backtests; individual loaders can still resolve to 0 results.
-  return ids.some((libraryId) => String(libraryId ?? "").trim().length > 0);
+  return ids.some((libraryId) => {
+    const normalized = String(libraryId ?? "").trim();
+    return normalized.length > 0 && !isRemovedAizipLibraryId(normalized);
+  });
 };
 
 export const canRunAizipLibrariesForSettings = (params: {
@@ -156,6 +172,133 @@ export const hasUsableAizipSeedCandles = (
   minimumBars = 3
 ): boolean => {
   return Array.isArray(candles) && candles.length >= Math.max(3, Math.floor(minimumBars));
+};
+
+const hashText32 = (value: string): number => {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+};
+
+const createSeededRng = (seed: number) => {
+  let state = (seed >>> 0) || 1;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+const sampleStandardNormal = (rng: () => number): number => {
+  let u = 0;
+  let v = 0;
+  while (u <= Number.EPSILON) {
+    u = rng();
+  }
+  while (v <= Number.EPSILON) {
+    v = rng();
+  }
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+};
+
+const clamp = (value: number, min: number, max: number): number => {
+  return Math.min(max, Math.max(min, value));
+};
+
+export const getSyntheticLibraryBarCount = (chunkBars: number): number => {
+  const requested = Math.max(1, Math.floor(Number(chunkBars) || 0));
+  return clamp(requested * 96, SYNTHETIC_LIBRARY_MIN_BARS, SYNTHETIC_LIBRARY_MAX_BARS);
+};
+
+export const buildSyntheticLibraryCandles = (params: {
+  seedText: string;
+  candleCount: number;
+  startMs?: number;
+  intervalMs?: number;
+}): SeededLibraryCandle[] => {
+  const {
+    seedText,
+    candleCount,
+    startMs = SYNTHETIC_LIBRARY_START_MS,
+    intervalMs = SYNTHETIC_LIBRARY_BAR_INTERVAL_MS
+  } = params;
+
+  const totalBars = Math.max(8, Math.floor(Number(candleCount) || 0));
+  const stepMs = Math.max(60_000, Math.floor(Number(intervalMs) || SYNTHETIC_LIBRARY_BAR_INTERVAL_MS));
+  const rng = createSeededRng(hashText32(seedText));
+  const out: SeededLibraryCandle[] = new Array(totalBars);
+  const regimeConfigs = [
+    { drift: 0.00065, vol: 0.0032, persistence: 0.5, jumpProb: 0.002, jumpScale: 0.006 },
+    { drift: -0.0006, vol: 0.0034, persistence: 0.5, jumpProb: 0.0022, jumpScale: 0.0065 },
+    { drift: 0.00004, vol: 0.0018, persistence: 0.2, jumpProb: 0.0008, jumpScale: 0.003 },
+    { drift: 0, vol: 0.0056, persistence: 0.15, jumpProb: 0.006, jumpScale: 0.015 }
+  ] as const;
+
+  let regimeIndex = 2;
+  let regimeBarsLeft = 0;
+  let previousLogReturn = 0;
+  let price = 100 + rng() * 20;
+
+  out[0] = {
+    time: startMs,
+    open: price,
+    high: price * 1.0015,
+    low: price * 0.9985,
+    close: price * 1.0005
+  };
+  price = out[0]!.close;
+
+  for (let index = 1; index < totalBars; index += 1) {
+    if (regimeBarsLeft <= 0) {
+      const pick = rng();
+      regimeIndex = pick < 0.24 ? 0 : pick < 0.48 ? 1 : pick < 0.82 ? 2 : 3;
+      regimeBarsLeft = 48 + Math.floor(rng() * 192);
+    }
+
+    const config = regimeConfigs[regimeIndex]!;
+    const intradayPhase = (index % 96) / 96;
+    const weeklyPhase = (index % (96 * 7)) / (96 * 7);
+    const seasonalBias =
+      Math.sin(intradayPhase * Math.PI * 2) * 0.00025 +
+      Math.sin(weeklyPhase * Math.PI * 2) * 0.0004;
+    const noise = sampleStandardNormal(rng);
+    let logReturn =
+      config.drift +
+      seasonalBias +
+      previousLogReturn * config.persistence +
+      noise * config.vol;
+
+    if (rng() < config.jumpProb) {
+      const jumpDirection = rng() < 0.5 ? -1 : 1;
+      logReturn += jumpDirection * config.jumpScale * (0.6 + rng() * 0.8);
+    }
+
+    logReturn = clamp(logReturn, -0.18, 0.18);
+    previousLogReturn = logReturn;
+
+    const open = price;
+    const close = Math.max(0.5, open * Math.exp(logReturn));
+    const bodyMove = Math.abs(close - open);
+    const wickScale = Math.max(open * config.vol * (0.8 + Math.abs(sampleStandardNormal(rng))), bodyMove * 0.65);
+    const high = Math.max(open, close) + wickScale * (0.35 + rng() * 0.85);
+    const low = Math.max(0.0001, Math.min(open, close) - wickScale * (0.35 + rng() * 0.85));
+
+    out[index] = {
+      time: startMs + index * stepMs,
+      open,
+      high: Math.max(high, open, close),
+      low: Math.min(low, open, close),
+      close
+    };
+    price = close;
+    regimeBarsLeft -= 1;
+  }
+
+  return out;
 };
 
 const toUtcTimestamp = (ms: number): number => {

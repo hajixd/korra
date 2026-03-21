@@ -402,12 +402,6 @@ const getSessionLabel = (timestampSeconds: number): string => {
   return "London";
 };
 
-const getTradeRiskReward = (trade: HistoryItem) => {
-  const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
-  const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
-  return rewardDistance / riskDistance;
-};
-
 const buildTradeNeighborVector = (trade: HistoryItem): number[] => {
   const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
   const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
@@ -1695,7 +1689,7 @@ const computeAntiCheatBacktestContext = (params: {
   const activeAiMode = panelBacktestFilterSettings.aiMode;
   const explicitActiveLibraryIds = panelBacktestFilterSettings.selectedAiLibraries
     .map((libraryId) => String(libraryId ?? "").trim().toLowerCase())
-    .filter((libraryId) => libraryId.length > 0);
+    .filter((libraryId) => libraryId.length > 0 && libraryId !== "recent");
   const activeLibraryIds =
     explicitActiveLibraryIds.length > 0
       ? explicitActiveLibraryIds
@@ -1770,39 +1764,6 @@ const computeAntiCheatBacktestContext = (params: {
     1,
     512
   );
-
-  const getTradeRiskReward = (trade: HistoryItem) => {
-    const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
-    const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
-    return rewardDistance / riskDistance;
-  };
-
-  const getSyntheticWinProb = (trade: HistoryItem) => {
-    const session = getSessionLabel(trade.entryTime);
-    const entryHour = getTradeHour(trade.entryTime);
-    const rr = getTradeRiskReward(trade);
-    const seed = hashSeedFromText(
-      `${trade.symbol}|${trade.entrySource}|${trade.side}|${trade.entryTime}`
-    );
-    let score = 0.5 + (((seed % 1000) / 999) - 0.5) * 0.12;
-
-    if (trade.side === "Long") {
-      score += 0.015;
-    }
-
-    if (session === "London") {
-      score += 0.035;
-    } else if (session === "New York") {
-      score += 0.025;
-    } else if (session === "Tokyo") {
-      score -= 0.01;
-    }
-
-    score += Math.sin((entryHour / 24) * Math.PI * 2) * 0.035;
-    score += clamp((rr - 1.1) * 0.045, -0.08, 0.08);
-
-    return clamp(score, 0.08, 0.92);
-  };
 
   const pickLibrarySource = (
     libraryId: string,
@@ -1904,11 +1865,8 @@ const computeAntiCheatBacktestContext = (params: {
     return 0;
   };
 
-  const resolveCandidateOutcomeScore = (candidate: LibrarySourceCandidate) => {
-    return effectiveValidationMode === "synthetic" && candidate.trade
-      ? getSyntheticWinProb(candidate.trade)
-      : getCandidateOutcomeScore(candidate);
-  };
+  const resolveCandidateOutcomeScore = (candidate: LibrarySourceCandidate) =>
+    getCandidateOutcomeScore(candidate);
 
   const resolveEffectiveOutcomeScore = (
     candidate: LibrarySourceCandidate,
@@ -2058,7 +2016,7 @@ const computeAntiCheatBacktestContext = (params: {
       const confidence =
         Number.isFinite(preservedConfidence)
           ? clamp(preservedConfidence, 0.01, 0.99)
-          : getSyntheticWinProb(trade);
+          : 0.5;
       confidenceById.set(trade.id, confidence);
       aiEntrySnapshotById.set(trade.id, {
         entryConfidence: confidence,

@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AIZIP_BACKTEST_HISTORY_FETCH_TIMEOUT_MS,
+  SYNTHETIC_LIBRARY_START_MS,
+  buildSyntheticLibraryCandles,
   buildSeededLibraryTradePoolFromCandles,
   canRunAizipLibraries,
   canRunAizipLibrariesForSettings,
   countEnabledAizipModels,
   doesAizipHistorySeedSettingsChange,
+  getSyntheticLibraryBarCount,
   getVisibleAizipLibraryIds,
   shouldSkipAizipBacktestHistoryFetch,
   usesAizipEveryCandleMode
@@ -25,7 +28,7 @@ test("selected libraries can run without selected models", () => {
       libraryIds: ["recent"],
       selectedModelCount: 0
     }),
-    true
+    false
   );
 });
 
@@ -38,7 +41,7 @@ test("library readiness follows the selected library set", () => {
         Reversal: 2
       }
     }),
-    true
+    false
   );
   assert.equal(
     canRunAizipLibrariesForSettings({
@@ -48,7 +51,7 @@ test("library readiness follows the selected library set", () => {
         Reversal: 0
       }
     }),
-    true
+    false
   );
   assert.equal(
     canRunAizipLibrariesForSettings({
@@ -64,7 +67,7 @@ test("library readiness follows the selected library set", () => {
 test("visible libraries exclude online and ghost learning toggles", () => {
   assert.deepEqual(
     getVisibleAizipLibraryIds(["core", "suppressed", "base", "recent"]),
-    ["base", "recent"]
+    ["base"]
   );
   assert.equal(
     countEnabledAizipModels({
@@ -158,6 +161,28 @@ test("history seed reloads when date range or seed coverage inputs change", () =
     }),
     true
   );
+});
+
+test("synthetic library candles are deterministic and start in 1999", () => {
+  const candleCount = getSyntheticLibraryBarCount(24);
+  const left = buildSyntheticLibraryCandles({
+    seedText: "synthetic-library|base|XAUUSD|15m",
+    candleCount
+  });
+  const right = buildSyntheticLibraryCandles({
+    seedText: "synthetic-library|base|XAUUSD|15m",
+    candleCount
+  });
+  const other = buildSyntheticLibraryCandles({
+    seedText: "synthetic-library|base|BTCUSD|15m",
+    candleCount
+  });
+
+  assert.deepEqual(left, right);
+  assert.ok(left.length >= 2048, "expected a full synthetic seed window");
+  assert.equal(left[0]?.time, SYNTHETIC_LIBRARY_START_MS);
+  assert.equal(new Date(SYNTHETIC_LIBRARY_START_MS).getUTCFullYear(), 1999);
+  assert.notDeepEqual(left.slice(0, 8), other.slice(0, 8));
 });
 
 test("backtest history timeout stays long enough for deep seed loads", () => {

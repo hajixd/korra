@@ -2,7 +2,6 @@ import {
   AI_LIBRARY_DEFAULT_MAX_SAMPLES,
   AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES,
   AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT,
-  AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES,
   AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW,
   AI_LIBRARY_MAX_SAMPLES
 } from "./aiLibrarySettings";
@@ -13,7 +12,6 @@ export const AIZIP_COMPUTE_WORKER_CODE = String.raw`
   const AI_LIBRARY_DEFAULT_MAX_SAMPLES = ${AI_LIBRARY_DEFAULT_MAX_SAMPLES};
   const AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES = ${AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES};
   const AI_LIBRARY_MAX_SAMPLES = ${AI_LIBRARY_MAX_SAMPLES};
-  const AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES = ${AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES};
   const AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT = ${AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT};
   const AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW = ${AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW};
   const K_ENTRY = 21;
@@ -21,6 +19,10 @@ export const AIZIP_COMPUTE_WORKER_CODE = String.raw`
   const SEED_LOOKAHEAD_BARS = 96;
   const SEED_STRIDE = 0;
   const MODELS = ["Momentum","Mean Reversion","Seasons","Time of Day","Fibonacci","Support / Resistance"];
+  const SYNTHETIC_LIBRARY_START_MS = Date.UTC(1999, 0, 1, 0, 0, 0, 0);
+  const SYNTHETIC_LIBRARY_BAR_INTERVAL_MS = 15 * 60 * 1000;
+  const SYNTHETIC_LIBRARY_MIN_BARS = 2048;
+  const SYNTHETIC_LIBRARY_MAX_BARS = 8192;
 
   let CANDLES = [];
 
@@ -42,62 +44,93 @@ export const AIZIP_COMPUTE_WORKER_CODE = String.raw`
       return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
     };
   }
-  function pick(arr, rnd){
-    if(!arr || !arr.length) return 0;
-    const idx = Math.max(0, Math.min(arr.length-1, Math.floor(rnd()*arr.length)));
-    return arr[idx];
+  function sampleStandardNormal(rng){
+    let u = 0;
+    let v = 0;
+    while(u <= Number.EPSILON) u = rng();
+    while(v <= Number.EPSILON) v = rng();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
   }
-  function makeSyntheticCandles(realCandles, seed){
-    const n = realCandles.length;
-    if(n < 3) return realCandles.slice();
-    const rets = [];
-    const ranges = [];
-    const upWicks = [];
-    const dnWicks = [];
-    for(let i=1;i<n;i++){
-      const p0 = realCandles[i-1].close;
-      const p1 = realCandles[i].close;
-      if(Number.isFinite(p0) && Number.isFinite(p1) && p0>0){
-        rets.push((p1 - p0) / p0);
+  function getSyntheticCandleCount(chunkBars){
+    const requested = Math.max(1, Math.floor(Number(chunkBars) || 0));
+    return clamp(requested * 96, SYNTHETIC_LIBRARY_MIN_BARS, SYNTHETIC_LIBRARY_MAX_BARS);
+  }
+  function makeSyntheticCandles(candleCount, seed){
+    const totalBars = Math.max(8, Math.floor(Number(candleCount) || 0));
+    const rng = mulberry32((seed >>> 0) || 1);
+    const out = new Array(totalBars);
+    const regimeConfigs = [
+      { drift: 0.00065, vol: 0.0032, persistence: 0.5, jumpProb: 0.002, jumpScale: 0.006 },
+      { drift: -0.0006, vol: 0.0034, persistence: 0.5, jumpProb: 0.0022, jumpScale: 0.0065 },
+      { drift: 0.00004, vol: 0.0018, persistence: 0.2, jumpProb: 0.0008, jumpScale: 0.003 },
+      { drift: 0, vol: 0.0056, persistence: 0.15, jumpProb: 0.006, jumpScale: 0.015 }
+    ];
+
+    let regimeIndex = 2;
+    let regimeBarsLeft = 0;
+    let previousLogReturn = 0;
+    let price = 100 + rng() * 20;
+
+    out[0] = {
+      index: 0,
+      time: SYNTHETIC_LIBRARY_START_MS,
+      open: price,
+      high: price * 1.0015,
+      low: price * 0.9985,
+      close: price * 1.0005
+    };
+    price = out[0].close;
+
+    for(let i=1;i<totalBars;i++){
+      if(regimeBarsLeft <= 0){
+        const pick = rng();
+        regimeIndex = pick < 0.24 ? 0 : pick < 0.48 ? 1 : pick < 0.82 ? 2 : 3;
+        regimeBarsLeft = 48 + Math.floor(rng() * 192);
       }
-      const o = realCandles[i].open;
-      const h = realCandles[i].high;
-      const l = realCandles[i].low;
-      const c = realCandles[i].close;
-      if(Number.isFinite(o) && Number.isFinite(h) && Number.isFinite(l) && Number.isFinite(c) && o>0){
-        const hi = (h - Math.max(o,c)) / o;
-        const lo = (Math.min(o,c) - l) / o;
-        const rng = (h - l) / o;
-        if(Number.isFinite(hi)) upWicks.push(Math.max(0, hi));
-        if(Number.isFinite(lo)) dnWicks.push(Math.max(0, lo));
-        if(Number.isFinite(rng)) ranges.push(Math.max(0, rng));
+
+      const config = regimeConfigs[regimeIndex];
+      const intradayPhase = (i % 96) / 96;
+      const weeklyPhase = (i % (96 * 7)) / (96 * 7);
+      const seasonalBias =
+        Math.sin(intradayPhase * Math.PI * 2) * 0.00025 +
+        Math.sin(weeklyPhase * Math.PI * 2) * 0.0004;
+      const noise = sampleStandardNormal(rng);
+      let logReturn =
+        config.drift +
+        seasonalBias +
+        previousLogReturn * config.persistence +
+        noise * config.vol;
+
+      if(rng() < config.jumpProb){
+        const jumpDirection = rng() < 0.5 ? -1 : 1;
+        logReturn += jumpDirection * config.jumpScale * (0.6 + rng() * 0.8);
       }
+
+      logReturn = clamp(logReturn, -0.18, 0.18);
+      previousLogReturn = logReturn;
+
+      const open = price;
+      const close = Math.max(0.5, open * Math.exp(logReturn));
+      const bodyMove = Math.abs(close - open);
+      const wickScale = Math.max(
+        open * config.vol * (0.8 + Math.abs(sampleStandardNormal(rng))),
+        bodyMove * 0.65
+      );
+      const high = Math.max(open, close) + wickScale * (0.35 + rng() * 0.85);
+      const low = Math.max(0.0001, Math.min(open, close) - wickScale * (0.35 + rng() * 0.85));
+
+      out[i] = {
+        index: i,
+        time: SYNTHETIC_LIBRARY_START_MS + i * SYNTHETIC_LIBRARY_BAR_INTERVAL_MS,
+        open,
+        high: Math.max(high, open, close),
+        low: Math.min(low, open, close),
+        close
+      };
+      price = close;
+      regimeBarsLeft -= 1;
     }
-    const rnd = mulberry32((seed >>> 0) || 1);
-    const out = new Array(n);
-    const start = realCandles[0];
-    out[0] = { index: 0, time: start.time, open: start.open, high: start.high, low: start.low, close: start.close };
-    let prevClose = start.close;
-    for(let i=1;i<n;i++){
-      const r = pick(rets, rnd);
-      const o = prevClose;
-      const c = o * (1 + r);
-      const rng = Math.max(1e-9, pick(ranges, rnd));
-      const up = Math.max(0, pick(upWicks, rnd));
-      const dn = Math.max(0, pick(dnWicks, rnd));
-      const bodyHi = Math.max(o, c);
-      const bodyLo = Math.min(o, c);
-      let h = bodyHi + o * up;
-      let l = bodyLo - o * dn;
-      const curRng = (h - l) / Math.max(1e-9, o);
-      if(curRng < rng){
-        const need = (rng - curRng) * o;
-        h += need * 0.5;
-        l -= need * 0.5;
-      }
-      out[i] = { index: i, time: realCandles[i].time, open: o, high: h, low: l, close: c };
-      prevClose = c;
-    }
+
     return out;
   }
 
@@ -2224,6 +2257,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
           metaSignalIndex: i,
           metaEntryIndex: entryIdx,
           metaExitIndex: resolvedExitIndex,
+          metaExitTime: candles[resolvedExitIndex] ? candles[resolvedExitIndex].time : candles[entryIdx].time,
           metaSession: sess,
           metaOutcome: hit === "TP" ? "Win" : "Loss",
           metaDir: dir === 1 ? "Buy" : "Sell",
@@ -2975,7 +3009,9 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
         .replace(/^_+|_+$/g, "");
 
     const aiLibrariesActive = Array.isArray(settings.aiLibrariesActive)
-      ? settings.aiLibrariesActive.map((x) => String(x))
+      ? settings.aiLibrariesActive
+          .map((x) => String(x || "").trim().toLowerCase())
+          .filter((id) => id && id !== "recent")
       : [];
     // Nearest-neighbor metadata (entryNeighbors / MIT) should always be available.
     // When no explicit library is selected, fall back to the base seeding pool so
@@ -3002,19 +3038,6 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
     const suppressedWeight = libWeight("suppressed", 100);
     const suppressedStride = clamp(Math.floor(Number(libSetting("suppressed").stride ?? 0) || 0), 0, 5000);
 
-    const recentEnabled = effectiveAiLibraries.includes("recent");
-    const recentWeight = libWeight("recent", 100);
-    const recentWindowTrades = clamp(
-      Math.floor(
-        Number.isFinite(Number(libSetting("recent").windowTrades))
-          ? Number(libSetting("recent").windowTrades)
-          : AI_LIBRARY_DEFAULT_RECENT_WINDOW_TRADES
-      ),
-      0,
-      AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW
-    );
-    const recentStride = clamp(Math.floor(Number(libSetting("recent").stride ?? 0) || 0), 0, 5000);
-
     // Library-driven suppression behavior:
     // Suppressed outcomes become neighbors only when the Suppressed library is active.
     COUNT_SUPPRESSED_NEIGHBORS = suppressedEnabled && suppressedWeight > 0;
@@ -3022,8 +3045,6 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
 
     // Static (pre-seeded) neighbor examples by model-space.
     const libsStatic = {};
-    // Dynamic Online Learning pool (raw points, used for Recent Window slicing).
-    const onlineRaw = {};
     // Dynamic Online Learning pool (core-weighted points, used directly).
     const onlineCore = {};
     // Dynamic Suppressed pool (suppressed outcomes as training-only neighbors).
@@ -3215,7 +3236,6 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
     const initLibStores = (models) => {
       for (const m of models) {
         if (!libsStatic[m]) libsStatic[m] = [];
-        if (!onlineRaw[m]) onlineRaw[m] = [];
         if (!onlineCore[m]) onlineCore[m] = [];
         if (!onlineSuppressed[m]) onlineSuppressed[m] = [];
       }
@@ -3620,6 +3640,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
           metaSignalIndex: signalIndex,
           metaEntryIndex: entryIndex,
           metaExitIndex: exitIdx,
+          metaExitTime: candles[exitIdx] ? candles[exitIdx].time : entryTime,
           metaSession: sess,
           metaOutcome: label === 1 ? "Win" : "Loss",
           metaDir: direction === 1 ? "Buy" : "Sell",
@@ -3659,11 +3680,20 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
 
       const trainCut = Math.floor(n * (trainingSplit / 100));
 
-      const synthSeed = hashStrToInt(
-        String((candles[0] && candles[0].time) || "") + "|" + String((candles[n - 1] && candles[n - 1].time) || "")
-      );
+      const synthSeed = hashStrToInt([
+        "synthetic-library",
+        String(settings.symbol || ""),
+        String(settings.timeframe || ""),
+        String(settings.precisionTimeframe || ""),
+        String(chunkBars),
+        String(tpDollars),
+        String(slDollars),
+        String(maxBarsInTrade),
+        JSON.stringify(modelStates || {}),
+        JSON.stringify(aiLibrariesSettings || {})
+      ].join("|"));
       const seedCandles =
-        syntheticTraining ? syntheticCandles(candles, synthSeed) : candles;
+        syntheticTraining ? makeSyntheticCandles(getSyntheticCandleCount(chunkBars), synthSeed) : candles;
 
       const onlineInitMaxSeedIndex = Math.min(
         n,
@@ -3900,9 +3930,8 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
       // Dynamic Online Learning injection: derived from *executed* (real) trades only.
       function addOnlineNeighborPoint(modelKey, vecRaw, dir, label, pnl, entryTime, signalIdx, entryIdx, exitIdx, suppressed){
         if(!modelKey) return;
-        if(!(coreEnabled || recentEnabled || suppressedEnabled)) return;
+        if(!(coreEnabled || suppressedEnabled)) return;
         const mk = String(modelKey);
-        if(!onlineRaw[mk]) onlineRaw[mk] = [];
         if(!onlineCore[mk]) onlineCore[mk] = [];
         if(!onlineSuppressed[mk]) onlineSuppressed[mk] = [];
 
@@ -3921,6 +3950,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
           metaSignalIndex: signalIdx,
           metaEntryIndex: entryIdx,
           metaExitIndex: exitIdx,
+          metaExitTime: (typeof exitIdx === "number" && candles[exitIdx]) ? candles[exitIdx].time : entryTime,
           metaSession: sess,
           metaOutcome: label === 1 ? "Win" : "Loss",
           metaDir: dir === 1 ? "Buy" : "Sell",
@@ -3931,13 +3961,6 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
         };
 
         const coreStrideEff = coreStride > 0 ? coreStride : 1;
-        const recentStrideEff = recentStride > 0 ? recentStride : 1;
-
-        if (recentEnabled && !suppressed) {
-          if (recentStrideEff <= 1 || (signalIdx % recentStrideEff === 0)) {
-            onlineRaw[mk].push(basePoint);
-          }
-        }
 
         if (coreEnabled && coreWeight > 0 && !suppressed) {
           if (coreStrideEff <= 1 || (signalIdx % coreStrideEff === 0)) {
@@ -3957,7 +3980,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
       settings.__addOnlineNeighborPoint = addOnlineNeighborPoint;
 
       // "libs" is a read-only view used by the rest of the simulation code.
-      // It merges the static seed pool + (optional) Online Learning + (optional) Recent Window slice.
+      // It merges the static seed pool + optional live-derived learning pools.
       for (const m of usedModels) {
         Object.defineProperty(libs, m, {
           configurable: true,
@@ -3977,19 +4000,6 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
               const capSup = libMaxSamples("suppressed", AI_LIBRARY_DEFAULT_MAX_SAMPLES);
               const arrSup = getBalancedDynamicPoints("suppressed", m, onlineSuppressed[m], capSup, false);
               for (const p of arrSup) out.push(p);
-            }
-
-            if (recentEnabled && recentWeight > 0 && recentWindowTrades > 0) {
-              const raw = onlineRaw[m] || [];
-              const win = Math.min(recentWindowTrades, raw.length);
-              const slice0 = win > 0 ? raw.slice(raw.length - win) : [];
-              const capRec = libMaxSamples("recent", AI_LIBRARY_DEFAULT_MAX_SAMPLES);
-              const slice = getBalancedDynamicPoints("recent", m, slice0, capRec, false);
-              for (const bp of slice) {
-                // clone with recent weighting (training-only)
-                const __uidBody = (bp && bp.uid) ? String(bp.uid).replace(/^[^|]+\|/, "") : String((bp && bp.metaTime) || "");
-                out.push({ ...bp, uid: "recent|" + __uidBody, weight: (bp.baseWeight || bp.weight || 1) * recentWeight, metaLib: "recent", metaTrainingOnly: true });
-              }
             }
 
             return out;
@@ -5516,18 +5526,6 @@ function flushSuppressedNeighbors(uptoIndex){
           }
           addNaturalLibraryWinSamples("suppressed", onlineSuppressed[mk]);
         }
-
-        if (recentEnabled && recentWeight > 0 && recentWindowTrades > 0) {
-          const raw = onlineRaw[mk] || [];
-          const win = Math.min(recentWindowTrades, raw.length);
-          const slice0 = win > 0 ? raw.slice(raw.length - win) : [];
-          const capRec = libMaxSamples("recent", AI_LIBRARY_DEFAULT_MAX_SAMPLES);
-          const slice = getBalancedDynamicPoints("recent", mk, slice0, capRec, false);
-          if (slice.length) {
-            libraryCounts.recent = (libraryCounts.recent || 0) + slice.length;
-          }
-          addNaturalLibraryWinSamples("recent", slice0);
-        }
       }
     } catch(_e) {}
     const libraryWinRates = {};
@@ -5601,6 +5599,7 @@ function flushSuppressedNeighbors(uptoIndex){
             (typeof entryIdx === "number" ? candles?.[entryIdx]?.time ?? "" : "") ??
             "";
           const exitTime =
+            p.metaExitTime ??
             p.exitTime ??
             p.exit_time ??
             p.closeTime ??

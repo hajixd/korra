@@ -103,10 +103,12 @@ import {
 import {
   AIZIP_BACKTEST_HISTORY_FETCH_TIMEOUT_MS,
   BASE_SEEDING_LIBRARY_IDS,
+  buildSyntheticLibraryCandles,
   buildSeededLibraryTradePoolFromCandles,
   canRunAizipLibrariesForSettings,
   countEnabledAizipModels,
   doesAizipHistorySeedSettingsChange,
+  getSyntheticLibraryBarCount,
   getVisibleAizipLibraryIds,
   getMinimumAizipSeedBars,
   hasUsableAizipSeedCandles,
@@ -9446,10 +9448,9 @@ function TradingTerminalWorkspace({
     }
 
     const isLegacyDefault =
-      cleaned.length === 3 &&
+      cleaned.length === 2 &&
       cleaned[0] === "core" &&
-      cleaned[1] === "recent" &&
-      cleaned[2] === "base";
+      cleaned[1] === "base";
     const isLegacyCoreOnly = cleaned.length === 1 && cleaned[0] === "core";
 
     return isLegacyDefault || isLegacyCoreOnly ? [] : cleaned;
@@ -17931,6 +17932,8 @@ function TradingTerminalWorkspace({
         `tf:${settings.timeframe}`,
         `ptf:${settings.precisionTimeframe}`,
         `sym:${settings.symbol}`,
+        `ac:${settings.antiCheatEnabled ? 1 : 0}`,
+        `vm:${settings.validationMode}`,
         `tp:${normalizedTp}`,
         `sl:${normalizedSl}`,
         `stop:${settings.stopMode}`,
@@ -17963,6 +17966,8 @@ function TradingTerminalWorkspace({
         `tf:${settings.timeframe}`,
         `ptf:${settings.precisionTimeframe}`,
         `sym:${settings.symbol}`,
+        `ac:${settings.antiCheatEnabled ? 1 : 0}`,
+        `vm:${settings.validationMode}`,
         `tp:${normalizedTp}`,
         `sl:${normalizedSl}`,
         `mp:${settings.minutePreciseEnabled ? 1 : 0}`,
@@ -17974,6 +17979,212 @@ function TradingTerminalWorkspace({
       ].join("|");
     },
     []
+  );
+
+  const shouldUseSyntheticLibraryHistory = useCallback(
+    (libraryId: string, settings: BacktestSettingsSnapshot) => {
+      return (
+        settings.antiCheatEnabled &&
+        settings.validationMode === "synthetic" &&
+        !isOnlineLearningLibraryId(libraryId) &&
+        !isGhostLearningLibraryId(libraryId)
+      );
+    },
+    []
+  );
+
+  const buildSyntheticLibraryCandlesForSettings = useCallback(
+    (
+      settings: BacktestSettingsSnapshot,
+      tpDollars: number,
+      slDollars: number,
+      kind: "seed" | "strategy"
+    ) => {
+      const modelKey = buildLibraryModelSelectionKey(settings);
+      const candleCount = getSyntheticLibraryBarCount(settings.chunkBars);
+      const seedText = [
+        "synthetic-library",
+        `kind:${kind}`,
+        `sym:${settings.symbol}`,
+        `tf:${settings.timeframe}`,
+        `ptf:${settings.precisionTimeframe}`,
+        `bars:${settings.chunkBars}`,
+        `models:${modelKey}`,
+        `tp:${Math.round(Number(tpDollars) || 0)}`,
+        `sl:${Math.round(Number(slDollars) || 0)}`
+      ].join("|");
+
+      return buildSyntheticLibraryCandles({
+        seedText,
+        candleCount
+      });
+    },
+    [buildLibraryModelSelectionKey]
+  );
+
+  const loadSyntheticSeededLibraryTradePool = useCallback(
+    async (
+      settings: BacktestSettingsSnapshot,
+      tpDollars: number,
+      slDollars: number
+    ): Promise<HistoryItem[]> => {
+      const normalizedTp = Number.isFinite(tpDollars) ? tpDollars : 0;
+      const normalizedSl = Number.isFinite(slDollars) ? slDollars : 0;
+      const poolKey = buildSeedLibraryPoolKey(settings, normalizedTp, normalizedSl);
+      const cached = aiLibraryPoolCacheRef.current.get(poolKey);
+      if (cached) {
+        return cached;
+      }
+
+      const inFlight = aiLibraryPoolInFlightRef.current.get(poolKey);
+      if (inFlight) {
+        return inFlight;
+      }
+
+      const computePromise = Promise.resolve().then(() => {
+        const candles = buildSyntheticLibraryCandlesForSettings(
+          settings,
+          normalizedTp,
+          normalizedSl,
+          "seed"
+        );
+        const formattedTimeCache = new Map<number, string>();
+        const formatSeedTime = (timestampSeconds: number) => {
+          const normalized = Math.floor(timestampSeconds);
+          const cachedLabel = formattedTimeCache.get(normalized);
+          if (cachedLabel) {
+            return cachedLabel;
+          }
+          const nextLabel = formatDateTime(normalized * 1000);
+          formattedTimeCache.set(normalized, nextLabel);
+          return nextLabel;
+        };
+        const ordered = buildSeededLibraryTradePoolFromCandles({
+          candles,
+          symbol: settings.symbol,
+          unitsPerMove: settings.dollarsPerMove,
+          tpDollars: normalizedTp,
+          slDollars: normalizedSl,
+          chunkBars: settings.chunkBars,
+          formatTimestamp: formatSeedTime
+        }) as HistoryItem[];
+        if (ordered.length > 0) {
+          aiLibraryPoolCacheRef.current.set(poolKey, ordered);
+        }
+        return ordered;
+      }).finally(() => {
+        aiLibraryPoolInFlightRef.current.delete(poolKey);
+      });
+
+      aiLibraryPoolInFlightRef.current.set(poolKey, computePromise);
+
+      return computePromise;
+    },
+    [
+      buildSeedLibraryPoolKey,
+      buildSyntheticLibraryCandlesForSettings
+    ]
+  );
+
+  const loadSyntheticLibraryTradePool = useCallback(
+    async (
+      settings: BacktestSettingsSnapshot,
+      tpDollars: number,
+      slDollars: number
+    ): Promise<HistoryItem[]> => {
+      const normalizedTp = Number.isFinite(tpDollars) ? tpDollars : 0;
+      const normalizedSl = Number.isFinite(slDollars) ? slDollars : 0;
+      const poolKey = buildLibraryPoolKey(settings, normalizedTp, normalizedSl);
+      const cached = aiLibraryPoolCacheRef.current.get(poolKey);
+      if (cached) {
+        return cached;
+      }
+
+      const inFlight = aiLibraryPoolInFlightRef.current.get(poolKey);
+      if (inFlight) {
+        return inFlight;
+      }
+
+      const computePromise = (async () => {
+        const candles = buildSyntheticLibraryCandlesForSettings(
+          settings,
+          normalizedTp,
+          normalizedSl,
+          "strategy"
+        );
+        const selectedModels = resolveLibraryModelProfiles(settings);
+        const unitsPerMove = Math.max(
+          1,
+          Number.isFinite(settings.dollarsPerMove)
+            ? settings.dollarsPerMove
+            : 1
+        );
+        const blueprints = buildStrategyReplayTradeBlueprints({
+          candles,
+          models: toStrategyReplayModels(selectedModels, settings.aiModelStates),
+          symbol: settings.symbol,
+          unitsPerMove,
+          chunkBars: settings.chunkBars,
+          strategyCatalog: modelsSurfaceCatalog,
+          tpDollars: normalizedTp,
+          slDollars: normalizedSl,
+          stopMode: settings.stopMode,
+          breakEvenTriggerPct: settings.breakEvenTriggerPct,
+          trailingStartPct: settings.trailingStartPct,
+          trailingDistPct: settings.trailingDistPct,
+          maxBarsInTrade: settings.maxBarsInTrade
+        });
+
+        if (blueprints.length === 0) {
+          return [];
+        }
+
+        const modelNamesById = selectedModels.reduce<Record<string, string>>(
+          (accumulator, model) => {
+            accumulator[model.id] = model.name ?? "Settings";
+            return accumulator;
+          },
+          {}
+        );
+        const rows = await computeBacktestRowsOnServer({
+          blueprints,
+          candleSeriesBySymbol: {
+            [settings.symbol]: candles
+          },
+          minutePreciseEnabled: false,
+          modelNamesById,
+          tpDollars: normalizedTp,
+          slDollars: normalizedSl,
+          stopMode: settings.stopMode,
+          breakEvenTriggerPct: settings.breakEvenTriggerPct,
+          trailingStartPct: settings.trailingStartPct,
+          trailingDistPct: settings.trailingDistPct,
+          limit: blueprints.length
+        });
+
+        const ordered = [...rows].sort(
+          (left, right) =>
+            Number(left.exitTime) - Number(right.exitTime) ||
+            left.id.localeCompare(right.id)
+        );
+        if (ordered.length > 0) {
+          aiLibraryPoolCacheRef.current.set(poolKey, ordered);
+        }
+        return ordered;
+      })().finally(() => {
+        aiLibraryPoolInFlightRef.current.delete(poolKey);
+      });
+
+      aiLibraryPoolInFlightRef.current.set(poolKey, computePromise);
+
+      return computePromise;
+    },
+    [
+      buildLibraryPoolKey,
+      buildSyntheticLibraryCandlesForSettings,
+      modelsSurfaceCatalog,
+      resolveLibraryModelProfiles
+    ]
   );
 
   const loadSeededLibraryTradePool = useCallback(
@@ -18530,6 +18741,10 @@ function TradingTerminalWorkspace({
           definition,
           options?.settingsSource
         );
+        const useSyntheticPool = shouldUseSyntheticLibraryHistory(
+          definition.id,
+          settingsSnapshot
+        );
         const useBase = isBaseSeedingLibraryId(definition.id);
         const tpDollars = useBase
           ? resolveLibraryDollarValue(settings.tpDollars, settingsSnapshot.tpDollars)
@@ -18539,25 +18754,45 @@ function TradingTerminalWorkspace({
           : settingsSnapshot.slDollars;
         let rawPool: HistoryItem[] = [];
         try {
-          rawPool = useBase
-            ? await withTimeout(
-                loadSeededLibraryTradePool(
-                  settingsSnapshot,
-                  tpDollars,
-                  slDollars
-                ),
-                AI_LIBRARY_RUN_TIMEOUT_MS,
-                `AI library ${libraryId} timed out while loading its seeded pool.`
-              )
-            : await withTimeout(
-                loadLibraryTradePool(
-                  settingsSnapshot,
-                  tpDollars,
-                  slDollars
-                ),
-                AI_LIBRARY_RUN_TIMEOUT_MS,
-                `AI library ${libraryId} timed out while loading its trade pool.`
-              );
+          rawPool = useSyntheticPool
+            ? useBase
+              ? await withTimeout(
+                  loadSyntheticSeededLibraryTradePool(
+                    settingsSnapshot,
+                    tpDollars,
+                    slDollars
+                  ),
+                  AI_LIBRARY_RUN_TIMEOUT_MS,
+                  `AI library ${libraryId} timed out while loading its synthetic seeded pool.`
+                )
+              : await withTimeout(
+                  loadSyntheticLibraryTradePool(
+                    settingsSnapshot,
+                    tpDollars,
+                    slDollars
+                  ),
+                  AI_LIBRARY_RUN_TIMEOUT_MS,
+                  `AI library ${libraryId} timed out while loading its synthetic trade pool.`
+                )
+            : useBase
+              ? await withTimeout(
+                  loadSeededLibraryTradePool(
+                    settingsSnapshot,
+                    tpDollars,
+                    slDollars
+                  ),
+                  AI_LIBRARY_RUN_TIMEOUT_MS,
+                  `AI library ${libraryId} timed out while loading its seeded pool.`
+                )
+              : await withTimeout(
+                  loadLibraryTradePool(
+                    settingsSnapshot,
+                    tpDollars,
+                    slDollars
+                  ),
+                  AI_LIBRARY_RUN_TIMEOUT_MS,
+                  `AI library ${libraryId} timed out while loading its trade pool.`
+                );
         } catch (error) {
           console.error("[AIZip][AiLibraryRunDiagnostics] LIBRARY_POOL_LOAD_FAILED", {
             libraryId,
@@ -18646,10 +18881,13 @@ function TradingTerminalWorkspace({
       buildLibrarySnapshotFromPool,
       filterLibraryCandidatePool,
       loadSeededLibraryTradePool,
+      loadSyntheticLibraryTradePool,
+      loadSyntheticSeededLibraryTradePool,
       loadLibraryTradePool,
       resolveLibraryBacktestSnapshot,
       resolveLibraryDollarValue,
-      resolveLibrarySettingsSnapshot
+      resolveLibrarySettingsSnapshot,
+      shouldUseSyntheticLibraryHistory
     ]
   );
 

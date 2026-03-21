@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { POST as aizipComputePost } from "../app/api/aizip/compute/route";
 import { POST as panelAnalyticsPost } from "../app/api/backtest/panel-analytics/route";
 import { isTradeCheatedByFutureDependency } from "../lib/aiTradeCheating";
 
@@ -84,6 +85,21 @@ const postPanelAnalytics = async (payload: Record<string, unknown>) => {
   );
 
   assert.equal(response.ok, true, `panel analytics request failed with ${response.status}`);
+  return response.json();
+};
+
+const postAizipCompute = async (payload: Record<string, unknown>) => {
+  const response = await aizipComputePost(
+    new Request("http://localhost/api/aizip/compute", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    })
+  );
+
+  assert.equal(response.ok, true, `aizip compute request failed with ${response.status}`);
   return response.json();
 };
 
@@ -1009,4 +1025,78 @@ test("synthetic validation uses the full trade history as its training pool", as
 
   assert.equal(onlineNeighborUid, "live-1");
   assert.equal(syntheticNeighborUid, "live-3");
+});
+
+test("synthetic worker libraries are stamped in 1999 while live trades stay on real-market time", async () => {
+  const candleStartMs = Date.parse("2025-03-01T00:00:00Z");
+  const candles = Array.from({ length: 320 }, (_, index) => {
+    const drift = index * 0.18;
+    const base = 100 + drift + Math.sin(index / 9) * 0.7;
+    return {
+      time: candleStartMs + index * 15 * 60 * 1000,
+      open: base,
+      high: base + 0.6,
+      low: base - 0.4,
+      close: base + 0.2
+    };
+  });
+
+  const payload = await postAizipCompute({
+    candles,
+    settings: {
+      antiCheatEnabled: true,
+      validationMode: "synthetic",
+      parseMode: "utc",
+      chunkBars: 8,
+      dollarsPerMove: 100,
+      tpDollars: 100,
+      slDollars: 100,
+      enabledSessions: {
+        Tokyo: true,
+        Sydney: true,
+        London: true,
+        "New York": true
+      },
+      modelStates: {
+        Momentum: 1
+      },
+      aiLibrariesActive: ["base", "recent"],
+      aiLibrariesSettings: {
+        base: { weight: 100, maxSamples: 128, tpDollars: 100, slDollars: 100 },
+        recent: { weight: 100, maxSamples: 128 }
+      }
+    },
+    timeoutMs: 60_000
+  });
+
+  const result =
+    payload.res && typeof payload.res === "object" && !Array.isArray(payload.res)
+      ? (payload.res as {
+          libraryCounts?: Record<string, number>;
+          libraryPoints?: Array<{ libId?: string; entryTime?: number; exitTime?: number }>;
+          trades?: Array<{ entryTime?: number; exitTime?: number }>;
+        })
+      : null;
+  assert.ok(result, "expected a compute result payload");
+
+  const libraryPoints = Array.isArray(result?.libraryPoints) ? result.libraryPoints : [];
+  assert.ok(libraryPoints.length > 0, "expected synthetic library points");
+  assert.equal(result?.libraryCounts?.recent ?? 0, 0);
+
+  const basePoints = libraryPoints.filter((point) => point?.libId === "base");
+  assert.ok(basePoints.length > 0, "expected base library points");
+  for (const point of basePoints.slice(0, 16)) {
+    const entryTime = Number(point.entryTime ?? NaN);
+    const exitTime = Number(point.exitTime ?? NaN);
+    assert.equal(new Date(entryTime).getUTCFullYear(), 1999);
+    assert.equal(new Date(exitTime).getUTCFullYear(), 1999);
+  }
+
+  const trades = Array.isArray(result?.trades) ? result.trades : [];
+  for (const trade of trades.slice(0, 16)) {
+    const entryTime = Number(trade.entryTime ?? NaN);
+    const exitTime = Number(trade.exitTime ?? NaN);
+    assert.equal(new Date(entryTime).getUTCFullYear() >= 2025, true);
+    assert.equal(new Date(exitTime).getUTCFullYear() >= 2025, true);
+  }
 });
