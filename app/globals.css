@@ -2046,13 +2046,36 @@ body.mobile-terminal-viewport-lock {
 
 .backtest-stats-range-main {
   --backtest-settings-control-width: 272px;
+  --backtest-settings-label-width: 132px;
   width: 100%;
   margin-left: auto;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: stretch;
   justify-content: flex-end;
   gap: 0.56rem;
+}
+
+.backtest-setting-row {
+  width: min(
+    100%,
+    calc(var(--backtest-settings-label-width) + var(--backtest-settings-control-width) + 0.72rem)
+  );
+  margin-left: auto;
+  display: grid;
+  grid-template-columns: minmax(108px, var(--backtest-settings-label-width)) minmax(0, var(--backtest-settings-control-width));
+  align-items: center;
+  gap: 0.72rem;
+}
+
+.backtest-setting-row-label {
+  justify-self: end;
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .backtest-date-input-row {
@@ -2238,6 +2261,16 @@ body.mobile-terminal-viewport-lock {
 .stats-timeframe-option.active {
   background: rgba(0, 255, 157, 0.09);
   color: #00ff9d;
+}
+
+.stats-timeframe-option.disabled {
+  color: rgba(255, 255, 255, 0.3);
+  cursor: not-allowed;
+}
+
+.stats-timeframe-option.disabled:hover {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.3);
 }
 
 .backtest-minute-precise-row {
@@ -7893,6 +7926,17 @@ body.mobile-terminal-viewport-lock {
     align-items: stretch;
     max-width: none;
     gap: 0.56rem;
+  }
+
+  .backtest-setting-row {
+    width: 100%;
+    grid-template-columns: 1fr;
+    gap: 0.36rem;
+  }
+
+  .backtest-setting-row-label {
+    justify-self: start;
+    text-align: left;
   }
 
   .backtest-date-input-row {

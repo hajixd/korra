@@ -2674,6 +2674,7 @@ type ModelRunResult = {
 type BacktestSettingsSnapshot = {
   symbol: string;
   timeframe: Timeframe;
+  precisionTimeframe: Timeframe;
   minutePreciseEnabled: boolean;
   statsDateStart: string;
   statsDateEnd: string;
@@ -4420,6 +4421,30 @@ const timeframeMinutes: Record<Timeframe, number> = {
   "4H": 240,
   "1D": 1440,
   "1W": 10080
+};
+
+const isTimeframe = (value: unknown): value is Timeframe => {
+  return typeof value === "string" && timeframes.includes(value as Timeframe);
+};
+
+const clampBacktestPrecisionTimeframe = (
+  analysisTimeframe: Timeframe,
+  precisionTimeframe: Timeframe
+): Timeframe => {
+  return (timeframeMinutes[precisionTimeframe] ?? Infinity) <=
+    (timeframeMinutes[analysisTimeframe] ?? -Infinity)
+    ? precisionTimeframe
+    : analysisTimeframe;
+};
+
+const getPrecisionSupportLeadingBars = (
+  analysisTimeframe: Timeframe,
+  precisionTimeframe: Timeframe,
+  leadingBars: number
+): number => {
+  const analysisMinutes = Math.max(1, timeframeMinutes[analysisTimeframe] ?? 1);
+  const precisionMinutes = Math.max(1, timeframeMinutes[precisionTimeframe] ?? analysisMinutes);
+  return Math.max(leadingBars, Math.round(leadingBars * Math.max(1, analysisMinutes / precisionMinutes)));
 };
 
 const timeframeVisibleCount: Record<Timeframe, number> = {
@@ -8737,6 +8762,7 @@ const doesBacktestHistoryGenerationInputChange = (
 ) => {
   if (previous.symbol !== next.symbol) return true;
   if (previous.timeframe !== next.timeframe) return true;
+  if (previous.precisionTimeframe !== next.precisionTimeframe) return true;
   if (previous.minutePreciseEnabled !== next.minutePreciseEnabled) return true;
   if (!areAiModelStatesEqual(previous.aiModelStates, next.aiModelStates)) return true;
   if (previous.dollarsPerMove !== next.dollarsPerMove) return true;
@@ -8859,12 +8885,12 @@ const getStatsRefreshStatusDetail = (
     timeframe?: Timeframe;
   }
 ): string => {
-  const needsOneMinuteSupportData =
+  const needsPrecisionSupportData =
     Boolean(options?.minutePreciseEnabled) && options?.timeframe !== "1m";
 
   if (status === "Loading Candle History") {
-    return needsOneMinuteSupportData
-      ? "Fetching historical candles and 1-minute support data."
+    return needsPrecisionSupportData
+      ? "Fetching historical candles and finer precision support data."
       : "Fetching historical candles.";
   }
 
@@ -9431,6 +9457,8 @@ function TradingTerminalWorkspace({
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
   const [selectedBacktestTimeframe, setSelectedBacktestTimeframe] = useState<Timeframe>("15m");
+  const [selectedBacktestPrecisionTimeframe, setSelectedBacktestPrecisionTimeframe] =
+    useState<Timeframe>("15m");
   const [minutePreciseEnabled, setMinutePreciseEnabled] = useState(false);
   const [selectedSurfaceTab, setSelectedSurfaceTab] = useState<SurfaceTab>("chart");
   const [selectedBacktestTab, setSelectedBacktestTab] = useState<BacktestTab>("mainStats");
@@ -9474,6 +9502,7 @@ function TradingTerminalWorkspace({
   const [statsDatePreset, setStatsDatePreset] = useState<BacktestDatePreset>("pastYear");
   const [statsDatePresetDdOpen, setStatsDatePresetDdOpen] = useState(false);
   const [statsTimeframeDdOpen, setStatsTimeframeDdOpen] = useState(false);
+  const [statsPrecisionTimeframeDdOpen, setStatsPrecisionTimeframeDdOpen] = useState(false);
   const [modelRunModalModelId, setModelRunModalModelId] = useState<string | null>(null);
   const [modelRunTimeframe, setModelRunTimeframe] = useState<Timeframe>("15m");
   const [modelRunPreset, setModelRunPreset] = useState<BacktestPresetRange>("pastMonth");
@@ -9698,11 +9727,18 @@ function TradingTerminalWorkspace({
     tickCount: 0,
     updatedAtMs: 0
   }));
+  const effectiveSelectedBacktestPrecisionTimeframe = clampBacktestPrecisionTimeframe(
+    selectedBacktestTimeframe,
+    selectedBacktestPrecisionTimeframe
+  );
+  const backtestPrecisionEnabled =
+    effectiveSelectedBacktestPrecisionTimeframe !== selectedBacktestTimeframe;
 
   const buildCurrentBacktestSettingsSnapshot = (): BacktestSettingsSnapshot => ({
     symbol: selectedSymbol,
     timeframe: selectedBacktestTimeframe,
-    minutePreciseEnabled,
+    precisionTimeframe: effectiveSelectedBacktestPrecisionTimeframe,
+    minutePreciseEnabled: backtestPrecisionEnabled,
     statsDateStart,
     statsDateEnd,
     enabledBacktestWeekdays: [...enabledBacktestWeekdays],
@@ -10021,6 +10057,7 @@ function TradingTerminalWorkspace({
   const selectedChartCandlesRef = useRef<Candle[]>([]);
   const statsDatePresetDdRef = useRef<HTMLDivElement>(null);
   const statsTimeframeDdRef = useRef<HTMLDivElement>(null);
+  const statsPrecisionTimeframeDdRef = useRef<HTMLDivElement>(null);
   const modelRunPresetDdRef = useRef<HTMLDivElement>(null);
   const modelRunTimeframeDdRef = useRef<HTMLDivElement>(null);
   const aiChartOverlaySeriesRef = useRef<Array<ISeriesApi<"Line">>>([]);
@@ -10421,6 +10458,20 @@ function TradingTerminalWorkspace({
   }, [statsTimeframeDdOpen]);
 
   useEffect(() => {
+    if (!statsPrecisionTimeframeDdOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        statsPrecisionTimeframeDdRef.current &&
+        !statsPrecisionTimeframeDdRef.current.contains(e.target as Node)
+      ) {
+        setStatsPrecisionTimeframeDdOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [statsPrecisionTimeframeDdOpen]);
+
+  useEffect(() => {
     if (!statsDatePresetDdOpen) return;
     const handler = (e: MouseEvent) => {
       if (
@@ -10819,15 +10870,18 @@ function TradingTerminalWorkspace({
   const appliedBacktestKey = useMemo(() => {
     return symbolTimeframeKey(appliedBacktestSettings.symbol, appliedBacktestSettings.timeframe);
   }, [appliedBacktestSettings.symbol, appliedBacktestSettings.timeframe]);
-  const appliedBacktestOneMinuteKey = useMemo(() => {
-    return symbolTimeframeKey(appliedBacktestSettings.symbol, "1m");
-  }, [appliedBacktestSettings.symbol]);
+  const appliedBacktestPrecisionKey = useMemo(() => {
+    return symbolTimeframeKey(
+      appliedBacktestSettings.symbol,
+      appliedBacktestSettings.precisionTimeframe
+    );
+  }, [appliedBacktestSettings.precisionTimeframe, appliedBacktestSettings.symbol]);
   const appliedBacktestSeedCandles = backtestSeriesMap[appliedBacktestKey] ?? EMPTY_CANDLES;
   const appliedBacktestFallbackCandles = seriesMap[appliedBacktestKey] ?? EMPTY_CANDLES;
   const appliedBacktestSeedOneMinuteCandles =
-    backtestOneMinuteSeriesMap[appliedBacktestOneMinuteKey] ?? EMPTY_CANDLES;
+    backtestOneMinuteSeriesMap[appliedBacktestPrecisionKey] ?? EMPTY_CANDLES;
   const appliedBacktestFallbackOneMinuteCandles =
-    seriesMap[appliedBacktestOneMinuteKey] ?? EMPTY_CANDLES;
+    seriesMap[appliedBacktestPrecisionKey] ?? EMPTY_CANDLES;
   appliedBacktestSettingsRef.current = appliedBacktestSettings;
   appliedBacktestSeedCandlesRef.current = appliedBacktestSeedCandles;
   appliedBacktestFallbackCandlesRef.current = appliedBacktestFallbackCandles;
@@ -11111,6 +11165,21 @@ function TradingTerminalWorkspace({
   useEffect(() => {
     setHoveredTime(null);
   }, [selectedTimeframe]);
+
+  useEffect(() => {
+    if (effectiveSelectedBacktestPrecisionTimeframe !== selectedBacktestPrecisionTimeframe) {
+      setSelectedBacktestPrecisionTimeframe(effectiveSelectedBacktestPrecisionTimeframe);
+    }
+  }, [
+    effectiveSelectedBacktestPrecisionTimeframe,
+    selectedBacktestPrecisionTimeframe
+  ]);
+
+  useEffect(() => {
+    setMinutePreciseEnabled((current) =>
+      current === backtestPrecisionEnabled ? current : backtestPrecisionEnabled
+    );
+  }, [backtestPrecisionEnabled]);
 
   useEffect(() => {
     let cancelled = false;
@@ -11680,27 +11749,26 @@ function TradingTerminalWorkspace({
     }
 
     const key = appliedBacktestKey;
-    const oneMinuteKey = appliedBacktestOneMinuteKey;
+    const precisionKey = appliedBacktestPrecisionKey;
 
     if (backtestHistorySeedReady) {
       return;
     }
 
     let cancelled = false;
-    const isAlreadyOneMinute = appliedBacktestSettings.timeframe === "1m";
-    const shouldLoadOneMinutePrecision =
-      appliedBacktestSettings.minutePreciseEnabled && !isAlreadyOneMinute;
+    const precisionTimeframe = appliedBacktestSettings.precisionTimeframe;
+    const shouldLoadPrecisionSupport = appliedBacktestSettings.minutePreciseEnabled;
     const existingCandles = pickLongestCandleSeries(
       appliedBacktestSeedCandlesRef.current,
       appliedBacktestFallbackCandlesRef.current
     );
-    const existingOneMinute = shouldLoadOneMinutePrecision
+    const existingPrecisionCandles = shouldLoadPrecisionSupport
       ? pickLongestCandleSeries(
           appliedBacktestSeedOneMinuteCandlesRef.current,
           appliedBacktestFallbackOneMinuteCandlesRef.current
         )
       : EMPTY_CANDLES;
-    const recentOneMinutePromise = shouldLoadOneMinutePrecision
+    const recentOneMinutePromise = shouldLoadPrecisionSupport
       ? fetchRecentOneMinuteCandles(undefined, BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS)
       : undefined;
     const minimumReplaySeedBars = getMinimumAizipSeedBars(appliedBacktestSettings.chunkBars);
@@ -11714,16 +11782,17 @@ function TradingTerminalWorkspace({
       appliedBacktestSettings.timeframe,
       leadingBars
     );
-    const oneMinutePaddingBars = Math.max(
-      leadingBars,
-      Math.round(leadingBars * (timeframeMinutes[appliedBacktestSettings.timeframe] ?? 1))
+    const precisionPaddingBars = getPrecisionSupportLeadingBars(
+      appliedBacktestSettings.timeframe,
+      precisionTimeframe,
+      leadingBars
     );
-    const oneMinuteTargetBars = shouldLoadOneMinutePrecision
+    const precisionTargetBars = shouldLoadPrecisionSupport
       ? estimateHistoryBarsForDateRange(
           appliedBacktestSettings.statsDateStart,
           appliedBacktestSettings.statsDateEnd,
-          "1m",
-          oneMinutePaddingBars
+          precisionTimeframe,
+          precisionPaddingBars
         )
       : 0;
     const hasDateRange = Boolean(
@@ -11737,17 +11806,18 @@ function TradingTerminalWorkspace({
           leadingBars
         })
       : null;
-    const oneMinuteHistoryRequestWindow =
-      shouldLoadOneMinutePrecision && hasDateRange
+    const precisionHistoryRequestWindow =
+      shouldLoadPrecisionSupport && hasDateRange
         ? buildHistoryApiRequestWindow({
-            timeframe: "1m",
+            timeframe: precisionTimeframe,
             startYmd: appliedBacktestSettings.statsDateStart,
             endYmd: appliedBacktestSettings.statsDateEnd,
-            leadingBars: oneMinutePaddingBars
+            leadingBars: precisionPaddingBars
           })
         : null;
     // A requested historical date range should not silently degrade to a recent fragment.
-    const allowOneMinuteFallback = !hasDateRange && (shouldLoadOneMinutePrecision || isAlreadyOneMinute);
+    const allowOneMinuteFallback =
+      !hasDateRange && (shouldLoadPrecisionSupport || appliedBacktestSettings.timeframe === "1m");
     const needsHistory =
       existingCandles.length < MIN_SEED_CANDLES ||
       existingCandles.length < targetBars ||
@@ -11759,12 +11829,12 @@ function TradingTerminalWorkspace({
           appliedBacktestSettings.statsDateEnd,
           leadingBars
         ));
-    const needsOneMinute =
-      shouldLoadOneMinutePrecision &&
-      (existingOneMinute.length < MIN_SEED_CANDLES ||
-        existingOneMinute.length < oneMinuteTargetBars);
+    const needsPrecisionSupport =
+      shouldLoadPrecisionSupport &&
+      (existingPrecisionCandles.length < MIN_SEED_CANDLES ||
+        existingPrecisionCandles.length < precisionTargetBars);
 
-    if (!needsHistory && !needsOneMinute) {
+    if (!needsHistory && !needsPrecisionSupport) {
       if ((backtestSeriesMapRef.current[key]?.length ?? 0) < existingCandles.length) {
         setBacktestSeriesMap((prev) => ({
           ...prev,
@@ -11772,13 +11842,14 @@ function TradingTerminalWorkspace({
         }));
       }
       if (
-        shouldLoadOneMinutePrecision &&
-        existingOneMinute.length > 0 &&
-        (backtestOneMinuteSeriesMapRef.current[oneMinuteKey]?.length ?? 0) < existingOneMinute.length
+        shouldLoadPrecisionSupport &&
+        existingPrecisionCandles.length > 0 &&
+        (backtestOneMinuteSeriesMapRef.current[precisionKey]?.length ?? 0) <
+          existingPrecisionCandles.length
       ) {
         setBacktestOneMinuteSeriesMap((prev) => ({
           ...prev,
-          [oneMinuteKey]: existingOneMinute
+          [precisionKey]: existingPrecisionCandles
         }));
       }
       setStatsRefreshStatus("Preparing Backtest Replay");
@@ -11813,31 +11884,31 @@ function TradingTerminalWorkspace({
                   : undefined
               )
             : Promise.resolve(existingCandles),
-          shouldLoadOneMinutePrecision
-            ? needsOneMinute
+          shouldLoadPrecisionSupport
+            ? needsPrecisionSupport
               ? fetchBacktestHistoryCandles(
-                  "1m",
-                  oneMinuteTargetBars,
+                  precisionTimeframe,
+                  precisionTargetBars,
                   recentOneMinutePromise,
                   true,
                   BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
                   hasDateRange
                     ? {
-                        requestWindow: oneMinuteHistoryRequestWindow ?? undefined,
+                        requestWindow: precisionHistoryRequestWindow ?? undefined,
                         coverageWindow: {
                           startYmd: appliedBacktestSettings.statsDateStart,
                           endYmd: appliedBacktestSettings.statsDateEnd,
-                          leadingBars: oneMinutePaddingBars,
+                          leadingBars: precisionPaddingBars,
                           strictCoverage: false
                         }
                       }
                     : undefined
                 ).catch(() => [])
-              : Promise.resolve(existingOneMinute)
+              : Promise.resolve(existingPrecisionCandles)
             : Promise.resolve([])
         ];
 
-        const [deepHistoryCandles, oneMinuteCandles] = await Promise.all(promises);
+        const [deepHistoryCandles, precisionCandles] = await Promise.all(promises);
         let replaySeedCandles = pickLongestCandleSeries(
           deepHistoryCandles,
           existingCandles
@@ -11858,15 +11929,15 @@ function TradingTerminalWorkspace({
           }));
         }
 
-        const resolvedOneMinute = pickLongestCandleSeries(
-          oneMinuteCandles,
-          existingOneMinute
+        const resolvedPrecisionCandles = pickLongestCandleSeries(
+          precisionCandles,
+          existingPrecisionCandles
         );
 
-        if (!cancelled && shouldLoadOneMinutePrecision && resolvedOneMinute.length > 0) {
+        if (!cancelled && shouldLoadPrecisionSupport && resolvedPrecisionCandles.length > 0) {
           setBacktestOneMinuteSeriesMap((prev) => ({
             ...prev,
-            [oneMinuteKey]: resolvedOneMinute
+            [precisionKey]: resolvedPrecisionCandles
           }));
         }
       } catch {
@@ -11948,6 +12019,7 @@ function TradingTerminalWorkspace({
     appliedBacktestSettings.chunkBars,
     appliedBacktestSettings.maxBarsInTrade,
     appliedBacktestSettings.minutePreciseEnabled,
+    appliedBacktestSettings.precisionTimeframe,
     appliedBacktestSettings.statsDateEnd,
     appliedBacktestSettings.statsDateStart,
     appliedBacktestSettings.symbol,
@@ -11958,7 +12030,7 @@ function TradingTerminalWorkspace({
     backtestHistorySeedReady,
     backtestRefreshNowMs,
     backtestRunCount,
-    appliedBacktestOneMinuteKey,
+    appliedBacktestPrecisionKey,
     appliedBacktestSeedCandles.length,
     appliedBacktestSeedOneMinuteCandles.length,
     shouldSkipBacktestHistoryFetch
@@ -12314,10 +12386,13 @@ function TradingTerminalWorkspace({
         );
       }
       if (
-        appliedBacktestSettings.timeframe !== "1m" &&
+        appliedBacktestSettings.minutePreciseEnabled &&
         !oneMinuteCandlesBySymbol[blueprint.symbol]
       ) {
-        const minuteKey = symbolTimeframeKey(blueprint.symbol, "1m");
+        const minuteKey = symbolTimeframeKey(
+          blueprint.symbol,
+          appliedBacktestSettings.precisionTimeframe
+        );
         const minuteCandles = pickLongestCandleSeries(
           backtestOneMinuteSeriesMap[minuteKey],
           backtestSeriesMap[minuteKey],
@@ -12337,7 +12412,7 @@ function TradingTerminalWorkspace({
         blueprints: everyCandleTradeBlueprints,
         candleSeriesBySymbol,
         oneMinuteCandlesBySymbol:
-          appliedBacktestSettings.timeframe === "1m" ? undefined : oneMinuteCandlesBySymbol,
+          appliedBacktestSettings.minutePreciseEnabled ? oneMinuteCandlesBySymbol : undefined,
         modelNamesById,
         tpDollars: appliedBacktestSettings.tpDollars,
         slDollars: appliedBacktestSettings.slDollars,
@@ -12372,6 +12447,7 @@ function TradingTerminalWorkspace({
     backtestHistorySeedReady,
     everyCandleTradeBlueprints,
     modelProfileById,
+    appliedBacktestSettings.precisionTimeframe,
     appliedBacktestSettings.timeframe,
     appliedBacktestSettings.tpDollars,
     appliedBacktestSettings.slDollars,
@@ -13808,7 +13884,7 @@ function TradingTerminalWorkspace({
   ]);
 
   const backtestOneMinuteCandlesBySymbol = useMemo(() => {
-    if (appliedBacktestSettings.timeframe === "1m") {
+    if (!appliedBacktestSettings.minutePreciseEnabled) {
       return {};
     }
 
@@ -13819,7 +13895,10 @@ function TradingTerminalWorkspace({
         continue;
       }
 
-      const key = symbolTimeframeKey(blueprint.symbol, "1m");
+      const key = symbolTimeframeKey(
+        blueprint.symbol,
+        appliedBacktestSettings.precisionTimeframe
+      );
       const candles = pickLongestCandleSeries(
         backtestOneMinuteSeriesMap[key],
         backtestSeriesMap[key],
@@ -13833,7 +13912,8 @@ function TradingTerminalWorkspace({
 
     return next;
   }, [
-    appliedBacktestSettings.timeframe,
+    appliedBacktestSettings.minutePreciseEnabled,
+    appliedBacktestSettings.precisionTimeframe,
     backtestSeriesMap,
     backtestOneMinuteSeriesMap,
     seriesMap,
@@ -14549,9 +14629,10 @@ function TradingTerminalWorkspace({
     selectedSymbol,
     selectedTimeframe,
     selectedBacktestTimeframe,
+    selectedBacktestPrecisionTimeframe: effectiveSelectedBacktestPrecisionTimeframe,
     chartPanelLiveSimulationEnabled,
     activePanelLiveSimulationEnabled,
-    minutePreciseEnabled,
+    minutePreciseEnabled: backtestPrecisionEnabled,
     enabledBacktestWeekdays,
     enabledBacktestSessions,
     enabledBacktestMonths,
@@ -14607,7 +14688,7 @@ function TradingTerminalWorkspace({
     statsDateStart,
     statsDateEnd,
   }), [
-    selectedSymbol, selectedTimeframe, selectedBacktestTimeframe, chartPanelLiveSimulationEnabled, activePanelLiveSimulationEnabled, minutePreciseEnabled,
+    selectedSymbol, selectedTimeframe, selectedBacktestTimeframe, effectiveSelectedBacktestPrecisionTimeframe, chartPanelLiveSimulationEnabled, activePanelLiveSimulationEnabled, backtestPrecisionEnabled,
     enabledBacktestWeekdays, enabledBacktestSessions,
     enabledBacktestMonths, enabledBacktestHours, aiMode, aiModelEnabled, aiFilterEnabled,
     staticLibrariesClusters, confidenceThreshold, aiExitStrictness, aiExitLossTolerance,
@@ -14625,6 +14706,20 @@ function TradingTerminalWorkspace({
 
   const applySettings = useCallback((s: Record<string, any>) => {
     if (s.selectedSymbol != null) setSelectedSymbol(s.selectedSymbol);
+    const nextBacktestTimeframe = isTimeframe(s.selectedBacktestTimeframe)
+      ? s.selectedBacktestTimeframe
+      : isTimeframe(s.selectedTimeframe)
+        ? s.selectedTimeframe
+        : selectedBacktestTimeframe;
+    const requestedBacktestPrecisionTimeframe = isTimeframe(s.selectedBacktestPrecisionTimeframe)
+      ? s.selectedBacktestPrecisionTimeframe
+      : s.minutePreciseEnabled === true
+        ? "1m"
+        : nextBacktestTimeframe;
+    const nextBacktestPrecisionTimeframe = clampBacktestPrecisionTimeframe(
+      nextBacktestTimeframe,
+      requestedBacktestPrecisionTimeframe
+    );
     if (s.selectedTimeframe != null) {
       setSelectedTimeframe(s.selectedTimeframe);
       if (s.selectedBacktestTimeframe == null) {
@@ -14632,6 +14727,7 @@ function TradingTerminalWorkspace({
       }
     }
     if (s.selectedBacktestTimeframe != null) setSelectedBacktestTimeframe(s.selectedBacktestTimeframe);
+    setSelectedBacktestPrecisionTimeframe(nextBacktestPrecisionTimeframe);
     if (s.chartPanelLiveSimulationEnabled != null) {
       setChartPanelLiveSimulationEnabled(Boolean(s.chartPanelLiveSimulationEnabled));
     }
@@ -14640,7 +14736,7 @@ function TradingTerminalWorkspace({
     } else if (s.chartPanelLiveSimulationEnabled != null) {
       setActivePanelLiveSimulationEnabled(Boolean(s.chartPanelLiveSimulationEnabled));
     }
-    if (s.minutePreciseEnabled != null) setMinutePreciseEnabled(Boolean(s.minutePreciseEnabled));
+    setMinutePreciseEnabled(nextBacktestPrecisionTimeframe !== nextBacktestTimeframe);
     if (s.enabledBacktestWeekdays != null) setEnabledBacktestWeekdays(s.enabledBacktestWeekdays);
     if (s.enabledBacktestSessions != null) setEnabledBacktestSessions(s.enabledBacktestSessions);
     if (s.enabledBacktestMonths != null) setEnabledBacktestMonths(s.enabledBacktestMonths);
@@ -14721,7 +14817,7 @@ function TradingTerminalWorkspace({
     if (isBacktestDatePreset(s.statsDatePreset)) setStatsDatePreset(s.statsDatePreset);
     if (s.statsDateStart != null) setStatsDateStart(s.statsDateStart);
     if (s.statsDateEnd != null) setStatsDateEnd(s.statsDateEnd);
-  }, [aiLibraryDefById, normalizeSelectedAiLibraries]);
+  }, [aiLibraryDefById, normalizeSelectedAiLibraries, selectedBacktestTimeframe]);
 
   useEffect(() => {
     try {
@@ -14790,6 +14886,7 @@ function TradingTerminalWorkspace({
     setSelectedSymbol(futuresAssets[0].symbol);
     setSelectedTimeframe("15m");
     setSelectedBacktestTimeframe("15m");
+    setSelectedBacktestPrecisionTimeframe("15m");
     setPanelExpanded(false);
     setWorkspacePanelWidth(WORKSPACE_PANEL_DEFAULT_WIDTH);
     setActivePanelTab("active");
@@ -17600,9 +17697,9 @@ function TradingTerminalWorkspace({
       const symbol = settings.symbol;
       const timeframe = settings.timeframe;
       const key = symbolTimeframeKey(symbol, timeframe);
-      const oneMinuteKey = symbolTimeframeKey(symbol, "1m");
-      const isAlreadyOneMinute = timeframe === "1m";
-      const shouldLoadOneMinutePrecision = settings.minutePreciseEnabled && !isAlreadyOneMinute;
+      const precisionTimeframe = settings.precisionTimeframe;
+      const precisionKey = symbolTimeframeKey(symbol, precisionTimeframe);
+      const shouldLoadPrecisionSupport = settings.minutePreciseEnabled;
       const leadingBars = Math.max(settings.chunkBars * 3, settings.maxBarsInTrade + 24);
       const targetBars = estimateHistoryBarsForDateRange(
         settings.statsDateStart,
@@ -17610,16 +17707,17 @@ function TradingTerminalWorkspace({
         timeframe,
         leadingBars
       );
-      const oneMinutePaddingBars = Math.max(
-        leadingBars,
-        Math.round(leadingBars * (timeframeMinutes[timeframe] ?? 1))
+      const precisionPaddingBars = getPrecisionSupportLeadingBars(
+        timeframe,
+        precisionTimeframe,
+        leadingBars
       );
-      const oneMinuteTargetBars = shouldLoadOneMinutePrecision
+      const precisionTargetBars = shouldLoadPrecisionSupport
         ? estimateHistoryBarsForDateRange(
             settings.statsDateStart,
             settings.statsDateEnd,
-            "1m",
-            oneMinutePaddingBars
+            precisionTimeframe,
+            precisionPaddingBars
           )
         : 0;
       const minimumSeedBars = getMinimumAizipSeedBars(settings.chunkBars);
@@ -17628,10 +17726,10 @@ function TradingTerminalWorkspace({
         backtestSeriesMapRef.current[key],
         seriesMapRef.current[key]
       );
-      const existingOneMinute = shouldLoadOneMinutePrecision
+      const existingOneMinute = shouldLoadPrecisionSupport
         ? pickLongestCandleSeries(
-            backtestOneMinuteSeriesMapRef.current[oneMinuteKey],
-            seriesMapRef.current[oneMinuteKey]
+            backtestOneMinuteSeriesMapRef.current[precisionKey],
+            seriesMapRef.current[precisionKey]
           )
         : EMPTY_CANDLES;
       const hasDateRange = Boolean(settings.statsDateStart && settings.statsDateEnd);
@@ -17644,17 +17742,17 @@ function TradingTerminalWorkspace({
           })
         : null;
       const oneMinuteHistoryRequestWindow =
-        shouldLoadOneMinutePrecision && hasDateRange
+        shouldLoadPrecisionSupport && hasDateRange
           ? buildHistoryApiRequestWindow({
-              timeframe: "1m",
+              timeframe: precisionTimeframe,
               startYmd: settings.statsDateStart,
               endYmd: settings.statsDateEnd,
-              leadingBars: oneMinutePaddingBars
+              leadingBars: precisionPaddingBars
             })
           : null;
       // If a specific date range was requested, only exact range history counts as valid seed data.
       const allowOneMinuteFallback =
-        !hasDateRange && (shouldLoadOneMinutePrecision || isAlreadyOneMinute);
+        !hasDateRange && (shouldLoadPrecisionSupport || timeframe === "1m");
       const needsHistory =
         existingCandles.length < MIN_SEED_CANDLES ||
         existingCandles.length < targetBars ||
@@ -17667,9 +17765,9 @@ function TradingTerminalWorkspace({
             leadingBars
           ));
       const needsOneMinute =
-        shouldLoadOneMinutePrecision &&
+        shouldLoadPrecisionSupport &&
         (existingOneMinute.length < MIN_SEED_CANDLES ||
-          existingOneMinute.length < oneMinuteTargetBars);
+          existingOneMinute.length < precisionTargetBars);
 
       if (!needsHistory && !needsOneMinute) {
         return {
@@ -17677,7 +17775,7 @@ function TradingTerminalWorkspace({
             [symbol]: existingCandles
           },
           oneMinuteCandlesBySymbol:
-            shouldLoadOneMinutePrecision && existingOneMinute.length > 0
+            shouldLoadPrecisionSupport && existingOneMinute.length > 0
               ? { [symbol]: existingOneMinute }
               : {}
         };
@@ -17686,9 +17784,10 @@ function TradingTerminalWorkspace({
       const seedKey = [
         `sym:${symbol}`,
         `tf:${timeframe}`,
-        `mp:${shouldLoadOneMinutePrecision ? 1 : 0}`,
+        `ptf:${precisionTimeframe}`,
+        `mp:${shouldLoadPrecisionSupport ? 1 : 0}`,
         `bars:${targetBars}`,
-        `m1:${oneMinuteTargetBars}`
+        `m1:${precisionTargetBars}`
       ].join("|");
       const inFlight = aiLibraryHistoryInFlightRef.current.get(seedKey);
       if (inFlight) {
@@ -17698,7 +17797,7 @@ function TradingTerminalWorkspace({
       const loadPromise = (async () => {
         let resolvedCandles = existingCandles;
         let resolvedOneMinute = existingOneMinute;
-        const recentOneMinutePromise = shouldLoadOneMinutePrecision
+        const recentOneMinutePromise = shouldLoadPrecisionSupport
           ? fetchRecentOneMinuteCandles(undefined, BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS)
           : undefined;
 
@@ -17724,11 +17823,11 @@ function TradingTerminalWorkspace({
                     : undefined
                 )
               : Promise.resolve(existingCandles),
-            shouldLoadOneMinutePrecision
+            shouldLoadPrecisionSupport
               ? needsOneMinute
                 ? fetchBacktestHistoryCandles(
-                    "1m",
-                    oneMinuteTargetBars,
+                    precisionTimeframe,
+                    precisionTargetBars,
                     recentOneMinutePromise,
                     true,
                     BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
@@ -17738,7 +17837,7 @@ function TradingTerminalWorkspace({
                           coverageWindow: {
                             startYmd: settings.statsDateStart,
                             endYmd: settings.statsDateEnd,
-                            leadingBars: oneMinutePaddingBars,
+                            leadingBars: precisionPaddingBars,
                             strictCoverage: false
                           }
                         }
@@ -17768,15 +17867,15 @@ function TradingTerminalWorkspace({
             oneMinuteCandles,
             existingOneMinute
           );
-          if (shouldLoadOneMinutePrecision && resolvedNextOneMinute.length > 0) {
+          if (shouldLoadPrecisionSupport && resolvedNextOneMinute.length > 0) {
             resolvedOneMinute = resolvedNextOneMinute;
             if (
               resolvedNextOneMinute.length >
-              (backtestOneMinuteSeriesMapRef.current[oneMinuteKey]?.length ?? 0)
+              (backtestOneMinuteSeriesMapRef.current[precisionKey]?.length ?? 0)
             ) {
               setBacktestOneMinuteSeriesMap((prev) => ({
                 ...prev,
-                [oneMinuteKey]: resolvedNextOneMinute
+                [precisionKey]: resolvedNextOneMinute
               }));
             }
           }
@@ -17799,7 +17898,7 @@ function TradingTerminalWorkspace({
             [symbol]: resolvedCandles
           },
           oneMinuteCandlesBySymbol:
-            shouldLoadOneMinutePrecision && resolvedOneMinute.length > 0
+            shouldLoadPrecisionSupport && resolvedOneMinute.length > 0
               ? { [symbol]: resolvedOneMinute }
               : {}
         };
@@ -17830,6 +17929,7 @@ function TradingTerminalWorkspace({
 
       return [
         `tf:${settings.timeframe}`,
+        `ptf:${settings.precisionTimeframe}`,
         `sym:${settings.symbol}`,
         `tp:${normalizedTp}`,
         `sl:${normalizedSl}`,
@@ -17861,6 +17961,7 @@ function TradingTerminalWorkspace({
       return [
         "seed",
         `tf:${settings.timeframe}`,
+        `ptf:${settings.precisionTimeframe}`,
         `sym:${settings.symbol}`,
         `tp:${normalizedTp}`,
         `sl:${normalizedSl}`,
@@ -18034,9 +18135,7 @@ function TradingTerminalWorkspace({
           blueprints,
           candleSeriesBySymbol,
           oneMinuteCandlesBySymbol:
-            settings.timeframe === "1m"
-              ? undefined
-              : oneMinuteCandlesBySymbol,
+            settings.minutePreciseEnabled ? oneMinuteCandlesBySymbol : undefined,
           minutePreciseEnabled: settings.minutePreciseEnabled,
           modelNamesById,
           tpDollars: normalizedTp,
@@ -22958,7 +23057,9 @@ function TradingTerminalWorkspace({
                     className="backtest-stats-range backtest-stats-range-main"
                     aria-label="global backtest settings"
                   >
-                    <div className="backtest-date-input-row">
+                    <div className="backtest-setting-row">
+                      <span className="backtest-setting-row-label">Time Range:</span>
+                      <div className="backtest-date-input-row">
                       <input
                         type="date"
                         value={statsDateStart}
@@ -22980,8 +23081,11 @@ function TradingTerminalWorkspace({
                         className="backtest-date-input"
                         aria-label="global backtest end date"
                       />
+                      </div>
                     </div>
-                    <div className="backtest-date-preset-row">
+                    <div className="backtest-setting-row">
+                      <span className="backtest-setting-row-label">Time Range Presets</span>
+                      <div className="backtest-date-preset-row">
                       <div
                         ref={statsDatePresetDdRef}
                         className={`backtest-date-preset-wrap${statsDatePresetDdOpen ? " is-open" : ""}`}
@@ -23034,14 +23138,19 @@ function TradingTerminalWorkspace({
                           </div>
                         ) : null}
                       </div>
-                      <div ref={statsTimeframeDdRef} className="stats-timeframe-wrap">
+                      </div>
+                    </div>
+                    <div className="backtest-setting-row">
+                      <span className="backtest-setting-row-label">Analysis Timeframe</span>
+                      <div className="backtest-date-preset-row">
+                        <div ref={statsTimeframeDdRef} className="stats-timeframe-wrap">
                         <button
                           type="button"
                           className="stats-timeframe-trigger"
-                          onClick={() => setStatsTimeframeDdOpen((o) => !o)}
+                          onClick={() => setStatsTimeframeDdOpen((open) => !open)}
                           aria-haspopup="listbox"
                           aria-expanded={statsTimeframeDdOpen}
-                          aria-label="Select backtest timeframe"
+                          aria-label="Select analysis timeframe"
                         >
                           {TIMEFRAME_DISPLAY_LABELS[selectedBacktestTimeframe]}
                           <span className="stats-timeframe-chevron" aria-hidden="true">
@@ -23052,7 +23161,7 @@ function TradingTerminalWorkspace({
                           <div
                             className="stats-timeframe-dd"
                             role="listbox"
-                            aria-label="Backtest timeframe options"
+                            aria-label="Analysis timeframe options"
                           >
                             {timeframes.map((tf) => (
                               <button
@@ -23063,7 +23172,9 @@ function TradingTerminalWorkspace({
                                 className={`stats-timeframe-option${selectedBacktestTimeframe === tf ? " active" : ""}`}
                                 onClick={() => {
                                   setSelectedBacktestTimeframe(tf);
+                                  setSelectedBacktestPrecisionTimeframe(tf);
                                   setStatsTimeframeDdOpen(false);
+                                  setStatsPrecisionTimeframeDdOpen(false);
                                 }}
                               >
                                 {TIMEFRAME_DISPLAY_LABELS[tf]}
@@ -23072,21 +23183,59 @@ function TradingTerminalWorkspace({
                           </div>
                         )}
                       </div>
-                      <div className="backtest-minute-precise-row" aria-label="Minute precise execution setting">
-                        <button
-                          type="button"
-                          className={`backtest-minute-precise-btn backtest-minute-precise-single${
-                            minutePreciseEnabled ? " active" : ""
-                          }`}
-                          onClick={() => setMinutePreciseEnabled((current) => !current)}
-                          aria-pressed={minutePreciseEnabled}
-                          aria-label="Toggle minute precise execution"
-                        >
-                          <span className="backtest-minute-precise-btn-title">Minute Precise</span>
-                          {minutePreciseEnabled ? (
-                            <span className="backtest-minute-precise-btn-state">ON</span>
-                          ) : null}
-                        </button>
+                      </div>
+                    </div>
+                    <div className="backtest-setting-row">
+                      <span className="backtest-setting-row-label">Precision Timeframe</span>
+                      <div className="backtest-date-preset-row">
+                        <div ref={statsPrecisionTimeframeDdRef} className="stats-timeframe-wrap">
+                          <button
+                            type="button"
+                            className="stats-timeframe-trigger"
+                            onClick={() => setStatsPrecisionTimeframeDdOpen((open) => !open)}
+                            aria-haspopup="listbox"
+                            aria-expanded={statsPrecisionTimeframeDdOpen}
+                            aria-label="Select precision timeframe"
+                          >
+                            {TIMEFRAME_DISPLAY_LABELS[effectiveSelectedBacktestPrecisionTimeframe]}
+                            <span className="stats-timeframe-chevron" aria-hidden="true">
+                              {statsPrecisionTimeframeDdOpen ? "^" : "v"}
+                            </span>
+                          </button>
+                          {statsPrecisionTimeframeDdOpen && (
+                            <div
+                              className="stats-timeframe-dd"
+                              role="listbox"
+                              aria-label="Precision timeframe options"
+                            >
+                              {timeframes.map((tf) => {
+                                const isDisabled =
+                                  timeframeMinutes[tf] > timeframeMinutes[selectedBacktestTimeframe];
+                                return (
+                                  <button
+                                    key={tf}
+                                    type="button"
+                                    role="option"
+                                    aria-selected={effectiveSelectedBacktestPrecisionTimeframe === tf}
+                                    aria-disabled={isDisabled}
+                                    className={`stats-timeframe-option${
+                                      effectiveSelectedBacktestPrecisionTimeframe === tf ? " active" : ""
+                                    }${isDisabled ? " disabled" : ""}`}
+                                    onClick={() => {
+                                      if (isDisabled) {
+                                        return;
+                                      }
+                                      setSelectedBacktestPrecisionTimeframe(tf);
+                                      setStatsPrecisionTimeframeDdOpen(false);
+                                    }}
+                                  >
+                                    {TIMEFRAME_DISPLAY_LABELS[tf]}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -25361,7 +25510,10 @@ function TradingTerminalWorkspace({
                         {selectedBacktestDayTrades.map((trade) => {
                           const isExpanded = expandedBacktestTradeId === trade.id;
                           const durationMinutes = getHistoryTradeDurationMinutes(trade);
-                          const oneMinuteKey = symbolTimeframeKey(trade.symbol, "1m");
+                          const oneMinuteKey = symbolTimeframeKey(
+                            trade.symbol,
+                            appliedBacktestSettings.precisionTimeframe
+                          );
                           const timeframeKey = symbolTimeframeKey(
                             trade.symbol,
                             appliedBacktestSettings.timeframe
@@ -25388,9 +25540,7 @@ function TradingTerminalWorkspace({
                           );
                           const executionFrameLabel =
                             appliedBacktestSettings.minutePreciseEnabled
-                              ? appliedBacktestSettings.timeframe === "1m"
-                                ? "1m"
-                                : "1m exec"
+                              ? `${appliedBacktestSettings.precisionTimeframe} exec`
                               : appliedBacktestSettings.timeframe;
 
                           return (
@@ -27060,7 +27210,7 @@ function TradingTerminalWorkspace({
           <div className="backtest-status-empty" aria-live="polite" aria-atomic="true">
             <strong>No backtest run yet.</strong>
             <span>Hold SPACE for 3 seconds to run your first backtest.</span>
-            <span>Tips: tune Date Range, timeframe, and Minute Precise first. Chart reset shortcut: Alt+R.</span>
+            <span>Tips: tune Time Range, Analysis Timeframe, and Precision Timeframe first. Chart reset shortcut: Alt+R.</span>
           </div>
         )}
         </footer>

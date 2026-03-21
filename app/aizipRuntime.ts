@@ -35,6 +35,7 @@ export type SeededLibraryTrade = {
 export type AIZipHistorySeedSettings = {
   symbol: string;
   timeframe: string;
+  precisionTimeframe: string;
   minutePreciseEnabled: boolean;
   statsDateStart: string;
   statsDateEnd: string;
@@ -141,6 +142,7 @@ export const doesAizipHistorySeedSettingsChange = (
 ): boolean => {
   if (previous.symbol !== next.symbol) return true;
   if (previous.timeframe !== next.timeframe) return true;
+  if (previous.precisionTimeframe !== next.precisionTimeframe) return true;
   if (previous.minutePreciseEnabled !== next.minutePreciseEnabled) return true;
   if (previous.statsDateStart !== next.statsDateStart) return true;
   if (previous.statsDateEnd !== next.statsDateEnd) return true;

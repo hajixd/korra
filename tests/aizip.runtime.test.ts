@@ -135,6 +135,7 @@ test("history seed reloads when date range or seed coverage inputs change", () =
   const base = {
     symbol: "XAUUSD",
     timeframe: "15m",
+    precisionTimeframe: "15m",
     minutePreciseEnabled: false,
     statsDateStart: "2025-03-01",
     statsDateEnd: "2026-03-01",
