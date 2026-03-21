@@ -5503,16 +5503,16 @@ function flushSuppressedNeighbors(uptoIndex){
           if (libraryPoints.length >= totalCap) break;
 
           let sIdx =
-            p.metaSignalIndex != null
-              ? p.metaSignalIndex
+            p.metaSignalIndex != null && Number.isFinite(Number(p.metaSignalIndex))
+              ? Number(p.metaSignalIndex)
               : null;
           let entryIdx =
-            p.metaEntryIndex != null
-              ? p.metaEntryIndex
+            p.metaEntryIndex != null && Number.isFinite(Number(p.metaEntryIndex))
+              ? Number(p.metaEntryIndex)
               : null;
           const exitIdx =
-            p.metaExitIndex != null
-              ? p.metaExitIndex
+            p.metaExitIndex != null && Number.isFinite(Number(p.metaExitIndex))
+              ? Number(p.metaExitIndex)
               : null;
           const vec = Array.isArray(p.v)
             ? p.v
@@ -5561,6 +5561,16 @@ function flushSuppressedNeighbors(uptoIndex){
             exitIndex: exitIdx,
             entryTime,
             exitTime,
+            holdBars:
+              p.holdBars ??
+              p.barsHeld ??
+              p.durationBars ??
+              p.durBars ??
+              (entryIdx != null && exitIdx != null ? exitIdx - entryIdx : null),
+            closeTime: p.closeTime ?? null,
+            endTime: p.endTime ?? null,
+            exitTimestamp:
+              p.exitTimestamp ?? p.exitTs ?? p.closeTimestamp ?? p.closeTs ?? null,
             metaTime: entryTime,
             dir: p.dir,
             label,

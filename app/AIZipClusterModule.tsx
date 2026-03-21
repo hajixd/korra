@@ -11201,41 +11201,33 @@ function ClusterMapInner({
         ? (p as any).chunk
         : null;
 
-      const signalIdxRaw =
-        (p as any).signalIndex ??
-        (p as any).metaSignalIndex ??
-        null;
-      const signalIdxNum = Number(signalIdxRaw);
-      const hasSignalIdx = Number.isFinite(signalIdxNum);
-      const entryIdxRaw =
+      const signalIdxClamped = clampTradeIndex(
+        (p as any).signalIndex ?? (p as any).metaSignalIndex ?? null,
+        candles.length
+      );
+      const entryIdxClamped0 = clampTradeIndex(
         (p as any).entryIndex ??
-        (p as any).metaEntryIndex ??
-        null;
-      const entryIdxNum = Number(entryIdxRaw);
-      const hasEntryIdx = Number.isFinite(entryIdxNum);
-      const entryTimeFromP = (p as any).entryTime ?? (p as any).metaTime ?? "";
+          (p as any).metaEntryIndex ??
+          (p as any).entryIdx ??
+          (p as any).openIndex ??
+          null,
+        candles.length
+      );
+      const entryTimeFromP =
+        (p as any).entryTime ??
+        (p as any).entry_time ??
+        (p as any).entryTimestamp ??
+        (p as any).entryTs ??
+        (p as any).openTime ??
+        (p as any).metaTime ??
+        "";
       const entryMs = entryTimeFromP ? parseTradeTimeMs(entryTimeFromP) : null;
       const inferredEntryIdx =
-        !hasEntryIdx && entryMs != null
+        entryIdxClamped0 == null && entryMs != null
           ? findNearestTradeIndexByTime(candles, entryMs)
           : null;
-      const entryIdxClamped = hasEntryIdx
-        ? Math.min(
-            Math.max(0, Math.floor(entryIdxNum)),
-            Math.max(0, candles.length - 1)
-          )
-        : inferredEntryIdx != null
-        ? Math.min(
-            Math.max(0, Math.floor(inferredEntryIdx)),
-            Math.max(0, candles.length - 1)
-          )
-        : null;
-      const sIdxClamped = hasSignalIdx
-        ? Math.min(
-            Math.max(0, Math.floor(signalIdxNum)),
-            Math.max(0, candles.length - 1)
-          )
-        : entryIdxClamped;
+      const entryIdxClamped = entryIdxClamped0 ?? inferredEntryIdx;
+      const sIdxClamped = signalIdxClamped ?? entryIdxClamped;
       const vectorIdx = sIdxClamped ?? entryIdxClamped;
 
       // Require either a usable candle-based descriptor (signal index + model)
@@ -11271,14 +11263,15 @@ function ClusterMapInner({
         entryTimeFromP ||
         (entryIdxClamped != null ? candles?.[entryIdxClamped]?.time ?? "" : "");
       // Try to preserve real exit info for library points when available.
-      const exitIdxFromP =
-        typeof (p as any).exitIndex === "number"
-          ? (p as any).exitIndex
-          : typeof (p as any).closeIndex === "number"
-          ? (p as any).closeIndex
-          : typeof (p as any).endIndex === "number"
-          ? (p as any).endIndex
-          : null;
+      const exitIdxFromP = clampTradeIndex(
+        (p as any).exitIndex ??
+          (p as any).metaExitIndex ??
+          (p as any).exitIdx ??
+          (p as any).closeIndex ??
+          (p as any).endIndex ??
+          null,
+        candles.length
+      );
 
       const holdBarsFromP = Number(
         (p as any).holdBars ??
@@ -11290,10 +11283,7 @@ function ClusterMapInner({
 
       const inferredExitIndex =
         exitIdxFromP != null
-          ? Math.min(
-              Math.max(0, Math.floor(exitIdxFromP)),
-              Math.max(0, candles.length - 1)
-            )
+          ? exitIdxFromP
           : holdBarsFromP > 0 && entryIdxClamped != null
           ? Math.min(
               Math.max(0, Math.floor(entryIdxClamped + holdBarsFromP)),
@@ -11719,7 +11709,16 @@ function ClusterMapInner({
 
     for (let i = 0; i < goodEntries.length; i++) {
       const e: any = goodEntries[i];
-      const p: any = embedding[i];
+      const pRaw: any = embedding[i];
+      const p: any =
+        pRaw && Number.isFinite(pRaw.x) && Number.isFinite(pRaw.y)
+          ? pRaw
+          : String((e as any)?.kind || "").toLowerCase() === "library"
+          ? {
+              x: Number(stdData[i]?.[0] ?? 0),
+              y: Number(stdData[i]?.[1] ?? stdData[i]?.[0] ?? 0),
+            }
+          : null;
       if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) continue; // skip node
       const p3: any = embedding3[i];
 
@@ -19537,6 +19536,21 @@ function ClusterMapInner({
                 : exitLabel === "MIT"
                 ? "rgba(255,175,90,0.98)"
                 : "rgba(255,255,255,0.90)";
+            const panelEntryIndex = clampTradeIndex(
+              (selectedNode as any).entryIndex ??
+                (selectedNode as any).trade?.entryIndex ??
+                null,
+              candles.length
+            );
+            const panelExitIndex = clampTradeIndex(
+              (selectedNode as any).exitIndex ??
+                (selectedNode as any).closeIndex ??
+                (selectedNode as any).endIndex ??
+                (selectedNode as any).trade?.exitIndex ??
+                (selectedNode as any).trade?.closeIndex ??
+                null,
+              candles.length
+            );
             const entryTimeRaw =
               (selectedNode as any).entryTime ||
               (selectedNode as any).entry_time ||
@@ -19548,12 +19562,7 @@ function ClusterMapInner({
               (selectedNode as any).trade?.entryTimestamp ||
               (selectedNode as any).trade?.entryTs ||
               (selectedNode as any).trade?.openTime ||
-              (typeof (selectedNode as any).entryIndex === "number"
-                ? candles?.[(selectedNode as any).entryIndex]?.time
-                : "") ||
-              (typeof (selectedNode as any).trade?.entryIndex === "number"
-                ? candles?.[(selectedNode as any).trade.entryIndex]?.time
-                : "") ||
+              (panelEntryIndex != null ? candles?.[panelEntryIndex]?.time : "") ||
               (selectedNode as any).time ||
               "";
             const exitTimeRaw =
@@ -19577,15 +19586,7 @@ function ClusterMapInner({
               (selectedNode as any).trade?.exitTs ||
               (selectedNode as any).trade?.closeTime ||
               (selectedNode as any).trade?.tExit ||
-              (typeof (selectedNode as any).exitIndex === "number"
-                ? candles?.[(selectedNode as any).exitIndex]?.time
-                : "") ||
-              (typeof (selectedNode as any).closeIndex === "number"
-                ? candles?.[(selectedNode as any).closeIndex]?.time
-                : "") ||
-              (typeof (selectedNode as any).endIndex === "number"
-                ? candles?.[(selectedNode as any).endIndex]?.time
-                : "") ||
+              (panelExitIndex != null ? candles?.[panelExitIndex]?.time : "") ||
               "";
 
             const entryDt = entryTimeRaw
@@ -19615,24 +19616,23 @@ function ClusterMapInner({
             const candleMins = inferCandleMinutes(candles, parseMode);
 
             const entryIdxNum =
-              typeof (selectedNode as any).entryIndex === "number"
-                ? (selectedNode as any).entryIndex
-                : typeof (selectedNode as any).trade?.entryIndex === "number"
-                ? (selectedNode as any).trade.entryIndex
-                : null;
+              clampTradeIndex(
+                (selectedNode as any).entryIndex ??
+                  (selectedNode as any).trade?.entryIndex ??
+                  null,
+                candles.length
+              );
 
             const exitIdxNum0 =
-              typeof (selectedNode as any).exitIndex === "number"
-                ? (selectedNode as any).exitIndex
-                : typeof (selectedNode as any).closeIndex === "number"
-                ? (selectedNode as any).closeIndex
-                : typeof (selectedNode as any).endIndex === "number"
-                ? (selectedNode as any).endIndex
-                : typeof (selectedNode as any).trade?.exitIndex === "number"
-                ? (selectedNode as any).trade.exitIndex
-                : typeof (selectedNode as any).trade?.closeIndex === "number"
-                ? (selectedNode as any).trade.closeIndex
-                : null;
+              clampTradeIndex(
+                (selectedNode as any).exitIndex ??
+                  (selectedNode as any).closeIndex ??
+                  (selectedNode as any).endIndex ??
+                  (selectedNode as any).trade?.exitIndex ??
+                  (selectedNode as any).trade?.closeIndex ??
+                  null,
+                candles.length
+              );
 
             const exitIdxNum = (selectedNode as any).isOpen
               ? sliderValue
