@@ -2051,12 +2051,12 @@ body.mobile-terminal-viewport-lock {
   flex-direction: column;
   align-items: flex-end;
   justify-content: flex-end;
-  gap: 0.32rem;
+  gap: 0.48rem;
 }
 
 .backtest-date-input-row {
   width: 100%;
-  max-width: 286px;
+  max-width: 280px;
   margin-left: auto;
   display: flex;
   align-items: center;
@@ -2072,7 +2072,7 @@ body.mobile-terminal-viewport-lock {
   flex-direction: column;
   align-items: flex-end;
   justify-content: flex-end;
-  gap: 0.32rem;
+  gap: 0.48rem;
 }
 
 .backtest-date-preset-wrap {
@@ -2245,6 +2245,7 @@ body.mobile-terminal-viewport-lock {
   align-items: center;
   justify-content: flex-end;
   gap: 0.5rem;
+  margin-top: 0.04rem;
 }
 
 .backtest-minute-precise-label {
@@ -2369,7 +2370,7 @@ body.mobile-terminal-viewport-lock {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.2rem;
+  gap: 0.42rem;
 }
 
 .backtest-toolbar-note-range,
@@ -2390,7 +2391,11 @@ body.mobile-terminal-viewport-lock {
 }
 
 .backtest-toolbar-note-library-line {
-  row-gap: 0.16rem;
+  row-gap: 0.22rem;
+}
+
+.backtest-toolbar-note-cheat-line {
+  row-gap: 0.2rem;
 }
 
 .backtest-toolbar-note-library-wrap {
@@ -7891,7 +7896,7 @@ body.mobile-terminal-viewport-lock {
     flex-direction: column;
     align-items: stretch;
     max-width: none;
-    gap: 0.32rem;
+    gap: 0.48rem;
   }
 
   .backtest-date-input-row {

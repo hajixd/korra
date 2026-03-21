@@ -18777,11 +18777,102 @@ function TradingTerminalWorkspace({
         ): entry is { id: string; name: string; count: number; color: string } => entry != null
       );
   }, [aiLibraryCounts, aiLibraryDefById, appliedVisibleAiLibraries]);
+  const backtestAiSourceTimeByUid = useMemo(() => {
+    const next = new Map<string, number>();
+
+    const upsert = (rawId: unknown, rawTime: unknown) => {
+      const id = String(rawId ?? "").trim();
+      const timeMs = toHistoryLabelTimestampMs(rawTime);
+      if (!id || timeMs == null) {
+        return;
+      }
+
+      next.set(id, timeMs);
+    };
+
+    for (const trade of backtestTimeFilteredTrades) {
+      upsert(trade.id, trade.entryTime);
+      upsert((trade as any).tradeUid, trade.entryTime);
+    }
+
+    for (const trade of backtestLibraryCandidateTrades) {
+      upsert(trade.id, trade.entryTime);
+      upsert((trade as any).tradeUid, trade.entryTime);
+    }
+
+    for (const point of aiClusterLibraryPoints as any[]) {
+      const pointId = point?.uid ?? point?.id ?? point?.metaUid ?? null;
+      const pointTime = point?.metaTime ?? point?.entryTime ?? null;
+      upsert(pointId, pointTime);
+    }
+
+    return next;
+  }, [aiClusterLibraryPoints, backtestLibraryCandidateTrades, backtestTimeFilteredTrades]);
+  const cheatingLiveTradeCount = useMemo(() => {
+    return backtestTrades.reduce((count, trade) => {
+      if (trade.aiMode !== "knn" && trade.aiMode !== "hdbscan") {
+        return count;
+      }
+
+      const tradeEntryTimeMs = toHistoryLabelTimestampMs(trade.entryTime);
+      if (tradeEntryTimeMs == null) {
+        return count;
+      }
+
+      const neighbors = Array.isArray((trade as any).entryNeighbors)
+        ? ((trade as any).entryNeighbors as BacktestEntryNeighbor[])
+        : [];
+      const hasFutureNeighbor = neighbors.some((neighbor) => {
+        const directNeighborTimeMs = toHistoryLabelTimestampMs(
+          neighbor?.t?.entryTime ?? neighbor?.metaTime ?? null
+        );
+        if (directNeighborTimeMs != null) {
+          return directNeighborTimeMs > tradeEntryTimeMs;
+        }
+
+        const candidateIds = [
+          neighbor?.uid,
+          neighbor?.metaUid,
+          neighbor?.t?.id,
+          neighbor?.t?.uid,
+          neighbor?.t?.tradeUid
+        ];
+
+        return candidateIds.some((rawId) => {
+          const id = String(rawId ?? "").trim();
+          if (!id) {
+            return false;
+          }
+
+          const sourceTimeMs = backtestAiSourceTimeByUid.get(id) ?? null;
+          return sourceTimeMs != null && sourceTimeMs > tradeEntryTimeMs;
+        });
+      });
+
+      if (hasFutureNeighbor) {
+        return count + 1;
+      }
+
+      const closestClusterUid = String((trade as any).closestClusterUid ?? "").trim();
+      if (!closestClusterUid) {
+        return count;
+      }
+
+      const closestClusterTimeMs = backtestAiSourceTimeByUid.get(closestClusterUid) ?? null;
+      return closestClusterTimeMs != null && closestClusterTimeMs > tradeEntryTimeMs
+        ? count + 1
+        : count;
+    }, 0);
+  }, [backtestAiSourceTimeByUid, backtestTrades]);
   const totalPreAiLiveTrades = backtestTimeFilteredTrades.length;
   const acceptedLiveTrades = backtestTrades.length;
   const liveTradeAcceptanceRatePct =
     totalPreAiLiveTrades > 0
       ? (acceptedLiveTrades / totalPreAiLiveTrades) * 100
+      : 0;
+  const cheatingLiveTradePct =
+    acceptedLiveTrades > 0
+      ? (cheatingLiveTradeCount / acceptedLiveTrades) * 100
       : 0;
 
   const mainStatsTitle = "Main Statistics";
@@ -22964,17 +23055,6 @@ function TradingTerminalWorkspace({
                     </span>
                     End Date: <strong>{backtestDateRangeEndLabel}</strong>
                   </span>
-                  <span className="backtest-toolbar-note-meta">
-                    Total Live Trades: <strong>{totalPreAiLiveTrades.toLocaleString("en-US")}</strong>
-                    <span className="backtest-toolbar-note-separator" aria-hidden="true">
-                      &middot;
-                    </span>
-                    Accepted Live Trades: <strong>{acceptedLiveTrades.toLocaleString("en-US")}</strong>
-                    <span className="backtest-toolbar-note-separator" aria-hidden="true">
-                      &middot;
-                    </span>
-                    Acceptance Rate: <strong>{liveTradeAcceptanceRatePct.toFixed(1)}%</strong>
-                  </span>
                   <span className="backtest-toolbar-note-meta backtest-toolbar-note-library-line">
                     Total Library Trades:{" "}
                     <strong>{totalLoadedLibraryTrades.toLocaleString("en-US")}</strong>
@@ -22991,6 +23071,24 @@ function TradingTerminalWorkspace({
                         </span>
                       </span>
                     ))}
+                  </span>
+                  <span className="backtest-toolbar-note-meta">
+                    Total Live Trades: <strong>{totalPreAiLiveTrades.toLocaleString("en-US")}</strong>
+                    <span className="backtest-toolbar-note-separator" aria-hidden="true">
+                      &middot;
+                    </span>
+                    Accepted Live Trades: <strong>{acceptedLiveTrades.toLocaleString("en-US")}</strong>
+                    <span className="backtest-toolbar-note-separator" aria-hidden="true">
+                      &middot;
+                    </span>
+                    Acceptance Rate: <strong>{liveTradeAcceptanceRatePct.toFixed(1)}%</strong>
+                  </span>
+                  <span className="backtest-toolbar-note-meta backtest-toolbar-note-cheat-line">
+                    Cheating Count: <strong>{cheatingLiveTradeCount.toLocaleString("en-US")}</strong>
+                    <span className="backtest-toolbar-note-separator" aria-hidden="true">
+                      &middot;
+                    </span>
+                    Cheating Percentage: <strong>{cheatingLiveTradePct.toFixed(1)}%</strong>
                   </span>
                 </div>
                 </div>
