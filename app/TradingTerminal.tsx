@@ -10183,11 +10183,17 @@ function TradingTerminalWorkspace({
     resetAiLibraryRunState();
     setAppliedBacktestSettings(nextSettings);
     if (needsHistoryRecompute) {
-      const hasActiveLibraries = (nextSettings.selectedAiLibraries?.length ?? 0) > 0;
+      const runtimeLibraryIds = (nextSettings.selectedAiLibraries ?? [])
+        .map((libraryId) => String(libraryId).trim())
+        .filter((libraryId) => libraryId.length > 0 && Boolean(aiLibraryDefById[libraryId]));
+      const effectiveRuntimeLibraryIds =
+        runtimeLibraryIds.length > 0 || !aiLibraryDefById.base
+          ? runtimeLibraryIds
+          : ["base"];
       const hasLibraryPreloadPhase =
-        hasActiveLibraries &&
+        effectiveRuntimeLibraryIds.length > 0 &&
         canRunAizipLibrariesForSettings({
-          libraryIds: nextSettings.selectedAiLibraries,
+          libraryIds: effectiveRuntimeLibraryIds,
           aiModelStates: nextSettings.aiModelStates
         });
       const hasAiAnalysisPhase =
@@ -10248,6 +10254,7 @@ function TradingTerminalWorkspace({
     setPropStats(null);
   }, [
     appliedBacktestSettings,
+    aiLibraryDefById,
     backtestRunCount,
     clearStatsRefreshResetTimeout,
     resetAiLibraryRunState,
@@ -10491,15 +10498,33 @@ function TradingTerminalWorkspace({
     },
     [aiModelStates]
   );
+  const liveRuntimeAiLibraryIds = useMemo(() => {
+    const explicitLibraryIds = selectedAiLibraries
+      .map((libraryId) => String(libraryId).trim())
+      .filter((libraryId) => libraryId.length > 0 && Boolean(aiLibraryDefById[libraryId]));
+    if (explicitLibraryIds.length > 0) {
+      return explicitLibraryIds;
+    }
+    return aiLibraryDefById.base ? ["base"] : [];
+  }, [aiLibraryDefById, selectedAiLibraries]);
   const aiLibraryReadyToRun = useMemo(() => {
-    return canRunAiLibrariesForSnapshot(selectedAiLibraries);
-  }, [canRunAiLibrariesForSnapshot, selectedAiLibraries]);
+    return canRunAiLibrariesForSnapshot(liveRuntimeAiLibraryIds);
+  }, [canRunAiLibrariesForSnapshot, liveRuntimeAiLibraryIds]);
+  const appliedRuntimeAiLibraryIds = useMemo(() => {
+    const explicitLibraryIds = (appliedBacktestSettings.selectedAiLibraries ?? [])
+      .map((libraryId) => String(libraryId).trim())
+      .filter((libraryId) => libraryId.length > 0 && Boolean(aiLibraryDefById[libraryId]));
+    if (explicitLibraryIds.length > 0) {
+      return explicitLibraryIds;
+    }
+    return aiLibraryDefById.base ? ["base"] : [];
+  }, [aiLibraryDefById, appliedBacktestSettings.selectedAiLibraries]);
   const appliedAiLibraryReadyToRun = useMemo(() => {
     return canRunAiLibrariesForSnapshot(
-      appliedBacktestSettings.selectedAiLibraries ?? [],
+      appliedRuntimeAiLibraryIds,
       appliedBacktestSettings
     );
-  }, [appliedBacktestSettings, canRunAiLibrariesForSnapshot]);
+  }, [appliedBacktestSettings, appliedRuntimeAiLibraryIds, canRunAiLibrariesForSnapshot]);
   const appliedAiLibraryRunInputsSignature = useMemo(() => {
     return serializeBacktestSettingsSnapshot(appliedBacktestSettings);
   }, [appliedBacktestSettings]);
@@ -10507,13 +10532,11 @@ function TradingTerminalWorkspace({
     return getVisibleAizipLibraryIds(selectedAiLibraries);
   }, [selectedAiLibraries]);
   const appliedVisibleAiLibraries = useMemo(() => {
-    return getVisibleAizipLibraryIds(appliedBacktestSettings.selectedAiLibraries);
-  }, [appliedBacktestSettings.selectedAiLibraries]);
+    return getVisibleAizipLibraryIds(appliedRuntimeAiLibraryIds);
+  }, [appliedRuntimeAiLibraryIds]);
   const appliedAutoRunAiLibraryIds = useMemo(() => {
-    return (appliedBacktestSettings.selectedAiLibraries ?? [])
-      .map((libraryId) => String(libraryId).trim())
-      .filter((libraryId) => libraryId.length > 0 && Boolean(aiLibraryDefById[libraryId]));
-  }, [aiLibraryDefById, appliedBacktestSettings.selectedAiLibraries]);
+    return appliedRuntimeAiLibraryIds;
+  }, [appliedRuntimeAiLibraryIds]);
   const selectedAiLibraryCount = visibleAiLibraries.length;
   const availableAiLibraries = useMemo(() => {
     return aiLibraryDefs.filter(
@@ -10642,8 +10665,8 @@ function TradingTerminalWorkspace({
     ? appliedAiLibraryReadyToRun
     : aiLibraryReadyToRun;
   const effectiveAiLibraryRunLibraryIds = manualLibraryRunUsesAppliedSnapshot
-    ? appliedBacktestSettings.selectedAiLibraries
-    : selectedAiLibraries;
+    ? appliedRuntimeAiLibraryIds
+    : liveRuntimeAiLibraryIds;
   const effectiveAiLibraryRunSettingsSource = manualLibraryRunUsesAppliedSnapshot
     ? appliedBacktestSettings.selectedAiLibrarySettings
     : selectedAiLibrarySettings;
@@ -13327,8 +13350,13 @@ function TradingTerminalWorkspace({
   const shouldSendActivePanelOverrides =
     usesChartPanelLiveSimulationForActive !== usesChartPanelLiveSimulationForHistory;
   const shouldComputePanelAnalyticsOnServer =
-    panelBacktestFilterSettings.aiMode !== "off" ||
-    activePanelBacktestFilterSettings.aiMode !== "off";
+    (panelSourceTrades.length > 0 || activePanelSourceTrades.length > 0) &&
+    (
+      panelBacktestFilterSettings.aiMode !== "off" ||
+      activePanelBacktestFilterSettings.aiMode !== "off" ||
+      appliedRuntimeAiLibraryIds.length > 0 ||
+      liveRuntimeAiLibraryIds.length > 0
+    );
   const aiLibraryDefaultsById = useMemo(() => {
     const next: Record<string, Record<string, AiLibrarySettingValue>> = {};
     for (const [libraryId, definition] of Object.entries(aiLibraryDefById)) {
@@ -13377,11 +13405,9 @@ function TradingTerminalWorkspace({
   ]);
   const panelAnalyticsLibraryIdSet = useMemo(() => {
     return new Set(
-      (appliedBacktestSettings.selectedAiLibraries ?? []).map((libraryId) =>
-        String(libraryId).trim()
-      )
+      appliedRuntimeAiLibraryIds.map((libraryId) => String(libraryId).trim())
     );
-  }, [appliedBacktestSettings.selectedAiLibraries]);
+  }, [appliedRuntimeAiLibraryIds]);
   const panelAnalyticsCanonicalLibraryIds = useMemo(() => {
     return [...panelAnalyticsLibraryIdSet].filter((libraryId) => {
       return (
@@ -13745,9 +13771,13 @@ function TradingTerminalWorkspace({
     const trailingDistPctSnapshot = appliedBacktestTrailingDistPctRef.current;
     const minutePreciseEnabledSnapshot = appliedBacktestMinutePreciseEnabledRef.current;
     const appliedSettingsSnapshot = appliedBacktestSettingsRef.current;
-    const activeLibraryIds = (appliedSettingsSnapshot.selectedAiLibraries ?? [])
+    const explicitLibraryIds = (appliedSettingsSnapshot.selectedAiLibraries ?? [])
       .map((libraryId) => String(libraryId).trim())
-      .filter((libraryId) => libraryId.length > 0);
+      .filter((libraryId) => libraryId.length > 0 && Boolean(aiLibraryDefById[libraryId]));
+    const activeLibraryIds =
+      explicitLibraryIds.length > 0 || !aiLibraryDefById.base
+        ? explicitLibraryIds
+        : ["base"];
     const shouldPreloadAiLibraries =
       activeLibraryIds.length > 0 &&
       canRunAizipLibrariesForSettings({
@@ -14047,6 +14077,7 @@ function TradingTerminalWorkspace({
     backtestHistorySeedReady,
     backtestRunCount,
     backtestRefreshNowMs,
+    aiLibraryDefById,
     setStatsRefreshTimelineRangeValue
   ]);
 
@@ -17156,7 +17187,7 @@ function TradingTerminalWorkspace({
   );
   const backtestSourceDiagnosticsKeyRef = useRef("");
   useEffect(() => {
-    if (!isClusterBacktestTabActive || appliedBacktestSettings.aiMode === "off") {
+    if (!isClusterBacktestTabActive) {
       return;
     }
 
@@ -18441,7 +18472,7 @@ function TradingTerminalWorkspace({
     aiLibraryAutoRunSignatureRef.current = nextAutoRunSignature;
     const appliedSettingsSnapshot = appliedBacktestSettingsRef.current;
     runAllLibrariesRef.current({
-      libraryIds: appliedSettingsSnapshot.selectedAiLibraries,
+      libraryIds: appliedAutoRunAiLibraryIds,
       settingsSource: appliedSettingsSnapshot.selectedAiLibrarySettings,
       backtestSettings: appliedSettingsSnapshot
     });
@@ -18449,6 +18480,7 @@ function TradingTerminalWorkspace({
     backtestHasRun,
     backtestHistorySeedReady,
     appliedAiLibraryReadyToRun,
+    appliedAutoRunAiLibraryIds,
     appliedAiLibraryRunInputsSignature,
     backtestRunCount,
     resetAiLibraryRunState

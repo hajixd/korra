@@ -46,7 +46,7 @@ type TradeAiEntrySnapshot = {
   confidence: number;
   entryMargin: number;
   margin: number;
-  aiMode: Exclude<BacktestTradeAiMode, "off">;
+  aiMode: BacktestTradeAiMode;
   closestClusterUid: string | null;
   entryNeighbors: BacktestEntryNeighbor[];
 };
@@ -1623,10 +1623,7 @@ const computeAntiCheatBacktestContext = (params: {
     splitEvaluationTrades = chronologicalTrades.slice(fallbackIndex);
   }
 
-  if (
-    panelBacktestFilterSettings.aiMode === "off" ||
-    chronologicalTrades.length === 0
-  ) {
+  if (chronologicalTrades.length === 0) {
     return {
       dateFilteredTrades,
       libraryCandidateTrades: splitTrainingTrades,
@@ -1637,10 +1634,13 @@ const computeAntiCheatBacktestContext = (params: {
   }
 
   const activeAiMode = panelBacktestFilterSettings.aiMode;
+  const explicitActiveLibraryIds = panelBacktestFilterSettings.selectedAiLibraries
+    .map((libraryId) => String(libraryId ?? "").trim().toLowerCase())
+    .filter((libraryId) => libraryId.length > 0);
   const activeLibraryIds =
-    panelBacktestFilterSettings.selectedAiLibraries.length > 0
-      ? panelBacktestFilterSettings.selectedAiLibraries
-      : [];
+    explicitActiveLibraryIds.length > 0
+      ? explicitActiveLibraryIds
+      : ["base"];
   const timeFilteredTrades = splitEvaluationTrades;
   const libraryPointsById = panelLibraryPoints.reduce<Map<string, LibrarySourceCandidate[]>>(
     (accumulator, point) => {
@@ -1944,6 +1944,12 @@ const computeAntiCheatBacktestContext = (params: {
   for (let index = 0; index < chronologicalTrades.length; index += 1) {
     const trade = chronologicalTrades[index]!;
     const tradeQueryVector = trade.neighborVector ?? buildTradeNeighborVector(trade);
+    const preservedNeighbors = cloneEntryNeighbors(trade.entryNeighbors);
+    const preservedClosestClusterUid =
+      trade.closestClusterUid == null ? null : String(trade.closestClusterUid);
+    const preservedConfidenceRaw =
+      trade.entryConfidence ?? trade.confidence ?? trade.entryMargin ?? trade.margin ?? null;
+    const preservedConfidence = Number(preservedConfidenceRaw);
     const basePool =
       effectiveValidationMode === "split"
         ? splitTrainingTrades
@@ -1954,7 +1960,10 @@ const computeAntiCheatBacktestContext = (params: {
             : chronologicalTrades;
 
     if (basePool.length === 0 && !hasCanonicalLibraryCandidates) {
-      const confidence = getSyntheticWinProb(trade);
+      const confidence =
+        Number.isFinite(preservedConfidence)
+          ? clamp(preservedConfidence, 0.01, 0.99)
+          : getSyntheticWinProb(trade);
       confidenceById.set(trade.id, confidence);
       aiEntrySnapshotById.set(trade.id, {
         entryConfidence: confidence,
@@ -1962,8 +1971,8 @@ const computeAntiCheatBacktestContext = (params: {
         entryMargin: confidence,
         margin: confidence,
         aiMode: activeAiMode,
-        closestClusterUid: null,
-        entryNeighbors: []
+        closestClusterUid: preservedClosestClusterUid,
+        entryNeighbors: preservedNeighbors
       });
       continue;
     }
@@ -2049,7 +2058,10 @@ const computeAntiCheatBacktestContext = (params: {
     }
 
     if (neighborEntries.length === 0) {
-      const confidence = clamp(0.5 + (baselineWinRate - 0.5) * 0.2, 0.18, 0.82);
+      const confidence =
+        Number.isFinite(preservedConfidence)
+          ? clamp(preservedConfidence, 0.01, 0.99)
+          : clamp(0.5 + (baselineWinRate - 0.5) * 0.2, 0.18, 0.82);
       confidenceById.set(trade.id, confidence);
       aiEntrySnapshotById.set(trade.id, {
         entryConfidence: confidence,
@@ -2057,8 +2069,8 @@ const computeAntiCheatBacktestContext = (params: {
         entryMargin: confidence,
         margin: confidence,
         aiMode: activeAiMode,
-        closestClusterUid: null,
-        entryNeighbors: []
+        closestClusterUid: preservedClosestClusterUid,
+        entryNeighbors: preservedNeighbors
       });
       continue;
     }
