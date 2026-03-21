@@ -64,11 +64,6 @@ type LibraryPointPayload = {
   metaModel?: string | null;
   entryTime?: number | null;
   metaTime?: number | null;
-  exitTime?: number | null;
-  readyTime?: number | null;
-  entryIndex?: number | null;
-  exitIndex?: number | null;
-  readyIndex?: number | null;
   pnl?: number | null;
   metaPnl?: number | null;
   result?: string | null;
@@ -85,11 +80,6 @@ type LibrarySourceCandidate = {
   sourceIndex: number;
   direction: number | null;
   entryTime: number | null;
-  exitTime: number | null;
-  availabilityTime: number | null;
-  entryIndex: number | null;
-  exitIndex: number | null;
-  availabilityIndex: number | null;
   pnlUsd: number | null;
   result: string | null;
   session: string | null;
@@ -1009,31 +999,6 @@ const toNumeric = (value: unknown, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const toTimestampSeconds = (value: unknown): number | null => {
-  if (value == null) {
-    return null;
-  }
-
-  const numeric = Number(value);
-  if (Number.isFinite(numeric) && numeric > 0) {
-    return numeric > 1_000_000_000_000
-      ? Math.floor(numeric / 1000)
-      : Math.floor(numeric);
-  }
-
-  const text = String(value).trim();
-  if (!text) {
-    return null;
-  }
-
-  const parsedMs = Date.parse(text);
-  if (!Number.isNaN(parsedMs) && Number.isFinite(parsedMs) && parsedMs > 0) {
-    return Math.floor(parsedMs / 1000);
-  }
-
-  return null;
-};
-
 const normalizeTradeAiMode = (value: unknown): BacktestTradeAiMode | null => {
   return value === "knn" || value === "hdbscan" || value === "off" ? value : null;
 };
@@ -1199,15 +1164,6 @@ const buildTradeSourceCandidate = (
     sourceIndex,
     direction: trade.side === "Short" ? -1 : 1,
     entryTime: Number.isFinite(Number(trade.entryTime)) ? Number(trade.entryTime) : null,
-    exitTime: Number.isFinite(Number(trade.exitTime)) ? Number(trade.exitTime) : null,
-    availabilityTime: Number.isFinite(Number(trade.exitTime))
-      ? Number(trade.exitTime)
-      : Number.isFinite(Number(trade.entryTime))
-        ? Number(trade.entryTime)
-        : null,
-    entryIndex: null,
-    exitIndex: null,
-    availabilityIndex: null,
     pnlUsd: Number.isFinite(Number(trade.pnlUsd)) ? Number(trade.pnlUsd) : null,
     result: normalizeOutcomeLabel(trade.result),
     session: getSessionLabel(trade.entryTime),
@@ -1234,24 +1190,6 @@ const buildLibraryPointSourceCandidate = (
       : point.metaTime != null
         ? Number(point.metaTime)
         : null;
-  const exitTime =
-    point.exitTime != null ? Number(point.exitTime) : null;
-  const availabilityTime =
-    point.readyTime != null
-      ? Number(point.readyTime)
-      : exitTime != null
-        ? exitTime
-        : entryTime;
-  const entryIndex =
-    point.entryIndex != null ? Number(point.entryIndex) : null;
-  const exitIndex =
-    point.exitIndex != null ? Number(point.exitIndex) : null;
-  const availabilityIndex =
-    point.readyIndex != null
-      ? Number(point.readyIndex)
-      : exitIndex != null
-        ? exitIndex
-        : entryIndex;
   const pnlRaw = Number(point.metaPnl ?? point.pnl ?? NaN);
   const pnlUsd = Number.isFinite(pnlRaw) ? pnlRaw : null;
   const directionRaw = Number(point.dir ?? NaN);
@@ -1266,14 +1204,7 @@ const buildLibraryPointSourceCandidate = (
     libraryId,
     sourceIndex,
     direction: Number.isFinite(directionRaw) ? directionRaw : null,
-    entryTime,
-    exitTime: Number.isFinite(Number(exitTime)) ? Number(exitTime) : null,
-    availabilityTime:
-      Number.isFinite(Number(availabilityTime)) ? Number(availabilityTime) : null,
-    entryIndex: Number.isFinite(Number(entryIndex)) ? Number(entryIndex) : null,
-    exitIndex: Number.isFinite(Number(exitIndex)) ? Number(exitIndex) : null,
-    availabilityIndex:
-      Number.isFinite(Number(availabilityIndex)) ? Number(availabilityIndex) : null,
+    entryTime: Number.isFinite(Number(entryTime)) ? Number(entryTime) : null,
     pnlUsd,
     result: normalizedOutcome,
     session:
@@ -1564,16 +1495,8 @@ const normalizeLibraryPoints = (value: unknown): LibraryPointPayload[] => {
       libId,
       model: row.model != null ? String(row.model) : null,
       metaModel: row.metaModel != null ? String(row.metaModel) : null,
-      entryTime: toTimestampSeconds(row.entryTime),
-      metaTime: toTimestampSeconds(row.metaTime),
-      exitTime: toTimestampSeconds(row.exitTime),
-      readyTime: toTimestampSeconds(row.readyTime ?? row.metaReadyTime),
-      entryIndex: row.entryIndex == null ? null : Number(row.entryIndex),
-      exitIndex: row.exitIndex == null ? null : Number(row.exitIndex),
-      readyIndex:
-        row.readyIndex == null && row.metaReadyIndex == null
-          ? null
-          : Number(row.readyIndex ?? row.metaReadyIndex),
+      entryTime: row.entryTime == null ? null : Number(row.entryTime),
+      metaTime: row.metaTime == null ? null : Number(row.metaTime),
       pnl: row.pnl == null ? null : Number(row.pnl),
       metaPnl: row.metaPnl == null ? null : Number(row.metaPnl),
       result: row.result != null ? String(row.result) : null,
@@ -2066,34 +1989,6 @@ const computeAntiCheatBacktestContext = (params: {
   >();
   const staticLibraryVectorSpaceById = new Map<string, StaticCandidateVectorSpace>();
   const selectedAiDomains = new Set(panelBacktestFilterSettings.selectedAiDomains);
-  const splitCutoffSeconds =
-    splitTimestampMs != null && Number.isFinite(splitTimestampMs)
-      ? Math.floor(splitTimestampMs / 1000)
-      : null;
-
-  const filterStaticLibrarySourceByCutoff = (
-    source: Array<{ candidate: LibrarySourceCandidate; sourceIndex: number; libraryId: string }>,
-    cutoffSeconds: number | null
-  ) => {
-    if (cutoffSeconds == null || !Number.isFinite(cutoffSeconds)) {
-      return [] as Array<{
-        candidate: LibrarySourceCandidate;
-        sourceIndex: number;
-        libraryId: string;
-      }>;
-    }
-
-    const filtered = source.filter(({ candidate }) => {
-      const availabilityTime = candidate.availabilityTime ?? candidate.entryTime;
-      return (
-        availabilityTime != null &&
-        Number.isFinite(availabilityTime) &&
-        availabilityTime < cutoffSeconds
-      );
-    });
-
-    return filtered.length === source.length ? source : filtered;
-  };
 
   for (const libraryId of activeLibraryIds) {
     const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
@@ -2120,19 +2015,6 @@ const computeAntiCheatBacktestContext = (params: {
       libraryId,
       buildStaticCandidateVectorSpace(source, panelBacktestFilterSettings)
     );
-  }
-
-  const splitStaticLibrarySourceById = new Map<
-    string,
-    Array<{ candidate: LibrarySourceCandidate; sourceIndex: number; libraryId: string }>
-  >();
-  if (effectiveValidationMode === "split") {
-    for (const [libraryId, source] of staticLibrarySourceById.entries()) {
-      splitStaticLibrarySourceById.set(
-        libraryId,
-        filterStaticLibrarySourceByCutoff(source, splitCutoffSeconds)
-      );
-    }
   }
 
   for (let index = 0; index < chronologicalTrades.length; index += 1) {
@@ -2186,23 +2068,8 @@ const computeAntiCheatBacktestContext = (params: {
         continue;
       }
 
-      const fullStaticSource = staticLibrarySourceById.get(libraryId);
-      const staticSource =
-        fullStaticSource == null
-          ? null
-          : effectiveValidationMode === "split"
-            ? splitStaticLibrarySourceById.get(libraryId) ?? []
-            : panelBacktestFilterSettings.antiCheatEnabled &&
-                effectiveValidationMode === "off"
-              ? filterStaticLibrarySourceByCutoff(
-                  fullStaticSource,
-                  Number(trade.entryTime)
-                )
-              : fullStaticSource;
-      const staticVectorSpace =
-        staticSource != null && staticSource === fullStaticSource
-          ? staticLibraryVectorSpaceById.get(libraryId)
-          : undefined;
+      const staticSource = staticLibrarySourceById.get(libraryId);
+      const staticVectorSpace = staticLibraryVectorSpaceById.get(libraryId);
       const source = staticSource ?? pickLibrarySource(libraryId, basePool, trade);
       if (source.length === 0) {
         continue;

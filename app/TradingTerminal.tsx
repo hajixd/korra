@@ -527,11 +527,6 @@ type ServerLibraryPointPayload = {
   metaModel?: string | null;
   entryTime?: number | null;
   metaTime?: number | null;
-  exitTime?: number | null;
-  readyTime?: number | null;
-  entryIndex?: number | null;
-  exitIndex?: number | null;
-  readyIndex?: number | null;
   pnl?: number | null;
   metaPnl?: number | null;
   result?: string | null;
@@ -574,36 +569,6 @@ const getHistoryTradeEntryLabel = (trade: Pick<HistoryItem, "entryAt" | "entryTi
 
 const getHistoryTradeExitLabel = (trade: Pick<HistoryItem, "exitAt" | "exitTime">): string => {
   return resolveHistoryTradeTimeLabel(trade.exitAt, trade.exitTime);
-};
-
-const normalizeTimestampSeconds = (value: unknown): number | null => {
-  if (value == null) {
-    return null;
-  }
-
-  const numeric = Number(value);
-  if (Number.isFinite(numeric) && numeric > 0) {
-    return numeric > 1_000_000_000_000
-      ? Math.floor(numeric / 1000)
-      : Math.floor(numeric);
-  }
-
-  const text = String(value).trim();
-  if (!text) {
-    return null;
-  }
-
-  const parsedMs = Date.parse(text);
-  if (!Number.isNaN(parsedMs) && Number.isFinite(parsedMs) && parsedMs > 0) {
-    return Math.floor(parsedMs / 1000);
-  }
-
-  return null;
-};
-
-const normalizeFiniteNumber = (value: unknown): number | null => {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
 };
 
 const getHistoryTradeTimeLabel = (
@@ -798,22 +763,15 @@ const toServerLibraryPointPayload = (point: any): ServerLibraryPointPayload => (
         : undefined,
   model: point?.model != null ? String(point.model) : null,
   metaModel: point?.metaModel != null ? String(point.metaModel) : null,
-  entryTime: normalizeTimestampSeconds(point?.entryTime),
-  metaTime: normalizeTimestampSeconds(point?.metaTime),
-  exitTime: normalizeTimestampSeconds(point?.exitTime),
-  readyTime: normalizeTimestampSeconds(point?.readyTime ?? point?.metaReadyTime),
-  entryIndex: normalizeFiniteNumber(point?.entryIndex),
-  exitIndex: normalizeFiniteNumber(point?.exitIndex),
-  readyIndex: normalizeFiniteNumber(
-    point?.readyIndex ?? point?.metaReadyIndex ?? point?.metaExitIndex
-  ),
-  pnl: normalizeFiniteNumber(point?.pnl),
-  metaPnl: normalizeFiniteNumber(point?.metaPnl),
+  entryTime: point?.entryTime == null ? null : Number(point.entryTime),
+  metaTime: point?.metaTime == null ? null : Number(point.metaTime),
+  pnl: point?.pnl == null ? null : Number(point.pnl),
+  metaPnl: point?.metaPnl == null ? null : Number(point.metaPnl),
   result: point?.result != null ? String(point.result) : null,
   metaOutcome: point?.metaOutcome != null ? String(point.metaOutcome) : null,
   metaSession: point?.metaSession != null ? String(point.metaSession) : null,
-  dir: normalizeFiniteNumber(point?.dir),
-  label: normalizeFiniteNumber(point?.label),
+  dir: point?.dir == null ? null : Number(point.dir),
+  label: point?.label == null ? null : Number(point.label),
   v: Array.isArray(point?.v)
     ? point.v
         .map((value: unknown) => Number(value))

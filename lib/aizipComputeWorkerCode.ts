@@ -5607,16 +5607,6 @@ function flushSuppressedNeighbors(uptoIndex){
             p.endTime ??
             (typeof exitIdx === "number" ? candles?.[exitIdx]?.time ?? "" : "") ??
             "";
-          const readyIdx =
-            p.metaReadyIndex != null
-              ? p.metaReadyIndex
-              : p.readyIndex != null
-                ? p.readyIndex
-                : exitIdx;
-          const readyTime =
-            typeof readyIdx === "number"
-              ? candles?.[readyIdx]?.time ?? exitTime ?? entryTime
-              : exitTime || entryTime;
 
           libraryPoints.push({
             id: "lib|" + lid + "|" + mk + "|" + sid + "|" + String(i),
@@ -5627,10 +5617,8 @@ function flushSuppressedNeighbors(uptoIndex){
             signalIndex: sIdx,
             entryIndex: entryIdx,
             exitIndex: exitIdx,
-            readyIndex: readyIdx,
             entryTime,
             exitTime,
-            readyTime,
             metaTime: entryTime,
             dir: p.dir,
             label,
