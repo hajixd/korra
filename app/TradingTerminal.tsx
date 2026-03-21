@@ -18417,26 +18417,42 @@ function TradingTerminalWorkspace({
         const slDollars = useBase
           ? resolveLibraryDollarValue(settings.slDollars, settingsSnapshot.slDollars)
           : settingsSnapshot.slDollars;
-
-        const rawPool = useBase
-          ? await withTimeout(
-              loadSeededLibraryTradePool(
-                settingsSnapshot,
-                tpDollars,
-                slDollars
-              ),
-              AI_LIBRARY_RUN_TIMEOUT_MS,
-              `AI library ${libraryId} timed out while loading its seeded pool.`
-            )
-          : await withTimeout(
-              loadLibraryTradePool(
-                settingsSnapshot,
-                tpDollars,
-                slDollars
-              ),
-              AI_LIBRARY_RUN_TIMEOUT_MS,
-              `AI library ${libraryId} timed out while loading its trade pool.`
-            );
+        let rawPool: HistoryItem[] = [];
+        try {
+          rawPool = useBase
+            ? await withTimeout(
+                loadSeededLibraryTradePool(
+                  settingsSnapshot,
+                  tpDollars,
+                  slDollars
+                ),
+                AI_LIBRARY_RUN_TIMEOUT_MS,
+                `AI library ${libraryId} timed out while loading its seeded pool.`
+              )
+            : await withTimeout(
+                loadLibraryTradePool(
+                  settingsSnapshot,
+                  tpDollars,
+                  slDollars
+                ),
+                AI_LIBRARY_RUN_TIMEOUT_MS,
+                `AI library ${libraryId} timed out while loading its trade pool.`
+              );
+        } catch (error) {
+          console.error("[AIZip][AiLibraryRunDiagnostics] LIBRARY_POOL_LOAD_FAILED", {
+            libraryId,
+            isBaseLibrary: useBase,
+            symbol: settingsSnapshot.symbol,
+            timeframe: settingsSnapshot.timeframe,
+            statsDateStart: settingsSnapshot.statsDateStart,
+            statsDateEnd: settingsSnapshot.statsDateEnd,
+            tpDollars,
+            slDollars,
+            message: error instanceof Error ? error.message : String(error ?? ""),
+            error
+          });
+          rawPool = [];
+        }
         if (aiLibraryRunTokenRef.current[libraryId] !== runToken) {
           return;
         }
@@ -18485,7 +18501,12 @@ function TradingTerminalWorkspace({
           ...current,
           [libraryId]: "ready"
         }));
-      } catch {
+      } catch (error) {
+        console.error("[AIZip][AiLibraryRunDiagnostics] LIBRARY_RUN_FAILED", {
+          libraryId,
+          message: error instanceof Error ? error.message : String(error ?? ""),
+          error
+        });
         if (aiLibraryRunTokenRef.current[libraryId] !== runToken) {
           return;
         }
