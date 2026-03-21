@@ -4572,6 +4572,7 @@ const buildBacktestDateRangeFromPreset = (
   now = new Date()
 ): { startDate: string; endDate: string } => {
   const endDate = startOfLocalDay(now);
+  endDate.setDate(endDate.getDate() - 1);
   const startDate = new Date(endDate);
 
   switch (preset) {
@@ -8600,6 +8601,16 @@ const stableHashToUnit = (str: string): number => {
     h = Math.imul(h, 16777619);
   }
   return ((h >>> 0) % 1000000) / 1000000;
+};
+
+const colorForAiLibraryLegend = (libraryId: string): string => {
+  const normalizedLibraryId = String(libraryId ?? "").trim();
+  if (normalizedLibraryId.toLowerCase() === "suppressed") {
+    return "rgba(140, 140, 140, 1)";
+  }
+
+  const hue = Math.floor(stableHashToUnit(`libLegend:${normalizedLibraryId}`) * 360);
+  return `hsla(${hue}, 92%, 64%, 0.98)`;
 };
 
 const getAiZipTradeDisplayId = (trade: Pick<HistoryItem, "id" | "entryTime">) => {
@@ -18744,6 +18755,28 @@ function TradingTerminalWorkspace({
     }
     return total;
   }, [aiLibraryCounts, appliedVisibleAiLibraries]);
+  const backtestLibraryTradeBreakdown = useMemo(() => {
+    return appliedVisibleAiLibraries
+      .map((libraryId) => {
+        const normalizedLibraryId = String(libraryId ?? "").trim();
+        if (!normalizedLibraryId) {
+          return null;
+        }
+
+        const library = aiLibraryDefById[normalizedLibraryId];
+        return {
+          id: normalizedLibraryId,
+          name: library?.name ?? normalizedLibraryId,
+          count: Math.max(0, Number(aiLibraryCounts[normalizedLibraryId] ?? 0)),
+          color: colorForAiLibraryLegend(normalizedLibraryId)
+        };
+      })
+      .filter(
+        (
+          entry
+        ): entry is { id: string; name: string; count: number; color: string } => entry != null
+      );
+  }, [aiLibraryCounts, aiLibraryDefById, appliedVisibleAiLibraries]);
   const totalPreAiLiveTrades = backtestTimeFilteredTrades.length;
   const acceptedLiveTrades = backtestTrades.length;
   const liveTradeAcceptanceRatePct =
@@ -22814,7 +22847,10 @@ function TradingTerminalWorkspace({
                       />
                     </div>
                     <div className="backtest-date-preset-row">
-                      <div ref={statsDatePresetDdRef} className="backtest-date-preset-wrap">
+                      <div
+                        ref={statsDatePresetDdRef}
+                        className={`backtest-date-preset-wrap${statsDatePresetDdOpen ? " is-open" : ""}`}
+                      >
                         <button
                           type="button"
                           className="backtest-date-preset-trigger"
@@ -22922,15 +22958,39 @@ function TradingTerminalWorkspace({
                 </div>
                 <div className="backtest-toolbar-note backtest-toolbar-note-stack">
                   <span className="backtest-toolbar-note-range">
-                    Start Date: <strong>{backtestDateRangeStartLabel}</strong> · End Date:{" "}
-                    <strong>{backtestDateRangeEndLabel}</strong>
+                    Start Date: <strong>{backtestDateRangeStartLabel}</strong>
+                    <span className="backtest-toolbar-note-separator" aria-hidden="true">
+                      &middot;
+                    </span>
+                    End Date: <strong>{backtestDateRangeEndLabel}</strong>
                   </span>
                   <span className="backtest-toolbar-note-meta">
-                    Total Live Trades: <strong>{totalPreAiLiveTrades.toLocaleString("en-US")}</strong> ·
-                    {" "}Accepted Live Trades: <strong>{acceptedLiveTrades.toLocaleString("en-US")}</strong> ·
-                    {" "}Acceptance Rate: <strong>{liveTradeAcceptanceRatePct.toFixed(1)}%</strong> ·
-                    {" "}Total Library Trades:{" "}
+                    Total Live Trades: <strong>{totalPreAiLiveTrades.toLocaleString("en-US")}</strong>
+                    <span className="backtest-toolbar-note-separator" aria-hidden="true">
+                      &middot;
+                    </span>
+                    Accepted Live Trades: <strong>{acceptedLiveTrades.toLocaleString("en-US")}</strong>
+                    <span className="backtest-toolbar-note-separator" aria-hidden="true">
+                      &middot;
+                    </span>
+                    Acceptance Rate: <strong>{liveTradeAcceptanceRatePct.toFixed(1)}%</strong>
+                  </span>
+                  <span className="backtest-toolbar-note-meta backtest-toolbar-note-library-line">
+                    Total Library Trades:{" "}
                     <strong>{totalLoadedLibraryTrades.toLocaleString("en-US")}</strong>
+                    {backtestLibraryTradeBreakdown.map((library) => (
+                      <span key={library.id} className="backtest-toolbar-note-library-wrap">
+                        <span className="backtest-toolbar-note-separator" aria-hidden="true">
+                          &middot;
+                        </span>
+                        <span className="backtest-toolbar-note-library" style={{ color: library.color }}>
+                          {library.name}:{" "}
+                          <strong style={{ color: library.color }}>
+                            {library.count.toLocaleString("en-US")}
+                          </strong>
+                        </span>
+                      </span>
+                    ))}
                   </span>
                 </div>
                 </div>
@@ -22997,7 +23057,10 @@ function TradingTerminalWorkspace({
                   <div className="model-run-shell">
                     <div className="model-run-toolbar">
                       <div className="model-run-toolbar-main">
-                        <div ref={modelRunPresetDdRef} className="backtest-date-preset-wrap">
+                        <div
+                          ref={modelRunPresetDdRef}
+                          className={`backtest-date-preset-wrap${modelRunPresetDdOpen ? " is-open" : ""}`}
+                        >
                           <button
                             type="button"
                             className="backtest-date-preset-trigger"
