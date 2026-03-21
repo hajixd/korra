@@ -707,6 +707,47 @@ const cloneTradeEntryNeighbors = (value: unknown): BacktestEntryNeighbor[] => {
   return out;
 };
 
+const normalizeTradeTimestampSeconds = (value: unknown): number | null => {
+  const numeric = Number(value);
+
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return null;
+  }
+
+  return numeric > 1_000_000_000_000 ? Math.floor(numeric / 1000) : numeric;
+};
+
+const resolveEntryNeighborTimestampSeconds = (
+  neighbor: BacktestEntryNeighbor | null | undefined
+): number | null => {
+  if (!neighbor) {
+    return null;
+  }
+
+  return normalizeTradeTimestampSeconds(neighbor.metaTime ?? neighbor.t?.entryTime ?? null);
+};
+
+const isTradeCheatedByFutureDependency = (
+  trade: Pick<HistoryItem, "entryTime" | "entryNeighbors">
+): boolean => {
+  const tradeEntryTime = normalizeTradeTimestampSeconds(trade.entryTime);
+  if (tradeEntryTime == null) {
+    return false;
+  }
+
+  const neighbors = Array.isArray(trade.entryNeighbors) ? trade.entryNeighbors : [];
+
+  // Saved entry neighbors are the persisted dependency list for accepted trades.
+  for (const neighbor of neighbors) {
+    const neighborEntryTime = resolveEntryNeighborTimestampSeconds(neighbor);
+    if (neighborEntryTime != null && neighborEntryTime > tradeEntryTime) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
 const toServerTradePayload = (trade: HistoryItem): ServerTradePayload => ({
   id: trade.id,
   symbol: trade.symbol,
@@ -18785,10 +18826,26 @@ function TradingTerminalWorkspace({
   }, [aiLibraryCounts, aiLibraryDefById, appliedVisibleAiLibraries]);
   const totalPreAiLiveTrades = backtestTimeFilteredTrades.length;
   const acceptedLiveTrades = backtestTrades.length;
+  const cheatedAcceptedLiveTrades = useMemo(() => {
+    let count = 0;
+
+    for (const trade of backtestTrades) {
+      if (isTradeCheatedByFutureDependency(trade)) {
+        count += 1;
+      }
+    }
+
+    return count;
+  }, [backtestTrades]);
   const liveTradeAcceptanceRatePct =
     totalPreAiLiveTrades > 0
       ? (acceptedLiveTrades / totalPreAiLiveTrades) * 100
       : 0;
+  const cheatedAcceptedLiveTradePct =
+    acceptedLiveTrades > 0
+      ? (cheatedAcceptedLiveTrades / acceptedLiveTrades) * 100
+      : 0;
+  const cheatingMetricColor = "rgba(239,68,68,0.96)";
 
   const mainStatsTitle = "Main Statistics";
 
@@ -22997,6 +23054,19 @@ function TradingTerminalWorkspace({
                       &middot;
                     </span>
                     Acceptance Rate: <strong>{liveTradeAcceptanceRatePct.toFixed(1)}%</strong>
+                  </span>
+                  <span className="backtest-toolbar-note-meta">
+                    Cheating Count:{" "}
+                    <strong style={{ color: cheatingMetricColor }}>
+                      {cheatedAcceptedLiveTrades.toLocaleString("en-US")}
+                    </strong>
+                    <span className="backtest-toolbar-note-separator" aria-hidden="true">
+                      &middot;
+                    </span>
+                    Cheating Percentage:{" "}
+                    <strong style={{ color: cheatingMetricColor }}>
+                      {cheatedAcceptedLiveTradePct.toFixed(1)}%
+                    </strong>
                   </span>
                 </div>
                 </div>
