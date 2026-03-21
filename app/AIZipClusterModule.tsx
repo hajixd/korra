@@ -3354,6 +3354,8 @@ function MButton({ className = "", glow = false, children, ...rest }) {
     </button>
   );
 }
+const DIMENSION_STANDARDIZATION_STD = 50;
+
 function standardiseVectors(data) {
   if (data.length === 0) return { stdData: [], mean: [], stdev: [] };
   const dim = data[0].length;
@@ -3379,7 +3381,8 @@ function standardiseVectors(data) {
   for (const v of data) {
     const row = new Array(dim);
     for (let i = 0; i < dim; i++) {
-      row[i] = (v[i] - mean[i]) / stdev[i];
+      row[i] =
+        ((v[i] - mean[i]) / stdev[i]) * DIMENSION_STANDARDIZATION_STD;
     }
     stdData.push(row);
   }
@@ -12242,7 +12245,9 @@ function ClusterMapInner({
 
         const stdVec = new Array(chC.length);
         for (let j = 0; j < chC.length; j++) {
-          stdVec[j] = (chC[j] - (proj as any).mean[j]) / (proj as any).stdev[j];
+          stdVec[j] =
+            ((chC[j] - (proj as any).mean[j]) / (proj as any).stdev[j]) *
+            DIMENSION_STANDARDIZATION_STD;
         }
 
         const projectedVec =
@@ -27558,7 +27563,7 @@ export default function App() {
       const xs = valsByDim[dd.key] || [];
       if (!xs.length) continue;
 
-      // Standardize this dimension (mean 0, std 1) over the evaluated set.
+      // Standardize this dimension (mean 0, std 50) over the evaluated set.
       let mx = 0;
       for (let i = 0; i < xs.length; i++) mx += xs[i];
       mx /= Math.max(1, xs.length);
@@ -27569,7 +27574,9 @@ export default function App() {
       }
       vx /= Math.max(1, xs.length);
       const sx = Math.sqrt(Math.max(eps, vx));
-      const zs = xs.map((v) => (v - mx) / sx);
+      const zs = xs.map(
+        (v) => ((v - mx) / sx) * DIMENSION_STANDARDIZATION_STD
+      );
 
       const r = corrSigned(zs);
 
@@ -37068,7 +37075,7 @@ export default function App() {
                               alignItems: "center",
                               gap: 6,
                             }}
-                            title="Sort by optimal range (z-score thresholds)"
+                            title="Sort by optimal range (standardized thresholds; 50 = 1 stdev)"
                           >
                             <span>Optimal</span>
                             {dimSortCol === "optimal" ? (
@@ -37206,7 +37213,7 @@ export default function App() {
                                   fontWeight: 900,
                                   color: "rgba(255,255,255,0.72)",
                                 }}
-                                title="Optimal range shown in z-score units (bottom/top 10% cutoffs)"
+                                title="Optimal range shown in standardized units (50 = 1 stdev; bottom/top 10% cutoffs)"
                               >
                                 {optimalStr}
                               </div>
@@ -37234,8 +37241,8 @@ export default function App() {
                       <div className="mt-2 text-[11px] text-neutral-500">
                         Correlation is computed on the selected dataset (TEST
                         set when split). Win@Low/High uses the bottom/top 10% of
-                        values (z-scores). Optimal shows which side performs
-                        better.
+                        values (50 standardized units = 1 stdev). Optimal
+                        shows which side performs better.
                       </div>
                     </div>
                   </>
