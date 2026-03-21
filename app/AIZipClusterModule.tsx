@@ -3568,6 +3568,7 @@ function normalizeClusterCompressionMethod(value) {
   const method = String(value || "").trim().toLowerCase();
   if (
     method === "umap" ||
+    method === "link_strength" ||
     method === "pca" ||
     method === "jl" ||
     method === "hash" ||
@@ -4269,6 +4270,454 @@ function computeUMAPEmbedding3D(stdData, pc1, pc2, opts = {}) {
   }
 
   return { emb, sampleIdx, pc1, pc2 };
+}
+
+function standardize3D(xs, ys, zs) {
+  const n = Math.min(xs.length, ys.length, zs.length);
+  if (!n) return { xs: [], ys: [], zs: [] };
+  let mx = 0;
+  let my = 0;
+  let mz = 0;
+  for (let i = 0; i < n; i++) {
+    mx += xs[i];
+    my += ys[i];
+    mz += zs[i];
+  }
+  mx /= n;
+  my /= n;
+  mz /= n;
+  let vx = 0;
+  let vy = 0;
+  let vz = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - mx;
+    const dy = ys[i] - my;
+    const dz = zs[i] - mz;
+    vx += dx * dx;
+    vy += dy * dy;
+    vz += dz * dz;
+  }
+  vx = Math.sqrt(vx / n) || 1;
+  vy = Math.sqrt(vy / n) || 1;
+  vz = Math.sqrt(vz / n) || 1;
+  const ox = new Array(n);
+  const oy = new Array(n);
+  const oz = new Array(n);
+  for (let i = 0; i < n; i++) {
+    ox[i] = (xs[i] - mx) / vx;
+    oy[i] = (ys[i] - my) / vy;
+    oz[i] = (zs[i] - mz) / vz;
+  }
+  return { xs: ox, ys: oy, zs: oz };
+}
+
+function buildLinkStrengthEdgesForEmbedding(
+  nodes: any[],
+  kRaw: number,
+  dim: "2d" | "3d"
+) {
+  if (!Array.isArray(nodes) || nodes.length < 2) return [];
+  const indexById = new Map<string, number>();
+  for (let i = 0; i < nodes.length; i++) {
+    const id = normalizeClusterMapToken((nodes[i] as any)?.id);
+    if (id && !indexById.has(id)) indexById.set(id, i);
+  }
+  const rawEdges = getKnnEdgesForClusterMap(nodes, kRaw, dim, {
+    allowLegacyFallback: true,
+  });
+  const out: Array<{ i: number; j: number; d: number }> = [];
+  for (const edge of rawEdges as any[]) {
+    const aId = normalizeClusterMapToken((edge as any)?.a);
+    const bId = normalizeClusterMapToken((edge as any)?.b);
+    const i = aId ? indexById.get(aId) : undefined;
+    const j = bId ? indexById.get(bId) : undefined;
+    if (i == null || j == null || i === j) continue;
+    const dRaw = Number((edge as any)?.d);
+    out.push({
+      i,
+      j,
+      d: Number.isFinite(dRaw) && dRaw >= 0 ? dRaw : 1,
+    });
+  }
+  return out;
+}
+
+function interpolateEmbeddingByNearestNeighbors(
+  stdData: number[][],
+  embCoords: number[][],
+  vec: number[],
+  targetDim: number
+) {
+  const safeTargetDim = Math.max(1, Math.floor(Number(targetDim) || 1));
+  if (
+    !Array.isArray(stdData) ||
+    !Array.isArray(embCoords) ||
+    stdData.length === 0 ||
+    embCoords.length === 0
+  ) {
+    return new Array(safeTargetDim).fill(0);
+  }
+
+  const k = Math.max(1, Math.min(8, Math.min(stdData.length, embCoords.length)));
+  const bestIdx = new Array(k).fill(-1);
+  const bestDist = new Array(k).fill(Infinity);
+  let worstPos = 0;
+  let worstDist = Infinity;
+  for (let t = 0; t < k; t++) {
+    if (bestDist[t] > worstDist) {
+      worstDist = bestDist[t];
+      worstPos = t;
+    }
+  }
+
+  for (let i = 0; i < stdData.length; i++) {
+    const row = stdData[i];
+    if (!Array.isArray(row)) continue;
+    const d = l2Dist(row, vec);
+    if (!Number.isFinite(d)) continue;
+    if (d < bestDist[worstPos]) {
+      bestDist[worstPos] = d;
+      bestIdx[worstPos] = i;
+      worstPos = 0;
+      worstDist = bestDist[0];
+      for (let t = 1; t < k; t++) {
+        if (bestDist[t] > worstDist) {
+          worstDist = bestDist[t];
+          worstPos = t;
+        }
+      }
+    }
+  }
+
+  const out = new Array(safeTargetDim).fill(0);
+  let weightSum = 0;
+  let fallbackIndex = -1;
+  let fallbackDist = Infinity;
+  for (let t = 0; t < k; t++) {
+    const idx = bestIdx[t];
+    const d = bestDist[t];
+    if (idx < 0 || !Number.isFinite(d)) continue;
+    if (d < fallbackDist) {
+      fallbackDist = d;
+      fallbackIndex = idx;
+    }
+    const coords = embCoords[idx];
+    if (!Array.isArray(coords)) continue;
+    const w = 1 / Math.max(1e-6, d * d + 1e-6);
+    for (let axis = 0; axis < safeTargetDim; axis++) {
+      out[axis] += Number(coords[axis] ?? 0) * w;
+    }
+    weightSum += w;
+  }
+
+  if (weightSum > 0) {
+    for (let axis = 0; axis < safeTargetDim; axis++) out[axis] /= weightSum;
+    return out;
+  }
+  if (fallbackIndex >= 0 && Array.isArray(embCoords[fallbackIndex])) {
+    return padClusterProjectionVector(embCoords[fallbackIndex], safeTargetDim);
+  }
+  return new Array(safeTargetDim).fill(0);
+}
+
+function optimizeLinkStrengthLayout2D(n, edges, initX, initY, opts = {}) {
+  if (!n) return { x: [], y: [] };
+  if (!Array.isArray(edges) || edges.length === 0) {
+    const standardized = standardize2D(initX, initY);
+    return { x: standardized.xs, y: standardized.ys };
+  }
+
+  const epochs = Math.max(40, Math.floor(Number(opts?.nEpochs) || 180));
+  const seed = seedFromKey(opts?.seedKey ?? "link-strength-2d");
+  const rand = mulberry32(seed);
+  const lrBase = Number(opts?.learningRate) || 0.22;
+  const repulsionSamples = Math.max(
+    1,
+    Math.floor(
+      Number(opts?.repulsionSamples) || (n > 1400 ? 2 : n > 650 ? 3 : 5)
+    )
+  );
+  const repulsionStrength = Number(opts?.repulsionStrength) || 0.075;
+  const anchorStrength = Number(opts?.anchorStrength) || 0.07;
+
+  const x = initX.slice();
+  const y = initY.slice();
+  const degree = new Array(n).fill(0);
+  const finiteDistances = [];
+  for (const edge of edges as any[]) {
+    const i = Number((edge as any)?.i);
+    const j = Number((edge as any)?.j);
+    const d = Number((edge as any)?.d);
+    if (!Number.isFinite(i) || !Number.isFinite(j) || i === j) continue;
+    if (i >= 0 && i < n) degree[i] += 1;
+    if (j >= 0 && j < n) degree[j] += 1;
+    if (Number.isFinite(d)) finiteDistances.push(d);
+  }
+  finiteDistances.sort((a, b) => a - b);
+  const dMin = finiteDistances[0] ?? 0;
+  const dP85 =
+    finiteDistances[Math.floor((finiteDistances.length - 1) * 0.85)] ??
+    finiteDistances[finiteDistances.length - 1] ??
+    dMin + 1;
+  const dRange = Math.max(1e-6, dP85 - dMin);
+  const mass = degree.map((d) => 1 + Math.sqrt(Math.max(0, d)) * 0.25);
+  const springEdges = edges.map((edge: any) => {
+    const d = Number(edge?.d);
+    const norm = clamp((d - dMin) / dRange, 0, 1.35);
+    const closeness = 1 - Math.min(1, norm);
+    return {
+      i: Number(edge?.i),
+      j: Number(edge?.j),
+      target: 0.18 + Math.pow(Math.max(0, norm), 0.9) * 1.45,
+      strength: 0.16 + closeness * 0.96,
+    };
+  });
+
+  for (let epoch = 0; epoch < epochs; epoch++) {
+    const lr = lrBase * (1 - epoch / Math.max(1, epochs));
+    const offset = Math.floor(rand() * springEdges.length);
+    for (let kk = 0; kk < springEdges.length; kk++) {
+      const edge = springEdges[(kk + offset) % springEdges.length];
+      const i = edge.i;
+      const j = edge.j;
+      if (!Number.isFinite(i) || !Number.isFinite(j) || i === j) continue;
+      const dx = x[i] - x[j];
+      const dy = y[i] - y[j];
+      const dist = Math.sqrt(dx * dx + dy * dy) + 1e-6;
+      const ux = dx / dist;
+      const uy = dy / dist;
+      const move = (dist - edge.target) * edge.strength * lr * 0.5;
+      const denom = Math.max(1e-6, mass[i] + mass[j]);
+      const shareI = mass[j] / denom;
+      const shareJ = mass[i] / denom;
+      x[i] -= ux * move * shareI;
+      y[i] -= uy * move * shareI;
+      x[j] += ux * move * shareJ;
+      y[j] += uy * move * shareJ;
+    }
+
+    for (let i = 0; i < n; i++) {
+      x[i] += (initX[i] - x[i]) * anchorStrength * lr;
+      y[i] += (initY[i] - y[i]) * anchorStrength * lr;
+
+      for (let sample = 0; sample < repulsionSamples; sample++) {
+        const j = Math.floor(rand() * n);
+        if (j === i) continue;
+        const dx = x[i] - x[j];
+        const dy = y[i] - y[j];
+        const d2 = dx * dx + dy * dy + 1e-6;
+        const rep = (repulsionStrength * lr) / (0.18 + d2);
+        const mi = Math.max(1, mass[i]);
+        const mj = Math.max(1, mass[j]);
+        x[i] += (dx * rep) / mi;
+        y[i] += (dy * rep) / mi;
+        x[j] -= (dx * rep) / mj;
+        y[j] -= (dy * rep) / mj;
+      }
+    }
+
+    if ((epoch & 7) === 0 || epoch === epochs - 1) {
+      let mx = 0;
+      let my = 0;
+      for (let i = 0; i < n; i++) {
+        mx += x[i];
+        my += y[i];
+      }
+      mx /= n;
+      my /= n;
+      for (let i = 0; i < n; i++) {
+        x[i] -= mx;
+        y[i] -= my;
+      }
+    }
+  }
+
+  const standardized = standardize2D(x, y);
+  return { x: standardized.xs, y: standardized.ys };
+}
+
+function optimizeLinkStrengthLayout3D(n, edges, initX, initY, initZ, opts = {}) {
+  if (!n) return { x: [], y: [], z: [] };
+  if (!Array.isArray(edges) || edges.length === 0) {
+    const standardized = standardize3D(initX, initY, initZ);
+    return { x: standardized.xs, y: standardized.ys, z: standardized.zs };
+  }
+
+  const epochs = Math.max(50, Math.floor(Number(opts?.nEpochs) || 200));
+  const seed = seedFromKey(opts?.seedKey ?? "link-strength-3d");
+  const rand = mulberry32(seed);
+  const lrBase = Number(opts?.learningRate) || 0.2;
+  const repulsionSamples = Math.max(
+    1,
+    Math.floor(
+      Number(opts?.repulsionSamples) || (n > 1200 ? 2 : n > 500 ? 3 : 4)
+    )
+  );
+  const repulsionStrength = Number(opts?.repulsionStrength) || 0.065;
+  const anchorStrength = Number(opts?.anchorStrength) || 0.065;
+
+  const x = initX.slice();
+  const y = initY.slice();
+  const z = initZ.slice();
+  const degree = new Array(n).fill(0);
+  const finiteDistances = [];
+  for (const edge of edges as any[]) {
+    const i = Number((edge as any)?.i);
+    const j = Number((edge as any)?.j);
+    const d = Number((edge as any)?.d);
+    if (!Number.isFinite(i) || !Number.isFinite(j) || i === j) continue;
+    if (i >= 0 && i < n) degree[i] += 1;
+    if (j >= 0 && j < n) degree[j] += 1;
+    if (Number.isFinite(d)) finiteDistances.push(d);
+  }
+  finiteDistances.sort((a, b) => a - b);
+  const dMin = finiteDistances[0] ?? 0;
+  const dP85 =
+    finiteDistances[Math.floor((finiteDistances.length - 1) * 0.85)] ??
+    finiteDistances[finiteDistances.length - 1] ??
+    dMin + 1;
+  const dRange = Math.max(1e-6, dP85 - dMin);
+  const mass = degree.map((d) => 1 + Math.sqrt(Math.max(0, d)) * 0.25);
+  const springEdges = edges.map((edge: any) => {
+    const d = Number(edge?.d);
+    const norm = clamp((d - dMin) / dRange, 0, 1.35);
+    const closeness = 1 - Math.min(1, norm);
+    return {
+      i: Number(edge?.i),
+      j: Number(edge?.j),
+      target: 0.24 + Math.pow(Math.max(0, norm), 0.9) * 1.55,
+      strength: 0.14 + closeness * 0.94,
+    };
+  });
+
+  for (let epoch = 0; epoch < epochs; epoch++) {
+    const lr = lrBase * (1 - epoch / Math.max(1, epochs));
+    const offset = Math.floor(rand() * springEdges.length);
+    for (let kk = 0; kk < springEdges.length; kk++) {
+      const edge = springEdges[(kk + offset) % springEdges.length];
+      const i = edge.i;
+      const j = edge.j;
+      if (!Number.isFinite(i) || !Number.isFinite(j) || i === j) continue;
+      const dx = x[i] - x[j];
+      const dy = y[i] - y[j];
+      const dz = z[i] - z[j];
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) + 1e-6;
+      const ux = dx / dist;
+      const uy = dy / dist;
+      const uz = dz / dist;
+      const move = (dist - edge.target) * edge.strength * lr * 0.48;
+      const denom = Math.max(1e-6, mass[i] + mass[j]);
+      const shareI = mass[j] / denom;
+      const shareJ = mass[i] / denom;
+      x[i] -= ux * move * shareI;
+      y[i] -= uy * move * shareI;
+      z[i] -= uz * move * shareI;
+      x[j] += ux * move * shareJ;
+      y[j] += uy * move * shareJ;
+      z[j] += uz * move * shareJ;
+    }
+
+    for (let i = 0; i < n; i++) {
+      x[i] += (initX[i] - x[i]) * anchorStrength * lr;
+      y[i] += (initY[i] - y[i]) * anchorStrength * lr;
+      z[i] += (initZ[i] - z[i]) * anchorStrength * lr;
+
+      for (let sample = 0; sample < repulsionSamples; sample++) {
+        const j = Math.floor(rand() * n);
+        if (j === i) continue;
+        const dx = x[i] - x[j];
+        const dy = y[i] - y[j];
+        const dz = z[i] - z[j];
+        const d2 = dx * dx + dy * dy + dz * dz + 1e-6;
+        const rep = (repulsionStrength * lr) / (0.18 + d2);
+        const mi = Math.max(1, mass[i]);
+        const mj = Math.max(1, mass[j]);
+        x[i] += (dx * rep) / mi;
+        y[i] += (dy * rep) / mi;
+        z[i] += (dz * rep) / mi;
+        x[j] -= (dx * rep) / mj;
+        y[j] -= (dy * rep) / mj;
+        z[j] -= (dz * rep) / mj;
+      }
+    }
+
+    if ((epoch & 7) === 0 || epoch === epochs - 1) {
+      let mx = 0;
+      let my = 0;
+      let mz = 0;
+      for (let i = 0; i < n; i++) {
+        mx += x[i];
+        my += y[i];
+        mz += z[i];
+      }
+      mx /= n;
+      my /= n;
+      mz /= n;
+      for (let i = 0; i < n; i++) {
+        x[i] -= mx;
+        y[i] -= my;
+        z[i] -= mz;
+      }
+    }
+  }
+
+  const standardized = standardize3D(x, y, z);
+  return { x: standardized.xs, y: standardized.ys, z: standardized.zs };
+}
+
+function computeLinkStrengthEmbedding2D(nodes, initX, initY, opts = {}) {
+  const n = Math.min(nodes.length, initX.length, initY.length);
+  if (!n) return { emb: [], embCoords: [], edgeCount: 0 };
+  const standardizedInit = standardize2D(initX.slice(0, n), initY.slice(0, n));
+  const edges = buildLinkStrengthEdgesForEmbedding(
+    nodes.slice(0, n),
+    Math.max(1, Math.floor(Number(opts?.nNeighbors) || 12)),
+    "2d"
+  );
+  const layout = optimizeLinkStrengthLayout2D(
+    n,
+    edges,
+    standardizedInit.xs,
+    standardizedInit.ys,
+    opts
+  );
+  const emb = new Array(n);
+  const embCoords = new Array(n);
+  for (let i = 0; i < n; i++) {
+    emb[i] = { x: layout.x[i], y: layout.y[i] };
+    embCoords[i] = [layout.x[i], layout.y[i]];
+  }
+  return { emb, embCoords, edgeCount: edges.length };
+}
+
+function computeLinkStrengthEmbedding3D(nodes, initX, initY, initZ, opts = {}) {
+  const n = Math.min(nodes.length, initX.length, initY.length, initZ.length);
+  if (!n) return { emb: [], embCoords: [], edgeCount: 0 };
+  const standardizedInit = standardize3D(
+    initX.slice(0, n),
+    initY.slice(0, n),
+    initZ.slice(0, n)
+  );
+  const edges = buildLinkStrengthEdgesForEmbedding(
+    nodes.slice(0, n),
+    Math.max(1, Math.floor(Number(opts?.nNeighbors) || 12)),
+    "3d"
+  );
+  const layout = optimizeLinkStrengthLayout3D(
+    n,
+    edges,
+    standardizedInit.xs,
+    standardizedInit.ys,
+    standardizedInit.zs,
+    opts
+  );
+  const emb = new Array(n);
+  const embCoords = new Array(n);
+  for (let i = 0; i < n; i++) {
+    emb[i] = { x: layout.x[i], y: layout.y[i], z: layout.z[i] };
+    embCoords[i] = [layout.x[i], layout.y[i], layout.z[i]];
+  }
+  return { emb, embCoords, edgeCount: edges.length };
 }
 
 const AI_EPS = 1e-8;
@@ -9841,6 +10290,7 @@ const areClusterMapPropsEqual = (prev: any, next: any) => {
 
 const DEFAULT_CLUSTER_MAP_COMPRESSION_OPTIONS = [
   { value: "umap", label: "UMAP" },
+  { value: "link_strength", label: "Link Strength" },
   { value: "pca", label: "PCA" },
   { value: "jl", label: "Random Projection" },
   { value: "hash", label: "Feature Hashing" },
@@ -10858,12 +11308,6 @@ function ClusterMapInner({
       return true;
     };
     const entries = [];
-    const actLibs = Array.isArray(activeLibraries)
-      ? activeLibraries.map((v: any) => String(v))
-      : [];
-    const suppressedLibActive = actLibs.some(
-      (v: string) => v.toLowerCase() === "suppressed"
-    );
     for (let i = 0; i < trades.length; i++) {
       const t = trades[i];
       const fi = t.signalIndex;
@@ -11023,110 +11467,108 @@ function ClusterMapInner({
         });
       }
     }
-    if (suppressedLibActive) {
-      for (let gi = 0; gi < ghostEntries.length; gi++) {
-        const g = ghostEntries[gi];
-        const pseudo = {
-          direction: g.dir,
-          result: null,
-          pnl: 0,
-          isOpen: false,
-        };
-        const baseV = buildMapVector(
-          candles,
-          g.signalIndex,
-          chunkBarsDeb,
-          g.model,
-          pseudo,
-          pnlScale,
-          parseMode
-        );
-        const tod = timeOfDayUnit(g.entryTime, parseMode);
-        const timeFeature = (tod - 0.5) * 2 * TIME_FEATURE_STRENGTH;
-        const meta = baseV.slice(-6);
-        const chunk = baseV.slice(0, Math.max(0, baseV.length - 6));
-        const baseR = 6.8;
+    for (let gi = 0; gi < ghostEntries.length; gi++) {
+      const g = ghostEntries[gi];
+      const pseudo = {
+        direction: g.dir,
+        result: null,
+        pnl: 0,
+        isOpen: false,
+      };
+      const baseV = buildMapVector(
+        candles,
+        g.signalIndex,
+        chunkBarsDeb,
+        g.model,
+        pseudo,
+        pnlScale,
+        parseMode
+      );
+      const tod = timeOfDayUnit(g.entryTime, parseMode);
+      const timeFeature = (tod - 0.5) * 2 * TIME_FEATURE_STRENGTH;
+      const meta = baseV.slice(-6);
+      const chunk = baseV.slice(0, Math.max(0, baseV.length - 6));
+      const baseR = 6.8;
 
-        const dtStr = (g.entryTime || "") as any;
-        const dt = dtStr ? parseDateFromString(dtStr, parseMode) : null;
-        const monIdx =
-          dt != null
-            ? parseMode === "utc"
-              ? dt.getUTCMonth()
-              : dt.getMonth()
-            : null;
-        const monthKey = monIdx != null ? MONTH_SHORT[monIdx] : null;
-        const dow =
-          dt != null
-            ? parseMode === "utc"
-              ? dt.getUTCDay()
-              : dt.getDay()
-            : null;
-        const dowKey = typeof dow === "number" ? DOW_SHORT[dow] : null;
-        const hour =
-          dt != null
-            ? parseMode === "utc"
-              ? dt.getUTCHours()
-              : dt.getHours()
-            : null;
-        const session = sessionFromTime(g.entryTime, parseMode);
-        const uid = `G${Number(g.signalIndex ?? 0)
-          .toString(36)
-          .toUpperCase()}${Number(g.entryIndex ?? 0)
-          .toString(36)
-          .toUpperCase()}`;
+      const dtStr = (g.entryTime || "") as any;
+      const dt = dtStr ? parseDateFromString(dtStr, parseMode) : null;
+      const monIdx =
+        dt != null
+          ? parseMode === "utc"
+            ? dt.getUTCMonth()
+            : dt.getMonth()
+          : null;
+      const monthKey = monIdx != null ? MONTH_SHORT[monIdx] : null;
+      const dow =
+        dt != null
+          ? parseMode === "utc"
+            ? dt.getUTCDay()
+            : dt.getDay()
+          : null;
+      const dowKey = typeof dow === "number" ? DOW_SHORT[dow] : null;
+      const hour =
+        dt != null
+          ? parseMode === "utc"
+            ? dt.getUTCHours()
+            : dt.getHours()
+          : null;
+      const session = sessionFromTime(g.entryTime, parseMode);
+      const uid = `G${Number(g.signalIndex ?? 0)
+        .toString(36)
+        .toUpperCase()}${Number(g.entryIndex ?? 0)
+        .toString(36)
+        .toUpperCase()}`;
 
-        entries.push({
-          id: `lib-suppressed-${g.signalIndex}-${g.entryIndex}-${gi}`,
-          libId: "suppressed",
-          metaLib: "suppressed",
-          uid,
-          entryMargin:
-            (g as any).entryMargin ??
-            (g as any).entryConfidence ??
-            (g as any).aiConfidence ??
-            (g as any).confidence ??
-            (g as any).margin ??
-            null,
-          entryConfidence: (g as any).entryConfidence ?? null,
-          aiConfidence: (g as any).aiConfidence ?? null,
-          confidence: (g as any).confidence ?? null,
-          aiMargin: (g as any).aiMargin ?? null,
-          margin: (g as any).margin ?? null,
-          session,
-          monthKey,
-          dow,
-          dowKey,
-          hour,
-          entryModel: g.model ?? null,
-          metaTime: g.entryTime,
-          metaSession: session,
-          chunk,
-          meta,
-          timeFeature,
-          baseR,
-          kind: "library",
-          signalIndex: g.signalIndex,
-          entryIndex: g.entryIndex,
-          exitIndex: (g as any).exitIndex ?? null,
-          exitTime: (g as any).exitTime ?? null,
-          pnl: typeof (g as any).pnl === "number" ? (g as any).pnl : 0,
-          win: (typeof (g as any).pnl === "number" ? (g as any).pnl : 0) >= 0,
-          isOpen: false,
-          exitModel: (g as any).exitModel ?? null,
-          exitReason: (g as any).exitReason ?? null,
-          entryPrice: (g as any).entryPrice ?? null,
-          suppressed: true,
-          dir: g.dir,
-          entryTime: g.entryTime,
-          aiMode: (g as any).aiMode ?? null,
-          entryNeighbors: (g as any).entryNeighbors ?? [],
-          closestClusterUid:
-            (g as any).labelUid ?? (g as any).closestClusterUid ?? null,
-          closestCluster: (g as any).label ?? undefined,
-          chunkType: g.model,
-        });
-      }
+      entries.push({
+        id: `lib-suppressed-${g.signalIndex}-${g.entryIndex}-${gi}`,
+        libId: "suppressed",
+        metaLib: "suppressed",
+        uid,
+        entryMargin:
+          (g as any).entryMargin ??
+          (g as any).entryConfidence ??
+          (g as any).aiConfidence ??
+          (g as any).confidence ??
+          (g as any).margin ??
+          null,
+        entryConfidence: (g as any).entryConfidence ?? null,
+        aiConfidence: (g as any).aiConfidence ?? null,
+        confidence: (g as any).confidence ?? null,
+        aiMargin: (g as any).aiMargin ?? null,
+        margin: (g as any).margin ?? null,
+        session,
+        monthKey,
+        dow,
+        dowKey,
+        hour,
+        entryModel: g.model ?? null,
+        metaTime: g.entryTime,
+        metaSession: session,
+        chunk,
+        meta,
+        timeFeature,
+        baseR,
+        kind: "library",
+        signalIndex: g.signalIndex,
+        entryIndex: g.entryIndex,
+        exitIndex: (g as any).exitIndex ?? null,
+        exitTime: (g as any).exitTime ?? null,
+        pnl: typeof (g as any).pnl === "number" ? (g as any).pnl : 0,
+        win: (typeof (g as any).pnl === "number" ? (g as any).pnl : 0) >= 0,
+        isOpen: false,
+        exitModel: (g as any).exitModel ?? null,
+        exitReason: (g as any).exitReason ?? null,
+        entryPrice: (g as any).entryPrice ?? null,
+        suppressed: true,
+        dir: g.dir,
+        entryTime: g.entryTime,
+        aiMode: (g as any).aiMode ?? null,
+        entryNeighbors: (g as any).entryNeighbors ?? [],
+        closestClusterUid:
+          (g as any).labelUid ?? (g as any).closestClusterUid ?? null,
+        closestCluster: (g as any).label ?? undefined,
+        chunkType: g.model,
+      });
     }
 
     const libraryNodeDiagnostics: any = {
@@ -11208,12 +11650,6 @@ function ClusterMapInner({
       }
 
       const libId = String((p as any).libId ?? (p as any).metaLib ?? "unknown");
-
-      const isSuppLib = libId.toLowerCase() === "suppressed";
-      if (isSuppLib && !suppressedLibActive) {
-        libraryNodeDiagnostics.skippedSuppressedInactive += 1;
-        continue;
-      }
 
       const dir = Number((p as any).dir ?? (p as any).direction ?? 0) || 0;
       const pnl = Number((p as any).pnl ?? (p as any).metaPnl ?? 0) || 0;
@@ -11537,6 +11973,90 @@ function ClusterMapInner({
         samplePcaY: um.samplePcaY,
         sampleEmbX: um.sampleEmbX,
         sampleEmbY: um.sampleEmbY,
+      };
+    } else if (viewCompressionMethod === "link_strength") {
+      const dim = stdData[0]?.length ?? 0;
+      const components = computePCAComponents(stdData, shouldEmbed3D ? 3 : 2);
+      const pc1 =
+        Array.isArray(components[0]) && components[0].length === dim
+          ? components[0]
+          : randomDir(dim, "cluster-link-strength-pc1");
+      const pc2 =
+        Array.isArray(components[1]) && components[1].length === dim
+          ? components[1]
+          : randomDir(dim, "cluster-link-strength-pc2");
+      const pc3 =
+        Array.isArray(components[2]) && components[2].length === dim
+          ? components[2]
+          : randomDir(dim, "cluster-link-strength-pc3");
+      const pca = pca2Coords(stdData, pc1, pc2);
+      const { xs: initPX, ys: initPY } = standardize2D(pca.xs, pca.ys);
+      const initPZ = standardize1D(stdData.map((row) => dot(row, pc3)));
+      const linkNeighborK = Math.max(6, neighborK || 0);
+
+      const layoutNodes2d = goodEntries.map((entry: any, index: number) => ({
+        ...(entry as any),
+        x: Number(initPX[index] ?? 0),
+        y: Number(initPY[index] ?? 0),
+      }));
+      const link2 = computeLinkStrengthEmbedding2D(layoutNodes2d, initPX, initPY, {
+        seedKey: "cluster-map-link-strength-2d",
+        nNeighbors: linkNeighborK,
+        nEpochs: lowPowerMode ? 120 : 190,
+      });
+      embedding = (link2.emb || []).map((point: any) => ({
+        x: Number(point?.x ?? 0),
+        y: Number(point?.y ?? 0),
+      }));
+      projection2dProject = (vec: number[]) =>
+        interpolateEmbeddingByNearestNeighbors(
+          stdData,
+          link2.embCoords || [],
+          vec,
+          2
+        );
+
+      if (shouldEmbed3D) {
+        const layoutNodes3d = goodEntries.map((entry: any, index: number) => ({
+          ...(entry as any),
+          x: Number(initPX[index] ?? 0),
+          y: Number(initPY[index] ?? 0),
+          x3: Number(initPX[index] ?? 0),
+          y3: Number(initPY[index] ?? 0),
+          z3: Number(initPZ[index] ?? 0),
+        }));
+        const link3 = computeLinkStrengthEmbedding3D(
+          layoutNodes3d,
+          initPX,
+          initPY,
+          initPZ,
+          {
+            seedKey: "cluster-map-link-strength-3d",
+            nNeighbors: linkNeighborK,
+            nEpochs: lowPowerMode ? 130 : 210,
+          }
+        );
+        embedding3 = (link3.emb || []).map((point: any) => ({
+          x: Number(point?.x ?? 0),
+          y: Number(point?.y ?? 0),
+          z: Number(point?.z ?? 0),
+        }));
+        projection3dProject = (vec: number[]) =>
+          interpolateEmbeddingByNearestNeighbors(
+            stdData,
+            link3.embCoords || [],
+            vec,
+            3
+          );
+        projectionMetadata.linkStrengthEdgeCount3d = Number(link3.edgeCount || 0);
+      }
+
+      projectionMetadata = {
+        ...projectionMetadata,
+        pc1,
+        pc2,
+        pc3,
+        linkStrengthEdgeCount2d: Number(link2.edgeCount || 0),
       };
     } else {
       const projection2d = createClusterMapProjection({
@@ -11953,6 +12473,7 @@ function ClusterMapInner({
     active: true,
     potential: true,
     close: true,
+    "lib:suppressed": false,
   });
   const [ghostLegendColored, setGhostLegendColored] = useState(false);
 
@@ -11973,13 +12494,31 @@ function ClusterMapInner({
   }, [kEntry, knnLinkK]);
   const showGroupOverlays = (Number(groupOverlayOpacity) || 0) > 0;
   const effectiveGroupOverlayOpacity = groupOverlayOpacity;
-  const suppressedLibraryActive = React.useMemo(() => {
-    const libs = Array.isArray(activeLibraries) ? (activeLibraries as any[]) : [];
-    for (const v of libs) {
-      if (String(v ?? "").toLowerCase() === "suppressed") return true;
+  const clusterMapLibraryLegendIds = React.useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const push = (raw: any) => {
+      const lid = String(raw ?? "").trim();
+      if (!lid) return;
+      const key = lid.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(lid);
+    };
+    for (const lid of Array.isArray(activeLibraries) ? activeLibraries : []) {
+      push(lid);
     }
-    return false;
-  }, [activeLibraries]);
+    for (const lp of (libraryPoints as any[]) || []) {
+      push((lp as any)?.libId ?? (lp as any)?.metaLib ?? "");
+    }
+    if (
+      (Array.isArray(ghostEntries) && ghostEntries.length > 0) ||
+      aiMethod === "hdbscan"
+    ) {
+      push("suppressed");
+    }
+    return out;
+  }, [activeLibraries, aiMethod, ghostEntries, libraryPoints]);
   const normalizeHdbBasisNodes = React.useCallback((src: any[]) => {
     return (src || []).filter(
       (n: any) =>
@@ -12020,9 +12559,9 @@ function ClusterMapInner({
   );
   const hoverWorldShown = pinnedWorld ?? hoverWorld;
 
-  // Ensure all active libraries have legend toggles (default ON).
+  // Ensure library legend toggles exist; suppressed starts OFF by default.
   useEffect(() => {
-    const libsArr = Array.isArray(activeLibraries) ? activeLibraries : [];
+    const libsArr = clusterMapLibraryLegendIds;
     if (libsArr.length === 0) return;
     setLegendToggles((prev: any) => {
       let changed = false;
@@ -12030,33 +12569,29 @@ function ClusterMapInner({
       for (const lid of libsArr) {
         const key = `lib:${String(lid)}`;
         if (!(key in next)) {
-          next[key] = true;
+          next[key] = String(lid).toLowerCase() === "suppressed" ? false : true;
           changed = true;
         }
       }
       return changed ? next : prev;
     });
-  }, [activeLibraries]);
+  }, [clusterMapLibraryLegendIds]);
 
-  // Safety recovery: if all currently-loaded library toggles are OFF, turn them back ON.
-  // This avoids a persistent "Library 0" state after accidental toggles.
+  // Safety recovery: if all non-suppressed library toggles are OFF, turn them back ON.
   useEffect(() => {
-    const ids = new Set<string>();
-    for (const lp of (libraryPoints as any[]) || []) {
-      if (!lp) continue;
-      const lid = String((lp as any).libId ?? (lp as any).metaLib ?? "").trim();
-      if (lid) ids.add(lid);
-    }
-    if (!ids.size) return;
+    const ids = clusterMapLibraryLegendIds.filter(
+      (lid) => String(lid).toLowerCase() !== "suppressed"
+    );
+    if (!ids.length) return;
     setLegendToggles((prev: any) => {
-      const keys = Array.from(ids).map((lid) => `lib:${lid}`);
+      const keys = ids.map((lid) => `lib:${lid}`);
       const allOff = keys.every((k) => (prev as any)?.[k] === false);
       if (!allOff) return prev;
       const next: any = { ...(prev || {}) };
       for (const k of keys) next[k] = true;
       return next;
     });
-  }, [libraryPoints]);
+  }, [clusterMapLibraryLegendIds]);
 
   const mapSelectStyle: React.CSSProperties = useMemo(
     () => ({
@@ -12075,24 +12610,9 @@ function ClusterMapInner({
     const idx = deferredSliderValue;
     const out: any[] = [];
     const proj = projectionRef.current;
-    const isSuppressedNode = (node: any) => {
-      if (!node) return false;
-      if ((node as any).suppressed || (node as any).metaSuppressed) return true;
-      const lid = String(
-        (node as any).libId ??
-          (node as any).metaLib ??
-          (node as any).library ??
-          (node as any).metaLibrary ??
-          ""
-      )
-        .toLowerCase()
-        .trim();
-      return lid === "suppressed";
-    };
 
     for (const n of sortedNodes as any[]) {
       if (typeof (n as any).signalIndex !== "number") continue;
-      if (!suppressedLibraryActive && isSuppressedNode(n)) continue;
 
       // Library nodes are identified by their kind or stable id prefix.
       // Trades may reference a library (closestClusterUid, etc.), so we avoid using libId as a discriminator here.
@@ -12256,7 +12776,6 @@ function ClusterMapInner({
     pnlScale,
     parseMode,
     legendToggles.close,
-    suppressedLibraryActive,
   ]);
 
   const fullHistoryHdbBasisNodes = useMemo(
@@ -13151,22 +13670,6 @@ function ClusterMapInner({
       });
     }
 
-    if (!suppressedLibraryActive) {
-      return out.filter((n: any) => {
-        if (!n) return false;
-        if ((n as any).suppressed || (n as any).metaSuppressed) return false;
-        const lid = String(
-          (n as any).libId ??
-            (n as any).metaLib ??
-            (n as any).library ??
-            (n as any).metaLibrary ??
-            ""
-        )
-          .toLowerCase()
-          .trim();
-        return lid !== "suppressed";
-      });
-    }
     return out;
   }, [
     timelineNodes,
@@ -13174,7 +13677,6 @@ function ClusterMapInner({
     confidenceThreshold,
     hdbOverlay,
     resolveHdbClusterWinRate,
-    suppressedLibraryActive,
   ]);
 
   // HDBSCAN cluster info helper for hover/tooltips (component-scope).
@@ -21447,7 +21949,7 @@ function ClusterMapInner({
               span: 1,
             },
 
-            ...(Array.isArray(activeLibraries) ? activeLibraries : []).map(
+            ...(clusterMapLibraryLegendIds || []).map(
               (lid) => {
                 const def = (AI_LIBRARY_DEF_BY_ID as any)[String(lid)];
                 const name = def
@@ -22307,6 +22809,7 @@ export default function App() {
     hdbSampleCap,
     hdbDomainDistinction,
     confidenceThreshold,
+    ancConfidenceThreshold,
     aiExitStrict,
     aiExitLossTol,
     aiExitWinTol,
@@ -22422,6 +22925,9 @@ export default function App() {
     } else if (typeof legacyEntryStrict === "number") {
       setConfidenceThreshold(legacyEntryStrict);
     }
+    if (typeof (data as any).ancConfidenceThreshold === "number") {
+      setAncConfidenceThreshold((data as any).ancConfidenceThreshold);
+    }
     if (typeof data.aiExitStrict === "number")
       setAiExitStrict(data.aiExitStrict);
     if (typeof data.aiExitLossTol === "number")
@@ -22504,12 +23010,28 @@ export default function App() {
       );
     if (typeof data.compressionMethod === "string") {
       const v = String(data.compressionMethod || "");
-      const ok = ["umap", "pca", "jl", "hash", "variance", "subsample"];
+      const ok = [
+        "umap",
+        "link_strength",
+        "pca",
+        "jl",
+        "hash",
+        "variance",
+        "subsample",
+      ];
       setCompressionMethod(ok.includes(v) ? v : "jl");
     }
     if (typeof data.compressionMethod === "string") {
       const v = String(data.compressionMethod || "");
-      const ok = ["umap", "pca", "jl", "hash", "variance", "subsample"];
+      const ok = [
+        "umap",
+        "link_strength",
+        "pca",
+        "jl",
+        "hash",
+        "variance",
+        "subsample",
+      ];
       setCompressionMethod(ok.includes(v) ? v : "jl");
     }
     if (typeof data.distanceMetric === "string") {
@@ -22707,6 +23229,7 @@ export default function App() {
     setUseAI(false);
     setCheckEveryBar(false);
     setConfidenceThreshold(0);
+    setAncConfidenceThreshold(0);
     setAiExitStrict(0);
     setAiExitLossTol(0);
     setAiExitWinTol(0);
@@ -22879,6 +23402,15 @@ export default function App() {
       setConfidenceThreshold(0);
     }
   }, [aiMethod, confidenceThreshold, useAI, checkEveryBar]);
+  const [ancConfidenceThreshold, setAncConfidenceThreshold] = useState(0);
+  useEffect(() => {
+    if (
+      (aiMethod === "off" || (!useAI && !checkEveryBar)) &&
+      ancConfidenceThreshold !== 0
+    ) {
+      setAncConfidenceThreshold(0);
+    }
+  }, [aiMethod, ancConfidenceThreshold, useAI, checkEveryBar]);
   const [isPropFirmCollapsed, setIsPropFirmCollapsed] = useState(true);
   const [isDimensionStatsCollapsed, setIsDimensionStatsCollapsed] =
     useState(true);
@@ -23611,7 +24143,7 @@ export default function App() {
   >("post");
   const [dimStyle, setDimStyle] = useState("recommended"); // "manual" | "recommended" | "all"
   const [dimManualAmount, setDimManualAmount] = useState(24);
-  const [compressionMethod, setCompressionMethod] = useState("jl"); // "umap" | "pca" | "jl" | "hash" | "variance" | "subsample"
+  const [compressionMethod, setCompressionMethod] = useState("jl"); // "umap" | "link_strength" | "pca" | "jl" | "hash" | "variance" | "subsample"
   const [distanceMetric, setDistanceMetric] = useState("euclidean"); // "euclidean" | "cosine" | "manhattan" | "chebyshev" | "mahalanobis"
   const [dimWeightMode, setDimWeightMode] = useState("uniform"); // "uniform" | "proportional"
   const [dimWeightsBump, setDimWeightsBump] = useState(0);
@@ -24057,6 +24589,7 @@ export default function App() {
         hdbSampleCap,
         hdbDomainDistinction,
         confidenceThreshold,
+        ancConfidenceThreshold,
         aiExitStrict,
         aiExitLossTol,
         aiExitWinTol,
@@ -24116,6 +24649,7 @@ export default function App() {
       hdbSampleCap,
       hdbDomainDistinction,
       confidenceThreshold,
+      ancConfidenceThreshold,
       aiExitStrict,
       aiExitLossTol,
       aiExitWinTol,
@@ -24177,6 +24711,7 @@ export default function App() {
         chunkBars,
         checkEveryBar,
         confidenceThreshold: 0,
+        ancConfidenceThreshold: 0,
         aiExitStrict,
         aiExitLossTol,
         aiExitWinTol,
@@ -24615,6 +25150,7 @@ export default function App() {
     chunkBars,
     checkEveryBar,
     confidenceThreshold,
+    ancConfidenceThreshold,
     aiExitStrict,
     aiExitLossTol,
     aiExitWinTol,
@@ -24678,7 +25214,11 @@ export default function App() {
 
   const aiAnyOn =
     aiMethod !== "off" &&
-    (useAI || checkEveryBar || confidenceThreshold > 0 || aiExitStrict > 0);
+    (useAI ||
+      checkEveryBar ||
+      confidenceThreshold > 0 ||
+      ancConfidenceThreshold > 0 ||
+      aiExitStrict > 0);
   const isAIActive = aiMethod !== "off" && (useAI || checkEveryBar);
   useEffect(() => {}, [aiAnyOn]);
   const [trades, setTrades] = useState([]);
@@ -24876,6 +25416,7 @@ export default function App() {
     checkEveryBar,
     useAI,
     confidenceThreshold,
+    ancConfidenceThreshold,
     aiExitStrict,
     aiExitLossTol,
     aiExitWinTol,
@@ -25534,6 +26075,7 @@ export default function App() {
         hdbSampleCap,
         hdbDomainDistinction,
         confidenceThreshold: confidenceThreshold,
+        ancConfidenceThreshold: ancConfidenceThreshold,
         aiExitStrict: aiExitStrict,
         aiExitLossTol: aiExitLossTol,
         aiExitWinTol: aiExitWinTol,
@@ -25875,6 +26417,7 @@ export default function App() {
               ...baseSettings,
               useAI: false,
               confidenceThreshold: 0,
+              ancConfidenceThreshold: 0,
             },
             signal: baselineController.signal,
           })
@@ -28272,6 +28815,9 @@ export default function App() {
   const effectiveConfidenceThreshold = confidenceGateDisabled
     ? 0
     : confidenceThreshold;
+  const effectiveAncConfidenceThreshold = confidenceGateDisabled
+    ? 0
+    : ancConfidenceThreshold;
 
   const selectedModelCount = useMemo(() => {
     const vals = Object.values(modelStates || {});
@@ -32843,6 +33389,7 @@ export default function App() {
                     setCheckEveryBar(false);
                     setUseAI(false);
                     setConfidenceThreshold(0);
+                    setAncConfidenceThreshold(0);
                   }
                 }}
                 style={{
@@ -32963,6 +33510,30 @@ export default function App() {
                   />
                   <div style={{ ...ui.tiny, marginTop: 4 }}>
                     {effectiveConfidenceThreshold}
+                  </div>
+                </div>
+
+                <div style={{ height: 8 }} />
+
+                <div>
+                  <div style={ui.label}>ANC Confidence Threshold</div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={effectiveAncConfidenceThreshold}
+                    onChange={(e) => {
+                      const v = clamp(Number(e.target.value) || 0, 0, 100);
+                      setAncConfidenceThreshold(v);
+                    }}
+                    className="theme-slider"
+                    style={{ ...sliderVars(effectiveAncConfidenceThreshold, 0, 100) }}
+                  />
+                  <div style={{ ...ui.tiny, marginTop: 4 }}>
+                    {effectiveAncConfidenceThreshold === 0
+                      ? "0 (OFF)"
+                      : effectiveAncConfidenceThreshold}
                   </div>
                 </div>
 
@@ -33499,6 +34070,9 @@ export default function App() {
                       }}
                     >
                       <option value="umap">UMAP</option>
+                      <option value="link_strength">
+                        Link Strength (Graph Layout)
+                      </option>
                       <option value="pca">
                         PCA (Principal Component Analysis)
                       </option>
