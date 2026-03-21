@@ -11,6 +11,7 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+const DIMENSION_STANDARDIZATION_STD = 50;
 
 type AiLibrarySettingValue = boolean | number | string;
 type AiLibrarySettings = Record<string, Record<string, AiLibrarySettingValue>>;
@@ -895,7 +896,11 @@ const buildStaticCandidateVectorSpace = (
   }
 
   const standardize = (vector: number[]) =>
-    vector.map((entry, index) => (entry - mean[index]!) / Math.max(AI_EPS, std[index]!));
+    vector.map(
+      (entry, index) =>
+        ((entry - mean[index]!) / Math.max(AI_EPS, std[index]!)) *
+        DIMENSION_STANDARDIZATION_STD
+    );
 
   const standardizedCandidates = rawCandidateVectors.map((vector) =>
     Array.isArray(vector) && vector.length === baseDim ? standardize(vector) : null

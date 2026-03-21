@@ -9,6 +9,7 @@ import {
 
 export const AIZIP_COMPUTE_WORKER_CODE = String.raw`
   const AI_EPS = 1e-8;
+  const DIMENSION_STANDARDIZATION_STD = 50;
   const AI_LIBRARY_DEFAULT_MAX_SAMPLES = ${AI_LIBRARY_DEFAULT_MAX_SAMPLES};
   const AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES = ${AI_LIBRARY_DEFAULT_SEEDED_MAX_SAMPLES};
   const AI_LIBRARY_MAX_SAMPLES = ${AI_LIBRARY_MAX_SAMPLES};
@@ -511,7 +512,7 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
     lib.__zN = 0;
   }
 
-  // Standardize dimensions (z-score): mean 0, std 1 per dimension, computed from the library.
+  // Standardize dimensions: mean 0, std 50 per dimension, computed from the library.
   // We store per-model stats so queries can be standardized the same way.
   const LIB_Z = {}; // modelKey -> { mean: number[], std: number[] }
 
@@ -549,10 +550,11 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
     }
     LIB_Z[modelKey] = { mean: meanArr, std: stdArr };
 
-    // In standardized space, per-dimension variance is ~1. Keep Mahalanobis stable.
-    const ones = new Array(dim);
-    for(let i=0;i<dim;i++) ones[i] = 1;
-    LIB_VAR[modelKey] = ones;
+    // In standardized space, per-dimension variance is ~50^2. Keep Mahalanobis stable.
+    const variance = DIMENSION_STANDARDIZATION_STD * DIMENSION_STANDARDIZATION_STD;
+    const scaledVar = new Array(dim);
+    for(let i=0;i<dim;i++) scaledVar[i] = variance;
+    LIB_VAR[modelKey] = scaledVar;
   }
 
   function standardizeVector(modelKey, vec){
@@ -563,7 +565,7 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
     for(let i=0;i<dim;i++){
       const x = (vec && Number.isFinite(vec[i])) ? vec[i] : 0;
       const sd = z.std[i] || 1;
-      out[i] = (x - z.mean[i]) / sd;
+      out[i] = ((x - z.mean[i]) / sd) * DIMENSION_STANDARDIZATION_STD;
     }
     return out;
   }
