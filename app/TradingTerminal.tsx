@@ -13350,13 +13350,8 @@ function TradingTerminalWorkspace({
   const shouldSendActivePanelOverrides =
     usesChartPanelLiveSimulationForActive !== usesChartPanelLiveSimulationForHistory;
   const shouldComputePanelAnalyticsOnServer =
-    (panelSourceTrades.length > 0 || activePanelSourceTrades.length > 0) &&
-    (
-      panelBacktestFilterSettings.aiMode !== "off" ||
-      activePanelBacktestFilterSettings.aiMode !== "off" ||
-      appliedRuntimeAiLibraryIds.length > 0 ||
-      liveRuntimeAiLibraryIds.length > 0
-    );
+    panelBacktestFilterSettings.aiMode !== "off" ||
+    activePanelBacktestFilterSettings.aiMode !== "off";
   const aiLibraryDefaultsById = useMemo(() => {
     const next: Record<string, Record<string, AiLibrarySettingValue>> = {};
     for (const [libraryId, definition] of Object.entries(aiLibraryDefById)) {
@@ -17187,7 +17182,7 @@ function TradingTerminalWorkspace({
   );
   const backtestSourceDiagnosticsKeyRef = useRef("");
   useEffect(() => {
-    if (!isClusterBacktestTabActive) {
+    if (!isClusterBacktestTabActive || appliedBacktestSettings.aiMode === "off") {
       return;
     }
 

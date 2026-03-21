@@ -41,6 +41,7 @@ const makeTrade = (params: {
   id: string;
   entryIso: string;
   exitIso: string;
+  entrySource?: string;
   side?: "Long" | "Short";
   result?: "Win" | "Loss";
   pnlUsd?: number;
@@ -56,7 +57,7 @@ const makeTrade = (params: {
     symbol: "XAUUSD",
     side: params.side ?? "Long",
     result: params.result ?? "Win",
-    entrySource: "Momentum",
+    entrySource: params.entrySource ?? "Momentum",
     pnlPct: params.pnlPct ?? 0.2,
     pnlUsd: params.pnlUsd ?? 100,
     entryTime: Math.floor(Date.parse(params.entryIso) / 1000),
@@ -323,59 +324,6 @@ test("canonical library points stamp MIT to nearest neighbor #1", async () => {
     stampedTrade.entryNeighbors[0]?.metaUid ?? stampedTrade.entryNeighbors[0]?.uid ?? null;
   assert.equal(stampedTrade.closestClusterUid, firstNeighborUid);
   assert.equal(String(firstNeighborUid).startsWith("lib|base|"), true);
-});
-
-test("panel analytics still stamps neighbors when aiMode is off but libraries are loaded", async () => {
-  const trades = [
-    makeTrade({
-      id: "live-1",
-      entryIso: "2025-03-01T00:00:00Z",
-      exitIso: "2025-03-01T01:00:00Z",
-      neighborVector: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
-    }),
-    makeTrade({
-      id: "live-2",
-      entryIso: "2025-03-01T02:00:00Z",
-      exitIso: "2025-03-01T03:00:00Z",
-      neighborVector: [0.12, 0.18, 0.28, 0.38, 0.48, 0.58]
-    })
-  ];
-
-  const libraryPoints = [
-    {
-      uid: "lib|base|alpha|0",
-      libId: "base",
-      metaTime: Math.floor(Date.parse("2025-02-28T00:00:00Z") / 1000),
-      metaPnl: 180,
-      metaOutcome: "Win",
-      metaSession: "London",
-      dir: 1,
-      label: 1,
-      v: [0.11, 0.19, 0.29, 0.39, 0.49, 0.59]
-    }
-  ];
-
-  const payload = await postPanelAnalytics({
-    panelSourceTrades: trades,
-    panelLibraryPoints: libraryPoints,
-    panelBacktestFilterSettings: baseFilterSettings({
-      aiMode: "off",
-      selectedAiLibraries: ["base"]
-    }),
-    panelConfidenceGateDisabled: true,
-    panelEffectiveConfidenceThreshold: 0,
-    aiLibraryDefaultsById: {
-      base: { weight: 100, maxSamples: 1000 }
-    }
-  });
-
-  const stampedTrade = payload.timeFilteredTrades[1];
-  assert.ok(stampedTrade, "expected a second stamped trade");
-  assert.ok(Array.isArray(stampedTrade.entryNeighbors) && stampedTrade.entryNeighbors.length > 0);
-  const firstNeighborUid =
-    stampedTrade.entryNeighbors[0]?.metaUid ?? stampedTrade.entryNeighbors[0]?.uid ?? null;
-  assert.equal(stampedTrade.closestClusterUid, firstNeighborUid);
-  assert.equal(stampedTrade.aiMode, "off");
 });
 
 test("stored neighbor order stays nearest-first even when library weights differ", async () => {
@@ -743,6 +691,64 @@ test("panel analytics honors selected AI domains when filtering neighbors", asyn
   assert.ok(stampedTrade, "expected a second stamped trade");
   assert.equal(stampedTrade.closestClusterUid, "lib|base|same-side-far|1");
   assert.equal(stampedTrade.entryNeighbors[0]?.dir, 1);
+  assertApprox(Number(stampedTrade.entryConfidence), 1);
+});
+
+test("base seeding neighbors still populate when Model domain is selected", async () => {
+  const trades = [
+    makeTrade({
+      id: "live-1",
+      entryIso: "2025-03-01T00:00:00Z",
+      exitIso: "2025-03-01T01:00:00Z",
+      entrySource: "Mean Reversion",
+      side: "Long"
+    }),
+    makeTrade({
+      id: "live-2",
+      entryIso: "2025-03-01T02:00:00Z",
+      exitIso: "2025-03-01T03:00:00Z",
+      entrySource: "Mean Reversion",
+      side: "Long",
+      neighborVector: [0, 0, 0, 0, 0, 0]
+    })
+  ];
+
+  const libraryPoints = [
+    {
+      uid: "lib|base|generic-seed|0",
+      libId: "base",
+      metaModel: "Base Seeding",
+      metaTime: Math.floor(Date.parse("2025-02-28T00:00:00Z") / 1000),
+      metaPnl: 140,
+      metaOutcome: "Win",
+      metaSession: "London",
+      dir: 1,
+      label: 1,
+      v: [0, 0, 0, 0, 0, 0.01]
+    }
+  ];
+
+  const payload = await postPanelAnalytics({
+    panelSourceTrades: trades,
+    panelLibraryPoints: libraryPoints,
+    panelBacktestFilterSettings: baseFilterSettings({
+      selectedAiLibraries: ["base"],
+      selectedAiDomains: ["Direction", "Model"],
+      kEntry: 1,
+      knnVoteMode: "majority"
+    }),
+    panelConfidenceGateDisabled: true,
+    panelEffectiveConfidenceThreshold: 0,
+    aiLibraryDefaultsById: {
+      base: { weight: 100, maxSamples: 1000 }
+    }
+  });
+
+  const stampedTrade = payload.timeFilteredTrades[1];
+  assert.ok(stampedTrade, "expected a second stamped trade");
+  assert.ok(Array.isArray(stampedTrade.entryNeighbors), "expected stamped neighbors");
+  assert.equal(stampedTrade.entryNeighbors.length, 1);
+  assert.equal(stampedTrade.closestClusterUid, "lib|base|generic-seed|0");
   assertApprox(Number(stampedTrade.entryConfidence), 1);
 });
 

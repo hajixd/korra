@@ -46,7 +46,7 @@ type TradeAiEntrySnapshot = {
   confidence: number;
   entryMargin: number;
   margin: number;
-  aiMode: BacktestTradeAiMode;
+  aiMode: Exclude<BacktestTradeAiMode, "off">;
   closestClusterUid: string | null;
   entryNeighbors: BacktestEntryNeighbor[];
 };
@@ -484,7 +484,15 @@ const candidatePassesAiDomains = (
 
   if (selectedDomains.has("Model")) {
     const queryModel = String(trade.entrySource ?? "").trim();
-    if (!queryModel || candidate.entryModel !== queryModel) {
+    const candidateModel = String(candidate.entryModel ?? "").trim();
+    const candidateUsesGenericBaseModel =
+      (candidate.libraryId === "base" ||
+        candidate.libraryId === "tokyo" ||
+        candidate.libraryId === "sydney" ||
+        candidate.libraryId === "london" ||
+        candidate.libraryId === "newyork") &&
+      (!candidateModel || candidateModel.toLowerCase() === "base seeding");
+    if (!candidateUsesGenericBaseModel && (!queryModel || candidateModel !== queryModel)) {
       return false;
     }
   }
@@ -1623,7 +1631,10 @@ const computeAntiCheatBacktestContext = (params: {
     splitEvaluationTrades = chronologicalTrades.slice(fallbackIndex);
   }
 
-  if (chronologicalTrades.length === 0) {
+  if (
+    panelBacktestFilterSettings.aiMode === "off" ||
+    chronologicalTrades.length === 0
+  ) {
     return {
       dateFilteredTrades,
       libraryCandidateTrades: splitTrainingTrades,
