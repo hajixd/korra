@@ -3090,8 +3090,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         type: "number",
         min: 1,
         max: 20000,
-        step: 25,
-        help: "Take-profit size in dollars for seeded trades."
+        step: 25
       },
       {
         key: "slDollars",
@@ -3099,8 +3098,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
         type: "number",
         min: 1,
         max: 20000,
-        step: 25,
-        help: "Stop-loss size in dollars for seeded trades."
+        step: 25
       },
       {
         key: "jumpToResolution",
@@ -3348,8 +3346,7 @@ const AI_LIBRARY_TARGET_WIN_RATE_FIELD: AiLibraryField = {
   type: "number",
   min: 0,
   max: 100,
-  step: 1,
-  help: "Trim this library's loaded neighbors toward the requested win ratio."
+  step: 1
 };
 
 const getAiLibraryTargetWinRateMode = (
@@ -24337,7 +24334,7 @@ function TradingTerminalWorkspace({
 
                                 return (
                                   <div key={field.key} className="ai-zip-library-field-block">
-                                    <div className="ai-zip-library-field-inline">
+                                    <div className="ai-zip-library-field-inline stacked">
                                       <div>
                                         <div className="ai-zip-library-field-label">{field.label}</div>
                                         {field.help ? (

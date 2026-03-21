@@ -5014,11 +5014,12 @@ body.mobile-terminal-viewport-lock {
 }
 
 .ai-zip-library-action.compact {
-  width: auto;
-  min-width: 132px;
-  align-self: flex-start;
+  width: min(100%, 220px);
+  align-self: center;
+  justify-self: center;
   border-radius: 12px;
   padding: 9px 12px;
+  text-align: center;
 }
 
 .ai-zip-library-empty {
@@ -5067,6 +5068,11 @@ body.mobile-terminal-viewport-lock {
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+}
+
+.ai-zip-library-field-inline.stacked {
+  display: grid;
+  justify-items: start;
 }
 
 .ai-zip-library-field-help {
