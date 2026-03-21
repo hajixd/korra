@@ -9365,6 +9365,7 @@ function TradingTerminalWorkspace({
   const [aiZipClusterMapView, setAiZipClusterMapView] = useState<"2d" | "3d">("2d");
   const [aiZipClusterResetKey, setAiZipClusterResetKey] = useState(0);
   const [aiZipClusterTimelineIdx, setAiZipClusterTimelineIdx] = useState(0);
+  const aiZipClusterSnapshotKeyRef = useRef("inactive");
   const [enabledBacktestWeekdays, setEnabledBacktestWeekdays] = useState<string[]>([
     ...backtestWeekdayLabels
   ]);
@@ -17071,13 +17072,25 @@ function TradingTerminalWorkspace({
   const isBacktestHistorySeedBlocked =
     statsRefreshStatus === "Historical Candle Range Unavailable";
   const isBacktestTabHistoryPending = backtestHasRun && !backtestHistorySeedReady;
+  const aiZipClusterSnapshotPending =
+    isClusterBacktestTabActive &&
+    backtestHasRun &&
+    backtestHistorySeedReady &&
+    shouldComputePanelAnalyticsOnServer &&
+    panelAnalyticsStatus !== "ready";
   const shouldShowBacktestInlineLoader =
     isBacktestSurfaceSettled &&
     backtestInlineLoaderTabs.has(selectedBacktestTab) &&
-    (isBacktestTabDataPending || (isBacktestTabHistoryPending && !isBacktestHistorySeedBlocked));
+    (
+      isBacktestTabDataPending ||
+      (isBacktestTabHistoryPending && !isBacktestHistorySeedBlocked) ||
+      aiZipClusterSnapshotPending
+    );
   const backtestInlineLoaderLabel =
     selectedBacktestTab === "dimensions"
       ? "Building dimension statistics..."
+      : selectedBacktestTab === "cluster" && aiZipClusterSnapshotPending
+        ? "Loading nearest neighbors..."
       : isBacktestTabHistoryPending
         ? "Loading backtest data..."
         : "Loading tab data...";
@@ -19822,6 +19835,80 @@ function TradingTerminalWorkspace({
 
     return map;
   }, [aiZipClusterCandles]);
+  const aiZipClusterTradeSource = useMemo(() => {
+    if (!isClusterBacktestTabActive) {
+      return [] as HistoryItem[];
+    }
+
+    if (shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus !== "ready") {
+      return [] as HistoryItem[];
+    }
+
+    return backtestTrades;
+  }, [
+    backtestTrades,
+    isClusterBacktestTabActive,
+    panelAnalyticsStatus,
+    shouldComputePanelAnalyticsOnServer
+  ]);
+  const aiZipClusterSnapshotSignature = useMemo(() => {
+    if (!isClusterBacktestTabActive) {
+      return "inactive";
+    }
+
+    if (shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus !== "ready") {
+      return `pending|${backtestRunCount}|${panelAnalyticsStatus}`;
+    }
+
+    let tradesWithNeighbors = 0;
+    let tradesWithClosestClusterUid = 0;
+    const samples: string[] = [];
+
+    for (const trade of aiZipClusterTradeSource) {
+      const neighbors = Array.isArray((trade as any).entryNeighbors)
+        ? ((trade as any).entryNeighbors as any[])
+        : [];
+      const closestClusterUid = String((trade as any).closestClusterUid ?? "").trim();
+
+      if (neighbors.length > 0) {
+        tradesWithNeighbors += 1;
+      }
+      if (closestClusterUid) {
+        tradesWithClosestClusterUid += 1;
+      }
+      if (samples.length < 8) {
+        const firstNeighborUid = String(
+          (neighbors[0] as any)?.uid ??
+            (neighbors[0] as any)?.metaUid ??
+            (neighbors[0] as any)?.id ??
+            ""
+        ).trim();
+        samples.push(
+          [
+            trade.id,
+            neighbors.length,
+            closestClusterUid || "-",
+            firstNeighborUid || "-"
+          ].join(":")
+        );
+      }
+    }
+
+    return [
+      backtestRunCount,
+      panelAnalyticsStatus,
+      aiZipClusterTradeSource.length,
+      tradesWithNeighbors,
+      tradesWithClosestClusterUid,
+      samples.join(",")
+    ].join("|");
+  }, [
+    aiZipClusterTradeSource,
+    backtestRunCount,
+    isClusterBacktestTabActive,
+    panelAnalyticsStatus,
+    shouldComputePanelAnalyticsOnServer
+  ]);
 
   const aiZipClusterTrades = useMemo(() => {
     if (!isClusterBacktestTabActive) {
@@ -19830,10 +19917,10 @@ function TradingTerminalWorkspace({
 
     const maxIndex = Math.max(0, aiZipClusterCandles.length - 1);
 
-    return backtestTrades.map((trade, index) => {
+    return aiZipClusterTradeSource.map((trade, index) => {
       const fallbackIndex =
         maxIndex > 0
-          ? Math.round((index / Math.max(1, backtestTrades.length - 1)) * maxIndex)
+          ? Math.round((index / Math.max(1, aiZipClusterTradeSource.length - 1)) * maxIndex)
           : 0;
       const entryIndex = clamp(
         aiZipClusterCandleIndexByUnix.get(Number(trade.entryTime)) ?? fallbackIndex,
@@ -19899,7 +19986,7 @@ function TradingTerminalWorkspace({
   }, [
     aiZipClusterCandleIndexByUnix,
     aiZipClusterCandles.length,
-    backtestTrades,
+    aiZipClusterTradeSource,
     getEffectiveTradeConfidenceScore,
     isClusterBacktestTabActive
   ]);
@@ -19908,23 +19995,28 @@ function TradingTerminalWorkspace({
       return "inactive";
     }
 
-    const firstTradeId = backtestTrades[0]?.id ?? "na";
-    const lastTradeId = backtestTrades[backtestTrades.length - 1]?.id ?? "na";
+    const firstTradeId = aiZipClusterTradeSource[0]?.id ?? "na";
+    const lastTradeId =
+      aiZipClusterTradeSource[aiZipClusterTradeSource.length - 1]?.id ?? "na";
     return [
+      backtestRunCount,
       aiZipClusterCandleWindowKey,
-      backtestTrades.length,
+      aiZipClusterTradeSource.length,
       firstTradeId,
       lastTradeId,
+      aiZipClusterSnapshotSignature,
       appliedBacktestSettings.aiMode,
       appliedBacktestSettings.validationMode,
       appliedBacktestSettings.antiCheatEnabled ? "ac1" : "ac0"
     ].join("|");
   }, [
     aiZipClusterCandleWindowKey,
+    aiZipClusterSnapshotSignature,
+    aiZipClusterTradeSource,
     appliedBacktestSettings.aiMode,
     appliedBacktestSettings.antiCheatEnabled,
     appliedBacktestSettings.validationMode,
-    backtestTrades,
+    backtestRunCount,
     isClusterBacktestTabActive
   ]);
 
@@ -19935,6 +20027,31 @@ function TradingTerminalWorkspace({
 
     setAiZipClusterTimelineIdx(Math.max(0, aiZipClusterCandles.length - 1));
   }, [aiZipClusterCandles.length, isClusterBacktestTabActive]);
+
+  useEffect(() => {
+    if (!isClusterBacktestTabActive) {
+      aiZipClusterSnapshotKeyRef.current = "inactive";
+      return;
+    }
+
+    if (shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus !== "ready") {
+      return;
+    }
+
+    if (aiZipClusterSnapshotKeyRef.current === aiZipClusterSnapshotSignature) {
+      return;
+    }
+
+    aiZipClusterSnapshotKeyRef.current = aiZipClusterSnapshotSignature;
+    setAiZipClusterResetKey((current) => current + 1);
+    setAiZipClusterTimelineIdx(Math.max(0, aiZipClusterCandles.length - 1));
+  }, [
+    aiZipClusterCandles.length,
+    aiZipClusterSnapshotSignature,
+    isClusterBacktestTabActive,
+    panelAnalyticsStatus,
+    shouldComputePanelAnalyticsOnServer
+  ]);
 
   const performanceStatsModelOptions = backtestAnalyticsData.performanceStatsModelOptions;
 
@@ -25109,48 +25226,52 @@ function TradingTerminalWorkspace({
               {selectedSurfaceTab === "backtest" && selectedBacktestTab === "cluster" ? (
                 <div className="backtest-grid">
                   <div className="backtest-card">
-                    <AIZipClusterMap
-                      key={aiZipClusterMapDataKey}
-                      candles={aiZipClusterCandles}
-                      trades={aiZipClusterTrades}
-                      ghostEntries={[]}
-                      libraryPoints={aiClusterLibraryPoints}
-                      activeLibraries={aiClusterActiveLibraries}
-                      libraryCounts={aiClusterLibraryCounts}
-                      chunkBars={appliedBacktestSettings.chunkBars}
-                      potential={null}
-                      parseMode="utc"
-                      showPotential={false}
-                      resetKey={aiZipClusterResetKey}
-                      sliderValue={aiZipClusterTimelineIdx}
-                      setSliderValue={setAiZipClusterTimelineIdx}
-                      onResetClusterMap={() => setAiZipClusterResetKey((current) => current + 1)}
-                      clusterMapView={aiZipClusterMapView}
-                      onToggleClusterMapView={() =>
-                        setAiZipClusterMapView((current) => (current === "3d" ? "2d" : "3d"))
-                      }
-                      onPostHocTrades={() => {}}
-                      onPostHocProgress={() => {}}
-                      onMitMap={() => {}}
-                      aiMethod={appliedBacktestSettings.aiMode}
-                      validationMode={appliedBacktestSettings.validationMode}
-                      aiDomains={appliedBacktestSettings.selectedAiDomains}
-                      knnNeighborSpace={appliedBacktestSettings.knnNeighborSpace}
-                      distanceMetric={appliedBacktestSettings.distanceMetric}
-                      compressionMethod={appliedBacktestSettings.compressionMethod}
-                      compressionOptions={AI_COMPRESSION_METHOD_OPTIONS}
-                      kEntry={appliedBacktestSettings.kEntry}
-                      knnVoteMode={appliedBacktestSettings.knnVoteMode}
-                      useEntryNeighborsOnly
-                      hdbDomainDistinction="conceptual"
-                      hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}
-                      hdbMinSamples={appliedBacktestSettings.hdbMinSamples}
-                      hdbEpsQuantile={appliedBacktestSettings.hdbEpsQuantile}
-                      confidenceThreshold={appliedEffectiveConfidenceThreshold}
-                      statsDateStart={appliedBacktestSettings.statsDateStart}
-                      statsDateEnd={appliedBacktestSettings.statsDateEnd}
-                      antiCheatEnabled={appliedBacktestSettings.antiCheatEnabled}
-                    />
+                    {aiZipClusterSnapshotPending ? (
+                      <ChartLoadingSpinner label="Loading nearest neighbors..." />
+                    ) : (
+                      <AIZipClusterMap
+                        key={aiZipClusterMapDataKey}
+                        candles={aiZipClusterCandles}
+                        trades={aiZipClusterTrades}
+                        ghostEntries={[]}
+                        libraryPoints={aiClusterLibraryPoints}
+                        activeLibraries={aiClusterActiveLibraries}
+                        libraryCounts={aiClusterLibraryCounts}
+                        chunkBars={appliedBacktestSettings.chunkBars}
+                        potential={null}
+                        parseMode="utc"
+                        showPotential={false}
+                        resetKey={aiZipClusterResetKey}
+                        sliderValue={aiZipClusterTimelineIdx}
+                        setSliderValue={setAiZipClusterTimelineIdx}
+                        onResetClusterMap={() => setAiZipClusterResetKey((current) => current + 1)}
+                        clusterMapView={aiZipClusterMapView}
+                        onToggleClusterMapView={() =>
+                          setAiZipClusterMapView((current) => (current === "3d" ? "2d" : "3d"))
+                        }
+                        onPostHocTrades={() => {}}
+                        onPostHocProgress={() => {}}
+                        onMitMap={() => {}}
+                        aiMethod={appliedBacktestSettings.aiMode}
+                        validationMode={appliedBacktestSettings.validationMode}
+                        aiDomains={appliedBacktestSettings.selectedAiDomains}
+                        knnNeighborSpace={appliedBacktestSettings.knnNeighborSpace}
+                        distanceMetric={appliedBacktestSettings.distanceMetric}
+                        compressionMethod={appliedBacktestSettings.compressionMethod}
+                        compressionOptions={AI_COMPRESSION_METHOD_OPTIONS}
+                        kEntry={appliedBacktestSettings.kEntry}
+                        knnVoteMode={appliedBacktestSettings.knnVoteMode}
+                        useEntryNeighborsOnly
+                        hdbDomainDistinction="conceptual"
+                        hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}
+                        hdbMinSamples={appliedBacktestSettings.hdbMinSamples}
+                        hdbEpsQuantile={appliedBacktestSettings.hdbEpsQuantile}
+                        confidenceThreshold={appliedEffectiveConfidenceThreshold}
+                        statsDateStart={appliedBacktestSettings.statsDateStart}
+                        statsDateEnd={appliedBacktestSettings.statsDateEnd}
+                        antiCheatEnabled={appliedBacktestSettings.antiCheatEnabled}
+                      />
+                    )}
                   </div>
                 </div>
               ) : null}
