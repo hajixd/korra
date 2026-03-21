@@ -18266,6 +18266,11 @@ function TradingTerminalWorkspace({
           Number.isFinite(entryTimeRaw) && entryTimeRaw > 0
             ? entryTimeRaw
             : getHistoryTradeEntryLabel(trade) || getHistoryTradeTimeLabel(trade);
+        const exitTimeRaw = Number(trade.exitTime);
+        const exitTime =
+          Number.isFinite(exitTimeRaw) && exitTimeRaw > 0
+            ? exitTimeRaw
+            : getHistoryTradeExitLabel(trade) || getHistoryTradeTimeLabel(trade);
         const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
         const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
         const holdMinutes = Math.max(
@@ -18292,6 +18297,7 @@ function TradingTerminalWorkspace({
           metaSignalIndex: signalIndex,
           entryTime,
           metaTime: entryTime,
+          exitTime,
           metaSession: getSessionLabel(entryTime as UTCTimestamp),
           dir: trade.side === "Long" ? 1 : -1,
           label: trade.result === "Win" ? 1 : -1,
