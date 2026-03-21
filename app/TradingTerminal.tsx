@@ -24973,7 +24973,7 @@ function TradingTerminalWorkspace({
                                   const cheated = isTradeCheatedByFutureDependency(trade);
                                   const cheatedColor = cheated
                                     ? "rgba(239,68,68,0.96)"
-                                    : "rgba(255,255,255,0.82)";
+                                    : "rgba(60,220,120,0.96)";
                                   const isHovered = hoveredBacktestHistoryId === trade.id;
                                   const cell = (
                                     col: number,
@@ -25056,7 +25056,20 @@ function TradingTerminalWorkspace({
                                           fontWeight: 800
                                         })}
                                       >
-                                        {cheated ? "Yes" : "No"}
+                                        <span
+                                          title={cheated ? "Cheated" : "Not cheated"}
+                                          aria-label={cheated ? "Cheated" : "Not cheated"}
+                                          style={{
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            minWidth: 18,
+                                            fontSize: 15,
+                                            lineHeight: 1
+                                          }}
+                                        >
+                                          {"\u2691"}
+                                        </span>
                                       </td>
                                       <td
                                         style={cell(10, {

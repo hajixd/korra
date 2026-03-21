@@ -24,7 +24,10 @@ import {
   resolveAIZipNeighborVoteOutcome,
   toneForAIZipNeighborVoteOutcome,
 } from "../lib/aizipNeighborOutcome";
-import { isTradeCheatedByFutureDependency } from "../lib/aiTradeCheating";
+import {
+  isTradeCheatedByFutureDependency,
+  normalizeTradeTimestampSeconds,
+} from "../lib/aiTradeCheating";
 import {
   ComposedChart,
   CartesianGrid,
@@ -15429,6 +15432,7 @@ function ClusterMapInner({
                 `neighbor-${String(idx + 1).padStart(2, "0")}`,
               payloadIndex: idx,
               id: resolvedId ?? rawFallback ?? null,
+              entryTimeRaw: timeRaw ?? null,
               displayId,
               dist,
               dirLabel: dirNum === 1 ? "LONG" : dirNum === -1 ? "SHORT" : "",
@@ -15485,6 +15489,14 @@ function ClusterMapInner({
     [selectedNode, selectedSourceTrade]
   );
 
+  const selectedNodeCheated = useMemo(() => {
+    if (!selectedNode) return false;
+
+    return isTradeCheatedByFutureDependency(
+      (selectedAiSnapshotSource as any) ?? (selectedNode as any)
+    );
+  }, [selectedAiSnapshotSource, selectedNode]);
+
   const selectedTradeCheated = useMemo(() => {
     if (!selectedNode) return null;
 
@@ -15493,15 +15505,47 @@ function ClusterMapInner({
       return null;
     }
 
-    return isTradeCheatedByFutureDependency(
-      (selectedAiSnapshotSource as any) ?? (selectedNode as any)
-    );
-  }, [selectedAiSnapshotSource, selectedNode]);
+    return selectedNodeCheated;
+  }, [selectedNode, selectedNodeCheated]);
 
   const selectedNeighborList = useMemo(
     () => buildNeighborListForNode(selectedAiSnapshotSource),
     [buildNeighborListForNode, selectedAiSnapshotSource]
   );
+
+  const selectedFutureNeighborKeys = useMemo(() => {
+    const out = new Set<string>();
+    if (selectedTradeCheated !== true) {
+      return out;
+    }
+
+    const selectedEntryTime = normalizeTradeTimestampSeconds(
+      (selectedAiSnapshotSource as any)?.entryTime ??
+        (selectedNode as any)?.entryTime ??
+        null
+    );
+    if (selectedEntryTime == null) {
+      return out;
+    }
+
+    for (const row of selectedNeighborList as any[]) {
+      const neighborEntryTime = normalizeTradeTimestampSeconds(
+        (row as any)?.entryTimeRaw ?? null
+      );
+      if (neighborEntryTime == null || neighborEntryTime <= selectedEntryTime) {
+        continue;
+      }
+
+      out.add(String((row as any)?.key ?? (row as any)?.id ?? ""));
+    }
+
+    return out;
+  }, [
+    selectedAiSnapshotSource,
+    selectedNeighborList,
+    selectedNode,
+    selectedTradeCheated,
+  ]);
 
   const selectedLibraryInfluencedRows = useMemo(() => {
     if (aiMethod === "hdbscan") return [];
@@ -15887,7 +15931,10 @@ function ClusterMapInner({
   const renderHdbGroupMemberList = (
     rows: any[],
     emptyLabel: string,
-    maxHeight = 180
+    maxHeight = 180,
+    options?: {
+      highlightIndexKeys?: Set<string>;
+    }
   ) => (
     <div
       style={{
@@ -15951,7 +15998,11 @@ function ClusterMapInner({
                       ...mono(),
                       width: 18,
                       textAlign: "right",
-                      opacity: 0.65,
+                      opacity: 0.9,
+                      color:
+                        options?.highlightIndexKeys?.has(String(row.key || idx))
+                          ? "rgba(239,68,68,0.96)"
+                          : "rgba(255,255,255,0.65)",
                     }}
                   >
                     {String(idx + 1).padStart(2, "0")}
@@ -19753,24 +19804,22 @@ function ClusterMapInner({
                   >
                     Selected
                   </div>
-                  <button
-                    onClick={() => {
-                      setSelectedId(null);
-                      setSelectedLink(null);
-                    }}
+                  <div
+                    title={selectedNodeCheated ? "Cheated" : "Not cheated"}
+                    aria-label={selectedNodeCheated ? "Cheated" : "Not cheated"}
                     style={{
-                      border: "1px solid rgba(255,255,255,0.12)",
-                      background: "rgba(255,255,255,0.06)",
-                      color: "rgba(255,255,255,0.86)",
+                      color: selectedNodeCheated
+                        ? "rgba(239,68,68,0.96)"
+                        : "rgba(60,220,120,0.96)",
                       borderRadius: 10,
-                      padding: "4px 8px",
-                      fontSize: 11,
+                      padding: "2px 4px",
+                      fontSize: 18,
                       fontWeight: 900,
-                      cursor: "pointer",
+                      lineHeight: 1,
                     }}
                   >
-                    Clear
-                  </button>
+                    {"\u2691"}
+                  </div>
                 </div>
 
                 <div
@@ -19789,22 +19838,6 @@ function ClusterMapInner({
                       {displayIdForNode(selectedNode as any)}
                     </div>
                   </div>
-
-                  {selectedTradeCheated != null ? (
-                    <>
-                      <div style={{ opacity: 0.65 }}>Cheated</div>
-                      <div
-                        style={{
-                          fontWeight: 900,
-                          color: selectedTradeCheated
-                            ? "rgba(239,68,68,0.96)"
-                            : "rgba(255,255,255,0.90)",
-                        }}
-                      >
-                        {selectedTradeCheated ? "Yes" : "No"}
-                      </div>
-                    </>
-                  ) : null}
 
                   <div style={{ opacity: 0.65 }}>Kind</div>
                   <div style={{ fontWeight: 900, color: th.accent }}>
@@ -20058,7 +20091,8 @@ function ClusterMapInner({
                     : renderHdbGroupMemberList(
                         selectedNeighborList,
                         "No neighbors available.",
-                        140
+                        140,
+                        { highlightIndexKeys: selectedFutureNeighborKeys }
                       )}
                 </div>
               </div>
