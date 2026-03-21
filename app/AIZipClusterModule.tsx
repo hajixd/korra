@@ -15443,7 +15443,8 @@ function ClusterMapInner({
                   (hitNode as any)?.metaSession ??
                   (nb as any)?.metaSession
               ),
-              pnlLabel: pnlVal == null ? "" : fmtUSD(pnlVal),
+              pnlLabel:
+                pnlVal == null ? "" : pnlVal > 0 ? `+${fmtUSD(pnlVal)}` : fmtUSD(pnlVal),
               tone,
               isWin,
               isLoss,
@@ -15547,6 +15548,24 @@ function ClusterMapInner({
     selectedTradeCheated,
   ]);
 
+  const handleSelectionListRowClick = React.useCallback(
+    (row: any) => {
+      if (!row) return;
+
+      const targetId = String((row as any)?.id ?? "").trim();
+      if (!targetId) return;
+
+      const target =
+        (nodeByIdAll as any).get(targetId) ??
+        (nodeByIdRaw as any).get(targetId) ??
+        null;
+      if (!target) return;
+
+      focusNodeSelection(target);
+    },
+    [focusNodeSelection, nodeByIdAll, nodeByIdRaw]
+  );
+
   const selectedLibraryInfluencedRows = useMemo(() => {
     if (aiMethod === "hdbscan") return [];
     if (!selectedNode) return [];
@@ -15634,7 +15653,8 @@ function ClusterMapInner({
         sessionLabel: normalizeLabel(
           (otherNode as any)?.session ?? (otherNode as any)?.metaSession
         ),
-        pnlLabel: pnlRaw == null ? "" : fmtUSD(pnlRaw),
+        pnlLabel:
+          pnlRaw == null ? "" : pnlRaw > 0 ? `+${fmtUSD(pnlRaw)}` : fmtUSD(pnlRaw),
         tone: pnlRaw == null ? "neutral" : isWin ? "green" : "red",
         sortIndex,
         isWin,
@@ -15842,6 +15862,7 @@ function ClusterMapInner({
 
         rows.push({
           key: stableKey,
+          id: String((node as any)?.id ?? "").trim() || null,
           displayId: displayIdForNode(node),
           dirLabel: dir === 1 ? "LONG" : dir === -1 ? "SHORT" : "",
           kindLabel:
@@ -15865,7 +15886,8 @@ function ClusterMapInner({
           sessionLabel: normalizeLabel(
             (node as any)?.session ?? (node as any)?.metaSession
           ),
-          pnlLabel: pnlRaw == null ? "" : fmtUSD(pnlRaw),
+          pnlLabel:
+            pnlRaw == null ? "" : pnlRaw > 0 ? `+${fmtUSD(pnlRaw)}` : fmtUSD(pnlRaw),
           tone:
             pnlRaw == null
               ? "neutral"
@@ -15934,6 +15956,7 @@ function ClusterMapInner({
     maxHeight = 180,
     options?: {
       highlightIndexKeys?: Set<string>;
+      onRowClick?: (row: any) => void;
     }
   ) => (
     <div
@@ -15959,9 +15982,19 @@ function ClusterMapInner({
             const greenBg = "rgba(60,220,120,0.12)";
             const redBg = "rgba(230,80,80,0.12)";
             const neutralBg = "rgba(255,255,255,0.03)";
+            const isClickable =
+              typeof options?.onRowClick === "function" &&
+              String((row as any)?.id ?? "").trim().length > 0;
             return (
               <div
                 key={String(row.key || idx)}
+                onClick={
+                  isClickable
+                    ? () => {
+                        options?.onRowClick?.(row);
+                      }
+                    : undefined
+                }
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
@@ -15982,6 +16015,7 @@ function ClusterMapInner({
                     : row.tone === "red"
                     ? redBg
                     : neutralBg,
+                  cursor: isClickable ? "pointer" : "default",
                 }}
               >
                 <div
@@ -17981,6 +18015,110 @@ function ClusterMapInner({
     },
     [timelineNodesCheat]
   );
+
+  const centerViewOnNode = React.useCallback((target: any) => {
+    if (!target) return;
+
+    const c = canvasRef.current as any;
+    const rect =
+      c && c.getBoundingClientRect ? c.getBoundingClientRect() : null;
+    const w = (rect && rect.width) || 1200;
+    const h = (rect && rect.height) || 440;
+    const tx = Number((target as any)?.x);
+    const ty = Number((target as any)?.y);
+    if (!Number.isFinite(tx) || !Number.isFinite(ty)) return;
+
+    setView((v: any) => {
+      const scale = Number(v?.scale) || 1;
+      const nv = {
+        ...v,
+        ox: w / 2 - tx * scale,
+        oy: h / 2 - ty * scale,
+      };
+      viewRef.current = nv;
+      return nv;
+    });
+  }, []);
+
+  const focusNodeSelection = React.useCallback(
+    (
+      candidate: any,
+      options?: {
+        setSearchStatus?: boolean;
+        setSearchHighlight?: boolean;
+        closeSearchSuggestions?: boolean;
+      }
+    ) => {
+      if (!candidate) return;
+
+      let target =
+        ((candidate as any)?.id != null
+          ? (nodeByIdAll as any).get(String((candidate as any).id)) ??
+            (nodeByIdRaw as any).get(String((candidate as any).id)) ??
+            null
+          : null) ??
+        resolveNodeForSelection(candidate) ??
+        candidate;
+
+      if (!target || (target as any)?.id == null) return;
+
+      try {
+        const inView = Array.isArray(viewNodes)
+          ? (viewNodes as any[]).some(
+              (n: any) => n && String((n as any).id ?? "") === String((target as any).id)
+            )
+          : false;
+        if (!inView) {
+          setViewSession("All");
+          setViewMonth("All");
+          setViewWeekday("All");
+          setViewHour("All");
+          setViewModel("All");
+        }
+      } catch (_e) {}
+
+      const targetIdxRaw = Number(
+        (target as any)?.signalIndex ?? (target as any)?.entryIndex ?? NaN
+      );
+      if (Number.isFinite(targetIdxRaw)) {
+        const maxIdx = Math.max(0, candles.length - 1);
+        const targetIdx = Math.min(maxIdx, Math.max(0, Math.floor(targetIdxRaw)));
+        setSliderValue((current: any) => {
+          const currentNum = Number(current);
+          return Number.isFinite(currentNum) ? Math.max(currentNum, targetIdx) : targetIdx;
+        });
+      }
+
+      const targetId = String((target as any).id);
+      setSelectedIds3d([targetId]);
+      setSelectedGroup(null);
+      selectedGroupRef.current = null;
+      setSelectedId(targetId);
+      setSelectedLink(null);
+
+      if (options?.setSearchHighlight) {
+        setSearchHighlightId(targetId);
+        searchHighlightIdRef.current = targetId;
+      }
+      if (options?.setSearchStatus) {
+        setSearchStatus("hit");
+      }
+      if (options?.closeSearchSuggestions) {
+        setSearchFocus(false);
+      }
+
+      centerViewOnNode(target);
+    },
+    [
+      candles.length,
+      centerViewOnNode,
+      nodeByIdAll,
+      nodeByIdRaw,
+      resolveNodeForSelection,
+      setSliderValue,
+      viewNodes,
+    ]
+  );
   const runSearch = (query?: string) => {
     const q = String(query ?? searchUid ?? "").trim();
     if (query !== undefined) setSearchUid(q);
@@ -18009,44 +18147,11 @@ function ClusterMapInner({
       return;
     }
 
-    // If the hit is currently filtered out, clear filters so it becomes visible.
-    try {
-      const inView = Array.isArray(viewNodes)
-        ? (viewNodes as any[]).some((n: any) => n && n.id === hit.id)
-        : false;
-      if (!inView) {
-        setViewSession("All");
-        setViewMonth("All");
-        setViewWeekday("All");
-        setViewHour("All");
-        setViewModel("All");
-      }
-    } catch (_e) {}
-
-    setSearchStatus("hit");
-
     const resolved = resolveNodeForSelection(hit) || hit;
-
-    setSelectedId((resolved as any).id);
-    setSelectedLink(null);
-    setSearchHighlightId((resolved as any).id);
-    searchHighlightIdRef.current = (resolved as any).id;
-    setSearchFocus(false);
-
-    // Center view on the found node (CSS pixels, not the devicePixel canvas buffer).
-    const c = canvasRef.current as any;
-    const rect =
-      c && c.getBoundingClientRect ? c.getBoundingClientRect() : null;
-    const w = (rect && rect.width) || 1200;
-    const h = (rect && rect.height) || 440;
-    setView((v: any) => {
-      const nv = {
-        ...v,
-        ox: w / 2 - (Number((resolved as any).x) || 0) * v.scale,
-        oy: h / 2 - (Number((resolved as any).y) || 0) * v.scale,
-      };
-      viewRef.current = nv;
-      return nv;
+    focusNodeSelection(resolved, {
+      setSearchStatus: true,
+      setSearchHighlight: true,
+      closeSearchSuggestions: true,
     });
   };
 
@@ -19770,6 +19875,9 @@ function ClusterMapInner({
 
             return (
               <div
+                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
                 style={{
                   position: "absolute",
                   right: 12,
@@ -19784,6 +19892,8 @@ function ClusterMapInner({
                   boxShadow: groupShadow,
                   color: "rgba(255,255,255,0.92)",
                   pointerEvents: "auto",
+                  userSelect: "text",
+                  WebkitUserSelect: "text",
                 }}
               >
                 <div
@@ -20080,19 +20190,24 @@ function ClusterMapInner({
                     ? renderHdbGroupMemberList(
                         selectedHdbGroupMembers,
                         "This point is not inside any HDBSCAN group.",
-                        160
+                        160,
+                        { onRowClick: handleSelectionListRowClick }
                       )
                     : isSelectedLib
                     ? renderHdbGroupMemberList(
                         selectedLibraryInfluencedRows,
                         "No influenced live trades available.",
-                        160
+                        160,
+                        { onRowClick: handleSelectionListRowClick }
                       )
                     : renderHdbGroupMemberList(
                         selectedNeighborList,
                         "No neighbors available.",
                         140,
-                        { highlightIndexKeys: selectedFutureNeighborKeys }
+                        {
+                          highlightIndexKeys: selectedFutureNeighborKeys,
+                          onRowClick: handleSelectionListRowClick,
+                        }
                       )}
                 </div>
               </div>
