@@ -22307,7 +22307,6 @@ export default function App() {
     hdbSampleCap,
     hdbDomainDistinction,
     confidenceThreshold,
-    ancConfidenceThreshold,
     aiExitStrict,
     aiExitLossTol,
     aiExitWinTol,
@@ -22422,9 +22421,6 @@ export default function App() {
       setConfidenceThreshold(data.confidenceThreshold);
     } else if (typeof legacyEntryStrict === "number") {
       setConfidenceThreshold(legacyEntryStrict);
-    }
-    if (typeof (data as any).ancConfidenceThreshold === "number") {
-      setAncConfidenceThreshold((data as any).ancConfidenceThreshold);
     }
     if (typeof data.aiExitStrict === "number")
       setAiExitStrict(data.aiExitStrict);
@@ -22711,7 +22707,6 @@ export default function App() {
     setUseAI(false);
     setCheckEveryBar(false);
     setConfidenceThreshold(0);
-    setAncConfidenceThreshold(0);
     setAiExitStrict(0);
     setAiExitLossTol(0);
     setAiExitWinTol(0);
@@ -22884,15 +22879,6 @@ export default function App() {
       setConfidenceThreshold(0);
     }
   }, [aiMethod, confidenceThreshold, useAI, checkEveryBar]);
-  const [ancConfidenceThreshold, setAncConfidenceThreshold] = useState(0);
-  useEffect(() => {
-    if (
-      (aiMethod === "off" || (!useAI && !checkEveryBar)) &&
-      ancConfidenceThreshold !== 0
-    ) {
-      setAncConfidenceThreshold(0);
-    }
-  }, [aiMethod, ancConfidenceThreshold, useAI, checkEveryBar]);
   const [isPropFirmCollapsed, setIsPropFirmCollapsed] = useState(true);
   const [isDimensionStatsCollapsed, setIsDimensionStatsCollapsed] =
     useState(true);
@@ -24071,7 +24057,6 @@ export default function App() {
         hdbSampleCap,
         hdbDomainDistinction,
         confidenceThreshold,
-        ancConfidenceThreshold,
         aiExitStrict,
         aiExitLossTol,
         aiExitWinTol,
@@ -24131,7 +24116,6 @@ export default function App() {
       hdbSampleCap,
       hdbDomainDistinction,
       confidenceThreshold,
-      ancConfidenceThreshold,
       aiExitStrict,
       aiExitLossTol,
       aiExitWinTol,
@@ -24193,7 +24177,6 @@ export default function App() {
         chunkBars,
         checkEveryBar,
         confidenceThreshold: 0,
-        ancConfidenceThreshold: 0,
         aiExitStrict,
         aiExitLossTol,
         aiExitWinTol,
@@ -24632,7 +24615,6 @@ export default function App() {
     chunkBars,
     checkEveryBar,
     confidenceThreshold,
-    ancConfidenceThreshold,
     aiExitStrict,
     aiExitLossTol,
     aiExitWinTol,
@@ -24699,7 +24681,6 @@ export default function App() {
     (useAI ||
       checkEveryBar ||
       confidenceThreshold > 0 ||
-      ancConfidenceThreshold > 0 ||
       aiExitStrict > 0);
   const isAIActive = aiMethod !== "off" && (useAI || checkEveryBar);
   useEffect(() => {}, [aiAnyOn]);
@@ -24898,7 +24879,6 @@ export default function App() {
     checkEveryBar,
     useAI,
     confidenceThreshold,
-    ancConfidenceThreshold,
     aiExitStrict,
     aiExitLossTol,
     aiExitWinTol,
@@ -25557,7 +25537,6 @@ export default function App() {
         hdbSampleCap,
         hdbDomainDistinction,
         confidenceThreshold: confidenceThreshold,
-        ancConfidenceThreshold: ancConfidenceThreshold,
         aiExitStrict: aiExitStrict,
         aiExitLossTol: aiExitLossTol,
         aiExitWinTol: aiExitWinTol,
@@ -25899,7 +25878,6 @@ export default function App() {
               ...baseSettings,
               useAI: false,
               confidenceThreshold: 0,
-              ancConfidenceThreshold: 0,
             },
             signal: baselineController.signal,
           })
@@ -28297,9 +28275,6 @@ export default function App() {
   const effectiveConfidenceThreshold = confidenceGateDisabled
     ? 0
     : confidenceThreshold;
-  const effectiveAncConfidenceThreshold = confidenceGateDisabled
-    ? 0
-    : ancConfidenceThreshold;
 
   const selectedModelCount = useMemo(() => {
     const vals = Object.values(modelStates || {});
@@ -32871,7 +32846,6 @@ export default function App() {
                     setCheckEveryBar(false);
                     setUseAI(false);
                     setConfidenceThreshold(0);
-                    setAncConfidenceThreshold(0);
                   }
                 }}
                 style={{
@@ -33255,68 +33229,6 @@ export default function App() {
                   pointerEvents: aiAllOff ? "none" : "auto",
                 }}
               >
-                <div
-                  style={{
-                    opacity: confidenceGateDisabled ? 0.45 : 1,
-                    pointerEvents: confidenceGateDisabled ? "none" : "auto",
-                    marginBottom: 10,
-                  }}
-                >
-                  <div style={{ ...ui.label, marginBottom: 8 }}>
-                    Confidence Thresholds
-                  </div>
-
-                  <div>
-                    <div style={ui.label}>AI Confidence Threshold</div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      step={1}
-                      value={effectiveConfidenceThreshold}
-                      onChange={(e) => {
-                        const v = clamp(Number(e.target.value) || 0, 0, 100);
-                        setConfidenceThreshold(v);
-                      }}
-                      className="theme-slider"
-                      style={{
-                        ...sliderVars(effectiveConfidenceThreshold, 0, 100),
-                      }}
-                    />
-                    <div style={{ ...ui.tiny, marginTop: 4 }}>
-                      {effectiveConfidenceThreshold}
-                    </div>
-                  </div>
-
-                  <div style={{ height: 8 }} />
-
-                  <div>
-                    <div style={ui.label}>ANC Confidence Threshold</div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      step={1}
-                      value={effectiveAncConfidenceThreshold}
-                      onChange={(e) => {
-                        const v = clamp(Number(e.target.value) || 0, 0, 100);
-                        setAncConfidenceThreshold(v);
-                      }}
-                      className="theme-slider"
-                      style={{
-                        ...sliderVars(effectiveAncConfidenceThreshold, 0, 100),
-                      }}
-                    />
-                    <div style={{ ...ui.tiny, marginTop: 4 }}>
-                      {effectiveAncConfidenceThreshold === 0
-                        ? "0 (OFF)"
-                        : effectiveAncConfidenceThreshold}
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ height: 8 }} />
-
                 <div style={{ ...ui.label, marginBottom: 8 }}>Embedding</div>
 
                 <div style={ui.row2}>

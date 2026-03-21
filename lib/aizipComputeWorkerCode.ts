@@ -2934,7 +2934,6 @@ const _nA = candles.length;
         : K_EXIT;
 
     const confidenceThreshold = clamp(Number((settings.confidenceThreshold ?? settings.aiEntryStrict) ?? 0), 0, 100);
-    const ancConfidenceThreshold = clamp(Number((settings.ancConfidenceThreshold ?? settings.ancEntryStrict) ?? 0), 0, 100);
     const aiExitStrict = Math.max(0, Number(settings.aiExitStrict||0));
     const aiExitLossTol = clamp(Number(settings.aiExitLossTol||0), -100, 100);
     const aiExitWinTol  = clamp(Number(settings.aiExitWinTol||0), -100, 100);
@@ -4313,71 +4312,6 @@ function flushSuppressedNeighbors(uptoIndex){
       return clamp(wins / (wins + losses + AI_EPS), 0, 1);
     }
 
-    function neighborAncConfidenceFromList(neighbors, libPoints, excludeTime){
-      if(!Array.isArray(neighbors) || !neighbors.length) return null;
-      if(!Array.isArray(libPoints) || !libPoints.length) return null;
-
-      const cutoffDate = parseDateFromString(excludeTime || "", parseMode);
-      const cutoffMs = cutoffDate ? cutoffDate.getTime() : null;
-      const statsByLib = new Map();
-
-      for(const p of libPoints){
-        if(!p) continue;
-        const libIdRaw = p.metaLib;
-        if(libIdRaw == null) continue;
-        const libId = String(libIdRaw).trim().toLowerCase();
-        if(!libId) continue;
-
-        if(cutoffMs != null){
-          const pointTimeRaw = p.metaTime ?? p.time ?? p.entryTime ?? p.entry ?? p.t ?? null;
-          const pointDate = parseDateFromString(pointTimeRaw, parseMode);
-          if(pointDate && pointDate.getTime() > cutoffMs) continue;
-        }
-
-        let isWin = null;
-        const label = Number(p.label);
-        if(Number.isFinite(label)){
-          isWin = label >= 0;
-        } else {
-          const outcome = String(p.metaOutcome || "").toUpperCase();
-          if(outcome === "TP" || outcome === "WIN" || outcome.includes("WIN")){
-            isWin = true;
-          } else if(outcome === "SL" || outcome === "LOSS" || outcome.includes("LOSS")){
-            isWin = false;
-          } else {
-            const pnl = Number(p.metaPnl);
-            if(Number.isFinite(pnl)) isWin = pnl >= 0;
-          }
-        }
-        if(isWin == null) continue;
-
-        let stat = statsByLib.get(libId);
-        if(!stat){
-          stat = { wins: 0, total: 0 };
-          statsByLib.set(libId, stat);
-        }
-        stat.total += 1;
-        if(isWin) stat.wins += 1;
-      }
-
-      const values = [];
-      for(const nb of neighbors){
-        if(!nb) continue;
-        const libIdRaw = nb.metaLib;
-        if(libIdRaw == null) continue;
-        const libId = String(libIdRaw).trim().toLowerCase();
-        if(!libId) continue;
-        const stat = statsByLib.get(libId);
-        if(!stat || !(stat.total > 0)) continue;
-        values.push(stat.wins / stat.total);
-      }
-
-      if(!values.length) return null;
-      let sum = 0;
-      for(const value of values) sum += value;
-      return clamp(sum / values.length, 0, 1);
-    }
-
     function entryLabelFromNeighbor(modelKey, dir, nb){
       if(!nb) return null;
       const sess =
@@ -4419,7 +4353,6 @@ function flushSuppressedNeighbors(uptoIndex){
           qMeta: null,
           neighbors: [],
           confidence: null,
-          ancConfidenceAtEntry: null,
           label: null,
           labelPnl: null,
           labelUid: null,
@@ -4435,7 +4368,6 @@ function flushSuppressedNeighbors(uptoIndex){
           qMeta,
           neighbors: [],
           confidence: null,
-          ancConfidenceAtEntry: null,
           label: null,
           labelPnl: null,
           labelUid: null,
@@ -4459,7 +4391,6 @@ function flushSuppressedNeighbors(uptoIndex){
         qMeta,
         neighbors,
         confidence: neighborConfidenceFromList(neighbors),
-        ancConfidenceAtEntry: neighborAncConfidenceFromList(neighbors, lib, excludeTime),
         label: entryLabelFromNeighbor(modelKeyUsed, dirUsed, bestNeighbor),
         labelPnl: entryPnlFromNeighbor(bestNeighbor),
         labelUid: entryUidFromNeighbor(bestNeighbor),
@@ -4545,47 +4476,6 @@ function flushSuppressedNeighbors(uptoIndex){
           return null;
         }
 
-        const bestPickAncConfidence = bestPick.snapshot.ancConfidenceAtEntry;
-        if (ancConfidenceThreshold > 0 && (bestPickAncConfidence == null || bestPickAncConfidence * 100 <= ancConfidenceThreshold)) {
-          const fi = i + 1;
-          const entryTimeGhost =
-            (candles[fi] && candles[fi].time) ||
-            (candles[i] && candles[i].time) ||
-            "";
-          if (bestPick.snapshot.q) {
-            queueSuppressedNeighbor(
-              bestPick.model,
-              bestPick.snapshot.q,
-              bestPick.dir,
-              fi,
-              i,
-              entryTimeGhost
-            );
-          }
-          const ghostRes = evalSuppressedOutcome(bestPick.dir, fi, bestPick.model);
-          ghostEntries.push({
-            signalIndex: i,
-            entryIndex: fi,
-            entryTime: entryTimeGhost,
-            dir: bestPick.dir,
-            model: bestPick.model,
-            margin: bestPick.margin,
-            entryConfidence: bestPick.margin,
-            label: bestPick.snapshot.label,
-            labelUid: bestPick.snapshot.labelUid,
-            aiMode: "model",
-            pnl: ghostRes.pnl,
-            exitReason: ghostRes.exitReason,
-            exitModel: ghostRes.exitModel,
-            exitIndex: ghostRes.exitIndex,
-            exitTime: ghostRes.exitTime,
-            entryPrice: ghostRes.entryPrice,
-            entryNeighbors: bestPick.snapshot.neighbors.slice(),
-            suppressed: true,
-          });
-          return null;
-        }
-
         return {
           model: bestPick.model,
           dir: bestPick.dir,
@@ -4613,40 +4503,6 @@ function flushSuppressedNeighbors(uptoIndex){
       // It never changes the chosen model or direction (no flipping).
       if (useAI) {
         if (entryConfidenceValue == null || entryConfidenceValue * 100 <= confidenceThreshold) {
-          const fi = i + 1;
-          const entryTimeGhost =
-            (candles[fi] && candles[fi].time) ||
-            (candles[i] && candles[i].time) ||
-            "";
-          if (entrySnapshot.q) {
-            queueSuppressedNeighbor(best.model, entrySnapshot.q, best.dir, fi, i, entryTimeGhost);
-          }
-          const ghostRes = evalSuppressedOutcome(best.dir, fi, best.model);
-          ghostEntries.push({
-            signalIndex: i,
-            entryIndex: fi,
-            entryTime: entryTimeGhost,
-            dir: best.dir,
-            model: best.model,
-            margin: entryConfidenceValue ?? 0,
-            entryConfidence: entryConfidenceValue,
-            label: entrySnapshot.label,
-            labelUid: entrySnapshot.labelUid,
-            aiMode: "filter",
-            pnl: ghostRes.pnl,
-            exitReason: ghostRes.exitReason,
-            exitModel: ghostRes.exitModel,
-            exitIndex: ghostRes.exitIndex,
-            exitTime: ghostRes.exitTime,
-            entryPrice: ghostRes.entryPrice,
-            entryNeighbors: entrySnapshot.neighbors.slice(),
-            suppressed: true,
-          });
-          return null;
-        }
-
-        const entryAncConfidenceValue = entrySnapshot.ancConfidenceAtEntry;
-        if (ancConfidenceThreshold > 0 && (entryAncConfidenceValue == null || entryAncConfidenceValue * 100 <= ancConfidenceThreshold)) {
           const fi = i + 1;
           const entryTimeGhost =
             (candles[fi] && candles[fi].time) ||
