@@ -5534,25 +5534,6 @@ function flushSuppressedNeighbors(uptoIndex){
           const label = lb > 0 ? 1 : -1;
           const sid = sIdx == null ? "na" : String(sIdx);
 
-          const entryIndex =
-            typeof p.metaEntryIndex === "number"
-              ? p.metaEntryIndex
-              : typeof p.entryIndex === "number"
-              ? p.entryIndex
-              : null;
-          const exitIndex =
-            typeof p.metaExitIndex === "number"
-              ? p.metaExitIndex
-              : typeof p.exitIndex === "number"
-              ? p.exitIndex
-              : null;
-          const exitTime =
-            exitIndex != null &&
-            candles[exitIndex] &&
-            candles[exitIndex].time != null
-              ? candles[exitIndex].time
-              : (p.exitTime ?? p.closeTime ?? p.endTime ?? "");
-
           libraryPoints.push({
             id: "lib|" + lid + "|" + mk + "|" + sid + "|" + String(i),
             uid: p.uid ?? null,
@@ -5560,13 +5541,7 @@ function flushSuppressedNeighbors(uptoIndex){
             libId: lid,
             model: mk,
             signalIndex: sIdx,
-            metaSignalIndex: sIdx,
-            entryIndex,
-            metaEntryIndex: entryIndex,
-            exitIndex,
-            metaExitIndex: exitIndex,
             entryTime: p.metaTime ?? "",
-            exitTime: exitTime,
             metaTime: p.metaTime ?? "",
             dir: p.dir,
             label,
