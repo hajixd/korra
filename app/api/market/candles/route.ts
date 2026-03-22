@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import {
-  DATABENTO_DEFAULT_PAIR,
-  DATABENTO_SUPPORTED_PAIRS,
-  DATABENTO_SUPPORTED_TIMEFRAMES,
-  fetchDatabentoCandles
-} from "../../../../lib/databentoMarketData";
+  TWELVE_DATA_DEFAULT_PAIR,
+  TWELVE_DATA_SUPPORTED_PAIRS,
+  TWELVE_DATA_SUPPORTED_TIMEFRAMES,
+  fetchTwelveDataCandles
+} from "../../../../lib/twelveDataMarketData";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,7 +17,7 @@ const toSafeHeaderValue = (value: unknown) =>
     .replace(/\n/g, " ")
     .trim();
 
-const buildDatabentoMarketErrorResponse = (
+const buildTwelveDataMarketErrorResponse = (
   pair: string,
   timeframe: string,
   limit: number,
@@ -26,29 +26,31 @@ const buildDatabentoMarketErrorResponse = (
   details: string
 ) =>
   {
+    const lower = details.toLowerCase();
     const isAuthFailure =
-      details.includes("auth_authentication_failed") ||
-      details.toLowerCase().includes("authentication failed");
+      lower.includes("api key") ||
+      lower.includes("unauthorized") ||
+      lower.includes("invalid api key") ||
+      lower.includes("missing twelve_data_api_key");
 
     return NextResponse.json(
       {
         error: isAuthFailure
-          ? "Databento authentication failed."
-          : "Databento market feed unavailable.",
+          ? "Twelve Data authentication failed."
+          : "Twelve Data market feed unavailable.",
         details,
         pair,
         timeframe,
         requestedCount: limit,
         start,
         end,
-        source: "databento",
-        docs: isAuthFailure ? "https://databento.com/docs/portal/api-keys" : undefined
+        source: "twelve-data"
       },
       {
         status: isAuthFailure ? 502 : 500,
         headers: {
           "Cache-Control": "no-store",
-          "X-Korra-Market-Source": "databento",
+          "X-Korra-Market-Source": "twelve-data",
           "X-Korra-Market-Error": isAuthFailure ? "auth" : "upstream",
           "X-Korra-Market-Reason": toSafeHeaderValue(details)
         }
@@ -58,26 +60,26 @@ const buildDatabentoMarketErrorResponse = (
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const pair = (searchParams.get("pair") || DATABENTO_DEFAULT_PAIR).toUpperCase();
+  const pair = (searchParams.get("pair") || TWELVE_DATA_DEFAULT_PAIR).toUpperCase();
   const timeframe = (searchParams.get("timeframe") || "M15").toUpperCase();
   const limitRaw = searchParams.get("limit") || "500";
   const limit = Math.min(Math.max(parseInt(limitRaw, 10) || 500, 10), MAX_LIMIT);
   const start = searchParams.get("start");
   const end = searchParams.get("end");
 
-  if (!DATABENTO_SUPPORTED_PAIRS.has(pair)) {
+  if (!TWELVE_DATA_SUPPORTED_PAIRS.has(pair)) {
     return NextResponse.json({ error: "Unsupported pair" }, { status: 400 });
   }
-  if (!DATABENTO_SUPPORTED_TIMEFRAMES.has(timeframe)) {
+  if (!TWELVE_DATA_SUPPORTED_TIMEFRAMES.has(timeframe)) {
     return NextResponse.json({ error: "Unsupported timeframe" }, { status: 400 });
   }
 
   try {
-    if (!process.env.DATABENTO_API_KEY) {
-      throw new Error("Missing DATABENTO_API_KEY.");
+    if (!process.env.TWELVE_DATA_API_KEY && !process.env.TWELVEDATA_API_KEY) {
+      throw new Error("Missing TWELVE_DATA_API_KEY.");
     }
 
-    const payload = await fetchDatabentoCandles({
+    const payload = await fetchTwelveDataCandles({
       pair,
       timeframe,
       count: limit,
@@ -88,18 +90,18 @@ export async function GET(request: Request) {
       headers: {
         "Content-Type": "application/json",
         "Cache-Control": "no-store",
-        "X-Korra-Market-Source": "databento",
+        "X-Korra-Market-Source": "twelve-data",
         "X-Korra-Market-Requested-Limit": String(limit)
       }
     });
   } catch (error) {
-    return buildDatabentoMarketErrorResponse(
+    return buildTwelveDataMarketErrorResponse(
       pair,
       timeframe,
       limit,
       start,
       end,
-      (error as Error).message || "Unknown Databento error."
+      (error as Error).message || "Unknown Twelve Data error."
     );
   }
 }

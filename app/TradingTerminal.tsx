@@ -2789,7 +2789,7 @@ type AiLibraryDef = {
 };
 
 type StatsRefreshOverlayMode = "idle" | "hold" | "loading";
-type StatsRefreshPhaseKey = "history" | "prepare" | "replay" | "ai" | "finalize";
+type StatsRefreshPhaseKey = "freeze" | "candles" | "candidates" | "replay" | "analyze";
 type BacktestDatePreset =
   | "custom"
   | "pastWeek"
@@ -5422,9 +5422,12 @@ const normalizeMarketDataErrorMessage = (message: string): string => {
   if (
     lower.includes("auth_authentication_failed") ||
     lower.includes("authentication failed") ||
-    lower.includes("missing databento_api_key")
+    lower.includes("missing databento_api_key") ||
+    lower.includes("missing twelve_data_api_key") ||
+    lower.includes("invalid api key") ||
+    lower.includes("unauthorized")
   ) {
-    return "Databento auth failed. Rotate or replace DATABENTO_API_KEY.";
+    return "Market data auth failed. Check the configured API key.";
   }
 
   return normalized || "Market data unavailable.";
@@ -5469,6 +5472,10 @@ const getMarketDataErrorMessage = (error: unknown): string => {
   return "Market data unavailable.";
 };
 
+const CLIENT_CANDLE_CACHE_TTL_MS = 30_000;
+const clientCandleCache = new Map<string, { expiresAt: number; candles: Candle[] }>();
+const clientCandleInFlight = new Map<string, Promise<Candle[]>>();
+
 const fetchMarketCandles = async (
   timeframe: Timeframe,
   limit: number,
@@ -5479,29 +5486,50 @@ const fetchMarketCandles = async (
     timeframe: marketTimeframeMap[timeframe],
     limit: String(Math.min(limit, MARKET_MAX_HISTORY_CANDLES))
   });
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(`/api/market/candles?${params.toString()}`, {
-      cache: "no-store",
-      signal: controller.signal
-    });
-    const payload = await readJsonResponse(response);
-
-    if (!response.ok) {
-      throw new MarketDataUnavailableError(
-        extractMarketDataFailure(payload, `Market candle request failed (${response.status}).`)
-      );
-    }
-
-    return normalizeMarketCandles(extractPayloadCandles(payload));
-  } catch (error) {
-    throw new MarketDataUnavailableError(getMarketDataErrorMessage(error));
-  } finally {
-    clearTimeout(timeoutId);
+  const requestKey = `market|${params.toString()}`;
+  const cached = clientCandleCache.get(requestKey);
+  const nowMs = Date.now();
+  if (cached && cached.expiresAt > nowMs) {
+    return cached.candles;
   }
+  const inFlight = clientCandleInFlight.get(requestKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const requestPromise = (async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(`/api/market/candles?${params.toString()}`, {
+        cache: "no-store",
+        signal: controller.signal
+      });
+      const payload = await readJsonResponse(response);
+
+      if (!response.ok) {
+        throw new MarketDataUnavailableError(
+          extractMarketDataFailure(payload, `Market candle request failed (${response.status}).`)
+        );
+      }
+
+      const candles = normalizeMarketCandles(extractPayloadCandles(payload));
+      clientCandleCache.set(requestKey, {
+        expiresAt: Date.now() + CLIENT_CANDLE_CACHE_TTL_MS,
+        candles
+      });
+      return candles;
+    } catch (error) {
+      throw new MarketDataUnavailableError(getMarketDataErrorMessage(error));
+    } finally {
+      clearTimeout(timeoutId);
+      clientCandleInFlight.delete(requestKey);
+    }
+  })();
+
+  clientCandleInFlight.set(requestKey, requestPromise);
+  return requestPromise;
 };
 
 const fetchHistoryApiCandles = async (
@@ -5524,29 +5552,50 @@ const fetchHistoryApiCandles = async (
   if (options?.endIso) {
     params.set("end", options.endIso);
   }
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(`/api/history/candles?${params.toString()}`, {
-      cache: "no-store",
-      signal: controller.signal
-    });
-    const payload = await readJsonResponse(response);
-
-    if (!response.ok) {
-      throw new MarketDataUnavailableError(
-        extractMarketDataFailure(payload, `History candle request failed (${response.status}).`)
-      );
-    }
-
-    return normalizeMarketCandles(extractPayloadCandles(payload));
-  } catch (error) {
-    throw new MarketDataUnavailableError(getMarketDataErrorMessage(error));
-  } finally {
-    clearTimeout(timeoutId);
+  const requestKey = `history|${params.toString()}`;
+  const cached = clientCandleCache.get(requestKey);
+  const nowMs = Date.now();
+  if (cached && cached.expiresAt > nowMs) {
+    return cached.candles;
   }
+  const inFlight = clientCandleInFlight.get(requestKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const requestPromise = (async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(`/api/history/candles?${params.toString()}`, {
+        cache: "no-store",
+        signal: controller.signal
+      });
+      const payload = await readJsonResponse(response);
+
+      if (!response.ok) {
+        throw new MarketDataUnavailableError(
+          extractMarketDataFailure(payload, `History candle request failed (${response.status}).`)
+        );
+      }
+
+      const candles = normalizeMarketCandles(extractPayloadCandles(payload));
+      clientCandleCache.set(requestKey, {
+        expiresAt: Date.now() + CLIENT_CANDLE_CACHE_TTL_MS,
+        candles
+      });
+      return candles;
+    } catch (error) {
+      throw new MarketDataUnavailableError(getMarketDataErrorMessage(error));
+    } finally {
+      clearTimeout(timeoutId);
+      clientCandleInFlight.delete(requestKey);
+    }
+  })();
+
+  clientCandleInFlight.set(requestKey, requestPromise);
+  return requestPromise;
 };
 
 const withTimeout = <T,>(
@@ -9009,35 +9058,57 @@ const doesBacktestHistoryGenerationInputChange = (
   return false;
 };
 
+const STATS_REFRESH_PHASE_ORDER: StatsRefreshPhaseKey[] = [
+  "freeze",
+  "candles",
+  "candidates",
+  "replay",
+  "analyze"
+];
+
 const STATS_REFRESH_PHASE_META: Record<
   StatsRefreshPhaseKey,
-  { label: string; weight: number; durationMs: number }
+  { label: string; durationMs: number }
 > = {
-  history: { label: "Sync Candle History", weight: 22, durationMs: 1400 },
-  prepare: { label: "Build Replay Window", weight: 12, durationMs: 900 },
-  replay: { label: "Replay Trades", weight: 46, durationMs: 0 },
-  ai: { label: "Apply AI Context", weight: 12, durationMs: 1100 },
-  finalize: { label: "Finalize Panels", weight: 8, durationMs: 850 }
+  freeze: { label: "Reset And Freeze Run", durationMs: 700 },
+  candles: { label: "Load And Validate Candle Data", durationMs: 1400 },
+  candidates: { label: "Build Trade Candidates", durationMs: 900 },
+  replay: { label: "Replay Trades", durationMs: 0 },
+  analyze: { label: "Filter Enrich And Analyze", durationMs: 1200 }
 };
 
 const getStatsRefreshPhaseKey = (status: string): StatsRefreshPhaseKey => {
-  if (status === "Loading Candle History") {
-    return "history";
+  if (status === "Resetting Backtest Run") {
+    return "freeze";
   }
 
-  if (status === "Preparing Backtest Replay") {
-    return "prepare";
+  if (
+    status === "Loading Candle History" ||
+    status === "Historical Candle Range Unavailable"
+  ) {
+    return "candles";
+  }
+
+  if (
+    status === "Building Trade Candidates" ||
+    status === "No Trades In Selected Range" ||
+    status === "Loading AI Libraries"
+  ) {
+    return "candidates";
   }
 
   if (status === "Replaying Backtest Trades" || status === "Recovering Replay Locally") {
     return "replay";
   }
 
-  if (status === "Loading AI Libraries" || status === "Applying AI Analysis") {
-    return "ai";
+  if (
+    status === "Applying AI Analysis" ||
+    status === "Finalizing Statistics"
+  ) {
+    return "analyze";
   }
 
-  return "finalize";
+  return "analyze";
 };
 
 const resolveStatsRefreshPhaseKey = (
@@ -9052,29 +9123,30 @@ const resolveStatsRefreshPhaseKey = (
   return phasePlan[phasePlan.length - 1] ?? preferred;
 };
 
-const getStatsRefreshProgressPct = (
-  phasePlan: StatsRefreshPhaseKey[],
+const getStatsRefreshPhaseProgressWindow = (
   status: string,
-  phaseRatio: number
-): number => {
-  const safePlan: StatsRefreshPhaseKey[] =
-    phasePlan.length > 0 ? phasePlan : ["prepare", "replay", "finalize"];
-  const activePhase = resolveStatsRefreshPhaseKey(safePlan, status);
-  const totalWeight = safePlan.reduce(
-    (sum, phase) => sum + STATS_REFRESH_PHASE_META[phase].weight,
-    0
-  );
-  const activeIndex = Math.max(0, safePlan.indexOf(activePhase));
-  const completedWeight = safePlan
-    .slice(0, activeIndex)
-    .reduce((sum, phase) => sum + STATS_REFRESH_PHASE_META[phase].weight, 0);
-  const currentWeight = STATS_REFRESH_PHASE_META[activePhase].weight;
+  enteringPhase: boolean
+): { start: number; end: number } => {
+  if (status === "Loading AI Libraries") {
+    return enteringPhase ? { start: 0, end: 100 } : { start: 65, end: 100 };
+  }
 
-  return clamp(
-    ((completedWeight + currentWeight * clamp(phaseRatio, 0, 1)) / Math.max(1, totalWeight)) * 100,
-    0,
-    100
-  );
+  if (status === "Applying AI Analysis") {
+    return enteringPhase ? { start: 0, end: 75 } : { start: 35, end: 75 };
+  }
+
+  if (status === "Finalizing Statistics") {
+    return enteringPhase ? { start: 0, end: 100 } : { start: 75, end: 100 };
+  }
+
+  if (
+    status === "Historical Candle Range Unavailable" ||
+    status === "No Trades In Selected Range"
+  ) {
+    return { start: 100, end: 100 };
+  }
+
+  return { start: 0, end: 100 };
 };
 
 const formatStatsRefreshDateLabel = (timeMs: number) => {
@@ -9106,56 +9178,70 @@ const getStatsRefreshPhaseDurationMs = (status: string): number => {
 };
 
 const isStatsRefreshAutoFinishPhase = (status: string): boolean => {
-  const phaseKey = getStatsRefreshPhaseKey(status);
-  return phaseKey === "finalize" && status !== "Finalizing Statistics";
+  return status === "No Trades In Selected Range";
 };
 
 const getStatsRefreshStatusDetail = (
   status: string,
   options?: {
+    symbol?: string;
     minutePreciseEnabled?: boolean;
     timeframe?: Timeframe;
+    precisionTimeframe?: Timeframe;
+    rangeStartLabel?: string;
+    rangeEndLabel?: string;
   }
 ): string => {
   const needsPrecisionSupportData =
     Boolean(options?.minutePreciseEnabled) && options?.timeframe !== "1m";
+  const symbolLabel = options?.symbol || "XAUUSD";
+  const timeframeLabel = options?.timeframe || "M15";
+  const precisionLabel = options?.precisionTimeframe || "1m";
+  const rangeLabel =
+    options?.rangeStartLabel && options?.rangeEndLabel
+      ? `${options.rangeStartLabel} through ${options.rangeEndLabel}`
+      : "the requested backtest range";
+
+  if (status === "Resetting Backtest Run") {
+    return `Clearing prior replay trades and analytics, then freezing the current ${symbolLabel} ${timeframeLabel} backtest snapshot before the new run begins.`;
+  }
 
   if (status === "Loading Candle History") {
     return needsPrecisionSupportData
-      ? "Fetching historical candles and finer precision support data."
-      : "Fetching historical candles.";
+      ? `Loading ${symbolLabel} analysis candles on ${timeframeLabel} for ${rangeLabel}, then validating the ${precisionLabel} precision candle set for refined entries and exits.`
+      : `Loading and validating ${symbolLabel} analysis candles on ${timeframeLabel} for ${rangeLabel}.`;
   }
 
-  if (status === "Preparing Backtest Replay") {
-    return "Applying date filters and building replay timeline.";
+  if (status === "Building Trade Candidates") {
+    return `Building deterministic trade candidates from the validated ${timeframeLabel} analysis candles and applying replay caps like concurrency and trade-count limits.`;
   }
 
   if (status === "Replaying Backtest Trades") {
-    return "Replaying backtest trades across the full selected date range.";
+    return "Replaying each trade candidate across the loaded candle range and resolving entries, exits, TP/SL outcomes, stop behavior, and final PnL.";
   }
 
   if (status === "Recovering Replay Locally") {
-    return "Server replay ran long, so the run is finishing with the local replay engine.";
+    return "The server replay ran too long, so this phase is finishing with the local replay engine against the same backtest candle set.";
   }
 
   if (status === "Loading AI Libraries") {
-    return "Loading the selected AI libraries before replay so they are available as neighbor candidates.";
+    return "Loading the selected AI libraries before replay so the finished trade set can be enriched immediately with confidence, neighbor, and anti-cheat context.";
   }
 
   if (status === "Applying AI Analysis") {
-    return "Applying AI filters, confidence, and nearest-neighbor analysis to replayed trades.";
+    return "Filtering replay trades, applying AI thresholds, and computing confidence and nearest-neighbor analysis for the backtest panels.";
   }
 
   if (status === "Finalizing Statistics") {
-    return "Aggregating performance metrics and updating panels.";
+    return "Aggregating the filtered trade set into summaries, calendars, performance tables, chart panels, and the final backtest views.";
   }
 
   if (status === "No Trades In Selected Range") {
-    return "No trades were found inside the selected backtest range.";
+    return "No valid trade candidates were produced for the selected candle range after candidate generation and replay constraints were applied.";
   }
 
   if (status === "Historical Candle Range Unavailable") {
-    return "The requested historical candle range could not be loaded. Adjust the date window or rerun after history sync completes.";
+    return `The requested candle range for ${symbolLabel} ${timeframeLabel}${needsPrecisionSupportData ? ` with ${precisionLabel} precision support` : ""} could not be loaded completely.`;
   }
 
   return "Updating backtest statistics.";
@@ -9170,27 +9256,10 @@ const buildStatsRefreshPhasePlan = ({
   loadingLibraries: boolean;
   preloadLibrariesBeforeReplay?: boolean;
 }): StatsRefreshPhaseKey[] => {
-  const phases: StatsRefreshPhaseKey[] = [];
-
-  if (needsHistorySeedReload) {
-    phases.push("history");
-  }
-
-  phases.push("prepare");
-
-  if (loadingLibraries && preloadLibrariesBeforeReplay) {
-    phases.push("ai");
-  }
-
-  phases.push("replay");
-
-  if (loadingLibraries && !preloadLibrariesBeforeReplay) {
-    phases.push("ai");
-  }
-
-  phases.push("finalize");
-
-  return phases;
+  void needsHistorySeedReload;
+  void loadingLibraries;
+  void preloadLibrariesBeforeReplay;
+  return [...STATS_REFRESH_PHASE_ORDER];
 };
 
 export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProps) {
@@ -10231,12 +10300,17 @@ function TradingTerminalWorkspace({
   const selectedSurfaceTabRef = useRef<SurfaceTab>(selectedSurfaceTab);
   const statsRefreshOverlayModeRef = useRef<StatsRefreshOverlayMode>("idle");
   const statsRefreshStatusRef = useRef(statsRefreshStatus);
+  const statsRefreshProgressRef = useRef(statsRefreshProgress);
   const statsRefreshPhasePlanRef = useRef<StatsRefreshPhaseKey[]>([]);
+  const statsRefreshActivePhaseKeyRef = useRef<StatsRefreshPhaseKey>("freeze");
   const statsRefreshTimelineRangeRef = useRef<{ startMs: number; endMs: number }>({
     startMs: statsRefreshTimelineRange.startMs,
     endMs: statsRefreshTimelineRange.endMs
   });
   const statsRefreshResetTimeoutRef = useRef(0);
+  const statsRefreshPhaseHoldRef = useRef(false);
+  const statsRefreshPhaseHoldTimeoutRef = useRef(0);
+  const statsRefreshQueuedStatusRef = useRef<string | null>(null);
   const statsRefreshVisualCompletionRafRef = useRef(0);
   const statsRefreshLoadingDisplayProgressRef = useRef(0);
   const liveBacktestSettingsRef = useRef<BacktestSettingsSnapshot>(appliedBacktestSettings);
@@ -10489,6 +10563,53 @@ function TradingTerminalWorkspace({
     statsRefreshOverlayModeRef.current = mode;
     setStatsRefreshOverlayMode(mode);
   }, []);
+  const commitStatsRefreshStatus = useCallback((status: string) => {
+    statsRefreshStatusRef.current = status;
+    setStatsRefreshStatus(status);
+  }, []);
+  const clearStatsRefreshPhaseHoldTimeout = useCallback(() => {
+    if (!statsRefreshPhaseHoldTimeoutRef.current) {
+      statsRefreshPhaseHoldRef.current = false;
+      statsRefreshQueuedStatusRef.current = null;
+      return;
+    }
+
+    window.clearTimeout(statsRefreshPhaseHoldTimeoutRef.current);
+    statsRefreshPhaseHoldTimeoutRef.current = 0;
+    statsRefreshPhaseHoldRef.current = false;
+    statsRefreshQueuedStatusRef.current = null;
+  }, []);
+  const queueStatsRefreshStatus = useCallback((status: string) => {
+    if (statsRefreshPhaseHoldRef.current) {
+      statsRefreshQueuedStatusRef.current = status;
+      return;
+    }
+
+    commitStatsRefreshStatus(status);
+  }, [commitStatsRefreshStatus]);
+  const startStatsRefreshPhaseHold = useCallback(
+    (status: string, durationMs: number) => {
+      clearStatsRefreshPhaseHoldTimeout();
+      statsRefreshPhaseHoldRef.current = true;
+      statsRefreshQueuedStatusRef.current = null;
+      commitStatsRefreshStatus(status);
+      statsRefreshProgressRef.current = 0;
+      setStatsRefreshProgress(0);
+      setStatsRefreshLoadingDisplayProgress(0);
+      statsRefreshActivePhaseKeyRef.current = getStatsRefreshPhaseKey(status);
+
+      statsRefreshPhaseHoldTimeoutRef.current = window.setTimeout(() => {
+        statsRefreshPhaseHoldTimeoutRef.current = 0;
+        statsRefreshPhaseHoldRef.current = false;
+        const queuedStatus = statsRefreshQueuedStatusRef.current;
+        statsRefreshQueuedStatusRef.current = null;
+        if (queuedStatus) {
+          commitStatsRefreshStatus(queuedStatus);
+        }
+      }, Math.max(0, durationMs));
+    },
+    [clearStatsRefreshPhaseHoldTimeout, commitStatsRefreshStatus]
+  );
   const setStatsRefreshPhasePlanValue = useCallback((phasePlan: StatsRefreshPhaseKey[]) => {
     statsRefreshPhasePlanRef.current = phasePlan;
     setStatsRefreshPhasePlan(phasePlan);
@@ -10503,6 +10624,7 @@ function TradingTerminalWorkspace({
     setStatsRefreshTimelineRange(nextRange);
   }, [backtestRefreshNowMs]);
   const clearStatsRefreshResetTimeout = useCallback(() => {
+    clearStatsRefreshPhaseHoldTimeout();
     if (statsRefreshVisualCompletionRafRef.current) {
       window.cancelAnimationFrame(statsRefreshVisualCompletionRafRef.current);
       statsRefreshVisualCompletionRafRef.current = 0;
@@ -10514,7 +10636,7 @@ function TradingTerminalWorkspace({
 
     window.clearTimeout(statsRefreshResetTimeoutRef.current);
     statsRefreshResetTimeoutRef.current = 0;
-  }, []);
+  }, [clearStatsRefreshPhaseHoldTimeout]);
   const finishStatsRefreshLoading = useCallback(
     (label: string) => {
       clearStatsRefreshResetTimeout();
@@ -10525,7 +10647,9 @@ function TradingTerminalWorkspace({
         updateStatsRefreshOverlayMode("idle");
         setStatsRefreshProgress(0);
         setStatsRefreshLoadingDisplayProgress(0);
-        setStatsRefreshStatus("Updating Backtest Statistics");
+        statsRefreshProgressRef.current = 0;
+        statsRefreshActivePhaseKeyRef.current = "freeze";
+        commitStatsRefreshStatus("Updating Backtest Statistics");
         setStatsRefreshPhasePlanValue([]);
         setStatsRefreshProgressLabel("");
         statsRefreshResetTimeoutRef.current = 0;
@@ -10560,7 +10684,12 @@ function TradingTerminalWorkspace({
       statsRefreshVisualCompletionRafRef.current =
         window.requestAnimationFrame(waitUntilVisuallyFull);
     },
-    [clearStatsRefreshResetTimeout, setStatsRefreshPhasePlanValue, updateStatsRefreshOverlayMode]
+    [
+      clearStatsRefreshResetTimeout,
+      commitStatsRefreshStatus,
+      setStatsRefreshPhasePlanValue,
+      updateStatsRefreshOverlayMode
+    ]
   );
   const applyBacktestSettingsSnapshot = useCallback((options?: { forceFullReload?: boolean }) => {
     const forceFullReload = options?.forceFullReload ?? false;
@@ -10576,7 +10705,8 @@ function TradingTerminalWorkspace({
       updateStatsRefreshOverlayMode("idle");
       setStatsRefreshProgress(0);
       setStatsRefreshLoadingDisplayProgress(0);
-      setStatsRefreshStatus("Updating Backtest Statistics");
+      statsRefreshProgressRef.current = 0;
+      commitStatsRefreshStatus("Updating Backtest Statistics");
       setStatsRefreshPhasePlanValue([]);
       setStatsRefreshProgressLabel("");
       setStatsRefreshReplaySettled(true);
@@ -10621,17 +10751,20 @@ function TradingTerminalWorkspace({
       updateStatsRefreshOverlayMode("loading");
       setStatsRefreshProgress(0);
       setStatsRefreshLoadingDisplayProgress(0);
+      statsRefreshProgressRef.current = 0;
       const nextPhasePlan = buildStatsRefreshPhasePlan({
         needsHistorySeedReload,
         loadingLibraries: hasAiAnalysisPhase,
         preloadLibrariesBeforeReplay: hasLibraryPreloadPhase
       });
       setStatsRefreshPhasePlanValue(nextPhasePlan);
-      setStatsRefreshStatus(
-        needsHistorySeedReload
-          ? "Loading Candle History"
-          : "Preparing Backtest Replay"
+      startStatsRefreshPhaseHold(
+        "Resetting Backtest Run",
+        STATS_REFRESH_PHASE_META.freeze.durationMs
       );
+      statsRefreshQueuedStatusRef.current = needsHistorySeedReload
+        ? "Loading Candle History"
+        : "Building Trade Candidates";
       const rangeStartMs = normalizeTimestampMs(backtestBlueprintRangeRef.current.startMs);
       const rangeEndMs = normalizeTimestampMs(backtestBlueprintRangeRef.current.endMs);
       const baseStartMs = Number.isFinite(rangeStartMs) && rangeStartMs > 0
@@ -10659,7 +10792,8 @@ function TradingTerminalWorkspace({
       updateStatsRefreshOverlayMode("idle");
       setStatsRefreshProgress(0);
       setStatsRefreshLoadingDisplayProgress(0);
-      setStatsRefreshStatus("Updating Backtest Statistics");
+      statsRefreshProgressRef.current = 0;
+      commitStatsRefreshStatus("Updating Backtest Statistics");
       setStatsRefreshPhasePlanValue([]);
       setStatsRefreshProgressLabel("");
       setStatsRefreshReplaySettled(true);
@@ -10671,9 +10805,11 @@ function TradingTerminalWorkspace({
     aiLibraryDefById,
     backtestRunCount,
     clearStatsRefreshResetTimeout,
+    commitStatsRefreshStatus,
     resetAiLibraryRunState,
     setStatsRefreshPhasePlanValue,
     setStatsRefreshTimelineRangeValue,
+    startStatsRefreshPhaseHold,
     updateStatsRefreshOverlayMode
   ]);
 
@@ -10762,6 +10898,7 @@ function TradingTerminalWorkspace({
   }, [statsRefreshStatus]);
 
   useEffect(() => {
+    statsRefreshProgressRef.current = statsRefreshProgress;
     setStatsRefreshLoadingDisplayProgress(statsRefreshProgress);
   }, [statsRefreshProgress]);
 
@@ -10770,11 +10907,14 @@ function TradingTerminalWorkspace({
       return;
     }
 
-    if (statsRefreshStatus === "Replaying Backtest Trades") {
+    if (
+      statsRefreshStatus === "Replaying Backtest Trades" ||
+      statsRefreshStatus === "Recovering Replay Locally"
+    ) {
       return;
     }
 
-    const durationMs = getStatsRefreshPhaseDurationMs(statsRefreshStatus);
+    const durationMs = Math.max(1, getStatsRefreshPhaseDurationMs(statsRefreshStatus));
     const statusSnapshot = statsRefreshStatus;
     const phasePlanSnapshot =
       statsRefreshPhasePlanRef.current.length > 0
@@ -10796,12 +10936,18 @@ function TradingTerminalWorkspace({
     let rafId = 0;
 
     const phaseKey = resolveStatsRefreshPhaseKey(phasePlanSnapshot, statusSnapshot);
-    const phaseStartProgress = getStatsRefreshProgressPct(phasePlanSnapshot, statusSnapshot, 0);
+    const enteringPhase = statsRefreshActivePhaseKeyRef.current !== phaseKey;
+    const progressWindow = getStatsRefreshPhaseProgressWindow(statusSnapshot, enteringPhase);
+    const phaseStartProgress = enteringPhase
+      ? progressWindow.start
+      : clamp(statsRefreshProgressRef.current, progressWindow.start, progressWindow.end);
     const phaseCursorLabel =
-      phaseKey === "history" || phaseKey === "prepare"
+      phaseKey === "freeze" || phaseKey === "candles" || phaseKey === "candidates"
         ? formatStatsRefreshDateLabel(rangeStartMs)
         : formatStatsRefreshDateLabel(rangeEndMs);
 
+    statsRefreshActivePhaseKeyRef.current = phaseKey;
+    statsRefreshProgressRef.current = phaseStartProgress;
     setStatsRefreshProgress(phaseStartProgress);
     setStatsRefreshLoadingDisplayProgress(phaseStartProgress);
     setStatsRefreshProgressLabel(phaseCursorLabel);
@@ -10815,10 +10961,14 @@ function TradingTerminalWorkspace({
         return;
       }
 
-      const ratio = clamp((performance.now() - startedAt) / durationMs, 0, 1);
-      setStatsRefreshProgress(
-        getStatsRefreshProgressPct(phasePlanSnapshot, statusSnapshot, ratio)
-      );
+      const ratio =
+        progressWindow.end === progressWindow.start
+          ? 1
+          : clamp((performance.now() - startedAt) / durationMs, 0, 1);
+      const nextProgress =
+        progressWindow.start + (progressWindow.end - progressWindow.start) * ratio;
+      statsRefreshProgressRef.current = nextProgress;
+      setStatsRefreshProgress(nextProgress);
 
       if (ratio < 1) {
         rafId = window.requestAnimationFrame(tick);
@@ -11577,17 +11727,17 @@ function TradingTerminalWorkspace({
           }
         }
       };
+      void syncLiveCandlesFromMarket;
 
       resolveChartInitialLoad();
-      void syncLiveCandlesFromMarket();
 
       if (cancelled) {
         return;
       }
 
-      liveSyncInterval = window.setInterval(() => {
-        void syncLiveCandlesFromMarket();
-      }, 8000);
+      // The temporary Twelve Data free-plan bridge cannot sustain a background
+      // full-candle resync every few seconds. Seed from history once, then let
+      // the quote stream update the active candle path.
 
       const resolveStream = () => {
         if (streamResolved) {
@@ -11961,35 +12111,9 @@ function TradingTerminalWorkspace({
   }, [minutePreciseEnabled, selectedKey, selectedTimeframe]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const prefetchTimeframeChanges = async () => {
-      const promises = timeframes.map(async (tf) => {
-        const key = symbolTimeframeKey(selectedSymbol, tf);
-        if (tf === selectedTimeframe) return;
-
-        try {
-          const candles = await fetchMarketCandles(tf, 3);
-
-          if (!cancelled && candles.length > 0) {
-            setSeriesMap((prev) => {
-              if ((prev[key]?.length ?? 0) >= candles.length) return prev;
-              return { ...prev, [key]: candles };
-            });
-          }
-        } catch {
-          // Non-critical prefetch; ignore failures.
-        }
-      });
-
-      await Promise.allSettled(promises);
-    };
-
-    prefetchTimeframeChanges();
-
-    return () => {
-      cancelled = true;
-    };
+    // The temporary Twelve Data free-plan bridge has a tight minute credit budget.
+    // Avoid background timeframe prefetching and fetch non-selected timeframes on demand instead.
+    return undefined;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSymbol]);
 
@@ -12102,12 +12226,15 @@ function TradingTerminalWorkspace({
           [precisionKey]: existingPrecisionCandles
         }));
       }
-      setStatsRefreshStatus("Preparing Backtest Replay");
+      startStatsRefreshPhaseHold(
+        "Building Trade Candidates",
+        STATS_REFRESH_PHASE_META.candidates.durationMs
+      );
       setBacktestHistorySeedReady(true);
       return;
     }
 
-    setStatsRefreshStatus("Loading Candle History");
+    queueStatsRefreshStatus("Loading Candle History");
 
     void (async () => {
       let resolvedReplaySeedCandles = existingCandles;
@@ -12248,10 +12375,13 @@ function TradingTerminalWorkspace({
                 availableEnd: availableLastTime == null ? null : new Date(availableLastTime).toISOString()
               });
             }
-            setStatsRefreshStatus("Preparing Backtest Replay");
+            startStatsRefreshPhaseHold(
+              "Building Trade Candidates",
+              STATS_REFRESH_PHASE_META.candidates.durationMs
+            );
             setBacktestHistorySeedReady(true);
           } else {
-            setStatsRefreshStatus(
+            queueStatsRefreshStatus(
               hasDateRange
                 ? "Historical Candle Range Unavailable"
                 : "Loading Candle History"
@@ -12283,7 +12413,9 @@ function TradingTerminalWorkspace({
     appliedBacktestPrecisionKey,
     appliedBacktestSeedCandles.length,
     appliedBacktestSeedOneMinuteCandles.length,
-    shouldSkipBacktestHistoryFetch
+    queueStatsRefreshStatus,
+    shouldSkipBacktestHistoryFetch,
+    startStatsRefreshPhaseHold
   ]);
 
   const selectedCandles = useMemo(() => {
@@ -14302,7 +14434,9 @@ function TradingTerminalWorkspace({
     setStatsRefreshTimelineRangeValue(analysisStartMs, analysisEndMs);
 
     if (tradeBlueprintsSnapshot.length === 0 || backtestTargetTradesSnapshot <= 0) {
-      setStatsRefreshStatus("No Trades In Selected Range");
+      queueStatsRefreshStatus("No Trades In Selected Range");
+      setStatsRefreshProgress(100);
+      statsRefreshProgressRef.current = 100;
       setStatsRefreshReplaySettled(true);
       startTransition(() => {
         setHistoryRows([]);
@@ -14311,14 +14445,6 @@ function TradingTerminalWorkspace({
     }
 
     const analysisSpanMs = Math.max(60_000, analysisEndMs - analysisStartMs);
-    const phasePlanSnapshot =
-      statsRefreshPhasePlanRef.current.length > 0
-        ? [...statsRefreshPhasePlanRef.current]
-        : buildStatsRefreshPhasePlan({
-            needsHistorySeedReload: false,
-            loadingLibraries: hasAiAnalysisPass,
-            preloadLibrariesBeforeReplay: shouldPreloadAiLibraries
-          });
     let lastLoadingProgressRatio = 0;
     const setLoadingProgressFromRatio = (ratio: number) => {
       const normalizedRatio = clamp(ratio, 0, 1);
@@ -14329,13 +14455,9 @@ function TradingTerminalWorkspace({
 
       lastLoadingProgressRatio = normalizedRatio;
       const cursorMs = analysisStartMs + analysisSpanMs * normalizedRatio;
-      setStatsRefreshProgress(
-        getStatsRefreshProgressPct(
-          phasePlanSnapshot,
-          "Replaying Backtest Trades",
-          normalizedRatio
-        )
-      );
+      const nextProgress = clamp(normalizedRatio * 100, 0, 100);
+      statsRefreshProgressRef.current = nextProgress;
+      setStatsRefreshProgress(nextProgress);
       setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(cursorMs));
     };
 
@@ -14409,7 +14531,7 @@ function TradingTerminalWorkspace({
         return;
       }
 
-      setStatsRefreshStatus("Finalizing Statistics");
+      queueStatsRefreshStatus("Finalizing Statistics");
       setLoadingProgressFromRatio(1);
       commitRows([]);
     };
@@ -14425,12 +14547,12 @@ function TradingTerminalWorkspace({
           return;
         }
 
-        setStatsRefreshStatus("Finalizing Statistics");
+        queueStatsRefreshStatus("Finalizing Statistics");
         commitRows(rows);
       };
 
       if (shouldShowPostReplayAiPhase) {
-        setStatsRefreshStatus("Applying AI Analysis");
+        queueStatsRefreshStatus("Applying AI Analysis");
         clearPhaseTransitionTimeout();
         phaseTransitionTimeoutId = window.setTimeout(() => {
           commitFinalizingPhase();
@@ -14448,7 +14570,7 @@ function TradingTerminalWorkspace({
 
       clearProgressTimeout();
       clearRequestTimeout();
-      setStatsRefreshStatus("Recovering Replay Locally");
+      queueStatsRefreshStatus("Recovering Replay Locally");
       setLoadingProgressFromRatio(0.82);
 
       window.setTimeout(() => {
@@ -14471,7 +14593,7 @@ function TradingTerminalWorkspace({
         return;
       }
 
-      setStatsRefreshStatus("Replaying Backtest Trades");
+      queueStatsRefreshStatus("Replaying Backtest Trades");
       setLoadingProgressFromRatio(0);
       setLoadingProgressFromRatio(0.1);
       progressTimeoutId = window.setTimeout(() => {
@@ -14510,7 +14632,7 @@ function TradingTerminalWorkspace({
     void (async () => {
       if (shouldPreloadAiLibraries) {
         aiLibraryAutoRunSignatureRef.current = nextAutoRunSignature;
-        setStatsRefreshStatus("Loading AI Libraries");
+        queueStatsRefreshStatus("Loading AI Libraries");
         await runAllLibrariesRef.current({
           libraryIds: activeLibraryIds,
           settingsSource: appliedSettingsSnapshot.selectedAiLibrarySettings,
@@ -14537,6 +14659,7 @@ function TradingTerminalWorkspace({
     backtestRunCount,
     backtestRefreshNowMs,
     aiLibraryDefById,
+    queueStatsRefreshStatus,
     setStatsRefreshTimelineRangeValue
   ]);
 
@@ -22115,28 +22238,41 @@ function TradingTerminalWorkspace({
     ((100 - clamp(statsRefreshProgress, 0, 100)) / 100) * (STATS_REFRESH_HOLD_MS / 1000)
   );
   const statsRefreshDisplayProgress = clamp(statsRefreshProgress, 0, 100);
-  const statsRefreshStatusDetail = getStatsRefreshStatusDetail(statsRefreshStatus, {
-    minutePreciseEnabled: appliedBacktestSettings.minutePreciseEnabled,
-    timeframe: appliedBacktestSettings.timeframe
-  });
   const statsRefreshRangeStartLabel = formatStatsRefreshDateLabel(statsRefreshTimelineRange.startMs);
   const statsRefreshRangeEndLabel = formatStatsRefreshDateLabel(statsRefreshTimelineRange.endMs);
+  const statsRefreshStatusDetail = getStatsRefreshStatusDetail(statsRefreshStatus, {
+    symbol: appliedBacktestSettings.symbol,
+    minutePreciseEnabled: appliedBacktestSettings.minutePreciseEnabled,
+    timeframe: appliedBacktestSettings.timeframe,
+    precisionTimeframe: appliedBacktestSettings.precisionTimeframe,
+    rangeStartLabel: statsRefreshRangeStartLabel,
+    rangeEndLabel: statsRefreshRangeEndLabel
+  });
   const statsRefreshCurrentDateLabel =
     statsRefreshProgressLabel || statsRefreshRangeStartLabel;
-  const statsRefreshPhaseCount = Math.max(1, statsRefreshPhasePlan.length);
+  const statsRefreshResolvedPhasePlan =
+    statsRefreshPhasePlan.length > 0 ? statsRefreshPhasePlan : STATS_REFRESH_PHASE_ORDER;
+  const statsRefreshPhaseCount = Math.max(1, statsRefreshResolvedPhasePlan.length);
   const statsRefreshActivePhaseKey = resolveStatsRefreshPhaseKey(
-    statsRefreshPhasePlan,
+    statsRefreshResolvedPhasePlan,
     statsRefreshStatus
   );
   const statsRefreshPhaseIndex = Math.max(
     1,
-    statsRefreshPhasePlan.indexOf(statsRefreshActivePhaseKey) + 1
+    statsRefreshResolvedPhasePlan.indexOf(statsRefreshActivePhaseKey) + 1
   );
   const statsRefreshPhaseName = STATS_REFRESH_PHASE_META[statsRefreshActivePhaseKey].label;
   const statsRefreshPhaseLabel = `Phase ${statsRefreshPhaseIndex} of ${statsRefreshPhaseCount} · ${statsRefreshPhaseName}`;
   const statsRefreshContextLabel =
     `${appliedBacktestSettings.symbol} · ${appliedBacktestSettings.timeframe} · ` +
     `${appliedBacktestSettings.aiMode === "off" ? "AI Off" : "AI On"}`;
+  const statsRefreshPhaseSummaryLabel =
+    `Phase ${statsRefreshPhaseIndex} of ${statsRefreshPhaseCount} - ${statsRefreshPhaseName}`;
+  const statsRefreshContextSummaryLabel =
+    `${appliedBacktestSettings.symbol} - ${appliedBacktestSettings.timeframe} - ` +
+    `${appliedBacktestSettings.aiMode === "off" ? "AI Off" : "AI On"}`;
+  void statsRefreshPhaseLabel;
+  void statsRefreshContextLabel;
   const isGideonSurface = selectedSurfaceTab === "ai";
   const backtestSurfaceLoadingLabel =
     selectedSurfaceTab === "models" ? "Loading Models..." : "Preparing Backtest...";
@@ -22356,14 +22492,14 @@ function TradingTerminalWorkspace({
           <div className="stats-refresh-overlay" aria-live="polite" aria-atomic="true">
             <div className="stats-refresh-loading-card">
               <div className="stats-refresh-loading-topline">
-                <div className="stats-refresh-loading-status">{statsRefreshStatus}</div>
+                <div className="stats-refresh-loading-status">{statsRefreshPhaseName}</div>
                 <div className="stats-refresh-loading-progress-value">
                   {`${Math.round(statsRefreshDisplayProgress)}%`}
                 </div>
               </div>
               <div className="stats-refresh-loading-phase">
-                <span>{statsRefreshPhaseLabel}</span>
-                <span>{statsRefreshContextLabel}</span>
+                <span>{statsRefreshPhaseSummaryLabel}</span>
+                <span>{statsRefreshContextSummaryLabel}</span>
               </div>
               <div className="stats-refresh-loading-detail">{statsRefreshStatusDetail}</div>
               <div
@@ -27677,14 +27813,14 @@ function TradingTerminalWorkspace({
           <div className="stats-refresh-loading-overlay" aria-live="polite" aria-atomic="true">
             <div className="stats-refresh-loading-shell">
               <div className="stats-refresh-loading-head">
-                <div className="stats-refresh-loading-status">{statsRefreshStatus}</div>
+                <div className="stats-refresh-loading-status">{statsRefreshPhaseName}</div>
                 <div className="stats-refresh-loading-pct">
                   {`${Math.round(statsRefreshDisplayProgress)}%`}
                 </div>
               </div>
               <div className="stats-refresh-loading-meta">
-                <span>{statsRefreshPhaseLabel}</span>
-                <span>{statsRefreshContextLabel}</span>
+                <span>{statsRefreshPhaseSummaryLabel}</span>
+                <span>{statsRefreshContextSummaryLabel}</span>
               </div>
               <div className="stats-refresh-loading-detail">{statsRefreshStatusDetail}</div>
               <div

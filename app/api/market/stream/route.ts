@@ -1,60 +1,47 @@
 import { NextResponse } from "next/server";
 import {
-  DATABENTO_DEFAULT_PAIR,
-  probeDatabentoAccess,
-  spawnDatabentoStreamProcess
-} from "../../../../lib/databentoMarketData";
+  TWELVE_DATA_DEFAULT_PAIR,
+  fetchTwelveDataLatestQuote
+} from "../../../../lib/twelveDataMarketData";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const PAIR_RE = /^[A-Z0-9]{2,20}(?:_[A-Z0-9]{2,20})?(?:,[A-Z0-9]{2,20}(?:_[A-Z0-9]{2,20})?)*$/;
 const KEEPALIVE_INTERVAL_MS = 15_000;
+const QUOTE_POLL_INTERVAL_MS = 30_000;
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const pairs = (searchParams.get("pairs") || DATABENTO_DEFAULT_PAIR).toUpperCase().trim();
+  const pairs = (searchParams.get("pairs") || TWELVE_DATA_DEFAULT_PAIR).toUpperCase().trim();
 
   if (!PAIR_RE.test(pairs)) {
     return NextResponse.json({ error: "Unsupported pair format." }, { status: 400 });
   }
-  if (pairs !== DATABENTO_DEFAULT_PAIR) {
+  if (pairs !== TWELVE_DATA_DEFAULT_PAIR) {
     return NextResponse.json({ error: "Only XAU_USD is supported by this stream." }, { status: 400 });
   }
 
-  try {
-    if (!process.env.DATABENTO_API_KEY) {
-      throw new Error("Missing DATABENTO_API_KEY.");
-    }
-    await probeDatabentoAccess();
-  } catch (error) {
-    const details = (error as Error).message || "Unknown Databento stream error.";
-    const isAuthFailure =
-      details.includes("auth_authentication_failed") ||
-      details.toLowerCase().includes("authentication failed");
-
+  if (!process.env.TWELVE_DATA_API_KEY && !process.env.TWELVEDATA_API_KEY) {
     return NextResponse.json(
       {
-        error: isAuthFailure
-          ? "Databento authentication failed."
-          : "Databento stream unavailable.",
-        details,
+        error: "Twelve Data stream unavailable.",
+        details: "Missing TWELVE_DATA_API_KEY.",
         pair: pairs,
-        source: "databento",
-        docs: isAuthFailure ? "https://databento.com/docs/portal/api-keys" : undefined
+        source: "twelve-data"
       },
-      { status: isAuthFailure ? 502 : 500 }
+      { status: 500 }
     );
   }
 
   const encoder = new TextEncoder();
-  const child = spawnDatabentoStreamProcess();
 
   const stream = new ReadableStream({
     start(controller) {
-      let stdoutBuffer = "";
       let closed = false;
       let keepaliveId = 0 as unknown as ReturnType<typeof setInterval>;
+      let pollId = 0 as unknown as ReturnType<typeof setInterval>;
+      let lastQuoteFingerprint = "";
 
       const close = () => {
         if (closed) {
@@ -62,10 +49,8 @@ export async function GET(request: Request) {
         }
         closed = true;
         clearInterval(keepaliveId);
+        clearInterval(pollId);
         request.signal.removeEventListener("abort", abortHandler);
-        if (!child.killed) {
-          child.kill();
-        }
         try {
           controller.close();
         } catch {
@@ -77,8 +62,32 @@ export async function GET(request: Request) {
         close();
       };
 
+      const emitLatestQuote = async () => {
+        try {
+          const payload = await fetchTwelveDataLatestQuote();
+          if (!payload || closed) {
+            return;
+          }
+          if ((payload.pair || "").toUpperCase() !== TWELVE_DATA_DEFAULT_PAIR) {
+            return;
+          }
+
+          const fingerprint = `${payload.time}:${payload.bid ?? ""}:${payload.ask ?? ""}`;
+          if (fingerprint === lastQuoteFingerprint) {
+            return;
+          }
+          lastQuoteFingerprint = fingerprint;
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message) {
+            console.error(`[twelve-data-stream] ${message}`);
+          }
+        }
+      };
+
       request.signal.addEventListener("abort", abortHandler);
-      controller.enqueue(encoder.encode(": databento-connected\n\n"));
+      controller.enqueue(encoder.encode(": twelve-data-connected\n\n"));
 
       keepaliveId = setInterval(() => {
         if (!closed) {
@@ -86,50 +95,13 @@ export async function GET(request: Request) {
         }
       }, KEEPALIVE_INTERVAL_MS);
 
-      child.stdout.setEncoding("utf8");
-      child.stderr.setEncoding("utf8");
-
-      child.stdout.on("data", (chunk: string) => {
-        stdoutBuffer += chunk;
-        const lines = stdoutBuffer.split(/\r?\n/);
-        stdoutBuffer = lines.pop() || "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || closed) {
-            continue;
-          }
-          try {
-            const payload = JSON.parse(trimmed) as { pair?: string };
-            if ((payload.pair || "").toUpperCase() !== DATABENTO_DEFAULT_PAIR) {
-              continue;
-            }
-            controller.enqueue(encoder.encode(`data: ${trimmed}\n\n`));
-          } catch {
-            // Ignore malformed child output and keep the stream alive.
-          }
-        }
-      });
-
-      child.stderr.on("data", (chunk: string) => {
-        const message = chunk.trim();
-        if (message) {
-          console.error(`[databento-stream] ${message}`);
-        }
-      });
-
-      child.on("error", () => {
-        close();
-      });
-
-      child.on("close", () => {
-        close();
-      });
+      void emitLatestQuote();
+      pollId = setInterval(() => {
+        void emitLatestQuote();
+      }, QUOTE_POLL_INTERVAL_MS);
     },
     cancel() {
-      if (!child.killed) {
-        child.kill();
-      }
+      // Interval cleanup is handled by the stream closing path.
     }
   });
 
@@ -140,7 +112,7 @@ export async function GET(request: Request) {
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
-      "X-Korra-Stream-Source": "databento"
+      "X-Korra-Stream-Source": "twelve-data"
     }
   });
 }

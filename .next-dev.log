@@ -43,3 +43,74 @@
  GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=5 502 in 3570ms
  GET /api/market/candles?pair=XAU_USD&timeframe=M15&limit=5 502 in 3258ms
  GET /api/market/stream?pairs=XAU_USD 502 in 3474ms
+ ✓ Compiled in 14ms
+ ✓ Compiled in 281ms (837 modules)
+ ✓ Compiled in 164ms (837 modules)
+ ✓ Compiled /api/market/candles in 269ms (104 modules)
+ ✓ Compiled /api/market/stream in 1ms (106 modules)
+ ✓ Compiled in 154ms (945 modules)
+ GET /api/market/stream?pairs=XAU_USD 502 in 6703ms
+ GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=5 502 in 6972ms
+ GET /api/market/candles?pair=XAU_USD&timeframe=M15&limit=3 502 in 6921ms
+ ✓ Compiled in 79ms
+ ✓ Compiled in 1129ms (837 modules)
+ ✓ Compiled in 836ms (837 modules)
+ ✓ Compiled in 799ms (837 modules)
+ ✓ Compiled in 752ms (837 modules)
+ ✓ Compiled in 779ms (837 modules)
+ ✓ Compiled in 754ms (837 modules)
+ ✓ Compiled in 778ms (837 modules)
+ ✓ Compiled in 831ms (837 modules)
+ ✓ Compiled in 787ms (837 modules)
+ ✓ Compiled in 822ms (837 modules)
+ ✓ Compiled in 731ms (837 modules)
+ ✓ Compiled in 769ms (837 modules)
+ ✓ Compiled in 754ms (837 modules)
+ ✓ Compiled in 825ms (837 modules)
+ ✓ Compiled in 711ms (837 modules)
+ ✓ Compiled in 749ms (837 modules)
+ ✓ Compiled in 839ms (837 modules)
+ ✓ Compiled in 806ms (837 modules)
+ ✓ Compiled in 838ms (837 modules)
+ ✓ Compiled in 761ms (837 modules)
+ ✓ Compiled in 765ms (837 modules)
+ ✓ Compiled in 722ms (837 modules)
+ ✓ Compiled in 832ms (837 modules)
+ ✓ Compiled in 782ms (837 modules)
+ ✓ Compiled /api/market/candles in 143ms (103 modules)
+ GET /api/market/candles?pair=XAU_USD&timeframe=M15&limit=3 200 in 508ms
+ ✓ Compiled /api/history/candles in 82ms (106 modules)
+ GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=5 200 in 333ms
+ ✓ Compiled /api/market/stream in 72ms (108 modules)
+ GET /api/market/candles?pair=XAU_USD&timeframe=M15&limit=3 200 in 200ms
+ GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=5 200 in 203ms
+ GET /api/market/candles?pair=XAU_USD&timeframe=H4&limit=3 500 in 267ms
+ GET /api/market/stream?pairs=XAU_USD 200 in 3969ms
+ ✓ Compiled in 170ms (108 modules)
+ ✓ Compiled in 18ms
+ ✓ Compiled /api/market/candles in 39ms (103 modules)
+ GET /api/market/candles?pair=XAU_USD&timeframe=M15&limit=10 500 in 203ms
+ ✓ Compiled /api/market/stream in 56ms (105 modules)
+ ✓ Compiled /api/history/candles in 95ms (108 modules)
+ GET /api/market/stream?pairs=XAU_USD 500 in 423ms
+ GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=10 500 in 483ms
+ ✓ Compiled in 70ms (108 modules)
+ ✓ Compiled in 62ms (108 modules)
+ GET /api/market/candles?pair=XAU_USD&timeframe=M15&limit=10 500 in 167ms
+ ✓ Compiled in 868ms (837 modules)
+ ✓ Compiled in 795ms (837 modules)
+ GET /api/market/candles?pair=XAU_USD&timeframe=M15&limit=10 500 in 148ms
+ GET /api/market/stream?pairs=XAU_USD 500 in 390ms
+ ✓ Compiled in 798ms (837 modules)
+ ✓ Compiled in 777ms (837 modules)
+ GET /api/market/candles?pair=XAU_USD&timeframe=M15&limit=10 200 in 141ms
+ GET /api/market/stream?pairs=XAU_USD 500 in 288ms
+ ✓ Compiled in 144ms (105 modules)
+ GET /api/market/stream?pairs=XAU_USD 500 in 291ms
+ ✓ Compiled in 66ms (103 modules)
+ GET /api/market/stream?pairs=XAU_USD 200 in 2471ms
+ ✓ Compiled /api/history/candles in 34ms (106 modules)
+ GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=10 500 in 208ms
+ GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=10 500 in 161ms
+ ✓ Compiled in 827ms (837 modules)
+ ✓ Compiled in 753ms (837 modules)
