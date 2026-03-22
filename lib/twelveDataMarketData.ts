@@ -135,7 +135,6 @@ const RATE_LIMIT_COOLDOWN_MS = 65_000;
 const AUTH_COOLDOWN_MS = 30 * 60_000;
 const TRANSIENT_COOLDOWN_MS = 15_000;
 const KEY_MIN_REQUEST_GAP_MS = 8_000;
-const KEY_QUEUE_WAIT_CAP_MS = 2_500;
 
 const parseConfiguredApiKeys = (): string[] => {
   const raw = [
@@ -356,29 +355,29 @@ const requestJson = async <T extends TwelveDataJson>(
   params: Record<string, string | number | undefined>,
   timeoutMs = DEFAULT_HTTP_TIMEOUT_MS
 ): Promise<T> => {
-  let apiKeys = getOrderedApiKeys();
-  let earliestReadyAt =
-    apiKeys.length > 0
-      ? apiKeys.reduce((best, apiKey) => Math.min(best, getKeyReadyAt(apiKey)), Number.POSITIVE_INFINITY)
-      : Number.POSITIVE_INFINITY;
-  const initialWaitMs = earliestReadyAt - Date.now();
-  if (Number.isFinite(initialWaitMs) && initialWaitMs > 75) {
-    await sleep(Math.min(initialWaitMs, KEY_QUEUE_WAIT_CAP_MS));
-  }
-
-  apiKeys = getOrderedApiKeys().filter((apiKey) => getKeyReadyAt(apiKey) <= Date.now());
+  const requestStartedAt = Date.now();
+  let apiKeys = getOrderedApiKeys().filter((apiKey) => getKeyReadyAt(apiKey) <= Date.now());
   let lastError: TwelveDataRequestError | null = null;
 
   if (apiKeys.length === 0) {
-    earliestReadyAt =
-      getOrderedApiKeys().reduce(
+    while (apiKeys.length === 0) {
+      const orderedKeys = getOrderedApiKeys();
+      const earliestReadyAt = orderedKeys.reduce(
         (best, apiKey) => Math.min(best, getKeyReadyAt(apiKey)),
         Number.POSITIVE_INFINITY
       );
-    const retryInMs = Math.max(0, earliestReadyAt - Date.now());
-    throw new Error(
-      `Twelve Data key pool cooling down. Retry in ${Math.max(1, Math.ceil(retryInMs / 1000))}s.`
-    );
+      const retryInMs = Math.max(0, earliestReadyAt - Date.now());
+      const remainingBudgetMs = timeoutMs - (Date.now() - requestStartedAt);
+
+      if (!Number.isFinite(earliestReadyAt) || remainingBudgetMs <= 250) {
+        throw new Error(
+          `Twelve Data key pool cooling down. Retry in ${Math.max(1, Math.ceil(retryInMs / 1000))}s.`
+        );
+      }
+
+      await sleep(Math.min(Math.max(75, retryInMs), Math.max(75, remainingBudgetMs - 200)));
+      apiKeys = getOrderedApiKeys().filter((apiKey) => getKeyReadyAt(apiKey) <= Date.now());
+    }
   }
 
   for (const apiKey of apiKeys) {
@@ -598,8 +597,19 @@ export const fetchTwelveDataCandles = async (params: {
     const endMs =
       parseTimeMs(params.end ?? null) ??
       Date.now();
-    const deduped = new Map<number, TwelveDataCandleRecord>();
     const stepMs = getStepMs(timeframe);
+    const hasExplicitStart = startMs != null;
+    const hasExplicitEnd = Number.isFinite(endMs);
+    const boundedRangeBars =
+      hasExplicitStart && hasExplicitEnd
+        ? Math.ceil((endMs - startMs) / Math.max(60_000, stepMs)) + 2
+        : Number.POSITIVE_INFINITY;
+    const shouldUseSingleBoundedRequest =
+      hasExplicitStart &&
+      hasExplicitEnd &&
+      boundedRangeBars > 0 &&
+      boundedRangeBars <= MAX_PAGE_SIZE;
+    const deduped = new Map<number, TwelveDataCandleRecord>();
     let cursorEndMs = endMs;
     let pageCount = 0;
     let previousEarliestMs = Number.POSITIVE_INFINITY;
@@ -607,14 +617,24 @@ export const fetchTwelveDataCandles = async (params: {
     while (pageCount < MAX_PAGE_COUNT) {
       const remaining = Math.max(64, requestedCount - deduped.size + 32);
       const outputsize = Math.min(MAX_PAGE_SIZE, remaining);
-      const response = await requestJson<TwelveDataTimeSeriesResponse>("/time_series", {
-        symbol: TWELVE_DATA_SYMBOL,
-        interval,
-        outputsize,
-        timezone: "UTC",
-        start_date: startMs == null ? undefined : toTwelveDateTime(Math.max(0, startMs - stepMs)),
-        end_date: Number.isFinite(cursorEndMs) ? toTwelveDateTime(cursorEndMs) : undefined
-      });
+      const response = await requestJson<TwelveDataTimeSeriesResponse>(
+        "/time_series",
+        shouldUseSingleBoundedRequest && pageCount === 0
+          ? {
+              symbol: TWELVE_DATA_SYMBOL,
+              interval,
+              timezone: "UTC",
+              start_date: toTwelveDateTime(Math.max(0, startMs - stepMs)),
+              end_date: Number.isFinite(cursorEndMs) ? toTwelveDateTime(cursorEndMs) : undefined
+            }
+          : {
+              symbol: TWELVE_DATA_SYMBOL,
+              interval,
+              outputsize,
+              timezone: "UTC",
+              end_date: Number.isFinite(cursorEndMs) ? toTwelveDateTime(cursorEndMs) : undefined
+            }
+      );
       const values = Array.isArray(response.values) ? response.values : [];
 
       if (values.length === 0) {
@@ -637,6 +657,9 @@ export const fetchTwelveDataCandles = async (params: {
 
       const earliestMs = pageCandles[0]!.time;
       if (startMs != null && earliestMs <= startMs) {
+        break;
+      }
+      if (shouldUseSingleBoundedRequest) {
         break;
       }
       if (deduped.size >= requestedCount && startMs == null) {

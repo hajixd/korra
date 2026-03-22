@@ -12335,52 +12335,49 @@ function TradingTerminalWorkspace({
       let resolvedReplaySeedCandles = existingCandles;
 
       try {
-        const promises: [Promise<Candle[]>, Promise<Candle[]>] = [
-          needsHistory
-            ? fetchBacktestHistoryCandles(
-                appliedBacktestSettings.timeframe,
-                targetBars,
+        const deepHistoryCandles = needsHistory
+          ? await fetchBacktestHistoryCandles(
+              appliedBacktestSettings.timeframe,
+              targetBars,
+              recentOneMinutePromise,
+              allowOneMinuteFallback,
+              BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
+              hasDateRange
+                ? {
+                    requestWindow: historyRequestWindow ?? undefined,
+                    coverageWindow: {
+                      startYmd: appliedBacktestSettings.statsDateStart,
+                      endYmd: appliedBacktestSettings.statsDateEnd,
+                      leadingBars,
+                      strictCoverage: true
+                    }
+                  }
+                : undefined
+            )
+          : existingCandles;
+        const precisionCandles =
+          shouldLoadPrecisionSupport && needsPrecisionSupport
+            ? await fetchBacktestHistoryCandles(
+                precisionTimeframe,
+                precisionTargetBars,
                 recentOneMinutePromise,
-                allowOneMinuteFallback,
+                true,
                 BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
                 hasDateRange
                   ? {
-                      requestWindow: historyRequestWindow ?? undefined,
+                      requestWindow: precisionHistoryRequestWindow ?? undefined,
                       coverageWindow: {
                         startYmd: appliedBacktestSettings.statsDateStart,
                         endYmd: appliedBacktestSettings.statsDateEnd,
-                        leadingBars,
-                        strictCoverage: true
+                        leadingBars: precisionPaddingBars,
+                        strictCoverage: false
                       }
                     }
                   : undefined
-              )
-            : Promise.resolve(existingCandles),
-          shouldLoadPrecisionSupport
-            ? needsPrecisionSupport
-              ? fetchBacktestHistoryCandles(
-                  precisionTimeframe,
-                  precisionTargetBars,
-                  recentOneMinutePromise,
-                  true,
-                  BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
-                  hasDateRange
-                    ? {
-                        requestWindow: precisionHistoryRequestWindow ?? undefined,
-                        coverageWindow: {
-                          startYmd: appliedBacktestSettings.statsDateStart,
-                          endYmd: appliedBacktestSettings.statsDateEnd,
-                          leadingBars: precisionPaddingBars,
-                          strictCoverage: false
-                        }
-                      }
-                    : undefined
-                ).catch(() => [])
-              : Promise.resolve(existingPrecisionCandles)
-            : Promise.resolve([])
-        ];
-
-        const [deepHistoryCandles, precisionCandles] = await Promise.all(promises);
+              ).catch(() => [])
+            : shouldLoadPrecisionSupport
+              ? existingPrecisionCandles
+              : [];
         let replaySeedCandles = pickLongestCandleSeries(
           deepHistoryCandles,
           existingCandles
@@ -18297,52 +18294,49 @@ function TradingTerminalWorkspace({
           : undefined;
 
         if (needsHistory || needsOneMinute) {
-          const promises: [Promise<Candle[]>, Promise<Candle[]>] = [
-            needsHistory
-              ? fetchBacktestHistoryCandles(
-                  timeframe,
-                  targetBars,
+          const deepHistoryCandles = needsHistory
+            ? await fetchBacktestHistoryCandles(
+                timeframe,
+                targetBars,
+                recentOneMinutePromise,
+                allowOneMinuteFallback,
+                BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
+                hasDateRange
+                  ? {
+                      requestWindow: historyRequestWindow ?? undefined,
+                      coverageWindow: {
+                        startYmd: settings.statsDateStart,
+                        endYmd: settings.statsDateEnd,
+                        leadingBars,
+                        strictCoverage: true
+                      }
+                    }
+                  : undefined
+              )
+            : existingCandles;
+          const oneMinuteCandles =
+            shouldLoadPrecisionSupport && needsOneMinute
+              ? await fetchBacktestHistoryCandles(
+                  precisionTimeframe,
+                  precisionTargetBars,
                   recentOneMinutePromise,
-                  allowOneMinuteFallback,
+                  true,
                   BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
                   hasDateRange
                     ? {
-                        requestWindow: historyRequestWindow ?? undefined,
+                        requestWindow: oneMinuteHistoryRequestWindow ?? undefined,
                         coverageWindow: {
                           startYmd: settings.statsDateStart,
                           endYmd: settings.statsDateEnd,
-                          leadingBars,
-                          strictCoverage: true
+                          leadingBars: precisionPaddingBars,
+                          strictCoverage: false
                         }
                       }
                     : undefined
-                )
-              : Promise.resolve(existingCandles),
-            shouldLoadPrecisionSupport
-              ? needsOneMinute
-                ? fetchBacktestHistoryCandles(
-                    precisionTimeframe,
-                    precisionTargetBars,
-                    recentOneMinutePromise,
-                    true,
-                    BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
-                    hasDateRange
-                      ? {
-                          requestWindow: oneMinuteHistoryRequestWindow ?? undefined,
-                          coverageWindow: {
-                            startYmd: settings.statsDateStart,
-                            endYmd: settings.statsDateEnd,
-                            leadingBars: precisionPaddingBars,
-                            strictCoverage: false
-                          }
-                        }
-                      : undefined
-                  ).catch(() => [])
-                : Promise.resolve(existingOneMinute)
-              : Promise.resolve([])
-          ];
-
-          const [deepHistoryCandles, oneMinuteCandles] = await Promise.all(promises);
+                ).catch(() => [])
+              : shouldLoadPrecisionSupport
+                ? existingOneMinute
+                : [];
           let seedCandles = pickLongestCandleSeries(
             deepHistoryCandles,
             existingCandles
