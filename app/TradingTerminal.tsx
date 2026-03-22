@@ -4557,8 +4557,8 @@ const futuresAssets: FutureAsset[] = [
     symbol: "XAUUSD",
     name: "XAU / USD",
     basePrice: 2945.25,
-    openInterest: "CLICKHOUSE + LIVE",
-    funding: "CFD"
+    openInterest: "DATABENTO + LIVE",
+    funding: "COMEX"
   }
 ];
 

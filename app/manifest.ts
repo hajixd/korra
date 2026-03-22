@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Korra",
     short_name: "Korra",
-    description: "XAUUSD trading terminal with live charting, assistant tools, and backtesting.",
+    description: "XAUUSD trading terminal with Databento gold futures charting, assistant tools, and backtesting.",
     start_url: "/",
     scope: "/",
     display: "standalone",

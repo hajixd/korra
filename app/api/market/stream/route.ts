@@ -1,63 +1,129 @@
 import { NextResponse } from "next/server";
+import {
+  DATABENTO_DEFAULT_PAIR,
+  spawnDatabentoStreamProcess
+} from "../../../../lib/databentoMarketData";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const DEFAULT_PAIR = "XAU_USD";
-const DEFAULT_STREAM_URL = "https://oanda-worker-production.up.railway.app/stream/prices";
 const PAIR_RE = /^[A-Z0-9]{2,20}(?:_[A-Z0-9]{2,20})?(?:,[A-Z0-9]{2,20}(?:_[A-Z0-9]{2,20})?)*$/;
+const KEEPALIVE_INTERVAL_MS = 15_000;
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const pairs = (searchParams.get("pairs") || DEFAULT_PAIR).toUpperCase().trim();
+  const pairs = (searchParams.get("pairs") || DATABENTO_DEFAULT_PAIR).toUpperCase().trim();
 
   if (!PAIR_RE.test(pairs)) {
     return NextResponse.json({ error: "Unsupported pair format." }, { status: 400 });
   }
-
-  const apiKey =
-    process.env.PRICE_STREAM_API_KEY ||
-    process.env.NEXT_PUBLIC_PRICE_STREAM_API_KEY ||
-    process.env.MARKET_API_KEY ||
-    process.env.NEXT_PUBLIC_MARKET_API_KEY ||
-    "trd_PCv-kkjDo-4t4QMDNxz3JRCGIyBCKHNq";
-  const upstreamBase = process.env.PRICE_STREAM_URL || DEFAULT_STREAM_URL;
-  const upstreamUrl = new URL(upstreamBase);
-  upstreamUrl.searchParams.set("api_key", apiKey);
-  upstreamUrl.searchParams.set("pairs", pairs);
-
-  try {
-    const upstream = await fetch(upstreamUrl.toString(), {
-      headers: {
-        Accept: "text/event-stream"
-      },
-      cache: "no-store"
-    });
-
-    if (!upstream.ok || !upstream.body) {
-      const body = await upstream.text().catch(() => "");
-      return NextResponse.json(
-        {
-          error: `Price stream unavailable (${upstream.status}).`,
-          details: body.slice(0, 500)
-        },
-        { status: upstream.status || 502 }
-      );
-    }
-
-    return new Response(upstream.body, {
-      status: 200,
-      headers: {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-        "X-Accel-Buffering": "no"
-      }
-    });
-  } catch (error) {
-    return NextResponse.json(
-      { error: (error as Error).message || "Failed to connect to price stream." },
-      { status: 502 }
-    );
+  if (pairs !== DATABENTO_DEFAULT_PAIR) {
+    return NextResponse.json({ error: "Only XAU_USD is supported by this stream." }, { status: 400 });
   }
+  if (!process.env.DATABENTO_API_KEY) {
+    return NextResponse.json({ error: "Missing DATABENTO_API_KEY." }, { status: 500 });
+  }
+
+  const encoder = new TextEncoder();
+  const child = spawnDatabentoStreamProcess();
+
+  const stream = new ReadableStream({
+    start(controller) {
+      let stdoutBuffer = "";
+      let closed = false;
+      let keepaliveId = 0 as unknown as ReturnType<typeof setInterval>;
+
+      const close = () => {
+        if (closed) {
+          return;
+        }
+        closed = true;
+        clearInterval(keepaliveId);
+        request.signal.removeEventListener("abort", abortHandler);
+        if (!child.killed) {
+          child.kill();
+        }
+        try {
+          controller.close();
+        } catch {
+          // The consumer may have already closed the stream.
+        }
+      };
+
+      const abortHandler = () => {
+        close();
+      };
+
+      request.signal.addEventListener("abort", abortHandler);
+      controller.enqueue(encoder.encode(": databento-connected\n\n"));
+
+      keepaliveId = setInterval(() => {
+        if (!closed) {
+          controller.enqueue(encoder.encode(": keepalive\n\n"));
+        }
+      }, KEEPALIVE_INTERVAL_MS);
+
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+
+      child.stdout.on("data", (chunk: string) => {
+        stdoutBuffer += chunk;
+        const lines = stdoutBuffer.split(/\r?\n/);
+        stdoutBuffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || closed) {
+            continue;
+          }
+          try {
+            const payload = JSON.parse(trimmed) as { pair?: string };
+            if ((payload.pair || "").toUpperCase() !== DATABENTO_DEFAULT_PAIR) {
+              continue;
+            }
+            controller.enqueue(encoder.encode(`data: ${trimmed}\n\n`));
+          } catch {
+            // Ignore malformed child output and keep the stream alive.
+          }
+        }
+      });
+
+      child.stderr.on("data", (chunk: string) => {
+        const message = chunk.trim();
+        if (message) {
+          console.error(`[databento-stream] ${message}`);
+        }
+      });
+
+      child.on("error", (error) => {
+        if (!closed) {
+          controller.enqueue(
+            encoder.encode(
+              `event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`
+            )
+          );
+          close();
+        }
+      });
+
+      child.on("close", () => {
+        close();
+      });
+    },
+    cancel() {
+      if (!child.killed) {
+        child.kill();
+      }
+    }
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no"
+    }
+  });
 }

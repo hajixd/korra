@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Korra's Space",
-  description: "XAUUSD trading UI with ClickHouse history and streaming prices.",
+  description: "XAUUSD trading UI with Databento gold futures history and streaming prices.",
   applicationName: "Korra",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
