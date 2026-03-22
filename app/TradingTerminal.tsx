@@ -268,7 +268,7 @@ type SurfaceTab = "chart" | "settings" | "models" | "backtest" | "ai" | "social"
 type SocialPresetFeedItem = {
   id: string;
   presetName: string;
-  note: string;
+  description: string;
   settings: Record<string, any>;
   authorUid: string;
   authorDisplayName: string;
@@ -2763,7 +2763,7 @@ const parseSocialPresetFeedList = (
       return {
         id: entry.id,
         presetName,
-        note: String(raw.note ?? "").trim(),
+        description: String(raw.description ?? raw.note ?? "").trim(),
         settings: settings as Record<string, any>,
         authorUid: String(raw.authorUid ?? "").trim(),
         authorDisplayName: String(raw.authorDisplayName ?? "").trim() || "Unknown Trader",
@@ -2800,6 +2800,41 @@ const parseSocialPresetFeedList = (
     })
     .filter((entry): entry is SocialPresetFeedItem => entry !== null)
     .sort((left, right) => right.publishedAtMs - left.publishedAtMs);
+};
+
+const resolveSocialFeedErrorMessage = (error: unknown) => {
+  const code = String((error as { code?: unknown })?.code ?? "").trim().toLowerCase();
+
+  if (code.includes("permission-denied")) {
+    return "The social feed is blocked by Firestore rules right now.";
+  }
+
+  if (code.includes("unavailable")) {
+    return "The social feed is temporarily unavailable. Try again in a moment.";
+  }
+
+  return error instanceof Error
+    ? error.message
+    : "The social preset feed could not be loaded right now.";
+};
+
+const buildUniqueSavedPresetName = (
+  existingPresets: SavedPreset[],
+  preferredName: string
+) => {
+  const baseName = preferredName.trim() || "Imported Preset";
+  const existingNames = new Set(existingPresets.map((preset) => preset.name));
+
+  if (!existingNames.has(baseName)) {
+    return baseName;
+  }
+
+  let suffix = 2;
+  while (existingNames.has(`${baseName} (${suffix})`)) {
+    suffix += 1;
+  }
+
+  return `${baseName} (${suffix})`;
 };
 
 const parseUploadedStrategyModelList = (
@@ -11011,6 +11046,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [socialPresetsLoading, setSocialPresetsLoading] = useState(false);
   const [socialPresetsError, setSocialPresetsError] = useState("");
   const [socialPublishPresetName, setSocialPublishPresetName] = useState("");
+  const [socialPublishDescription, setSocialPublishDescription] = useState("");
   const [socialPublishStatus, setSocialPublishStatus] = useState("");
   const [socialPublishStatusTone, setSocialPublishStatusTone] = useState<
     "neutral" | "success" | "error"
@@ -22505,11 +22541,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const selectedSocialPublishPreset = useMemo(() => {
     return mobileSavedPresets.find((preset) => preset.name === socialPublishPresetName) ?? null;
   }, [mobileSavedPresets, socialPublishPresetName]);
-  const selectedSocialPublishPreview = useMemo(() => {
-    return selectedSocialPublishPreset
-      ? buildSocialPresetPreview(selectedSocialPublishPreset.settings)
-      : null;
-  }, [selectedSocialPublishPreset]);
   const socialPublishedCount = useMemo(() => {
     return socialPresets.filter((preset) => preset.authorUid === currentUser.uid).length;
   }, [currentUser.uid, socialPresets]);
@@ -22568,9 +22599,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         setSocialPresets(parsed);
         setSocialPresetsLoading(false);
       },
-      () => {
+      (error) => {
         setSocialPresetsLoading(false);
-        setSocialPresetsError("The social preset feed could not be loaded right now.");
+        setSocialPresetsError(resolveSocialFeedErrorMessage(error));
       }
     );
 
@@ -22601,7 +22632,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     try {
       await addDoc(collection(firebaseDb, "socialPresets"), {
         presetName: selectedSocialPublishPreset.name,
-        note: "",
+        description: socialPublishDescription.trim(),
+        note: socialPublishDescription.trim(),
         settings: selectedSocialPublishPreset.settings,
         authorUid: currentUser.uid,
         authorDisplayName: currentUserDisplayName,
@@ -22619,9 +22651,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       });
       setSocialPublishStatus(`Published ${selectedSocialPublishPreset.name} to the community feed.`);
       setSocialPublishStatusTone("success");
+      setSocialPublishDescription("");
     } catch (error) {
       setSocialPublishStatus(
-        error instanceof Error ? error.message : "That preset could not be published."
+        resolveSocialFeedErrorMessage(error)
       );
       setSocialPublishStatusTone("error");
     } finally {
@@ -22632,6 +22665,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     currentUser.uid,
     currentUserDisplayName,
     firebaseDb,
+    socialPublishDescription,
     selectedSocialPublishPreset
   ]);
 
@@ -22667,7 +22701,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         setSocialPublishStatusTone("neutral");
       } catch (error) {
         setSocialPublishStatus(
-          error instanceof Error ? error.message : "That published preset could not be removed."
+          resolveSocialFeedErrorMessage(error)
         );
         setSocialPublishStatusTone("error");
       } finally {
@@ -22675,6 +22709,28 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       }
     },
     [currentUser.uid, firebaseDb]
+  );
+  const handleSaveSocialPresetToSaves = useCallback(
+    (preset: SocialPresetFeedItem) => {
+      const preferredName =
+        preset.authorUid === currentUser.uid
+          ? preset.presetName
+          : `${preset.presetName} · ${preset.authorDisplayName}`;
+      const nextName = buildUniqueSavedPresetName(savedPresets, preferredName);
+      const nextPresets = [
+        ...savedPresets,
+        {
+          name: nextName,
+          settings: preset.settings,
+          savedAt: Date.now(),
+        },
+      ];
+
+      persistPresets(nextPresets);
+      setSocialPublishStatus(`Saved ${nextName} to your presets.`);
+      setSocialPublishStatusTone("success");
+    },
+    [currentUser.uid, persistPresets, savedPresets]
   );
 
   const aiZipClusterSourceCandles = useMemo(() => {
@@ -26064,7 +26120,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 </div>
                 <div className="backtest-toolbar-note backtest-toolbar-note-stack">
                   <span className="backtest-toolbar-note-meta">
-                    Publish one saved preset or run one directly from the community feed.
+                    Publish a saved preset, browse community posts, and save any setup into your own preset list.
                   </span>
                   {socialPublishStatus ? (
                     <span className={`backtest-toolbar-note-meta social-simple-status ${socialPublishStatusTone}`}>
@@ -26103,6 +26159,24 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             ))}
                           </select>
                         </label>
+                      </div>
+                      <label className="social-simple-field">
+                        <span>Description</span>
+                        <textarea
+                          className="social-simple-textarea"
+                          value={socialPublishDescription}
+                          onChange={(event) => setSocialPublishDescription(event.target.value)}
+                          rows={4}
+                          maxLength={220}
+                          placeholder="Write a short note about how you use this preset or what people should expect."
+                        />
+                      </label>
+                      <div className="social-simple-helper-row">
+                        <span className="social-simple-helper-text">
+                          {selectedSocialPublishPreset
+                            ? `Posting ${selectedSocialPublishPreset.name} as ${currentUserDisplayName}.`
+                            : "Choose a preset to publish."}
+                        </span>
                         <button
                           type="button"
                           className="panel-action-btn"
@@ -26112,26 +26186,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                           {socialPublishing ? "Publishing..." : "Publish"}
                         </button>
                       </div>
-
-                      {selectedSocialPublishPreview ? (
-                        <div className="social-simple-summary">
-                          <span>{selectedSocialPublishPreview.symbol}</span>
-                          <span>{selectedSocialPublishPreview.analysisTimeframe} analysis</span>
-                          <span>
-                            {selectedSocialPublishPreview.minutePreciseEnabled
-                              ? `${selectedSocialPublishPreview.precisionTimeframe} precision`
-                              : "analysis only"}
-                          </span>
-                          <span>
-                            {selectedSocialPublishPreview.aiMode === "off"
-                              ? "AI Off"
-                              : selectedSocialPublishPreview.aiMode.toUpperCase()}
-                          </span>
-                          <span>
-                            {selectedSocialPublishPreview.enabledModelCount.toLocaleString("en-US")} models
-                          </span>
-                        </div>
-                      ) : null}
                     </>
                   )}
                 </section>
@@ -26175,22 +26229,20 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                                   {isOwner ? " · You" : ""}
                                 </span>
                               </div>
-                              <div className="social-simple-row-meta">
-                                <span>{preset.symbol}</span>
-                                <span>{preset.analysisTimeframe}</span>
-                                <span>
-                                  {preset.minutePreciseEnabled
-                                    ? preset.precisionTimeframe
-                                    : "analysis only"}
-                                </span>
-                                <span>
-                                  {preset.aiMode === "off" ? "AI Off" : preset.aiMode.toUpperCase()}
-                                </span>
-                                <span>{formatRelativeTimeLabel(preset.publishedAtMs)}</span>
+                              <div className="social-simple-row-detail">
+                                {`${preset.symbol.replaceAll("_", "/")} · ${preset.analysisTimeframe} · ${
+                                  preset.minutePreciseEnabled
+                                    ? `${preset.precisionTimeframe} precision`
+                                    : "analysis only"
+                                } · ${
+                                  preset.aiMode === "off" ? "AI Off" : preset.aiMode.toUpperCase()
+                                } · ${preset.enabledModelCount.toLocaleString("en-US")} models · ${formatRelativeTimeLabel(
+                                  preset.publishedAtMs
+                                )}`}
                               </div>
-                              {preset.note ? (
-                                <div className="social-simple-row-note">{preset.note}</div>
-                              ) : null}
+                              <div className="social-simple-row-note">
+                                {preset.description || "No description added yet."}
+                              </div>
                             </div>
                             <div className="social-simple-row-actions">
                               <button
@@ -26199,6 +26251,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                                 onClick={() => handleRunSocialPreset(preset)}
                               >
                                 Run
+                              </button>
+                              <button
+                                type="button"
+                                className="panel-action-btn"
+                                onClick={() => handleSaveSocialPresetToSaves(preset)}
+                              >
+                                Add to Saves
                               </button>
                               {isOwner ? (
                                 <button
