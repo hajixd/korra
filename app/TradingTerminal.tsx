@@ -649,6 +649,8 @@ const cloneTradeEntryNeighbors = (value: unknown): BacktestEntryNeighbor[] => {
           : row.metaSession != null
             ? String(row.metaSession)
             : null,
+      metaLib: row.metaLib != null ? String(row.metaLib) : null,
+      metaSuppressed: row.metaSuppressed === true,
       dir: Number.isFinite(dir) ? dir : null,
       label: Number.isFinite(label) ? label : null,
       d: Number.isFinite(d) ? d : null,
@@ -740,6 +742,8 @@ const toServerTradePayload = (trade: HistoryItem): ServerTradePayload => ({
     trade.confidence ??
     null,
   aiConfidence: trade.aiConfidence ?? null,
+  averageNeighborContributionAtEntry:
+    trade.averageNeighborContributionAtEntry ?? null,
   aiMode:
     trade.aiMode === "knn" || trade.aiMode === "hdbscan" || trade.aiMode === "off"
       ? trade.aiMode
@@ -780,6 +784,153 @@ const toServerLibraryPointPayload = (point: any): ServerLibraryPointPayload => (
         .filter((value: number) => Number.isFinite(value))
     : null
 });
+
+const normalizeAiProbabilityScore = (value: unknown): number | null => {
+  let numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  if (numeric > 1 && numeric <= 100) {
+    numeric /= 100;
+  }
+  return clamp(numeric, 0, 1);
+};
+
+const getEntryNeighborOutcomeScore = (
+  neighbor: BacktestEntryNeighbor | null | undefined
+): number | null => {
+  if (!neighbor) {
+    return null;
+  }
+
+  const label = Number(neighbor.label);
+  if (Number.isFinite(label)) {
+    if (label > 0) return 1;
+    if (label < 0) return 0;
+  }
+
+  const outcome = String(
+    neighbor.metaOutcome ?? neighbor.t?.result ?? ""
+  ).trim().toLowerCase();
+  if (
+    outcome === "tp" ||
+    outcome === "win" ||
+    outcome.includes("win") ||
+    outcome.includes("take profit")
+  ) {
+    return 1;
+  }
+  if (
+    outcome === "sl" ||
+    outcome === "loss" ||
+    outcome.includes("loss") ||
+    outcome.includes("stop loss")
+  ) {
+    return 0;
+  }
+
+  const pnl = Number(neighbor.metaPnl ?? neighbor.t?.pnl ?? NaN);
+  if (Number.isFinite(pnl)) {
+    return pnl >= 0 ? 1 : 0;
+  }
+
+  return null;
+};
+
+const getTradeAverageNeighborContributionAtEntryScore = (
+  trade: HistoryItem
+): number | null => {
+  const explicit = normalizeAiProbabilityScore(
+    trade.averageNeighborContributionAtEntry
+  );
+  if (explicit != null) {
+    return explicit;
+  }
+
+  const neighbors = Array.isArray(trade.entryNeighbors) ? trade.entryNeighbors : [];
+  if (!neighbors.length) {
+    return null;
+  }
+
+  const aggregates = new Map<string, { wins: number; losses: number }>();
+
+  for (const neighbor of neighbors) {
+    const outcomeScore = getEntryNeighborOutcomeScore(neighbor);
+    if (outcomeScore == null) {
+      continue;
+    }
+
+    const libraryKey =
+      String(neighbor.metaLib ?? "").trim().toLowerCase() || "unknown";
+    const weight = Math.max(0, Number(neighbor.w) || 1);
+    const current = aggregates.get(libraryKey) ?? { wins: 0, losses: 0 };
+    current.wins += weight * outcomeScore;
+    current.losses += weight * (1 - outcomeScore);
+    aggregates.set(libraryKey, current);
+  }
+
+  if (aggregates.size === 0) {
+    return null;
+  }
+
+  let weightedContribution = 0;
+  let totalWeight = 0;
+
+  for (const neighbor of neighbors) {
+    const libraryKey =
+      String(neighbor.metaLib ?? "").trim().toLowerCase() || "unknown";
+    const aggregate = aggregates.get(libraryKey);
+    if (!aggregate) {
+      continue;
+    }
+
+    const libraryTotal = aggregate.wins + aggregate.losses;
+    if (!(libraryTotal > 0)) {
+      continue;
+    }
+
+    const libraryContribution = aggregate.wins / libraryTotal;
+    const weight = Math.max(0, Number(neighbor.w) || 1);
+    weightedContribution += libraryContribution * weight;
+    totalWeight += weight;
+  }
+
+  if (!(totalWeight > 0)) {
+    return null;
+  }
+
+  return clamp(weightedContribution / totalWeight, 0, 1);
+};
+
+const tradePassesAiEntryThresholds = (params: {
+  trade: HistoryItem;
+  confidenceThresholdPct: number;
+  ancThresholdPct: number;
+  confidenceResolver: (trade: HistoryItem) => number;
+}): boolean => {
+  const {
+    trade,
+    confidenceThresholdPct,
+    ancThresholdPct,
+    confidenceResolver
+  } = params;
+
+  if (confidenceThresholdPct > 0) {
+    const confidence = confidenceResolver(trade) * 100;
+    if (!Number.isFinite(confidence) || confidence < confidenceThresholdPct) {
+      return false;
+    }
+  }
+
+  if (ancThresholdPct > 0) {
+    const anc = getTradeAverageNeighborContributionAtEntryScore(trade);
+    if (anc == null || anc * 100 < ancThresholdPct) {
+      return false;
+    }
+  }
+
+  return true;
+};
 
 const computeBacktestRowsLocally = (
   payload: BacktestHistoryComputeRequest
@@ -841,11 +992,13 @@ type PanelAnalyticsServerPayload = {
   panelBacktestFilterSettings: BacktestFilterSettings;
   panelConfidenceGateDisabled: boolean;
   panelEffectiveConfidenceThreshold: number;
+  panelEffectiveAncThreshold: number;
   panelLibraryPoints?: ServerLibraryPointPayload[];
   activePanelSourceTrades?: HistoryItem[];
   activePanelBacktestFilterSettings?: BacktestFilterSettings;
   activePanelConfidenceGateDisabled?: boolean;
   activePanelEffectiveConfidenceThreshold?: number;
+  activePanelEffectiveAncThreshold?: number;
   aiLibraryDefaultsById: Record<string, Record<string, AiLibrarySettingValue>>;
 };
 
@@ -897,6 +1050,7 @@ const computePanelAnalyticsOnServer = async (
     panelBacktestFilterSettings: payload.panelBacktestFilterSettings,
     panelConfidenceGateDisabled: payload.panelConfidenceGateDisabled,
     panelEffectiveConfidenceThreshold: payload.panelEffectiveConfidenceThreshold,
+    panelEffectiveAncThreshold: payload.panelEffectiveAncThreshold,
     aiLibraryDefaultsById: payload.aiLibraryDefaultsById
   };
 
@@ -917,6 +1071,9 @@ const computePanelAnalyticsOnServer = async (
   }
   if (typeof payload.activePanelEffectiveConfidenceThreshold === "number") {
     requestBody.activePanelEffectiveConfidenceThreshold = payload.activePanelEffectiveConfidenceThreshold;
+  }
+  if (typeof payload.activePanelEffectiveAncThreshold === "number") {
+    requestBody.activePanelEffectiveAncThreshold = payload.activePanelEffectiveAncThreshold;
   }
 
   const requestText = JSON.stringify(requestBody);
@@ -2687,6 +2844,7 @@ type BacktestSettingsSnapshot = {
   aiMode: "off" | "knn" | "hdbscan";
   aiFilterEnabled: boolean;
   confidenceThreshold: number;
+  ancThreshold: number;
   tpDollars: number;
   slDollars: number;
   dollarsPerMove: number;
@@ -2733,6 +2891,7 @@ type BacktestFilterSettings = Pick<
   | "distanceMetric"
   | "knnNeighborSpace"
   | "selectedAiDomains"
+  | "ancThreshold"
   | "kEntry"
   | "knnVoteMode"
 >;
@@ -6173,6 +6332,7 @@ const filterHistoryRowsLocally = (params: {
   settings: BacktestFilterSettings;
   confidenceGateDisabled: boolean;
   effectiveConfidenceThreshold: number;
+  effectiveAncThreshold: number;
   confidenceResolver: (trade: HistoryItem) => number;
 }) => {
   const {
@@ -6180,6 +6340,7 @@ const filterHistoryRowsLocally = (params: {
     settings,
     confidenceGateDisabled,
     effectiveConfidenceThreshold,
+    effectiveAncThreshold,
     confidenceResolver
   } = params;
   const dateFilteredTrades = filterTradesByDateRange(
@@ -6196,7 +6357,13 @@ const filterHistoryRowsLocally = (params: {
   const filteredTrades = confidenceGateDisabled
     ? timeFilteredTrades
     : timeFilteredTrades.filter(
-        (trade) => confidenceResolver(trade) * 100 >= effectiveConfidenceThreshold
+        (trade) =>
+          tradePassesAiEntryThresholds({
+            trade,
+            confidenceThresholdPct: effectiveConfidenceThreshold,
+            ancThresholdPct: effectiveAncThreshold,
+            confidenceResolver
+          })
       );
 
   return [...filteredTrades].sort(
@@ -9558,6 +9725,7 @@ function TradingTerminalWorkspace({
   const [aiFilterEnabled, setAiFilterEnabled] = useState(false);
   const [staticLibrariesClusters, setStaticLibrariesClusters] = useState(false);
   const [confidenceThreshold, setConfidenceThreshold] = useState(0);
+  const [ancThreshold, setAncThreshold] = useState(0);
   const [aiExitStrictness, setAiExitStrictness] = useState(0);
   const [aiExitLossTolerance, setAiExitLossTolerance] = useState(0);
   const [aiExitWinTolerance, setAiExitWinTolerance] = useState(0);
@@ -9749,6 +9917,7 @@ function TradingTerminalWorkspace({
     aiMode,
     aiFilterEnabled,
     confidenceThreshold,
+    ancThreshold,
     tpDollars,
     slDollars,
     dollarsPerMove,
@@ -10663,6 +10832,7 @@ function TradingTerminalWorkspace({
   const aiDisabled = aiMode === "off";
   const confidenceGateDisabled = aiMode === "off";
   const effectiveConfidenceThreshold = confidenceGateDisabled ? 0 : confidenceThreshold;
+  const effectiveAncThreshold = confidenceGateDisabled ? 0 : ancThreshold;
   const selectedAiModelCount = useMemo(() => {
     return countEnabledAizipModels(aiModelStates);
   }, [aiModelStates]);
@@ -10779,7 +10949,10 @@ function TradingTerminalWorkspace({
     if (confidenceGateDisabled && confidenceThreshold !== 0) {
       setConfidenceThreshold(0);
     }
-  }, [confidenceGateDisabled, confidenceThreshold]);
+    if (confidenceGateDisabled && ancThreshold !== 0) {
+      setAncThreshold(0);
+    }
+  }, [ancThreshold, confidenceGateDisabled, confidenceThreshold]);
   const selectedAiLibrary = useMemo(() => {
     return selectedAiLibraryId ? aiLibraryDefById[selectedAiLibraryId] ?? null : null;
   }, [aiLibraryDefById, selectedAiLibraryId]);
@@ -10917,6 +11090,9 @@ function TradingTerminalWorkspace({
   const appliedEffectiveConfidenceThreshold = appliedConfidenceGateDisabled
     ? 0
     : appliedBacktestSettings.confidenceThreshold;
+  const appliedEffectiveAncThreshold = appliedConfidenceGateDisabled
+    ? 0
+    : appliedBacktestSettings.ancThreshold;
   const appliedAiModelEveryCandleMode = usesAizipEveryCandleMode(
     appliedBacktestSettings.aiMode,
     appliedBacktestSettings.aiFilterEnabled
@@ -13316,12 +13492,14 @@ function TradingTerminalWorkspace({
       distanceMetric,
       knnNeighborSpace,
       selectedAiDomains: [...selectedAiDomains],
+      ancThreshold,
       kEntry,
       knnVoteMode
     }),
     [
       antiCheatEnabled,
       aiMode,
+      ancThreshold,
       distanceMetric,
       enabledBacktestHours,
       enabledBacktestMonths,
@@ -13342,6 +13520,9 @@ function TradingTerminalWorkspace({
   const chartPanelEffectiveConfidenceThreshold = chartPanelConfidenceGateDisabled
     ? 0
     : confidenceThreshold;
+  const chartPanelEffectiveAncThreshold = chartPanelConfidenceGateDisabled
+    ? 0
+    : ancThreshold;
   const chartPanelTradeBlueprints = useMemo(() => {
     if (!shouldBuildChartPanelReplayRows) {
       return [] as TradeBlueprint[];
@@ -13517,6 +13698,10 @@ function TradingTerminalWorkspace({
     usesChartPanelLiveSimulationForHistory
       ? chartPanelEffectiveConfidenceThreshold
       : appliedEffectiveConfidenceThreshold;
+  const panelEffectiveAncThreshold =
+    usesChartPanelLiveSimulationForHistory
+      ? chartPanelEffectiveAncThreshold
+      : appliedEffectiveAncThreshold;
   const panelSourceTrades =
     usesChartPanelLiveSimulationForHistory
       ? chartPanelReplayRows
@@ -13537,6 +13722,10 @@ function TradingTerminalWorkspace({
     usesChartPanelLiveSimulationForActive
       ? chartPanelEffectiveConfidenceThreshold
       : appliedEffectiveConfidenceThreshold;
+  const activePanelEffectiveAncThreshold =
+    usesChartPanelLiveSimulationForActive
+      ? chartPanelEffectiveAncThreshold
+      : appliedEffectiveAncThreshold;
   const shouldSendActivePanelOverrides =
     usesChartPanelLiveSimulationForActive !== usesChartPanelLiveSimulationForHistory;
   const shouldComputePanelAnalyticsOnServer =
@@ -13566,13 +13755,15 @@ function TradingTerminalWorkspace({
       settings: panelBacktestFilterSettings,
       confidenceGateDisabled: panelConfidenceGateDisabled,
       effectiveConfidenceThreshold: panelEffectiveConfidenceThreshold,
+      effectiveAncThreshold: panelEffectiveAncThreshold,
       confidenceResolver: getTradeConfidenceScore
     });
   }, [
     panelSourceTrades,
     panelBacktestFilterSettings,
     panelConfidenceGateDisabled,
-    panelEffectiveConfidenceThreshold
+    panelEffectiveConfidenceThreshold,
+    panelEffectiveAncThreshold
   ]);
   const fallbackActivePanelHistoryRows = useMemo(() => {
     return filterHistoryRowsLocally({
@@ -13580,13 +13771,15 @@ function TradingTerminalWorkspace({
       settings: activePanelBacktestFilterSettings,
       confidenceGateDisabled: activePanelConfidenceGateDisabled,
       effectiveConfidenceThreshold: activePanelEffectiveConfidenceThreshold,
+      effectiveAncThreshold: activePanelEffectiveAncThreshold,
       confidenceResolver: getTradeConfidenceScore
     });
   }, [
     activePanelSourceTrades,
     activePanelBacktestFilterSettings,
     activePanelConfidenceGateDisabled,
-    activePanelEffectiveConfidenceThreshold
+    activePanelEffectiveConfidenceThreshold,
+    activePanelEffectiveAncThreshold
   ]);
   const panelAnalyticsLibraryIdSet = useMemo(() => {
     return new Set(
@@ -13671,12 +13864,14 @@ function TradingTerminalWorkspace({
         panelBacktestFilterSettings,
         panelConfidenceGateDisabled,
         panelEffectiveConfidenceThreshold,
+        panelEffectiveAncThreshold,
         ...(shouldSendActivePanelOverrides
           ? {
               activePanelSourceTrades,
               activePanelBacktestFilterSettings,
               activePanelConfidenceGateDisabled,
-              activePanelEffectiveConfidenceThreshold
+              activePanelEffectiveConfidenceThreshold,
+              activePanelEffectiveAncThreshold
             }
           : {}),
         panelLibraryPoints: panelAnalyticsLibraryPoints,
@@ -13706,11 +13901,13 @@ function TradingTerminalWorkspace({
     activePanelBacktestFilterSettings,
     activePanelConfidenceGateDisabled,
     activePanelEffectiveConfidenceThreshold,
+    activePanelEffectiveAncThreshold,
     activePanelSourceTrades,
     aiLibraryDefaultsById,
     panelBacktestFilterSettings,
     panelConfidenceGateDisabled,
     panelEffectiveConfidenceThreshold,
+    panelEffectiveAncThreshold,
     panelAnalyticsCanonicalLibrariesMissingPoints,
     panelAnalyticsLibraryPoints,
     panelAnalyticsLibrarySourcesSettled,
@@ -14643,6 +14840,7 @@ function TradingTerminalWorkspace({
     aiFilterEnabled,
     staticLibrariesClusters,
     confidenceThreshold,
+    ancThreshold,
     aiExitStrictness,
     aiExitLossTolerance,
     aiExitWinTolerance,
@@ -14692,7 +14890,7 @@ function TradingTerminalWorkspace({
     selectedSymbol, selectedTimeframe, selectedBacktestTimeframe, effectiveSelectedBacktestPrecisionTimeframe, chartPanelLiveSimulationEnabled, activePanelLiveSimulationEnabled, backtestPrecisionEnabled,
     enabledBacktestWeekdays, enabledBacktestSessions,
     enabledBacktestMonths, enabledBacktestHours, aiMode, aiModelEnabled, aiFilterEnabled,
-    staticLibrariesClusters, confidenceThreshold, aiExitStrictness, aiExitLossTolerance,
+    staticLibrariesClusters, confidenceThreshold, ancThreshold, aiExitStrictness, aiExitLossTolerance,
     aiExitWinTolerance, useMitExit, complexity, volatilityPercentile, tpDollars, slDollars,
     dollarsPerMove, maxBarsInTrade, maxConcurrentTrades, stopMode, breakEvenTriggerPct, trailingStartPct,
     trailingDistPct, aiModelStates, aiFeatureLevels, aiFeatureModes,
@@ -14747,6 +14945,7 @@ function TradingTerminalWorkspace({
     if (s.aiFilterEnabled != null) setAiFilterEnabled(s.aiFilterEnabled);
     if (s.staticLibrariesClusters != null) setStaticLibrariesClusters(s.staticLibrariesClusters);
     if (s.confidenceThreshold != null) setConfidenceThreshold(s.confidenceThreshold);
+    if (s.ancThreshold != null) setAncThreshold(s.ancThreshold);
     if (s.aiExitStrictness != null) setAiExitStrictness(s.aiExitStrictness);
     if (s.aiExitLossTolerance != null) setAiExitLossTolerance(s.aiExitLossTolerance);
     if (s.aiExitWinTolerance != null) setAiExitWinTolerance(s.aiExitWinTolerance);
@@ -14905,6 +15104,7 @@ function TradingTerminalWorkspace({
     setAiFilterEnabled(false);
     setStaticLibrariesClusters(false);
     setConfidenceThreshold(0);
+    setAncThreshold(0);
     setAiExitStrictness(0);
     setAiExitLossTolerance(0);
     setAiExitWinTolerance(0);
@@ -17261,13 +17461,16 @@ function TradingTerminalWorkspace({
         return true;
       }
 
-      return (
-        getEffectiveTradeConfidenceScore(trade) * 100 >=
-        appliedEffectiveConfidenceThreshold
-      );
+      return tradePassesAiEntryThresholds({
+        trade,
+        confidenceThresholdPct: appliedEffectiveConfidenceThreshold,
+        ancThresholdPct: appliedEffectiveAncThreshold,
+        confidenceResolver: getEffectiveTradeConfidenceScore
+      });
     });
   }, [
     appliedConfidenceGateDisabled,
+    appliedEffectiveAncThreshold,
     appliedEffectiveConfidenceThreshold,
     backtestTimeFilteredTrades,
     getEffectiveTradeConfidenceScore
@@ -18415,6 +18618,9 @@ function TradingTerminalWorkspace({
       const effectiveConfidenceThreshold = confidenceGateDisabled
         ? 0
         : settings.confidenceThreshold;
+      const effectiveAncThreshold = confidenceGateDisabled
+        ? 0
+        : settings.ancThreshold;
 
       if (confidenceGateDisabled) {
         return new Set(pool.map((trade) => trade.id));
@@ -18422,7 +18628,14 @@ function TradingTerminalWorkspace({
 
       const ids = new Set<string>();
       for (const trade of pool) {
-        if (getTradeConfidenceScore(trade) * 100 >= effectiveConfidenceThreshold) {
+        if (
+          tradePassesAiEntryThresholds({
+            trade,
+            confidenceThresholdPct: effectiveConfidenceThreshold,
+            ancThresholdPct: effectiveAncThreshold,
+            confidenceResolver: getTradeConfidenceScore
+          })
+        ) {
           ids.add(trade.id);
         }
       }
@@ -20559,6 +20772,8 @@ function TradingTerminalWorkspace({
           (trade as any).confidence ??
           null,
         margin: getEffectiveTradeConfidenceScore(trade),
+        averageNeighborContributionAtEntry:
+          (trade as any).averageNeighborContributionAtEntry ?? null,
         aiMode:
           (trade as any).aiMode === "knn" || (trade as any).aiMode === "hdbscan"
             ? (trade as any).aiMode
@@ -24118,6 +24333,7 @@ function TradingTerminalWorkspace({
                               setAiModelEnabled(false);
                               setAiFilterEnabled(false);
                               setConfidenceThreshold(0);
+                              setAncThreshold(0);
                             }
                           }}
                         >
@@ -24174,6 +24390,24 @@ function TradingTerminalWorkspace({
                             style={{ "--p": `${effectiveConfidenceThreshold}%` } as React.CSSProperties}
                           />
                           <div className="ai-zip-note">{effectiveConfidenceThreshold}</div>
+                        </div>
+
+                        <div className={`ai-zip-control ${confidenceGateDisabled ? "disabled" : ""}`}>
+                          <div className="ai-zip-label">ANC Threshold (At Entry)</div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={effectiveAncThreshold}
+                            disabled={confidenceGateDisabled}
+                            onChange={(event) => {
+                              setAncThreshold(clamp(Number(event.target.value) || 0, 0, 100));
+                            }}
+                            className="backtest-slider"
+                            style={{ "--p": `${effectiveAncThreshold}%` } as React.CSSProperties}
+                          />
+                          <div className="ai-zip-note">{effectiveAncThreshold}</div>
                         </div>
                       </div>
                     </div>

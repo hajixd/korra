@@ -10642,6 +10642,14 @@ function ClusterMapInner({
   const [viewMonth, setViewMonth] = useState("All"); // All | 0-11
   const [viewWeekday, setViewWeekday] = useState("All"); // All | 0-6
   const [viewHour, setViewHour] = useState("All"); // All | 0-23
+  const [legendToggles, setLegendToggles] = useState({
+    closedWin: true,
+    closedLoss: true,
+    active: true,
+    potential: true,
+    close: true,
+    "lib:suppressed": false,
+  });
 
   // Cluster Groups stats view mode for the table + selected group panel
   // (All = overall, Buy = BUY-only subset, Sell = SELL-only subset)
@@ -10858,12 +10866,8 @@ function ClusterMapInner({
       return true;
     };
     const entries = [];
-    const actLibs = Array.isArray(activeLibraries)
-      ? activeLibraries.map((v: any) => String(v))
-      : [];
-    const suppressedLibActive = actLibs.some(
-      (v: string) => v.toLowerCase() === "suppressed"
-    );
+    const suppressedLibActive =
+      (legendToggles as any)["lib:suppressed"] === true;
     for (let i = 0; i < trades.length; i++) {
       const t = trades[i];
       const fi = t.signalIndex;
@@ -11785,6 +11789,7 @@ function ClusterMapInner({
     distanceMetric,
     knnNeighborSpace,
     viewCompressionMethod,
+    legendToggles,
   ]);
 
   const tradeNodeByUidAll = useMemo(() => {
@@ -11947,13 +11952,6 @@ function ClusterMapInner({
       setSliderValue(0);
     }
   }, [candles.length]);
-  const [legendToggles, setLegendToggles] = useState({
-    closedWin: true,
-    closedLoss: true,
-    active: true,
-    potential: true,
-    close: true,
-  });
   const [ghostLegendColored, setGhostLegendColored] = useState(false);
 
   const [groupOverlayOpacity, setGroupOverlayOpacity] = React.useState(1);
@@ -11973,12 +11971,21 @@ function ClusterMapInner({
   }, [kEntry, knnLinkK]);
   const showGroupOverlays = (Number(groupOverlayOpacity) || 0) > 0;
   const effectiveGroupOverlayOpacity = groupOverlayOpacity;
-  const suppressedLibraryActive = React.useMemo(() => {
-    const libs = Array.isArray(activeLibraries) ? (activeLibraries as any[]) : [];
-    for (const v of libs) {
-      if (String(v ?? "").toLowerCase() === "suppressed") return true;
+  const suppressedLibraryActive =
+    (legendToggles as any)["lib:suppressed"] === true;
+  const libraryLegendIds = React.useMemo(() => {
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    for (const lid of Array.isArray(activeLibraries) ? activeLibraries : []) {
+      const id = String(lid ?? "").trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
     }
-    return false;
+    if (!seen.has("suppressed")) {
+      ids.push("suppressed");
+    }
+    return ids;
   }, [activeLibraries]);
   const normalizeHdbBasisNodes = React.useCallback((src: any[]) => {
     return (src || []).filter(
@@ -12020,23 +12027,23 @@ function ClusterMapInner({
   );
   const hoverWorldShown = pinnedWorld ?? hoverWorld;
 
-  // Ensure all active libraries have legend toggles (default ON).
+  // Ensure cluster-map library legend toggles exist.
+  // Suppressed is always present, but starts hidden.
   useEffect(() => {
-    const libsArr = Array.isArray(activeLibraries) ? activeLibraries : [];
-    if (libsArr.length === 0) return;
+    if (libraryLegendIds.length === 0) return;
     setLegendToggles((prev: any) => {
       let changed = false;
       const next: any = { ...prev };
-      for (const lid of libsArr) {
+      for (const lid of libraryLegendIds) {
         const key = `lib:${String(lid)}`;
         if (!(key in next)) {
-          next[key] = true;
+          next[key] = String(lid).toLowerCase() === "suppressed" ? false : true;
           changed = true;
         }
       }
       return changed ? next : prev;
     });
-  }, [activeLibraries]);
+  }, [libraryLegendIds]);
 
   // Safety recovery: if all currently-loaded library toggles are OFF, turn them back ON.
   // This avoids a persistent "Library 0" state after accidental toggles.
@@ -12045,6 +12052,7 @@ function ClusterMapInner({
     for (const lp of (libraryPoints as any[]) || []) {
       if (!lp) continue;
       const lid = String((lp as any).libId ?? (lp as any).metaLib ?? "").trim();
+      if (!lid || lid.toLowerCase() === "suppressed") continue;
       if (lid) ids.add(lid);
     }
     if (!ids.size) return;
@@ -21447,8 +21455,7 @@ function ClusterMapInner({
               span: 1,
             },
 
-            ...(Array.isArray(activeLibraries) ? activeLibraries : []).map(
-              (lid) => {
+            ...libraryLegendIds.map((lid) => {
                 const def = (AI_LIBRARY_DEF_BY_ID as any)[String(lid)];
                 const name = def
                   ? def.name || def.label || def.id
@@ -21472,8 +21479,7 @@ function ClusterMapInner({
                   span: 1,
                   isLibrary: true,
                 };
-              }
-            ),
+              }),
           ].map((item) => {
             const enabled = legendToggles[item.key];
             const disabledBg =
@@ -21486,9 +21492,10 @@ function ClusterMapInner({
               <div
                 key={item.key}
                 onClick={() => {
+                  const nextEnabled = !(legendToggles as any)[item.key];
                   setLegendToggles((prev) => ({
                     ...prev,
-                    [item.key]: !prev[item.key],
+                    [item.key]: nextEnabled,
                   }));
                 }}
                 onContextMenu={(e) => {

@@ -24,6 +24,8 @@ export type BacktestEntryNeighbor = {
   metaPnl?: number | null;
   metaOutcome?: string | null;
   metaSession?: string | null;
+  metaLib?: string | null;
+  metaSuppressed?: boolean | null;
   dir?: number | null;
   label?: number | null;
   d?: number | null;
@@ -37,6 +39,7 @@ export type BacktestTradeAiEntryMeta = {
   entryMargin?: number | null;
   margin?: number | null;
   aiConfidence?: number | null;
+  averageNeighborContributionAtEntry?: number | null;
   aiMode?: BacktestTradeAiMode | null;
   closestClusterUid?: string | null;
   entryNeighbors?: BacktestEntryNeighbor[];
@@ -692,6 +695,8 @@ export const computeBacktestHistoryRowsChunk = ({
           blueprint.confidence ??
           null,
         aiConfidence: blueprint.aiConfidence ?? null,
+        averageNeighborContributionAtEntry:
+          blueprint.averageNeighborContributionAtEntry ?? null,
         aiMode: blueprint.aiMode ?? null,
         closestClusterUid: blueprint.closestClusterUid ?? null,
         entryNeighbors: Array.isArray(blueprint.entryNeighbors)

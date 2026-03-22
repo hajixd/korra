@@ -51,6 +51,7 @@ type TradeAiEntrySnapshot = {
   confidence: number;
   entryMargin: number;
   margin: number;
+  averageNeighborContributionAtEntry: number | null;
   aiMode: Exclude<BacktestTradeAiMode, "off">;
   closestClusterUid: string | null;
   entryNeighbors: BacktestEntryNeighbor[];
@@ -111,6 +112,7 @@ type BacktestFilterSettings = {
   selectedAiLibrarySettings: AiLibrarySettings;
   distanceMetric: AiDistanceMetric;
   knnNeighborSpace: KnnNeighborSpace;
+  ancThreshold: number;
   kEntry: number;
   knnVoteMode: KnnVoteMode;
   selectedAiDomains: string[];
@@ -1026,6 +1028,17 @@ const toNumeric = (value: unknown, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const normalizeProbabilityScore = (value: unknown): number | null => {
+  let numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  if (numeric > 1 && numeric <= 100) {
+    numeric /= 100;
+  }
+  return clamp(numeric, 0, 1);
+};
+
 const normalizeTradeAiMode = (value: unknown): BacktestTradeAiMode | null => {
   return value === "knn" || value === "hdbscan" || value === "off" ? value : null;
 };
@@ -1078,6 +1091,8 @@ const cloneEntryNeighbors = (value: unknown): BacktestEntryNeighbor[] => {
           : row.metaSession != null
             ? String(row.metaSession)
             : null,
+      metaLib: row.metaLib != null ? String(row.metaLib) : null,
+      metaSuppressed: row.metaSuppressed === true,
       dir: Number.isFinite(dir) ? dir : null,
       label: Number.isFinite(label) ? label : null,
       d: Number.isFinite(d) ? d : null,
@@ -1271,6 +1286,8 @@ const buildEntryNeighbor = (
     metaPnl: candidate.pnlUsd,
     metaOutcome: label === 1 ? "Win" : label === -1 ? "Loss" : candidate.result,
     metaSession: candidate.session,
+    metaLib: candidate.libraryId,
+    metaSuppressed: candidate.libraryId === "suppressed",
     dir,
     label,
     d: Number.isFinite(distance) ? distance : Number.MAX_SAFE_INTEGER,
@@ -1365,6 +1382,8 @@ const applyTradeAiEntrySnapshot = (
     confidence: snapshot.confidence,
     entryMargin: snapshot.entryMargin,
     margin: snapshot.margin,
+    averageNeighborContributionAtEntry:
+      snapshot.averageNeighborContributionAtEntry,
     aiMode: snapshot.aiMode,
     closestClusterUid: snapshot.closestClusterUid,
     entryNeighbors,
@@ -1472,6 +1491,10 @@ const normalizeTrade = (value: unknown): HistoryItem | null => {
           : toNumeric(row.entryMargin)
         : toNumeric(row.margin),
     aiConfidence: row.aiConfidence == null ? null : toNumeric(row.aiConfidence),
+    averageNeighborContributionAtEntry:
+      row.averageNeighborContributionAtEntry == null
+        ? null
+        : normalizeProbabilityScore(row.averageNeighborContributionAtEntry),
     aiMode: normalizeTradeAiMode(row.aiMode),
     closestClusterUid:
       row.closestClusterUid == null ? null : String(row.closestClusterUid),
@@ -1582,6 +1605,7 @@ const normalizeFilterSettings = (value: unknown): BacktestFilterSettings => {
         : {},
     distanceMetric: normalizeDistanceMetric(row.distanceMetric),
     knnNeighborSpace: normalizeKnnNeighborSpace(row.knnNeighborSpace),
+    ancThreshold: clamp(toNumeric(row.ancThreshold), 0, 100),
     kEntry: clamp(Math.floor(toNumeric(row.kEntry, 12)), 1, 512),
     knnVoteMode: normalizeKnnVoteMode(row.knnVoteMode),
     selectedAiDomains: Array.isArray(row.selectedAiDomains)
@@ -1970,6 +1994,64 @@ const computeAntiCheatBacktestContext = (params: {
     return clamp(wins / (wins + losses + AI_EPS), 0, 1);
   };
 
+  const computeAverageNeighborContributionAtEntry = (
+    contextualNeighbors: LibraryNeighborAggregateEntry[],
+    rankedNeighbors: LibraryNeighborAggregateEntry[]
+  ) => {
+    if (contextualNeighbors.length === 0 || rankedNeighbors.length === 0) {
+      return null;
+    }
+
+    const contributionByLibrary = new Map<string, number>();
+    const aggregates = new Map<string, { wins: number; losses: number }>();
+
+    for (const neighbor of contextualNeighbors) {
+      const libraryKey =
+        String(neighbor.candidate.libraryId ?? "").trim().toLowerCase() || "unknown";
+      const voteWeight =
+        Number.isFinite(neighbor.voteWeight) && neighbor.voteWeight > 0
+          ? neighbor.voteWeight
+          : 1;
+      const outcomeScore = clamp(neighbor.outcomeScore, 0, 1);
+      const current = aggregates.get(libraryKey) ?? { wins: 0, losses: 0 };
+      current.wins += voteWeight * outcomeScore;
+      current.losses += voteWeight * (1 - outcomeScore);
+      aggregates.set(libraryKey, current);
+    }
+
+    for (const [libraryKey, aggregate] of aggregates) {
+      const total = aggregate.wins + aggregate.losses;
+      if (total > 0) {
+        contributionByLibrary.set(libraryKey, clamp(aggregate.wins / total, 0, 1));
+      }
+    }
+
+    let weightedContribution = 0;
+    let totalWeight = 0;
+
+    for (const neighbor of rankedNeighbors) {
+      const libraryKey =
+        String(neighbor.candidate.libraryId ?? "").trim().toLowerCase() || "unknown";
+      const contribution = contributionByLibrary.get(libraryKey);
+      if (contribution == null) {
+        continue;
+      }
+
+      const voteWeight =
+        Number.isFinite(neighbor.voteWeight) && neighbor.voteWeight > 0
+          ? neighbor.voteWeight
+          : 1;
+      weightedContribution += contribution * voteWeight;
+      totalWeight += voteWeight;
+    }
+
+    if (!(totalWeight > 0)) {
+      return null;
+    }
+
+    return clamp(weightedContribution / totalWeight, 0, 1);
+  };
+
   const hydrateTradesWithSnapshots = (trades: HistoryItem[]) => {
     return trades.map((trade) =>
       applyTradeAiEntrySnapshot(
@@ -2042,6 +2124,9 @@ const computeAntiCheatBacktestContext = (params: {
     const preservedConfidenceRaw =
       trade.entryConfidence ?? trade.confidence ?? trade.entryMargin ?? trade.margin ?? null;
     const preservedConfidence = Number(preservedConfidenceRaw);
+    const preservedAnc = normalizeProbabilityScore(
+      trade.averageNeighborContributionAtEntry
+    );
     const basePool =
       effectiveValidationMode === "split"
         ? splitTrainingTrades
@@ -2062,6 +2147,7 @@ const computeAntiCheatBacktestContext = (params: {
         confidence,
         entryMargin: confidence,
         margin: confidence,
+        averageNeighborContributionAtEntry: preservedAnc,
         aiMode: activeAiMode,
         closestClusterUid: preservedClosestClusterUid,
         entryNeighbors: preservedNeighbors
@@ -2169,6 +2255,7 @@ const computeAntiCheatBacktestContext = (params: {
         confidence,
         entryMargin: confidence,
         margin: confidence,
+        averageNeighborContributionAtEntry: preservedAnc,
         aiMode: activeAiMode,
         closestClusterUid: preservedClosestClusterUid,
         entryNeighbors: preservedNeighbors
@@ -2188,6 +2275,11 @@ const computeAntiCheatBacktestContext = (params: {
     const confidence =
       computeNeighborConfidence(rankedNeighborEntries) ??
       clamp(0.5 + (baselineWinRate - 0.5) * 0.2, 0.18, 0.82);
+    const averageNeighborContributionAtEntry =
+      computeAverageNeighborContributionAtEntry(
+        neighborEntries,
+        rankedNeighborEntries
+      );
     const rankedNeighbors = rankedNeighborEntries.map((entry) =>
       buildEntryNeighbor(
         entry.candidate,
@@ -2203,6 +2295,7 @@ const computeAntiCheatBacktestContext = (params: {
       confidence,
       entryMargin: confidence,
       margin: confidence,
+      averageNeighborContributionAtEntry,
       aiMode: activeAiMode,
       closestClusterUid:
         rankedNeighbors.length > 0
@@ -2228,6 +2321,7 @@ const filterHistoryRows = (params: {
   aiEntrySnapshotById: Map<string, TradeAiEntrySnapshot>;
   confidenceGateDisabled: boolean;
   effectiveConfidenceThreshold: number;
+  effectiveAncThreshold: number;
 }) => {
   const {
     sourceTrades,
@@ -2235,7 +2329,8 @@ const filterHistoryRows = (params: {
     confidenceById,
     aiEntrySnapshotById,
     confidenceGateDisabled,
-    effectiveConfidenceThreshold
+    effectiveConfidenceThreshold,
+    effectiveAncThreshold
   } = params;
 
   const startMs = getUtcDayStartMs(settings.statsDateStart);
@@ -2276,7 +2371,18 @@ const filterHistoryRows = (params: {
       }
 
       const confidence = (confidenceById.get(trade.id) ?? getTradeConfidenceScore(trade)) * 100;
-      return confidence >= effectiveConfidenceThreshold;
+      if (confidence < effectiveConfidenceThreshold) {
+        return false;
+      }
+
+      if (effectiveAncThreshold <= 0) {
+        return true;
+      }
+
+      const anc =
+        aiEntrySnapshotById.get(trade.id)?.averageNeighborContributionAtEntry ??
+        normalizeProbabilityScore(trade.averageNeighborContributionAtEntry);
+      return anc != null && anc * 100 >= effectiveAncThreshold;
     })
     .map((trade) =>
       applyTradeAiEntrySnapshot(
@@ -2311,6 +2417,7 @@ export async function POST(request: Request) {
   const panelBacktestFilterSettings = normalizeFilterSettings(body.panelBacktestFilterSettings);
   const panelConfidenceGateDisabled = body.panelConfidenceGateDisabled === true;
   const panelEffectiveConfidenceThreshold = toNumeric(body.panelEffectiveConfidenceThreshold);
+  const panelEffectiveAncThreshold = toNumeric(body.panelEffectiveAncThreshold);
   const activePanelSourceTrades =
     body.activePanelSourceTrades === undefined
       ? panelSourceTrades
@@ -2327,6 +2434,10 @@ export async function POST(request: Request) {
     body.activePanelEffectiveConfidenceThreshold === undefined
       ? panelEffectiveConfidenceThreshold
       : toNumeric(body.activePanelEffectiveConfidenceThreshold);
+  const activePanelEffectiveAncThreshold =
+    body.activePanelEffectiveAncThreshold === undefined
+      ? panelEffectiveAncThreshold
+      : toNumeric(body.activePanelEffectiveAncThreshold);
   const aiLibraryDefaultsById = normalizeAiLibraryDefaultsById(body.aiLibraryDefaultsById);
 
   try {
@@ -2343,7 +2454,8 @@ export async function POST(request: Request) {
       confidenceById: antiCheatBacktestContext.confidenceById,
       aiEntrySnapshotById: antiCheatBacktestContext.aiEntrySnapshotById,
       confidenceGateDisabled: panelConfidenceGateDisabled,
-      effectiveConfidenceThreshold: panelEffectiveConfidenceThreshold
+      effectiveConfidenceThreshold: panelEffectiveConfidenceThreshold,
+      effectiveAncThreshold: panelEffectiveAncThreshold
     });
 
     const activePanelHistoryRows = filterHistoryRows({
@@ -2352,7 +2464,8 @@ export async function POST(request: Request) {
       confidenceById: antiCheatBacktestContext.confidenceById,
       aiEntrySnapshotById: antiCheatBacktestContext.aiEntrySnapshotById,
       confidenceGateDisabled: activePanelConfidenceGateDisabled,
-      effectiveConfidenceThreshold: activePanelEffectiveConfidenceThreshold
+      effectiveConfidenceThreshold: activePanelEffectiveConfidenceThreshold,
+      effectiveAncThreshold: activePanelEffectiveAncThreshold
     });
 
     const payload: PanelAnalyticsResponseBody = {
