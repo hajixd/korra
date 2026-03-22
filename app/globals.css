@@ -1352,6 +1352,573 @@ body.mobile-terminal-viewport-lock {
   inset: 0;
 }
 
+.mobile-app-frame {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 430px);
+  height: 100dvh;
+  margin: 0 auto;
+  padding:
+    calc(env(safe-area-inset-top, 0px) + 0.72rem)
+    0.76rem
+    calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 0.7rem;
+}
+
+.mobile-app-topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.8rem;
+  align-items: start;
+}
+
+.mobile-app-topbar-copy {
+  display: grid;
+  gap: 0.26rem;
+  min-width: 0;
+}
+
+.mobile-app-kicker,
+.mobile-app-eyebrow {
+  color: rgba(232, 238, 229, 0.48);
+  font-size: 0.56rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.mobile-app-topbar-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mobile-app-topbar-title-row h1 {
+  margin: 0;
+  color: #f5f3ee;
+  font-size: clamp(1.34rem, 5.6vw, 1.7rem);
+  letter-spacing: -0.05em;
+  line-height: 0.96;
+}
+
+.mobile-app-symbol-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 0.72rem;
+  border: 1px solid rgba(147, 164, 133, 0.18);
+  background: rgba(244, 248, 238, 0.045);
+  border-radius: 999px;
+  color: rgba(230, 238, 224, 0.84);
+  font-size: 0.58rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mobile-app-topbar-copy p {
+  margin: 0;
+  color: rgba(234, 239, 228, 0.6);
+  font-size: 0.68rem;
+  line-height: 1.38;
+  max-width: 38ch;
+}
+
+.mobile-app-body {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 0.72rem;
+  padding-right: 0.05rem;
+}
+
+.mobile-app-quote-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.42rem;
+}
+
+.mobile-app-mini-card,
+.mobile-app-card,
+.mobile-app-tabbar {
+  border: 1px solid rgba(242, 247, 237, 0.08);
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(111, 166, 120, 0.08), transparent 42%),
+    linear-gradient(180deg, rgba(13, 17, 16, 0.96), rgba(5, 7, 7, 0.98));
+  box-shadow:
+    0 16px 34px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(16px);
+}
+
+.mobile-app-mini-card {
+  min-height: 68px;
+  padding: 0.62rem 0.68rem;
+  border-radius: 20px;
+  display: grid;
+  gap: 0.22rem;
+  align-content: center;
+}
+
+.mobile-app-mini-card span {
+  color: rgba(231, 236, 225, 0.52);
+  font-size: 0.56rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.mobile-app-mini-card strong {
+  color: rgba(247, 246, 241, 0.94);
+  font-size: 0.86rem;
+  letter-spacing: -0.03em;
+}
+
+.mobile-app-sync-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.72rem 0.82rem;
+  border-radius: 18px;
+  border: 1px solid rgba(110, 223, 165, 0.16);
+  background: rgba(14, 26, 20, 0.84);
+  color: rgba(220, 248, 231, 0.76);
+  font-size: 0.66rem;
+  line-height: 1.35;
+}
+
+.mobile-app-sync-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #36d48d;
+  box-shadow: 0 0 0 6px rgba(54, 212, 141, 0.14);
+  animation: mobile-sync-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes mobile-sync-pulse {
+  0%,
+  100% {
+    transform: scale(0.9);
+    opacity: 0.7;
+  }
+
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+}
+
+.mobile-app-card {
+  border-radius: 26px;
+  padding: 0.9rem;
+  display: grid;
+  gap: 0.78rem;
+}
+
+.mobile-app-hero-card {
+  gap: 0.88rem;
+}
+
+.mobile-app-hero-head,
+.mobile-app-section-head,
+.mobile-app-history-head,
+.mobile-app-progress-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.mobile-app-hero-head h2,
+.mobile-app-empty-state h2,
+.mobile-app-section-head h3 {
+  margin: 0;
+  color: #f7f4ef;
+  letter-spacing: -0.04em;
+}
+
+.mobile-app-hero-head h2 {
+  font-size: 1.22rem;
+  line-height: 1;
+}
+
+.mobile-app-section-head h3,
+.mobile-app-empty-state h2 {
+  font-size: 0.94rem;
+  line-height: 1.08;
+}
+
+.mobile-app-side-tag,
+.mobile-app-live-pill,
+.mobile-app-count-pill,
+.mobile-app-inline-action,
+.mobile-app-action-button,
+.mobile-app-preset-cta {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mobile-app-side-tag,
+.mobile-app-live-pill,
+.mobile-app-count-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 0.72rem;
+  border-radius: 999px;
+  font-size: 0.56rem;
+  font-weight: 900;
+}
+
+.mobile-app-side-tag {
+  margin-bottom: 0.36rem;
+  border: 1px solid rgba(242, 247, 237, 0.1);
+  color: rgba(244, 246, 239, 0.86);
+}
+
+.mobile-app-side-tag.up,
+.mobile-app-live-pill {
+  border-color: rgba(79, 213, 148, 0.24);
+  background: rgba(15, 45, 29, 0.86);
+  color: #8ef0bc;
+}
+
+.mobile-app-side-tag.down {
+  border-color: rgba(237, 108, 114, 0.22);
+  background: rgba(47, 19, 22, 0.86);
+  color: #ff9ca2;
+}
+
+.mobile-app-count-pill {
+  border: 1px solid rgba(242, 247, 237, 0.08);
+  background: rgba(244, 248, 238, 0.04);
+  color: rgba(241, 245, 237, 0.74);
+}
+
+.mobile-app-hero-pnl {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.mobile-app-hero-pnl span,
+.mobile-app-stat-card span,
+.mobile-app-metric-tile span,
+.mobile-app-settings-row span,
+.mobile-app-history-copy span,
+.mobile-app-empty-state p,
+.mobile-app-preset-copy span {
+  color: rgba(233, 238, 227, 0.56);
+  font-size: 0.64rem;
+  line-height: 1.35;
+}
+
+.mobile-app-hero-pnl strong {
+  font-size: 1.56rem;
+  line-height: 1;
+  letter-spacing: -0.06em;
+}
+
+.mobile-app-hero-pnl small {
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.mobile-app-card .up {
+  color: #72e5a5;
+}
+
+.mobile-app-card .down {
+  color: #ff8d96;
+}
+
+.mobile-app-metric-grid,
+.mobile-app-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.52rem;
+}
+
+.mobile-app-metric-tile,
+.mobile-app-stat-card {
+  min-height: 88px;
+  border: 1px solid rgba(242, 247, 237, 0.06);
+  background: rgba(243, 247, 239, 0.028);
+  border-radius: 18px;
+  padding: 0.72rem;
+  display: grid;
+  gap: 0.24rem;
+  align-content: start;
+}
+
+.mobile-app-metric-tile strong,
+.mobile-app-stat-card strong,
+.mobile-app-settings-row strong,
+.mobile-app-history-copy strong,
+.mobile-app-preset-copy strong {
+  color: rgba(248, 247, 242, 0.94);
+  font-size: 0.82rem;
+  line-height: 1.2;
+}
+
+.mobile-app-stat-card small {
+  color: rgba(230, 235, 224, 0.46);
+  font-size: 0.56rem;
+  line-height: 1.35;
+}
+
+.mobile-app-progress-card {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.mobile-app-progress-head span,
+.mobile-app-progress-head strong {
+  font-size: 0.66rem;
+}
+
+.mobile-app-progress-head span {
+  color: rgba(234, 238, 228, 0.58);
+}
+
+.mobile-app-progress-head strong {
+  color: rgba(244, 246, 240, 0.88);
+}
+
+.mobile-app-progress-track {
+  position: relative;
+  height: 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(242, 247, 237, 0.08);
+  background: rgba(242, 247, 237, 0.06);
+  overflow: hidden;
+}
+
+.mobile-app-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #1f9d62 0%, #3fd487 52%, #8ef0bc 100%);
+  box-shadow: 0 0 18px rgba(74, 222, 128, 0.24);
+}
+
+.mobile-app-empty-state {
+  min-height: 240px;
+  border: 1px dashed rgba(242, 247, 237, 0.1);
+  border-radius: 22px;
+  background: rgba(244, 248, 238, 0.024);
+  padding: 1rem 0.9rem;
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 0.38rem;
+}
+
+.mobile-app-empty-state.compact {
+  min-height: 0;
+}
+
+.mobile-app-inline-action,
+.mobile-app-action-button {
+  min-height: 42px;
+  border-radius: 16px;
+  border: 1px solid rgba(242, 247, 237, 0.12);
+  background: rgba(244, 248, 238, 0.05);
+  color: rgba(245, 244, 240, 0.92);
+  padding: 0 0.9rem;
+  font-size: 0.58rem;
+  font-weight: 900;
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease;
+}
+
+.mobile-app-inline-action:hover,
+.mobile-app-action-button:hover,
+.mobile-app-tab:hover,
+.mobile-app-history-item:hover,
+.mobile-app-preset-item:hover {
+  transform: translateY(-1px);
+}
+
+.mobile-app-action-stack,
+.mobile-app-settings-list,
+.mobile-app-preset-list,
+.mobile-app-history-list {
+  display: grid;
+  gap: 0.54rem;
+}
+
+.mobile-app-settings-row,
+.mobile-app-history-item,
+.mobile-app-preset-item {
+  border: 1px solid rgba(242, 247, 237, 0.06);
+  background: rgba(244, 248, 238, 0.03);
+  border-radius: 18px;
+  padding: 0.74rem 0.8rem;
+}
+
+.mobile-app-settings-row {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.mobile-app-settings-row strong {
+  font-size: 0.72rem;
+}
+
+.mobile-app-history-item,
+.mobile-app-preset-item {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease;
+}
+
+.mobile-app-history-item {
+  display: grid;
+  gap: 0.52rem;
+}
+
+.mobile-app-history-copy {
+  min-width: 0;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.mobile-app-history-copy strong {
+  font-size: 0.68rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.04em;
+}
+
+.mobile-app-history-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.38rem;
+}
+
+.mobile-app-history-chips span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 0.56rem;
+  border-radius: 999px;
+  border: 1px solid rgba(242, 247, 237, 0.08);
+  background: rgba(244, 248, 238, 0.04);
+  color: rgba(231, 236, 225, 0.66);
+  font-size: 0.58rem;
+}
+
+.mobile-app-preset-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.72rem;
+}
+
+.mobile-app-preset-copy {
+  min-width: 0;
+  display: grid;
+  gap: 0.16rem;
+}
+
+.mobile-app-preset-cta {
+  flex: 0 0 auto;
+  color: #8ef0bc;
+  font-size: 0.56rem;
+  font-weight: 900;
+}
+
+.mobile-app-action-button.danger {
+  border-color: rgba(237, 108, 114, 0.16);
+  background: rgba(50, 18, 20, 0.86);
+  color: #ff9ca2;
+}
+
+.mobile-app-tabbar {
+  padding: 0.48rem;
+  border-radius: 26px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.mobile-app-tab {
+  min-height: 60px;
+  border: 0;
+  border-radius: 18px;
+  background: transparent;
+  color: rgba(226, 232, 220, 0.46);
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 0.22rem;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+.mobile-app-tab.active {
+  color: #f3f2ed;
+  background: linear-gradient(180deg, rgba(31, 47, 37, 0.9), rgba(14, 20, 17, 0.9));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.mobile-app-tab-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+}
+
+.mobile-app-tab-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.mobile-app-tab-label {
+  font-size: 0.56rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 800;
+}
+
+@media (max-width: 460px) {
+  .mobile-app-frame {
+    padding:
+      calc(env(safe-area-inset-top, 0px) + 0.64rem)
+      0.64rem
+      calc(env(safe-area-inset-bottom, 0px) + 0.46rem);
+  }
+
+  .mobile-app-quote-strip,
+  .mobile-app-metric-grid,
+  .mobile-app-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mobile-app-topbar {
+    gap: 0.62rem;
+  }
+
+  .mobile-app-symbol-pill {
+    max-width: 100%;
+  }
+}
+
 .top-utility {
   display: flex;
   align-items: center;
@@ -2186,6 +2753,171 @@ body.mobile-terminal-viewport-lock {
   .social-feed-actions {
     width: 100%;
     flex-wrap: wrap;
+  }
+}
+
+.social-simple-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  gap: 0.9rem;
+  align-items: start;
+}
+
+.social-simple-card {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.social-simple-overview-actions {
+  flex-wrap: wrap;
+}
+
+.social-simple-counter,
+.social-simple-field > span,
+.social-simple-row-head span,
+.social-simple-row-meta span,
+.social-simple-summary span {
+  color: rgba(188, 198, 188, 0.7);
+  font-size: 0.68rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.social-simple-status.success {
+  color: rgba(173, 242, 195, 0.92);
+}
+
+.social-simple-status.error {
+  color: rgba(255, 186, 186, 0.92);
+}
+
+.social-simple-publish-row {
+  display: flex;
+  align-items: end;
+  gap: 0.75rem;
+}
+
+.social-simple-field {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.social-simple-select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(9, 12, 18, 0.96);
+  color: rgba(242, 246, 250, 0.96);
+  padding: 0.7rem 0.8rem;
+  font-size: 0.82rem;
+  outline: none;
+}
+
+.social-simple-select:focus {
+  border-color: rgba(124, 232, 182, 0.34);
+}
+
+.social-simple-summary,
+.social-simple-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.social-simple-summary span,
+.social-simple-row-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(10, 12, 16, 0.9);
+  color: rgba(219, 227, 234, 0.82);
+}
+
+.social-simple-feed {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.social-simple-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  padding: 0.9rem 0.95rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 10, 14, 0.92);
+}
+
+.social-simple-row-main {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.social-simple-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.social-simple-row-head strong {
+  color: rgba(246, 248, 250, 0.96);
+  font-size: 0.95rem;
+}
+
+.social-simple-row-note,
+.social-simple-empty {
+  color: rgba(198, 207, 214, 0.8);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.social-simple-empty {
+  padding: 0.95rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 10, 14, 0.9);
+}
+
+.social-simple-empty-error {
+  color: rgba(255, 193, 193, 0.92);
+  border-color: rgba(211, 105, 105, 0.24);
+}
+
+.social-simple-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.social-simple-remove-btn {
+  border-color: rgba(216, 111, 111, 0.2);
+  color: rgba(255, 205, 205, 0.94);
+}
+
+@media (max-width: 1080px) {
+  .social-simple-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .social-simple-publish-row,
+  .social-simple-row,
+  .social-simple-row-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .social-simple-row-actions {
+    width: 100%;
   }
 }
 
@@ -5107,10 +5839,13 @@ body.mobile-terminal-viewport-lock {
 .stats-refresh-loading-status {
   margin: 0;
   color: rgba(233, 255, 245, 0.9);
+  font-size: 12px;
+  line-height: 1.18;
 }
 
 .stats-refresh-loading-pct {
   color: rgba(117, 255, 205, 0.95);
+  font-size: 11px;
 }
 
 .stats-refresh-loading-meta {
@@ -5119,6 +5854,8 @@ body.mobile-terminal-viewport-lock {
   flex-wrap: wrap;
   gap: 0.5rem 1rem;
   color: rgba(173, 255, 220, 0.72);
+  font-size: 10px;
+  line-height: 1.22;
 }
 
 .stats-refresh-loading-step {
@@ -5184,8 +5921,8 @@ body.mobile-terminal-viewport-lock {
   grid-template-columns: 1fr auto 1fr;
   gap: 0.8rem;
   color: rgba(201, 255, 230, 0.84);
-  font-size: 7px;
-  line-height: 1.15;
+  font-size: 9px;
+  line-height: 1.2;
 }
 
 .stats-refresh-loading-range > span:first-child {

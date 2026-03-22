@@ -754,11 +754,32 @@ function TradeDetailsModalImpl({
         : [],
     [dimensionRows]
   );
-  const sharedDimensionTrackRange = useMemo(() => {
-    if (!normalizedDimensionRows.length) {
-      return { min: NaN, max: NaN };
+  const mostInfluentialDimensionLabel = useMemo(() => {
+    const explicit = [
+      (trade as any).mostInfluentialDimension,
+      (trade as any).most_influential_dimension,
+      (trade as any).mostInfluentialDim,
+      (trade as any).influentialDimension,
+      (trade as any).influential_dimension,
+      (trade as any).topDim,
+      (trade as any).top_dimension,
+      (trade as any).bestDim,
+      (trade as any).dimension,
+      (trade as any).dim,
+    ]
+      .map((value) => String(value ?? "").trim())
+      .find((value) => value.length > 0);
+
+    if (explicit) {
+      return explicit;
     }
 
+    const rankedDimension = normalizedDimensionRows.find((row) =>
+      String((row as any)?.name ?? "").trim().length > 0
+    );
+    return rankedDimension ? String((rankedDimension as any).name) : "—";
+  }, [normalizedDimensionRows, trade]);
+  const getPaddedDimensionTrackRange = (dimension) => {
     const numericValues = [];
     const pushIfFinite = (value) => {
       const numericValue = Number(value);
@@ -767,19 +788,18 @@ function TradeDetailsModalImpl({
       }
     };
 
-    normalizedDimensionRows.forEach((dimension) => {
-      pushIfFinite((dimension as any).min);
-      pushIfFinite((dimension as any).max);
-      pushIfFinite((dimension as any).qLow);
-      pushIfFinite((dimension as any).qHigh);
-      pushIfFinite((dimension as any).entryValue);
-      const segments = Array.isArray((dimension as any).segments)
-        ? (dimension as any).segments
-        : [];
-      segments.forEach((segment) => {
-        pushIfFinite(segment?.start);
-        pushIfFinite(segment?.end);
-      });
+    pushIfFinite((dimension as any)?.min);
+    pushIfFinite((dimension as any)?.max);
+    pushIfFinite((dimension as any)?.qLow);
+    pushIfFinite((dimension as any)?.qHigh);
+    pushIfFinite((dimension as any)?.entryValue);
+
+    const segments = Array.isArray((dimension as any)?.segments)
+      ? (dimension as any).segments
+      : [];
+    segments.forEach((segment) => {
+      pushIfFinite(segment?.start);
+      pushIfFinite(segment?.end);
     });
 
     if (!numericValues.length) {
@@ -796,14 +816,14 @@ function TradeDetailsModalImpl({
     const magnitude = Math.max(Math.abs(rawMin), Math.abs(rawMax), 1);
     const padding =
       rawSpan > 0
-        ? Math.max(rawSpan * 0.16, magnitude * 0.05, 0.75)
-        : Math.max(magnitude * 0.2, 1);
+        ? Math.max(rawSpan * 0.16, magnitude * 0.045, 0.45)
+        : Math.max(magnitude * 0.18, 0.9);
 
     return {
       min: rawMin - padding,
       max: rawMax + padding,
     };
-  }, [normalizedDimensionRows]);
+  };
   const [hoveredDimensionProfile, setHoveredDimensionProfile] = React.useState<{
     key: string;
     pct: number;
@@ -999,7 +1019,7 @@ function TradeDetailsModalImpl({
         style={{
           border: `1px solid ${t.border}`,
           background: t.bg,
-          borderRadius: 14,
+          borderRadius: 0,
           padding: "10px 12px",
           minHeight: 58,
           display: "flex",
@@ -1064,7 +1084,7 @@ function TradeDetailsModalImpl({
         style={{
           width: compactViewport ? "min(1120px, 99vw)" : "min(1120px, 96vw)",
           height: compactViewport ? "min(900px, 96vh)" : "min(900px, 90vh)",
-          borderRadius: compactViewport ? 13 : 18,
+          borderRadius: 0,
           border: "1px solid rgba(255,255,255,0.10)",
           background: "rgba(12,12,12,0.96)",
           boxShadow: "0 28px 120px rgba(0,0,0,0.65)",
@@ -1106,7 +1126,7 @@ function TradeDetailsModalImpl({
                 fontSize: compactViewport ? 11 : 12,
                 fontWeight: 900,
                 padding: "3px 10px",
-                borderRadius: 999,
+                borderRadius: 0,
                 background: "rgba(255,255,255,0.06)",
                 border: `1px solid ${accent}`,
                 color: accent,
@@ -1138,7 +1158,7 @@ function TradeDetailsModalImpl({
             style={{
               height: compactViewport ? 31 : 34,
               padding: compactViewport ? "0 10px" : "0 12px",
-              borderRadius: 10,
+              borderRadius: 0,
               border: "1px solid rgba(255,255,255,0.14)",
               background: "rgba(255,255,255,0.06)",
               color: "rgba(255,255,255,0.86)",
@@ -1157,64 +1177,7 @@ function TradeDetailsModalImpl({
             overflowY: "auto",
           }}
         >
-        {/* AI Cluster Info */}
         <div style={{ padding: compactViewport ? "10px 12px" : "12px 16px" }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "baseline",
-              justifyContent: "space-between",
-              gap: 12,
-              marginBottom: 10,
-            }}
-          >
-            <div
-              style={{
-                fontSize: 12,
-                fontWeight: 900,
-                letterSpacing: 0.4,
-                opacity: 0.92,
-              }}
-            >
-              AI Cluster Info
-            </div>
-            <div
-              style={{
-                fontSize: 11,
-                opacity: 0.72,
-                textAlign: "right",
-                lineHeight: 1.2,
-              }}
-            >
-              <span style={{ opacity: 0.9 }}>
-                AI Margin{" "}
-                <b style={{ color: "rgba(255,255,255,0.88)" }}>
-                  {fmtPct(num((trade as any).aiMargin), 1)}
-                </b>
-              </span>
-              <span style={{ opacity: 0.45 }}> · </span>
-              <span style={{ opacity: 0.9 }}>
-                Cluster{" "}
-                <b style={{ color: "rgba(255,255,255,0.88)" }}>
-                  {(trade as any).closestCluster ??
-                    (trade as any).clusterName ??
-                    (trade as any).clusterLabel ??
-                    "—"}
-                </b>
-              </span>
-              <span style={{ opacity: 0.45 }}> · </span>
-              <span style={{ opacity: 0.9 }}>
-                Group{" "}
-                <b style={{ color: "rgba(255,255,255,0.82)" }}>
-                  {(trade as any).hdbClusterId ??
-                    (trade as any).clusterGroupId ??
-                    (trade as any).clusterGroup ??
-                    "—"}
-                </b>
-              </span>
-            </div>
-          </div>
-
           {/* Row 1 */}
           <div
             style={{
@@ -1363,31 +1326,21 @@ function TradeDetailsModalImpl({
             <InfoBox
               label="Most Influential Dimension"
               tone="blue"
-              value={
-                (trade as any).mostInfluentialDimension ??
-                (trade as any).most_influential_dimension ??
-                (trade as any).mostInfluentialDim ??
-                (trade as any).influentialDimension ??
-                (trade as any).influential_dimension ??
-                (trade as any).topDim ??
-                (trade as any).top_dimension ??
-                (trade as any).bestDim ??
-                (trade as any).dimension ??
-                (trade as any).dim ??
-                "—"
-              }
+              value={mostInfluentialDimensionLabel}
             />
           </div>
 
-          <TradeCandlestickChart
-            trade={trade}
-            candles={candles}
-            interval={interval}
-            parseMode={parseMode}
-            tpDist={tpDist}
-            slDist={slDist}
-            heightPx={420}
-          />
+          <div style={{ marginTop: compactViewport ? 14 : 18 }}>
+            <TradeCandlestickChart
+              trade={trade}
+              candles={candles}
+              interval={interval}
+              parseMode={parseMode}
+              tpDist={tpDist}
+              slDist={slDist}
+              heightPx={420}
+            />
+          </div>
 
           <div
             style={{
@@ -1395,7 +1348,7 @@ function TradeDetailsModalImpl({
               border: "1px solid rgba(255,255,255,0.08)",
               background:
                 "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015))",
-              borderRadius: 16,
+              borderRadius: 0,
               padding: compactViewport ? "10px 10px" : "12px 12px",
               boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.03)",
             }}
@@ -1456,11 +1409,12 @@ function TradeDetailsModalImpl({
               >
                 {normalizedDimensionRows.map((dimension) => {
                   const rowKey = String((dimension as any).key ?? "");
-                  const min = Number.isFinite(sharedDimensionTrackRange.min)
-                    ? sharedDimensionTrackRange.min
+                  const paddedTrackRange = getPaddedDimensionTrackRange(dimension);
+                  const min = Number.isFinite(paddedTrackRange.min)
+                    ? paddedTrackRange.min
                     : Number((dimension as any).min);
-                  const max = Number.isFinite(sharedDimensionTrackRange.max)
-                    ? sharedDimensionTrackRange.max
+                  const max = Number.isFinite(paddedTrackRange.max)
+                    ? paddedTrackRange.max
                     : Number((dimension as any).max);
                   const qLow = Number((dimension as any).qLow);
                   const qHigh = Number((dimension as any).qHigh);
@@ -1510,6 +1464,40 @@ function TradeDetailsModalImpl({
                         .map((item) => [String(item.pct), item])
                     ).values()
                   );
+                  const positionedBoundaryLabels = boundaryLabels
+                    .slice()
+                    .sort((a, b) => Number(a.pct ?? 0) - Number(b.pct ?? 0))
+                    .reduce<Array<{ key: string; pct: number | null; label: string; lane: number }>>(
+                      (acc, item) => {
+                        const pct = Number(item.pct);
+                        const occupiedLanes = new Set<number>();
+                        for (let index = acc.length - 1; index >= 0; index -= 1) {
+                          const previous = acc[index];
+                          const previousPct = Number(previous.pct);
+                          if (!Number.isFinite(previousPct) || !Number.isFinite(pct)) {
+                            continue;
+                          }
+                          if (Math.abs(pct - previousPct) > 11) {
+                            break;
+                          }
+                          occupiedLanes.add(previous.lane);
+                        }
+                        let lane = 0;
+                        while (occupiedLanes.has(lane)) {
+                          lane += 1;
+                        }
+                        acc.push({
+                          ...item,
+                          lane,
+                        });
+                        return acc;
+                      },
+                      []
+                    );
+                  const boundaryLabelLaneCount = positionedBoundaryLabels.reduce(
+                    (maxLane, item) => Math.max(maxLane, item.lane),
+                    -1
+                  ) + 1;
                   const segmentBoundaryPcts = Array.from(
                     new Set(
                       segments
@@ -1536,7 +1524,7 @@ function TradeDetailsModalImpl({
                         display: "grid",
                         gap: 9,
                         padding: "12px 12px 16px",
-                        borderRadius: 10,
+                        borderRadius: 0,
                         border: "1px solid rgba(255,255,255,0.08)",
                         background:
                           hoverInfo != null
@@ -1581,7 +1569,7 @@ function TradeDetailsModalImpl({
                         style={{
                           position: "relative",
                           paddingTop: 28,
-                          paddingBottom: 30,
+                          paddingBottom: 34 + Math.max(0, boundaryLabelLaneCount - 1) * 18,
                         }}
                       >
                         <div
@@ -1655,10 +1643,10 @@ function TradeDetailsModalImpl({
                                 position: "absolute",
                                 left: `${hoverInfo.pct}%`,
                                 top: -34,
-                                transform: "translateX(-50%)",
-                                padding: "3px 6px",
-                                border: "1px solid rgba(134,239,172,0.26)",
-                                background: "rgba(3,10,7,0.92)",
+                              transform: "translateX(-50%)",
+                              padding: "3px 6px",
+                              border: "1px solid rgba(134,239,172,0.26)",
+                              background: "rgba(3,10,7,0.92)",
                                 color:
                                   hoverInfo.winRate != null
                                     ? "rgba(134,239,172,0.92)"
@@ -1666,11 +1654,12 @@ function TradeDetailsModalImpl({
                                 fontSize: 9,
                                 fontWeight: 800,
                                 letterSpacing: 0.2,
-                                whiteSpace: "nowrap",
-                                pointerEvents: "none",
-                                zIndex: 4,
-                              }}
-                            >
+                              whiteSpace: "nowrap",
+                              pointerEvents: "none",
+                              zIndex: 4,
+                              borderRadius: 0,
+                            }}
+                          >
                               {`${hoverInfo.label} · ${formatPrecisePct(
                                 hoverInfo.winRate
                               )} win · ${formatPrecisePct(
@@ -1693,12 +1682,13 @@ function TradeDetailsModalImpl({
                               fontSize: 9,
                               fontWeight: 800,
                               whiteSpace: "nowrap",
+                              borderRadius: 0,
                             }}
                           >
                             Entry {entryText}
                           </div>
                         ) : null}
-                        {boundaryLabels.map((labelItem) => {
+                        {positionedBoundaryLabels.map((labelItem) => {
                           const labelPct = labelItem.pct ?? 50;
                           return (
                             <div
@@ -1706,7 +1696,7 @@ function TradeDetailsModalImpl({
                               style={{
                                 position: "absolute",
                                 left: `${labelPct}%`,
-                                bottom: 0,
+                                bottom: `${labelItem.lane * 18}px`,
                                 transform: "translateX(-50%)",
                                 padding: "2px 6px",
                                 border: "1px solid rgba(110,231,183,0.24)",
@@ -1715,6 +1705,7 @@ function TradeDetailsModalImpl({
                                 fontSize: 9,
                                 fontWeight: 800,
                                 whiteSpace: "nowrap",
+                                borderRadius: 0,
                               }}
                             >
                               {labelItem.label}
@@ -2268,7 +2259,7 @@ function TradeCandlestickChartSVG({
       <div
         style={{
           padding: 14,
-          borderRadius: 14,
+          borderRadius: 0,
           border: "1px solid rgba(255,255,255,0.10)",
           background: "rgba(0,0,0,0.35)",
         }}
@@ -2298,7 +2289,7 @@ function TradeCandlestickChartSVG({
       ref={wrapRef}
       style={{
         width: "100%",
-        borderRadius: 16,
+        borderRadius: 0,
         border: "1px solid rgba(255,255,255,0.10)",
         background: "rgba(0,0,0,0.35)",
         padding: 12,
@@ -2343,7 +2334,7 @@ function TradeCandlestickChartSVG({
           width: "100%",
           height: H,
           display: "block",
-          borderRadius: 12,
+          borderRadius: 0,
           background: bg,
         }}
         onMouseMove={onMouseMove}
@@ -3183,7 +3174,7 @@ function TradeCandlestickChartLightweight({
       style={{
         border: "1px solid rgba(255,255,255,0.10)",
         background: "rgba(0,0,0,0.80)",
-        borderRadius: 18,
+        borderRadius: 0,
         overflow: "hidden",
         boxShadow: "0 18px 60px rgba(0,0,0,0.55) inset",
       }}
@@ -3253,7 +3244,7 @@ function TradeCandlestickChartLightweight({
             style={{
               position: "fixed", left: lx, top: ly, zIndex: 99999,
               background: "rgba(10,10,14,0.97)", border: "1px solid rgba(255,255,255,0.10)",
-              borderRadius: 14, padding: "14px 18px", minWidth: 230,
+              borderRadius: 0, padding: "14px 18px", minWidth: 230,
               boxShadow: "0 16px 48px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.05)",
               backdropFilter: "blur(20px)",
               fontFamily: "ui-monospace,'SF Mono',Menlo,monospace", fontSize: 12,
@@ -3379,6 +3370,45 @@ function canonicalModelName(name: any): string {
   if (norm.includes("ai") && norm.includes("model")) return "AI Model";
   return String(name ?? "");
 }
+
+function resolveTradeDisplayModelLabel(trade: any): string {
+  const primaryFields = [
+    trade?.chunkType,
+    trade?.entrySource,
+    trade?.entryModel,
+    trade?.model,
+    trade?.modelName,
+  ];
+
+  for (const value of primaryFields) {
+    const label = String(value ?? "").trim();
+    if (!label) continue;
+    if (canonicalModelName(label) === "AI Model") {
+      return "AI Model";
+    }
+  }
+
+  const fallbackFields = [
+    trade?.entryModel,
+    trade?.model,
+    trade?.modelName,
+    trade?.exitModel,
+    trade?.origModel,
+    trade?.entrySource,
+    trade?.chunkType,
+    trade?.strategy,
+    trade?.setup,
+  ];
+
+  for (const value of fallbackFields) {
+    const label = String(value ?? "").trim();
+    if (!label) continue;
+    return canonicalModelName(label);
+  }
+
+  return "—";
+}
+
 function translateChecklist(model, items, type) {
   const m = checklistLabelMap[model];
   if (!m) return items;
@@ -3473,7 +3503,7 @@ function PerTradeMiniChart({
   const pnl = (p: number) => (p - entryPrice) * dir * usdPerUnit;
 
   return (
-    <div className="h-full bg-neutral-950 rounded-xl border border-neutral-800 overflow-hidden">
+    <div className="h-full bg-neutral-950 rounded-none border border-neutral-800 overflow-hidden">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart
           data={data}
@@ -11745,6 +11775,7 @@ const areClusterMapPropsEqual = (prev: any, next: any) => {
     prev.clusterMapView === next.clusterMapView &&
     prev.aiMethod === next.aiMethod &&
     shallowValueArrayEqual(prev.aiDomains, next.aiDomains) &&
+    prev.remapOppositeOutcomes === next.remapOppositeOutcomes &&
     prev.knnVoteMode === next.knnVoteMode &&
     prev.kEntry === next.kEntry &&
     prev.knnNeighborSpace === next.knnNeighborSpace &&
@@ -11975,6 +12006,7 @@ function ClusterMapInner({
   onMitMap,
   aiMethod,
   aiDomains,
+  remapOppositeOutcomes: remapOppositeOutcomesProp,
   knnVoteMode = "majority",
   kEntry,
   knnNeighborSpace = "post",
@@ -12630,14 +12662,7 @@ function ClusterMapInner({
 
     for (const t of trades || []) {
       addTime((t as any)?.entryTime ?? (t as any)?.time ?? "");
-      addModel(
-        (t as any)?.entryModel ??
-          (t as any)?.model ??
-          (t as any)?.origModel ??
-          ((t as any)?.chunkType && (t as any)?.chunkType !== "AI Model"
-            ? (t as any)?.chunkType
-            : "")
-      );
+      addModel(resolveTradeDisplayModelLabel(t));
     }
     for (const g of ghostEntries || []) {
       addTime((g as any)?.entryTime ?? "");
@@ -12850,13 +12875,7 @@ function ClusterMapInner({
             : dt.getHours()
           : null;
 
-      const entryModel =
-        (t as any).entryModel ??
-        (t as any).model ??
-        (t as any).origModel ??
-        ((t as any).chunkType && (t as any).chunkType !== "AI Model"
-          ? (t as any).chunkType
-          : null);
+      const entryModel = resolveTradeDisplayModelLabel(t);
       entries.push({
         id: `trade-${t.uid ?? t.id ?? i}-${t.entryIndex}`,
         uid: t.uid || t.id || null,
@@ -19123,8 +19142,23 @@ function ClusterMapInner({
       return null;
     };
 
+    const DRAG_START_THRESHOLD_PX = 4;
+    let pointerPressed = false;
+    let activePointerId: number | null = null;
     let dragging = false;
     let drag = { x: 0, y: 0, ox: 0, oy: 0, moved: false };
+    const beginDrag = (pointerId?: number | null) => {
+      if (dragging) {
+        return;
+      }
+      dragging = true;
+      setIsDragging(true);
+      if (pointerId != null && canvas.setPointerCapture) {
+        try {
+          canvas.setPointerCapture(pointerId);
+        } catch {}
+      }
+    };
     let rafId = null;
     let hoverRafId = null;
     let pendingOx = viewRef.current.ox;
@@ -19273,11 +19307,14 @@ function ClusterMapInner({
       }
 
       // Normal pan/drag
+      if (e.button !== 0) {
+        return;
+      }
+      mapFocusRef.current = true;
       e.preventDefault();
       e.stopPropagation();
-      canvas.setPointerCapture?.(e.pointerId);
-      dragging = true;
-      setIsDragging(true);
+      pointerPressed = true;
+      activePointerId = typeof e.pointerId === "number" ? e.pointerId : null;
       drag = {
         x: p.x,
         y: p.y,
@@ -19405,14 +19442,21 @@ function ClusterMapInner({
           return;
         }
       }
-      if (dragging) {
-        e.preventDefault();
+      if (pointerPressed && !dragging) {
+        const pressDx = p.x - drag.x;
+        const pressDy = p.y - drag.y;
         if (
-          !drag.moved &&
-          (Math.abs(p.x - drag.x) > 3 || Math.abs(p.y - drag.y) > 3)
+          Math.abs(pressDx) > DRAG_START_THRESHOLD_PX ||
+          Math.abs(pressDy) > DRAG_START_THRESHOLD_PX
         ) {
           drag.moved = true;
+          beginDrag(typeof e.pointerId === "number" ? e.pointerId : activePointerId);
+        } else {
+          return;
         }
+      }
+      if (dragging) {
+        e.preventDefault();
         const s = Number(mapSpreadMulRef.current) || 1;
         const panSpeed = 1.7;
         const spreadDiv = Math.max(0.7, Math.sqrt(Math.max(0.01, s)));
@@ -19708,6 +19752,7 @@ function ClusterMapInner({
     };
     const endDrag = (e) => {
       const hadMapPointerGesture =
+        pointerPressed ||
         dragging ||
         lassoRef.current.drawing ||
         (boxSelectMode && selShape === "rect" && !!boxStart && !boxEnd);
@@ -19715,19 +19760,27 @@ function ClusterMapInner({
         return;
       }
 
+      const wasPointerPressed = pointerPressed;
+      const wasDragging = dragging;
+      const releasePointerId =
+        typeof (e as any)?.pointerId === "number" ? (e as any).pointerId : activePointerId;
+      pointerPressed = false;
+      activePointerId = null;
       dragging = false;
       setIsDragging(false);
-      setView((prev) => {
-        const cur = viewRef.current;
-        if (
-          Math.abs((prev?.scale ?? 1) - (cur?.scale ?? 1)) < 1e-9 &&
-          Math.abs((prev?.ox ?? 0) - (cur?.ox ?? 0)) < 1e-6 &&
-          Math.abs((prev?.oy ?? 0) - (cur?.oy ?? 0)) < 1e-6
-        ) {
-          return prev;
-        }
-        return cur;
-      });
+      if (wasDragging) {
+        setView((prev) => {
+          const cur = viewRef.current;
+          if (
+            Math.abs((prev?.scale ?? 1) - (cur?.scale ?? 1)) < 1e-9 &&
+            Math.abs((prev?.ox ?? 0) - (cur?.ox ?? 0)) < 1e-6 &&
+            Math.abs((prev?.oy ?? 0) - (cur?.oy ?? 0)) < 1e-6
+          ) {
+            return prev;
+          }
+          return cur;
+        });
+      }
       // In selection mode we don't do click-to-select node here.
       // Finish lasso selection on release.
       if (boxSelectMode) {
@@ -19742,15 +19795,15 @@ function ClusterMapInner({
             setLassoFinal(null);
           }
         }
-        if (e && canvas.releasePointerCapture) {
+        if (releasePointerId != null && canvas.releasePointerCapture) {
           try {
-            canvas.releasePointerCapture(e.pointerId);
+            canvas.releasePointerCapture(releasePointerId);
           } catch {}
         }
         return;
       }
 
-      if (e && !drag.moved) {
+      if (e && wasPointerPressed && !wasDragging) {
         const p = getLocal(e);
         const w = toWorld(p.x, p.y);
 
@@ -19766,9 +19819,9 @@ function ClusterMapInner({
             setPinnedHeatHover(hsPinned);
           }
 
-          if (e && canvas.releasePointerCapture) {
+          if (releasePointerId != null && canvas.releasePointerCapture) {
             try {
-              canvas.releasePointerCapture(e.pointerId);
+              canvas.releasePointerCapture(releasePointerId);
             } catch {}
           }
           return;
@@ -19808,9 +19861,9 @@ function ClusterMapInner({
         }
       }
 
-      if (e && canvas.releasePointerCapture) {
+      if (releasePointerId != null && canvas.releasePointerCapture) {
         try {
-          canvas.releasePointerCapture(e.pointerId);
+          canvas.releasePointerCapture(releasePointerId);
         } catch {}
       }
     };
@@ -24528,7 +24581,7 @@ export default function App() {
       setDistanceMetric(ok.includes(v) ? v : "euclidean");
     }
     if (typeof data.remapOppositeOutcomes === "boolean")
-      setRemapOppositeOutcomes(!!data.remapOppositeOutcomes);
+      setLocalRemapOppositeOutcomes(!!data.remapOppositeOutcomes);
     if (Array.isArray(data.domains) || Array.isArray(data.aiDomains)) {
       const arr = Array.isArray(data.domains)
         ? data.domains
@@ -24748,7 +24801,7 @@ export default function App() {
     setDimWeightsBump(0);
     setCalibrationMode("none");
     setDistanceMetric("euclidean");
-    setRemapOppositeOutcomes(true);
+    setLocalRemapOppositeOutcomes(true);
     setDimWeightMode("uniform");
     setVolatilityPercentile(0);
 
@@ -25744,8 +25797,22 @@ export default function App() {
   // kNN neighbor pool controls
   useState(false);
   const [aiDomains, setAiDomains] = useState<string[]>(["Direction"]); // multi-select filters for neighbor candidates
-  const [remapOppositeOutcomes, setRemapOppositeOutcomes] = useState(true);
+  const [localRemapOppositeOutcomes, setLocalRemapOppositeOutcomes] = useState(
+    remapOppositeOutcomesProp === false ? false : true
+  );
   useState(0.85);
+  const remapOppositeOutcomes =
+    remapOppositeOutcomesProp === undefined
+      ? localRemapOppositeOutcomes
+      : remapOppositeOutcomesProp !== false;
+  const remapOppositeOutcomesLockedByParent = remapOppositeOutcomesProp !== undefined;
+
+  useEffect(() => {
+    if (remapOppositeOutcomesProp === undefined) {
+      return;
+    }
+    setLocalRemapOppositeOutcomes(remapOppositeOutcomesProp !== false);
+  }, [remapOppositeOutcomesProp]);
 
   const toggleAiDomain = React.useCallback((key: string) => {
     setAiDomains((prev) => {
@@ -30079,10 +30146,7 @@ export default function App() {
     }
     const map = new Map();
     for (const t of closed) {
-      const key =
-        t.chunkType === "AI Model"
-          ? String(t.origModel || "AI Model")
-          : String(t.chunkType || "Unknown");
+      const key = resolveTradeDisplayModelLabel(t);
       const pnlNum = typeof t.pnl === "number" ? t.pnl : Number(t.pnl);
       if (!Number.isFinite(pnlNum)) continue;
       const prev = map.get(key) || { sum: 0, n: 0 };
@@ -30153,10 +30217,7 @@ export default function App() {
     );
     const map = new Map();
     for (const t of closed) {
-      const key =
-        t.chunkType === "AI Model"
-          ? String(t.origModel || "AI Model")
-          : String(t.chunkType || "Unknown");
+      const key = resolveTradeDisplayModelLabel(t);
       const pnlNum = typeof t.pnl === "number" ? t.pnl : Number(t.pnl);
       if (!Number.isFinite(pnlNum)) continue;
       const prev = map.get(key) || { sum: 0, n: 0 };
@@ -30989,12 +31050,7 @@ export default function App() {
         const modelName = (() => {
           const s = String(rawModel ?? "-");
           if (s === "AI Model" || s.toLowerCase().includes("ai model")) {
-            const fb =
-              (openTrade as any)?.origModel ||
-              (openTrade as any)?.entryModel ||
-              (openTradePotential as any)?.model ||
-              (openTradePotential as any)?.origModel;
-            return String(fb ?? s);
+            return "AI Model";
           }
           return s;
         })();
@@ -35415,7 +35471,9 @@ export default function App() {
                       >
                         {directionDomainEnabled
                           ? "Direction domain is enabled, so this remap is currently inactive."
-                          : "Use this when you want opposite-side losers to count as same-side evidence."}
+                          : remapOppositeOutcomesLockedByParent
+                            ? "This remap is controlled from the main terminal settings."
+                            : "Use this when you want opposite-side losers to count as same-side evidence."}
                       </div>
                     </div>
 
@@ -35425,7 +35483,10 @@ export default function App() {
                         gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                         gap: 8,
                         minWidth: 220,
-                        opacity: aiAllOff || directionDomainEnabled ? 0.55 : 1,
+                        opacity:
+                          aiAllOff || directionDomainEnabled || remapOppositeOutcomesLockedByParent
+                            ? 0.55
+                            : 1,
                       }}
                     >
                       {[
@@ -35444,9 +35505,11 @@ export default function App() {
                           key={option.key}
                           type="button"
                           onClick={() =>
-                            setRemapOppositeOutcomes(option.key === "on")
+                            setLocalRemapOppositeOutcomes(option.key === "on")
                           }
-                          disabled={aiAllOff || directionDomainEnabled}
+                          disabled={
+                            aiAllOff || directionDomainEnabled || remapOppositeOutcomesLockedByParent
+                          }
                           style={{
                             padding: "9px 10px",
                             borderRadius: 12,

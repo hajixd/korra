@@ -121,6 +121,7 @@ import {
 import {
   AIZIP_BACKTEST_HISTORY_FETCH_TIMEOUT_MS,
   BASE_SEEDING_LIBRARY_IDS,
+  GHOST_LEARNING_LIBRARY_ID,
   buildSyntheticLibraryCandles,
   buildSeededLibraryTradePoolFromCandles,
   canRunAizipLibrariesForSettings,
@@ -227,6 +228,7 @@ type BacktestTab =
   | "dimensions"
   | "propFirm";
 type PanelTab = "active" | "assets" | "history" | "actions";
+type MobileWorkspaceTab = "active" | "history" | "settings";
 type MainStatisticsCard = {
   label: string;
   value: ReactNode;
@@ -2616,6 +2618,28 @@ const resolveSettingsAiMode = (value: unknown): "off" | "knn" | "hdbscan" => {
   return value === "knn" || value === "hdbscan" ? value : "off";
 };
 
+const resolveStrategyReplayEntryMode = (
+  aiMode: BacktestSettingsSnapshot["aiMode"],
+  aiFilterEnabled: boolean
+): "signals" | "every-bar" => {
+  return usesAizipEveryCandleMode(aiMode, aiFilterEnabled) ? "every-bar" : "signals";
+};
+
+const buildReplayModelNamesById = <
+  TModel extends {
+    id: string;
+    name?: string | null;
+  }
+>(
+  models: readonly TModel[],
+  aiModelEveryBarMode: boolean
+): Record<string, string> => {
+  return models.reduce<Record<string, string>>((accumulator, model) => {
+    accumulator[model.id] = aiModelEveryBarMode ? "AI Model" : model.name ?? "Settings";
+    return accumulator;
+  }, {});
+};
+
 const countPresetEnabledModels = (value: unknown): number => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return 0;
@@ -2948,6 +2972,7 @@ type BacktestSettingsSnapshot = {
   distanceMetric: AiDistanceMetric;
   knnNeighborSpace: KnnNeighborSpace;
   selectedAiDomains: string[];
+  remapOppositeOutcomes: boolean;
   dimensionAmount: number;
   compressionMethod: AiCompressionMethod;
   kEntry: number;
@@ -2976,6 +3001,7 @@ type BacktestFilterSettings = Pick<
   | "distanceMetric"
   | "knnNeighborSpace"
   | "selectedAiDomains"
+  | "remapOppositeOutcomes"
   | "ancThreshold"
   | "kEntry"
   | "knnVoteMode"
@@ -4054,6 +4080,15 @@ const AI_COMPRESSION_METHOD_OPTIONS: Array<{
   { value: "variance", label: "Top Variance" },
   { value: "subsample", label: "Uniform Subsample" }
 ];
+const AI_DISTANCE_METRIC_OPTIONS: Array<{
+  value: AiDistanceMetric;
+  label: string;
+}> = [
+  { value: "euclidean", label: "Euclidean" },
+  { value: "cosine", label: "Cosine similarity" },
+  { value: "manhattan", label: "Manhattan (L1)" },
+  { value: "chebyshev", label: "Chebyshev (L-infinity)" }
+];
 
 function AiZipMenuSelect({
   value,
@@ -4257,14 +4292,14 @@ const normalizeAiCompressionMethod = (value: unknown): AiCompressionMethod => {
 
 const normalizeAiValidationMode = (value: unknown): AiValidationMode => {
   const mode = String(value ?? "").trim().toLowerCase();
-  if (mode === "split" || mode === "synthetic") return mode;
+  if (mode === "split") return mode;
   return "off";
 };
 const normalizeAiRealismLevel = (value: unknown): number => {
   return clamp(Math.floor(Number(value) || 0), 0, 3);
 };
 
-const AI_VALIDATION_ORDER: AiValidationMode[] = ["off", "split", "synthetic"];
+const AI_VALIDATION_ORDER: AiValidationMode[] = ["off", "split"];
 const AI_VALIDATION_LABELS: Record<AiValidationMode, string> = {
   off: "Online",
   split: "Test/Split",
@@ -9478,6 +9513,76 @@ const ChartLoadingSpinner = ({ label }: { label: string }) => {
   );
 };
 
+const MobileWorkspaceTabIcon = ({
+  tab,
+}: {
+  tab: MobileWorkspaceTab;
+}) => {
+  if (tab === "active") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path
+          d="M4 15.5c1.6 0 2.7-.9 3.5-2.8l1.2-2.9 2.6 7.2 2.4-5.1c.6-1.4 1.4-2 2.7-2H20"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+
+  if (tab === "history") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path
+          d="M12 5.2A6.8 6.8 0 1 1 5.2 12"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+        />
+        <path
+          d="M12 8.4V12l2.8 1.8"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M5 7V4.5H7.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path
+        d="M6.2 7.2h11.6M6.2 12h11.6M6.2 16.8h7.6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <path
+        d="M4.5 4.5h15v15h-15z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        opacity="0.45"
+      />
+    </svg>
+  );
+};
+
 const TradeDetailsLoadingModal = ({
   trade,
   onClose,
@@ -9517,7 +9622,7 @@ const TradeDetailsLoadingModal = ({
         style={{
           width: "min(1120px, 96vw)",
           height: "min(900px, 90vh)",
-          borderRadius: 18,
+          borderRadius: 0,
           border: "1px solid rgba(255,255,255,0.10)",
           background: "rgba(12,12,12,0.96)",
           boxShadow: "0 28px 120px rgba(0,0,0,0.65)",
@@ -9558,7 +9663,7 @@ const TradeDetailsLoadingModal = ({
                 fontSize: 12,
                 fontWeight: 900,
                 padding: "3px 10px",
-                borderRadius: 999,
+                borderRadius: 0,
                 background: "rgba(255,255,255,0.06)",
                 border: "1px solid rgba(0,255,157,0.5)",
                 color: "rgba(180,255,225,0.96)",
@@ -9581,7 +9686,7 @@ const TradeDetailsLoadingModal = ({
             style={{
               height: 34,
               padding: "0 12px",
-              borderRadius: 10,
+              borderRadius: 0,
               border: "1px solid rgba(255,255,255,0.14)",
               background: "rgba(255,255,255,0.06)",
               color: "rgba(255,255,255,0.86)",
@@ -9609,7 +9714,7 @@ const TradeDetailsLoadingModal = ({
               bottom: 26,
               transform: "translateX(-50%)",
               padding: "8px 12px",
-              borderRadius: 12,
+              borderRadius: 0,
               border: "1px solid rgba(255,255,255,0.08)",
               background: "rgba(8,12,15,0.76)",
               color: "rgba(226,255,240,0.72)",
@@ -10764,6 +10869,7 @@ function TradingTerminalWorkspace({
     "Direction",
     "Model"
   ]);
+  const [remapOppositeOutcomes, setRemapOppositeOutcomes] = useState(true);
   const [dimensionAmount, setDimensionAmount] = useState(32);
 const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>("jl");
   const [kEntry, setKEntry] = useState(12);
@@ -10826,7 +10932,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [socialPresetsLoading, setSocialPresetsLoading] = useState(false);
   const [socialPresetsError, setSocialPresetsError] = useState("");
   const [socialPublishPresetName, setSocialPublishPresetName] = useState("");
-  const [socialPublishNote, setSocialPublishNote] = useState("");
   const [socialPublishStatus, setSocialPublishStatus] = useState("");
   const [socialPublishStatusTone, setSocialPublishStatusTone] = useState<
     "neutral" | "success" | "error"
@@ -10834,6 +10939,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [socialPublishing, setSocialPublishing] = useState(false);
   const [socialPresetActionId, setSocialPresetActionId] = useState<string | null>(null);
   const [isMobileWorkspace, setIsMobileWorkspace] = useState(false);
+  const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab>("active");
   const [mobileTradeLimit, setMobileTradeLimit] = useState(3);
   const [aggressorPressure, setAggressorPressure] = useState<AggressorPressureSnapshot>(() => ({
     buyPressure: 0,
@@ -10900,6 +11006,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     distanceMetric,
     knnNeighborSpace,
     selectedAiDomains: [...selectedAiDomains],
+    remapOppositeOutcomes,
     dimensionAmount,
     compressionMethod,
     kEntry,
@@ -11029,7 +11136,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       const hasTouch = navigator.maxTouchPoints > 0;
       const mobileByUa = mobileUserAgentPattern.test(navigator.userAgent);
       setIsMobileWorkspace(mobileByUa || (mobileByViewport && (coarsePointer || hasTouch)));
-      setMobileTradeLimit(window.innerHeight <= 760 ? 2 : 3);
+      setMobileTradeLimit(window.innerHeight <= 760 ? 12 : 18);
     };
     const addQueryListener = (
       query: MediaQueryList,
@@ -11398,11 +11505,17 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   liveBacktestSettingsRef.current = buildCurrentBacktestSettingsSnapshot();
 
   const updateStatsRefreshOverlayMode = useCallback((mode: StatsRefreshOverlayMode) => {
+    if (statsRefreshOverlayModeRef.current === mode) {
+      return;
+    }
     statsRefreshOverlayModeRef.current = mode;
     setStatsRefreshOverlayMode(mode);
   }, []);
   const setStatsRefreshProgressValue = useCallback((value: number) => {
     const nextValue = clamp(value, 0, 100);
+    if (Math.abs(statsRefreshProgressRef.current - nextValue) < 0.01) {
+      return;
+    }
     statsRefreshProgressRef.current = nextValue;
     setStatsRefreshProgress(nextValue);
   }, []);
@@ -11430,26 +11543,37 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     }) => {
       const current = statsRefreshOperationRef.current;
       const now = Date.now();
+      const shouldResetClock =
+        Boolean(input.resetClock) ||
+        !current.startedAtMs ||
+        (typeof input.label === "string" && input.label !== current.label);
       const nextOperation: StatsRefreshOperationSnapshot = {
         label: input.label ?? current.label,
         detail: input.detail ?? current.detail,
         telemetry: input.telemetry ?? current.telemetry,
-        startedAtMs:
-          input.resetClock ||
-          !current.startedAtMs ||
-          (typeof input.label === "string" && input.label !== current.label)
-            ? now
-            : current.startedAtMs,
+        startedAtMs: shouldResetClock ? now : current.startedAtMs,
         updatedAtMs: now
       };
-      statsRefreshOperationRef.current = nextOperation;
-      setStatsRefreshOperation(nextOperation);
-      setStatsRefreshHeartbeatNowMs(now);
+      const operationChanged =
+        nextOperation.label !== current.label ||
+        nextOperation.detail !== current.detail ||
+        nextOperation.telemetry !== current.telemetry ||
+        nextOperation.startedAtMs !== current.startedAtMs;
+      if (operationChanged) {
+        statsRefreshOperationRef.current = nextOperation;
+        setStatsRefreshOperation(nextOperation);
+      }
+      if (shouldResetClock) {
+        setStatsRefreshHeartbeatNowMs(now);
+      }
       if (Number.isFinite(input.progress)) {
         setStatsRefreshProgressValue(Number(input.progress));
       }
       if (Number.isFinite(input.cursorMs)) {
-        setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(Number(input.cursorMs)));
+        const nextLabel = formatStatsRefreshDateLabel(Number(input.cursorMs));
+        setStatsRefreshProgressLabel((currentLabel) =>
+          currentLabel === nextLabel ? currentLabel : nextLabel
+        );
       }
     },
     [setStatsRefreshProgressValue]
@@ -12073,6 +12197,31 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       appliedBacktestSettings
     );
   }, [appliedBacktestSettings, appliedRuntimeAiLibraryIds, canRunAiLibrariesForSnapshot]);
+  const appendSuppressedLibraryForCluster = useCallback(
+    (libraryIds: readonly string[] | null | undefined) => {
+      const next: string[] = [];
+      const seen = new Set<string>();
+
+      for (const rawLibraryId of Array.isArray(libraryIds) ? libraryIds : []) {
+        const libraryId = String(rawLibraryId ?? "").trim();
+        if (!libraryId || seen.has(libraryId) || !aiLibraryDefById[libraryId]) {
+          continue;
+        }
+        seen.add(libraryId);
+        next.push(libraryId);
+      }
+
+      if (
+        aiLibraryDefById[GHOST_LEARNING_LIBRARY_ID] &&
+        !seen.has(GHOST_LEARNING_LIBRARY_ID)
+      ) {
+        next.push(GHOST_LEARNING_LIBRARY_ID);
+      }
+
+      return next;
+    },
+    [aiLibraryDefById]
+  );
   const appliedAiLibraryRunInputsSignature = useMemo(() => {
     return serializeBacktestSettingsSnapshot(appliedBacktestSettings);
   }, [appliedBacktestSettings]);
@@ -12082,9 +12231,18 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const appliedVisibleAiLibraries = useMemo(() => {
     return getVisibleAizipLibraryIds(appliedRuntimeAiLibraryIds);
   }, [appliedRuntimeAiLibraryIds]);
+  const liveClusterLibraryRunIds = useMemo(() => {
+    return appendSuppressedLibraryForCluster(liveRuntimeAiLibraryIds);
+  }, [appendSuppressedLibraryForCluster, liveRuntimeAiLibraryIds]);
+  const appliedClusterLibraryRunIds = useMemo(() => {
+    return appendSuppressedLibraryForCluster(appliedRuntimeAiLibraryIds);
+  }, [appendSuppressedLibraryForCluster, appliedRuntimeAiLibraryIds]);
+  const appliedClusterDisplayLibraries = useMemo(() => {
+    return appendSuppressedLibraryForCluster(appliedVisibleAiLibraries);
+  }, [appendSuppressedLibraryForCluster, appliedVisibleAiLibraries]);
   const appliedAutoRunAiLibraryIds = useMemo(() => {
-    return appliedRuntimeAiLibraryIds;
-  }, [appliedRuntimeAiLibraryIds]);
+    return appliedClusterLibraryRunIds;
+  }, [appliedClusterLibraryRunIds]);
   useEffect(() => {
     if (statsRefreshOverlayMode !== "loading" || statsRefreshStatus !== "Loading AI Libraries") {
       return;
@@ -12284,8 +12442,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     ? appliedAiLibraryReadyToRun
     : aiLibraryReadyToRun;
   const effectiveAiLibraryRunLibraryIds = manualLibraryRunUsesAppliedSnapshot
-    ? appliedRuntimeAiLibraryIds
-    : liveRuntimeAiLibraryIds;
+    ? appliedClusterLibraryRunIds
+    : liveClusterLibraryRunIds;
   const effectiveAiLibraryRunSettingsSource = manualLibraryRunUsesAppliedSnapshot
     ? appliedBacktestSettings.selectedAiLibrarySettings
     : selectedAiLibrarySettings;
@@ -13510,11 +13668,24 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
             ) {
               const availableLastTime =
                 resolvedReplaySeedCandles[resolvedReplaySeedCandles.length - 1]?.time ?? null;
-              console.warn("[BacktestHistory] Requested range exceeds available history coverage.", {
-                requestedStart: appliedBacktestSettings.statsDateStart,
-                requestedEnd: appliedBacktestSettings.statsDateEnd,
-                availableEnd: availableLastTime == null ? null : new Date(availableLastTime).toISOString()
-              });
+              const requestedEndExclusiveMs = getEffectiveUtcDayEndExclusiveMsFromYmd(
+                appliedBacktestSettings.statsDateEnd,
+                appliedBacktestSettings.timeframe
+              );
+              const trailingGapMs =
+                requestedEndExclusiveMs != null && availableLastTime != null
+                  ? requestedEndExclusiveMs - availableLastTime - getTimeframeMs(appliedBacktestSettings.timeframe)
+                  : Number.POSITIVE_INFINITY;
+              const shouldWarnForCoverageGap =
+                !Number.isFinite(trailingGapMs) ||
+                trailingGapMs > Math.max(12 * 60 * 60_000, getTimeframeMs(appliedBacktestSettings.timeframe) * 24);
+              if (shouldWarnForCoverageGap) {
+                console.warn("[BacktestHistory] Requested range exceeds available history coverage.", {
+                  requestedStart: appliedBacktestSettings.statsDateStart,
+                  requestedEnd: appliedBacktestSettings.statsDateEnd,
+                  availableEnd: availableLastTime == null ? null : new Date(availableLastTime).toISOString()
+                });
+              }
             }
             startStatsRefreshPhaseHold(
               "Building Trade Candidates",
@@ -13852,6 +14023,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       symbol: appliedBacktestSettings.symbol,
       unitsPerMove,
       chunkBars: appliedBacktestSettings.chunkBars,
+      entryMode: resolveStrategyReplayEntryMode(
+        appliedBacktestSettings.aiMode,
+        appliedBacktestSettings.aiFilterEnabled
+      ),
       strategyCatalog: modelsSurfaceCatalog,
       tpDollars: appliedBacktestSettings.tpDollars,
       slDollars: appliedBacktestSettings.slDollars,
@@ -13863,6 +14038,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     });
   }, [
     appliedBacktestModelProfiles,
+    appliedBacktestSettings.aiFilterEnabled,
+    appliedBacktestSettings.aiMode,
     appliedBacktestSettings.aiModelStates,
     appliedBacktestSettings.chunkBars,
     appliedBacktestSettings.breakEvenTriggerPct,
@@ -13908,7 +14085,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     for (const blueprint of everyCandleTradeBlueprints) {
       if (!modelNamesById[blueprint.modelId]) {
         modelNamesById[blueprint.modelId] =
-          modelProfileById[blueprint.modelId]?.name ?? "Settings";
+          appliedAiModelEveryCandleMode
+            ? "AI Model"
+            : modelProfileById[blueprint.modelId]?.name ?? "Settings";
       }
     }
 
@@ -14900,6 +15079,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       distanceMetric,
       knnNeighborSpace,
       selectedAiDomains: [...selectedAiDomains],
+      remapOppositeOutcomes,
       ancThreshold,
       kEntry,
       knnVoteMode
@@ -14916,6 +15096,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       kEntry,
       knnVoteMode,
       knnNeighborSpace,
+      remapOppositeOutcomes,
       selectedAiDomains,
       selectedAiLibraries,
       selectedAiLibrarySettings,
@@ -14952,6 +15133,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       symbol: selectedSymbol,
       unitsPerMove,
       chunkBars,
+      entryMode: resolveStrategyReplayEntryMode(aiMode, aiFilterEnabled),
       strategyCatalog: modelsSurfaceCatalog,
       tpDollars,
       slDollars,
@@ -14964,6 +15146,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
     return enforceMaxConcurrentTradeBlueprints(blueprints, maxConcurrentTrades);
   }, [
+    aiFilterEnabled,
+    aiMode,
     aiModelStates,
     backtestModelProfiles,
     breakEvenTriggerPct,
@@ -15010,17 +15194,20 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     shouldBuildChartPanelReplayRows
   ]);
   const chartPanelModelNamesById = useMemo(() => {
+    const aiModelEveryBarMode = usesAizipEveryCandleMode(aiMode, aiFilterEnabled);
     const modelNamesById: Record<string, string> = {};
 
     for (const blueprint of chartPanelTradeBlueprints) {
       if (!modelNamesById[blueprint.modelId]) {
         modelNamesById[blueprint.modelId] =
-          modelProfileById[blueprint.modelId]?.name ?? "Settings";
+          aiModelEveryBarMode
+            ? "AI Model"
+            : modelProfileById[blueprint.modelId]?.name ?? "Settings";
       }
     }
 
     return modelNamesById;
-  }, [chartPanelTradeBlueprints, modelProfileById]);
+  }, [aiFilterEnabled, aiMode, chartPanelTradeBlueprints, modelProfileById]);
   const [chartPanelReplayRows, setChartPanelReplayRows] = useState<HistoryItem[]>([]);
   useEffect(() => {
     if (!shouldBuildChartPanelReplayRows) {
@@ -15594,13 +15781,19 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       hasAiAnalysisPass && !shouldPreloadAiLibraries;
     const statsDateStartSnapshot = appliedBacktestStatsDateStartRef.current;
     const statsDateEndSnapshot = appliedBacktestStatsDateEndRef.current;
+    const aiModelEveryBarMode = usesAizipEveryCandleMode(
+      appliedSettingsSnapshot.aiMode,
+      appliedSettingsSnapshot.aiFilterEnabled
+    );
 
     const modelNamesById: Record<string, string> = {};
 
     for (const blueprint of tradeBlueprintsSnapshot) {
       if (!modelNamesById[blueprint.modelId]) {
         modelNamesById[blueprint.modelId] =
-          modelProfileByIdSnapshot[blueprint.modelId]?.name ?? "Settings";
+          aiModelEveryBarMode
+            ? "AI Model"
+            : modelProfileByIdSnapshot[blueprint.modelId]?.name ?? "Settings";
       }
     }
 
@@ -16541,6 +16734,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     if (s.distanceMetric != null) setDistanceMetric(s.distanceMetric);
     if (s.knnNeighborSpace != null) setKnnNeighborSpace(s.knnNeighborSpace);
     if (s.selectedAiDomains != null) setSelectedAiDomains(s.selectedAiDomains);
+    if (s.remapOppositeOutcomes != null) setRemapOppositeOutcomes(Boolean(s.remapOppositeOutcomes));
     if (s.dimensionAmount != null) setDimensionAmount(s.dimensionAmount);
     if (s.compressionMethod != null) {
       setCompressionMethod(normalizeAiCompressionMethod(s.compressionMethod));
@@ -16676,6 +16870,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     setDistanceMetric("euclidean");
     setKnnNeighborSpace("post");
     setSelectedAiDomains(["Direction", "Model"]);
+    setRemapOppositeOutcomes(true);
     setDimensionAmount(32);
     setCompressionMethod("jl");
     setKEntry(12);
@@ -19970,6 +20165,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           symbol: settings.symbol,
           unitsPerMove,
           chunkBars: settings.chunkBars,
+          entryMode: resolveStrategyReplayEntryMode(
+            settings.aiMode,
+            settings.aiFilterEnabled
+          ),
           strategyCatalog: modelsSurfaceCatalog,
           tpDollars: normalizedTp,
           slDollars: normalizedSl,
@@ -19984,12 +20183,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           return [];
         }
 
-        const modelNamesById = selectedModels.reduce<Record<string, string>>(
-          (accumulator, model) => {
-            accumulator[model.id] = model.name ?? "Settings";
-            return accumulator;
-          },
-          {}
+        const modelNamesById = buildReplayModelNamesById(
+          selectedModels,
+          usesAizipEveryCandleMode(settings.aiMode, settings.aiFilterEnabled)
         );
         const rows = await computeBacktestRowsOnServer({
           blueprints,
@@ -20166,6 +20362,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           symbol: settings.symbol,
           unitsPerMove,
           chunkBars: settings.chunkBars,
+          entryMode: resolveStrategyReplayEntryMode(
+            settings.aiMode,
+            settings.aiFilterEnabled
+          ),
           strategyCatalog: modelsSurfaceCatalog,
           tpDollars: normalizedTp,
           slDollars: normalizedSl,
@@ -20180,12 +20380,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           return [];
         }
 
-        const modelNamesById = selectedModels.reduce<Record<string, string>>(
-          (accumulator, model) => {
-            accumulator[model.id] = model.name ?? "Settings";
-            return accumulator;
-          },
-          {}
+        const modelNamesById = buildReplayModelNamesById(
+          selectedModels,
+          usesAizipEveryCandleMode(settings.aiMode, settings.aiFilterEnabled)
         );
         const rows = await computeBacktestRowsOnServer({
           blueprints,
@@ -20679,7 +20876,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           candidatePool,
           executedTradeIds
         );
-        if (result.count === 0) {
+        if (result.count === 0 && result.sourceCount > 0) {
           console.error("[AIZip][AiLibraryRunDiagnostics] LIBRARY_READY_WITH_ZERO_RESULTS", {
             libraryId,
             rawPoolCount: rawPool.length,
@@ -20756,7 +20953,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         options?.libraryIds && options.libraryIds.length > 0
           ? options.libraryIds
           : selectedAiLibraries;
-      const activeIds = sourceIds.filter((libraryId) => Boolean(aiLibraryDefById[libraryId]));
+      const activeIds = appendSuppressedLibraryForCluster(sourceIds);
 
       if (activeIds.length === 0) {
         return;
@@ -20772,6 +20969,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       );
     },
     [
+      appendSuppressedLibraryForCluster,
       aiLibraryDefById,
       runAiLibrary,
       selectedAiLibraries,
@@ -20816,31 +21014,31 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     backtestRunCount,
     resetAiLibraryRunState
   ]);
-  const appliedVisibleAiLibrariesSettled = useMemo(() => {
-    if (appliedVisibleAiLibraries.length === 0) {
+  const appliedClusterDisplayLibrariesSettled = useMemo(() => {
+    if (appliedClusterDisplayLibraries.length === 0) {
       return true;
     }
 
-    return appliedVisibleAiLibraries.every((libraryId) => {
+    return appliedClusterDisplayLibraries.every((libraryId) => {
       const status = aiLibraryRunStatus[String(libraryId).trim()] ?? "idle";
       return status === "ready" || status === "error";
     });
-  }, [aiLibraryRunStatus, appliedVisibleAiLibraries]);
+  }, [aiLibraryRunStatus, appliedClusterDisplayLibraries]);
   const aiClusterActiveLibraries = useMemo(() => {
     if (
       !backtestHasRun ||
       !backtestHistorySeedReady ||
       !appliedAiLibraryReadyToRun ||
-      !appliedVisibleAiLibrariesSettled
+      !appliedClusterDisplayLibrariesSettled
     ) {
       return [] as string[];
     }
 
-    return appliedVisibleAiLibraries;
+    return appliedClusterDisplayLibraries;
   }, [
     appliedAiLibraryReadyToRun,
-    appliedVisibleAiLibraries,
-    appliedVisibleAiLibrariesSettled,
+    appliedClusterDisplayLibraries,
+    appliedClusterDisplayLibrariesSettled,
     backtestHasRun,
     backtestHistorySeedReady
   ]);
@@ -20879,7 +21077,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, [aiClusterActiveLibraryIdSet, aiLibraryCounts]);
   const aiLibraryDiagnosticsKeyRef = useRef<string>("");
   useEffect(() => {
-    const appliedLibraryIds = appliedVisibleAiLibraries.map((libraryId) =>
+    const appliedLibraryIds = appliedClusterDisplayLibraries.map((libraryId) =>
       String(libraryId).trim()
     ).filter(Boolean);
     if (appliedLibraryIds.length === 0) {
@@ -20911,14 +21109,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     }
     if (
       appliedAiLibraryReadyToRun &&
-      appliedVisibleAiLibrariesSettled &&
+      appliedClusterDisplayLibrariesSettled &&
       totalAppliedCount === 0
     ) {
       codes.push("APPLIED_LIBRARIES_PRODUCED_ZERO_COUNTS");
     }
     if (
       appliedAiLibraryReadyToRun &&
-      appliedVisibleAiLibrariesSettled &&
+      appliedClusterDisplayLibrariesSettled &&
       pointCount === 0
     ) {
       codes.push("APPLIED_LIBRARIES_PRODUCED_ZERO_POINTS");
@@ -20960,8 +21158,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     aiLibraryCounts,
     aiLibraryRunStatus,
     appliedAiLibraryReadyToRun,
-    appliedVisibleAiLibrariesSettled,
-    appliedVisibleAiLibraries,
+    appliedClusterDisplayLibrariesSettled,
+    appliedClusterDisplayLibraries,
     backtestHasRun,
     backtestHistorySeedReady,
     appliedSelectedAiModelCount,
@@ -22179,6 +22377,52 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const mobileSavedPresets = useMemo(() => {
     return [...savedPresets].sort((a, b) => b.savedAt - a.savedAt);
   }, [savedPresets]);
+  const mobileSymbolLabel = useMemo(() => {
+    return String(selectedSymbol || "XAU_USD").replaceAll("_", "/");
+  }, [selectedSymbol]);
+  const mobileSettingsSummaryRows = useMemo(
+    () => [
+      {
+        label: "Analysis",
+        value: `${appliedBacktestSettings.symbol.replaceAll("_", "/")} · ${appliedBacktestSettings.timeframe}`
+      },
+      {
+        label: "Precision",
+        value: appliedBacktestSettings.minutePreciseEnabled
+          ? appliedBacktestSettings.precisionTimeframe
+          : "Matches analysis"
+      },
+      {
+        label: "AI Mode",
+        value:
+          appliedBacktestSettings.aiMode === "off"
+            ? "Off"
+            : appliedBacktestSettings.aiFilterEnabled
+              ? `${appliedBacktestSettings.aiMode.toUpperCase()} Filter`
+              : appliedBacktestSettings.aiMode.toUpperCase()
+      },
+      {
+        label: "Risk",
+        value: `TP $${formatUsd(appliedBacktestSettings.tpDollars)} · SL $${formatUsd(appliedBacktestSettings.slDollars)}`
+      },
+      {
+        label: "Window",
+        value: `${appliedBacktestSettings.statsDateStart} → ${appliedBacktestSettings.statsDateEnd}`
+      },
+      {
+        label: "Libraries",
+        value:
+          appliedBacktestSettings.selectedAiLibraries.length > 0
+            ? appliedBacktestSettings.selectedAiLibraries.join(", ")
+            : "None selected"
+      }
+    ],
+    [appliedBacktestSettings]
+  );
+  const mobilePrimaryStats = useMemo(() => {
+    return backtestHeroStats.slice(0, 4);
+  }, [backtestHeroStats]);
+  const mobileLatestTrade = mobileRecentTrades[0] ?? null;
   const selectedSocialPublishPreset = useMemo(() => {
     return mobileSavedPresets.find((preset) => preset.name === socialPublishPresetName) ?? null;
   }, [mobileSavedPresets, socialPublishPresetName]);
@@ -22190,7 +22434,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const socialPublishedCount = useMemo(() => {
     return socialPresets.filter((preset) => preset.authorUid === currentUser.uid).length;
   }, [currentUser.uid, socialPresets]);
-  const socialFeaturedPreset = socialPresets[0] ?? null;
   const socialVisiblePresets = useMemo(() => {
     return socialPresets.slice(0, 36);
   }, [socialPresets]);
@@ -22279,7 +22522,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     try {
       await addDoc(collection(firebaseDb, "socialPresets"), {
         presetName: selectedSocialPublishPreset.name,
-        note: socialPublishNote.trim().slice(0, 180),
+        note: "",
         settings: selectedSocialPublishPreset.settings,
         authorUid: currentUser.uid,
         authorDisplayName: currentUserDisplayName,
@@ -22297,7 +22540,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       });
       setSocialPublishStatus(`Published ${selectedSocialPublishPreset.name} to the community feed.`);
       setSocialPublishStatusTone("success");
-      setSocialPublishNote("");
     } catch (error) {
       setSocialPublishStatus(
         error instanceof Error ? error.message : "That preset could not be published."
@@ -22311,8 +22553,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     currentUser.uid,
     currentUserDisplayName,
     firebaseDb,
-    selectedSocialPublishPreset,
-    socialPublishNote
+    selectedSocialPublishPreset
   ]);
 
   const handleRunSocialPreset = useCallback(
@@ -24111,14 +24352,34 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   if (isMobileWorkspace) {
     return (
       <main className="terminal mobile-terminal-shell">
-        <section className="mobile-terminal-panel">
-          <header className="mobile-terminal-hero">
-            <div className="mobile-terminal-copy">
-              <span className="mobile-terminal-kicker">Korra Mobile</span>
-              <h1>Presets and recent trades</h1>
-              <p>Load a preset, rerun it instantly, and keep the latest activity in view.</p>
+        <section className="mobile-app-frame">
+          <header className="mobile-app-topbar">
+            <div className="mobile-app-topbar-copy">
+              <span className="mobile-app-kicker">Korra Mobile</span>
+              <div className="mobile-app-topbar-title-row">
+                <h1>
+                  {mobileWorkspaceTab === "active"
+                    ? "Active Trade"
+                    : mobileWorkspaceTab === "history"
+                      ? "Trade History"
+                      : "Run Settings"}
+                </h1>
+                <span className="mobile-app-symbol-pill">
+                  {mobileSymbolLabel} · {appliedBacktestSettings.timeframe}
+                </span>
+              </div>
+              <p>
+                {mobileWorkspaceTab === "active"
+                  ? activeTrade
+                    ? "Live trade state, quote context, and the latest backtest pulse."
+                    : "Standby view with the latest backtest pulse and quick market context."
+                  : mobileWorkspaceTab === "history"
+                    ? "Tap any recent trade to open the full replay detail view."
+                    : "Load presets, review the current run, and manage your account."}
+              </p>
             </div>
-            <div className="profile-menu-wrap mobile-profile-wrap" ref={profileMenuRef}>
+
+            <div className="profile-menu-wrap mobile-app-profile" ref={profileMenuRef}>
               <button
                 type="button"
                 className="profile-avatar-btn"
@@ -24180,146 +24441,362 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
             </div>
           </header>
 
-          <div className="mobile-preset-dock" ref={presetMenuRef}>
-            <div className="mobile-terminal-card mobile-terminal-card-compact">
-              <div className="mobile-terminal-section-head compact">
-                <div>
-                  <span className="mobile-terminal-eyebrow">Preset</span>
-                  <h2>Load Preset</h2>
-                </div>
-                <button
-                  type="button"
-                  className={`mobile-terminal-action${presetMenuOpen === "load" ? " active" : ""}`}
-                  onClick={() => setPresetMenuOpen((current) => (current === "load" ? null : "load"))}
-                >
-                  {presetMenuOpen === "load" ? "Close" : "Load"}
-                </button>
+          <div className="mobile-app-body">
+            <section className="mobile-app-quote-strip">
+              <div className="mobile-app-mini-card">
+                <span>Bid</span>
+                <strong>{liveQuote.bid != null ? formatPrice(liveQuote.bid) : "—"}</strong>
               </div>
-              <div className="mobile-terminal-card-note compact">
-                {statsRefreshOverlayMode === "loading"
-                  ? "Refreshing the selected preset now."
-                  : backtestHasRun
-                    ? `${mobileRecentTrades.length.toLocaleString("en-US")} latest trades are pinned below.`
-                    : "Choose any saved preset and the backtest refresh starts immediately."}
+              <div className="mobile-app-mini-card">
+                <span>Ask</span>
+                <strong>{liveQuote.ask != null ? formatPrice(liveQuote.ask) : "—"}</strong>
               </div>
-            </div>
-
-            {presetMenuOpen === "load" ? (
-              <div className="mobile-preset-sheet">
-                <div className="mobile-preset-sheet-head">
-                  <strong>Saved Presets</strong>
-                  <span>Tap one to load and rerun it.</span>
-                </div>
-                {mobileSavedPresets.length === 0 ? (
-                  <div className="mobile-empty-state compact">
-                    <strong>No saved presets yet.</strong>
-                    <span>Save presets on desktop first, then load them here from mobile.</span>
-                  </div>
-                ) : (
-                  <div className="mobile-preset-list">
-                    {mobileSavedPresets.map((preset) => (
-                      <button
-                        key={preset.name}
-                        type="button"
-                        className="mobile-preset-item"
-                        onClick={() => handleLoadPreset(preset)}
-                      >
-                        <span className="mobile-preset-copy">
-                          <strong>{preset.name}</strong>
-                          <small>{new Date(preset.savedAt).toLocaleDateString()}</small>
-                        </span>
-                        <span className="mobile-preset-cta">Load</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+              <div className="mobile-app-mini-card">
+                <span>Spread</span>
+                <strong>{liveQuote.spread != null ? liveQuote.spread.toFixed(2) : "—"}</strong>
               </div>
-            ) : null}
-          </div>
-
-          <div className="mobile-terminal-card mobile-terminal-history">
-            <div className="mobile-terminal-section-head compact">
-              <div>
-                <span className="mobile-terminal-eyebrow">History</span>
-                <h2>Recent Trades</h2>
+              <div className="mobile-app-mini-card">
+                <span>Win Rate</span>
+                <strong>{backtestSummary.winRate.toFixed(1)}%</strong>
               </div>
-              <span className="mobile-terminal-count">
-                {mobileRecentTrades.length.toLocaleString("en-US")}
-              </span>
-            </div>
+            </section>
 
             {statsRefreshOverlayMode === "loading" ? (
-              <div className="mobile-loading-note">
-                Running the preset and rebuilding recent trade history.
+              <div className="mobile-app-sync-banner">
+                <span className="mobile-app-sync-dot" aria-hidden="true" />
+                Rebuilding the backtest and refreshing the mobile workspace.
               </div>
-            ) : mobileRecentTrades.length === 0 ? (
-              <div className="mobile-empty-state">
-                <strong>
-                  {backtestHasRun ? "No recent trades for this preset yet." : "No backtest has run yet."}
-                </strong>
-                <span>
-                  {mobileSavedPresets.length > 0
-                    ? "Use Load Preset above to rerun one of your saved setups."
-                    : "Save a preset on desktop first, then load it here to refresh this feed."}
-                </span>
-              </div>
-            ) : (
-              <div className="mobile-trade-feed">
-                {mobileRecentTrades.map((trade) => {
-                  const durationMinutes = Math.max(
-                    1,
-                    (Number(trade.exitTime) - Number(trade.entryTime)) / 60
-                  );
-                  const confidencePct = Math.round(getEffectiveTradeConfidenceScore(trade) * 100);
+            ) : null}
 
-                  return (
-                    <button
-                      key={trade.id}
-                      type="button"
-                      className="mobile-trade-card"
-                      onMouseEnter={() => {
-                        void loadAiZipClusterModule();
-                      }}
-                      onClick={() => openBacktestTradeDetails(trade)}
-                    >
-                      <div className="mobile-trade-card-head">
-                        <div className="mobile-trade-card-copy">
-                          <strong className="mobile-trade-card-id">
-                            {getAiZipTradeDisplayId(trade)}
-                          </strong>
-                          <span>
-                            {trade.symbol} · {trade.side === "Long" ? "Buy" : "Sell"} ·{" "}
-                            {getSessionLabel(trade.entryTime)}
+            {mobileWorkspaceTab === "active" ? (
+              <>
+                <section className="mobile-app-card mobile-app-hero-card">
+                  {activeTrade ? (
+                    <>
+                      <div className="mobile-app-hero-head">
+                        <div>
+                          <span
+                            className={`mobile-app-side-tag ${
+                              activeTrade.side === "Long" ? "up" : "down"
+                            }`}
+                          >
+                            {activeTrade.side}
                           </span>
+                          <h2>{activeTrade.symbol.replaceAll("_", "/")}</h2>
                         </div>
-                        <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
-                          {formatSignedUsd(trade.pnlUsd)}
+                        <span className="mobile-app-live-pill">Live</span>
+                      </div>
+
+                      <div className="mobile-app-hero-pnl">
+                        <span>Unrealized PnL</span>
+                        <strong className={activeTrade.pnlValue >= 0 ? "up" : "down"}>
+                          {formatSignedUsd(activeTrade.pnlValue)}
                         </strong>
+                        <small className={activeTrade.pnlPct >= 0 ? "up" : "down"}>
+                          {activeTrade.pnlPct >= 0 ? "+" : ""}
+                          {activeTrade.pnlPct.toFixed(2)}%
+                        </small>
                       </div>
 
-                      <div className="mobile-trade-card-meta">
-                        <span>{trade.symbol}</span>
-                        <span>{trade.side === "Long" ? "Buy" : "Sell"}</span>
-                        <span>{getSessionLabel(trade.entryTime)}</span>
+                      <div className="mobile-app-metric-grid">
+                        <div className="mobile-app-metric-tile">
+                          <span>Entry</span>
+                          <strong>{formatPrice(activeTrade.entryPrice)}</strong>
+                        </div>
+                        <div className="mobile-app-metric-tile">
+                          <span>Mark</span>
+                          <strong>{formatPrice(activeTrade.markPrice)}</strong>
+                        </div>
+                        <div className="mobile-app-metric-tile">
+                          <span>Take Profit</span>
+                          <strong className="up">{formatPrice(activeTrade.targetPrice)}</strong>
+                        </div>
+                        <div className="mobile-app-metric-tile">
+                          <span>Stop Loss</span>
+                          <strong className="down">{formatPrice(activeTrade.stopPrice)}</strong>
+                        </div>
+                        <div className="mobile-app-metric-tile">
+                          <span>Size</span>
+                          <strong>{formatUnits(activeTrade.units)} units</strong>
+                        </div>
+                        <div className="mobile-app-metric-tile">
+                          <span>R:R</span>
+                          <strong>1:{activeTrade.rr.toFixed(2)}</strong>
+                        </div>
+                        <div className="mobile-app-metric-tile">
+                          <span>Opened</span>
+                          <strong>{activeTrade.openedAtLabel}</strong>
+                        </div>
+                        <div className="mobile-app-metric-tile">
+                          <span>Duration</span>
+                          <strong>{activeTrade.elapsed}</strong>
+                        </div>
                       </div>
 
-                      <div className="mobile-trade-card-chips">
-                        <span>{`En ${getHistoryTradeEntryLabel(trade)}`}</span>
-                        <span>{`Ex ${getHistoryTradeExitLabel(trade)}`}</span>
-                        <span>{formatMinutesCompact(durationMinutes)}</span>
-                        <span>{`${confidencePct}%`}</span>
+                      <div className="mobile-app-progress-card">
+                        <div className="mobile-app-progress-head">
+                          <span>Progress To TP</span>
+                          <strong>{activeTrade.progressPct.toFixed(1)}%</strong>
+                        </div>
+                        <div className="mobile-app-progress-track">
+                          <div
+                            className="mobile-app-progress-fill"
+                            style={{ width: `${activeTrade.progressPct}%` }}
+                          />
+                        </div>
                       </div>
+                    </>
+                  ) : (
+                    <div className="mobile-app-empty-state">
+                      <span className="mobile-app-kicker">Standby</span>
+                      <h2>No active trade right now</h2>
+                      <p>
+                        {latestTradeBarsAgo !== null
+                          ? `The latest closed trade was ${latestTradeBarsAgo} bar${latestTradeBarsAgo !== 1 ? "s" : ""} ago.`
+                          : "Run or refresh a preset to populate the latest trade flow."}
+                      </p>
+                      {mobileLatestTrade ? (
+                        <button
+                          type="button"
+                          className="mobile-app-inline-action"
+                          onClick={() => openBacktestTradeDetails(mobileLatestTrade)}
+                        >
+                          Open Latest Closed Trade
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
+                </section>
 
-                      <div className="mobile-trade-card-footer compact">
-                        <span>{trade.entrySource}</span>
-                        <span>{getBacktestExitLabel(trade)}</span>
+                <section className="mobile-app-card">
+                  <div className="mobile-app-section-head">
+                    <div>
+                      <span className="mobile-app-eyebrow">Snapshot</span>
+                      <h3>Backtest Pulse</h3>
+                    </div>
+                    <span className="mobile-app-count-pill">
+                      {backtestSummary.tradeCount.toLocaleString("en-US")}
+                    </span>
+                  </div>
+
+                  <div className="mobile-app-stat-grid">
+                    {mobilePrimaryStats.map((stat) => (
+                      <div key={stat.label} className="mobile-app-stat-card">
+                        <span>{stat.label}</span>
+                        <strong
+                          className={
+                            stat.tone === "up" ? "up" : stat.tone === "down" ? "down" : ""
+                          }
+                        >
+                          {stat.value}
+                        </strong>
+                        <small>{stat.meta}</small>
                       </div>
+                    ))}
+                  </div>
+                </section>
+              </>
+            ) : mobileWorkspaceTab === "history" ? (
+              <section className="mobile-app-card mobile-app-history-card">
+                <div className="mobile-app-section-head">
+                  <div>
+                    <span className="mobile-app-eyebrow">History</span>
+                    <h3>Recent Trades</h3>
+                  </div>
+                  <span className="mobile-app-count-pill">
+                    {mobileRecentTrades.length.toLocaleString("en-US")}
+                  </span>
+                </div>
+
+                {mobileRecentTrades.length === 0 ? (
+                  <div className="mobile-app-empty-state compact">
+                    <h2>{backtestHasRun ? "No recent trades yet" : "No backtest has run yet"}</h2>
+                    <p>
+                      {mobileSavedPresets.length > 0
+                        ? "Load a preset from Settings to rebuild the history feed."
+                        : "Save a preset on desktop first, then load it here from Settings."}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mobile-app-history-list">
+                    {mobileRecentTrades.map((trade) => {
+                      const durationMinutes = Math.max(
+                        1,
+                        (Number(trade.exitTime) - Number(trade.entryTime)) / 60
+                      );
+                      const confidencePct = Math.round(getEffectiveTradeConfidenceScore(trade) * 100);
+
+                      return (
+                        <button
+                          key={trade.id}
+                          type="button"
+                          className="mobile-app-history-item"
+                          onClick={() => openBacktestTradeDetails(trade)}
+                        >
+                          <div className="mobile-app-history-head">
+                            <div className="mobile-app-history-copy">
+                              <strong>{getAiZipTradeDisplayId(trade)}</strong>
+                              <span>
+                                {trade.symbol.replaceAll("_", "/")} ·{" "}
+                                {trade.side === "Long" ? "Buy" : "Sell"} ·{" "}
+                                {getSessionLabel(trade.entryTime)}
+                              </span>
+                            </div>
+                            <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
+                              {formatSignedUsd(trade.pnlUsd)}
+                            </strong>
+                          </div>
+
+                          <div className="mobile-app-history-chips">
+                            <span>{trade.entrySource}</span>
+                            <span>{getBacktestExitLabel(trade)}</span>
+                            <span>{formatMinutesCompact(durationMinutes)}</span>
+                            <span>{confidencePct}% conf</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            ) : (
+              <>
+                <section className="mobile-app-card">
+                  <div className="mobile-app-section-head">
+                    <div>
+                      <span className="mobile-app-eyebrow">Configuration</span>
+                      <h3>Current Run</h3>
+                    </div>
+                  </div>
+                  <div className="mobile-app-settings-list">
+                    {mobileSettingsSummaryRows.map((row) => (
+                      <div key={row.label} className="mobile-app-settings-row">
+                        <span>{row.label}</span>
+                        <strong>{row.value}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="mobile-app-card">
+                  <div className="mobile-app-section-head">
+                    <div>
+                      <span className="mobile-app-eyebrow">Presets</span>
+                      <h3>Saved Presets</h3>
+                    </div>
+                    <span className="mobile-app-count-pill">
+                      {mobileSavedPresets.length.toLocaleString("en-US")}
+                    </span>
+                  </div>
+
+                  {mobileSavedPresets.length === 0 ? (
+                    <div className="mobile-app-empty-state compact">
+                      <h2>No saved presets yet</h2>
+                      <p>Save presets on desktop first, then they’ll appear here for quick reruns.</p>
+                    </div>
+                  ) : (
+                    <div className="mobile-app-preset-list">
+                      {mobileSavedPresets.map((preset) => {
+                        const presetSymbol = String(
+                          preset.settings.selectedSymbol ?? preset.settings.symbol ?? "XAU_USD"
+                        ).replaceAll("_", "/");
+                        const presetTimeframe = String(
+                          preset.settings.selectedBacktestTimeframe ??
+                            preset.settings.timeframe ??
+                            "15m"
+                        );
+
+                        return (
+                          <button
+                            key={preset.name}
+                            type="button"
+                            className="mobile-app-preset-item"
+                            onClick={() => {
+                              handleLoadPreset(preset);
+                              setMobileWorkspaceTab("active");
+                            }}
+                          >
+                            <div className="mobile-app-preset-copy">
+                              <strong>{preset.name}</strong>
+                              <span>
+                                {presetSymbol} · {presetTimeframe} ·{" "}
+                                {new Date(preset.savedAt).toLocaleDateString()}
+                              </span>
+                            </div>
+                            <span className="mobile-app-preset-cta">Load</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+
+                <section className="mobile-app-card">
+                  <div className="mobile-app-section-head">
+                    <div>
+                      <span className="mobile-app-eyebrow">Account</span>
+                      <h3>Profile Actions</h3>
+                    </div>
+                  </div>
+
+                  <div className="mobile-app-action-stack">
+                    <button
+                      type="button"
+                      className="mobile-app-action-button"
+                      onClick={() => {
+                        setProfileUsernameInput(currentUserDisplayName);
+                        setProfileDialogStatus("");
+                        setProfileDialogMode("username");
+                      }}
+                    >
+                      Change Username
                     </button>
-                  );
-                })}
-              </div>
+                    <button
+                      type="button"
+                      className="mobile-app-action-button"
+                      onClick={() => {
+                        setProfilePasswordForm(EMPTY_ACCOUNT_PASSWORD_FORM);
+                        setProfileDialogStatus("");
+                        setProfileDialogMode("password");
+                      }}
+                    >
+                      Change Password
+                    </button>
+                    <button
+                      type="button"
+                      className="mobile-app-action-button danger"
+                      onClick={() => {
+                        void onLogOut();
+                      }}
+                    >
+                      Log Out
+                    </button>
+                  </div>
+                </section>
+              </>
             )}
           </div>
+
+          <nav className="mobile-app-tabbar" aria-label="Mobile workspace tabs">
+            {([
+              { id: "active", label: "Active" },
+              { id: "history", label: "History" },
+              { id: "settings", label: "Settings" }
+            ] as Array<{ id: MobileWorkspaceTab; label: string }>).map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`mobile-app-tab${mobileWorkspaceTab === tab.id ? " active" : ""}`}
+                onClick={() => setMobileWorkspaceTab(tab.id)}
+                aria-pressed={mobileWorkspaceTab === tab.id}
+              >
+                <span className="mobile-app-tab-icon">
+                  <MobileWorkspaceTabIcon tab={tab.id} />
+                </span>
+                <span className="mobile-app-tab-label">{tab.label}</span>
+              </button>
+            ))}
+          </nav>
         </section>
 
         {statsRefreshOverlayVisible && statsRefreshOverlayMode === "loading" ? (
@@ -24469,7 +24946,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       </main>
     );
   }
-
   return (
     <main className={`terminal${isGideonSurface ? " terminal-gideon" : ""}`}>
       <div className="surface-strip">
@@ -25474,269 +25950,170 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         ) : null}
 
         {selectedSurfaceTab === "social" ? (
-          <section className="social-surface" aria-label="social preset workspace">
-            <div className="social-shell">
-              <div className="social-hero">
-                <article className="social-hero-copy">
-                  <span className="social-kicker">Community Presets</span>
-                  <h2>Share the setups that are actually worth rerunning.</h2>
-                  <p>
-                    Publish one of your saved workspace presets, browse the community feed, and
-                    pull any shared setup straight back into a fresh backtest run.
-                  </p>
-                </article>
-                <div className="social-hero-stats">
-                  <article className="social-stat-card">
-                    <span>Live Feed</span>
-                    <strong>{socialPresets.length.toLocaleString("en-US")}</strong>
-                    <small>Signed-in traders can see every published setup.</small>
-                  </article>
-                  <article className="social-stat-card">
-                    <span>Your Posts</span>
-                    <strong>{socialPublishedCount.toLocaleString("en-US")}</strong>
-                    <small>Publish from any preset you already keep in your workspace.</small>
-                  </article>
-                  <article className="social-stat-card">
-                    <span>Freshest Drop</span>
-                    <strong>{socialFeaturedPreset ? socialFeaturedPreset.presetName : "Waiting"}</strong>
-                    <small>
-                      {socialFeaturedPreset
-                        ? `${socialFeaturedPreset.authorDisplayName} · ${formatRelativeTimeLabel(
-                            socialFeaturedPreset.publishedAtMs
-                          )}`
-                        : "The first shared preset will land here."}
-                    </small>
-                  </article>
+          <section className="backtest-surface" aria-label="social preset workspace">
+            <div className="backtest-shell">
+              <div className="backtest-card compact social-simple-overview">
+                <div className="backtest-card-head backtest-stats-head">
+                  <div>
+                    <h3>Social</h3>
+                  </div>
+                  <div className="models-surface-overview-actions social-simple-overview-actions">
+                    <span className="social-simple-counter">
+                      {socialPresets.length.toLocaleString("en-US")} shared
+                    </span>
+                    <span className="social-simple-counter">
+                      {socialPublishedCount.toLocaleString("en-US")} yours
+                    </span>
+                  </div>
+                </div>
+                <div className="backtest-toolbar-note backtest-toolbar-note-stack">
+                  <span className="backtest-toolbar-note-meta">
+                    Publish one saved preset or run one directly from the community feed.
+                  </span>
+                  {socialPublishStatus ? (
+                    <span className={`backtest-toolbar-note-meta social-simple-status ${socialPublishStatusTone}`}>
+                      {socialPublishStatus}
+                    </span>
+                  ) : null}
                 </div>
               </div>
 
-              <div className="social-layout">
-                <aside className="social-publish-card">
-                  <div className="social-card-head">
+              <div className="social-simple-layout">
+                <section className="backtest-card compact social-simple-card">
+                  <div className="backtest-card-head backtest-stats-head">
                     <div>
-                      <span className="social-kicker">Publish</span>
-                      <h3>Put a saved preset into the feed</h3>
-                      <p>
-                        Choose one of your saved workspace presets, add a short angle if you want,
-                        and publish it for the rest of the community.
-                      </p>
-                    </div>
-                    <div className="social-author-badge">
-                      {currentUser.photoURL ? (
-                        <span
-                          className="social-author-avatar social-author-avatar--photo"
-                          style={{ backgroundImage: `url("${currentUser.photoURL}")` }}
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <span className="social-author-avatar" aria-hidden="true">
-                          {currentUserInitials}
-                        </span>
-                      )}
-                      <span>{currentUserDisplayName}</span>
+                      <h3>Publish Preset</h3>
                     </div>
                   </div>
 
                   {mobileSavedPresets.length === 0 ? (
-                    <div className="social-empty-state">
-                      <strong>No saved presets yet.</strong>
-                      <span>
-                        Save a preset first, then come back here to publish it for everyone else.
-                      </span>
+                    <div className="social-simple-empty">
+                      Save a preset first, then you can publish it here for everyone with an account.
                     </div>
                   ) : (
                     <>
-                      <label className="social-field">
-                        <span>Saved Preset</span>
-                        <select
-                          value={socialPublishPresetName}
-                          onChange={(event) => setSocialPublishPresetName(event.target.value)}
-                        >
-                          {mobileSavedPresets.map((preset) => (
-                            <option key={preset.name} value={preset.name}>
-                              {preset.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label className="social-field">
-                        <span>Context Note</span>
-                        <textarea
-                          value={socialPublishNote}
-                          onChange={(event) => setSocialPublishNote(event.target.value.slice(0, 180))}
-                          placeholder="Optional: what makes this setup worth a rerun?"
-                          rows={3}
-                        />
-                      </label>
-
-                      {selectedSocialPublishPreview ? (
-                        <div className="social-preview-card">
-                          <div className="social-preview-title">
-                            <strong>{selectedSocialPublishPreset?.name}</strong>
-                            <span>
-                              Saved {new Date(selectedSocialPublishPreset?.savedAt ?? Date.now()).toLocaleDateString()}
-                            </span>
-                          </div>
-                          <div className="social-chip-row">
-                            <span className="social-chip">{selectedSocialPublishPreview.symbol}</span>
-                            <span className="social-chip">
-                              {selectedSocialPublishPreview.analysisTimeframe} analysis
-                            </span>
-                            <span className="social-chip">
-                              {selectedSocialPublishPreview.minutePreciseEnabled
-                                ? `${selectedSocialPublishPreview.precisionTimeframe} precision`
-                                : "analysis only"}
-                            </span>
-                            <span className="social-chip">
-                              {selectedSocialPublishPreview.aiMode === "off"
-                                ? "AI Off"
-                                : selectedSocialPublishPreview.aiMode.toUpperCase()}
-                            </span>
-                            <span className="social-chip">
-                              {selectedSocialPublishPreview.enabledModelCount.toLocaleString("en-US")} models
-                            </span>
-                            <span className="social-chip">
-                              {selectedSocialPublishPreview.maxConcurrentTrades.toLocaleString("en-US")} max concurrent
-                            </span>
-                          </div>
-                        </div>
-                      ) : null}
-
-                      <div className="social-publish-actions">
+                      <div className="social-simple-publish-row">
+                        <label className="social-simple-field">
+                          <span>Saved Preset</span>
+                          <select
+                            className="social-simple-select"
+                            value={socialPublishPresetName}
+                            onChange={(event) => setSocialPublishPresetName(event.target.value)}
+                          >
+                            {mobileSavedPresets.map((preset) => (
+                              <option key={preset.name} value={preset.name}>
+                                {preset.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                         <button
                           type="button"
-                          className="social-action-btn social-action-btn--primary"
+                          className="panel-action-btn"
                           onClick={handlePublishSocialPreset}
                           disabled={socialPublishing || !selectedSocialPublishPreset}
                         >
-                          {socialPublishing ? "Publishing..." : "Publish Preset"}
+                          {socialPublishing ? "Publishing..." : "Publish"}
                         </button>
-                        <span>Publishes the full saved workspace settings behind this preset.</span>
                       </div>
+
+                      {selectedSocialPublishPreview ? (
+                        <div className="social-simple-summary">
+                          <span>{selectedSocialPublishPreview.symbol}</span>
+                          <span>{selectedSocialPublishPreview.analysisTimeframe} analysis</span>
+                          <span>
+                            {selectedSocialPublishPreview.minutePreciseEnabled
+                              ? `${selectedSocialPublishPreview.precisionTimeframe} precision`
+                              : "analysis only"}
+                          </span>
+                          <span>
+                            {selectedSocialPublishPreview.aiMode === "off"
+                              ? "AI Off"
+                              : selectedSocialPublishPreview.aiMode.toUpperCase()}
+                          </span>
+                          <span>
+                            {selectedSocialPublishPreview.enabledModelCount.toLocaleString("en-US")} models
+                          </span>
+                        </div>
+                      ) : null}
                     </>
                   )}
+                </section>
 
-                  {socialPublishStatus ? (
-                    <div className={`social-inline-status ${socialPublishStatusTone}`}>
-                      {socialPublishStatus}
-                    </div>
-                  ) : null}
-                </aside>
-
-                <section className="social-feed-card" aria-label="community preset feed">
-                  <div className="social-card-head">
+                <section className="backtest-card compact social-simple-card" aria-label="community preset feed">
+                  <div className="backtest-card-head backtest-stats-head">
                     <div>
-                      <span className="social-kicker">Feed</span>
-                      <h3>Shared by the community</h3>
-                      <p>
-                        Load any preset into your workspace and rerun it immediately against your
-                        current market data and backtest engine.
-                      </p>
+                      <h3>Community Feed</h3>
                     </div>
-                    <div className="social-feed-headline">
-                      <span>{socialVisiblePresets.length.toLocaleString("en-US")} visible now</span>
+                    <div className="models-surface-overview-actions social-simple-overview-actions">
+                      <span className="social-simple-counter">
+                        {socialVisiblePresets.length.toLocaleString("en-US")} visible
+                      </span>
                     </div>
                   </div>
 
                   {socialPresetsLoading ? (
-                    <div className="social-empty-state">
-                      <strong>Loading community presets...</strong>
-                      <span>Pulling the latest shared setups from the live account feed.</span>
+                    <div className="social-simple-empty">
+                      Loading community presets...
                     </div>
                   ) : socialPresetsError ? (
-                    <div className="social-inline-status error">{socialPresetsError}</div>
+                    <div className="social-simple-empty social-simple-empty-error">
+                      {socialPresetsError}
+                    </div>
                   ) : socialVisiblePresets.length === 0 ? (
-                    <div className="social-empty-state">
-                      <strong>No community presets yet.</strong>
-                      <span>
-                        Publish the first one from the card on the left and it will appear here for
-                        every signed-in account.
-                      </span>
+                    <div className="social-simple-empty">
+                      No shared presets yet.
                     </div>
                   ) : (
-                    <div className="social-feed-list">
+                    <div className="social-simple-feed">
                       {socialVisiblePresets.map((preset) => {
-                        const presetInitials = resolveUserInitials({
-                          displayName: preset.authorDisplayName,
-                          email: null
-                        });
                         const isOwner = preset.authorUid === currentUser.uid;
-                        return (
-                          <article key={preset.id} className="social-feed-item">
-                            <div className="social-feed-item-head">
-                              <div className="social-feed-author">
-                                {preset.authorPhotoURL ? (
-                                  <span
-                                    className="social-author-avatar social-author-avatar--photo"
-                                    style={{ backgroundImage: `url("${preset.authorPhotoURL}")` }}
-                                    aria-hidden="true"
-                                  />
-                                ) : (
-                                  <span className="social-author-avatar" aria-hidden="true">
-                                    {presetInitials}
-                                  </span>
-                                )}
-                                <div className="social-feed-author-copy">
-                                  <strong>{preset.authorDisplayName}</strong>
-                                  <span>{formatRelativeTimeLabel(preset.publishedAtMs)}</span>
-                                </div>
-                              </div>
-                              {isOwner ? <span className="social-owner-pill">You</span> : null}
-                            </div>
 
-                            <div className="social-feed-item-body">
-                              <div className="social-feed-item-title-row">
-                                <h4>{preset.presetName}</h4>
-                                <span>{new Date(preset.publishedAtMs).toLocaleDateString()}</span>
+                        return (
+                          <article key={preset.id} className="social-simple-row">
+                            <div className="social-simple-row-main">
+                              <div className="social-simple-row-head">
+                                <strong>{preset.presetName}</strong>
+                                <span>
+                                  {preset.authorDisplayName}
+                                  {isOwner ? " · You" : ""}
+                                </span>
                               </div>
-                              <p>
-                                {preset.note ||
-                                  "Published without a note. Load it into the workspace to inspect the exact settings mix and rerun it immediately."}
-                              </p>
-                              <div className="social-chip-row">
-                                <span className="social-chip">{preset.symbol}</span>
-                                <span className="social-chip">{preset.analysisTimeframe} analysis</span>
-                                <span className="social-chip">
+                              <div className="social-simple-row-meta">
+                                <span>{preset.symbol}</span>
+                                <span>{preset.analysisTimeframe}</span>
+                                <span>
                                   {preset.minutePreciseEnabled
-                                    ? `${preset.precisionTimeframe} precision`
+                                    ? preset.precisionTimeframe
                                     : "analysis only"}
                                 </span>
-                                <span className="social-chip">
+                                <span>
                                   {preset.aiMode === "off" ? "AI Off" : preset.aiMode.toUpperCase()}
                                 </span>
-                                <span className="social-chip">
-                                  {preset.enabledModelCount.toLocaleString("en-US")} models
-                                </span>
-                                <span className="social-chip">
-                                  {preset.maxConcurrentTrades.toLocaleString("en-US")} max concurrent
-                                </span>
+                                <span>{formatRelativeTimeLabel(preset.publishedAtMs)}</span>
                               </div>
+                              {preset.note ? (
+                                <div className="social-simple-row-note">{preset.note}</div>
+                              ) : null}
                             </div>
-
-                            <div className="social-feed-item-footer">
-                              <span>
-                                Saved locally on {new Date(preset.savedAt).toLocaleDateString("en-US")}
-                              </span>
-                              <div className="social-feed-actions">
+                            <div className="social-simple-row-actions">
+                              <button
+                                type="button"
+                                className="panel-action-btn"
+                                onClick={() => handleRunSocialPreset(preset)}
+                              >
+                                Run
+                              </button>
+                              {isOwner ? (
                                 <button
                                   type="button"
-                                  className="social-action-btn social-action-btn--primary"
-                                  onClick={() => handleRunSocialPreset(preset)}
+                                  className="panel-action-btn social-simple-remove-btn"
+                                  onClick={() => void handleDeleteSocialPreset(preset)}
+                                  disabled={socialPresetActionId === preset.id}
                                 >
-                                  Run Preset
+                                  {socialPresetActionId === preset.id ? "Removing..." : "Remove"}
                                 </button>
-                                {isOwner ? (
-                                  <button
-                                    type="button"
-                                    className="social-action-btn"
-                                    onClick={() => void handleDeleteSocialPreset(preset)}
-                                    disabled={socialPresetActionId === preset.id}
-                                  >
-                                    {socialPresetActionId === preset.id ? "Removing..." : "Remove"}
-                                  </button>
-                                ) : null}
-                              </div>
+                              ) : null}
                             </div>
                           </article>
                         );
@@ -26799,6 +27176,38 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             ))}
                           </div>
                         </div>
+
+                        <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
+                          <div className="ai-zip-label">Opposite-Direction Vote Remap</div>
+                          <div
+                            className="ai-zip-toggle-grid"
+                            style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
+                          >
+                            <button
+                              type="button"
+                              className={`ai-zip-button pill ${remapOppositeOutcomes ? "active" : ""}`}
+                              style={{ width: "100%" }}
+                              disabled={aiDisabled}
+                              onClick={() => setRemapOppositeOutcomes(true)}
+                            >
+                              ON
+                            </button>
+                            <button
+                              type="button"
+                              className={`ai-zip-button pill ${!remapOppositeOutcomes ? "active" : ""}`}
+                              style={{ width: "100%" }}
+                              disabled={aiDisabled}
+                              onClick={() => setRemapOppositeOutcomes(false)}
+                            >
+                              OFF
+                            </button>
+                          </div>
+                          <div className="ai-zip-note">
+                            {selectedAiDomains.includes("Direction")
+                              ? "Direction is active, so opposite-direction remapping is ignored right now."
+                              : "When Direction is off, opposite-side losses can be remapped into supportive votes."}
+                          </div>
+                        </div>
                       </div>
                     </div>
 
@@ -26807,19 +27216,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       <div style={{ display: "grid", gap: "0.55rem" }}>
                         <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
                           <div className="ai-zip-label">Distance Metric</div>
-                          <select
+                          <AiZipMenuSelect
                             value={distanceMetric}
+                            options={AI_DISTANCE_METRIC_OPTIONS}
                             disabled={aiDisabled}
-                            onChange={(event) => {
-                              setDistanceMetric(event.target.value as AiDistanceMetric);
+                            onChange={(nextValue) => {
+                              setDistanceMetric(nextValue as AiDistanceMetric);
                             }}
-                            className="ai-zip-input"
-                          >
-                            <option value="euclidean">Euclidean</option>
-                            <option value="cosine">Cosine similarity</option>
-                            <option value="manhattan">Manhattan (L1)</option>
-                            <option value="chebyshev">Chebyshev (L-infinity)</option>
-                          </select>
+                          />
                         </div>
 
                         <div className={`ai-zip-control ${aiDisabled ? "disabled" : ""}`}>
@@ -27068,9 +27472,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
                         <button
                           type="button"
-                          className={`ai-zip-button ${validationMode === "synthetic" ? "active" : ""}`}
-                          disabled={!antiCheatEnabled}
-                          onClick={() => setValidationMode("synthetic")}
+                          className="ai-zip-button"
+                          disabled
+                          title="Synthetic validation is currently unavailable."
                         >
                           Synthetic
                         </button>
@@ -28462,6 +28866,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                         aiMethod={appliedBacktestSettings.aiMode}
                         validationMode={appliedBacktestSettings.validationMode}
                         aiDomains={appliedBacktestSettings.selectedAiDomains}
+                        remapOppositeOutcomes={appliedBacktestSettings.remapOppositeOutcomes}
                         knnNeighborSpace={appliedBacktestSettings.knnNeighborSpace}
                         distanceMetric={appliedBacktestSettings.distanceMetric}
                         compressionMethod={appliedBacktestSettings.compressionMethod}

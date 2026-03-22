@@ -82,6 +82,7 @@ type BuildStrategyReplayTradeBlueprintsArgs = {
   symbol: string;
   unitsPerMove: number;
   chunkBars: number;
+  entryMode?: StrategyReplayEntryMode;
   strategyCatalog?: readonly StrategyModelCatalogEntry[];
   tpDollars?: number;
   slDollars?: number;
@@ -91,6 +92,8 @@ type BuildStrategyReplayTradeBlueprintsArgs = {
   trailingDistPct?: number;
   maxBarsInTrade?: number;
 };
+
+export type StrategyReplayEntryMode = "signals" | "every-bar";
 
 const AI_EPS = 1e-8;
 
@@ -782,6 +785,7 @@ export const buildStrategyReplayTradeBlueprints = ({
   symbol,
   unitsPerMove,
   chunkBars,
+  entryMode = "signals",
   strategyCatalog = STRATEGY_MODEL_CATALOG,
   tpDollars = 0,
   slDollars = 0,
@@ -834,8 +838,10 @@ export const buildStrategyReplayTradeBlueprints = ({
     return [];
   }
 
+  const everyBarSides: BacktestHistoryTradeSide[] =
+    entryMode === "every-bar" ? ["Long", "Short"] : [];
+
   for (let signalIndex = startIndex; signalIndex < candles.length - 1; signalIndex += 1) {
-    const snapshot = buildFeatureSnapshot(candles, featureSeries, signalIndex, chunkBars);
     const entryIndex = signalIndex + 1;
     const entryCandle = candles[entryIndex];
     if (!entryCandle) {
@@ -843,58 +849,73 @@ export const buildStrategyReplayTradeBlueprints = ({
     }
 
     const entryPrice = Math.max(0.000001, entryCandle.open);
+    const snapshot =
+      entryMode === "every-bar"
+        ? null
+        : buildFeatureSnapshot(candles, featureSeries, signalIndex, chunkBars);
 
     for (const { model, spec } of eligibleModels) {
-      const side = evaluateEntrySide(spec, snapshot);
-      if (!side) {
+      const candidateSides =
+        entryMode === "every-bar"
+          ? everyBarSides
+          : snapshot == null
+            ? []
+            : [evaluateEntrySide(spec, snapshot)].filter(
+                (side): side is BacktestHistoryTradeSide => side === "Long" || side === "Short"
+              );
+      if (candidateSides.length === 0) {
         continue;
       }
 
-      const tpDistance =
-        tpDollars > 0
-          ? Math.max(0.000001, tpDollars / safeUnits)
-          : resolveFallbackDistance(model, entryPrice, true);
-      const slDistance =
-        slDollars > 0
-          ? Math.max(0.000001, slDollars / safeUnits)
-          : resolveFallbackDistance(model, entryPrice, false);
-      const exitIndex = resolveTradeExitIndex({
-        candles,
-        featureSeries,
-        model,
-        modelSpec: spec,
-        signalIndex,
-        chunkBars,
-        entryPrice,
-        side,
-        tpDistance,
-        slDistance,
-        stopMode,
-        breakEvenTriggerPct,
-        trailingStartPct,
-        trailingDistPct,
-        maxBarsInTrade
-      });
+      for (const side of candidateSides) {
+        const tpDistance =
+          tpDollars > 0
+            ? Math.max(0.000001, tpDollars / safeUnits)
+            : resolveFallbackDistance(model, entryPrice, true);
+        const slDistance =
+          slDollars > 0
+            ? Math.max(0.000001, slDollars / safeUnits)
+            : resolveFallbackDistance(model, entryPrice, false);
+        const exitIndex = resolveTradeExitIndex({
+          candles,
+          featureSeries,
+          model,
+          modelSpec: spec,
+          signalIndex,
+          chunkBars,
+          entryPrice,
+          side,
+          tpDistance,
+          slDistance,
+          stopMode,
+          breakEvenTriggerPct,
+          trailingStartPct,
+          trailingDistPct,
+          maxBarsInTrade
+        });
 
-      if (exitIndex <= entryIndex || exitIndex >= candles.length) {
-        continue;
+        if (exitIndex <= entryIndex || exitIndex >= candles.length) {
+          continue;
+        }
+
+        const riskPct = (model.riskMin + model.riskMax) / 2;
+        const rr = (model.rrMin + model.rrMax) / 2;
+        const entryModeSlug =
+          entryMode === "every-bar" ? `every-${side.toLowerCase()}` : "signal";
+
+        blueprints.push({
+          id: `${model.id}-${entryModeSlug}-${String(signalIndex).padStart(6, "0")}`,
+          modelId: model.id,
+          symbol,
+          side,
+          result: "Win",
+          entryMs: entryCandle.time,
+          exitMs: candles[exitIndex]!.time,
+          riskPct,
+          rr,
+          units: safeUnits
+        });
       }
-
-      const riskPct = (model.riskMin + model.riskMax) / 2;
-      const rr = (model.rrMin + model.rrMax) / 2;
-
-      blueprints.push({
-        id: `${model.id}-json-${String(signalIndex).padStart(6, "0")}`,
-        modelId: model.id,
-        symbol,
-        side,
-        result: "Win",
-        entryMs: entryCandle.time,
-        exitMs: candles[exitIndex]!.time,
-        riskPct,
-        rr,
-        units: safeUnits
-      });
     }
   }
 
