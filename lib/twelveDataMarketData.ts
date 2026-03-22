@@ -107,7 +107,9 @@ const candlesCache = new Map<
   string,
   { expiresAt: number; value: TwelveDataCandlesPayload }
 >();
+const candlesInFlight = new Map<string, Promise<TwelveDataCandlesPayload>>();
 let quoteCache: { expiresAt: number; value: TwelveDataQuotePayload } | null = null;
+let quoteInFlight: Promise<TwelveDataQuotePayload> | null = null;
 type TwelveDataKeyFailureType = "rate_limit" | "auth" | "other";
 
 const keyFailureState = new Map<
@@ -181,6 +183,33 @@ export const isTwelveDataAuthFailureMessage = (message: string): boolean => {
     lower.includes("forbidden") ||
     lower.includes("missing twelve_data_api_key")
   );
+};
+
+export const isTwelveDataRetryableMessage = (message: string): boolean => {
+  const lower = String(message || "").toLowerCase();
+  return (
+    lower.includes("key pool cooling down") ||
+    lower.includes("retry in") ||
+    lower.includes("run out of api credits") ||
+    lower.includes("rate limit") ||
+    lower.includes("too many requests") ||
+    lower.includes("current limit being") ||
+    lower.includes(" 429") ||
+    lower.includes("http 429")
+  );
+};
+
+export const getTwelveDataRetryAfterSeconds = (message: string): number | null => {
+  const normalized = String(message || "");
+  const explicitMatch = normalized.match(/retry in\s+(\d+)\s*s/i);
+  if (explicitMatch) {
+    const seconds = Number(explicitMatch[1]);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+  }
+  if (isTwelveDataRetryableMessage(normalized)) {
+    return Math.ceil(RATE_LIMIT_COOLDOWN_MS / 1000);
+  }
+  return null;
 };
 
 const classifyFailureType = (message: string): TwelveDataKeyFailureType => {
@@ -553,97 +582,117 @@ export const fetchTwelveDataCandles = async (params: {
       candles: cachedCandles
     };
   }
-  const startMs = parseTimeMs(params.start ?? null);
-  const endMs =
-    parseTimeMs(params.end ?? null) ??
-    Date.now();
-  const deduped = new Map<number, TwelveDataCandleRecord>();
-  const stepMs = getStepMs(timeframe);
-  let cursorEndMs = endMs;
-  let pageCount = 0;
-  let previousEarliestMs = Number.POSITIVE_INFINITY;
-
-  while (pageCount < MAX_PAGE_COUNT) {
-    const remaining = Math.max(64, requestedCount - deduped.size + 32);
-    const outputsize = Math.min(MAX_PAGE_SIZE, remaining);
-    const response = await requestJson<TwelveDataTimeSeriesResponse>("/time_series", {
-      symbol: TWELVE_DATA_SYMBOL,
-      interval,
-      outputsize,
-      timezone: "UTC",
-      start_date: startMs == null ? undefined : toTwelveDateTime(Math.max(0, startMs - stepMs)),
-      end_date: Number.isFinite(cursorEndMs) ? toTwelveDateTime(cursorEndMs) : undefined
-    });
-    const values = Array.isArray(response.values) ? response.values : [];
-
-    if (values.length === 0) {
-      break;
-    }
-
-    const pageCandles = sortAndDedupeCandles(
-      values
-        .map((entry) => normalizeCandleRecord(entry, timeframe))
-        .filter((entry): entry is TwelveDataCandleRecord => entry !== null)
-    );
-
-    if (pageCandles.length === 0) {
-      break;
-    }
-
-    for (const candle of pageCandles) {
-      deduped.set(candle.time, candle);
-    }
-
-    const earliestMs = pageCandles[0]!.time;
-    if (startMs != null && earliestMs <= startMs) {
-      break;
-    }
-    if (deduped.size >= requestedCount && startMs == null) {
-      break;
-    }
-    if (pageCandles.length < outputsize) {
-      break;
-    }
-    if (!Number.isFinite(earliestMs) || earliestMs >= previousEarliestMs) {
-      break;
-    }
-
-    previousEarliestMs = earliestMs;
-    cursorEndMs = earliestMs - 1000;
-    pageCount += 1;
+  const inFlight = candlesInFlight.get(cacheKey);
+  if (inFlight) {
+    const payload = await inFlight;
+    return payload.count > requestedCount
+      ? {
+          ...payload,
+          count: requestedCount,
+          candles: payload.candles.slice(-requestedCount)
+        }
+      : payload;
   }
+  const requestPromise = (async (): Promise<TwelveDataCandlesPayload> => {
+    const startMs = parseTimeMs(params.start ?? null);
+    const endMs =
+      parseTimeMs(params.end ?? null) ??
+      Date.now();
+    const deduped = new Map<number, TwelveDataCandleRecord>();
+    const stepMs = getStepMs(timeframe);
+    let cursorEndMs = endMs;
+    let pageCount = 0;
+    let previousEarliestMs = Number.POSITIVE_INFINITY;
 
-  const candles = sortAndDedupeCandles([...deduped.values()]).filter((candle) => {
-    if (startMs != null && candle.time < startMs) {
-      return false;
+    while (pageCount < MAX_PAGE_COUNT) {
+      const remaining = Math.max(64, requestedCount - deduped.size + 32);
+      const outputsize = Math.min(MAX_PAGE_SIZE, remaining);
+      const response = await requestJson<TwelveDataTimeSeriesResponse>("/time_series", {
+        symbol: TWELVE_DATA_SYMBOL,
+        interval,
+        outputsize,
+        timezone: "UTC",
+        start_date: startMs == null ? undefined : toTwelveDateTime(Math.max(0, startMs - stepMs)),
+        end_date: Number.isFinite(cursorEndMs) ? toTwelveDateTime(cursorEndMs) : undefined
+      });
+      const values = Array.isArray(response.values) ? response.values : [];
+
+      if (values.length === 0) {
+        break;
+      }
+
+      const pageCandles = sortAndDedupeCandles(
+        values
+          .map((entry) => normalizeCandleRecord(entry, timeframe))
+          .filter((entry): entry is TwelveDataCandleRecord => entry !== null)
+      );
+
+      if (pageCandles.length === 0) {
+        break;
+      }
+
+      for (const candle of pageCandles) {
+        deduped.set(candle.time, candle);
+      }
+
+      const earliestMs = pageCandles[0]!.time;
+      if (startMs != null && earliestMs <= startMs) {
+        break;
+      }
+      if (deduped.size >= requestedCount && startMs == null) {
+        break;
+      }
+      if (pageCandles.length < outputsize) {
+        break;
+      }
+      if (!Number.isFinite(earliestMs) || earliestMs >= previousEarliestMs) {
+        break;
+      }
+
+      previousEarliestMs = earliestMs;
+      cursorEndMs = earliestMs - 1000;
+      pageCount += 1;
     }
-    if (Number.isFinite(endMs) && candle.time > endMs) {
-      return false;
-    }
-    return true;
-  });
 
-  const trimmed =
-    candles.length > requestedCount
-      ? candles.slice(-requestedCount)
-      : candles;
+    const candles = sortAndDedupeCandles([...deduped.values()]).filter((candle) => {
+      if (startMs != null && candle.time < startMs) {
+        return false;
+      }
+      if (Number.isFinite(endMs) && candle.time > endMs) {
+        return false;
+      }
+      return true;
+    });
 
-  const payload = {
-    pair,
-    timeframe,
-    start: params.start ?? null,
-    end: params.end ?? null,
-    count: trimmed.length,
-    candles: trimmed,
-    source: "twelve-data"
-  };
+    const trimmed =
+      candles.length > requestedCount
+        ? candles.slice(-requestedCount)
+        : candles;
 
-  candlesCache.set(cacheKey, {
-    expiresAt: nowMs + CANDLES_CACHE_TTL_MS,
-    value: payload
-  });
+    const payload = {
+      pair,
+      timeframe,
+      start: params.start ?? null,
+      end: params.end ?? null,
+      count: trimmed.length,
+      candles: trimmed,
+      source: "twelve-data"
+    };
 
-  return payload;
+    candlesCache.set(cacheKey, {
+      expiresAt: Date.now() + CANDLES_CACHE_TTL_MS,
+      value: payload
+    });
+
+    return payload;
+  })();
+
+  candlesInFlight.set(cacheKey, requestPromise);
+  try {
+    return await requestPromise;
+  } finally {
+    candlesInFlight.delete(cacheKey);
+  }
 };
 
 export const fetchTwelveDataLatestQuote = async (): Promise<TwelveDataQuotePayload> => {
@@ -651,52 +700,63 @@ export const fetchTwelveDataLatestQuote = async (): Promise<TwelveDataQuotePaylo
   if (quoteCache && quoteCache.expiresAt > nowMs) {
     return quoteCache.value;
   }
-
-  let quote: TwelveDataQuoteResponse;
-
-  try {
-    quote = await requestJson<TwelveDataQuoteResponse>("/quote", {
-      symbol: TWELVE_DATA_SYMBOL
-    }).catch(async () => {
-      return requestJson<TwelveDataQuoteResponse>("/price", {
-        symbol: TWELVE_DATA_SYMBOL
-      });
-    });
-  } catch (error) {
-    const fallback = getCachedQuoteFallback();
-    if (fallback) {
-      quoteCache = {
-        expiresAt: nowMs + QUOTE_CACHE_TTL_MS,
-        value: fallback
-      };
-      return fallback;
-    }
-    throw error;
+  if (quoteInFlight) {
+    return quoteInFlight;
   }
 
-  const mid =
-    parseMaybeNumber(quote.close) ||
-    parseMaybeNumber(quote.price);
-  const timeSeconds =
-    parseMaybeNumber(quote.last_quote_at) ||
-    parseMaybeNumber(quote.timestamp);
-  const timeMs = Number.isFinite(timeSeconds) ? timeSeconds * 1000 : Date.now();
+  quoteInFlight = (async (): Promise<TwelveDataQuotePayload> => {
+    let quote: TwelveDataQuoteResponse;
 
-  const payload = {
-    pair: TWELVE_DATA_DEFAULT_PAIR,
-    bid: Number.isFinite(mid) ? mid : null,
-    ask: Number.isFinite(mid) ? mid : null,
-    mid: Number.isFinite(mid) ? mid : null,
-    time: new Date(timeMs).toISOString(),
-    source: "twelve-data"
-  };
+    try {
+      quote = await requestJson<TwelveDataQuoteResponse>("/quote", {
+        symbol: TWELVE_DATA_SYMBOL
+      }).catch(async () => {
+        return requestJson<TwelveDataQuoteResponse>("/price", {
+          symbol: TWELVE_DATA_SYMBOL
+        });
+      });
+    } catch (error) {
+      const fallback = getCachedQuoteFallback();
+      if (fallback) {
+        quoteCache = {
+          expiresAt: nowMs + QUOTE_CACHE_TTL_MS,
+          value: fallback
+        };
+        return fallback;
+      }
+      throw error;
+    }
 
-  quoteCache = {
-    expiresAt: nowMs + QUOTE_CACHE_TTL_MS,
-    value: payload
-  };
+    const mid =
+      parseMaybeNumber(quote.close) ||
+      parseMaybeNumber(quote.price);
+    const timeSeconds =
+      parseMaybeNumber(quote.last_quote_at) ||
+      parseMaybeNumber(quote.timestamp);
+    const timeMs = Number.isFinite(timeSeconds) ? timeSeconds * 1000 : Date.now();
 
-  return payload;
+    const payload = {
+      pair: TWELVE_DATA_DEFAULT_PAIR,
+      bid: Number.isFinite(mid) ? mid : null,
+      ask: Number.isFinite(mid) ? mid : null,
+      mid: Number.isFinite(mid) ? mid : null,
+      time: new Date(timeMs).toISOString(),
+      source: "twelve-data"
+    };
+
+    quoteCache = {
+      expiresAt: Date.now() + QUOTE_CACHE_TTL_MS,
+      value: payload
+    };
+
+    return payload;
+  })();
+
+  try {
+    return await quoteInFlight;
+  } finally {
+    quoteInFlight = null;
+  }
 };
 
 export const probeTwelveDataAccess = async (): Promise<void> => {

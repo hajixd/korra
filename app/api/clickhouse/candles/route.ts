@@ -4,8 +4,10 @@ import {
   TWELVE_DATA_SUPPORTED_PAIRS,
   TWELVE_DATA_SUPPORTED_TIMEFRAMES,
   fetchTwelveDataCandles,
+  getTwelveDataRetryAfterSeconds,
   hasConfiguredTwelveDataApiKeys,
-  isTwelveDataAuthFailureMessage
+  isTwelveDataAuthFailureMessage,
+  isTwelveDataRetryableMessage
 } from "../../../../lib/twelveDataMarketData";
 
 export const runtime = "nodejs";
@@ -36,11 +38,17 @@ const buildTwelveDataHistoryErrorResponse = (params: {
   details: string;
 }) => {
   const isAuthFailure = isTwelveDataAuthFailureMessage(params.details);
+  const isRetryable = !isAuthFailure && isTwelveDataRetryableMessage(params.details);
+  const retryAfterSeconds = isRetryable
+    ? getTwelveDataRetryAfterSeconds(params.details)
+    : null;
 
   return NextResponse.json(
     {
       error: isAuthFailure
         ? "Twelve Data authentication failed."
+        : isRetryable
+          ? "Twelve Data history is cooling down."
         : "Twelve Data history unavailable.",
       details: params.details,
       pair: params.pair,
@@ -51,12 +59,13 @@ const buildTwelveDataHistoryErrorResponse = (params: {
       source: "twelve-data"
     },
     {
-      status: isAuthFailure ? 502 : 500,
+      status: isAuthFailure ? 502 : isRetryable ? 429 : 500,
       headers: {
         "Cache-Control": "no-store",
         "X-Korra-History-Source": "twelve-data",
-        "X-Korra-History-Error": isAuthFailure ? "auth" : "upstream",
-        "X-Korra-History-Reason": toSafeHeaderValue(params.details)
+        "X-Korra-History-Error": isAuthFailure ? "auth" : isRetryable ? "cooldown" : "upstream",
+        "X-Korra-History-Reason": toSafeHeaderValue(params.details),
+        ...(retryAfterSeconds ? { "Retry-After": String(retryAfterSeconds) } : {})
       }
     }
   );

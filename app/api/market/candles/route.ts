@@ -4,8 +4,10 @@ import {
   TWELVE_DATA_SUPPORTED_PAIRS,
   TWELVE_DATA_SUPPORTED_TIMEFRAMES,
   fetchTwelveDataCandles,
+  getTwelveDataRetryAfterSeconds,
   hasConfiguredTwelveDataApiKeys,
-  isTwelveDataAuthFailureMessage
+  isTwelveDataAuthFailureMessage,
+  isTwelveDataRetryableMessage
 } from "../../../../lib/twelveDataMarketData";
 
 export const runtime = "nodejs";
@@ -29,11 +31,17 @@ const buildTwelveDataMarketErrorResponse = (
 ) =>
   {
     const isAuthFailure = isTwelveDataAuthFailureMessage(details);
+    const isRetryable = !isAuthFailure && isTwelveDataRetryableMessage(details);
+    const retryAfterSeconds = isRetryable
+      ? getTwelveDataRetryAfterSeconds(details)
+      : null;
 
     return NextResponse.json(
       {
         error: isAuthFailure
           ? "Twelve Data authentication failed."
+          : isRetryable
+            ? "Twelve Data market feed is cooling down."
           : "Twelve Data market feed unavailable.",
         details,
         pair,
@@ -44,12 +52,13 @@ const buildTwelveDataMarketErrorResponse = (
         source: "twelve-data"
       },
       {
-        status: isAuthFailure ? 502 : 500,
+        status: isAuthFailure ? 502 : isRetryable ? 429 : 500,
         headers: {
           "Cache-Control": "no-store",
           "X-Korra-Market-Source": "twelve-data",
-          "X-Korra-Market-Error": isAuthFailure ? "auth" : "upstream",
-          "X-Korra-Market-Reason": toSafeHeaderValue(details)
+          "X-Korra-Market-Error": isAuthFailure ? "auth" : isRetryable ? "cooldown" : "upstream",
+          "X-Korra-Market-Reason": toSafeHeaderValue(details),
+          ...(retryAfterSeconds ? { "Retry-After": String(retryAfterSeconds) } : {})
         }
       }
     );

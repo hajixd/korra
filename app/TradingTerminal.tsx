@@ -5420,6 +5420,15 @@ const normalizeMarketDataErrorMessage = (message: string): string => {
   const lower = normalized.toLowerCase();
 
   if (
+    lower.includes("cooling down") ||
+    lower.includes("retry in") ||
+    lower.includes("rate limit") ||
+    lower.includes("api credits")
+  ) {
+    return "Market data is temporarily cooling down. Please retry in a few seconds.";
+  }
+
+  if (
     lower.includes("auth_authentication_failed") ||
     lower.includes("authentication failed") ||
     lower.includes("missing databento_api_key") ||
@@ -5472,6 +5481,62 @@ const getMarketDataErrorMessage = (error: unknown): string => {
   return "Market data unavailable.";
 };
 
+const MARKET_DATA_MAX_RETRIES = 2;
+
+const waitForMarketDataRetry = async (delayMs: number): Promise<void> => {
+  if (!Number.isFinite(delayMs) || delayMs <= 0) {
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+};
+
+const parseRetryAfterDelayMs = (
+  response: Response,
+  payload: Record<string, unknown> | null
+): number => {
+  const headerValue = response.headers.get("Retry-After");
+  const headerSeconds = Number(headerValue);
+  if (Number.isFinite(headerSeconds) && headerSeconds > 0) {
+    return Math.max(250, Math.ceil(headerSeconds * 1000));
+  }
+
+  const details =
+    payload && typeof payload.details === "string" ? payload.details : "";
+  const match = details.match(/retry in\s+(\d+)\s*s/i);
+  if (match) {
+    const seconds = Number(match[1]);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Math.max(250, Math.ceil(seconds * 1000));
+    }
+  }
+
+  return 1500;
+};
+
+const shouldRetryMarketDataFailure = (
+  response: Response,
+  payload: Record<string, unknown> | null
+): boolean => {
+  if (response.status === 429) {
+    return true;
+  }
+
+  const combined = [
+    payload && typeof payload.error === "string" ? payload.error : "",
+    payload && typeof payload.details === "string" ? payload.details : ""
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    combined.includes("cooling down") ||
+    combined.includes("retry in") ||
+    combined.includes("rate limit") ||
+    combined.includes("too many requests") ||
+    combined.includes("api credits")
+  );
+};
+
 const CLIENT_CANDLE_CACHE_TTL_MS = 30_000;
 const clientCandleCache = new Map<string, { expiresAt: number; candles: Candle[] }>();
 const clientCandleInFlight = new Map<string, Promise<Candle[]>>();
@@ -5498,32 +5563,47 @@ const fetchMarketCandles = async (
   }
 
   const requestPromise = (async () => {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
     try {
-      const response = await fetch(`/api/market/candles?${params.toString()}`, {
-        cache: "no-store",
-        signal: controller.signal
-      });
-      const payload = await readJsonResponse(response);
+      for (let attempt = 0; attempt <= MARKET_DATA_MAX_RETRIES; attempt += 1) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-      if (!response.ok) {
-        throw new MarketDataUnavailableError(
-          extractMarketDataFailure(payload, `Market candle request failed (${response.status}).`)
-        );
+        try {
+          const response = await fetch(`/api/market/candles?${params.toString()}`, {
+            cache: "no-store",
+            signal: controller.signal
+          });
+          const payload = await readJsonResponse(response);
+
+          if (!response.ok) {
+            if (
+              attempt < MARKET_DATA_MAX_RETRIES &&
+              shouldRetryMarketDataFailure(response, payload)
+            ) {
+              await waitForMarketDataRetry(parseRetryAfterDelayMs(response, payload));
+              continue;
+            }
+
+            throw new MarketDataUnavailableError(
+              extractMarketDataFailure(payload, `Market candle request failed (${response.status}).`)
+            );
+          }
+
+          const candles = normalizeMarketCandles(extractPayloadCandles(payload));
+          clientCandleCache.set(requestKey, {
+            expiresAt: Date.now() + CLIENT_CANDLE_CACHE_TTL_MS,
+            candles
+          });
+          return candles;
+        } finally {
+          clearTimeout(timeoutId);
+        }
       }
 
-      const candles = normalizeMarketCandles(extractPayloadCandles(payload));
-      clientCandleCache.set(requestKey, {
-        expiresAt: Date.now() + CLIENT_CANDLE_CACHE_TTL_MS,
-        candles
-      });
-      return candles;
+      throw new MarketDataUnavailableError("Market data unavailable.");
     } catch (error) {
       throw new MarketDataUnavailableError(getMarketDataErrorMessage(error));
     } finally {
-      clearTimeout(timeoutId);
       clientCandleInFlight.delete(requestKey);
     }
   })();
@@ -5564,32 +5644,47 @@ const fetchHistoryApiCandles = async (
   }
 
   const requestPromise = (async () => {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
     try {
-      const response = await fetch(`/api/history/candles?${params.toString()}`, {
-        cache: "no-store",
-        signal: controller.signal
-      });
-      const payload = await readJsonResponse(response);
+      for (let attempt = 0; attempt <= MARKET_DATA_MAX_RETRIES; attempt += 1) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-      if (!response.ok) {
-        throw new MarketDataUnavailableError(
-          extractMarketDataFailure(payload, `History candle request failed (${response.status}).`)
-        );
+        try {
+          const response = await fetch(`/api/history/candles?${params.toString()}`, {
+            cache: "no-store",
+            signal: controller.signal
+          });
+          const payload = await readJsonResponse(response);
+
+          if (!response.ok) {
+            if (
+              attempt < MARKET_DATA_MAX_RETRIES &&
+              shouldRetryMarketDataFailure(response, payload)
+            ) {
+              await waitForMarketDataRetry(parseRetryAfterDelayMs(response, payload));
+              continue;
+            }
+
+            throw new MarketDataUnavailableError(
+              extractMarketDataFailure(payload, `History candle request failed (${response.status}).`)
+            );
+          }
+
+          const candles = normalizeMarketCandles(extractPayloadCandles(payload));
+          clientCandleCache.set(requestKey, {
+            expiresAt: Date.now() + CLIENT_CANDLE_CACHE_TTL_MS,
+            candles
+          });
+          return candles;
+        } finally {
+          clearTimeout(timeoutId);
+        }
       }
 
-      const candles = normalizeMarketCandles(extractPayloadCandles(payload));
-      clientCandleCache.set(requestKey, {
-        expiresAt: Date.now() + CLIENT_CANDLE_CACHE_TTL_MS,
-        candles
-      });
-      return candles;
+      throw new MarketDataUnavailableError("Market data unavailable.");
     } catch (error) {
       throw new MarketDataUnavailableError(getMarketDataErrorMessage(error));
     } finally {
-      clearTimeout(timeoutId);
       clientCandleInFlight.delete(requestKey);
     }
   })();
