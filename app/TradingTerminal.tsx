@@ -23121,10 +23121,17 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     seriesMap
   ]);
   const activeBacktestTradeDimensionRows = useMemo(() => {
-    const baseDimensions =
+    const preferredStats =
       activeBacktestTradeDimensionStats?.dims?.length
-        ? activeBacktestTradeDimensionStats.dims
-        : dimensionStats?.dims ?? [];
+        ? activeBacktestTradeDimensionStats
+        : dimensionStats;
+    const activeKeySet =
+      preferredStats?.keptKeys && preferredStats.keptKeys.length > 0
+        ? new Set(preferredStats.keptKeys)
+        : null;
+    const baseDimensions = ((preferredStats?.dims ?? []) as DimensionStatRow[]).filter(
+      (dimension) => !activeKeySet || activeKeySet.has(dimension.key)
+    );
 
     if (!activeBacktestTradeDetails || baseDimensions.length === 0) {
       return [];

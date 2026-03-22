@@ -754,6 +754,13 @@ function TradeDetailsModalImpl({
         : [],
     [dimensionRows]
   );
+  const [hoveredDimensionProfile, setHoveredDimensionProfile] = React.useState<{
+    key: string;
+    pct: number;
+    value: number;
+    label: string;
+    winRate: number | null;
+  } | null>(null);
   const toTrackPct = (value, min, max) => {
     const v = Number(value);
     const lo = Number(min);
@@ -763,6 +770,74 @@ function TradeDetailsModalImpl({
     }
     if (hi <= lo) return 50;
     return clamp(((v - lo) / (hi - lo)) * 100, 0, 100);
+  };
+  const formatTrackLabel = (prefix, value) =>
+    Number.isFinite(Number(value)) ? `${prefix} ${Number(value).toFixed(1)}` : prefix;
+  const getDimensionOptimalLabels = (dimension) => {
+    const qLow = Number((dimension as any)?.qLow);
+    const qHigh = Number((dimension as any)?.qHigh);
+    const winLow = Number((dimension as any)?.winLow);
+    const winHigh = Number((dimension as any)?.winHigh);
+    const labels = [] as Array<{ key: string; label: string; anchorValue: number }>;
+    const preferLow =
+      Number.isFinite(winLow) && (!Number.isFinite(winHigh) || winLow > winHigh);
+    const preferHigh =
+      Number.isFinite(winHigh) && (!Number.isFinite(winLow) || winHigh > winLow);
+    const preferBoth =
+      Number.isFinite(winLow) &&
+      Number.isFinite(winHigh) &&
+      Math.abs(winLow - winHigh) <= 0.000000001;
+
+    if ((preferLow || preferBoth) && Number.isFinite(qLow)) {
+      labels.push({
+        key: "low",
+        label: formatTrackLabel("<=", qLow),
+        anchorValue: qLow,
+      });
+    }
+    if ((preferHigh || preferBoth) && Number.isFinite(qHigh)) {
+      labels.push({
+        key: "high",
+        label: formatTrackLabel(">=", qHigh),
+        anchorValue: qHigh,
+      });
+    }
+    return labels;
+  };
+  const resolveDimensionHoverProfile = (dimension, value, pct) => {
+    const qLow = Number((dimension as any)?.qLow);
+    const qHigh = Number((dimension as any)?.qHigh);
+    const winLow = Number((dimension as any)?.winLow);
+    const winHigh = Number((dimension as any)?.winHigh);
+
+    if (Number.isFinite(value) && Number.isFinite(qLow) && value <= qLow) {
+      return {
+        key: String((dimension as any)?.key ?? ""),
+        pct,
+        value,
+        label: formatTrackLabel("<=", qLow),
+        winRate: Number.isFinite(winLow) ? winLow : null,
+      };
+    }
+    if (Number.isFinite(value) && Number.isFinite(qHigh) && value >= qHigh) {
+      return {
+        key: String((dimension as any)?.key ?? ""),
+        pct,
+        value,
+        label: formatTrackLabel(">=", qHigh),
+        winRate: Number.isFinite(winHigh) ? winHigh : null,
+      };
+    }
+    return {
+      key: String((dimension as any)?.key ?? ""),
+      pct,
+      value,
+      label:
+        Number.isFinite(qLow) && Number.isFinite(qHigh)
+          ? `${qLow.toFixed(1)} to ${qHigh.toFixed(1)}`
+          : "mid range",
+      winRate: null,
+    };
   };
 
   const InfoBox = ({ label, value, tone = "neutral" }) => {
@@ -1246,7 +1321,7 @@ function TradeDetailsModalImpl({
                   whiteSpace: "nowrap",
                 }}
               >
-                {normalizedDimensionRows.length} dims
+                {normalizedDimensionRows.length} active dims
               </div>
             </div>
 
@@ -1261,6 +1336,7 @@ function TradeDetailsModalImpl({
                 }}
               >
                 {normalizedDimensionRows.map((dimension) => {
+                  const rowKey = String((dimension as any).key ?? "");
                   const min = Number((dimension as any).min);
                   const max = Number((dimension as any).max);
                   const entryValue = Number((dimension as any).entryValue);
@@ -1268,20 +1344,29 @@ function TradeDetailsModalImpl({
                   const segments = Array.isArray((dimension as any).segments)
                     ? (dimension as any).segments
                     : [];
+                  const optimalLabels = getDimensionOptimalLabels(dimension);
+                  const hoverInfo =
+                    hoveredDimensionProfile && hoveredDimensionProfile.key === rowKey
+                      ? hoveredDimensionProfile
+                      : null;
                   const entryText =
                     entryPct == null || !Number.isFinite(entryValue)
                       ? "N/A"
                       : entryValue.toFixed(2);
                   return (
                     <div
-                      key={String((dimension as any).key)}
+                      key={rowKey}
                       style={{
                         display: "grid",
-                        gap: 7,
-                        padding: "9px 10px 10px",
-                        borderRadius: 14,
+                        gap: 9,
+                        padding: "11px 12px 14px",
+                        borderRadius: 10,
                         border: "1px solid rgba(255,255,255,0.08)",
-                        background: "rgba(0,0,0,0.18)",
+                        background:
+                          hoverInfo != null
+                            ? "rgba(10,18,14,0.44)"
+                            : "rgba(0,0,0,0.18)",
+                        transition: "background 120ms ease",
                       }}
                     >
                       <div
@@ -1308,61 +1393,166 @@ function TradeDetailsModalImpl({
                           style={{
                             flexShrink: 0,
                             fontSize: 9,
-                            color: "rgba(255,255,255,0.58)",
+                            color:
+                              hoverInfo?.winRate != null
+                                ? "rgba(134,239,172,0.86)"
+                                : "rgba(255,255,255,0.58)",
                             whiteSpace: "nowrap",
                           }}
                         >
-                          Entry {entryText}
+                          {hoverInfo
+                            ? hoverInfo.winRate != null
+                              ? `${(hoverInfo.winRate * 100).toFixed(1)}% win`
+                              : hoverInfo.label
+                            : `Entry ${entryText}`}
                         </div>
                       </div>
 
                       <div
                         style={{
                           position: "relative",
-                          height: 20,
-                          borderRadius: 999,
-                          border: "1px solid rgba(255,255,255,0.14)",
-                          background:
-                            "linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.015))",
-                          overflow: "hidden",
+                          paddingTop: 24,
+                          paddingBottom: 22,
                         }}
                       >
-                        {segments.map((segment, segmentIndex) => {
-                          const left = toTrackPct(segment.start, min, max) ?? 0;
-                          const right = toTrackPct(segment.end, min, max) ?? 0;
-                          const width = Math.max(0, right - left);
-                          return (
+                        <div
+                          style={{
+                            position: "relative",
+                            height: 34,
+                            borderRadius: 2,
+                            border: "1px solid rgba(255,255,255,0.16)",
+                            background:
+                              "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))",
+                            overflow: "visible",
+                          }}
+                          onMouseMove={(event) => {
+                            const rect = event.currentTarget.getBoundingClientRect();
+                            const width = Math.max(1, rect.width);
+                            const pct = clamp(
+                              ((event.clientX - rect.left) / width) * 100,
+                              0,
+                              100
+                            );
+                            const value =
+                              max > min ? min + ((max - min) * pct) / 100 : min;
+                            setHoveredDimensionProfile(
+                              resolveDimensionHoverProfile(dimension, value, pct)
+                            );
+                          }}
+                          onMouseLeave={() =>
+                            setHoveredDimensionProfile((current) =>
+                              current?.key === rowKey ? null : current
+                            )
+                          }
+                        >
+                          {segments.map((segment, segmentIndex) => {
+                            const left = toTrackPct(segment.start, min, max) ?? 0;
+                            const right = toTrackPct(segment.end, min, max) ?? 0;
+                            const width = Math.max(0, right - left);
+                            return (
+                              <div
+                                key={`${rowKey}-${segmentIndex}`}
+                                style={{
+                                  position: "absolute",
+                                  left: `${left}%`,
+                                  top: 3,
+                                  bottom: 3,
+                                  width: `${width}%`,
+                                  borderRadius: 1,
+                                  background:
+                                    "linear-gradient(90deg, rgba(74,222,128,0.24), rgba(134,239,172,0.42))",
+                                  boxShadow:
+                                    "inset 0 0 0 1px rgba(110,231,183,0.26)",
+                                }}
+                              />
+                            );
+                          })}
+                          {entryPct != null ? (
                             <div
-                              key={`${String((dimension as any).key)}-${segmentIndex}`}
                               style={{
                                 position: "absolute",
-                                left: `${left}%`,
-                                top: 2,
-                                bottom: 2,
-                                width: `${width}%`,
-                                borderRadius: 999,
-                                background:
-                                  "linear-gradient(90deg, rgba(74,222,128,0.18), rgba(134,239,172,0.34))",
-                                boxShadow:
-                                  "inset 0 0 0 1px rgba(110,231,183,0.20)",
+                                left: `calc(${entryPct}% - 1px)`,
+                                top: -11,
+                                bottom: -11,
+                                width: 2,
+                                borderRadius: 0,
+                                background: "rgba(255,255,255,0.94)",
+                                boxShadow: "0 0 0 1px rgba(0,0,0,0.22)",
+                                zIndex: 3,
                               }}
                             />
-                          );
-                        })}
+                          ) : null}
+                          {hoverInfo ? (
+                            <div
+                              style={{
+                                position: "absolute",
+                                left: `${hoverInfo.pct}%`,
+                                top: -34,
+                                transform: "translateX(-50%)",
+                                padding: "3px 6px",
+                                border: "1px solid rgba(134,239,172,0.26)",
+                                background: "rgba(3,10,7,0.92)",
+                                color:
+                                  hoverInfo.winRate != null
+                                    ? "rgba(134,239,172,0.92)"
+                                    : "rgba(255,255,255,0.76)",
+                                fontSize: 9,
+                                fontWeight: 800,
+                                letterSpacing: 0.2,
+                                whiteSpace: "nowrap",
+                                pointerEvents: "none",
+                                zIndex: 4,
+                              }}
+                            >
+                              {hoverInfo.winRate != null
+                                ? `${hoverInfo.label} · ${(hoverInfo.winRate * 100).toFixed(1)}%`
+                                : `${hoverInfo.label} · no edge`}
+                            </div>
+                          ) : null}
+                        </div>
                         {entryPct != null ? (
                           <div
                             style={{
                               position: "absolute",
-                              left: `calc(${entryPct}% - 1px)`,
-                              top: -6,
-                              bottom: -6,
-                              width: 2,
-                              borderRadius: 999,
-                              background: "rgba(255,255,255,0.88)",
-                              boxShadow: "0 0 0 1px rgba(0,0,0,0.18)",
+                              left: `${entryPct}%`,
+                              top: 0,
+                              transform: "translateX(-50%)",
+                              padding: "2px 6px",
+                              border: "1px solid rgba(255,255,255,0.18)",
+                              background: "rgba(18,18,18,0.92)",
+                              color: "rgba(255,255,255,0.9)",
+                              fontSize: 9,
+                              fontWeight: 800,
+                              whiteSpace: "nowrap",
                             }}
-                          />
+                          >
+                            Entry {entryText}
+                          </div>
                         ) : null}
+                        {optimalLabels.map((labelItem) => {
+                          const labelPct =
+                            toTrackPct(labelItem.anchorValue, min, max) ?? 50;
+                          return (
+                            <div
+                              key={`${rowKey}-${labelItem.key}-label`}
+                              style={{
+                                position: "absolute",
+                                left: `${labelPct}%`,
+                                bottom: 0,
+                                transform: "translateX(-50%)",
+                                padding: "2px 6px",
+                                border: "1px solid rgba(110,231,183,0.24)",
+                                background: "rgba(7,20,12,0.92)",
+                                color: "rgba(134,239,172,0.9)",
+                                fontSize: 9,
+                                fontWeight: 800,
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {labelItem.label}
+                            </div>
+                          );
+                        })}
                       </div>
 
                       <div
@@ -1372,18 +1562,25 @@ function TradeDetailsModalImpl({
                           justifyContent: "space-between",
                           gap: 10,
                           fontSize: 9,
-                          color: "rgba(255,255,255,0.46)",
+                          color: "rgba(255,255,255,0.42)",
                         }}
                       >
                         <span>{Number.isFinite(min) ? min.toFixed(2) : "—"}</span>
                         <span
                           style={{
-                            color: "rgba(134,239,172,0.82)",
+                            color:
+                              hoverInfo?.winRate != null
+                                ? "rgba(134,239,172,0.86)"
+                                : "rgba(255,255,255,0.52)",
                             textAlign: "center",
                             flex: 1,
                           }}
                         >
-                          {String((dimension as any).optimal ?? "—")}
+                          {hoverInfo
+                            ? hoverInfo.winRate != null
+                              ? `${(hoverInfo.winRate * 100).toFixed(1)}% win rate in zone`
+                              : "Hover the green ranges for optimal-zone win rate"
+                            : "Hover the bar to inspect the stored zone win rate"}
                         </span>
                         <span>{Number.isFinite(max) ? max.toFixed(2) : "—"}</span>
                       </div>
@@ -29567,9 +29764,12 @@ export default function App() {
   }, [dimensionStats]);
 
   const activeTradeDimensionRows = useMemo(() => {
-    const baseDimensions = Array.isArray(dimensionStats?.dims)
+    const baseDimensions = (Array.isArray(dimensionStats?.dims)
       ? dimensionStats.dims
-      : [];
+      : []
+    ).filter((dimension) => {
+      return !keptDimKeySet || keptDimKeySet.has(String((dimension as any)?.key ?? ""));
+    });
     if (!activeTradeDetails || !baseDimensions.length) {
       return [];
     }
