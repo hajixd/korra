@@ -2744,7 +2744,14 @@ type PropFirmStats = {
 
 type AiValidationMode = "off" | "split" | "synthetic";
 type AiDistanceMetric = "euclidean" | "cosine" | "manhattan" | "chebyshev";
-type AiCompressionMethod = "umap" | "pca" | "jl" | "hash" | "variance" | "subsample";
+type AiCompressionMethod =
+  | "link"
+  | "umap"
+  | "pca"
+  | "jl"
+  | "hash"
+  | "variance"
+  | "subsample";
 type KnnVoteMode = "distance" | "majority";
 type KnnNeighborSpace = "high" | "post" | "3d" | "2d";
 
@@ -3958,6 +3965,7 @@ const AI_COMPRESSION_METHOD_OPTIONS: Array<{
   value: AiCompressionMethod;
   label: string;
 }> = [
+  { value: "link", label: "Link Strength" },
   { value: "umap", label: "UMAP" },
   { value: "pca", label: "PCA" },
   { value: "jl", label: "Random Projection" },
@@ -4154,6 +4162,7 @@ function AiZipMenuSelect({
 const normalizeAiCompressionMethod = (value: unknown): AiCompressionMethod => {
   const method = String(value ?? "").trim().toLowerCase();
   if (
+    method === "link" ||
     method === "umap" ||
     method === "pca" ||
     method === "jl" ||
@@ -4163,7 +4172,7 @@ const normalizeAiCompressionMethod = (value: unknown): AiCompressionMethod => {
   ) {
     return method;
   }
-  return "jl";
+  return "link";
 };
 
 const normalizeAiValidationMode = (value: unknown): AiValidationMode => {
@@ -10048,7 +10057,7 @@ function TradingTerminalWorkspace({
     "Model"
   ]);
   const [dimensionAmount, setDimensionAmount] = useState(32);
-  const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>("jl");
+const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>("link");
   const [kEntry, setKEntry] = useState(12);
   const [kExit, setKExit] = useState(9);
   const [knnVoteMode, setKnnVoteMode] = useState<KnnVoteMode>("majority");
@@ -15419,7 +15428,7 @@ function TradingTerminalWorkspace({
     setKnnNeighborSpace("post");
     setSelectedAiDomains(["Direction", "Model"]);
     setDimensionAmount(32);
-    setCompressionMethod("jl");
+    setCompressionMethod("link");
     setKEntry(12);
     setKExit(9);
     setKnnVoteMode("majority");
