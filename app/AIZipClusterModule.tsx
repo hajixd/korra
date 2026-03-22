@@ -334,6 +334,11 @@ const resolveTradeCandleIndices = (
   const entryTimeMs = parseTradeTimeMs(
     safeTrade.entryTime ??
       safeTrade.entryTs ??
+      safeTrade.entryDate ??
+      safeTrade.entryAt ??
+      safeTrade.openDate ??
+      safeTrade.openedAt ??
+      safeTrade.entryBarTime ??
       safeTrade.openTime ??
       safeTrade.time ??
       safeTrade.timestamp
@@ -341,6 +346,11 @@ const resolveTradeCandleIndices = (
   const exitTimeMs = parseTradeTimeMs(
     safeTrade.exitTime ??
       safeTrade.exitTs ??
+      safeTrade.exitDate ??
+      safeTrade.exitAt ??
+      safeTrade.closeDate ??
+      safeTrade.closedAt ??
+      safeTrade.exitBarTime ??
       safeTrade.closeTime ??
       safeTrade.endTime
   );
@@ -6098,16 +6108,22 @@ function computeTradeDimensionRawValueMap({
     chunkBars
   );
   const nC = candles.length;
-  if (nC < windowBars + 2) {
+  if (nC < 2) {
     return null;
   }
 
-  const idx = Number((trade as any)?.entryIndex);
-  if (!Number.isFinite(idx) || idx <= windowBars || idx >= nC) {
+  const resolvedIndices = resolveTradeCandleIndices(trade, candles, {
+    fallbackEntryToStart: true,
+    fallbackExitToEntry: false,
+  });
+  const idxRaw = Number((trade as any)?.entryIndex);
+  const idx = Number.isFinite(idxRaw) ? idxRaw : Number(resolvedIndices.entryIndex);
+  if (!Number.isFinite(idx)) {
     return null;
   }
 
-  const a = idx - windowBars;
+  const safeIdx = clampInt(Math.floor(idx), 0, nC - 1);
+  const a = safeIdx - windowBars;
   const W = windowBars;
   const eps = 1e-9;
 
@@ -6118,7 +6134,7 @@ function computeTradeDimensionRawValueMap({
   const tW = new Array(W);
 
   for (let i = 0; i < W; i++) {
-    const j = a + i;
+    const j = safeSliceIndex(nC, a + i);
     const candle = candles[j];
     cW[i] = Number(candle?.close ?? candle?.c ?? 0);
     hW[i] = Number(candle?.high ?? candle?.h ?? cW[i] ?? 0);
@@ -29551,7 +29567,10 @@ export default function App() {
   }, [dimensionStats]);
 
   const activeTradeDimensionRows = useMemo(() => {
-    if (!activeTradeDetails || !dimensionStats?.dims?.length) {
+    const baseDimensions = Array.isArray(dimensionStats?.dims)
+      ? dimensionStats.dims
+      : [];
+    if (!activeTradeDetails || !baseDimensions.length) {
       return [];
     }
 
@@ -29562,12 +29581,8 @@ export default function App() {
       featureLevels,
       featureModes,
     });
-    if (!rawValueByKey) {
-      return [];
-    }
-
-    return (dimensionStats.dims || []).map((dimension) => {
-      const rawValue = Number(rawValueByKey[(dimension as any)?.key]);
+    return baseDimensions.map((dimension) => {
+      const rawValue = Number(rawValueByKey?.[(dimension as any)?.key]);
       const mean = Number((dimension as any)?.mean);
       const std = Number((dimension as any)?.std);
       const entryValue =
