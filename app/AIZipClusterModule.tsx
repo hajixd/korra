@@ -542,6 +542,7 @@ function TradeDetailsModalImpl({
   parseMode,
   tpDist,
   slDist,
+  dimensionRows,
   onClose,
 }) {
   const num = (v) => {
@@ -730,6 +731,29 @@ function TradeDetailsModalImpl({
   const fmtPct = (v, d = 1) =>
     Number.isFinite(v) ? `${(Number(v) * 100).toFixed(d)}%` : "—";
   const titleId = displayIdForNode(trade as any);
+  const normalizedDimensionRows = useMemo(
+    () =>
+      Array.isArray(dimensionRows)
+        ? dimensionRows.filter(
+            (row) =>
+              row &&
+              row.key &&
+              Number.isFinite(Number(row.min)) &&
+              Number.isFinite(Number(row.max))
+          )
+        : [],
+    [dimensionRows]
+  );
+  const toTrackPct = (value, min, max) => {
+    const v = Number(value);
+    const lo = Number(min);
+    const hi = Number(max);
+    if (!Number.isFinite(v) || !Number.isFinite(lo) || !Number.isFinite(hi)) {
+      return null;
+    }
+    if (hi <= lo) return 50;
+    return clamp(((v - lo) / (hi - lo)) * 100, 0, 100);
+  };
 
   const InfoBox = ({ label, value, tone = "neutral" }) => {
     const isEmpty =
@@ -933,6 +957,12 @@ function TradeDetailsModalImpl({
           </button>
         </div>
 
+        <div
+          style={{
+            flex: 1,
+            overflowY: "auto",
+          }}
+        >
         {/* AI Cluster Info */}
         <div style={{ padding: compactViewport ? "10px 12px" : "12px 16px" }}>
           <div
@@ -1154,6 +1184,215 @@ function TradeDetailsModalImpl({
               }
             />
           </div>
+
+          <div
+            style={{
+              marginTop: compactViewport ? 10 : 12,
+              border: "1px solid rgba(255,255,255,0.08)",
+              background:
+                "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015))",
+              borderRadius: 16,
+              padding: compactViewport ? "10px 10px" : "12px 12px",
+              boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.03)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "baseline",
+                justifyContent: "space-between",
+                gap: 10,
+                marginBottom: 10,
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 900,
+                    letterSpacing: 0.7,
+                    textTransform: "uppercase",
+                    color: "rgba(255,255,255,0.86)",
+                  }}
+                >
+                  Dimension Entry Profile
+                </div>
+                <div
+                  style={{
+                    fontSize: 10,
+                    lineHeight: 1.35,
+                    color: "rgba(255,255,255,0.52)",
+                    marginTop: 3,
+                  }}
+                >
+                  Green bands show the currently optimal zone. The vertical line
+                  marks this trade&apos;s entry value for that dimension.
+                </div>
+              </div>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: "rgba(255,255,255,0.45)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {normalizedDimensionRows.length} dims
+              </div>
+            </div>
+
+            {normalizedDimensionRows.length ? (
+              <div
+                style={{
+                  maxHeight: compactViewport ? 260 : 320,
+                  overflowY: "auto",
+                  paddingRight: 4,
+                  display: "grid",
+                  gap: 12,
+                }}
+              >
+                {normalizedDimensionRows.map((dimension) => {
+                  const min = Number((dimension as any).min);
+                  const max = Number((dimension as any).max);
+                  const entryValue = Number((dimension as any).entryValue);
+                  const entryPct = toTrackPct(entryValue, min, max);
+                  const segments = Array.isArray((dimension as any).segments)
+                    ? (dimension as any).segments
+                    : [];
+                  const entryText =
+                    entryPct == null || !Number.isFinite(entryValue)
+                      ? "N/A"
+                      : entryValue.toFixed(2);
+                  return (
+                    <div
+                      key={String((dimension as any).key)}
+                      style={{
+                        display: "grid",
+                        gap: 7,
+                        padding: "9px 10px 10px",
+                        borderRadius: 14,
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        background: "rgba(0,0,0,0.18)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "baseline",
+                          justifyContent: "space-between",
+                          gap: 10,
+                        }}
+                      >
+                        <div
+                          style={{
+                            minWidth: 0,
+                            fontSize: 10,
+                            lineHeight: 1.35,
+                            fontWeight: 800,
+                            color: "rgba(255,255,255,0.86)",
+                          }}
+                          title={String((dimension as any).name ?? "")}
+                        >
+                          {String((dimension as any).name ?? "Dimension")}
+                        </div>
+                        <div
+                          style={{
+                            flexShrink: 0,
+                            fontSize: 9,
+                            color: "rgba(255,255,255,0.58)",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          Entry {entryText}
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          position: "relative",
+                          height: 20,
+                          borderRadius: 999,
+                          border: "1px solid rgba(255,255,255,0.14)",
+                          background:
+                            "linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.015))",
+                          overflow: "hidden",
+                        }}
+                      >
+                        {segments.map((segment, segmentIndex) => {
+                          const left = toTrackPct(segment.start, min, max) ?? 0;
+                          const right = toTrackPct(segment.end, min, max) ?? 0;
+                          const width = Math.max(0, right - left);
+                          return (
+                            <div
+                              key={`${String((dimension as any).key)}-${segmentIndex}`}
+                              style={{
+                                position: "absolute",
+                                left: `${left}%`,
+                                top: 2,
+                                bottom: 2,
+                                width: `${width}%`,
+                                borderRadius: 999,
+                                background:
+                                  "linear-gradient(90deg, rgba(74,222,128,0.18), rgba(134,239,172,0.34))",
+                                boxShadow:
+                                  "inset 0 0 0 1px rgba(110,231,183,0.20)",
+                              }}
+                            />
+                          );
+                        })}
+                        {entryPct != null ? (
+                          <div
+                            style={{
+                              position: "absolute",
+                              left: `calc(${entryPct}% - 1px)`,
+                              top: -6,
+                              bottom: -6,
+                              width: 2,
+                              borderRadius: 999,
+                              background: "rgba(255,255,255,0.88)",
+                              boxShadow: "0 0 0 1px rgba(0,0,0,0.18)",
+                            }}
+                          />
+                        ) : null}
+                      </div>
+
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 10,
+                          fontSize: 9,
+                          color: "rgba(255,255,255,0.46)",
+                        }}
+                      >
+                        <span>{Number.isFinite(min) ? min.toFixed(2) : "—"}</span>
+                        <span
+                          style={{
+                            color: "rgba(134,239,172,0.82)",
+                            textAlign: "center",
+                            flex: 1,
+                          }}
+                        >
+                          {String((dimension as any).optimal ?? "—")}
+                        </span>
+                        <span>{Number.isFinite(max) ? max.toFixed(2) : "—"}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div
+                style={{
+                  fontSize: 10,
+                  color: "rgba(255,255,255,0.52)",
+                  padding: "4px 2px 2px",
+                }}
+              >
+                No dimension profile available for this trade yet.
+              </div>
+            )}
+          </div>
         </div>
 
         <TradeCandlestickChart
@@ -1165,6 +1404,7 @@ function TradeDetailsModalImpl({
           slDist={slDist}
           heightPx={420}
         />
+        </div>
       </div>
     </div>
   );
@@ -5798,6 +6038,580 @@ function featureTakeCount(key: string, level: any) {
   const take = Number(steps[lvl] ?? 0) || 0;
   const bank = FEATURE_DIM_NAME_BANK[key];
   return bank && bank.length ? Math.min(take, bank.length) : take;
+}
+
+function buildDimensionFeatureBlueprint(featureLevels, featureModes, chunkBars) {
+  const windowBars = clamp(Math.round(chunkBars || 24), 8, 120);
+  const dimDefs = [];
+  const perFeatureDims = {};
+  const partsGlobal = Math.max(1, windowBars | 0);
+
+  for (const feature of ALL_FEATURE_DEFS) {
+    const take = featureTakeCount(feature.key, featureLevels?.[feature.key]);
+    if (take <= 0) continue;
+
+    const mode = featureModes?.[feature.key] || "individual";
+    const parts = mode === "individual" ? partsGlobal : 1;
+    const showLag = mode === "individual";
+    const bank = FEATURE_DIM_NAME_BANK[feature.key] || [];
+    const list = [];
+
+    for (let featureIndex = 0; featureIndex < take; featureIndex++) {
+      const subName = bank[featureIndex] || `Dim ${featureIndex + 1}`;
+      for (let lag = 0; lag < parts; lag++) {
+        const key = `${feature.key}__${featureIndex}__t${lag}`;
+        dimDefs.push({
+          key,
+          baseKey: feature.key,
+          featureIndex,
+          lag,
+          name: showLag
+            ? `${feature.label} — ${subName} · t-${lag}`
+            : `${feature.label} — ${subName}`,
+        });
+        list.push({ key, idx: featureIndex, lag });
+      }
+    }
+
+    if (list.length) {
+      perFeatureDims[feature.key] = list;
+    }
+  }
+
+  return { windowBars, dimDefs, perFeatureDims };
+}
+
+function computeTradeDimensionRawValueMap({
+  trade,
+  candles,
+  chunkBars,
+  featureLevels,
+  featureModes,
+}) {
+  if (!trade || !Array.isArray(candles) || candles.length === 0) {
+    return null;
+  }
+
+  const { windowBars, perFeatureDims } = buildDimensionFeatureBlueprint(
+    featureLevels,
+    featureModes,
+    chunkBars
+  );
+  const nC = candles.length;
+  if (nC < windowBars + 2) {
+    return null;
+  }
+
+  const idx = Number((trade as any)?.entryIndex);
+  if (!Number.isFinite(idx) || idx <= windowBars || idx >= nC) {
+    return null;
+  }
+
+  const a = idx - windowBars;
+  const W = windowBars;
+  const eps = 1e-9;
+
+  const cW = new Array(W);
+  const hW = new Array(W);
+  const lW = new Array(W);
+  const oW = new Array(W);
+  const tW = new Array(W);
+
+  for (let i = 0; i < W; i++) {
+    const j = a + i;
+    const candle = candles[j];
+    cW[i] = Number(candle?.close ?? candle?.c ?? 0);
+    hW[i] = Number(candle?.high ?? candle?.h ?? cW[i] ?? 0);
+    lW[i] = Number(candle?.low ?? candle?.l ?? cW[i] ?? 0);
+    oW[i] = Number(candle?.open ?? candle?.o ?? cW[i] ?? 0);
+    tW[i] = candle?.time ?? candle?.t ?? null;
+  }
+
+  const minYear = new Date(candles[0]?.time ?? candles[0]?.t ?? 0).getFullYear();
+  const maxYear = new Date(
+    candles[nC - 1]?.time ?? candles[nC - 1]?.t ?? 0
+  ).getFullYear();
+  const yearDen = Math.max(1, maxYear - minYear);
+
+  const hiP = new Array(W + 1);
+  const loP = new Array(W + 1);
+  const bodySumP = new Array(W + 1);
+  const upperSumP = new Array(W + 1);
+  const lowerSumP = new Array(W + 1);
+  const wickSumP = new Array(W + 1);
+  const bullPfx = new Array(W + 1);
+  const bearPfx = new Array(W + 1);
+  const flipsPfx = new Array(W + 1);
+  const dojiPfx = new Array(W + 1);
+  const sumCloseP = new Array(W + 1);
+  const sumClose2P = new Array(W + 1);
+  const sumRetP = new Array(W + 1);
+  const sumRet2P = new Array(W + 1);
+  const sumAbsRetP = new Array(W + 1);
+  const sumAbsRet2P = new Array(W + 1);
+  const maxRetP = new Array(W + 1);
+  const minRetP = new Array(W + 1);
+
+  let hi = -Infinity;
+  let lo = Infinity;
+  let bodySum = 0;
+  let upperSum = 0;
+  let lowerSum = 0;
+  let wickSum = 0;
+  let bullN = 0;
+  let bearN = 0;
+  let flips = 0;
+  let prevSign = 0;
+  let dojiN = 0;
+  let sumClose = 0;
+  let sumClose2 = 0;
+  let sumRet = 0;
+  let sumRet2 = 0;
+  let sumAbsRet = 0;
+  let sumAbsRet2 = 0;
+  let maxRet = -Infinity;
+  let minRet = Infinity;
+
+  hiP[0] = -Infinity;
+  loP[0] = Infinity;
+  bodySumP[0] = 0;
+  upperSumP[0] = 0;
+  lowerSumP[0] = 0;
+  wickSumP[0] = 0;
+  bullPfx[0] = 0;
+  bearPfx[0] = 0;
+  flipsPfx[0] = 0;
+  dojiPfx[0] = 0;
+  sumCloseP[0] = 0;
+  sumClose2P[0] = 0;
+  sumRetP[0] = 0;
+  sumRet2P[0] = 0;
+  sumAbsRetP[0] = 0;
+  sumAbsRet2P[0] = 0;
+  maxRetP[0] = -Infinity;
+  minRetP[0] = Infinity;
+
+  const retsFull = [];
+
+  for (let i = 0; i < W; i++) {
+    const h = hW[i];
+    const l = lW[i];
+    const o = oW[i];
+    const c = cW[i];
+
+    if (h > hi) hi = h;
+    if (l < lo) lo = l;
+
+    const body = Math.abs(c - o);
+    const upper = h - Math.max(c, o);
+    const lower = Math.min(c, o) - l;
+
+    bodySum += body;
+    upperSum += upper;
+    lowerSum += lower;
+    wickSum += upper + lower;
+
+    sumClose += c;
+    sumClose2 += c * c;
+
+    const candleRange = Math.max(eps, h - l);
+    if (body / candleRange < 0.2) dojiN++;
+
+    const sign = c > o ? 1 : c < o ? -1 : 0;
+    if (prevSign && sign && sign !== prevSign) flips++;
+    if (sign) prevSign = sign;
+
+    if (c > o) bullN++;
+    else if (c < o) bearN++;
+
+    if (i > 0) {
+      const r = cW[i] - cW[i - 1];
+      retsFull.push(r);
+      sumRet += r;
+      sumRet2 += r * r;
+      const ar = Math.abs(r);
+      sumAbsRet += ar;
+      sumAbsRet2 += ar * ar;
+      if (r > maxRet) maxRet = r;
+      if (r < minRet) minRet = r;
+    }
+
+    const L = i + 1;
+    hiP[L] = hi;
+    loP[L] = lo;
+    bodySumP[L] = bodySum;
+    upperSumP[L] = upperSum;
+    lowerSumP[L] = lowerSum;
+    wickSumP[L] = wickSum;
+    bullPfx[L] = bullN;
+    bearPfx[L] = bearN;
+    flipsPfx[L] = flips;
+    dojiPfx[L] = dojiN;
+    sumCloseP[L] = sumClose;
+    sumClose2P[L] = sumClose2;
+    sumRetP[L] = sumRet;
+    sumRet2P[L] = sumRet2;
+    sumAbsRetP[L] = sumAbsRet;
+    sumAbsRet2P[L] = sumAbsRet2;
+    maxRetP[L] = maxRet;
+    minRetP[L] = minRet;
+  }
+
+  let p25 = 0;
+  let p50 = 0;
+  let p75 = 0;
+  if (retsFull.length) {
+    const sortedReturns = retsFull.slice().sort((x, y) => x - y);
+    const pick = (q) =>
+      sortedReturns[
+        Math.max(
+          0,
+          Math.min(
+            sortedReturns.length - 1,
+            Math.floor(q * (sortedReturns.length - 1))
+          )
+        )
+      ];
+    p25 = pick(0.25);
+    p50 = pick(0.5);
+    p75 = pick(0.75);
+  }
+
+  const firstRetFull = W >= 2 ? cW[1] - cW[0] : 0;
+  const byKeyByLag = {};
+  for (const fk in perFeatureDims) byKeyByLag[fk] = new Array(W);
+
+  for (let lag = 0; lag < W; lag++) {
+    const L = Math.max(1, W - lag);
+    const endInWindow = L - 1;
+
+    const range = hiP[L] - loP[L];
+    const netRet = cW[endInWindow] - cW[0];
+    const m = Math.max(1, L - 1);
+    const meanRet = sumRetP[L] / m;
+    const varRet = Math.max(0, sumRet2P[L] / m - meanRet * meanRet);
+    const stdRet = Math.sqrt(varRet);
+    const absMeanRet = sumAbsRetP[L] / m;
+    const absVar = Math.max(
+      0,
+      sumAbsRet2P[L] / m - absMeanRet * absMeanRet
+    );
+    const absStdRet = Math.sqrt(absVar);
+    const maxRetL = Number.isFinite(maxRetP[L]) ? maxRetP[L] : 0;
+    const minRetL = Number.isFinite(minRetP[L]) ? minRetP[L] : 0;
+    const position = range > eps ? (cW[endInWindow] - loP[L]) / range : 0.5;
+    const bodyMean = bodySumP[L] / (L + eps);
+    const upperWickMean = upperSumP[L] / (L + eps);
+    const lowerWickMean = lowerSumP[L] / (L + eps);
+    const wickBodyRatio = wickSumP[L] / (bodySumP[L] + eps);
+    const bullFrac = L > 0 ? bullPfx[L] / L : 0;
+    const bearFrac = L > 0 ? bearPfx[L] / L : 0;
+    const reversalRate = L > 0 ? flipsPfx[L] / L : 0;
+    const chopRatio = sumAbsRetP[L] / (Math.abs(netRet) + eps);
+    const lastRet = L >= 2 ? cW[endInWindow] - cW[endInWindow - 1] : 0;
+
+    const dt = new Date(tW[endInWindow]);
+    const hour = dt.getHours();
+    const minute = dt.getMinutes();
+    const dow = dt.getDay();
+    const month = dt.getMonth();
+    const year = dt.getFullYear();
+
+    const hourAng = (2 * Math.PI * hour) / 24;
+    const minAng = (2 * Math.PI * minute) / 60;
+    const dowAng = (2 * Math.PI * dow) / 7;
+    const monAng = (2 * Math.PI * month) / 12;
+    const yearNorm = (year - minYear) / yearDen;
+
+    const start = new Date(year, 0, 0);
+    const doy = Math.floor((dt.getTime() - start.getTime()) / 86400000);
+    const doyAng = (2 * Math.PI * (doy % 365)) / 365;
+    const weekNorm = Math.min(1, Math.max(0, doy / 365));
+
+    const meanClose = sumCloseP[L] / (L + eps);
+    const varClose = Math.max(
+      0,
+      sumClose2P[L] / (L + eps) - meanClose * meanClose
+    );
+    const stdClose = Math.sqrt(varClose) || 0;
+    const lastClose0 = cW[endInWindow];
+    const zLast = stdClose > eps ? (lastClose0 - meanClose) / stdClose : 0;
+    const midClose0 =
+      cW[Math.min(endInWindow, Math.floor(L / 2))] ?? lastClose0;
+    const zMid = stdClose > eps ? (midClose0 - meanClose) / stdClose : 0;
+    const zDelta = zLast - zMid;
+
+    const swingSR = Math.max(eps, range);
+    const pSR = (lastClose0 - loP[L]) / swingSR;
+    const touchBand = 0.08;
+    let supTouches = 0;
+    let resTouches = 0;
+    for (let i = 0; i < L; i++) {
+      const p = (cW[i] - loP[L]) / swingSR;
+      if (p <= touchBand) supTouches++;
+      if (p >= 1 - touchBand) resTouches++;
+    }
+    const dSup = pSR;
+    const dRes = 1 - pSR;
+
+    const fibLevels = [0.236, 0.382, 0.5, 0.618, 0.786];
+    const fibDeltas = fibLevels.map((lv) => pSR - lv);
+    let nearestAbs = Infinity;
+    let nearestSigned = 0;
+    for (let i = 0; i < fibDeltas.length; i++) {
+      const v = fibDeltas[i];
+      const absValue = Math.abs(v);
+      if (absValue < nearestAbs) {
+        nearestAbs = absValue;
+        nearestSigned = v;
+      }
+    }
+
+    const accel = lastRet - (meanRet || 0);
+    const volBurst = stdRet > 0 ? Math.abs(lastRet) / (stdRet + eps) : 0;
+
+    const candByKey = {
+      pricePath: [
+        meanRet,
+        stdRet,
+        maxRetL,
+        minRetL,
+        sumAbsRetP[L],
+        position,
+        netRet,
+        range,
+        bodyMean,
+        upperWickMean,
+        lowerWickMean,
+        bullFrac,
+        bearFrac,
+        reversalRate,
+        chopRatio,
+        lastRet,
+        firstRetFull,
+        p25,
+        p50,
+        p75,
+      ],
+      rangeTrend: [
+        range,
+        netRet,
+        range / (Math.abs(netRet) + eps),
+        chopRatio,
+        bullFrac - bearFrac,
+        absMeanRet,
+      ],
+      wicks: [
+        wickBodyRatio,
+        upperWickMean,
+        lowerWickMean,
+        upperWickMean - lowerWickMean,
+        L > 0 ? dojiPfx[L] / L : 0,
+      ],
+      time: [
+        Math.sin(hourAng),
+        Math.cos(hourAng),
+        Math.sin(minAng),
+        Math.cos(minAng),
+      ],
+      temporal: [
+        yearNorm,
+        Math.sin(monAng),
+        Math.cos(monAng),
+        Math.sin(dowAng),
+        Math.cos(dowAng),
+        Math.sin(hourAng),
+        Math.cos(hourAng),
+        Math.sin(doyAng),
+        Math.cos(doyAng),
+        weekNorm,
+      ],
+      position: [
+        position,
+        range > eps ? (hiP[L] - lastClose0) / range : 0,
+        range > eps ? (lastClose0 - loP[L]) / range : 0,
+        range > eps ? Math.max(0, 1 - (hiP[L] - lastClose0) / range) : 0,
+        range > eps ? Math.max(0, 1 - (lastClose0 - loP[L]) / range) : 0,
+        position,
+      ],
+      topography: [
+        bullFrac,
+        bearFrac,
+        bullFrac - bearFrac,
+        absMeanRet,
+        absStdRet,
+        reversalRate,
+        chopRatio,
+        wickBodyRatio,
+        bodyMean,
+      ],
+      mf__momentum__core: [
+        meanRet,
+        stdRet,
+        maxRetL,
+        minRetL,
+        sumAbsRetP[L],
+        netRet,
+        range,
+        bullFrac,
+        bearFrac,
+        1 - reversalRate,
+        reversalRate,
+        chopRatio,
+        lastRet,
+        firstRetFull,
+        accel,
+        meanRet !== 0 ? meanRet * meanRet * meanRet : 0,
+      ],
+      mf__mean_reversion__core: [
+        zLast,
+        stdClose > eps ? stdClose : stdRet,
+        0,
+        0,
+        Math.abs(zLast),
+        reversalRate,
+        zLast,
+        zMid,
+        zDelta,
+        hiP[L] > meanClose ? (hiP[L] - meanClose) / (range + eps) : 0,
+        meanClose > loP[L] ? (meanClose - loP[L]) / (range + eps) : 0,
+        -zDelta,
+        wickBodyRatio,
+        chopRatio,
+        range,
+        netRet,
+      ],
+      mf__seasons__core: [
+        Math.sin(hourAng),
+        Math.cos(hourAng),
+        Math.sin(doyAng),
+        Math.cos(doyAng),
+        weekNorm,
+        Math.min(1, Math.max(0, (dt.getHours() + dt.getMinutes() / 60) / 24)),
+        range,
+        netRet,
+        absMeanRet,
+        absStdRet,
+        chopRatio,
+        wickBodyRatio,
+        bullFrac,
+        bearFrac,
+        reversalRate,
+        position,
+      ],
+      mf__time_of_day__core: [
+        Math.sin(hourAng),
+        Math.cos(hourAng),
+        Math.min(1, Math.max(0, (dt.getHours() + dt.getMinutes() / 60) / 24)),
+        range,
+        netRet,
+        absMeanRet,
+        absStdRet,
+        chopRatio,
+        wickBodyRatio,
+        bullFrac,
+        bearFrac,
+        reversalRate,
+        position,
+        lastRet,
+        accel,
+        volBurst,
+      ],
+      mf__fibonacci__core: [
+        fibDeltas[0] ?? 0,
+        fibDeltas[1] ?? 0,
+        fibDeltas[2] ?? 0,
+        fibDeltas[3] ?? 0,
+        fibDeltas[4] ?? 0,
+        Number.isFinite(nearestAbs) ? nearestAbs : 0,
+        nearestSigned,
+        range,
+        netRet,
+        position,
+        absMeanRet,
+        absStdRet,
+        chopRatio,
+        bullFrac,
+        bearFrac,
+        reversalRate,
+      ],
+      mf__support_resistance__core: [
+        dSup,
+        dRes,
+        supTouches / (L + eps),
+        resTouches / (L + eps),
+        dSup <= touchBand ? 1 : 0,
+        dRes <= touchBand ? 1 : 0,
+        range,
+        netRet,
+        position,
+        absMeanRet,
+        absStdRet,
+        chopRatio,
+        wickBodyRatio,
+        bullFrac,
+        bearFrac,
+        reversalRate,
+      ],
+    };
+
+    for (const fk in byKeyByLag) {
+      byKeyByLag[fk][lag] = candByKey[fk] || [];
+    }
+  }
+
+  const valuesByKey = {};
+  for (const fk in perFeatureDims) {
+    const list = perFeatureDims[fk] || [];
+    const byLag = byKeyByLag[fk] || [];
+    for (let k = 0; k < list.length; k++) {
+      const it = list[k];
+      const arr = byLag[it.lag] || [];
+      valuesByKey[it.key] = Number(arr[it.idx] ?? 0);
+    }
+  }
+
+  return valuesByKey;
+}
+
+function buildDimensionRangeSegments(dimension) {
+  if (!dimension) return [];
+  const min = Number((dimension as any).min);
+  const max = Number((dimension as any).max);
+  const qLow = Number((dimension as any).qLow);
+  const qHigh = Number((dimension as any).qHigh);
+  const winLow = Number((dimension as any).winLow);
+  const winHigh = Number((dimension as any).winHigh);
+
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+    return [];
+  }
+
+  const hasLow = Number.isFinite(winLow);
+  const hasHigh = Number.isFinite(winHigh);
+  const segments = [];
+
+  if (hasLow && hasHigh) {
+    if (winHigh > winLow) {
+      segments.push({ start: qHigh, end: max });
+    } else if (winLow > winHigh) {
+      segments.push({ start: min, end: qLow });
+    } else {
+      segments.push({ start: min, end: qLow });
+      segments.push({ start: qHigh, end: max });
+    }
+  } else if (hasHigh) {
+    segments.push({ start: qHigh, end: max });
+  } else if (hasLow) {
+    segments.push({ start: min, end: qLow });
+  }
+
+  return segments
+    .map((segment) => ({
+      start: clamp(Number(segment.start), min, max),
+      end: clamp(Number(segment.end), min, max),
+    }))
+    .filter((segment) => Number.isFinite(segment.start) && Number.isFinite(segment.end) && segment.end > segment.start);
 }
 
 const DEFAULT_SESSIONS = {
@@ -27758,7 +28572,9 @@ export default function App() {
   }, [isAIActive, baselineStatsForEfficacy, effectiveStats.totalPnl]);
   const dimensionStats = useMemo(() => {
     const needDimStats =
-      !isDimensionStatsCollapsed || dimWeightMode === "proportional";
+      !isDimensionStatsCollapsed ||
+      dimWeightMode === "proportional" ||
+      !!activeTradeDetails;
     if (!needDimStats) return null;
     const raw = uiAllTrades || [];
     if (!raw.length || !candles || !candles.length) return null;
@@ -28575,6 +29391,8 @@ export default function App() {
         qHigh,
         winLow,
         winHigh,
+        mean: mx,
+        std: sx,
         lift:
           winLow === null ||
           winLow === undefined ||
@@ -28623,6 +29441,7 @@ export default function App() {
   }, [
     isDimensionStatsCollapsed,
     dimWeightMode,
+    activeTradeDetails,
     uiAllTrades,
     candles,
     chunkBars,
@@ -28730,6 +29549,45 @@ export default function App() {
     for (const k of keys) s.add(String(k));
     return s;
   }, [dimensionStats]);
+
+  const activeTradeDimensionRows = useMemo(() => {
+    if (!activeTradeDetails || !dimensionStats?.dims?.length) {
+      return [];
+    }
+
+    const rawValueByKey = computeTradeDimensionRawValueMap({
+      trade: activeTradeDetails,
+      candles,
+      chunkBars,
+      featureLevels,
+      featureModes,
+    });
+    if (!rawValueByKey) {
+      return [];
+    }
+
+    return (dimensionStats.dims || []).map((dimension) => {
+      const rawValue = Number(rawValueByKey[(dimension as any)?.key]);
+      const mean = Number((dimension as any)?.mean);
+      const std = Number((dimension as any)?.std);
+      const entryValue =
+        Number.isFinite(rawValue) && Number.isFinite(std) && std > 0
+          ? ((rawValue - mean) / std) * 50
+          : null;
+      return {
+        ...dimension,
+        entryValue,
+        segments: buildDimensionRangeSegments(dimension),
+      };
+    });
+  }, [
+    activeTradeDetails,
+    candles,
+    chunkBars,
+    dimensionStats,
+    featureLevels,
+    featureModes,
+  ]);
 
   const dimWeightsForWorker = useMemo(() => {
     if (dimWeightMode !== "proportional") return null;
@@ -29042,6 +29900,7 @@ export default function App() {
     return { ["--p"]: `${clamp(pct, 0, 100)}%` };
   };
   const aiAllOff = aiMethod === "off";
+  const directionDomainEnabled = aiDomains.includes("Direction");
   const confidenceGateDisabled = aiAllOff || (!useAI && !checkEveryBar);
   const effectiveConfidenceThreshold = confidenceGateDisabled
     ? 0
@@ -34132,37 +34991,110 @@ export default function App() {
 
                 <div
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 10,
-                    width: "100%",
-                    flexWrap: "wrap",
+                    display: "grid",
+                    gap: 8,
+                    padding: 10,
+                    borderRadius: 14,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    background: "rgba(255,255,255,0.03)",
                   }}
                 >
-                  <div style={{ ...ui.label, margin: 0 }}>
-                    Remap opposite outcomes (Direction)
-                  </div>
-                  <select
-                    value={remapOppositeOutcomes ? "yes" : "no"}
-                    onChange={(e) =>
-                      setRemapOppositeOutcomes(e.target.value === "yes")
-                    }
-                    disabled={aiAllOff}
+                  <div
                     style={{
-                      background: "rgba(0,0,0,0.35)",
-                      color: "rgba(255,255,255,0.92)",
-                      padding: "8px 10px",
-                      borderRadius: 12,
-                      border: "1px solid rgba(255,255,255,0.14)",
-                      outline: "none",
-                      fontWeight: 800,
-                      cursor: aiAllOff ? "not-allowed" : "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      width: "100%",
+                      flexWrap: "wrap",
                     }}
                   >
-                    <option value="yes">Yes</option>
-                    <option value="no">No</option>
-                  </select>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      <div style={{ ...ui.label, margin: 0 }}>
+                        Opposite-Direction Vote Remap
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          lineHeight: 1.45,
+                          color: "rgba(255,255,255,0.64)",
+                          maxWidth: 520,
+                        }}
+                      >
+                        When Direction is off, a losing short can support a buy and
+                        a losing long can support a sell.
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 10,
+                          lineHeight: 1.4,
+                          color: directionDomainEnabled
+                            ? "rgba(251,191,36,0.86)"
+                            : "rgba(255,255,255,0.48)",
+                        }}
+                      >
+                        {directionDomainEnabled
+                          ? "Direction domain is enabled, so this remap is currently inactive."
+                          : "Use this when you want opposite-side losers to count as same-side evidence."}
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                        gap: 8,
+                        minWidth: 220,
+                        opacity: aiAllOff || directionDomainEnabled ? 0.55 : 1,
+                      }}
+                    >
+                      {[
+                        {
+                          key: "on",
+                          active: remapOppositeOutcomes,
+                          label: "Remap On",
+                        },
+                        {
+                          key: "off",
+                          active: !remapOppositeOutcomes,
+                          label: "Strict Raw",
+                        },
+                      ].map((option) => (
+                        <button
+                          key={option.key}
+                          type="button"
+                          onClick={() =>
+                            setRemapOppositeOutcomes(option.key === "on")
+                          }
+                          disabled={aiAllOff || directionDomainEnabled}
+                          style={{
+                            padding: "9px 10px",
+                            borderRadius: 12,
+                            border: option.active
+                              ? "1px solid rgba(74,222,128,0.34)"
+                              : "1px solid rgba(255,255,255,0.14)",
+                            background: option.active
+                              ? "linear-gradient(135deg, rgba(22,163,74,0.20), rgba(8,12,10,0.78))"
+                              : "rgba(0,0,0,0.35)",
+                            color: option.active
+                              ? "rgba(220,252,231,0.98)"
+                              : "rgba(255,255,255,0.88)",
+                            fontSize: 12,
+                            fontWeight: 850,
+                            cursor:
+                              aiAllOff || directionDomainEnabled
+                                ? "not-allowed"
+                                : "pointer",
+                            boxShadow: option.active
+                              ? "0 12px 24px rgba(0,0,0,0.30)"
+                              : "none",
+                          }}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
                 <div style={{ height: 12 }} />
@@ -39020,6 +39952,7 @@ export default function App() {
             parseMode={parseMode}
             tpDist={tpDist}
             slDist={slDist}
+            dimensionRows={activeTradeDimensionRows}
             onClose={() => setActiveTradeDetails(null)}
           />
         ) : null}
