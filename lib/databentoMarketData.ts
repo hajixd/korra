@@ -164,6 +164,10 @@ const getDatasetRange = async (): Promise<DatasetRange> => {
   return value;
 };
 
+export const probeDatabentoAccess = async (): Promise<void> => {
+  await getDatasetRange();
+};
+
 const clipToSchemaEnd = async (
   timeframe: string,
   requestedEnd?: string | null

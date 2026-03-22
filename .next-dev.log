@@ -1,0 +1,29 @@
+
+> korra-space@0.1.0 dev
+> next dev
+
+   ▲ Next.js 15.5.12
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.1.164:3000
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 2.1s
+ ○ Compiling /api/market/candles ...
+ ✓ Compiled /api/market/candles in 2.4s (303 modules)
+ GET /api/market/candles?pair=XAU_USD&timeframe=M1&limit=5 200 in 4855ms
+ GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=5 200 in 5283ms
+ GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=5 200 in 2732ms
+ ✓ Compiled in 22ms
+ ✓ Compiled /api/market/candles in 137ms (106 modules)
+ ✓ Compiled (108 modules)
+ ✓ Compiled /api/market/stream in 207ms (305 modules)
+ GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=5 200 in 3392ms
+ GET /api/market/candles?pair=XAU_USD&timeframe=M1&limit=5 200 in 3485ms
+ GET /api/market/stream?pairs=XAU_USD 200 in 3193ms
+ ✓ Compiled in 104ms (110 modules)
+ GET /api/market/candles?pair=XAU_USD&timeframe=M1&limit=5 200 in 2749ms
+ GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=5 200 in 3006ms
+ GET /api/market/stream?pairs=XAU_USD 200 in 2621ms
+ ○ Compiling / ...
+ ✓ Compiled / in 13.1s (1960 modules)

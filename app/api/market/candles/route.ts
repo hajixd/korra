@@ -10,7 +10,30 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const LEGACY_MARKET_API_BASE =
+  process.env.MARKET_API_BASE || "https://trading-system-delta.vercel.app/api/public/candles";
 const MAX_LIMIT = 10000;
+const MAX_RELIABLE_UPSTREAM_LIMIT = 3800;
+const UPSTREAM_TIMEOUT_MS = 3000;
+
+const buildUpstreamAttemptLimits = (requestedLimit: number): number[] => {
+  const attempts = new Set<number>();
+  attempts.add(Math.min(requestedLimit, MAX_RELIABLE_UPSTREAM_LIMIT));
+
+  for (const candidate of [3000, 2000, 1500, 1000, 500]) {
+    if (candidate <= requestedLimit) {
+      attempts.add(candidate);
+    }
+  }
+
+  return Array.from(attempts).filter((value) => value > 0);
+};
+
+const toSafeHeaderValue = (value: unknown) =>
+  String(value ?? "")
+    .replace(/\r/g, " ")
+    .replace(/\n/g, " ")
+    .trim();
 
 const buildEmptyCandlesResponse = (
   pair: string,
@@ -38,6 +61,39 @@ const buildEmptyCandlesResponse = (
     }
   );
 
+const fetchLegacyMarketCandles = async (pair: string, timeframe: string, limit: number) => {
+  const url = new URL(LEGACY_MARKET_API_BASE);
+  url.searchParams.set("pair", pair);
+  url.searchParams.set("timeframe", timeframe);
+
+  for (const attemptLimit of buildUpstreamAttemptLimits(limit)) {
+    url.searchParams.set("limit", String(attemptLimit));
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+    try {
+      const response = await fetch(url.toString(), {
+        headers: {
+          "X-API-Key": "trd_PCv-kkjDo-4t4QMDNxz3JRCGIyBCKHNq",
+          Accept: "application/json"
+        },
+        cache: "no-store",
+        signal: controller.signal
+      });
+
+      if (!response.ok) {
+        continue;
+      }
+
+      return (await response.json()) as Record<string, unknown>;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  throw new Error("Legacy market feed unavailable.");
+};
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const pair = (searchParams.get("pair") || DATABENTO_DEFAULT_PAIR).toUpperCase();
@@ -53,11 +109,12 @@ export async function GET(request: Request) {
   if (!DATABENTO_SUPPORTED_TIMEFRAMES.has(timeframe)) {
     return NextResponse.json({ error: "Unsupported timeframe" }, { status: 400 });
   }
-  if (!process.env.DATABENTO_API_KEY) {
-    return buildEmptyCandlesResponse(pair, timeframe, limit, start, end, "Missing DATABENTO_API_KEY.");
-  }
 
   try {
+    if (!process.env.DATABENTO_API_KEY) {
+      throw new Error("Missing DATABENTO_API_KEY.");
+    }
+
     const payload = await fetchDatabentoCandles({
       pair,
       timeframe,
@@ -73,14 +130,35 @@ export async function GET(request: Request) {
         "X-Korra-Market-Requested-Limit": String(limit)
       }
     });
-  } catch (error) {
-    return buildEmptyCandlesResponse(
-      pair,
-      timeframe,
-      limit,
-      start,
-      end,
-      (error as Error).message || "Databento market feed unavailable."
-    );
+  } catch (databentoError) {
+    try {
+      const payload = await fetchLegacyMarketCandles(pair, timeframe, limit);
+      return NextResponse.json(
+        {
+          ...payload,
+          source: "legacy-market-fallback"
+        },
+        {
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store",
+            "X-Korra-Market-Source": "legacy-market-fallback",
+            "X-Korra-Market-Reason": toSafeHeaderValue(
+              (databentoError as Error).message || "databento-error"
+            )
+          }
+        }
+      );
+    } catch (legacyError) {
+      return buildEmptyCandlesResponse(
+        pair,
+        timeframe,
+        limit,
+        start,
+        end,
+        `Databento: ${(databentoError as Error).message || "unknown error"} | ` +
+          `Legacy: ${(legacyError as Error).message || "unknown error"}`
+      );
+    }
   }
 }

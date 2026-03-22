@@ -1,14 +1,53 @@
 import { NextResponse } from "next/server";
 import {
   DATABENTO_DEFAULT_PAIR,
+  probeDatabentoAccess,
   spawnDatabentoStreamProcess
 } from "../../../../lib/databentoMarketData";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const DEFAULT_STREAM_URL = "https://oanda-worker-production.up.railway.app/stream/prices";
+const LEGACY_STREAM_API_KEY = "trd_PCv-kkjDo-4t4QMDNxz3JRCGIyBCKHNq";
 const PAIR_RE = /^[A-Z0-9]{2,20}(?:_[A-Z0-9]{2,20})?(?:,[A-Z0-9]{2,20}(?:_[A-Z0-9]{2,20})?)*$/;
 const KEEPALIVE_INTERVAL_MS = 15_000;
+
+const proxyLegacyStream = async (pairs: string) => {
+  const upstreamBase = process.env.PRICE_STREAM_URL || DEFAULT_STREAM_URL;
+  const upstreamUrl = new URL(upstreamBase);
+  upstreamUrl.searchParams.set("api_key", LEGACY_STREAM_API_KEY);
+  upstreamUrl.searchParams.set("pairs", pairs);
+
+  const upstream = await fetch(upstreamUrl.toString(), {
+    headers: {
+      Accept: "text/event-stream"
+    },
+    cache: "no-store"
+  });
+
+  if (!upstream.ok || !upstream.body) {
+    const body = await upstream.text().catch(() => "");
+    return NextResponse.json(
+      {
+        error: `Price stream unavailable (${upstream.status}).`,
+        details: body.slice(0, 500)
+      },
+      { status: upstream.status || 502 }
+    );
+  }
+
+  return new Response(upstream.body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+      "X-Korra-Stream-Source": "legacy-fallback"
+    }
+  });
+};
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -20,8 +59,14 @@ export async function GET(request: Request) {
   if (pairs !== DATABENTO_DEFAULT_PAIR) {
     return NextResponse.json({ error: "Only XAU_USD is supported by this stream." }, { status: 400 });
   }
-  if (!process.env.DATABENTO_API_KEY) {
-    return NextResponse.json({ error: "Missing DATABENTO_API_KEY." }, { status: 500 });
+
+  try {
+    if (!process.env.DATABENTO_API_KEY) {
+      throw new Error("Missing DATABENTO_API_KEY.");
+    }
+    await probeDatabentoAccess();
+  } catch {
+    return proxyLegacyStream(pairs);
   }
 
   const encoder = new TextEncoder();
@@ -95,15 +140,8 @@ export async function GET(request: Request) {
         }
       });
 
-      child.on("error", (error) => {
-        if (!closed) {
-          controller.enqueue(
-            encoder.encode(
-              `event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`
-            )
-          );
-          close();
-        }
+      child.on("error", () => {
+        close();
       });
 
       child.on("close", () => {
@@ -123,7 +161,8 @@ export async function GET(request: Request) {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
-      "X-Accel-Buffering": "no"
+      "X-Accel-Buffering": "no",
+      "X-Korra-Stream-Source": "databento"
     }
   });
 }
