@@ -1761,10 +1761,8 @@ const computeAntiCheatBacktestContext = (params: {
   const explicitActiveLibraryIds = panelBacktestFilterSettings.selectedAiLibraries
     .map((libraryId) => String(libraryId ?? "").trim().toLowerCase())
     .filter((libraryId) => libraryId.length > 0 && libraryId !== "recent");
-  const activeLibraryIds =
-    explicitActiveLibraryIds.length > 0
-      ? explicitActiveLibraryIds
-      : ["base"];
+  const activeLibraryIds = explicitActiveLibraryIds;
+  const preserveExistingLibraryState = activeLibraryIds.length > 0;
   const timeFilteredTrades = splitEvaluationTrades;
   const libraryPointsById = panelLibraryPoints.reduce<Map<string, LibrarySourceCandidate[]>>(
     (accumulator, point) => {
@@ -2132,13 +2130,20 @@ const computeAntiCheatBacktestContext = (params: {
   for (let index = 0; index < chronologicalTrades.length; index += 1) {
     const trade = chronologicalTrades[index]!;
     const tradeQueryVector = trade.neighborVector ?? buildTradeNeighborVector(trade);
-    const preservedNeighbors = cloneEntryNeighbors(trade.entryNeighbors);
-    const preservedClosestClusterUid =
-      trade.closestClusterUid == null ? null : String(trade.closestClusterUid);
-    const preservedConfidence = resolveExplicitAiConfidenceScore(trade);
-    const preservedAnc = normalizeProbabilityScore(
-      trade.averageNeighborContributionAtEntry
-    );
+    const preservedNeighbors = preserveExistingLibraryState
+      ? cloneEntryNeighbors(trade.entryNeighbors)
+      : [];
+    const preservedClosestClusterUid = preserveExistingLibraryState
+      ? trade.closestClusterUid == null
+        ? null
+        : String(trade.closestClusterUid)
+      : null;
+    const preservedConfidence = preserveExistingLibraryState
+      ? resolveExplicitAiConfidenceScore(trade)
+      : null;
+    const preservedAnc = preserveExistingLibraryState
+      ? normalizeProbabilityScore(trade.averageNeighborContributionAtEntry)
+      : null;
     const basePool =
       effectiveValidationMode === "split"
         ? splitTrainingTrades

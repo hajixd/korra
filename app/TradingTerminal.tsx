@@ -946,6 +946,15 @@ type PanelAnalyticsServerResponse = {
   activePanelHistoryRows: HistoryItem[];
 };
 
+const EMPTY_PANEL_ANALYTICS_DATA: PanelAnalyticsServerResponse = {
+  dateFilteredTrades: [],
+  libraryCandidateTrades: [],
+  timeFilteredTrades: [],
+  confidenceByIdEntries: [],
+  chartPanelHistoryRows: [],
+  activePanelHistoryRows: []
+};
+
 const PANEL_ANALYTICS_CLIENT_CACHE_TTL_MS = 15_000;
 const PANEL_ANALYTICS_CLIENT_CACHE_MAX = 6;
 const panelAnalyticsClientCache = new Map<
@@ -2998,6 +3007,8 @@ type DimensionScope = "active" | "all";
 type DimensionStatRow = {
   key: string;
   featureId: string;
+  featureIndex: number;
+  lag: number;
   name: string;
   corr: number;
   absCorr: number;
@@ -3005,6 +3016,8 @@ type DimensionStatRow = {
   max: number;
   qLow: number;
   qHigh: number;
+  mean: number;
+  std: number;
   winLow: number | null;
   winHigh: number | null;
   lift: number | null;
@@ -8676,6 +8689,47 @@ const buildDimensionFeatureLagBuckets = (
   return buckets;
 };
 
+const buildDimensionProfileSegments = (
+  dimension: Pick<DimensionStatRow, "min" | "max" | "qLow" | "qHigh" | "winLow" | "winHigh">
+): Array<{ start: number; end: number }> => {
+  const min = Number(dimension.min);
+  const max = Number(dimension.max);
+  const qLow = Number(dimension.qLow);
+  const qHigh = Number(dimension.qHigh);
+  const winLow = Number(dimension.winLow);
+  const winHigh = Number(dimension.winHigh);
+
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+    return [];
+  }
+
+  const lowBetter = Number.isFinite(winLow) && (!Number.isFinite(winHigh) || winLow > winHigh);
+  const highBetter = Number.isFinite(winHigh) && (!Number.isFinite(winLow) || winHigh > winLow);
+  const bothBetter =
+    Number.isFinite(winLow) &&
+    Number.isFinite(winHigh) &&
+    Math.abs(winHigh - winLow) <= 0.000000001;
+
+  const segments: Array<{ start: number; end: number }> = [];
+
+  if (bothBetter) {
+    segments.push({ start: min, end: qLow });
+    segments.push({ start: qHigh, end: max });
+  } else if (lowBetter) {
+    segments.push({ start: min, end: qLow });
+  } else if (highBetter) {
+    segments.push({ start: qHigh, end: max });
+  }
+
+  return segments.filter((segment) => {
+    return (
+      Number.isFinite(segment.start) &&
+      Number.isFinite(segment.end) &&
+      segment.end > segment.start
+    );
+  });
+};
+
 const BacktestTradeMiniChart = ({
   trade,
   candles,
@@ -11138,10 +11192,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       const runtimeLibraryIds = (nextSettings.selectedAiLibraries ?? [])
         .map((libraryId) => String(libraryId).trim())
         .filter((libraryId) => libraryId.length > 0 && Boolean(aiLibraryDefById[libraryId]));
-      const effectiveRuntimeLibraryIds =
-        runtimeLibraryIds.length > 0 || !aiLibraryDefById.base
-          ? runtimeLibraryIds
-          : ["base"];
+      const effectiveRuntimeLibraryIds = runtimeLibraryIds;
       const hasLibraryPreloadPhase =
         effectiveRuntimeLibraryIds.length > 0 &&
         canRunAizipLibrariesForSettings({
@@ -11150,10 +11201,16 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         });
       const hasAiAnalysisPhase =
         nextSettings.antiCheatEnabled || hasLibraryPreloadPhase;
+      resetAiLibraryRunState();
       setBacktestRunCount((current) => current + 1);
       setBacktestRefreshNowMs(nextRefreshMs);
       setBacktestHistorySeedReady(!needsHistorySeedReload);
       setStatsRefreshReplaySettled(false);
+      setActiveBacktestTradeDetails(null);
+      setPanelAnalyticsData(EMPTY_PANEL_ANALYTICS_DATA);
+      startTransition(() => {
+        setHistoryRows([]);
+      });
       setPanelAnalyticsStatus("loading");
       setBacktestAnalyticsStatus("loading");
       updateStatsRefreshOverlayMode("loading");
@@ -14658,14 +14715,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     }
     return next;
   }, [aiLibraryDefById]);
-  const [panelAnalyticsData, setPanelAnalyticsData] = useState<PanelAnalyticsServerResponse>({
-    dateFilteredTrades: [],
-    libraryCandidateTrades: [],
-    timeFilteredTrades: [],
-    confidenceByIdEntries: [],
-    chartPanelHistoryRows: [],
-    activePanelHistoryRows: []
-  });
+  const [panelAnalyticsData, setPanelAnalyticsData] = useState<PanelAnalyticsServerResponse>(
+    EMPTY_PANEL_ANALYTICS_DATA
+  );
   const [panelAnalyticsStatus, setPanelAnalyticsStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [backtestAnalyticsStatus, setBacktestAnalyticsStatus] =
     useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -14760,6 +14812,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   ]);
   useEffect(() => {
     if (!shouldComputePanelAnalyticsOnServer) {
+      setPanelAnalyticsData(EMPTY_PANEL_ANALYTICS_DATA);
       setPanelAnalyticsStatus("idle");
       return;
     }
@@ -15097,10 +15150,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     const explicitLibraryIds = (appliedSettingsSnapshot.selectedAiLibraries ?? [])
       .map((libraryId) => String(libraryId).trim())
       .filter((libraryId) => libraryId.length > 0 && Boolean(aiLibraryDefById[libraryId]));
-    const activeLibraryIds =
-      explicitLibraryIds.length > 0 || !aiLibraryDefById.base
-        ? explicitLibraryIds
-        : ["base"];
+    const activeLibraryIds = explicitLibraryIds;
     const shouldPreloadAiLibraries =
       activeLibraryIds.length > 0 &&
       canRunAizipLibrariesForSettings({
@@ -22391,7 +22441,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   };
 
   const dimensionStats = useMemo<DimensionStatsSummary | null>(() => {
-    if (!isBacktestAnalyticsVisible || deferredBacktestTab !== "dimensions") {
+    const shouldBuildDimensionStats =
+      (isBacktestAnalyticsVisible && deferredBacktestTab === "dimensions") ||
+      activeBacktestTradeDetails !== null;
+
+    if (!shouldBuildDimensionStats) {
       return null;
     }
 
@@ -22588,6 +22642,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       dimensions.push({
         key: dimension.key,
         featureId: dimension.featureId,
+        featureIndex: dimension.featureIndex,
+        lag: dimension.lag,
         name: dimension.name,
         corr: correlation,
         absCorr: Math.abs(correlation),
@@ -22595,6 +22651,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         max: Math.max(...normalized),
         qLow: lowThreshold,
         qHigh: highThreshold,
+        mean,
+        std,
         winLow,
         winHigh,
         lift,
@@ -22667,6 +22725,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     backtestSeriesMap,
     deferredBacktestTab,
     deferredDimensionStatsSourceTrades,
+    activeBacktestTradeDetails,
     isBacktestAnalyticsVisible,
     seriesMap,
   ]);
@@ -22763,6 +22822,51 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
     return new Set(dimensionStats.keptKeys);
   }, [dimensionStats]);
+  const activeBacktestTradeDimensionRows = useMemo(() => {
+    const baseDimensions = dimensionStats?.dims ?? [];
+
+    if (!activeBacktestTradeDetails || baseDimensions.length === 0) {
+      return [];
+    }
+
+    const candles = activeBacktestTradeCandles;
+    const entryTimeMs = Number(activeBacktestTradeDetails.entryTime) * 1000;
+    const entryIndex =
+      candles.length > 0 && Number.isFinite(entryTimeMs)
+        ? findCandleIndexAtOrBefore(candles, entryTimeMs)
+        : -1;
+    const featureBuckets =
+      entryIndex >= 0
+        ? buildDimensionFeatureLagBuckets(
+            candles,
+            entryIndex,
+            appliedBacktestSettings.chunkBars
+          )
+        : null;
+
+    return baseDimensions.map((dimension) => {
+      const perLagValues = featureBuckets?.[dimension.featureId] ?? [];
+      const values = perLagValues[dimension.lag] ?? perLagValues[0] ?? [];
+      const rawValue = Number(values[dimension.featureIndex] ?? Number.NaN);
+      const entryValue =
+        Number.isFinite(rawValue) &&
+        Number.isFinite(dimension.std) &&
+        dimension.std > 0
+          ? ((rawValue - dimension.mean) / dimension.std) * 50
+          : null;
+
+      return {
+        ...dimension,
+        entryValue,
+        segments: buildDimensionProfileSegments(dimension)
+      };
+    });
+  }, [
+    activeBacktestTradeCandles,
+    activeBacktestTradeDetails,
+    appliedBacktestSettings.chunkBars,
+    dimensionStats
+  ]);
 
   const runPropFirm = () => {
     if (backtestTrades.length === 0) {
@@ -23765,6 +23869,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
             parseMode="utc"
             tpDist={0}
             slDist={0}
+            dimensionRows={activeBacktestTradeDimensionRows}
             onClose={() => setActiveBacktestTradeDetails(null)}
           />
         ) : null}
@@ -29384,6 +29489,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           parseMode="utc"
           tpDist={0}
           slDist={0}
+          dimensionRows={activeBacktestTradeDimensionRows}
           onClose={() => setActiveBacktestTradeDetails(null)}
         />
       ) : null}
