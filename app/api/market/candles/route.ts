@@ -3,31 +3,13 @@ import {
   DATABENTO_DEFAULT_PAIR,
   DATABENTO_SUPPORTED_PAIRS,
   DATABENTO_SUPPORTED_TIMEFRAMES,
-  buildEmptyDatabentoCandlesPayload,
   fetchDatabentoCandles
 } from "../../../../lib/databentoMarketData";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const LEGACY_MARKET_API_BASE =
-  process.env.MARKET_API_BASE || "https://trading-system-delta.vercel.app/api/public/candles";
 const MAX_LIMIT = 10000;
-const MAX_RELIABLE_UPSTREAM_LIMIT = 3800;
-const UPSTREAM_TIMEOUT_MS = 3000;
-
-const buildUpstreamAttemptLimits = (requestedLimit: number): number[] => {
-  const attempts = new Set<number>();
-  attempts.add(Math.min(requestedLimit, MAX_RELIABLE_UPSTREAM_LIMIT));
-
-  for (const candidate of [3000, 2000, 1500, 1000, 500]) {
-    if (candidate <= requestedLimit) {
-      attempts.add(candidate);
-    }
-  }
-
-  return Array.from(attempts).filter((value) => value > 0);
-};
 
 const toSafeHeaderValue = (value: unknown) =>
   String(value ?? "")
@@ -35,64 +17,44 @@ const toSafeHeaderValue = (value: unknown) =>
     .replace(/\n/g, " ")
     .trim();
 
-const buildEmptyCandlesResponse = (
+const buildDatabentoMarketErrorResponse = (
   pair: string,
   timeframe: string,
   limit: number,
   start: string | null,
   end: string | null,
-  details?: string
+  details: string
 ) =>
-  NextResponse.json(
-    buildEmptyDatabentoCandlesPayload({
-      pair,
-      timeframe,
-      count: limit,
-      start,
-      end,
-      details: details || "Market feed unavailable."
-    }),
-    {
-      status: 200,
-      headers: {
-        "Cache-Control": "no-store",
-        "X-Korra-Market-Source": "empty-fallback"
-      }
-    }
-  );
+  {
+    const isAuthFailure =
+      details.includes("auth_authentication_failed") ||
+      details.toLowerCase().includes("authentication failed");
 
-const fetchLegacyMarketCandles = async (pair: string, timeframe: string, limit: number) => {
-  const url = new URL(LEGACY_MARKET_API_BASE);
-  url.searchParams.set("pair", pair);
-  url.searchParams.set("timeframe", timeframe);
-
-  for (const attemptLimit of buildUpstreamAttemptLimits(limit)) {
-    url.searchParams.set("limit", String(attemptLimit));
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
-    try {
-      const response = await fetch(url.toString(), {
+    return NextResponse.json(
+      {
+        error: isAuthFailure
+          ? "Databento authentication failed."
+          : "Databento market feed unavailable.",
+        details,
+        pair,
+        timeframe,
+        requestedCount: limit,
+        start,
+        end,
+        source: "databento",
+        docs: isAuthFailure ? "https://databento.com/docs/portal/api-keys" : undefined
+      },
+      {
+        status: isAuthFailure ? 502 : 500,
         headers: {
-          "X-API-Key": "trd_PCv-kkjDo-4t4QMDNxz3JRCGIyBCKHNq",
-          Accept: "application/json"
-        },
-        cache: "no-store",
-        signal: controller.signal
-      });
-
-      if (!response.ok) {
-        continue;
+          "Cache-Control": "no-store",
+          "X-Korra-Market-Source": "databento",
+          "X-Korra-Market-Error": isAuthFailure ? "auth" : "upstream",
+          "X-Korra-Market-Reason": toSafeHeaderValue(details)
+        }
       }
-
-      return (await response.json()) as Record<string, unknown>;
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-
-  throw new Error("Legacy market feed unavailable.");
-};
+    );
+  };
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -130,35 +92,14 @@ export async function GET(request: Request) {
         "X-Korra-Market-Requested-Limit": String(limit)
       }
     });
-  } catch (databentoError) {
-    try {
-      const payload = await fetchLegacyMarketCandles(pair, timeframe, limit);
-      return NextResponse.json(
-        {
-          ...payload,
-          source: "legacy-market-fallback"
-        },
-        {
-          headers: {
-            "Content-Type": "application/json",
-            "Cache-Control": "no-store",
-            "X-Korra-Market-Source": "legacy-market-fallback",
-            "X-Korra-Market-Reason": toSafeHeaderValue(
-              (databentoError as Error).message || "databento-error"
-            )
-          }
-        }
-      );
-    } catch (legacyError) {
-      return buildEmptyCandlesResponse(
-        pair,
-        timeframe,
-        limit,
-        start,
-        end,
-        `Databento: ${(databentoError as Error).message || "unknown error"} | ` +
-          `Legacy: ${(legacyError as Error).message || "unknown error"}`
-      );
-    }
+  } catch (error) {
+    return buildDatabentoMarketErrorResponse(
+      pair,
+      timeframe,
+      limit,
+      start,
+      end,
+      (error as Error).message || "Unknown Databento error."
+    );
   }
 }

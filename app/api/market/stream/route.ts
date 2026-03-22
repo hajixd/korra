@@ -8,46 +8,8 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const DEFAULT_STREAM_URL = "https://oanda-worker-production.up.railway.app/stream/prices";
-const LEGACY_STREAM_API_KEY = "trd_PCv-kkjDo-4t4QMDNxz3JRCGIyBCKHNq";
 const PAIR_RE = /^[A-Z0-9]{2,20}(?:_[A-Z0-9]{2,20})?(?:,[A-Z0-9]{2,20}(?:_[A-Z0-9]{2,20})?)*$/;
 const KEEPALIVE_INTERVAL_MS = 15_000;
-
-const proxyLegacyStream = async (pairs: string) => {
-  const upstreamBase = process.env.PRICE_STREAM_URL || DEFAULT_STREAM_URL;
-  const upstreamUrl = new URL(upstreamBase);
-  upstreamUrl.searchParams.set("api_key", LEGACY_STREAM_API_KEY);
-  upstreamUrl.searchParams.set("pairs", pairs);
-
-  const upstream = await fetch(upstreamUrl.toString(), {
-    headers: {
-      Accept: "text/event-stream"
-    },
-    cache: "no-store"
-  });
-
-  if (!upstream.ok || !upstream.body) {
-    const body = await upstream.text().catch(() => "");
-    return NextResponse.json(
-      {
-        error: `Price stream unavailable (${upstream.status}).`,
-        details: body.slice(0, 500)
-      },
-      { status: upstream.status || 502 }
-    );
-  }
-
-  return new Response(upstream.body, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-      "X-Korra-Stream-Source": "legacy-fallback"
-    }
-  });
-};
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -65,8 +27,24 @@ export async function GET(request: Request) {
       throw new Error("Missing DATABENTO_API_KEY.");
     }
     await probeDatabentoAccess();
-  } catch {
-    return proxyLegacyStream(pairs);
+  } catch (error) {
+    const details = (error as Error).message || "Unknown Databento stream error.";
+    const isAuthFailure =
+      details.includes("auth_authentication_failed") ||
+      details.toLowerCase().includes("authentication failed");
+
+    return NextResponse.json(
+      {
+        error: isAuthFailure
+          ? "Databento authentication failed."
+          : "Databento stream unavailable.",
+        details,
+        pair: pairs,
+        source: "databento",
+        docs: isAuthFailure ? "https://databento.com/docs/portal/api-keys" : undefined
+      },
+      { status: isAuthFailure ? 502 : 500 }
+    );
   }
 
   const encoder = new TextEncoder();

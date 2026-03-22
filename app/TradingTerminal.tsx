@@ -5408,6 +5408,67 @@ type HistoryCoverageWindow = {
   strictCoverage?: boolean;
 };
 
+class MarketDataUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MarketDataUnavailableError";
+  }
+}
+
+const normalizeMarketDataErrorMessage = (message: string): string => {
+  const normalized = String(message || "").trim();
+  const lower = normalized.toLowerCase();
+
+  if (
+    lower.includes("auth_authentication_failed") ||
+    lower.includes("authentication failed") ||
+    lower.includes("missing databento_api_key")
+  ) {
+    return "Databento auth failed. Rotate or replace DATABENTO_API_KEY.";
+  }
+
+  return normalized || "Market data unavailable.";
+};
+
+const readJsonResponse = async (response: Response): Promise<Record<string, unknown> | null> => {
+  try {
+    return (await response.json()) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+};
+
+const extractMarketDataFailure = (
+  payload: Record<string, unknown> | null,
+  fallback: string
+): string => {
+  const error =
+    payload && typeof payload.error === "string" && payload.error.trim().length > 0
+      ? payload.error.trim()
+      : fallback;
+  const details =
+    payload && typeof payload.details === "string" && payload.details.trim().length > 0
+      ? payload.details.trim()
+      : "";
+
+  return normalizeMarketDataErrorMessage(details ? `${error} ${details}` : error);
+};
+
+const extractPayloadCandles = (payload: Record<string, unknown> | null): MarketApiCandle[] => {
+  const candles = payload?.candles;
+  return Array.isArray(candles) ? (candles as MarketApiCandle[]) : [];
+};
+
+const getMarketDataErrorMessage = (error: unknown): string => {
+  if (error instanceof MarketDataUnavailableError) {
+    return error.message;
+  }
+  if (error instanceof Error) {
+    return normalizeMarketDataErrorMessage(error.message);
+  }
+  return "Market data unavailable.";
+};
+
 const fetchMarketCandles = async (
   timeframe: Timeframe,
   limit: number,
@@ -5427,16 +5488,17 @@ const fetchMarketCandles = async (
       cache: "no-store",
       signal: controller.signal
     });
+    const payload = await readJsonResponse(response);
 
     if (!response.ok) {
-      return [];
+      throw new MarketDataUnavailableError(
+        extractMarketDataFailure(payload, `Market candle request failed (${response.status}).`)
+      );
     }
 
-    const payload = await response.json();
-
-    return normalizeMarketCandles(payload.candles || []);
-  } catch {
-    return [];
+    return normalizeMarketCandles(extractPayloadCandles(payload));
+  } catch (error) {
+    throw new MarketDataUnavailableError(getMarketDataErrorMessage(error));
   } finally {
     clearTimeout(timeoutId);
   }
@@ -5471,16 +5533,17 @@ const fetchHistoryApiCandles = async (
       cache: "no-store",
       signal: controller.signal
     });
+    const payload = await readJsonResponse(response);
 
     if (!response.ok) {
-      return [];
+      throw new MarketDataUnavailableError(
+        extractMarketDataFailure(payload, `History candle request failed (${response.status}).`)
+      );
     }
 
-    const payload = await response.json();
-
-    return normalizeMarketCandles(payload.candles || []);
-  } catch {
-    return [];
+    return normalizeMarketCandles(extractPayloadCandles(payload));
+  } catch (error) {
+    throw new MarketDataUnavailableError(getMarketDataErrorMessage(error));
   } finally {
     clearTimeout(timeoutId);
   }
@@ -5773,9 +5836,9 @@ const fetchHybridHistoryCandles = async (
         ? coveredHistoryCandles.slice(-targetBars)
         : recentTimeframeCandles.slice(-targetBars);
     }
-  } catch {
+  } catch (error) {
     if (!allowOneMinuteFallback) {
-      return [];
+      throw error;
     }
 
     // Leave chart and backtest to use the recent 1m window when deeper history is unavailable.
@@ -9634,6 +9697,7 @@ function TradingTerminalWorkspace({
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(WORKSPACE_PANEL_DEFAULT_WIDTH);
   const [isWorkspacePanelResizing, setIsWorkspacePanelResizing] = useState(false);
+  const [marketDataStatusMessage, setMarketDataStatusMessage] = useState("");
   const [activePanelTab, setActivePanelTab] = useState<PanelTab>("active");
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [selectedHistoryInteractionTick, setSelectedHistoryInteractionTick] = useState(0);
@@ -11410,6 +11474,7 @@ function TradingTerminalWorkspace({
       sampleCount: 0,
       pendingByCandleStart: new Map<number, number>()
     };
+    setMarketDataStatusMessage("");
     setLiveQuote({
       bid: null,
       ask: null,
@@ -11460,13 +11525,16 @@ function TradingTerminalWorkspace({
 
         if (!cancelled && historicalCandles.length > 0) {
           hasInitialSeed = true;
+          setMarketDataStatusMessage("");
           setSeriesMap((prev) => ({
             ...prev,
             [key]: historicalCandles
           }));
         }
-      } catch {
-        // Keep the last real candle state if historical loading is unavailable.
+      } catch (error) {
+        if (!cancelled) {
+          setMarketDataStatusMessage(getMarketDataErrorMessage(error));
+        }
       } finally {
         historyResolved = true;
         resolveChartInitialLoad();
@@ -11481,6 +11549,7 @@ function TradingTerminalWorkspace({
           }
 
           hasInitialSeed = true;
+          setMarketDataStatusMessage("");
           setSeriesMap((prev) => ({
             ...prev,
             [key]: (() => {
@@ -11502,8 +11571,10 @@ function TradingTerminalWorkspace({
               return mergedLastTime < currentLastTime ? current : merged;
             })()
           }));
-        } catch {
-          // Tick updates can continue even if the live candle window refresh fails.
+        } catch (error) {
+          if (!cancelled && (seriesMapRef.current[key]?.length ?? 0) === 0) {
+            setMarketDataStatusMessage(getMarketDataErrorMessage(error));
+          }
         }
       };
 
@@ -11566,6 +11637,8 @@ function TradingTerminalWorkspace({
           if (!Number.isFinite(price) || !Number.isFinite(eventTime)) {
             return;
           }
+
+          setMarketDataStatusMessage("");
 
           const hasBid = Number.isFinite(bid);
           const hasAsk = Number.isFinite(ask);
@@ -22741,7 +22814,7 @@ function TradingTerminalWorkspace({
                   </div>
                 </>
               ) : (
-                <span>No market data</span>
+                <span>{marketDataStatusMessage || "No market data"}</span>
               )}
             </div>
           </div>
@@ -22812,7 +22885,7 @@ function TradingTerminalWorkspace({
                     })()}
                   </>
                 ) : (
-                  <span>No market data loaded</span>
+                  <span>{marketDataStatusMessage || "No market data loaded"}</span>
                 )}
               </div>
               <div className="chart-overlay-stack">
