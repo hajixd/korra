@@ -839,6 +839,51 @@ function TradeDetailsModalImpl({
       winRate: null,
     };
   };
+  const getDimensionTrackBackground = (dimension, min, max) => {
+    const qLow = Number((dimension as any)?.qLow);
+    const qHigh = Number((dimension as any)?.qHigh);
+    const winLow = Number((dimension as any)?.winLow);
+    const winHigh = Number((dimension as any)?.winHigh);
+    const lowPct = toTrackPct(qLow, min, max);
+    const highPct = toTrackPct(qHigh, min, max);
+    const preferLow =
+      Number.isFinite(winLow) && (!Number.isFinite(winHigh) || winLow > winHigh);
+    const preferHigh =
+      Number.isFinite(winHigh) && (!Number.isFinite(winLow) || winHigh > winLow);
+    const preferBoth =
+      Number.isFinite(winLow) &&
+      Number.isFinite(winHigh) &&
+      Math.abs(winLow - winHigh) <= 0.000000001;
+
+    if (preferBoth && lowPct != null && highPct != null) {
+      return `linear-gradient(90deg,
+        rgba(34,197,94,0.22) 0%,
+        rgba(74,222,128,0.36) ${Math.max(0, lowPct)}%,
+        rgba(245,158,11,0.18) ${Math.max(0, Math.min(100, lowPct + 10))}%,
+        rgba(255,255,255,0.04) 50%,
+        rgba(245,158,11,0.18) ${Math.max(0, Math.min(100, highPct - 10))}%,
+        rgba(74,222,128,0.36) ${Math.max(0, highPct)}%,
+        rgba(34,197,94,0.22) 100%)`;
+    }
+
+    if (preferLow && lowPct != null) {
+      return `linear-gradient(90deg,
+        rgba(34,197,94,0.24) 0%,
+        rgba(74,222,128,0.38) ${Math.max(0, lowPct)}%,
+        rgba(245,158,11,0.16) ${Math.max(0, Math.min(100, lowPct + 12))}%,
+        rgba(255,255,255,0.035) 100%)`;
+    }
+
+    if (preferHigh && highPct != null) {
+      return `linear-gradient(90deg,
+        rgba(255,255,255,0.035) 0%,
+        rgba(245,158,11,0.16) ${Math.max(0, Math.min(100, highPct - 12))}%,
+        rgba(74,222,128,0.38) ${Math.max(0, highPct)}%,
+        rgba(34,197,94,0.24) 100%)`;
+    }
+
+    return "linear-gradient(90deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))";
+  };
 
   const InfoBox = ({ label, value, tone = "neutral" }) => {
     const isEmpty =
@@ -1332,7 +1377,7 @@ function TradeDetailsModalImpl({
                   overflowY: "auto",
                   paddingRight: 4,
                   display: "grid",
-                  gap: 12,
+                  gap: 18,
                 }}
               >
                 {normalizedDimensionRows.map((dimension) => {
@@ -1345,6 +1390,17 @@ function TradeDetailsModalImpl({
                     ? (dimension as any).segments
                     : [];
                   const optimalLabels = getDimensionOptimalLabels(dimension);
+                  const segmentBoundaryPcts = Array.from(
+                    new Set(
+                      segments
+                        .flatMap((segment) => [
+                          toTrackPct(segment.start, min, max),
+                          toTrackPct(segment.end, min, max),
+                        ])
+                        .filter((pct) => pct != null)
+                        .map((pct) => Number(Number(pct).toFixed(3)))
+                    )
+                  );
                   const hoverInfo =
                     hoveredDimensionProfile && hoveredDimensionProfile.key === rowKey
                       ? hoveredDimensionProfile
@@ -1412,17 +1468,20 @@ function TradeDetailsModalImpl({
                         style={{
                           position: "relative",
                           paddingTop: 24,
-                          paddingBottom: 22,
+                          paddingBottom: 24,
                         }}
                       >
                         <div
                           style={{
                             position: "relative",
-                            height: 34,
-                            borderRadius: 2,
+                            height: 40,
+                            borderRadius: 0,
                             border: "1px solid rgba(255,255,255,0.16)",
-                            background:
-                              "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))",
+                            background: getDimensionTrackBackground(
+                              dimension,
+                              min,
+                              max
+                            ),
                             overflow: "visible",
                           }}
                           onMouseMove={(event) => {
@@ -1445,35 +1504,30 @@ function TradeDetailsModalImpl({
                             )
                           }
                         >
-                          {segments.map((segment, segmentIndex) => {
-                            const left = toTrackPct(segment.start, min, max) ?? 0;
-                            const right = toTrackPct(segment.end, min, max) ?? 0;
-                            const width = Math.max(0, right - left);
-                            return (
-                              <div
-                                key={`${rowKey}-${segmentIndex}`}
-                                style={{
-                                  position: "absolute",
-                                  left: `${left}%`,
-                                  top: 3,
-                                  bottom: 3,
-                                  width: `${width}%`,
-                                  borderRadius: 1,
-                                  background:
-                                    "linear-gradient(90deg, rgba(74,222,128,0.24), rgba(134,239,172,0.42))",
-                                  boxShadow:
-                                    "inset 0 0 0 1px rgba(110,231,183,0.26)",
-                                }}
-                              />
-                            );
-                          })}
+                          {segmentBoundaryPcts.map((pct, boundaryIndex) => (
+                            <div
+                              key={`${rowKey}-boundary-${boundaryIndex}`}
+                              style={{
+                                position: "absolute",
+                                left: `calc(${pct}% - 1px)`,
+                                top: -7,
+                                bottom: -7,
+                                width: 2,
+                                borderRadius: 0,
+                                background: "rgba(74,222,128,0.92)",
+                                boxShadow:
+                                  "0 0 0 1px rgba(5,20,10,0.28), 0 0 10px rgba(74,222,128,0.18)",
+                                zIndex: 2,
+                              }}
+                            />
+                          ))}
                           {entryPct != null ? (
                             <div
                               style={{
                                 position: "absolute",
                                 left: `calc(${entryPct}% - 1px)`,
-                                top: -11,
-                                bottom: -11,
+                                top: -16,
+                                bottom: -16,
                                 width: 2,
                                 borderRadius: 0,
                                 background: "rgba(255,255,255,0.94)",
