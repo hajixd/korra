@@ -114,3 +114,15 @@
  GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=10 500 in 161ms
  ✓ Compiled in 827ms (837 modules)
  ✓ Compiled in 753ms (837 modules)
+ ✓ Compiled in 18ms
+   Reload env: .env.local
+ ✓ Compiled in 232ms (837 modules)
+ ✓ Compiled /api/market/candles in 248ms (103 modules)
+ ✓ Compiled /api/market/stream in 140ms (105 modules)
+ GET /api/market/candles?pair=XAU_USD&timeframe=M15&limit=3 200 in 658ms
+ GET /api/market/stream?pairs=XAU_USD 200 in 29696ms
+ GET /api/market/stream?pairs=XAU_USD 200 in 3014ms
+ ✓ Compiled in 127ms (103 modules)
+ ✓ Compiled /api/market/candles in 47ms (105 modules)
+ GET /api/market/candles?pair=XAU_USD&timeframe=M15&limit=3 200 in 570ms
+ GET /api/market/stream?pairs=XAU_USD 200 in 3008ms

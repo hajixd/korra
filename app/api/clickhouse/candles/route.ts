@@ -3,7 +3,9 @@ import {
   TWELVE_DATA_DEFAULT_PAIR,
   TWELVE_DATA_SUPPORTED_PAIRS,
   TWELVE_DATA_SUPPORTED_TIMEFRAMES,
-  fetchTwelveDataCandles
+  fetchTwelveDataCandles,
+  hasConfiguredTwelveDataApiKeys,
+  isTwelveDataAuthFailureMessage
 } from "../../../../lib/twelveDataMarketData";
 
 export const runtime = "nodejs";
@@ -33,12 +35,7 @@ const buildTwelveDataHistoryErrorResponse = (params: {
   end: string | null;
   details: string;
 }) => {
-  const lower = params.details.toLowerCase();
-  const isAuthFailure =
-    lower.includes("api key") ||
-    lower.includes("unauthorized") ||
-    lower.includes("invalid api key") ||
-    lower.includes("missing twelve_data_api_key");
+  const isAuthFailure = isTwelveDataAuthFailureMessage(params.details);
 
   return NextResponse.json(
     {
@@ -85,7 +82,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    if (!process.env.TWELVE_DATA_API_KEY && !process.env.TWELVEDATA_API_KEY) {
+    if (!hasConfiguredTwelveDataApiKeys()) {
       throw new Error("Missing TWELVE_DATA_API_KEY.");
     }
 

@@ -108,14 +108,137 @@ const candlesCache = new Map<
   { expiresAt: number; value: TwelveDataCandlesPayload }
 >();
 let quoteCache: { expiresAt: number; value: TwelveDataQuotePayload } | null = null;
+type TwelveDataKeyFailureType = "rate_limit" | "auth" | "other";
 
-const getApiKey = (): string => {
-  const key =
-    (process.env.TWELVE_DATA_API_KEY || process.env.TWELVEDATA_API_KEY || "").trim();
-  if (!key) {
+const keyFailureState = new Map<
+  string,
+  { unavailableUntil: number; failureType: TwelveDataKeyFailureType; details: string }
+>();
+
+class TwelveDataRequestError extends Error {
+  failureType: TwelveDataKeyFailureType;
+
+  constructor(message: string, failureType: TwelveDataKeyFailureType) {
+    super(message);
+    this.name = "TwelveDataRequestError";
+    this.failureType = failureType;
+  }
+}
+
+const RATE_LIMIT_COOLDOWN_MS = 65_000;
+const AUTH_COOLDOWN_MS = 30 * 60_000;
+const TRANSIENT_COOLDOWN_MS = 15_000;
+
+const parseConfiguredApiKeys = (): string[] => {
+  const raw = [
+    process.env.TWELVE_DATA_API_KEYS,
+    process.env.TWELVE_DATA_API_KEY,
+    process.env.TWELVEDATA_API_KEY
+  ]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(",");
+
+  const unique = new Set<string>();
+  for (const token of raw.split(/[,\r\n;]+/)) {
+    const key = token.trim();
+    if (key) {
+      unique.add(key);
+    }
+  }
+
+  return [...unique];
+};
+
+const getApiKeys = (): string[] => {
+  const keys = parseConfiguredApiKeys();
+  if (keys.length === 0) {
     throw new Error("Missing TWELVE_DATA_API_KEY.");
   }
-  return key;
+  return keys;
+};
+
+export const hasConfiguredTwelveDataApiKeys = (): boolean => {
+  return parseConfiguredApiKeys().length > 0;
+};
+
+export const isTwelveDataAuthFailureMessage = (message: string): boolean => {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes(" 401") ||
+    lower.includes(" 403") ||
+    lower.includes("http 401") ||
+    lower.includes("http 403") ||
+    lower.includes("invalid api key") ||
+    lower.includes("api key is invalid") ||
+    lower.includes("apikey") ||
+    lower.includes("unauthorized") ||
+    lower.includes("forbidden") ||
+    lower.includes("missing twelve_data_api_key")
+  );
+};
+
+const classifyFailureType = (message: string): TwelveDataKeyFailureType => {
+  const lower = message.toLowerCase();
+
+  if (
+    lower.includes(" 429") ||
+    lower.includes("http 429") ||
+    lower.includes("run out of api credits") ||
+    lower.includes("rate limit") ||
+    lower.includes("too many requests") ||
+    lower.includes("current limit being")
+  ) {
+    return "rate_limit";
+  }
+
+  if (isTwelveDataAuthFailureMessage(message)) {
+    return "auth";
+  }
+
+  return "other";
+};
+
+const getFailureCooldownMs = (failureType: TwelveDataKeyFailureType): number => {
+  if (failureType === "rate_limit") {
+    return RATE_LIMIT_COOLDOWN_MS;
+  }
+  if (failureType === "auth") {
+    return AUTH_COOLDOWN_MS;
+  }
+  return TRANSIENT_COOLDOWN_MS;
+};
+
+const getOrderedApiKeys = (): string[] => {
+  const nowMs = Date.now();
+  return getApiKeys().sort((left, right) => {
+    const leftUnavailableUntil = keyFailureState.get(left)?.unavailableUntil ?? 0;
+    const rightUnavailableUntil = keyFailureState.get(right)?.unavailableUntil ?? 0;
+    const leftCooling = leftUnavailableUntil > nowMs ? 1 : 0;
+    const rightCooling = rightUnavailableUntil > nowMs ? 1 : 0;
+    if (leftCooling !== rightCooling) {
+      return leftCooling - rightCooling;
+    }
+    if (leftUnavailableUntil !== rightUnavailableUntil) {
+      return leftUnavailableUntil - rightUnavailableUntil;
+    }
+    return 0;
+  });
+};
+
+const markApiKeyFailure = (
+  apiKey: string,
+  failureType: TwelveDataKeyFailureType,
+  details: string
+) => {
+  keyFailureState.set(apiKey, {
+    unavailableUntil: Date.now() + getFailureCooldownMs(failureType),
+    failureType,
+    details
+  });
+};
+
+const markApiKeySuccess = (apiKey: string) => {
+  keyFailureState.delete(apiKey);
 };
 
 const parseMaybeNumber = (value: unknown): number => {
@@ -173,53 +296,78 @@ const requestJson = async <T extends TwelveDataJson>(
   params: Record<string, string | number | undefined>,
   timeoutMs = DEFAULT_HTTP_TIMEOUT_MS
 ): Promise<T> => {
-  const url = new URL(`${TWELVE_DATA_API_BASE}${pathname}`);
-  url.searchParams.set("apikey", getApiKey());
+  const apiKeys = getOrderedApiKeys();
+  let lastError: TwelveDataRequestError | null = null;
 
-  for (const [key, value] of Object.entries(params)) {
-    if (value === undefined || value === null || value === "") {
-      continue;
+  for (const apiKey of apiKeys) {
+    const url = new URL(`${TWELVE_DATA_API_BASE}${pathname}`);
+    url.searchParams.set("apikey", apiKey);
+
+    for (const [key, value] of Object.entries(params)) {
+      if (value === undefined || value === null || value === "") {
+        continue;
+      }
+      url.searchParams.set(key, String(value));
     }
-    url.searchParams.set(key, String(value));
-  }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(url.toString(), {
-      cache: "no-store",
-      signal: controller.signal
-    });
-    const text = await response.text();
-    let payload: T | null = null;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      payload = JSON.parse(text) as T;
-    } catch {
-      payload = null;
-    }
+      const response = await fetch(url.toString(), {
+        cache: "no-store",
+        signal: controller.signal
+      });
+      const text = await response.text();
+      let payload: T | null = null;
 
-    const statusValue =
-      payload && typeof payload.status === "string" ? payload.status.toLowerCase() : "";
+      try {
+        payload = JSON.parse(text) as T;
+      } catch {
+        payload = null;
+      }
 
-    if (!response.ok || statusValue === "error") {
-      throw new Error(normalizeError(response.status, payload, text.slice(0, 400)));
-    }
+      const statusValue =
+        payload && typeof payload.status === "string" ? payload.status.toLowerCase() : "";
 
-    if (!payload) {
-      throw new Error(`Twelve Data ${response.status}: Empty JSON payload.`);
-    }
+      if (!response.ok || statusValue === "error") {
+        const message = normalizeError(response.status, payload, text.slice(0, 400));
+        throw new TwelveDataRequestError(message, classifyFailureType(message));
+      }
 
-    return payload;
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("Twelve Data request timed out.");
+      if (!payload) {
+        throw new TwelveDataRequestError(
+          `Twelve Data ${response.status}: Empty JSON payload.`,
+          "other"
+        );
+      }
+
+      markApiKeySuccess(apiKey);
+      return payload;
+    } catch (error) {
+      const message =
+        error instanceof Error && error.name === "AbortError"
+          ? "Twelve Data request timed out."
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      const requestError =
+        error instanceof TwelveDataRequestError
+          ? error
+          : new TwelveDataRequestError(message, classifyFailureType(message));
+
+      markApiKeyFailure(apiKey, requestError.failureType, requestError.message);
+      lastError = requestError;
+    } finally {
+      clearTimeout(timeoutId);
     }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
   }
+
+  if (lastError) {
+    throw new Error(`All Twelve Data API keys failed. ${lastError.message}`);
+  }
+
+  throw new Error("Missing TWELVE_DATA_API_KEY.");
 };
 
 const normalizeCandleRecord = (

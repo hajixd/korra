@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import {
   TWELVE_DATA_DEFAULT_PAIR,
-  fetchTwelveDataLatestQuote
+  fetchTwelveDataLatestQuote,
+  hasConfiguredTwelveDataApiKeys
 } from "../../../../lib/twelveDataMarketData";
 
 export const runtime = "nodejs";
@@ -22,7 +23,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Only XAU_USD is supported by this stream." }, { status: 400 });
   }
 
-  if (!process.env.TWELVE_DATA_API_KEY && !process.env.TWELVEDATA_API_KEY) {
+  if (!hasConfiguredTwelveDataApiKeys()) {
     return NextResponse.json(
       {
         error: "Twelve Data stream unavailable.",
