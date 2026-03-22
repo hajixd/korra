@@ -754,6 +754,56 @@ function TradeDetailsModalImpl({
         : [],
     [dimensionRows]
   );
+  const sharedDimensionTrackRange = useMemo(() => {
+    if (!normalizedDimensionRows.length) {
+      return { min: NaN, max: NaN };
+    }
+
+    const numericValues = [];
+    const pushIfFinite = (value) => {
+      const numericValue = Number(value);
+      if (Number.isFinite(numericValue)) {
+        numericValues.push(numericValue);
+      }
+    };
+
+    normalizedDimensionRows.forEach((dimension) => {
+      pushIfFinite((dimension as any).min);
+      pushIfFinite((dimension as any).max);
+      pushIfFinite((dimension as any).qLow);
+      pushIfFinite((dimension as any).qHigh);
+      pushIfFinite((dimension as any).entryValue);
+      const segments = Array.isArray((dimension as any).segments)
+        ? (dimension as any).segments
+        : [];
+      segments.forEach((segment) => {
+        pushIfFinite(segment?.start);
+        pushIfFinite(segment?.end);
+      });
+    });
+
+    if (!numericValues.length) {
+      return { min: NaN, max: NaN };
+    }
+
+    const rawMin = Math.min(...numericValues);
+    const rawMax = Math.max(...numericValues);
+    if (!Number.isFinite(rawMin) || !Number.isFinite(rawMax)) {
+      return { min: NaN, max: NaN };
+    }
+
+    const rawSpan = rawMax - rawMin;
+    const magnitude = Math.max(Math.abs(rawMin), Math.abs(rawMax), 1);
+    const padding =
+      rawSpan > 0
+        ? Math.max(rawSpan * 0.16, magnitude * 0.05, 0.75)
+        : Math.max(magnitude * 0.2, 1);
+
+    return {
+      min: rawMin - padding,
+      max: rawMax + padding,
+    };
+  }, [normalizedDimensionRows]);
   const [hoveredDimensionProfile, setHoveredDimensionProfile] = React.useState<{
     key: string;
     pct: number;
@@ -1406,8 +1456,12 @@ function TradeDetailsModalImpl({
               >
                 {normalizedDimensionRows.map((dimension) => {
                   const rowKey = String((dimension as any).key ?? "");
-                  const min = Number((dimension as any).min);
-                  const max = Number((dimension as any).max);
+                  const min = Number.isFinite(sharedDimensionTrackRange.min)
+                    ? sharedDimensionTrackRange.min
+                    : Number((dimension as any).min);
+                  const max = Number.isFinite(sharedDimensionTrackRange.max)
+                    ? sharedDimensionTrackRange.max
+                    : Number((dimension as any).max);
                   const qLow = Number((dimension as any).qLow);
                   const qHigh = Number((dimension as any).qHigh);
                   const entryValue = Number((dimension as any).entryValue);

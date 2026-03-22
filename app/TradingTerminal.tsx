@@ -9478,6 +9478,157 @@ const ChartLoadingSpinner = ({ label }: { label: string }) => {
   );
 };
 
+const TradeDetailsLoadingModal = ({
+  trade,
+  onClose,
+}: {
+  trade: Record<string, unknown> | null;
+  onClose: () => void;
+}) => {
+  const tradeId =
+    trade != null
+      ? getAiZipTradeDisplayId({
+          id: String(trade.id ?? trade.uid ?? trade.tradeId ?? "trade"),
+          entryTime: Number(trade.entryTime ?? Date.now() / 1000) as HistoryItem["entryTime"],
+        })
+      : "Trade";
+  const tradeSymbol = String(trade?.symbol ?? "XAU_USD");
+
+  return (
+    <div
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 9999,
+        background: "rgba(0,0,0,0.6)",
+        backdropFilter: "blur(6px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 18,
+      }}
+    >
+      <div
+        style={{
+          width: "min(1120px, 96vw)",
+          height: "min(900px, 90vh)",
+          borderRadius: 18,
+          border: "1px solid rgba(255,255,255,0.10)",
+          background: "rgba(12,12,12,0.96)",
+          boxShadow: "0 28px 120px rgba(0,0,0,0.65)",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <div
+          style={{
+            padding: "14px 16px",
+            borderBottom: "1px solid rgba(255,255,255,0.08)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              gap: 10,
+              flexWrap: "wrap",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 16,
+                fontWeight: 900,
+                color: "rgba(255,255,255,0.92)",
+              }}
+            >
+              {tradeId}
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 900,
+                padding: "3px 10px",
+                borderRadius: 999,
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(0,255,157,0.5)",
+                color: "rgba(180,255,225,0.96)",
+              }}
+            >
+              LOADING DETAILS
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: "rgba(255,255,255,0.7)",
+              }}
+            >
+              {tradeSymbol}
+            </div>
+          </div>
+
+          <button
+            onClick={onClose}
+            style={{
+              height: 34,
+              padding: "0 12px",
+              borderRadius: 10,
+              border: "1px solid rgba(255,255,255,0.14)",
+              background: "rgba(255,255,255,0.06)",
+              color: "rgba(255,255,255,0.86)",
+              fontSize: 12,
+              fontWeight: 800,
+              cursor: "pointer",
+            }}
+          >
+            Close
+          </button>
+        </div>
+
+        <div
+          style={{
+            position: "relative",
+            flex: 1,
+            minHeight: 0,
+          }}
+        >
+          <ChartLoadingSpinner label="Loading trade details..." />
+          <div
+            style={{
+              position: "absolute",
+              left: "50%",
+              bottom: 26,
+              transform: "translateX(-50%)",
+              padding: "8px 12px",
+              borderRadius: 12,
+              border: "1px solid rgba(255,255,255,0.08)",
+              background: "rgba(8,12,15,0.76)",
+              color: "rgba(226,255,240,0.72)",
+              fontSize: 11,
+              lineHeight: 1.4,
+              letterSpacing: 0.02,
+              textAlign: "center",
+              width: "min(540px, calc(100% - 32px))",
+            }}
+          >
+            Preparing the candlestick window, dimension profile, and nearest-neighbor context for
+            this trade.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const stableHashToUnit = (str: string): number => {
   let h = 2166136261;
   for (let i = 0; i < str.length; i += 1) {
@@ -10453,6 +10604,12 @@ function TradingTerminalWorkspace({
   const [activeBacktestTradeDetails, setActiveBacktestTradeDetails] = useState<
     Record<string, unknown> | null
   >(null);
+  const [activeBacktestTradeDetailsPreview, setActiveBacktestTradeDetailsPreview] = useState<
+    Record<string, unknown> | null
+  >(null);
+  const [activeBacktestTradeDetailsLoading, setActiveBacktestTradeDetailsLoading] =
+    useState(false);
+  const activeBacktestTradeDetailsRequestRef = useRef(0);
   const [statsDateStart, setStatsDateStart] = useState(BACKTEST_DEFAULT_DATE_RANGE.startDate);
   const [statsDateEnd, setStatsDateEnd] = useState(BACKTEST_DEFAULT_DATE_RANGE.endDate);
   const [statsDatePreset, setStatsDatePreset] = useState<BacktestDatePreset>("pastYear");
@@ -11477,6 +11634,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       setBacktestRefreshNowMs(nextRefreshMs);
       setBacktestHistorySeedReady(!needsHistorySeedReload);
       setStatsRefreshReplaySettled(false);
+      activeBacktestTradeDetailsRequestRef.current += 1;
+      setActiveBacktestTradeDetailsLoading(false);
+      setActiveBacktestTradeDetailsPreview(null);
       setActiveBacktestTradeDetails(null);
       setPanelAnalyticsData(EMPTY_PANEL_ANALYTICS_DATA);
       startTransition(() => {
@@ -15844,18 +16004,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     seriesMap
   ]);
 
-  const openBacktestTradeDetails = (trade: HistoryItem) => {
-    const detailCandles = getHistoryCandlesForSymbol(trade.symbol);
-    const entryIndex = findCandleIndexAtOrBefore(
-      detailCandles,
-      Number(trade.entryTime) * 1000
-    );
-    const exitIndex = findCandleIndexAtOrBefore(
-      detailCandles,
-      Number(trade.exitTime) * 1000
-    );
-
-    setActiveBacktestTradeDetails({
+  const buildBacktestTradeDetailsPreview = useCallback((trade: HistoryItem) => {
+    return {
       id: trade.id,
       uid: trade.id,
       kind: "trade",
@@ -15876,10 +16026,83 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       entryReason: trade.entrySource,
       exitReason: getBacktestExitLabel(trade),
       confidence: getEffectiveTradeConfidenceScore(trade),
-      entryIndex: entryIndex >= 0 ? entryIndex : undefined,
-      exitIndex: exitIndex >= 0 ? exitIndex : undefined
+    };
+  }, []);
+
+  const closeBacktestTradeDetails = useCallback(() => {
+    activeBacktestTradeDetailsRequestRef.current += 1;
+    setActiveBacktestTradeDetailsLoading(false);
+    setActiveBacktestTradeDetailsPreview(null);
+    setActiveBacktestTradeDetails(null);
+  }, []);
+
+  const openBacktestTradeDetails = useCallback((trade: HistoryItem) => {
+    const preview = buildBacktestTradeDetailsPreview(trade);
+    const requestId = activeBacktestTradeDetailsRequestRef.current + 1;
+    activeBacktestTradeDetailsRequestRef.current = requestId;
+
+    setActiveBacktestTradeDetails(null);
+    setActiveBacktestTradeDetailsPreview(preview);
+    setActiveBacktestTradeDetailsLoading(true);
+
+    const loadDetails = async () => {
+      try {
+        await loadAiZipClusterModule();
+      } catch (error) {
+        console.error("[Korra][TradeDetails] Failed to load trade details module.", error);
+        if (activeBacktestTradeDetailsRequestRef.current === requestId) {
+          setActiveBacktestTradeDetailsLoading(false);
+        }
+        return;
+      }
+
+      if (activeBacktestTradeDetailsRequestRef.current !== requestId) {
+        return;
+      }
+
+      const detailCandles = getHistoryCandlesForSymbol(trade.symbol);
+      const entryIndex = findCandleIndexAtOrBefore(
+        detailCandles,
+        Number(trade.entryTime) * 1000
+      );
+      const exitIndex = findCandleIndexAtOrBefore(
+        detailCandles,
+        Number(trade.exitTime) * 1000
+      );
+      const resolvedDetails = {
+        ...preview,
+        entryIndex: entryIndex >= 0 ? entryIndex : undefined,
+        exitIndex: exitIndex >= 0 ? exitIndex : undefined,
+      };
+
+      if (activeBacktestTradeDetailsRequestRef.current !== requestId) {
+        return;
+      }
+
+      startTransition(() => {
+        if (activeBacktestTradeDetailsRequestRef.current !== requestId) {
+          return;
+        }
+        setActiveBacktestTradeDetails(resolvedDetails);
+        setActiveBacktestTradeDetailsPreview(resolvedDetails);
+        setActiveBacktestTradeDetailsLoading(false);
+      });
+    };
+
+    if (typeof window === "undefined") {
+      void loadDetails();
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      window.setTimeout(() => {
+        if (activeBacktestTradeDetailsRequestRef.current !== requestId) {
+          return;
+        }
+        void loadDetails();
+      }, 24);
     });
-  };
+  }, [buildBacktestTradeDetailsPreview, getHistoryCandlesForSymbol]);
 
   const activeBacktestTradeCandles = useMemo(() => {
     if (!activeBacktestTradeDetails) {
@@ -15888,6 +16111,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
     return getHistoryCandlesForSymbol(String(activeBacktestTradeDetails.symbol ?? ""));
   }, [activeBacktestTradeDetails, getHistoryCandlesForSymbol, selectedChartCandles]);
+  const visibleBacktestTradeDetails =
+    activeBacktestTradeDetails ?? activeBacktestTradeDetailsPreview;
 
   const activeChartTrade = useMemo<OverlayTrade | null>(() => {
     if (!activeTrade || selectedCandles.length === 0) {
@@ -17183,6 +17408,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     setSelectedHistoryId(null);
     setShowAllTradesOnChart(false);
     setShowActiveTradeOnChart(false);
+    activeBacktestTradeDetailsRequestRef.current += 1;
+    setActiveBacktestTradeDetailsLoading(false);
+    setActiveBacktestTradeDetailsPreview(null);
     setActiveBacktestTradeDetails(null);
     focusTradeIdRef.current = null;
   }, [appliedBacktestModelNames]);
@@ -24049,6 +24277,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       key={trade.id}
                       type="button"
                       className="mobile-trade-card"
+                      onMouseEnter={() => {
+                        void loadAiZipClusterModule();
+                      }}
                       onClick={() => openBacktestTradeDetails(trade)}
                     >
                       <div className="mobile-trade-card-head">
@@ -24215,18 +24446,25 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           </div>
         ) : null}
 
-        {activeBacktestTradeDetails ? (
-          <AIZipTradeDetailsModal
-            trade={activeBacktestTradeDetails}
-            candles={activeBacktestTradeCandles}
-            dollarsPerMove={dollarsPerMove}
-            interval={selectedTimeframe}
-            parseMode="utc"
-            tpDist={0}
-            slDist={0}
-            dimensionRows={activeBacktestTradeDimensionRows}
-            onClose={() => setActiveBacktestTradeDetails(null)}
-          />
+        {visibleBacktestTradeDetails ? (
+          activeBacktestTradeDetailsLoading || !activeBacktestTradeDetails ? (
+            <TradeDetailsLoadingModal
+              trade={visibleBacktestTradeDetails}
+              onClose={closeBacktestTradeDetails}
+            />
+          ) : (
+            <AIZipTradeDetailsModal
+              trade={activeBacktestTradeDetails}
+              candles={activeBacktestTradeCandles}
+              dollarsPerMove={dollarsPerMove}
+              interval={selectedTimeframe}
+              parseMode="utc"
+              tpDist={0}
+              slDist={0}
+              dimensionRows={activeBacktestTradeDimensionRows}
+              onClose={closeBacktestTradeDetails}
+            />
+          )
         ) : null}
       </main>
     );
@@ -27788,7 +28026,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                                   return (
                                     <tr
                                       key={trade.id}
-                                      onMouseEnter={() => setHoveredBacktestHistoryId(trade.id)}
+                                      onMouseEnter={() => {
+                                        setHoveredBacktestHistoryId(trade.id);
+                                        void loadAiZipClusterModule();
+                                      }}
                                       onMouseLeave={() =>
                                         setHoveredBacktestHistoryId((value) =>
                                           value === trade.id ? null : value
@@ -29835,18 +30076,25 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         </div>
       ) : null}
 
-      {activeBacktestTradeDetails ? (
-        <AIZipTradeDetailsModal
-          trade={activeBacktestTradeDetails}
-          candles={activeBacktestTradeCandles}
-          dollarsPerMove={dollarsPerMove}
-          interval={selectedTimeframe}
-          parseMode="utc"
-          tpDist={0}
-          slDist={0}
-          dimensionRows={activeBacktestTradeDimensionRows}
-          onClose={() => setActiveBacktestTradeDetails(null)}
-        />
+      {visibleBacktestTradeDetails ? (
+        activeBacktestTradeDetailsLoading || !activeBacktestTradeDetails ? (
+          <TradeDetailsLoadingModal
+            trade={visibleBacktestTradeDetails}
+            onClose={closeBacktestTradeDetails}
+          />
+        ) : (
+          <AIZipTradeDetailsModal
+            trade={activeBacktestTradeDetails}
+            candles={activeBacktestTradeCandles}
+            dollarsPerMove={dollarsPerMove}
+            interval={selectedTimeframe}
+            parseMode="utc"
+            tpDist={0}
+            slDist={0}
+            dimensionRows={activeBacktestTradeDimensionRows}
+            onClose={closeBacktestTradeDetails}
+          />
+        )
       ) : null}
     </main>
   );
