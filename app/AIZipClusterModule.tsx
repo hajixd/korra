@@ -3567,6 +3567,7 @@ function computeClusterVarianceIndices(rawData, outDim) {
 function normalizeClusterCompressionMethod(value) {
   const method = String(value || "").trim().toLowerCase();
   if (
+    method === "link" ||
     method === "umap" ||
     method === "pca" ||
     method === "jl" ||
@@ -3576,7 +3577,7 @@ function normalizeClusterCompressionMethod(value) {
   ) {
     return method;
   }
-  return "jl";
+  return "link";
 }
 function padClusterProjectionVector(vec, targetDim) {
   const out = new Array(targetDim).fill(0);
@@ -3671,6 +3672,389 @@ function createClusterMapProjection({
     );
   return {
     emb: stdData.map((row) => project(row)),
+    project,
+  };
+}
+
+function buildClusterLinkStrengthSampleIndices(count, targetCount) {
+  if (count <= 0) return [];
+  if (count <= targetCount) {
+    return Array.from({ length: count }, (_, index) => index);
+  }
+  const sampleIdx = [];
+  const stride = Math.max(1, Math.ceil(count / Math.max(1, targetCount)));
+  for (let index = 0; index < count && sampleIdx.length < targetCount; index += stride) {
+    sampleIdx.push(index);
+  }
+  if (sampleIdx[sampleIdx.length - 1] !== count - 1 && sampleIdx.length < targetCount) {
+    sampleIdx.push(count - 1);
+  }
+  return sampleIdx;
+}
+
+function buildClusterLinkStrengthGraph(entries, stdData, opts = {}) {
+  const n = Math.min(
+    Array.isArray(entries) ? entries.length : 0,
+    Array.isArray(stdData) ? stdData.length : 0
+  );
+  if (n < 2) return [];
+
+  const useK = Math.max(
+    1,
+    Math.min(Math.max(1, n - 1), Math.max(2, Math.min(24, Math.floor(Number(opts.nNeighbors) || 10))))
+  );
+  const edgeMap = new Map();
+  const registerEdge = (leftIndex, rightIndex, rawWeight) => {
+    if (!Number.isFinite(leftIndex) || !Number.isFinite(rightIndex)) return;
+    if (leftIndex === rightIndex) return;
+    const weight = Math.max(0.02, Math.min(0.995, Number(rawWeight) || 0));
+    if (!(weight > 0)) return;
+    const a = leftIndex < rightIndex ? leftIndex : rightIndex;
+    const b = leftIndex < rightIndex ? rightIndex : leftIndex;
+    const key = `${a}|${b}`;
+    const prev = edgeMap.get(key);
+    if (!prev || weight > prev.w) {
+      edgeMap.set(key, { i: a, j: b, w: weight });
+    }
+  };
+
+  const { nbrIdx, nbrDist } = knnBruteforce(stdData, useK);
+  const fuzzyEdges = buildFuzzyGraph(nbrIdx, nbrDist);
+  for (const edge of fuzzyEdges) {
+    registerEdge(edge.i, edge.j, 0.16 + Number(edge.w || 0) * 0.56);
+  }
+
+  const aliasToIndices = new Map();
+  for (let index = 0; index < n; index++) {
+    const entry = entries[index];
+    if (!entry) continue;
+    const primaryId =
+      normalizeClusterMapToken((entry as any)?.id) ??
+      normalizeClusterMapToken((entry as any)?.uid) ??
+      normalizeClusterMapToken((entry as any)?.tradeUid) ??
+      normalizeClusterMapToken((entry as any)?.metaUid) ??
+      normalizeClusterMapToken((entry as any)?.metaOrigUid) ??
+      `node-${index}`;
+    addClusterMapAlias(aliasToIndices, primaryId, String(index));
+    addClusterMapAlias(aliasToIndices, (entry as any)?.uid, String(index));
+    addClusterMapAlias(aliasToIndices, (entry as any)?.tradeUid, String(index));
+    addClusterMapAlias(aliasToIndices, (entry as any)?.metaUid, String(index));
+    addClusterMapAlias(aliasToIndices, (entry as any)?.metaTradeUid, String(index));
+    addClusterMapAlias(aliasToIndices, (entry as any)?.metaOrigId, String(index));
+    addClusterMapAlias(aliasToIndices, (entry as any)?.metaOrigUid, String(index));
+    addClusterMapAlias(aliasToIndices, (entry as any)?.metaId, String(index));
+    addClusterMapAlias(aliasToIndices, (entry as any)?.parentId, String(index));
+    addClusterMapAlias(aliasToIndices, (entry as any)?.labelUid, String(index));
+
+    const timeToken = normalizeClusterMapToken(
+      (entry as any)?.entryTime ?? (entry as any)?.metaTime ?? (entry as any)?.time
+    );
+    if (timeToken) {
+      addClusterMapAlias(aliasToIndices, `t:${timeToken}`, String(index));
+      const modelToken = normalizeClusterMapToken(
+        (entry as any)?.entryModel ?? (entry as any)?.chunkType ?? (entry as any)?.model
+      );
+      const dirToken = normalizeClusterMapToken((entry as any)?.dir ?? (entry as any)?.direction);
+      if (modelToken) addClusterMapAlias(aliasToIndices, `tm:${timeToken}|${modelToken}`, String(index));
+      if (dirToken) {
+        addClusterMapAlias(aliasToIndices, `td:${timeToken}|${dirToken}`, String(index));
+        if (modelToken) {
+          addClusterMapAlias(
+            aliasToIndices,
+            `tmd:${timeToken}|${modelToken}|${dirToken}`,
+            String(index)
+          );
+        }
+      }
+    }
+  }
+
+  const resolveNeighborIndex = (sourceIndex, neighbor) => {
+    const sourceVector = stdData[sourceIndex];
+    const rawCandidates = [
+      (neighbor as any)?.targetId,
+      (neighbor as any)?.nodeId,
+      extractNeighborPrimaryRawId(neighbor),
+      (neighbor as any)?.id,
+      (neighbor as any)?.metaId,
+      (neighbor as any)?.uid,
+      (neighbor as any)?.metaUid,
+      (neighbor as any)?.tradeUid,
+      (neighbor as any)?.metaTradeUid,
+      (neighbor as any)?.labelUid,
+    ];
+
+    for (const rawCandidate of rawCandidates) {
+      const token = normalizeClusterMapToken(rawCandidate);
+      if (!token) continue;
+      const directHits = aliasToIndices.get(token);
+      const timedHits = aliasToIndices.get(`t:${token}`);
+      const hits = directHits && directHits.size > 0 ? directHits : timedHits;
+      if (!hits || hits.size <= 0) continue;
+
+      let bestIndex = -1;
+      let bestDistance = Infinity;
+      for (const candidateRaw of hits) {
+        const candidateIndex = Number(candidateRaw);
+        if (!Number.isFinite(candidateIndex) || candidateIndex === sourceIndex) continue;
+        const candidateVector = stdData[candidateIndex];
+        if (!Array.isArray(candidateVector)) continue;
+        const distance = l2Dist(sourceVector, candidateVector);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = candidateIndex;
+        }
+      }
+      if (bestIndex >= 0) {
+        return bestIndex;
+      }
+    }
+
+    return null;
+  };
+
+  const explicitDistanceSamples = [];
+  const explicitEdges = [];
+  for (let sourceIndex = 0; sourceIndex < n; sourceIndex++) {
+    const sourceEntry = entries[sourceIndex];
+    if (!isEntrySourceNodeForKnn(sourceEntry)) continue;
+    const rawNeighbors = Array.isArray((sourceEntry as any)?.entryNeighbors)
+      ? ((sourceEntry as any).entryNeighbors as any[])
+      : [];
+    if (rawNeighbors.length <= 0) continue;
+
+    const orderedNeighbors = rawNeighbors.slice().sort((left, right) => {
+      const leftDistance = neighborSortDistance((left as any)?.d);
+      const rightDistance = neighborSortDistance((right as any)?.d);
+      if (leftDistance !== rightDistance) return leftDistance - rightDistance;
+      const leftRank = Number((left as any)?.rank);
+      const rightRank = Number((right as any)?.rank);
+      const safeLeftRank = Number.isFinite(leftRank) ? leftRank : Number.POSITIVE_INFINITY;
+      const safeRightRank = Number.isFinite(rightRank) ? rightRank : Number.POSITIVE_INFINITY;
+      return safeLeftRank - safeRightRank;
+    });
+
+    let accepted = 0;
+    for (const neighbor of orderedNeighbors) {
+      if (accepted >= useK) break;
+      const targetIndex = resolveNeighborIndex(sourceIndex, neighbor);
+      if (targetIndex == null || targetIndex === sourceIndex) continue;
+
+      const distance = neighborSortDistance((neighbor as any)?.d);
+      if (Number.isFinite(distance)) {
+        explicitDistanceSamples.push(distance);
+      }
+      explicitEdges.push({
+        i: sourceIndex,
+        j: targetIndex,
+        d: distance,
+        rank: accepted,
+      });
+      accepted += 1;
+    }
+  }
+
+  const explicitScale =
+    Number.isFinite(quantile1D(explicitDistanceSamples, 0.6)) &&
+    quantile1D(explicitDistanceSamples, 0.6) > 1e-6
+      ? quantile1D(explicitDistanceSamples, 0.6)
+      : 1;
+
+  for (const edge of explicitEdges) {
+    const rankWeight = Math.max(0.12, 1 - Number(edge.rank || 0) / Math.max(1, useK));
+    const distWeight = Number.isFinite(Number(edge.d))
+      ? Math.exp(-Math.max(0, Number(edge.d)) / explicitScale)
+      : 0.42;
+    registerEdge(edge.i, edge.j, 0.26 + rankWeight * 0.18 + distWeight * 0.56);
+  }
+
+  return Array.from(edgeMap.values());
+}
+
+function createClusterMapLinkStrengthProjection({
+  entries,
+  stdData,
+  targetDim,
+  seedKey,
+  nNeighbors,
+}) {
+  const safeTargetDim = Math.max(1, Math.floor(Number(targetDim) || 1));
+  const normalizedTargetDim = safeTargetDim >= 3 ? 3 : 2;
+  if (!Array.isArray(stdData) || stdData.length === 0) {
+    return {
+      emb: [],
+      project: () => new Array(safeTargetDim).fill(0),
+    };
+  }
+
+  const fallbackProjection = () =>
+    createClusterMapProjection({
+      rawData: stdData,
+      stdData,
+      targetDim: normalizedTargetDim,
+      method: "pca",
+      seedKey: `${seedKey}|fallback-pca`,
+    });
+
+  const sampleCap = normalizedTargetDim >= 3 ? 1800 : 1500;
+  const sampleIdx = buildClusterLinkStrengthSampleIndices(stdData.length, sampleCap);
+  const sampleStdData = sampleIdx.map((index) => stdData[index]);
+  const sampleEntries = sampleIdx.map((index) => (Array.isArray(entries) ? entries[index] : null));
+
+  if (sampleStdData.length < Math.max(3, normalizedTargetDim + 1)) {
+    return fallbackProjection();
+  }
+
+  const components = computePCAComponents(
+    sampleStdData,
+    Math.min(normalizedTargetDim, sampleStdData[0]?.length ?? normalizedTargetDim)
+  );
+  if (!Array.isArray(components) || components.length === 0) {
+    return fallbackProjection();
+  }
+
+  const initX = standardize1D(
+    sampleStdData.map((row) => dotProduct(components[0] ?? [], row))
+  );
+  const initY = standardize1D(
+    sampleStdData.map((row) =>
+      dotProduct(
+        components[Math.min(1, components.length - 1)] ?? components[0] ?? [],
+        row
+      )
+    )
+  );
+  const initZ =
+    normalizedTargetDim >= 3
+      ? standardize1D(
+          sampleStdData.map((row, index) => {
+            if (components.length >= 3) {
+              return dotProduct(components[2] ?? [], row);
+            }
+            return stableHashToUnit(`${seedKey}|link-z|${index}`) * 2 - 1;
+          })
+        )
+      : [];
+
+  let edges = buildClusterLinkStrengthGraph(sampleEntries, sampleStdData, {
+    nNeighbors,
+  });
+  if (edges.length <= 0) {
+    const safeK = Math.max(1, Math.min(12, sampleStdData.length - 1));
+    const { nbrIdx, nbrDist } = knnBruteforce(sampleStdData, safeK);
+    edges = buildFuzzyGraph(nbrIdx, nbrDist);
+  }
+  if (edges.length <= 0) {
+    return fallbackProjection();
+  }
+
+  let sampleEmbVectors = [];
+  if (normalizedTargetDim >= 3) {
+    const { x, y, z } = optimizeUMAP3D(
+      sampleStdData.length,
+      edges,
+      initX,
+      initY,
+      initZ,
+      {
+        nEpochs: 200,
+        negRate: 4,
+        learningRate: 1.0,
+        seedKey: `${seedKey}|layout-3d`,
+      }
+    );
+    sampleEmbVectors = x.map((value, index) => [value, y[index], z[index]]);
+  } else {
+    const { x, y } = optimizeUMAP2D(
+      sampleStdData.length,
+      edges,
+      initX,
+      initY,
+      {
+        nEpochs: 180,
+        negRate: 4,
+        learningRate: 1.0,
+        seedKey: `${seedKey}|layout-2d`,
+      }
+    );
+    sampleEmbVectors = x.map((value, index) => [value, y[index]]);
+  }
+
+  const project = (vec) => {
+    if (!Array.isArray(vec) || sampleStdData.length <= 0) {
+      return new Array(safeTargetDim).fill(0);
+    }
+    const useK = Math.max(1, Math.min(6, sampleStdData.length));
+    const nearest = [];
+    for (let index = 0; index < sampleStdData.length; index++) {
+      const distance = l2Dist(vec, sampleStdData[index]);
+      if (!Number.isFinite(distance)) continue;
+      if (nearest.length < useK) {
+        nearest.push({ index, distance });
+        nearest.sort((left, right) => right.distance - left.distance);
+      } else if (distance < nearest[0].distance) {
+        nearest[0] = { index, distance };
+        nearest.sort((left, right) => right.distance - left.distance);
+      }
+    }
+    if (nearest.length <= 0) {
+      return new Array(safeTargetDim).fill(0);
+    }
+
+    const out = new Array(normalizedTargetDim).fill(0);
+    let weightSum = 0;
+    const ordered = nearest.slice().sort((left, right) => left.distance - right.distance);
+    for (const hit of ordered) {
+      const coords = sampleEmbVectors[hit.index] ?? [];
+      const weight = 1 / Math.max(1e-6, hit.distance * hit.distance + 0.02);
+      weightSum += weight;
+      for (let dimIndex = 0; dimIndex < normalizedTargetDim; dimIndex++) {
+        out[dimIndex] += Number(coords[dimIndex] ?? 0) * weight;
+      }
+    }
+    if (weightSum > 0) {
+      for (let dimIndex = 0; dimIndex < normalizedTargetDim; dimIndex++) {
+        out[dimIndex] /= weightSum;
+      }
+    }
+    return padClusterProjectionVector(out, safeTargetDim);
+  };
+
+  const emb = new Array(stdData.length);
+  if (sampleIdx.length === stdData.length) {
+    for (let index = 0; index < sampleEmbVectors.length; index++) {
+      const coords = sampleEmbVectors[index] ?? [];
+      emb[index] =
+        normalizedTargetDim >= 3
+          ? {
+              x: Number(coords[0] ?? 0),
+              y: Number(coords[1] ?? 0),
+              z: Number(coords[2] ?? 0),
+            }
+          : {
+              x: Number(coords[0] ?? 0),
+              y: Number(coords[1] ?? 0),
+            };
+    }
+  } else {
+    for (let index = 0; index < stdData.length; index++) {
+      const coords = project(stdData[index]);
+      emb[index] =
+        normalizedTargetDim >= 3
+          ? {
+              x: Number(coords[0] ?? 0),
+              y: Number(coords[1] ?? 0),
+              z: Number(coords[2] ?? 0),
+            }
+          : {
+              x: Number(coords[0] ?? 0),
+              y: Number(coords[1] ?? 0),
+            };
+    }
+  }
+
+  return {
+    emb,
     project,
   };
 }
@@ -9840,6 +10224,7 @@ const areClusterMapPropsEqual = (prev: any, next: any) => {
 };
 
 const DEFAULT_CLUSTER_MAP_COMPRESSION_OPTIONS = [
+  { value: "link", label: "Link Strength" },
   { value: "umap", label: "UMAP" },
   { value: "pca", label: "PCA" },
   { value: "jl", label: "Random Projection" },
@@ -10053,7 +10438,7 @@ function ClusterMapInner({
   kEntry,
   knnNeighborSpace = "post",
   distanceMetric = "euclidean",
-  compressionMethod = "jl",
+  compressionMethod = "link",
   compressionOptions = DEFAULT_CLUSTER_MAP_COMPRESSION_OPTIONS,
   hdbDomainDistinction,
   hdbMinClusterSize,
@@ -11542,6 +11927,39 @@ function ClusterMapInner({
         sampleEmbX: um.sampleEmbX,
         sampleEmbY: um.sampleEmbY,
       };
+    } else if (viewCompressionMethod === "link") {
+      const linkNeighborCount = Math.max(
+        6,
+        Math.min(24, Math.floor(Number(kEntry) || 10))
+      );
+      const projection2d = createClusterMapLinkStrengthProjection({
+        entries: goodEntries,
+        stdData,
+        targetDim: 2,
+        seedKey: "cluster-map|link|2d",
+        nNeighbors: linkNeighborCount,
+      });
+      projection2dProject = projection2d.project;
+      embedding = (projection2d.emb || []).map((coords) => ({
+        x: Number(coords?.x ?? coords?.[0] ?? 0),
+        y: Number(coords?.y ?? coords?.[1] ?? 0),
+      }));
+
+      if (shouldEmbed3D) {
+        const projection3d = createClusterMapLinkStrengthProjection({
+          entries: goodEntries,
+          stdData,
+          targetDim: 3,
+          seedKey: "cluster-map|link|3d",
+          nNeighbors: linkNeighborCount,
+        });
+        projection3dProject = projection3d.project;
+        embedding3 = (projection3d.emb || []).map((coords) => ({
+          x: Number(coords?.x ?? coords?.[0] ?? 0),
+          y: Number(coords?.y ?? coords?.[1] ?? 0),
+          z: Number(coords?.z ?? coords?.[2] ?? 0),
+        }));
+      }
     } else {
       const projection2d = createClusterMapProjection({
         rawData: allVectors,
@@ -21094,10 +21512,13 @@ function ClusterMapInner({
           Each point on the map is a past trade or the current potential setup.
           Points are projected from a high‑dimensional market state into a 2D
           space; similar setups cluster together. Dot size scales with the
-          magnitude of the trade’s profit or loss. Positions are learned via a
-          UMAP-style embedding so that similar trades (in the full standardized
-          feature space) land near each other. Pan by dragging, zoom with the
-          mouse wheel and hover to inspect details.
+          magnitude of the trade’s profit or loss. The selected compression
+          view controls how positions are learned
+          {viewCompressionMethod === "link"
+            ? "; Link Strength uses the similarity graph directly, so trades with stronger links pull closer together."
+            : "."}{" "}
+          Pan by dragging, zoom with the mouse wheel and hover to inspect
+          details.
         </div>
         <div
           style={{
@@ -22511,13 +22932,13 @@ export default function App() {
       );
     if (typeof data.compressionMethod === "string") {
       const v = String(data.compressionMethod || "");
-      const ok = ["umap", "pca", "jl", "hash", "variance", "subsample"];
-      setCompressionMethod(ok.includes(v) ? v : "jl");
+      const ok = ["link", "umap", "pca", "jl", "hash", "variance", "subsample"];
+      setCompressionMethod(ok.includes(v) ? v : "link");
     }
     if (typeof data.compressionMethod === "string") {
       const v = String(data.compressionMethod || "");
-      const ok = ["umap", "pca", "jl", "hash", "variance", "subsample"];
-      setCompressionMethod(ok.includes(v) ? v : "jl");
+      const ok = ["link", "umap", "pca", "jl", "hash", "variance", "subsample"];
+      setCompressionMethod(ok.includes(v) ? v : "link");
     }
     if (typeof data.distanceMetric === "string") {
       const v = String(data.distanceMetric || "").toLowerCase();
@@ -22773,7 +23194,7 @@ export default function App() {
     setKnnNeighborSpace("post");
     setDimStyle("recommended");
     setDimManualAmount(24);
-    setCompressionMethod("jl");
+    setCompressionMethod("link");
 
     setEnabledDows({ ...DEFAULT_DOWS });
     setEnabledHours({ ...DEFAULT_HOURS });
@@ -23618,7 +24039,7 @@ export default function App() {
   >("post");
   const [dimStyle, setDimStyle] = useState("recommended"); // "manual" | "recommended" | "all"
   const [dimManualAmount, setDimManualAmount] = useState(24);
-  const [compressionMethod, setCompressionMethod] = useState("jl"); // "umap" | "pca" | "jl" | "hash" | "variance" | "subsample"
+  const [compressionMethod, setCompressionMethod] = useState("link"); // "link" | "umap" | "pca" | "jl" | "hash" | "variance" | "subsample"
   const [distanceMetric, setDistanceMetric] = useState("euclidean"); // "euclidean" | "cosine" | "manhattan" | "chebyshev" | "mahalanobis"
   const [dimWeightMode, setDimWeightMode] = useState("uniform"); // "uniform" | "proportional"
   const [dimWeightsBump, setDimWeightsBump] = useState(0);
@@ -33486,6 +33907,7 @@ export default function App() {
                         fontWeight: 800,
                       }}
                     >
+                      <option value="link">Link Strength</option>
                       <option value="umap">UMAP</option>
                       <option value="pca">
                         PCA (Principal Component Analysis)
