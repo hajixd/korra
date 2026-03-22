@@ -2745,7 +2745,6 @@ type PropFirmStats = {
 type AiValidationMode = "off" | "split" | "synthetic";
 type AiDistanceMetric = "euclidean" | "cosine" | "manhattan" | "chebyshev";
 type AiCompressionMethod =
-  | "link"
   | "umap"
   | "pca"
   | "jl"
@@ -2797,6 +2796,13 @@ type AiLibraryDef = {
 
 type StatsRefreshOverlayMode = "idle" | "hold" | "loading";
 type StatsRefreshPhaseKey = "freeze" | "candles" | "candidates" | "replay" | "analyze";
+type StatsRefreshOperationSnapshot = {
+  label: string;
+  detail: string;
+  telemetry: string;
+  startedAtMs: number;
+  updatedAtMs: number;
+};
 type BacktestDatePreset =
   | "custom"
   | "pastWeek"
@@ -3965,7 +3971,6 @@ const AI_COMPRESSION_METHOD_OPTIONS: Array<{
   value: AiCompressionMethod;
   label: string;
 }> = [
-  { value: "link", label: "Link Strength" },
   { value: "umap", label: "UMAP" },
   { value: "pca", label: "PCA" },
   { value: "jl", label: "Random Projection" },
@@ -4162,7 +4167,6 @@ function AiZipMenuSelect({
 const normalizeAiCompressionMethod = (value: unknown): AiCompressionMethod => {
   const method = String(value ?? "").trim().toLowerCase();
   if (
-    method === "link" ||
     method === "umap" ||
     method === "pca" ||
     method === "jl" ||
@@ -4172,7 +4176,7 @@ const normalizeAiCompressionMethod = (value: unknown): AiCompressionMethod => {
   ) {
     return method;
   }
-  return "link";
+  return "jl";
 };
 
 const normalizeAiValidationMode = (value: unknown): AiValidationMode => {
@@ -9269,6 +9273,19 @@ const formatStatsRefreshDateLabel = (timeMs: number) => {
   });
 };
 
+const formatStatsRefreshElapsedLabel = (elapsedMs: number): string => {
+  const safeElapsedMs = Math.max(0, Math.floor(Number(elapsedMs) || 0));
+  const totalSeconds = Math.floor(safeElapsedMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  if (minutes > 0) {
+    return `${minutes}m ${String(seconds).padStart(2, "0")}s elapsed`;
+  }
+
+  return `${seconds}s elapsed`;
+};
+
 const normalizeTimestampMs = (value: number): number => {
   if (!Number.isFinite(value)) {
     return NaN;
@@ -9351,6 +9368,96 @@ const getStatsRefreshStatusDetail = (
   return "Updating backtest statistics.";
 };
 
+const getStatsRefreshLivePulseDetail = (
+  status: string,
+  operationLabel: string,
+  elapsedMs: number
+): string => {
+  const normalizedLabel = operationLabel.trim().toLowerCase();
+
+  if (status === "Resetting Backtest Run") {
+    return elapsedMs >= 2200
+      ? "Applying the frozen settings snapshot and queuing the next loading phase."
+      : "Dropping the prior replay, analytics, and selections so the next run starts from a clean state.";
+  }
+
+  if (status === "Loading Candle History") {
+    if (normalizedLabel.includes("scanning cached")) {
+      return "Comparing the requested date window and warmup bars against the longest reusable candle cache.";
+    }
+
+    if (normalizedLabel.includes("requesting analysis")) {
+      return elapsedMs >= 7000
+        ? "Still waiting on the analysis timeframe response. The loader will validate bar coverage the moment it returns."
+        : "Opening the analysis timeframe request and keeping the requested replay window aligned while the provider responds.";
+    }
+
+    if (normalizedLabel.includes("analysis candle request finished")) {
+      return "Normalizing the returned candles, ordering them by time, and checking whether the requested replay window is fully covered.";
+    }
+
+    if (normalizedLabel.includes("requesting precision")) {
+      return elapsedMs >= 7000
+        ? "The lower timeframe support request is still in flight so intrabar entry and exit refinement can stay accurate."
+        : "Fetching the lower timeframe support candles used for precision entry, exit, and stop ordering.";
+    }
+
+    if (normalizedLabel.includes("precision candle support finished")) {
+      return "Merging the support candles into the replay seed so the engine can refine intrabar execution.";
+    }
+
+    if (normalizedLabel.includes("validating replay candle coverage")) {
+      return "Deduping, confirming range coverage, and promoting the seeded candle sets into the replay cache.";
+    }
+
+    if (normalizedLabel.includes("falling back")) {
+      return "Trying the locally cached candle seed so the requested range can still be recovered without widening the replay window.";
+    }
+
+    if (normalizedLabel.includes("could not be satisfied")) {
+      return "The requested historical window still does not have enough validated candles to build a safe replay seed.";
+    }
+
+    return "Tracking the active history request and updating the replay cursor as soon as new candle coverage settles.";
+  }
+
+  if (status === "Building Trade Candidates") {
+    return elapsedMs >= 5000
+      ? "Applying replay caps and trimming the candidate queue down to the trades that can actually be replayed."
+      : "Scanning the validated analysis candles for deterministic entry signals and staging replayable trade blueprints.";
+  }
+
+  if (status === "Loading AI Libraries") {
+    return elapsedMs >= 6000
+      ? "Still waiting on library runs so confidence, neighbor, and anti-cheat context can be attached to the finished trade set."
+      : "Running the selected AI libraries before the panels finalize so confidence and nearest-neighbor context are already available.";
+  }
+
+  if (status === "Replaying Backtest Trades" || status === "Recovering Replay Locally") {
+    return elapsedMs >= 8000
+      ? "The replay engine is still walking the candle sets and resolving TP, SL, break-even, trailing, and final exit ordering."
+      : "Stepping through the candle timeline and resolving each candidate into a finished trade row with entry, exit, and PnL.";
+  }
+
+  if (status === "Applying AI Analysis") {
+    return elapsedMs >= 5000
+      ? "Waiting for the analysis jobs that score, filter, and enrich the replay rows before the panels can finalize."
+      : "Filtering the replay rows and attaching confidence, nearest-neighbor, and anti-cheat context before the final summaries render.";
+  }
+
+  if (status === "Finalizing Statistics") {
+    return elapsedMs >= 6000
+      ? "Still waiting on the remaining analytics payloads before swapping the backtest panels to the finished run."
+      : "Rolling the finished trade set into summaries, calendars, cluster data, tables, and performance views.";
+  }
+
+  if (status === "No Trades In Selected Range") {
+    return "The replay window completed, but no candidate survived the selected model filters and replay caps.";
+  }
+
+  return "Updating the active backtest step with the latest settled work.";
+};
+
 const buildStatsRefreshPhasePlan = ({
   needsHistorySeedReload,
   loadingLibraries,
@@ -9375,9 +9482,9 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [authForm, setAuthForm] = useState<AccountAuthFormState>(EMPTY_ACCOUNT_AUTH_FORM);
   const [authBusy, setAuthBusy] = useState<"login" | "create" | null>(null);
   const [authError, setAuthError] = useState("");
-  const firebaseSetupMessage = firebaseClientConfigReady
+  const accountSetupMessage = firebaseClientConfigReady
     ? ""
-    : `Add ${firebaseClientMissingEnvVars.join(", ")} to .env.local to enable Firebase auth.`;
+    : `Add ${firebaseClientMissingEnvVars.join(", ")} to .env.local to finish setting up account access.`;
 
   const syncAccountProfile = useCallback(
     async (user: User, explicitDisplayName?: string): Promise<string> => {
@@ -9486,7 +9593,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       }
 
       if (!firebaseAuth || !firebaseClientConfigReady) {
-        setAuthError(firebaseSetupMessage || "Firebase auth is not configured yet.");
+        setAuthError(accountSetupMessage || "Account access is not configured yet.");
         return;
       }
 
@@ -9559,7 +9666,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
         setAuthBusy(null);
       }
     },
-    [authForm, authMode, firebaseAuth, firebaseSetupMessage, syncAccountProfile]
+    [accountSetupMessage, authForm, authMode, firebaseAuth, syncAccountProfile]
   );
 
   const handleChangeDisplayName = useCallback(
@@ -9640,9 +9747,20 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       <main className="terminal account-screen">
         <section className="account-screen-shell">
           <div className="account-shell-panel">
+            <div className="account-auth-loader" aria-hidden="true">
+              <span className="account-auth-loader__halo" />
+              <span className="account-auth-loader__ring account-auth-loader__ring--outer" />
+              <span className="account-auth-loader__ring account-auth-loader__ring--middle" />
+              <span className="account-auth-loader__ring account-auth-loader__ring--inner" />
+              <span className="account-auth-loader__beam" />
+              <span className="account-auth-loader__core">
+                <span className="account-auth-loader__core-dot" />
+              </span>
+            </div>
             <div className="account-shell-header">
-              <h1>Connecting account</h1>
-              <p>Checking your Firebase session before loading the terminal.</p>
+              <div className="account-shell-kicker">Secure Access</div>
+              <h1>Logging In</h1>
+              <p>Restoring your workspace, profile, and saved state.</p>
             </div>
           </div>
         </section>
@@ -9682,8 +9800,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
               </button>
             </div>
 
-            {firebaseSetupMessage ? (
-              <div className="account-inline-note">{firebaseSetupMessage}</div>
+            {accountSetupMessage ? (
+              <div className="account-inline-note">{accountSetupMessage}</div>
             ) : null}
 
             {authMode ? (
@@ -9750,7 +9868,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   disabled={formDisabled}
                 >
                   {authBusy === authMode
-                    ? "Loading..."
+                    ? (
+                        <span className="account-submit-state">
+                          <span className="account-submit-spinner" aria-hidden="true">
+                            <span />
+                            <span />
+                            <span />
+                          </span>
+                          <span>
+                            {authMode === "login" ? "Logging In" : "Creating Account"}
+                          </span>
+                        </span>
+                      )
                     : authMode === "create"
                       ? "Create Account"
                       : "Log In"}
@@ -10057,7 +10186,7 @@ function TradingTerminalWorkspace({
     "Model"
   ]);
   const [dimensionAmount, setDimensionAmount] = useState(32);
-const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>("link");
+const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>("jl");
   const [kEntry, setKEntry] = useState(12);
   const [kExit, setKExit] = useState(9);
   const [knnVoteMode, setKnnVoteMode] = useState<KnnVoteMode>("majority");
@@ -10093,6 +10222,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [statsRefreshStatus, setStatsRefreshStatus] = useState("Updating Backtest Statistics");
   const [statsRefreshPhasePlan, setStatsRefreshPhasePlan] = useState<StatsRefreshPhaseKey[]>([]);
   const [statsRefreshProgressLabel, setStatsRefreshProgressLabel] = useState("");
+  const [statsRefreshOperation, setStatsRefreshOperation] = useState<StatsRefreshOperationSnapshot>({
+    label: "",
+    detail: "",
+    telemetry: "",
+    startedAtMs: 0,
+    updatedAtMs: 0
+  });
+  const [statsRefreshHeartbeatNowMs, setStatsRefreshHeartbeatNowMs] = useState(() => Date.now());
   const [statsRefreshReplaySettled, setStatsRefreshReplaySettled] = useState(true);
   const [statsRefreshTimelineRange, setStatsRefreshTimelineRange] = useState<{
     startMs: number;
@@ -10417,6 +10554,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const statsRefreshQueuedStatusRef = useRef<string | null>(null);
   const statsRefreshVisualCompletionRafRef = useRef(0);
   const statsRefreshLoadingDisplayProgressRef = useRef(0);
+  const statsRefreshOperationRef = useRef<StatsRefreshOperationSnapshot>({
+    label: "",
+    detail: "",
+    telemetry: "",
+    startedAtMs: 0,
+    updatedAtMs: 0
+  });
   const liveBacktestSettingsRef = useRef<BacktestSettingsSnapshot>(appliedBacktestSettings);
   const tradeBlueprintsRef = useRef<TradeBlueprint[]>([]);
   const backtestHistorySeriesBySymbolRef = useRef<Record<string, Candle[]>>({});
@@ -10667,10 +10811,64 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     statsRefreshOverlayModeRef.current = mode;
     setStatsRefreshOverlayMode(mode);
   }, []);
+  const setStatsRefreshProgressValue = useCallback((value: number) => {
+    const nextValue = clamp(value, 0, 100);
+    statsRefreshProgressRef.current = nextValue;
+    setStatsRefreshProgress(nextValue);
+  }, []);
+  const resetStatsRefreshOperation = useCallback(() => {
+    const now = Date.now();
+    const nextOperation: StatsRefreshOperationSnapshot = {
+      label: "",
+      detail: "",
+      telemetry: "",
+      startedAtMs: now,
+      updatedAtMs: now
+    };
+    statsRefreshOperationRef.current = nextOperation;
+    setStatsRefreshOperation(nextOperation);
+    setStatsRefreshHeartbeatNowMs(now);
+  }, []);
+  const updateStatsRefreshOperation = useCallback(
+    (input: {
+      label?: string;
+      detail?: string;
+      telemetry?: string;
+      progress?: number;
+      cursorMs?: number;
+      resetClock?: boolean;
+    }) => {
+      const current = statsRefreshOperationRef.current;
+      const now = Date.now();
+      const nextOperation: StatsRefreshOperationSnapshot = {
+        label: input.label ?? current.label,
+        detail: input.detail ?? current.detail,
+        telemetry: input.telemetry ?? current.telemetry,
+        startedAtMs:
+          input.resetClock ||
+          !current.startedAtMs ||
+          (typeof input.label === "string" && input.label !== current.label)
+            ? now
+            : current.startedAtMs,
+        updatedAtMs: now
+      };
+      statsRefreshOperationRef.current = nextOperation;
+      setStatsRefreshOperation(nextOperation);
+      setStatsRefreshHeartbeatNowMs(now);
+      if (Number.isFinite(input.progress)) {
+        setStatsRefreshProgressValue(Number(input.progress));
+      }
+      if (Number.isFinite(input.cursorMs)) {
+        setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(Number(input.cursorMs)));
+      }
+    },
+    [setStatsRefreshProgressValue]
+  );
   const commitStatsRefreshStatus = useCallback((status: string) => {
     statsRefreshStatusRef.current = status;
     setStatsRefreshStatus(status);
-  }, []);
+    resetStatsRefreshOperation();
+  }, [resetStatsRefreshOperation]);
   const clearStatsRefreshPhaseHoldTimeout = useCallback(() => {
     if (!statsRefreshPhaseHoldTimeoutRef.current) {
       statsRefreshPhaseHoldRef.current = false;
@@ -10697,8 +10895,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       statsRefreshPhaseHoldRef.current = true;
       statsRefreshQueuedStatusRef.current = null;
       commitStatsRefreshStatus(status);
-      statsRefreshProgressRef.current = 0;
-      setStatsRefreshProgress(0);
+      setStatsRefreshProgressValue(0);
       setStatsRefreshLoadingDisplayProgress(0);
       statsRefreshActivePhaseKeyRef.current = getStatsRefreshPhaseKey(status);
 
@@ -10712,7 +10909,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         }
       }, Math.max(0, durationMs));
     },
-    [clearStatsRefreshPhaseHoldTimeout, commitStatsRefreshStatus]
+    [clearStatsRefreshPhaseHoldTimeout, commitStatsRefreshStatus, setStatsRefreshProgressValue]
   );
   const setStatsRefreshPhasePlanValue = useCallback((phasePlan: StatsRefreshPhaseKey[]) => {
     statsRefreshPhasePlanRef.current = phasePlan;
@@ -10744,14 +10941,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const finishStatsRefreshLoading = useCallback(
     (label: string) => {
       clearStatsRefreshResetTimeout();
-      setStatsRefreshProgress(100);
+      setStatsRefreshProgressValue(100);
       setStatsRefreshProgressLabel(label);
 
       const closeOverlay = () => {
         updateStatsRefreshOverlayMode("idle");
-        setStatsRefreshProgress(0);
+        setStatsRefreshProgressValue(0);
         setStatsRefreshLoadingDisplayProgress(0);
-        statsRefreshProgressRef.current = 0;
         statsRefreshActivePhaseKeyRef.current = "freeze";
         commitStatsRefreshStatus("Updating Backtest Statistics");
         setStatsRefreshPhasePlanValue([]);
@@ -10791,6 +10987,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     [
       clearStatsRefreshResetTimeout,
       commitStatsRefreshStatus,
+      setStatsRefreshProgressValue,
       setStatsRefreshPhasePlanValue,
       updateStatsRefreshOverlayMode
     ]
@@ -10807,9 +11004,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
     if (!settingsChanged) {
       updateStatsRefreshOverlayMode("idle");
-      setStatsRefreshProgress(0);
+      setStatsRefreshProgressValue(0);
       setStatsRefreshLoadingDisplayProgress(0);
-      statsRefreshProgressRef.current = 0;
       commitStatsRefreshStatus("Updating Backtest Statistics");
       setStatsRefreshPhasePlanValue([]);
       setStatsRefreshProgressLabel("");
@@ -10853,9 +11049,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       setPanelAnalyticsStatus("loading");
       setBacktestAnalyticsStatus("loading");
       updateStatsRefreshOverlayMode("loading");
-      setStatsRefreshProgress(0);
+      setStatsRefreshProgressValue(0);
       setStatsRefreshLoadingDisplayProgress(0);
-      statsRefreshProgressRef.current = 0;
       const nextPhasePlan = buildStatsRefreshPhasePlan({
         needsHistorySeedReload,
         loadingLibraries: hasAiAnalysisPhase,
@@ -10892,11 +11087,19 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       );
       setStatsRefreshTimelineRangeValue(phaseStartMs, phaseEndMs);
       setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(phaseStartMs));
+      updateStatsRefreshOperation({
+        label: "Freezing the active backtest snapshot",
+        detail:
+          "Clearing the prior replay result, locking the current settings, and planning the new 5-step backtest run before data loads begin.",
+        telemetry: `${nextSettings.symbol} · ${nextSettings.timeframe} · ${nextSettings.minutePreciseEnabled ? `${nextSettings.precisionTimeframe} precision enabled` : "analysis-only replay"}`,
+        progress: 8,
+        cursorMs: phaseStartMs,
+        resetClock: true
+      });
     } else {
       updateStatsRefreshOverlayMode("idle");
-      setStatsRefreshProgress(0);
+      setStatsRefreshProgressValue(0);
       setStatsRefreshLoadingDisplayProgress(0);
-      statsRefreshProgressRef.current = 0;
       commitStatsRefreshStatus("Updating Backtest Statistics");
       setStatsRefreshPhasePlanValue([]);
       setStatsRefreshProgressLabel("");
@@ -10914,6 +11117,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     setStatsRefreshPhasePlanValue,
     setStatsRefreshTimelineRangeValue,
     startStatsRefreshPhaseHold,
+    setStatsRefreshProgressValue,
+    updateStatsRefreshOperation,
     updateStatsRefreshOverlayMode
   ]);
 
@@ -11003,18 +11208,62 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
   useEffect(() => {
     statsRefreshProgressRef.current = statsRefreshProgress;
-    setStatsRefreshLoadingDisplayProgress(statsRefreshProgress);
   }, [statsRefreshProgress]);
 
   useEffect(() => {
-    if (statsRefreshOverlayMode !== "loading") {
+    if (statsRefreshOverlayMode === "idle") {
+      setStatsRefreshLoadingDisplayProgress(statsRefreshProgressRef.current);
       return;
     }
 
-    if (
-      statsRefreshStatus === "Replaying Backtest Trades" ||
-      statsRefreshStatus === "Recovering Replay Locally"
-    ) {
+    let rafId = 0;
+
+    const tick = () => {
+      if (statsRefreshOverlayModeRef.current === "idle") {
+        return;
+      }
+
+      const currentValue = statsRefreshLoadingDisplayProgressRef.current;
+      const targetValue = clamp(statsRefreshProgressRef.current, 0, 100);
+      const delta = targetValue - currentValue;
+      const needsUpdate = Math.abs(delta) >= 0.05;
+      if (needsUpdate) {
+        const easing = delta > 0 ? (targetValue >= 98 ? 0.04 : 0.06) : 0.14;
+        const nextValue =
+          Math.abs(delta) < 0.18 ? targetValue : currentValue + delta * easing;
+        statsRefreshLoadingDisplayProgressRef.current = nextValue;
+        setStatsRefreshLoadingDisplayProgress(nextValue);
+      }
+
+      rafId = window.requestAnimationFrame(tick);
+    };
+
+    rafId = window.requestAnimationFrame(tick);
+
+    return () => {
+      if (rafId) {
+        window.cancelAnimationFrame(rafId);
+      }
+    };
+  }, [statsRefreshOverlayMode]);
+
+  useEffect(() => {
+    if (statsRefreshOverlayMode === "idle") {
+      return;
+    }
+
+    setStatsRefreshHeartbeatNowMs(Date.now());
+    const intervalId = window.setInterval(() => {
+      setStatsRefreshHeartbeatNowMs(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [statsRefreshOverlayMode]);
+
+  useEffect(() => {
+    if (statsRefreshOverlayMode !== "loading" || statsRefreshStatus !== "Resetting Backtest Run") {
       return;
     }
 
@@ -11028,15 +11277,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
             loadingLibraries: false
           });
     const startedAt = performance.now();
-    const rangeSnapshot = statsRefreshTimelineRangeRef.current;
-    const rangeStartMs = Number.isFinite(rangeSnapshot.startMs)
-      ? rangeSnapshot.startMs
-      : backtestRefreshNowMs - BACKTEST_LOOKBACK_YEARS * 365 * 24 * 60 * 60_000;
-    const rangeEndMs = Number.isFinite(rangeSnapshot.endMs)
-      ? Math.max(rangeStartMs + 60_000, rangeSnapshot.endMs)
-      : backtestRefreshNowMs;
-    const autoFinish = isStatsRefreshAutoFinishPhase(statusSnapshot);
-    let completed = false;
     let rafId = 0;
 
     const phaseKey = resolveStatsRefreshPhaseKey(phasePlanSnapshot, statusSnapshot);
@@ -11045,23 +11285,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     const phaseStartProgress = enteringPhase
       ? progressWindow.start
       : clamp(statsRefreshProgressRef.current, progressWindow.start, progressWindow.end);
-    const phaseCursorLabel =
-      phaseKey === "freeze" || phaseKey === "candles" || phaseKey === "candidates"
-        ? formatStatsRefreshDateLabel(rangeStartMs)
-        : formatStatsRefreshDateLabel(rangeEndMs);
-
     statsRefreshActivePhaseKeyRef.current = phaseKey;
-    statsRefreshProgressRef.current = phaseStartProgress;
-    setStatsRefreshProgress(phaseStartProgress);
-    setStatsRefreshLoadingDisplayProgress(phaseStartProgress);
-    setStatsRefreshProgressLabel(phaseCursorLabel);
+    setStatsRefreshProgressValue(phaseStartProgress);
 
     const tick = () => {
-      if (statsRefreshOverlayModeRef.current !== "loading") {
-        return;
-      }
-
-      if (statsRefreshStatusRef.current !== statusSnapshot) {
+      if (
+        statsRefreshOverlayModeRef.current !== "loading" ||
+        statsRefreshStatusRef.current !== statusSnapshot
+      ) {
         return;
       }
 
@@ -11071,17 +11302,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           : clamp((performance.now() - startedAt) / durationMs, 0, 1);
       const nextProgress =
         progressWindow.start + (progressWindow.end - progressWindow.start) * ratio;
-      statsRefreshProgressRef.current = nextProgress;
-      setStatsRefreshProgress(nextProgress);
+      setStatsRefreshProgressValue(nextProgress);
 
       if (ratio < 1) {
         rafId = window.requestAnimationFrame(tick);
-        return;
-      }
-
-      if (autoFinish && !completed) {
-        completed = true;
-        finishStatsRefreshLoading(formatStatsRefreshDateLabel(rangeEndMs));
       }
     };
 
@@ -11092,11 +11316,56 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         window.cancelAnimationFrame(rafId);
       }
     };
+  }, [setStatsRefreshProgressValue, statsRefreshOverlayMode, statsRefreshStatus]);
+
+  useEffect(() => {
+    if (statsRefreshOverlayMode !== "loading" || statsRefreshStatus !== "Loading Candle History") {
+      return;
+    }
+
+    const elapsedMs =
+      statsRefreshOperation.startedAtMs > 0
+        ? Math.max(0, statsRefreshHeartbeatNowMs - statsRefreshOperation.startedAtMs)
+        : 0;
+    const normalizedLabel = statsRefreshOperation.label.trim().toLowerCase();
+    let floorProgress = NaN;
+    let capProgress = NaN;
+
+    if (normalizedLabel.includes("scanning cached")) {
+      floorProgress = 8;
+      capProgress = 16;
+    } else if (normalizedLabel.includes("requesting analysis")) {
+      floorProgress = 18;
+      capProgress = 52;
+    } else if (normalizedLabel.includes("requesting precision")) {
+      floorProgress = 64;
+      capProgress = 82;
+    } else if (normalizedLabel.includes("validating replay candle coverage")) {
+      floorProgress = 94;
+      capProgress = 98;
+    }
+
+    if (!Number.isFinite(floorProgress) || !Number.isFinite(capProgress)) {
+      return;
+    }
+
+    const progressRatio = 1 - Math.exp(-elapsedMs / 7_000);
+    const nextProgress = floorProgress + (capProgress - floorProgress) * progressRatio;
+
+    if (nextProgress <= statsRefreshProgressRef.current + 0.35) {
+      return;
+    }
+
+    updateStatsRefreshOperation({
+      progress: nextProgress
+    });
   }, [
-    backtestRefreshNowMs,
-    finishStatsRefreshLoading,
+    statsRefreshHeartbeatNowMs,
+    statsRefreshOperation.label,
+    statsRefreshOperation.startedAtMs,
     statsRefreshOverlayMode,
-    statsRefreshStatus
+    statsRefreshStatus,
+    updateStatsRefreshOperation
   ]);
 
   const selectedAsset = useMemo(() => {
@@ -11220,6 +11489,74 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const appliedAutoRunAiLibraryIds = useMemo(() => {
     return appliedRuntimeAiLibraryIds;
   }, [appliedRuntimeAiLibraryIds]);
+  useEffect(() => {
+    if (statsRefreshOverlayMode !== "loading" || statsRefreshStatus !== "Loading AI Libraries") {
+      return;
+    }
+
+    const totalLibraries = appliedAutoRunAiLibraryIds.length;
+    const readyLibraries = appliedAutoRunAiLibraryIds.filter((libraryId) => {
+      const status = aiLibraryRunStatus[libraryId] ?? "idle";
+      return status === "ready";
+    });
+    const errorLibraries = appliedAutoRunAiLibraryIds.filter((libraryId) => {
+      const status = aiLibraryRunStatus[libraryId] ?? "idle";
+      return status === "error";
+    });
+    const loadingLibraries = appliedAutoRunAiLibraryIds.filter((libraryId) => {
+      const status = aiLibraryRunStatus[libraryId] ?? "idle";
+      return status === "loading";
+    });
+    const settledCount = readyLibraries.length + errorLibraries.length;
+    const elapsedMs =
+      statsRefreshOperation.startedAtMs > 0
+        ? Math.max(0, statsRefreshHeartbeatNowMs - statsRefreshOperation.startedAtMs)
+        : 0;
+    const progressPerLibrary = totalLibraries > 0 ? 100 / totalLibraries : 100;
+    const inFlightCreep =
+      loadingLibraries.length > 0
+        ? progressPerLibrary * (1 - Math.exp(-elapsedMs / 5_000)) * 0.76
+        : 0;
+    const nextProgress =
+      totalLibraries <= 0
+        ? 100
+        : settledCount >= totalLibraries
+          ? 98
+          : Math.min(96, (settledCount / totalLibraries) * 100 + inFlightCreep);
+    const activeLibraryNames = loadingLibraries
+      .slice(0, 2)
+      .map((libraryId) => aiLibraryDefById[libraryId]?.name ?? libraryId);
+    const waitingSummary =
+      activeLibraryNames.length > 0
+        ? `Waiting on ${activeLibraryNames.join(", ")}${loadingLibraries.length > activeLibraryNames.length ? " and more" : ""}.`
+        : settledCount >= totalLibraries
+          ? "All selected AI libraries have settled and replay can continue."
+          : "Scheduling the selected AI libraries and waiting for their outputs.";
+
+    updateStatsRefreshOperation({
+      label: "Running the selected AI libraries",
+      detail:
+        `${waitingSummary} Their outputs feed confidence, nearest-neighbor, and anti-cheat context into the finished backtest panels.`,
+      telemetry:
+        `${settledCount.toLocaleString()}/${totalLibraries.toLocaleString()} settled - ${loadingLibraries.length.toLocaleString()} running - ${readyLibraries.length.toLocaleString()} ready - ${errorLibraries.length.toLocaleString()} errors`,
+      progress: nextProgress,
+      cursorMs:
+        statsRefreshTimelineRange.startMs +
+        Math.max(60_000, statsRefreshTimelineRange.endMs - statsRefreshTimelineRange.startMs) *
+          clamp(nextProgress / 100, 0, 0.92)
+    });
+  }, [
+    aiLibraryDefById,
+    aiLibraryRunStatus,
+    appliedAutoRunAiLibraryIds,
+    statsRefreshHeartbeatNowMs,
+    statsRefreshOperation.startedAtMs,
+    statsRefreshOverlayMode,
+    statsRefreshStatus,
+    statsRefreshTimelineRange.endMs,
+    statsRefreshTimelineRange.startMs,
+    updateStatsRefreshOperation
+  ]);
   const selectedAiLibraryCount = visibleAiLibraries.length;
   const availableAiLibraries = useMemo(() => {
     return aiLibraryDefs.filter(
@@ -12312,7 +12649,35 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       (existingPrecisionCandles.length < MIN_SEED_CANDLES ||
         existingPrecisionCandles.length < precisionTargetBars);
 
+    updateStatsRefreshOperation({
+      label: "Scanning cached analysis and precision candles",
+      detail: hasDateRange
+        ? "Checking the requested historical window, warmup bars, and replay support candles before opening any history requests."
+        : "Checking whether the currently cached replay seed already covers the warmup bars needed for this run.",
+      telemetry:
+        `${appliedBacktestSettings.timeframe} target ${targetBars.toLocaleString()} bars` +
+        (shouldLoadPrecisionSupport
+          ? ` · ${precisionTimeframe} precision target ${precisionTargetBars.toLocaleString()} bars`
+          : " · precision not required"),
+      progress: 8,
+      cursorMs: historyRequestWindow?.startIso ? Date.parse(historyRequestWindow.startIso) : undefined,
+      resetClock: true
+    });
+
     if (!needsHistory && !needsPrecisionSupport) {
+      updateStatsRefreshOperation({
+        label: "Reusing the already loaded replay seed",
+        detail:
+          "The cached analysis candles already cover the requested backtest window, so the loader can skip new history requests and move straight into candidate generation.",
+        telemetry:
+          `${existingCandles.length.toLocaleString()} analysis bars ready` +
+          (shouldLoadPrecisionSupport
+            ? ` · ${existingPrecisionCandles.length.toLocaleString()} precision bars ready`
+            : ""),
+        progress: 100,
+        cursorMs: historyRequestWindow?.startIso ? Date.parse(historyRequestWindow.startIso) : undefined,
+        resetClock: true
+      });
       if ((backtestSeriesMapRef.current[key]?.length ?? 0) < existingCandles.length) {
         setBacktestSeriesMap((prev) => ({
           ...prev,
@@ -12344,6 +12709,19 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       let resolvedReplaySeedCandles = existingCandles;
 
       try {
+        if (needsHistory) {
+          updateStatsRefreshOperation({
+            label: "Requesting analysis timeframe candle history",
+            detail: hasDateRange
+              ? `Fetching ${appliedBacktestSettings.timeframe} candles for the requested date window, then checking whether the returned range covers the warmup bars and replay window.`
+              : `Fetching the deeper ${appliedBacktestSettings.timeframe} replay seed so candidate generation has enough warmup bars and lookahead coverage.`,
+            telemetry:
+              `${appliedBacktestSettings.symbol} · ${appliedBacktestSettings.timeframe} · target ${targetBars.toLocaleString()} bars`,
+            progress: 18,
+            cursorMs: historyRequestWindow?.startIso ? Date.parse(historyRequestWindow.startIso) : undefined,
+            resetClock: true
+          });
+        }
         const deepHistoryCandles = needsHistory
           ? await fetchBacktestHistoryCandles(
               appliedBacktestSettings.timeframe,
@@ -12361,9 +12739,42 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       strictCoverage: true
                     }
                   }
-                : undefined
+              : undefined
             )
           : existingCandles;
+        if (needsHistory) {
+          updateStatsRefreshOperation({
+            label: "Analysis candle request finished",
+            detail:
+              "The analysis timeframe response returned and is now being checked against the requested coverage window before any precision support data is considered.",
+            telemetry: `${deepHistoryCandles.length.toLocaleString()} analysis bars returned`,
+            progress: shouldLoadPrecisionSupport && needsPrecisionSupport ? 54 : 68,
+            cursorMs: (() => {
+              const latestAnalysisTime = deepHistoryCandles[deepHistoryCandles.length - 1]?.time;
+              if (latestAnalysisTime != null) {
+                return normalizeTimestampMs(latestAnalysisTime);
+              }
+              return historyRequestWindow?.endIso
+                ? Date.parse(historyRequestWindow.endIso)
+                : undefined;
+            })()
+          });
+        }
+        if (shouldLoadPrecisionSupport && needsPrecisionSupport) {
+          updateStatsRefreshOperation({
+            label: "Requesting precision support candles",
+            detail:
+              "Loading the lower timeframe support candles that the replay engine uses to refine entries, exits, and stop handling inside each analysis candle.",
+            telemetry:
+              `${appliedBacktestSettings.symbol} · ${precisionTimeframe} · target ${precisionTargetBars.toLocaleString()} bars`,
+            progress: 64,
+            cursorMs:
+              precisionHistoryRequestWindow?.startIso
+                ? Date.parse(precisionHistoryRequestWindow.startIso)
+                : undefined,
+            resetClock: true
+          });
+        }
         const precisionCandles =
           shouldLoadPrecisionSupport && needsPrecisionSupport
             ? await fetchBacktestHistoryCandles(
@@ -12387,6 +12798,20 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
             : shouldLoadPrecisionSupport
               ? existingPrecisionCandles
               : [];
+        if (shouldLoadPrecisionSupport && needsPrecisionSupport) {
+          updateStatsRefreshOperation({
+            label: "Precision candle support finished",
+            detail:
+              "The precision timeframe response returned and is now being merged with the analysis seed so replay can refine intrabar execution accurately.",
+            telemetry: `${precisionCandles.length.toLocaleString()} precision bars returned`,
+            progress: 84,
+            cursorMs:
+              precisionCandles[precisionCandles.length - 1]?.time ??
+              (precisionHistoryRequestWindow?.endIso
+                ? Date.parse(precisionHistoryRequestWindow.endIso)
+                : undefined)
+          });
+        }
         let replaySeedCandles = pickLongestCandleSeries(
           deepHistoryCandles,
           existingCandles
@@ -12421,6 +12846,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       } catch {
         // Backtest falls back to chart history if deep history cannot load.
         if (!cancelled) {
+          updateStatsRefreshOperation({
+            label: "Falling back to the locally available candle cache",
+            detail:
+              "A deep history request failed, so the loader is trying to salvage the run from the longest chart-backed candle seed that still reaches the requested range.",
+            telemetry: `${appliedBacktestSettings.timeframe} fallback coverage check`,
+            progress: 88,
+            resetClock: true
+          });
           let fallbackCandles = pickLongestCandleSeries(
             appliedBacktestFallbackCandlesRef.current,
             existingCandles
@@ -12446,6 +12879,17 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         }
       } finally {
         if (!cancelled) {
+          updateStatsRefreshOperation({
+            label: "Validating replay candle coverage",
+            detail:
+              "Checking the final seeded candle sets, confirming the requested range is covered, and promoting the analysis and precision candles into the replay cache.",
+            telemetry:
+              `${resolvedReplaySeedCandles.length.toLocaleString()} analysis bars ready` +
+              (shouldLoadPrecisionSupport
+                ? ` · ${(backtestOneMinuteSeriesMapRef.current[precisionKey]?.length ?? existingPrecisionCandles.length).toLocaleString()} precision bars available`
+                : ""),
+            progress: 94
+          });
           const hasReplaySeedRangeStart =
             !hasDateRange ||
             candlesReachDateRangeStart(
@@ -12480,8 +12924,24 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               "Building Trade Candidates",
               STATS_REFRESH_PHASE_META.candidates.durationMs
             );
+            updateStatsRefreshOperation({
+              label: "Candle loading complete",
+              detail:
+                "Analysis history, optional precision support, and coverage validation are done. The run is handing the candle seed to candidate generation now.",
+              telemetry: `${resolvedReplaySeedCandles.length.toLocaleString()} replay seed bars promoted`,
+              progress: 100
+            });
             setBacktestHistorySeedReady(true);
           } else {
+            updateStatsRefreshOperation({
+              label: "Requested candle coverage could not be satisfied",
+              detail:
+                "The requested historical range still does not contain enough analysis candles to safely build replay candidates for this run.",
+              telemetry:
+                `${resolvedReplaySeedCandles.length.toLocaleString()} analysis bars available after validation`,
+              progress: 100,
+              resetClock: true
+            });
             queueStatsRefreshStatus(
               hasDateRange
                 ? "Historical Candle Range Unavailable"
@@ -12515,6 +12975,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     appliedBacktestSeedCandles.length,
     appliedBacktestSeedOneMinuteCandles.length,
     queueStatsRefreshStatus,
+    updateStatsRefreshOperation,
     shouldSkipBacktestHistoryFetch,
     startStatsRefreshPhaseHold
   ]);
@@ -13748,6 +14209,51 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     deterministicTradeBlueprints,
     backtestTargetTrades
   ]);
+  useEffect(() => {
+    if (statsRefreshOverlayMode !== "loading" || statsRefreshStatus !== "Building Trade Candidates") {
+      return;
+    }
+
+    const elapsedMs =
+      statsRefreshOperation.startedAtMs > 0
+        ? Math.max(0, statsRefreshHeartbeatNowMs - statsRefreshOperation.startedAtMs)
+        : 0;
+    const timelineSpanMs = Math.max(
+      60_000,
+      statsRefreshTimelineRange.endMs - statsRefreshTimelineRange.startMs
+    );
+    const targetRatio =
+      backtestTargetTrades > 0 ? clamp(tradeBlueprints.length / backtestTargetTrades, 0, 1) : 0;
+    const timeRatio = 1 - Math.exp(-elapsedMs / 6_000);
+    const nextProgress = Math.min(
+      96,
+      Math.max(14 + timeRatio * 66, 18 + targetRatio * 58)
+    );
+
+    updateStatsRefreshOperation({
+      label: "Building deterministic trade candidates",
+      detail:
+        tradeBlueprints.length > 0
+          ? "Signal generation is complete for the current candle window. The candidate queue is now being capped and staged in replay order."
+          : "Scanning the validated analysis candles, running the selected models, and staging deterministic trade candidates for replay.",
+      telemetry:
+        `${appliedBacktestModelProfiles.length.toLocaleString()} models - ${selectedBacktestCandles.length.toLocaleString()} analysis bars - ${tradeBlueprints.length.toLocaleString()} candidates - replay cap ${backtestTargetTrades.toLocaleString()}`,
+      progress: nextProgress,
+      cursorMs: statsRefreshTimelineRange.startMs + timelineSpanMs * clamp(nextProgress / 100, 0, 0.94)
+    });
+  }, [
+    appliedBacktestModelProfiles.length,
+    backtestTargetTrades,
+    selectedBacktestCandles.length,
+    statsRefreshHeartbeatNowMs,
+    statsRefreshOperation.startedAtMs,
+    statsRefreshOverlayMode,
+    statsRefreshStatus,
+    statsRefreshTimelineRange.endMs,
+    statsRefreshTimelineRange.startMs,
+    tradeBlueprints.length,
+    updateStatsRefreshOperation
+  ]);
 
   const [historyRows, setHistoryRows] = useState<HistoryItem[]>([]);
   const boundedHistoryRows = useMemo(() => {
@@ -14533,11 +15039,28 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       Number.isFinite(filterEndMs) ? Math.min(rawEndMs, filterEndMs) : rawEndMs
     );
     setStatsRefreshTimelineRangeValue(analysisStartMs, analysisEndMs);
+    updateStatsRefreshOperation({
+      label: "Indexing and sorting replay candidates",
+      detail:
+        "Locking the replay date window, sorting candidate trades into execution order, and preparing the candle maps the replay engine needs before execution begins.",
+      telemetry:
+        `${tradeBlueprintsSnapshot.length.toLocaleString()} candidates · target ${backtestTargetTradesSnapshot.toLocaleString()} trades · ${Object.keys(backtestHistorySeriesBySymbolSnapshot).length.toLocaleString()} symbol candle sets`,
+      progress: 18,
+      cursorMs: analysisStartMs,
+      resetClock: true
+    });
 
     if (tradeBlueprintsSnapshot.length === 0 || backtestTargetTradesSnapshot <= 0) {
       queueStatsRefreshStatus("No Trades In Selected Range");
-      setStatsRefreshProgress(100);
-      statsRefreshProgressRef.current = 100;
+      updateStatsRefreshOperation({
+        label: "No trades survived candidate generation",
+        detail:
+          "The validated candle seed did not produce any replayable trade candidates after model selection, date filters, and replay caps were applied.",
+        telemetry: `0 candidates ready for replay · ${Object.keys(backtestHistorySeriesBySymbolSnapshot).length.toLocaleString()} symbol candle sets inspected`,
+        progress: 100,
+        cursorMs: analysisEndMs,
+        resetClock: true
+      });
       setStatsRefreshReplaySettled(true);
       startTransition(() => {
         setHistoryRows([]);
@@ -14557,8 +15080,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       lastLoadingProgressRatio = normalizedRatio;
       const cursorMs = analysisStartMs + analysisSpanMs * normalizedRatio;
       const nextProgress = clamp(normalizedRatio * 100, 0, 100);
-      statsRefreshProgressRef.current = nextProgress;
-      setStatsRefreshProgress(nextProgress);
+      setStatsRefreshProgressValue(nextProgress);
       setStatsRefreshProgressLabel(formatStatsRefreshDateLabel(cursorMs));
     };
 
@@ -14566,6 +15088,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     let settled = false;
     let phaseTransitionTimeoutId = 0;
     let progressTimeoutId = 0;
+    let replayHeartbeatIntervalId = 0;
     let requestTimeoutId = 0;
     const requestController = new AbortController();
     const replayPayload = {
@@ -14590,6 +15113,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
       window.clearTimeout(progressTimeoutId);
       progressTimeoutId = 0;
+    };
+    const clearReplayHeartbeat = () => {
+      if (!replayHeartbeatIntervalId) {
+        return;
+      }
+
+      window.clearInterval(replayHeartbeatIntervalId);
+      replayHeartbeatIntervalId = 0;
     };
     const clearRequestTimeout = () => {
       if (!requestTimeoutId) {
@@ -14619,6 +15150,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
       settled = true;
       clearProgressTimeout();
+      clearReplayHeartbeat();
       clearRequestTimeout();
       clearPhaseTransitionTimeout();
       setStatsRefreshReplaySettled(true);
@@ -14633,7 +15165,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       }
 
       queueStatsRefreshStatus("Finalizing Statistics");
-      setLoadingProgressFromRatio(1);
+      setLoadingProgressFromRatio(0.88);
       commitRows([]);
     };
 
@@ -14642,7 +15174,15 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         return;
       }
 
-      setLoadingProgressFromRatio(1);
+      setLoadingProgressFromRatio(shouldShowPostReplayAiPhase ? 0.76 : 0.88);
+      updateStatsRefreshOperation({
+        label: "Replay rows are ready for analysis",
+        detail:
+          "Trade entries, exits, stop behavior, and final PnL are resolved. The run is now handing the replayed trade set into analytics and panel aggregation.",
+        telemetry: `${rows.length.toLocaleString()} replay rows committed`,
+        progress: shouldShowPostReplayAiPhase ? 76 : 88,
+        cursorMs: analysisEndMs
+      });
       const commitFinalizingPhase = () => {
         if (cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
           return;
@@ -14670,9 +15210,19 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       }
 
       clearProgressTimeout();
+      clearReplayHeartbeat();
       clearRequestTimeout();
       queueStatsRefreshStatus("Recovering Replay Locally");
       setLoadingProgressFromRatio(0.82);
+      updateStatsRefreshOperation({
+        label: "Switching from server replay to the local engine",
+        detail:
+          "The remote replay request exceeded its budget, so the same candidate batch is being resolved locally against the already loaded candle set.",
+        telemetry: `${chronologicalTradeBlueprints.length.toLocaleString()} candidates queued for local replay`,
+        progress: 82,
+        cursorMs: analysisStartMs,
+        resetClock: true
+      });
 
       window.setTimeout(() => {
         if (cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
@@ -14695,11 +15245,36 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       }
 
       queueStatsRefreshStatus("Replaying Backtest Trades");
-      setLoadingProgressFromRatio(0);
-      setLoadingProgressFromRatio(0.1);
-      progressTimeoutId = window.setTimeout(() => {
-        setLoadingProgressFromRatio(0.6);
-      }, 350);
+      setLoadingProgressFromRatio(0.08);
+      updateStatsRefreshOperation({
+        label: "Submitting candidates to the replay engine",
+        detail: minutePreciseEnabledSnapshot
+          ? "Resolving each candidate against the analysis candles and the precision support candles so entries, exits, TP, SL, break-even, and trailing behavior are replayed consistently."
+          : "Resolving each candidate against the analysis candle set so entries, exits, TP, SL, break-even, and trailing behavior are replayed consistently.",
+        telemetry:
+          `${chronologicalTradeBlueprints.length.toLocaleString()} candidates · ${Object.keys(backtestHistorySeriesBySymbolSnapshot).length.toLocaleString()} symbol candle sets`,
+        progress: 8,
+        cursorMs: analysisStartMs,
+        resetClock: true
+      });
+      const replayStartedAtMs = Date.now();
+      const tickReplayHeartbeat = () => {
+        const elapsedMs = Math.max(0, Date.now() - replayStartedAtMs);
+        const progressRatio = Math.min(0.94, 0.08 + 0.86 * (1 - Math.exp(-elapsedMs / 12_000)));
+        setLoadingProgressFromRatio(progressRatio);
+        updateStatsRefreshOperation({
+          label: "Replaying candidate trades across the loaded candle set",
+          detail: minutePreciseEnabledSnapshot
+            ? "The replay engine is stepping through analysis candles and precision support candles to resolve the exact order of entries, exits, and stop logic."
+            : "The replay engine is stepping through the analysis candle set to resolve the exact order of entries, exits, and stop logic.",
+          telemetry:
+            `${chronologicalTradeBlueprints.length.toLocaleString()} candidates · ${Object.keys(backtestHistorySeriesBySymbolSnapshot).length.toLocaleString()} symbol candle sets · ${formatStatsRefreshElapsedLabel(elapsedMs)}`,
+          progress: progressRatio * 100,
+          cursorMs: analysisStartMs + analysisSpanMs * Math.min(0.98, progressRatio)
+        });
+      };
+      tickReplayHeartbeat();
+      replayHeartbeatIntervalId = window.setInterval(tickReplayHeartbeat, 500);
       requestTimeoutId = window.setTimeout(() => {
         requestController.abort();
         recoverReplayLocally();
@@ -14751,6 +15326,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       cancelled = true;
       requestController.abort();
       clearProgressTimeout();
+      clearReplayHeartbeat();
       clearRequestTimeout();
       clearPhaseTransitionTimeout();
     };
@@ -14761,7 +15337,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     backtestRefreshNowMs,
     aiLibraryDefById,
     queueStatsRefreshStatus,
-    setStatsRefreshTimelineRangeValue
+    setStatsRefreshProgressValue,
+    setStatsRefreshTimelineRangeValue,
+    updateStatsRefreshOperation
   ]);
 
   const selectedHistoryTrade = useMemo(() => {
@@ -15428,7 +16006,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     setKnnNeighborSpace("post");
     setSelectedAiDomains(["Direction", "Model"]);
     setDimensionAmount(32);
-    setCompressionMethod("link");
+    setCompressionMethod("jl");
     setKEntry(12);
     setKExit(9);
     setKnnVoteMode("majority");
@@ -17856,6 +18434,102 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     statsRefreshPanelAnalyticsSettled &&
     statsRefreshBacktestAnalyticsSettled &&
     statsRefreshAiLibrariesSettled;
+
+  useEffect(() => {
+    if (
+      statsRefreshOverlayMode !== "loading" ||
+      (statsRefreshStatus !== "Applying AI Analysis" &&
+        statsRefreshStatus !== "Finalizing Statistics")
+    ) {
+      return;
+    }
+
+    const elapsedMs =
+      statsRefreshOperation.startedAtMs > 0
+        ? Math.max(0, statsRefreshHeartbeatNowMs - statsRefreshOperation.startedAtMs)
+        : 0;
+    const requiredTasks = [
+      {
+        label: "AI libraries",
+        required: statsRefreshNeedsAiLibraries,
+        status: statsRefreshAiLibrariesSettled ? "ready" : "loading"
+      },
+      {
+        label: "panel analytics",
+        required: statsRefreshNeedsPanelAnalytics,
+        status:
+          panelAnalyticsStatus === "error"
+            ? "error"
+            : statsRefreshPanelAnalyticsSettled
+              ? "ready"
+              : "loading"
+      },
+      {
+        label: "backtest analytics",
+        required: statsRefreshNeedsBacktestAnalytics,
+        status:
+          backtestAnalyticsStatus === "error"
+            ? "error"
+            : statsRefreshBacktestAnalyticsSettled
+              ? "ready"
+              : "loading"
+      }
+    ].filter((task) => task.required);
+    const totalTasks = Math.max(requiredTasks.length, 1);
+    const settledTasks = requiredTasks.filter((task) => task.status !== "loading").length;
+    const readyTasks = requiredTasks.filter((task) => task.status === "ready").length;
+    const errorTasks = requiredTasks.filter((task) => task.status === "error").length;
+    const pendingTasks = requiredTasks.filter((task) => task.status === "loading");
+    const pendingSummary =
+      pendingTasks.length > 0
+        ? `Waiting on ${pendingTasks[0]!.label}${pendingTasks.length > 1 ? ` and ${pendingTasks.length - 1} more tasks` : ""} before the finished run can replace the previous panel state.`
+        : "All required analytics payloads are settled and the final backtest panels are being committed now.";
+    const timeRatio = 1 - Math.exp(-elapsedMs / 5_500);
+    const settledRatio = settledTasks / totalTasks;
+    const nextProgress =
+      statsRefreshStatus === "Applying AI Analysis"
+        ? Math.min(78, 18 + settledRatio * 40 + timeRatio * 16)
+        : statsRefreshCompletionReady
+          ? 100
+          : Math.min(96, 42 + settledRatio * 42 + timeRatio * 12);
+    const label =
+      statsRefreshStatus === "Applying AI Analysis"
+        ? "Filtering replay rows and settling AI analysis"
+        : "Finalizing summaries and backtest panels";
+    const detail =
+      statsRefreshStatus === "Applying AI Analysis"
+        ? `${pendingSummary} Date filters, session filters, AI thresholds, and nearest-neighbor context are being aligned against the replayed trade set.`
+        : `${pendingSummary} Summary cards, calendars, tables, cluster views, and performance panels are waiting on the last settled payloads.`;
+
+    updateStatsRefreshOperation({
+      label,
+      detail,
+      telemetry:
+        `${readyTasks.toLocaleString()}/${totalTasks.toLocaleString()} ready - ${pendingTasks.length.toLocaleString()} loading - ${errorTasks.toLocaleString()} errors - panel ${panelAnalyticsStatus} - stats ${backtestAnalyticsStatus}`,
+      progress: nextProgress,
+      cursorMs:
+        statsRefreshTimelineRange.startMs +
+        Math.max(60_000, statsRefreshTimelineRange.endMs - statsRefreshTimelineRange.startMs) *
+          clamp(nextProgress / 100, 0, 0.99)
+    });
+  }, [
+    backtestAnalyticsStatus,
+    panelAnalyticsStatus,
+    statsRefreshAiLibrariesSettled,
+    statsRefreshBacktestAnalyticsSettled,
+    statsRefreshCompletionReady,
+    statsRefreshHeartbeatNowMs,
+    statsRefreshNeedsAiLibraries,
+    statsRefreshNeedsBacktestAnalytics,
+    statsRefreshNeedsPanelAnalytics,
+    statsRefreshOperation.startedAtMs,
+    statsRefreshOverlayMode,
+    statsRefreshPanelAnalyticsSettled,
+    statsRefreshStatus,
+    statsRefreshTimelineRange.endMs,
+    statsRefreshTimelineRange.startMs,
+    updateStatsRefreshOperation
+  ]);
 
   useEffect(() => {
     if (statsRefreshOverlayMode !== "loading") {
@@ -22335,7 +23009,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     0,
     ((100 - clamp(statsRefreshProgress, 0, 100)) / 100) * (STATS_REFRESH_HOLD_MS / 1000)
   );
-  const statsRefreshDisplayProgress = clamp(statsRefreshProgress, 0, 100);
+  const statsRefreshDisplayProgress = clamp(
+    statsRefreshOverlayMode === "loading"
+      ? statsRefreshLoadingDisplayProgress
+      : statsRefreshProgress,
+    0,
+    100
+  );
   const statsRefreshRangeStartLabel = formatStatsRefreshDateLabel(statsRefreshTimelineRange.startMs);
   const statsRefreshRangeEndLabel = formatStatsRefreshDateLabel(statsRefreshTimelineRange.endMs);
   const statsRefreshStatusDetail = getStatsRefreshStatusDetail(statsRefreshStatus, {
@@ -22369,8 +23049,72 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const statsRefreshContextSummaryLabel =
     `${appliedBacktestSettings.symbol} - ${appliedBacktestSettings.timeframe} - ` +
     `${appliedBacktestSettings.aiMode === "off" ? "AI Off" : "AI On"}`;
+  const statsRefreshOperationElapsedMs =
+    statsRefreshOperation.startedAtMs > 0
+      ? Math.max(0, statsRefreshHeartbeatNowMs - statsRefreshOperation.startedAtMs)
+      : 0;
+  const statsRefreshOperationElapsedLabel = formatStatsRefreshElapsedLabel(
+    statsRefreshOperationElapsedMs
+  );
+  const statsRefreshOperationLabel =
+    statsRefreshOperation.label.trim() || `Tracking ${statsRefreshPhaseName.toLowerCase()}`;
+  const statsRefreshOperationDetail =
+    statsRefreshOperation.detail.trim() || statsRefreshStatusDetail;
+  const statsRefreshOperationPulseDetail = getStatsRefreshLivePulseDetail(
+    statsRefreshStatus,
+    statsRefreshOperationLabel,
+    statsRefreshOperationElapsedMs
+  );
+  const statsRefreshOperationTelemetryLabel = [
+    statsRefreshOperation.telemetry.trim(),
+    statsRefreshOperationElapsedLabel
+  ]
+    .filter((value) => value.length > 0)
+    .join(" - ");
   void statsRefreshPhaseLabel;
   void statsRefreshContextLabel;
+  const statsRefreshLoadingContent = (
+    <>
+      <div className="stats-refresh-loading-head">
+        <div className="stats-refresh-loading-status">{statsRefreshPhaseName}</div>
+        <div className="stats-refresh-loading-pct">
+          {`${Math.round(statsRefreshDisplayProgress)}%`}
+        </div>
+      </div>
+      <div className="stats-refresh-loading-meta">
+        <span>{statsRefreshPhaseSummaryLabel}</span>
+        <span>{statsRefreshContextSummaryLabel}</span>
+      </div>
+      <div className="stats-refresh-loading-step">
+        <div className="stats-refresh-loading-step-label">{statsRefreshOperationLabel}</div>
+        <div className="stats-refresh-loading-detail">{statsRefreshOperationDetail}</div>
+        <div className="stats-refresh-loading-subdetail">{statsRefreshOperationPulseDetail}</div>
+        <div className="stats-refresh-loading-step-meta">
+          <span>{statsRefreshOperationTelemetryLabel}</span>
+          <span>{statsRefreshStatusDetail}</span>
+        </div>
+      </div>
+      <div
+        key={statsRefreshStatus}
+        className="stats-refresh-loading-track"
+        role="progressbar"
+        aria-label="Updating backtest statistics"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(statsRefreshDisplayProgress)}
+      >
+        <div
+          className="stats-refresh-loading-fill"
+          style={{ width: `${statsRefreshDisplayProgress}%` }}
+        />
+      </div>
+      <div className="stats-refresh-loading-range">
+        <span>{statsRefreshRangeStartLabel}</span>
+        <span>{statsRefreshCurrentDateLabel}</span>
+        <span>{statsRefreshRangeEndLabel}</span>
+      </div>
+    </>
+  );
   const isGideonSurface = selectedSurfaceTab === "ai";
   const backtestSurfaceLoadingLabel =
     selectedSurfaceTab === "models" ? "Loading Models..." : "Preparing Backtest...";
@@ -22589,36 +23333,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         {statsRefreshOverlayVisible && statsRefreshOverlayMode === "loading" ? (
           <div className="stats-refresh-overlay" aria-live="polite" aria-atomic="true">
             <div className="stats-refresh-loading-card">
-              <div className="stats-refresh-loading-topline">
-                <div className="stats-refresh-loading-status">{statsRefreshPhaseName}</div>
-                <div className="stats-refresh-loading-progress-value">
-                  {`${Math.round(statsRefreshDisplayProgress)}%`}
-                </div>
-              </div>
-              <div className="stats-refresh-loading-phase">
-                <span>{statsRefreshPhaseSummaryLabel}</span>
-                <span>{statsRefreshContextSummaryLabel}</span>
-              </div>
-              <div className="stats-refresh-loading-detail">{statsRefreshStatusDetail}</div>
-              <div
-                key={statsRefreshStatus}
-                className="stats-refresh-loading-track"
-                role="progressbar"
-                aria-label="Updating backtest statistics"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(statsRefreshDisplayProgress)}
-              >
-                <div
-                  className="stats-refresh-loading-fill"
-                  style={{ width: `${statsRefreshDisplayProgress}%` }}
-                />
-              </div>
-              <div className="stats-refresh-loading-range">
-                <span>{statsRefreshRangeStartLabel}</span>
-                <span>{statsRefreshCurrentDateLabel}</span>
-                <span>{statsRefreshRangeEndLabel}</span>
-              </div>
+              {statsRefreshLoadingContent}
             </div>
           </div>
         ) : null}
@@ -27910,36 +28625,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         statsRefreshOverlayMode === "loading" ? (
           <div className="stats-refresh-loading-overlay" aria-live="polite" aria-atomic="true">
             <div className="stats-refresh-loading-shell">
-              <div className="stats-refresh-loading-head">
-                <div className="stats-refresh-loading-status">{statsRefreshPhaseName}</div>
-                <div className="stats-refresh-loading-pct">
-                  {`${Math.round(statsRefreshDisplayProgress)}%`}
-                </div>
-              </div>
-              <div className="stats-refresh-loading-meta">
-                <span>{statsRefreshPhaseSummaryLabel}</span>
-                <span>{statsRefreshContextSummaryLabel}</span>
-              </div>
-              <div className="stats-refresh-loading-detail">{statsRefreshStatusDetail}</div>
-              <div
-                key={statsRefreshStatus}
-                className="stats-refresh-loading-track"
-                role="progressbar"
-                aria-label="Updating backtest statistics"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(statsRefreshDisplayProgress)}
-              >
-                <div
-                  className="stats-refresh-loading-fill"
-                  style={{ width: `${statsRefreshDisplayProgress}%` }}
-                />
-              </div>
-              <div className="stats-refresh-loading-range">
-                <span>{statsRefreshRangeStartLabel}</span>
-                <span>{statsRefreshCurrentDateLabel}</span>
-                <span>{statsRefreshRangeEndLabel}</span>
-              </div>
+              {statsRefreshLoadingContent}
             </div>
           </div>
         ) : (
