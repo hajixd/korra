@@ -555,6 +555,8 @@ function TradeDetailsModalImpl({
   dimensionRows,
   onClose,
 }) {
+  type DimensionProfileScaleMode = "raw" | "standardized";
+
   const num = (v) => {
     if (typeof v === "number") return v;
     if (typeof v === "string") {
@@ -779,7 +781,32 @@ function TradeDetailsModalImpl({
     );
     return rankedDimension ? String((rankedDimension as any).name) : "—";
   }, [normalizedDimensionRows, trade]);
-  const getPaddedDimensionTrackRange = (dimension) => {
+  const [dimensionProfileScaleMode, setDimensionProfileScaleMode] =
+    React.useState<DimensionProfileScaleMode>("raw");
+  const getDimensionScaleData = (
+    dimension,
+    scaleMode: DimensionProfileScaleMode = dimensionProfileScaleMode
+  ) => {
+    const isRaw = scaleMode === "raw";
+    const segmentSource = isRaw
+      ? (dimension as any)?.rawSegments
+      : (dimension as any)?.segments;
+
+    return {
+      min: Number(isRaw ? (dimension as any)?.rawMin : (dimension as any)?.min),
+      max: Number(isRaw ? (dimension as any)?.rawMax : (dimension as any)?.max),
+      qLow: Number(isRaw ? (dimension as any)?.rawQLow : (dimension as any)?.qLow),
+      qHigh: Number(isRaw ? (dimension as any)?.rawQHigh : (dimension as any)?.qHigh),
+      entryValue: Number(
+        isRaw ? (dimension as any)?.rawEntryValue : (dimension as any)?.entryValue
+      ),
+      segments: Array.isArray(segmentSource) ? segmentSource : [],
+    };
+  };
+  const getPaddedDimensionTrackRange = (
+    dimension,
+    scaleMode: DimensionProfileScaleMode = dimensionProfileScaleMode
+  ) => {
     const numericValues = [];
     const pushIfFinite = (value) => {
       const numericValue = Number(value);
@@ -787,17 +814,15 @@ function TradeDetailsModalImpl({
         numericValues.push(numericValue);
       }
     };
+    const scaleData = getDimensionScaleData(dimension, scaleMode);
 
-    pushIfFinite((dimension as any)?.min);
-    pushIfFinite((dimension as any)?.max);
-    pushIfFinite((dimension as any)?.qLow);
-    pushIfFinite((dimension as any)?.qHigh);
-    pushIfFinite((dimension as any)?.entryValue);
+    pushIfFinite(scaleData.min);
+    pushIfFinite(scaleData.max);
+    pushIfFinite(scaleData.qLow);
+    pushIfFinite(scaleData.qHigh);
+    pushIfFinite(scaleData.entryValue);
 
-    const segments = Array.isArray((dimension as any)?.segments)
-      ? (dimension as any).segments
-      : [];
-    segments.forEach((segment) => {
+    scaleData.segments.forEach((segment) => {
       pushIfFinite(segment?.start);
       pushIfFinite(segment?.end);
     });
@@ -826,6 +851,7 @@ function TradeDetailsModalImpl({
   };
   const [hoveredDimensionProfile, setHoveredDimensionProfile] = React.useState<{
     key: string;
+    scaleMode: DimensionProfileScaleMode;
     pct: number;
     value: number;
     label: string;
@@ -842,13 +868,42 @@ function TradeDetailsModalImpl({
     if (hi <= lo) return 50;
     return clamp(((v - lo) / (hi - lo)) * 100, 0, 100);
   };
-  const formatTrackLabel = (prefix, value) =>
-    Number.isFinite(Number(value)) ? `${prefix} ${Number(value).toFixed(1)}` : prefix;
+  const formatDimensionValue = (
+    value,
+    scaleMode: DimensionProfileScaleMode = dimensionProfileScaleMode
+  ) => {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) {
+      return "—";
+    }
+    const digits =
+      scaleMode === "raw"
+        ? Math.abs(numericValue) >= 100
+          ? 2
+          : Math.abs(numericValue) >= 10
+            ? 3
+            : 4
+        : 2;
+    return numericValue.toLocaleString(undefined, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: digits,
+    });
+  };
+  const formatTrackLabel = (
+    prefix,
+    value,
+    scaleMode: DimensionProfileScaleMode = dimensionProfileScaleMode
+  ) =>
+    Number.isFinite(Number(value)) ? `${prefix} ${formatDimensionValue(value, scaleMode)}` : prefix;
   const formatPrecisePct = (value, digits = 3) =>
     Number.isFinite(Number(value)) ? `${(Number(value) * 100).toFixed(digits)}%` : "—";
-  const resolveDimensionHoverProfile = (dimension, value, pct) => {
-    const qLow = Number((dimension as any)?.qLow);
-    const qHigh = Number((dimension as any)?.qHigh);
+  const resolveDimensionHoverProfile = (
+    dimension,
+    value,
+    pct,
+    scaleMode: DimensionProfileScaleMode = dimensionProfileScaleMode
+  ) => {
+    const { qLow, qHigh } = getDimensionScaleData(dimension, scaleMode);
     const winLow = Number((dimension as any)?.winLow);
     const winHigh = Number((dimension as any)?.winHigh);
     const key = String((dimension as any)?.key ?? "");
@@ -880,12 +935,13 @@ function TradeDetailsModalImpl({
       );
       const label =
         value <= qLow
-          ? formatTrackLabel("<=", qLow)
+          ? formatTrackLabel("<=", qLow, scaleMode)
           : value >= qHigh
-          ? formatTrackLabel(">=", qHigh)
-          : `${Number(value).toFixed(2)}`;
+          ? formatTrackLabel(">=", qHigh, scaleMode)
+          : formatDimensionValue(value, scaleMode);
       return {
         key,
+        scaleMode,
         pct,
         value,
         label,
@@ -897,9 +953,10 @@ function TradeDetailsModalImpl({
     if (Number.isFinite(value) && Number.isFinite(qLow) && value <= qLow) {
       return {
         key,
+        scaleMode,
         pct,
         value,
-        label: formatTrackLabel("<=", qLow),
+        label: formatTrackLabel("<=", qLow, scaleMode),
         winRate: finiteLow ? winLow : defaultRate,
         confidence: clamp(0.32 + separation * 0.58, 0.05, 0.995),
       };
@@ -907,25 +964,31 @@ function TradeDetailsModalImpl({
     if (Number.isFinite(value) && Number.isFinite(qHigh) && value >= qHigh) {
       return {
         key,
+        scaleMode,
         pct,
         value,
-        label: formatTrackLabel(">=", qHigh),
+        label: formatTrackLabel(">=", qHigh, scaleMode),
         winRate: finiteHigh ? winHigh : defaultRate,
         confidence: clamp(0.32 + separation * 0.58, 0.05, 0.995),
       };
     }
     return {
       key,
+      scaleMode,
       pct,
       value,
-      label: Number.isFinite(value) ? `${Number(value).toFixed(2)}` : "mid range",
+      label: Number.isFinite(value) ? formatDimensionValue(value, scaleMode) : "mid range",
       winRate: defaultRate,
       confidence: clamp(0.18 + separation * 0.34, 0.05, 0.995),
     };
   };
-  const getDimensionTrackBackground = (dimension, min, max) => {
-    const qLow = Number((dimension as any)?.qLow);
-    const qHigh = Number((dimension as any)?.qHigh);
+  const getDimensionTrackBackground = (
+    dimension,
+    min,
+    max,
+    scaleMode: DimensionProfileScaleMode = dimensionProfileScaleMode
+  ) => {
+    const { qLow, qHigh } = getDimensionScaleData(dimension, scaleMode);
     const winLow = Number((dimension as any)?.winLow);
     const winHigh = Number((dimension as any)?.winHigh);
     const lowPct = toTrackPct(qLow, min, max);
@@ -968,6 +1031,9 @@ function TradeDetailsModalImpl({
 
     return "linear-gradient(90deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))";
   };
+  React.useEffect(() => {
+    setHoveredDimensionProfile(null);
+  }, [dimensionProfileScaleMode]);
 
   const InfoBox = ({ label, value, tone = "neutral" }) => {
     const isEmpty =
@@ -1382,7 +1448,7 @@ function TradeDetailsModalImpl({
                     marginTop: 3,
                   }}
                 >
-                  Green bands show the currently optimal zone. The vertical line
+                  Switch between raw and standardized scales. The vertical line
                   marks this trade&apos;s entry value for that dimension.
                 </div>
               </div>
@@ -1397,6 +1463,47 @@ function TradeDetailsModalImpl({
               </div>
             </div>
 
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: 3,
+                marginBottom: 12,
+                border: "1px solid rgba(255,255,255,0.08)",
+                background: "rgba(255,255,255,0.03)",
+              }}
+            >
+              {([
+                { id: "raw", label: "Non-Standardized" },
+                { id: "standardized", label: "Standardized" },
+              ] as Array<{ id: DimensionProfileScaleMode; label: string }>).map((tab) => {
+                const active = dimensionProfileScaleMode === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setDimensionProfileScaleMode(tab.id)}
+                    style={{
+                      border: "1px solid rgba(255,255,255,0.10)",
+                      background: active
+                        ? "rgba(255,255,255,0.14)"
+                        : "rgba(255,255,255,0.02)",
+                      color: active
+                        ? "rgba(255,255,255,0.96)"
+                        : "rgba(255,255,255,0.64)",
+                      fontSize: 10,
+                      fontWeight: 800,
+                      padding: "6px 10px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+
             {normalizedDimensionRows.length ? (
               <div
                 style={{
@@ -1409,20 +1516,25 @@ function TradeDetailsModalImpl({
               >
                 {normalizedDimensionRows.map((dimension) => {
                   const rowKey = String((dimension as any).key ?? "");
-                  const paddedTrackRange = getPaddedDimensionTrackRange(dimension);
+                  const scaleData = getDimensionScaleData(
+                    dimension,
+                    dimensionProfileScaleMode
+                  );
+                  const paddedTrackRange = getPaddedDimensionTrackRange(
+                    dimension,
+                    dimensionProfileScaleMode
+                  );
                   const min = Number.isFinite(paddedTrackRange.min)
                     ? paddedTrackRange.min
-                    : Number((dimension as any).min);
+                    : scaleData.min;
                   const max = Number.isFinite(paddedTrackRange.max)
                     ? paddedTrackRange.max
-                    : Number((dimension as any).max);
-                  const qLow = Number((dimension as any).qLow);
-                  const qHigh = Number((dimension as any).qHigh);
-                  const entryValue = Number((dimension as any).entryValue);
+                    : scaleData.max;
+                  const qLow = scaleData.qLow;
+                  const qHigh = scaleData.qHigh;
+                  const entryValue = scaleData.entryValue;
                   const entryPct = toTrackPct(entryValue, min, max);
-                  const segments = Array.isArray((dimension as any).segments)
-                    ? (dimension as any).segments
-                    : [];
+                  const segments = scaleData.segments;
                   const boundaryLabels = Array.from(
                     new Map(
                       segments
@@ -1432,21 +1544,21 @@ function TradeDetailsModalImpl({
                               ? "Minimum"
                               : Number.isFinite(qLow) &&
                                 Math.abs(Number(segment.start) - qLow) <= 0.000001
-                              ? formatTrackLabel("<=", qLow)
+                              ? formatTrackLabel("<=", qLow, dimensionProfileScaleMode)
                               : Number.isFinite(qHigh) &&
                                 Math.abs(Number(segment.start) - qHigh) <= 0.000001
-                              ? formatTrackLabel(">=", qHigh)
-                              : Number(segment.start).toFixed(2);
+                              ? formatTrackLabel(">=", qHigh, dimensionProfileScaleMode)
+                              : formatDimensionValue(segment.start, dimensionProfileScaleMode);
                           const endLabel =
                             Math.abs(Number(segment.end) - max) <= 0.000001
                               ? "Maximum"
                               : Number.isFinite(qLow) &&
                                 Math.abs(Number(segment.end) - qLow) <= 0.000001
-                              ? formatTrackLabel("<=", qLow)
+                              ? formatTrackLabel("<=", qLow, dimensionProfileScaleMode)
                               : Number.isFinite(qHigh) &&
                                 Math.abs(Number(segment.end) - qHigh) <= 0.000001
-                              ? formatTrackLabel(">=", qHigh)
-                              : Number(segment.end).toFixed(2);
+                              ? formatTrackLabel(">=", qHigh, dimensionProfileScaleMode)
+                              : formatDimensionValue(segment.end, dimensionProfileScaleMode);
                           return [
                             {
                               key: `${segmentIndex}-start`,
@@ -1510,13 +1622,15 @@ function TradeDetailsModalImpl({
                     )
                   );
                   const hoverInfo =
-                    hoveredDimensionProfile && hoveredDimensionProfile.key === rowKey
+                    hoveredDimensionProfile &&
+                    hoveredDimensionProfile.key === rowKey &&
+                    hoveredDimensionProfile.scaleMode === dimensionProfileScaleMode
                       ? hoveredDimensionProfile
                       : null;
                   const entryText =
                     entryPct == null || !Number.isFinite(entryValue)
                       ? "N/A"
-                      : entryValue.toFixed(2);
+                      : formatDimensionValue(entryValue, dimensionProfileScaleMode);
                   return (
                     <div
                       key={rowKey}
@@ -1581,7 +1695,8 @@ function TradeDetailsModalImpl({
                             background: getDimensionTrackBackground(
                               dimension,
                               min,
-                              max
+                              max,
+                              dimensionProfileScaleMode
                             ),
                             overflow: "visible",
                           }}
@@ -1596,12 +1711,20 @@ function TradeDetailsModalImpl({
                             const value =
                               max > min ? min + ((max - min) * pct) / 100 : min;
                             setHoveredDimensionProfile(
-                              resolveDimensionHoverProfile(dimension, value, pct)
+                              resolveDimensionHoverProfile(
+                                dimension,
+                                value,
+                                pct,
+                                dimensionProfileScaleMode
+                              )
                             );
                           }}
                           onMouseLeave={() =>
                             setHoveredDimensionProfile((current) =>
-                              current?.key === rowKey ? null : current
+                              current?.key === rowKey &&
+                              current?.scaleMode === dimensionProfileScaleMode
+                                ? null
+                                : current
                             )
                           }
                         >
@@ -1725,7 +1848,9 @@ function TradeDetailsModalImpl({
                         }}
                       >
                         <span>
-                          {Number.isFinite(min) ? `Minimum ${min.toFixed(2)}` : "Minimum —"}
+                          {Number.isFinite(min)
+                            ? `Minimum ${formatDimensionValue(min, dimensionProfileScaleMode)}`
+                            : "Minimum —"}
                         </span>
                         <span
                           style={{
@@ -1746,7 +1871,9 @@ function TradeDetailsModalImpl({
                             : "Hover anywhere on the bar for a precise win-rate estimate"}
                         </span>
                         <span>
-                          {Number.isFinite(max) ? `Maximum ${max.toFixed(2)}` : "Maximum —"}
+                          {Number.isFinite(max)
+                            ? `Maximum ${formatDimensionValue(max, dimensionProfileScaleMode)}`
+                            : "Maximum —"}
                         </span>
                       </div>
                     </div>
@@ -29786,6 +29913,8 @@ export default function App() {
 
       const qLow = quantile(zs, 0.1);
       const qHigh = quantile(zs, 0.9);
+      const rawQLow = quantile(xs, 0.1);
+      const rawQHigh = quantile(xs, 0.9);
 
       let lowN = 0,
         lowW = 0,
@@ -29830,6 +29959,10 @@ export default function App() {
 
         corr: r,
         absCorr: Math.abs(r),
+        rawMin: Math.min(...xs),
+        rawMax: Math.max(...xs),
+        rawQLow,
+        rawQHigh,
         min: minV,
         max: maxV,
         qLow,
@@ -30023,8 +30156,17 @@ export default function App() {
           : null;
       return {
         ...dimension,
+        rawEntryValue: Number.isFinite(rawValue) ? rawValue : null,
         entryValue,
         segments: buildDimensionRangeSegments(dimension),
+        rawSegments: buildDimensionRangeSegments({
+          min: Number((dimension as any)?.rawMin),
+          max: Number((dimension as any)?.rawMax),
+          qLow: Number((dimension as any)?.rawQLow),
+          qHigh: Number((dimension as any)?.rawQHigh),
+          winLow: Number((dimension as any)?.winLow),
+          winHigh: Number((dimension as any)?.winHigh),
+        }),
       };
     });
   }, [
@@ -35459,21 +35601,6 @@ export default function App() {
                       >
                         When Direction is off, a losing short can support a buy and
                         a losing long can support a sell.
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 10,
-                          lineHeight: 1.4,
-                          color: directionDomainEnabled
-                            ? "rgba(251,191,36,0.86)"
-                            : "rgba(255,255,255,0.48)",
-                        }}
-                      >
-                        {directionDomainEnabled
-                          ? "Direction domain is enabled, so this remap is currently inactive."
-                          : remapOppositeOutcomesLockedByParent
-                            ? "This remap is controlled from the main terminal settings."
-                            : "Use this when you want opposite-side losers to count as same-side evidence."}
                       </div>
                     </div>
 

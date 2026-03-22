@@ -3038,6 +3038,10 @@ type DimensionStatRow = {
   name: string;
   corr: number;
   absCorr: number;
+  rawMin: number;
+  rawMax: number;
+  rawQLow: number;
+  rawQHigh: number;
   min: number;
   max: number;
   qLow: number;
@@ -8919,6 +8923,10 @@ const buildDimensionStatsSummary = (params: {
     const std = Math.sqrt(Math.max(epsilon, variance));
     const normalized = values.map((value) => ((value - mean) / std) * 50);
     const correlation = getBinaryCorrelation(normalized, outcomes);
+    const rawMin = Math.min(...values);
+    const rawMax = Math.max(...values);
+    const rawLowThreshold = quantileOf(values, 0.1);
+    const rawHighThreshold = quantileOf(values, 0.9);
     const lowThreshold = quantileOf(normalized, 0.1);
     const highThreshold = quantileOf(normalized, 0.9);
     let lowTotal = 0;
@@ -8969,6 +8977,10 @@ const buildDimensionStatsSummary = (params: {
       name: dimension.name,
       corr: correlation,
       absCorr: Math.abs(correlation),
+      rawMin,
+      rawMax,
+      rawQLow: rawLowThreshold,
+      rawQHigh: rawHighThreshold,
       min: Math.min(...normalized),
       max: Math.max(...normalized),
       qLow: lowThreshold,
@@ -23337,6 +23349,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       const std = Math.sqrt(Math.max(epsilon, variance));
       const normalized = values.map((value) => ((value - mean) / std) * 50);
       const correlation = getBinaryCorrelation(normalized, outcomes);
+      const rawMin = Math.min(...values);
+      const rawMax = Math.max(...values);
+      const rawLowThreshold = quantileOf(values, 0.1);
+      const rawHighThreshold = quantileOf(values, 0.9);
       const lowThreshold = quantileOf(normalized, 0.1);
       const highThreshold = quantileOf(normalized, 0.9);
       let lowTotal = 0;
@@ -23387,6 +23403,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         name: dimension.name,
         corr: correlation,
         absCorr: Math.abs(correlation),
+        rawMin,
+        rawMax,
+        rawQLow: rawLowThreshold,
+        rawQHigh: rawHighThreshold,
         min: Math.min(...normalized),
         max: Math.max(...normalized),
         qLow: lowThreshold,
@@ -23634,8 +23654,17 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
       return {
         ...dimension,
+        rawEntryValue: Number.isFinite(rawValue) ? rawValue : null,
         entryValue,
-        segments: buildDimensionProfileSegments(dimension)
+        segments: buildDimensionProfileSegments(dimension),
+        rawSegments: buildDimensionProfileSegments({
+          min: dimension.rawMin,
+          max: dimension.rawMax,
+          qLow: dimension.rawQLow,
+          qHigh: dimension.rawQHigh,
+          winLow: dimension.winLow,
+          winHigh: dimension.winHigh
+        })
       };
     });
   }, [
@@ -27181,13 +27210,19 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                           <div className="ai-zip-label">Opposite-Direction Vote Remap</div>
                           <div
                             className="ai-zip-toggle-grid"
-                            style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
+                            style={{
+                              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                              opacity:
+                                aiDisabled || selectedAiDomains.includes("Direction")
+                                  ? 0.5
+                                  : 1,
+                            }}
                           >
                             <button
                               type="button"
                               className={`ai-zip-button pill ${remapOppositeOutcomes ? "active" : ""}`}
                               style={{ width: "100%" }}
-                              disabled={aiDisabled}
+                              disabled={aiDisabled || selectedAiDomains.includes("Direction")}
                               onClick={() => setRemapOppositeOutcomes(true)}
                             >
                               ON
@@ -27196,16 +27231,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                               type="button"
                               className={`ai-zip-button pill ${!remapOppositeOutcomes ? "active" : ""}`}
                               style={{ width: "100%" }}
-                              disabled={aiDisabled}
+                              disabled={aiDisabled || selectedAiDomains.includes("Direction")}
                               onClick={() => setRemapOppositeOutcomes(false)}
                             >
                               OFF
                             </button>
-                          </div>
-                          <div className="ai-zip-note">
-                            {selectedAiDomains.includes("Direction")
-                              ? "Direction is active, so opposite-direction remapping is ignored right now."
-                              : "When Direction is off, opposite-side losses can be remapped into supportive votes."}
                           </div>
                         </div>
                       </div>
