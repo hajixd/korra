@@ -114,6 +114,10 @@ const keyFailureState = new Map<
   string,
   { unavailableUntil: number; failureType: TwelveDataKeyFailureType; details: string }
 >();
+const keyUsageState = new Map<
+  string,
+  { lastAttemptAt: number; lastSuccessAt: number }
+>();
 
 class TwelveDataRequestError extends Error {
   failureType: TwelveDataKeyFailureType;
@@ -128,6 +132,8 @@ class TwelveDataRequestError extends Error {
 const RATE_LIMIT_COOLDOWN_MS = 65_000;
 const AUTH_COOLDOWN_MS = 30 * 60_000;
 const TRANSIENT_COOLDOWN_MS = 15_000;
+const KEY_MIN_REQUEST_GAP_MS = 8_000;
+const KEY_QUEUE_WAIT_CAP_MS = 2_500;
 
 const parseConfiguredApiKeys = (): string[] => {
   const raw = [
@@ -208,20 +214,40 @@ const getFailureCooldownMs = (failureType: TwelveDataKeyFailureType): number => 
   return TRANSIENT_COOLDOWN_MS;
 };
 
+const sleep = async (delayMs: number): Promise<void> => {
+  if (!Number.isFinite(delayMs) || delayMs <= 0) {
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+};
+
+const getKeyReadyAt = (apiKey: string): number => {
+  const lastAttemptAt = keyUsageState.get(apiKey)?.lastAttemptAt ?? 0;
+  const unavailableUntil = keyFailureState.get(apiKey)?.unavailableUntil ?? 0;
+  return Math.max(unavailableUntil, lastAttemptAt + KEY_MIN_REQUEST_GAP_MS);
+};
+
 const getOrderedApiKeys = (): string[] => {
-  const nowMs = Date.now();
   return getApiKeys().sort((left, right) => {
-    const leftUnavailableUntil = keyFailureState.get(left)?.unavailableUntil ?? 0;
-    const rightUnavailableUntil = keyFailureState.get(right)?.unavailableUntil ?? 0;
-    const leftCooling = leftUnavailableUntil > nowMs ? 1 : 0;
-    const rightCooling = rightUnavailableUntil > nowMs ? 1 : 0;
-    if (leftCooling !== rightCooling) {
-      return leftCooling - rightCooling;
+    const leftReadyAt = getKeyReadyAt(left);
+    const rightReadyAt = getKeyReadyAt(right);
+    if (leftReadyAt !== rightReadyAt) {
+      return leftReadyAt - rightReadyAt;
     }
-    if (leftUnavailableUntil !== rightUnavailableUntil) {
-      return leftUnavailableUntil - rightUnavailableUntil;
+    const leftLastSuccessAt = keyUsageState.get(left)?.lastSuccessAt ?? 0;
+    const rightLastSuccessAt = keyUsageState.get(right)?.lastSuccessAt ?? 0;
+    if (leftLastSuccessAt !== rightLastSuccessAt) {
+      return leftLastSuccessAt - rightLastSuccessAt;
     }
     return 0;
+  });
+};
+
+const markApiKeyAttempt = (apiKey: string) => {
+  const current = keyUsageState.get(apiKey);
+  keyUsageState.set(apiKey, {
+    lastAttemptAt: Date.now(),
+    lastSuccessAt: current?.lastSuccessAt ?? 0
   });
 };
 
@@ -239,6 +265,11 @@ const markApiKeyFailure = (
 
 const markApiKeySuccess = (apiKey: string) => {
   keyFailureState.delete(apiKey);
+  const current = keyUsageState.get(apiKey);
+  keyUsageState.set(apiKey, {
+    lastAttemptAt: current?.lastAttemptAt ?? 0,
+    lastSuccessAt: Date.now()
+  });
 };
 
 const parseMaybeNumber = (value: unknown): number => {
@@ -296,8 +327,30 @@ const requestJson = async <T extends TwelveDataJson>(
   params: Record<string, string | number | undefined>,
   timeoutMs = DEFAULT_HTTP_TIMEOUT_MS
 ): Promise<T> => {
-  const apiKeys = getOrderedApiKeys();
+  let apiKeys = getOrderedApiKeys();
+  let earliestReadyAt =
+    apiKeys.length > 0
+      ? apiKeys.reduce((best, apiKey) => Math.min(best, getKeyReadyAt(apiKey)), Number.POSITIVE_INFINITY)
+      : Number.POSITIVE_INFINITY;
+  const initialWaitMs = earliestReadyAt - Date.now();
+  if (Number.isFinite(initialWaitMs) && initialWaitMs > 75) {
+    await sleep(Math.min(initialWaitMs, KEY_QUEUE_WAIT_CAP_MS));
+  }
+
+  apiKeys = getOrderedApiKeys().filter((apiKey) => getKeyReadyAt(apiKey) <= Date.now());
   let lastError: TwelveDataRequestError | null = null;
+
+  if (apiKeys.length === 0) {
+    earliestReadyAt =
+      getOrderedApiKeys().reduce(
+        (best, apiKey) => Math.min(best, getKeyReadyAt(apiKey)),
+        Number.POSITIVE_INFINITY
+      );
+    const retryInMs = Math.max(0, earliestReadyAt - Date.now());
+    throw new Error(
+      `Twelve Data key pool cooling down. Retry in ${Math.max(1, Math.ceil(retryInMs / 1000))}s.`
+    );
+  }
 
   for (const apiKey of apiKeys) {
     const url = new URL(`${TWELVE_DATA_API_BASE}${pathname}`);
@@ -312,6 +365,7 @@ const requestJson = async <T extends TwelveDataJson>(
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    markApiKeyAttempt(apiKey);
 
     try {
       const response = await fetch(url.toString(), {
