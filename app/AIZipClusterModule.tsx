@@ -760,6 +760,7 @@ function TradeDetailsModalImpl({
     value: number;
     label: string;
     winRate: number | null;
+    confidence: number | null;
   } | null>(null);
   const toTrackPct = (value, min, max) => {
     const v = Number(value);
@@ -773,70 +774,83 @@ function TradeDetailsModalImpl({
   };
   const formatTrackLabel = (prefix, value) =>
     Number.isFinite(Number(value)) ? `${prefix} ${Number(value).toFixed(1)}` : prefix;
-  const getDimensionOptimalLabels = (dimension) => {
-    const qLow = Number((dimension as any)?.qLow);
-    const qHigh = Number((dimension as any)?.qHigh);
-    const winLow = Number((dimension as any)?.winLow);
-    const winHigh = Number((dimension as any)?.winHigh);
-    const labels = [] as Array<{ key: string; label: string; anchorValue: number }>;
-    const preferLow =
-      Number.isFinite(winLow) && (!Number.isFinite(winHigh) || winLow > winHigh);
-    const preferHigh =
-      Number.isFinite(winHigh) && (!Number.isFinite(winLow) || winHigh > winLow);
-    const preferBoth =
-      Number.isFinite(winLow) &&
-      Number.isFinite(winHigh) &&
-      Math.abs(winLow - winHigh) <= 0.000000001;
-
-    if ((preferLow || preferBoth) && Number.isFinite(qLow)) {
-      labels.push({
-        key: "low",
-        label: formatTrackLabel("<=", qLow),
-        anchorValue: qLow,
-      });
-    }
-    if ((preferHigh || preferBoth) && Number.isFinite(qHigh)) {
-      labels.push({
-        key: "high",
-        label: formatTrackLabel(">=", qHigh),
-        anchorValue: qHigh,
-      });
-    }
-    return labels;
-  };
+  const formatPrecisePct = (value, digits = 3) =>
+    Number.isFinite(Number(value)) ? `${(Number(value) * 100).toFixed(digits)}%` : "—";
   const resolveDimensionHoverProfile = (dimension, value, pct) => {
     const qLow = Number((dimension as any)?.qLow);
     const qHigh = Number((dimension as any)?.qHigh);
     const winLow = Number((dimension as any)?.winLow);
     const winHigh = Number((dimension as any)?.winHigh);
+    const key = String((dimension as any)?.key ?? "");
+    const finiteLow = Number.isFinite(winLow);
+    const finiteHigh = Number.isFinite(winHigh);
+    const defaultRate = finiteLow
+      ? winLow
+      : finiteHigh
+      ? winHigh
+      : 0.5;
+    const separation =
+      finiteLow && finiteHigh ? clamp(Math.abs(winHigh - winLow), 0, 1) : 0.18;
+
+    if (Number.isFinite(value) && Number.isFinite(qLow) && Number.isFinite(qHigh) && qHigh > qLow) {
+      const t = clamp((value - qLow) / (qHigh - qLow), 0, 1);
+      const eased = t * t * (3 - 2 * t);
+      const blendedRate =
+        finiteLow && finiteHigh
+          ? winLow + (winHigh - winLow) * eased
+          : defaultRate;
+      const edgeStrength =
+        value <= qLow || value >= qHigh
+          ? 1
+          : 1 - Math.min(t, 1 - t) * 2;
+      const confidence = clamp(
+        0.22 + separation * 0.46 + edgeStrength * 0.30,
+        0.05,
+        0.995
+      );
+      const label =
+        value <= qLow
+          ? formatTrackLabel("<=", qLow)
+          : value >= qHigh
+          ? formatTrackLabel(">=", qHigh)
+          : `${Number(value).toFixed(2)}`;
+      return {
+        key,
+        pct,
+        value,
+        label,
+        winRate: Number.isFinite(blendedRate) ? blendedRate : null,
+        confidence,
+      };
+    }
 
     if (Number.isFinite(value) && Number.isFinite(qLow) && value <= qLow) {
       return {
-        key: String((dimension as any)?.key ?? ""),
+        key,
         pct,
         value,
         label: formatTrackLabel("<=", qLow),
-        winRate: Number.isFinite(winLow) ? winLow : null,
+        winRate: finiteLow ? winLow : defaultRate,
+        confidence: clamp(0.32 + separation * 0.58, 0.05, 0.995),
       };
     }
     if (Number.isFinite(value) && Number.isFinite(qHigh) && value >= qHigh) {
       return {
-        key: String((dimension as any)?.key ?? ""),
+        key,
         pct,
         value,
         label: formatTrackLabel(">=", qHigh),
-        winRate: Number.isFinite(winHigh) ? winHigh : null,
+        winRate: finiteHigh ? winHigh : defaultRate,
+        confidence: clamp(0.32 + separation * 0.58, 0.05, 0.995),
       };
     }
     return {
-      key: String((dimension as any)?.key ?? ""),
+      key,
       pct,
       value,
-      label:
-        Number.isFinite(qLow) && Number.isFinite(qHigh)
-          ? `${qLow.toFixed(1)} to ${qHigh.toFixed(1)}`
-          : "mid range",
-      winRate: null,
+      label: Number.isFinite(value) ? `${Number(value).toFixed(2)}` : "mid range",
+      winRate: defaultRate,
+      confidence: clamp(0.18 + separation * 0.34, 0.05, 0.995),
     };
   };
   const getDimensionTrackBackground = (dimension, min, max) => {
@@ -1315,6 +1329,16 @@ function TradeDetailsModalImpl({
             />
           </div>
 
+          <TradeCandlestickChart
+            trade={trade}
+            candles={candles}
+            interval={interval}
+            parseMode={parseMode}
+            tpDist={tpDist}
+            slDist={slDist}
+            heightPx={420}
+          />
+
           <div
             style={{
               marginTop: compactViewport ? 10 : 12,
@@ -1377,19 +1401,61 @@ function TradeDetailsModalImpl({
                   overflowY: "auto",
                   paddingRight: 4,
                   display: "grid",
-                  gap: 18,
+                  gap: 24,
                 }}
               >
                 {normalizedDimensionRows.map((dimension) => {
                   const rowKey = String((dimension as any).key ?? "");
                   const min = Number((dimension as any).min);
                   const max = Number((dimension as any).max);
+                  const qLow = Number((dimension as any).qLow);
+                  const qHigh = Number((dimension as any).qHigh);
                   const entryValue = Number((dimension as any).entryValue);
                   const entryPct = toTrackPct(entryValue, min, max);
                   const segments = Array.isArray((dimension as any).segments)
                     ? (dimension as any).segments
                     : [];
-                  const optimalLabels = getDimensionOptimalLabels(dimension);
+                  const boundaryLabels = Array.from(
+                    new Map(
+                      segments
+                        .flatMap((segment, segmentIndex) => {
+                          const startLabel =
+                            Math.abs(Number(segment.start) - min) <= 0.000001
+                              ? "Minimum"
+                              : Number.isFinite(qLow) &&
+                                Math.abs(Number(segment.start) - qLow) <= 0.000001
+                              ? formatTrackLabel("<=", qLow)
+                              : Number.isFinite(qHigh) &&
+                                Math.abs(Number(segment.start) - qHigh) <= 0.000001
+                              ? formatTrackLabel(">=", qHigh)
+                              : Number(segment.start).toFixed(2);
+                          const endLabel =
+                            Math.abs(Number(segment.end) - max) <= 0.000001
+                              ? "Maximum"
+                              : Number.isFinite(qLow) &&
+                                Math.abs(Number(segment.end) - qLow) <= 0.000001
+                              ? formatTrackLabel("<=", qLow)
+                              : Number.isFinite(qHigh) &&
+                                Math.abs(Number(segment.end) - qHigh) <= 0.000001
+                              ? formatTrackLabel(">=", qHigh)
+                              : Number(segment.end).toFixed(2);
+                          return [
+                            {
+                              key: `${segmentIndex}-start`,
+                              pct: toTrackPct(segment.start, min, max),
+                              label: startLabel,
+                            },
+                            {
+                              key: `${segmentIndex}-end`,
+                              pct: toTrackPct(segment.end, min, max),
+                              label: endLabel,
+                            },
+                          ];
+                        })
+                        .filter((item) => item.pct != null)
+                        .map((item) => [String(item.pct), item])
+                    ).values()
+                  );
                   const segmentBoundaryPcts = Array.from(
                     new Set(
                       segments
@@ -1415,7 +1481,7 @@ function TradeDetailsModalImpl({
                       style={{
                         display: "grid",
                         gap: 9,
-                        padding: "11px 12px 14px",
+                        padding: "12px 12px 16px",
                         borderRadius: 10,
                         border: "1px solid rgba(255,255,255,0.08)",
                         background:
@@ -1449,26 +1515,19 @@ function TradeDetailsModalImpl({
                           style={{
                             flexShrink: 0,
                             fontSize: 9,
-                            color:
-                              hoverInfo?.winRate != null
-                                ? "rgba(134,239,172,0.86)"
-                                : "rgba(255,255,255,0.58)",
+                            color: "rgba(255,255,255,0.94)",
                             whiteSpace: "nowrap",
                           }}
                         >
-                          {hoverInfo
-                            ? hoverInfo.winRate != null
-                              ? `${(hoverInfo.winRate * 100).toFixed(1)}% win`
-                              : hoverInfo.label
-                            : `Entry ${entryText}`}
+                          Entry {entryText}
                         </div>
                       </div>
 
                       <div
                         style={{
                           position: "relative",
-                          paddingTop: 24,
-                          paddingBottom: 24,
+                          paddingTop: 28,
+                          paddingBottom: 30,
                         }}
                       >
                         <div
@@ -1558,9 +1617,11 @@ function TradeDetailsModalImpl({
                                 zIndex: 4,
                               }}
                             >
-                              {hoverInfo.winRate != null
-                                ? `${hoverInfo.label} · ${(hoverInfo.winRate * 100).toFixed(1)}%`
-                                : `${hoverInfo.label} · no edge`}
+                              {`${hoverInfo.label} · ${formatPrecisePct(
+                                hoverInfo.winRate
+                              )} win · ${formatPrecisePct(
+                                hoverInfo.confidence
+                              )} confidence`}
                             </div>
                           ) : null}
                         </div>
@@ -1569,7 +1630,7 @@ function TradeDetailsModalImpl({
                             style={{
                               position: "absolute",
                               left: `${entryPct}%`,
-                              top: 0,
+                              top: -7,
                               transform: "translateX(-50%)",
                               padding: "2px 6px",
                               border: "1px solid rgba(255,255,255,0.18)",
@@ -1583,9 +1644,8 @@ function TradeDetailsModalImpl({
                             Entry {entryText}
                           </div>
                         ) : null}
-                        {optimalLabels.map((labelItem) => {
-                          const labelPct =
-                            toTrackPct(labelItem.anchorValue, min, max) ?? 50;
+                        {boundaryLabels.map((labelItem) => {
+                          const labelPct = labelItem.pct ?? 50;
                           return (
                             <div
                               key={`${rowKey}-${labelItem.key}-label`}
@@ -1616,27 +1676,33 @@ function TradeDetailsModalImpl({
                           justifyContent: "space-between",
                           gap: 10,
                           fontSize: 9,
-                          color: "rgba(255,255,255,0.42)",
+                          color: "rgba(255,255,255,0.92)",
                         }}
                       >
-                        <span>{Number.isFinite(min) ? min.toFixed(2) : "—"}</span>
+                        <span>
+                          {Number.isFinite(min) ? `Minimum ${min.toFixed(2)}` : "Minimum —"}
+                        </span>
                         <span
                           style={{
                             color:
                               hoverInfo?.winRate != null
-                                ? "rgba(134,239,172,0.86)"
-                                : "rgba(255,255,255,0.52)",
+                                ? "rgba(134,239,172,0.92)"
+                                : "rgba(255,255,255,0.74)",
                             textAlign: "center",
                             flex: 1,
                           }}
                         >
                           {hoverInfo
-                            ? hoverInfo.winRate != null
-                              ? `${(hoverInfo.winRate * 100).toFixed(1)}% win rate in zone`
-                              : "Hover the green ranges for optimal-zone win rate"
-                            : "Hover the bar to inspect the stored zone win rate"}
+                            ? `${formatPrecisePct(
+                                hoverInfo.winRate
+                              )} win rate here with ${formatPrecisePct(
+                                hoverInfo.confidence
+                              )} confidence`
+                            : "Hover anywhere on the bar for a precise win-rate estimate"}
                         </span>
-                        <span>{Number.isFinite(max) ? max.toFixed(2) : "—"}</span>
+                        <span>
+                          {Number.isFinite(max) ? `Maximum ${max.toFixed(2)}` : "Maximum —"}
+                        </span>
                       </div>
                     </div>
                   );
@@ -1656,15 +1722,6 @@ function TradeDetailsModalImpl({
           </div>
         </div>
 
-        <TradeCandlestickChart
-          trade={trade}
-          candles={candles}
-          interval={interval}
-          parseMode={parseMode}
-          tpDist={tpDist}
-          slDist={slDist}
-          heightPx={420}
-        />
         </div>
       </div>
     </div>
