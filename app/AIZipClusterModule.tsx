@@ -24,6 +24,10 @@ import {
   toneForAIZipNeighborVoteOutcome,
 } from "../lib/aizipNeighborOutcome";
 import {
+  computeNeighborConfidenceScore,
+  resolveExplicitAiConfidenceScore,
+} from "../lib/aiConfidence";
+import {
   isTradeCheatedByFutureDependency,
   normalizeTradeTimestampSeconds,
 } from "../lib/aiTradeCheating";
@@ -15453,17 +15457,16 @@ function ClusterMapInner({
 
       // Non-HDBSCAN modes: keep the existing confidence signal.
       if (aiMethod !== "hdbscan") {
-        const raw =
-          (n as any).entryConfidence ??
-          (n as any).aiConfidence ??
-          (n as any).confidence ??
-          (n as any).entryMargin ??
-          (n as any).aiMargin ??
-          (n as any).potentialMargin ??
-          (n as any).margin ??
-          null;
-        const v = raw === null || raw === undefined ? NaN : Number(raw);
-        if (Number.isFinite(v)) return clamp(Math.abs(v), 0, 1);
+        const neighborConfidence = computeNeighborConfidenceScore(
+          Array.isArray((n as any)?.entryNeighbors)
+            ? ((n as any).entryNeighbors as any[])
+            : [],
+          { maxNeighbors: effectiveNeighborK, sortByDistance: true }
+        );
+        if (neighborConfidence != null) return neighborConfidence;
+
+        const explicitConfidence = resolveExplicitAiConfidenceScore(n);
+        if (explicitConfidence != null) return explicitConfidence;
         return 0;
       }
 
@@ -15483,7 +15486,13 @@ function ClusterMapInner({
       // Noise
       return 0.01;
     },
-    [aiMethod, hdbConfidenceClusters, pointInPolyWorld, resolveHdbClusterWinRate]
+    [
+      aiMethod,
+      effectiveNeighborK,
+      hdbConfidenceClusters,
+      pointInPolyWorld,
+      resolveHdbClusterWinRate,
+    ]
   );
 
   const gateConfidenceForNode = React.useCallback((n: any): number | null => {
@@ -16143,7 +16152,16 @@ function ClusterMapInner({
             const voteOutcome = resolveAIZipNeighborVoteOutcome(nb);
             const isWin = voteOutcome === "win";
             const isLoss = voteOutcome === "loss";
-            const tone = toneForAIZipNeighborVoteOutcome(voteOutcome);
+            const outcomeTone = toneForAIZipNeighborVoteOutcome(voteOutcome);
+            const pnlTone =
+              pnlVal == null
+                ? outcomeTone
+                : pnlVal > 0
+                ? "green"
+                : pnlVal < 0
+                ? "red"
+                : "neutral";
+            const visualTone = pnlTone !== "neutral" ? pnlTone : outcomeTone;
             const dirNum = Number(
               (hitNode as any)?.dir ??
                 (hitNode as any)?.direction ??
@@ -16194,7 +16212,9 @@ function ClusterMapInner({
               ),
               pnlLabel:
                 pnlVal == null ? "" : pnlVal > 0 ? `+${fmtUSD(pnlVal)}` : fmtUSD(pnlVal),
-              tone,
+              tone: outcomeTone,
+              visualTone,
+              pnlTone,
               isWin,
               isLoss,
             };
@@ -16681,24 +16701,17 @@ function ClusterMapInner({
   const resolveNonHdbConfidence = React.useCallback(
     (node: any) => {
       if (!node) return null;
-      const raw =
-        (node as any)?.entryConfidence ??
-        (node as any)?.aiConfidence ??
-        (node as any)?.confidence ??
-        (node as any)?.entryMargin ??
-        (node as any)?.aiMargin ??
-        (node as any)?.potentialMargin ??
-        (node as any)?.margin ??
-        null;
-      let v = raw === null || raw === undefined ? NaN : Number(raw);
-      if (Number.isFinite(v)) {
-        if (v > 1 && v <= 100) v = v / 100;
-        if (v >= -1 && v <= 1 && v < 0) v = (v + 1) / 2;
-        return clamp(Math.abs(v), 0, 1);
+      const neighborConfidence = computeNeighborConfidenceScore(
+        pickNeighborPayload(node),
+        { maxNeighbors: effectiveNeighborK, sortByDistance: true }
+      );
+      if (neighborConfidence != null) {
+        return neighborConfidence;
       }
-      return null;
+
+      return resolveExplicitAiConfidenceScore(node);
     },
-    []
+    [effectiveNeighborK, pickNeighborPayload]
   );
 
   const resolveSelectedNeighborMetric = React.useCallback(
@@ -16853,6 +16866,18 @@ function ClusterMapInner({
             const metric = options?.metricForRow?.(row) ?? null;
             const metricValue = Number(metric?.value);
             const hasMetric = !!metric?.label && Number.isFinite(metricValue);
+            const visualTone =
+              String((row as any)?.visualTone ?? (row as any)?.tone ?? "neutral").toLowerCase() === "green"
+                ? "green"
+                : String((row as any)?.visualTone ?? (row as any)?.tone ?? "neutral").toLowerCase() === "red"
+                ? "red"
+                : "neutral";
+            const pnlTone =
+              String((row as any)?.pnlTone ?? visualTone).toLowerCase() === "green"
+                ? "green"
+                : String((row as any)?.pnlTone ?? visualTone).toLowerCase() === "red"
+                ? "red"
+                : "neutral";
             const rowNode = (row as any)?.targetNode ?? null;
             const rowKind = String((rowNode as any)?.kind || "").toLowerCase();
             const isLibraryRow =
@@ -16900,16 +16925,16 @@ function ClusterMapInner({
                   borderRadius: 8,
                   border: row.isFocus
                     ? focusBorder
-                    : row.tone === "green"
+                    : visualTone === "green"
                     ? greenBorder
-                    : row.tone === "red"
+                    : visualTone === "red"
                     ? redBorder
                     : neutralBorder,
                   background: row.isFocus
                     ? focusBg
-                    : row.tone === "green"
+                    : visualTone === "green"
                     ? greenBg
-                    : row.tone === "red"
+                    : visualTone === "red"
                     ? redBg
                     : neutralBg,
                   cursor: isClickable ? "pointer" : "default",
@@ -16992,9 +17017,9 @@ function ClusterMapInner({
                         fontSize: 11,
                         fontWeight: 900,
                         color:
-                          row.tone === "green"
+                          pnlTone === "green"
                             ? "rgba(60,220,120,0.95)"
-                            : row.tone === "red"
+                            : pnlTone === "red"
                             ? "rgba(230,80,80,0.95)"
                             : "rgba(255,255,255,0.92)",
                       }}
@@ -17472,30 +17497,25 @@ function ClusterMapInner({
       if (!t) return 0;
 
       const resolveExplicitConfidence = () => {
-        const raw =
-          (t as any).entryConfidence ??
-          (t as any).aiConfidence ??
-          (t as any).confidence ??
-          (t as any).entryMargin ??
-          (t as any).margin ??
-          (t as any).aiMargin ??
-          (t as any).hdbWinRate ??
-          (t as any).clusterWinRate ??
-          null;
-        let v = raw === null || raw === undefined ? NaN : Number(raw);
-        if (!Number.isFinite(v)) return null;
-        if (v > 1 && v <= 100) v = v / 100;
-        if (v >= -1 && v <= 1 && v < 0) v = (v + 1) / 2;
-        return clamp(Math.abs(v), 0, 1);
+        return resolveExplicitAiConfidenceScore(t);
       };
+
+      if (aiMethod !== "hdbscan") {
+        const neighborConfidence = computeNeighborConfidenceScore(
+          pickNeighborPayload(t),
+          { maxNeighbors: effectiveNeighborK, sortByDistance: true }
+        );
+        if (neighborConfidence != null) {
+          return neighborConfidence;
+        }
+
+        const explicit = resolveExplicitConfidence();
+        return explicit ?? 0;
+      }
 
       const explicit = resolveExplicitConfidence();
       if (explicit != null) {
         return explicit;
-      }
-
-      if (aiMethod !== "hdbscan") {
-        return 0;
       }
 
       const uid = (t as any).uid ?? (t as any).id ?? null;
@@ -17507,7 +17527,13 @@ function ClusterMapInner({
       // Fallback: if we can't map back to a node, try using the trade/node itself (post-hoc nodes have fresh IDs).
       return hdbConfidenceForNode(t as any);
     },
-    [aiMethod, tradeNodeByUidAll, hdbConfidenceForNode]
+    [
+      aiMethod,
+      effectiveNeighborK,
+      hdbConfidenceForNode,
+      pickNeighborPayload,
+      tradeNodeByUidAll,
+    ]
   );
 
   const sortArrow = (k: string) => {
@@ -25779,42 +25805,10 @@ export default function App() {
   const resolveNeighborConfidence = React.useCallback(
     (t: any) => {
       if (!t) return null;
-      const raw = pickNeighborPayload(t);
-      if (!Array.isArray(raw) || raw.length === 0) return null;
-      const neighborK = Math.max(
-        0,
-        Math.min(36, Math.floor(Number(kEntry) || 0))
-      );
-      if (neighborK <= 0) return null;
-
-      const ordered = raw
-        .slice()
-        .sort((a: any, b: any) => {
-          const da = Number((a as any)?.d);
-          const db = Number((b as any)?.d);
-          const aa = Number.isFinite(da) ? da : Infinity;
-          const bb = Number.isFinite(db) ? db : Infinity;
-          return aa - bb;
-        })
-        .slice(0, neighborK);
-
-      let win = 0;
-      let loss = 0;
-
-      for (const nb of ordered as any[]) {
-        if (!nb) continue;
-
-        const voteOutcome = resolveAIZipNeighborVoteOutcome(nb);
-        const isWin = voteOutcome === "win";
-        const isLoss = voteOutcome === "loss";
-        if (!isWin && !isLoss) continue;
-
-        if (isWin) win += 1;
-        else if (isLoss) loss += 1;
-      }
-
-      if (win <= 0 && loss <= 0) return null;
-      return clamp(win / (win + loss + AI_EPS), 0, 1);
+      return computeNeighborConfidenceScore(pickNeighborPayload(t), {
+        maxNeighbors: kEntry,
+        sortByDistance: true,
+      });
     },
     [pickNeighborPayload, kEntry]
   );
@@ -25823,21 +25817,7 @@ export default function App() {
       if (!t) return 0;
 
       const resolveExplicitConfidence = () => {
-        const raw =
-          (t as any).entryConfidence ??
-          (t as any).aiConfidence ??
-          (t as any).confidence ??
-          (t as any).entryMargin ??
-          (t as any).margin ??
-          null;
-
-        let v = raw === null || raw === undefined ? NaN : Number(raw);
-        if (!Number.isFinite(v)) return null;
-
-        if (v > 1 && v <= 100) v = v / 100;
-        if (v >= -1 && v <= 1 && v < 0) v = (v + 1) / 2;
-
-        return clamp(Math.abs(v), 0, 1);
+        return resolveExplicitAiConfidenceScore(t);
       };
 
       // Confidence / margin:
@@ -25867,7 +25847,12 @@ export default function App() {
       }
 
       const neighborConf = resolveNeighborConfidence(t);
-      return neighborConf ?? null;
+      if (neighborConf != null) {
+        return neighborConf;
+      }
+
+      const explicit = resolveExplicitConfidence();
+      return explicit ?? 0;
     },
     [aiMethod, resolveNeighborConfidence]
   );

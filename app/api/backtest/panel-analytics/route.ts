@@ -8,6 +8,11 @@ import {
   AI_LIBRARY_DEFAULT_MAX_SAMPLES,
   AI_LIBRARY_MAX_SAMPLES
 } from "../../../../lib/aiLibrarySettings";
+import {
+  computeNeighborConfidenceScore,
+  normalizeAiProbabilityScore as normalizeSharedAiProbabilityScore,
+  resolveExplicitAiConfidenceScore
+} from "../../../../lib/aiConfidence";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1029,14 +1034,23 @@ const toNumeric = (value: unknown, fallback = 0) => {
 };
 
 const normalizeProbabilityScore = (value: unknown): number | null => {
-  let numeric = Number(value);
-  if (!Number.isFinite(numeric)) {
-    return null;
+  return normalizeSharedAiProbabilityScore(value);
+};
+
+const resolveTradeAiConfidenceScore = (trade: HistoryItem): number => {
+  const neighborConfidence = computeNeighborConfidenceScore(
+    Array.isArray(trade.entryNeighbors) ? trade.entryNeighbors : []
+  );
+  if (neighborConfidence != null) {
+    return neighborConfidence;
   }
-  if (numeric > 1 && numeric <= 100) {
-    numeric /= 100;
+
+  const explicitConfidence = resolveExplicitAiConfidenceScore(trade);
+  if (explicitConfidence != null) {
+    return explicitConfidence;
   }
-  return clamp(numeric, 0, 1);
+
+  return getTradeConfidenceScore(trade);
 };
 
 const normalizeTradeAiMode = (value: unknown): BacktestTradeAiMode | null => {
@@ -2121,9 +2135,7 @@ const computeAntiCheatBacktestContext = (params: {
     const preservedNeighbors = cloneEntryNeighbors(trade.entryNeighbors);
     const preservedClosestClusterUid =
       trade.closestClusterUid == null ? null : String(trade.closestClusterUid);
-    const preservedConfidenceRaw =
-      trade.entryConfidence ?? trade.confidence ?? trade.entryMargin ?? trade.margin ?? null;
-    const preservedConfidence = Number(preservedConfidenceRaw);
+    const preservedConfidence = resolveExplicitAiConfidenceScore(trade);
     const preservedAnc = normalizeProbabilityScore(
       trade.averageNeighborContributionAtEntry
     );
@@ -2138,7 +2150,7 @@ const computeAntiCheatBacktestContext = (params: {
 
     if (basePool.length === 0 && !hasCanonicalLibraryCandidates) {
       const confidence =
-        Number.isFinite(preservedConfidence)
+        preservedConfidence != null
           ? clamp(preservedConfidence, 0.01, 0.99)
           : getSyntheticWinProb(trade);
       confidenceById.set(trade.id, confidence);
@@ -2246,7 +2258,7 @@ const computeAntiCheatBacktestContext = (params: {
 
     if (neighborEntries.length === 0) {
       const confidence =
-        Number.isFinite(preservedConfidence)
+        preservedConfidence != null
           ? clamp(preservedConfidence, 0.01, 0.99)
           : clamp(0.5 + (baselineWinRate - 0.5) * 0.2, 0.18, 0.82);
       confidenceById.set(trade.id, confidence);
@@ -2370,7 +2382,8 @@ const filterHistoryRows = (params: {
         return true;
       }
 
-      const confidence = (confidenceById.get(trade.id) ?? getTradeConfidenceScore(trade)) * 100;
+      const confidence =
+        (confidenceById.get(trade.id) ?? resolveTradeAiConfidenceScore(trade)) * 100;
       if (confidence < effectiveConfidenceThreshold) {
         return false;
       }

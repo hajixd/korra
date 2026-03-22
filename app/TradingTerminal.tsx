@@ -31,7 +31,20 @@ import {
   updateProfile,
   type User
 } from "firebase/auth";
-import { doc, getDoc, serverTimestamp, setDoc, type Firestore } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  type Firestore
+} from "firebase/firestore";
 import type {
   AutoscaleInfo,
   CandlestickData,
@@ -86,6 +99,11 @@ import {
   summarizeBacktestTrades as summarizeBacktestTradesShared
 } from "../lib/backtestStats";
 import { isTradeCheatedByFutureDependency } from "../lib/aiTradeCheating";
+import {
+  computeAverageNeighborContributionAtEntryScore,
+  computeNeighborConfidenceScore,
+  resolveExplicitAiConfidenceScore
+} from "../lib/aiConfidence";
 import {
   firebaseClientConfigReady,
   firebaseClientMissingEnvVars,
@@ -178,7 +196,25 @@ const DEFAULT_COPYTRADE_ROUTE =
 const DIRECT_MT5_ADD_ACCOUNT_PATH = "/settings/account?view=add";
 type SavedPreset = { name: string; settings: Record<string, any>; savedAt: number };
 type Timeframe = "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
-type SurfaceTab = "chart" | "settings" | "models" | "backtest" | "ai" | "copytrade";
+type SurfaceTab = "chart" | "settings" | "models" | "backtest" | "ai" | "social" | "copytrade";
+type SocialPresetFeedItem = {
+  id: string;
+  presetName: string;
+  note: string;
+  settings: Record<string, any>;
+  authorUid: string;
+  authorDisplayName: string;
+  authorPhotoURL: string | null;
+  symbol: string;
+  analysisTimeframe: Timeframe;
+  precisionTimeframe: Timeframe;
+  minutePreciseEnabled: boolean;
+  aiMode: "off" | "knn" | "hdbscan";
+  enabledModelCount: number;
+  maxConcurrentTrades: number;
+  savedAt: number;
+  publishedAtMs: number;
+};
 type BacktestTab =
   | "mainSettings"
   | "mainStats"
@@ -214,7 +250,7 @@ type StrategyBacktestSurfaceSummary = {
   sellExitTrigger: string[];
 };
 
-const SURFACE_TAB_IDS: SurfaceTab[] = ["chart", "models", "settings", "backtest", "ai", "copytrade"];
+const SURFACE_TAB_IDS: SurfaceTab[] = ["chart", "models", "settings", "backtest", "ai", "social", "copytrade"];
 const BACKTEST_TAB_IDS: BacktestTab[] = [
   "mainSettings",
   "mainStats",
@@ -785,121 +821,20 @@ const toServerLibraryPointPayload = (point: any): ServerLibraryPointPayload => (
     : null
 });
 
-const normalizeAiProbabilityScore = (value: unknown): number | null => {
-  let numeric = Number(value);
-  if (!Number.isFinite(numeric)) {
-    return null;
-  }
-  if (numeric > 1 && numeric <= 100) {
-    numeric /= 100;
-  }
-  return clamp(numeric, 0, 1);
-};
-
-const getEntryNeighborOutcomeScore = (
-  neighbor: BacktestEntryNeighbor | null | undefined
-): number | null => {
-  if (!neighbor) {
-    return null;
-  }
-
-  const label = Number(neighbor.label);
-  if (Number.isFinite(label)) {
-    if (label > 0) return 1;
-    if (label < 0) return 0;
-  }
-
-  const outcome = String(
-    neighbor.metaOutcome ?? neighbor.t?.result ?? ""
-  ).trim().toLowerCase();
-  if (
-    outcome === "tp" ||
-    outcome === "win" ||
-    outcome.includes("win") ||
-    outcome.includes("take profit")
-  ) {
-    return 1;
-  }
-  if (
-    outcome === "sl" ||
-    outcome === "loss" ||
-    outcome.includes("loss") ||
-    outcome.includes("stop loss")
-  ) {
-    return 0;
-  }
-
-  const pnl = Number(neighbor.metaPnl ?? neighbor.t?.pnl ?? NaN);
-  if (Number.isFinite(pnl)) {
-    return pnl >= 0 ? 1 : 0;
-  }
-
-  return null;
-};
-
 const getTradeAverageNeighborContributionAtEntryScore = (
   trade: HistoryItem
 ): number | null => {
-  const explicit = normalizeAiProbabilityScore(
-    trade.averageNeighborContributionAtEntry
+  const explicit = resolveExplicitAiConfidenceScore(
+    { averageNeighborContributionAtEntry: trade.averageNeighborContributionAtEntry },
+    ["averageNeighborContributionAtEntry"]
   );
   if (explicit != null) {
     return explicit;
   }
 
-  const neighbors = Array.isArray(trade.entryNeighbors) ? trade.entryNeighbors : [];
-  if (!neighbors.length) {
-    return null;
-  }
-
-  const aggregates = new Map<string, { wins: number; losses: number }>();
-
-  for (const neighbor of neighbors) {
-    const outcomeScore = getEntryNeighborOutcomeScore(neighbor);
-    if (outcomeScore == null) {
-      continue;
-    }
-
-    const libraryKey =
-      String(neighbor.metaLib ?? "").trim().toLowerCase() || "unknown";
-    const weight = Math.max(0, Number(neighbor.w) || 1);
-    const current = aggregates.get(libraryKey) ?? { wins: 0, losses: 0 };
-    current.wins += weight * outcomeScore;
-    current.losses += weight * (1 - outcomeScore);
-    aggregates.set(libraryKey, current);
-  }
-
-  if (aggregates.size === 0) {
-    return null;
-  }
-
-  let weightedContribution = 0;
-  let totalWeight = 0;
-
-  for (const neighbor of neighbors) {
-    const libraryKey =
-      String(neighbor.metaLib ?? "").trim().toLowerCase() || "unknown";
-    const aggregate = aggregates.get(libraryKey);
-    if (!aggregate) {
-      continue;
-    }
-
-    const libraryTotal = aggregate.wins + aggregate.losses;
-    if (!(libraryTotal > 0)) {
-      continue;
-    }
-
-    const libraryContribution = aggregate.wins / libraryTotal;
-    const weight = Math.max(0, Number(neighbor.w) || 1);
-    weightedContribution += libraryContribution * weight;
-    totalWeight += weight;
-  }
-
-  if (!(totalWeight > 0)) {
-    return null;
-  }
-
-  return clamp(weightedContribution / totalWeight, 0, 1);
+  return computeAverageNeighborContributionAtEntryScore(
+    Array.isArray(trade.entryNeighbors) ? trade.entryNeighbors : []
+  );
 };
 
 const tradePassesAiEntryThresholds = (params: {
@@ -2637,6 +2572,134 @@ const parseSavedPresetList = (value: unknown): SavedPreset[] => {
       };
     })
     .filter((entry): entry is SavedPreset => entry !== null);
+};
+
+const coerceTimestampMs = (value: unknown, fallback = Date.now()): number => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (value && typeof value === "object") {
+    const candidate = value as {
+      seconds?: unknown;
+      nanoseconds?: unknown;
+      toMillis?: unknown;
+    };
+
+    if (typeof candidate.toMillis === "function") {
+      const nextValue = Number(candidate.toMillis());
+      if (Number.isFinite(nextValue)) {
+        return nextValue;
+      }
+    }
+
+    const seconds = Number(candidate.seconds ?? NaN);
+    const nanoseconds = Number(candidate.nanoseconds ?? 0);
+    if (Number.isFinite(seconds)) {
+      return seconds * 1000 + (Number.isFinite(nanoseconds) ? nanoseconds / 1_000_000 : 0);
+    }
+  }
+
+  return fallback;
+};
+
+const resolveSettingsAiMode = (value: unknown): "off" | "knn" | "hdbscan" => {
+  return value === "knn" || value === "hdbscan" ? value : "off";
+};
+
+const countPresetEnabledModels = (value: unknown): number => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return 0;
+  }
+
+  return Object.values(value as Record<string, unknown>).reduce<number>((count, state) => {
+    return count + ((Number(state ?? 0) > 0) ? 1 : 0);
+  }, 0);
+};
+
+const buildSocialPresetPreview = (settings: Record<string, any>) => {
+  const symbol = String(settings.selectedSymbol ?? "XAU_USD").trim() || "XAU_USD";
+  const analysisTimeframe = isTimeframe(settings.selectedBacktestTimeframe)
+    ? settings.selectedBacktestTimeframe
+    : isTimeframe(settings.selectedTimeframe)
+      ? settings.selectedTimeframe
+      : "15m";
+  const requestedPrecisionTimeframe = isTimeframe(settings.selectedBacktestPrecisionTimeframe)
+    ? settings.selectedBacktestPrecisionTimeframe
+    : settings.minutePreciseEnabled === true
+      ? "1m"
+      : analysisTimeframe;
+  const precisionTimeframe = clampBacktestPrecisionTimeframe(
+    analysisTimeframe,
+    requestedPrecisionTimeframe
+  );
+
+  return {
+    symbol,
+    analysisTimeframe,
+    precisionTimeframe,
+    minutePreciseEnabled: precisionTimeframe !== analysisTimeframe,
+    aiMode: resolveSettingsAiMode(settings.aiMode),
+    enabledModelCount: countPresetEnabledModels(settings.aiModelStates),
+    maxConcurrentTrades: clamp(Math.floor(Number(settings.maxConcurrentTrades) || 1), 1, 500)
+  };
+};
+
+const parseSocialPresetFeedList = (
+  value: Array<{ id: string; data: Record<string, unknown> }>
+): SocialPresetFeedItem[] => {
+  return value
+    .map((entry) => {
+      const raw = entry.data;
+      const presetName = String(raw.presetName ?? raw.name ?? "").trim();
+      const settings = raw.settings;
+
+      if (!presetName || !settings || typeof settings !== "object" || Array.isArray(settings)) {
+        return null;
+      }
+
+      const preview = buildSocialPresetPreview(settings as Record<string, any>);
+
+      return {
+        id: entry.id,
+        presetName,
+        note: String(raw.note ?? "").trim(),
+        settings: settings as Record<string, any>,
+        authorUid: String(raw.authorUid ?? "").trim(),
+        authorDisplayName: String(raw.authorDisplayName ?? "").trim() || "Unknown Trader",
+        authorPhotoURL:
+          typeof raw.authorPhotoURL === "string" && raw.authorPhotoURL.trim().length > 0
+            ? raw.authorPhotoURL
+            : null,
+        symbol: String(raw.symbol ?? preview.symbol).trim() || preview.symbol,
+        analysisTimeframe: isTimeframe(raw.analysisTimeframe)
+          ? raw.analysisTimeframe
+          : preview.analysisTimeframe,
+        precisionTimeframe: isTimeframe(raw.precisionTimeframe)
+          ? raw.precisionTimeframe
+          : preview.precisionTimeframe,
+        minutePreciseEnabled:
+          typeof raw.minutePreciseEnabled === "boolean"
+            ? raw.minutePreciseEnabled
+            : preview.minutePreciseEnabled,
+        aiMode: resolveSettingsAiMode(raw.aiMode ?? preview.aiMode),
+        enabledModelCount:
+          Number.isFinite(Number(raw.enabledModelCount))
+            ? Math.max(0, Math.floor(Number(raw.enabledModelCount)))
+            : preview.enabledModelCount,
+        maxConcurrentTrades:
+          Number.isFinite(Number(raw.maxConcurrentTrades))
+            ? clamp(Math.floor(Number(raw.maxConcurrentTrades)), 1, 500)
+            : preview.maxConcurrentTrades,
+        savedAt: coerceTimestampMs(raw.savedAt, Date.now()),
+        publishedAtMs: coerceTimestampMs(
+          raw.publishedAtMs ?? raw.publishedAt,
+          Date.now()
+        )
+      };
+    })
+    .filter((entry): entry is SocialPresetFeedItem => entry !== null)
+    .sort((left, right) => right.publishedAtMs - left.publishedAtMs);
 };
 
 const parseUploadedStrategyModelList = (
@@ -4644,6 +4707,7 @@ const surfaceTabs: Array<{ id: SurfaceTab; label: string }> = [
   { id: "settings", label: "Settings" },
   { id: "backtest", label: "Backtest" },
   { id: "ai", label: "Gideon" },
+  { id: "social", label: "Social" },
   { id: "copytrade", label: "Copy-Trade" }
 ];
 
@@ -6106,6 +6170,39 @@ function formatDateTime(timestampMs: number): string {
     timeZone: "UTC"
   });
 }
+
+const formatRelativeTimeLabel = (timestampMs: number): string => {
+  const deltaMs = Date.now() - timestampMs;
+  const absoluteMs = Math.abs(deltaMs);
+  const minuteMs = 60_000;
+  const hourMs = 60 * minuteMs;
+  const dayMs = 24 * hourMs;
+
+  if (!Number.isFinite(timestampMs) || absoluteMs < minuteMs) {
+    return "just now";
+  }
+
+  if (absoluteMs < hourMs) {
+    const minutes = Math.max(1, Math.round(absoluteMs / minuteMs));
+    return `${minutes}m ago`;
+  }
+
+  if (absoluteMs < dayMs) {
+    const hours = Math.max(1, Math.round(absoluteMs / hourMs));
+    return `${hours}h ago`;
+  }
+
+  const days = Math.max(1, Math.round(absoluteMs / dayMs));
+  if (days <= 6) {
+    return `${days}d ago`;
+  }
+
+  return new Date(timestampMs).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  });
+};
 
 const formatStatsDateLabel = (ymd: string): string => {
   return new Date(`${ymd}T00:00:00Z`).toLocaleDateString("en-US", {
@@ -10243,6 +10340,17 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [savedPresets, setSavedPresets] = useState<SavedPreset[]>([]);
   const [presetMenuOpen, setPresetMenuOpen] = useState<"save" | "load" | null>(null);
   const [presetNameInput, setPresetNameInput] = useState("");
+  const [socialPresets, setSocialPresets] = useState<SocialPresetFeedItem[]>([]);
+  const [socialPresetsLoading, setSocialPresetsLoading] = useState(false);
+  const [socialPresetsError, setSocialPresetsError] = useState("");
+  const [socialPublishPresetName, setSocialPublishPresetName] = useState("");
+  const [socialPublishNote, setSocialPublishNote] = useState("");
+  const [socialPublishStatus, setSocialPublishStatus] = useState("");
+  const [socialPublishStatusTone, setSocialPublishStatusTone] = useState<
+    "neutral" | "success" | "error"
+  >("neutral");
+  const [socialPublishing, setSocialPublishing] = useState(false);
+  const [socialPresetActionId, setSocialPresetActionId] = useState<string | null>(null);
   const [isMobileWorkspace, setIsMobileWorkspace] = useState(false);
   const [mobileTradeLimit, setMobileTradeLimit] = useState(3);
   const [aggressorPressure, setAggressorPressure] = useState<AggressorPressureSnapshot>(() => ({
@@ -14746,7 +14854,24 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, [panelAnalyticsData, panelAnalyticsStatus, shouldComputePanelAnalyticsOnServer]);
   const getEffectiveTradeConfidenceScore = useCallback(
     (trade: HistoryItem) => {
-      return antiCheatBacktestContext.confidenceById.get(trade.id) ?? getTradeConfidenceScore(trade);
+      const computed = antiCheatBacktestContext.confidenceById.get(trade.id);
+      if (computed != null && Number.isFinite(computed)) {
+        return computed;
+      }
+
+      const neighborConfidence = computeNeighborConfidenceScore(
+        Array.isArray(trade.entryNeighbors) ? trade.entryNeighbors : []
+      );
+      if (neighborConfidence != null) {
+        return neighborConfidence;
+      }
+
+      const explicitConfidence = resolveExplicitAiConfidenceScore(trade);
+      if (explicitConfidence != null) {
+        return explicitConfidence;
+      }
+
+      return getTradeConfidenceScore(trade);
     },
     [antiCheatBacktestContext]
   );
@@ -21505,6 +21630,183 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const mobileSavedPresets = useMemo(() => {
     return [...savedPresets].sort((a, b) => b.savedAt - a.savedAt);
   }, [savedPresets]);
+  const selectedSocialPublishPreset = useMemo(() => {
+    return mobileSavedPresets.find((preset) => preset.name === socialPublishPresetName) ?? null;
+  }, [mobileSavedPresets, socialPublishPresetName]);
+  const selectedSocialPublishPreview = useMemo(() => {
+    return selectedSocialPublishPreset
+      ? buildSocialPresetPreview(selectedSocialPublishPreset.settings)
+      : null;
+  }, [selectedSocialPublishPreset]);
+  const socialPublishedCount = useMemo(() => {
+    return socialPresets.filter((preset) => preset.authorUid === currentUser.uid).length;
+  }, [currentUser.uid, socialPresets]);
+  const socialFeaturedPreset = socialPresets[0] ?? null;
+  const socialVisiblePresets = useMemo(() => {
+    return socialPresets.slice(0, 36);
+  }, [socialPresets]);
+
+  useEffect(() => {
+    if (mobileSavedPresets.length === 0) {
+      if (socialPublishPresetName !== "") {
+        setSocialPublishPresetName("");
+      }
+      return;
+    }
+
+    if (
+      socialPublishPresetName &&
+      mobileSavedPresets.some((preset) => preset.name === socialPublishPresetName)
+    ) {
+      return;
+    }
+
+    setSocialPublishPresetName(mobileSavedPresets[0]!.name);
+  }, [mobileSavedPresets, socialPublishPresetName]);
+
+  useEffect(() => {
+    if (selectedSurfaceTab !== "social") {
+      return;
+    }
+
+    if (!firebaseDb) {
+      setSocialPresets([]);
+      setSocialPresetsLoading(false);
+      setSocialPresetsError("Community presets are unavailable until account cloud sync is configured.");
+      return;
+    }
+
+    setSocialPresetsLoading(true);
+    setSocialPresetsError("");
+
+    const presetsQuery = query(
+      collection(firebaseDb, "socialPresets"),
+      orderBy("publishedAtMs", "desc"),
+      limit(48)
+    );
+
+    const unsubscribe = onSnapshot(
+      presetsQuery,
+      (snapshot) => {
+        const parsed = parseSocialPresetFeedList(
+          snapshot.docs.map((docSnapshot) => ({
+            id: docSnapshot.id,
+            data: docSnapshot.data() as Record<string, unknown>
+          }))
+        );
+        setSocialPresets(parsed);
+        setSocialPresetsLoading(false);
+      },
+      () => {
+        setSocialPresetsLoading(false);
+        setSocialPresetsError("The social preset feed could not be loaded right now.");
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [firebaseDb, selectedSurfaceTab]);
+
+  const handlePublishSocialPreset = useCallback(async () => {
+    if (!firebaseDb) {
+      setSocialPublishStatus("Community presets are unavailable right now.");
+      setSocialPublishStatusTone("error");
+      return;
+    }
+
+    if (!selectedSocialPublishPreset) {
+      setSocialPublishStatus("Choose a saved preset before publishing.");
+      setSocialPublishStatusTone("error");
+      return;
+    }
+
+    const preview = buildSocialPresetPreview(selectedSocialPublishPreset.settings);
+
+    setSocialPublishing(true);
+    setSocialPublishStatus("");
+    setSocialPublishStatusTone("neutral");
+
+    try {
+      await addDoc(collection(firebaseDb, "socialPresets"), {
+        presetName: selectedSocialPublishPreset.name,
+        note: socialPublishNote.trim().slice(0, 180),
+        settings: selectedSocialPublishPreset.settings,
+        authorUid: currentUser.uid,
+        authorDisplayName: currentUserDisplayName,
+        authorPhotoURL: currentUser.photoURL ?? null,
+        symbol: preview.symbol,
+        analysisTimeframe: preview.analysisTimeframe,
+        precisionTimeframe: preview.precisionTimeframe,
+        minutePreciseEnabled: preview.minutePreciseEnabled,
+        aiMode: preview.aiMode,
+        enabledModelCount: preview.enabledModelCount,
+        maxConcurrentTrades: preview.maxConcurrentTrades,
+        savedAt: selectedSocialPublishPreset.savedAt,
+        publishedAt: serverTimestamp(),
+        publishedAtMs: Date.now()
+      });
+      setSocialPublishStatus(`Published ${selectedSocialPublishPreset.name} to the community feed.`);
+      setSocialPublishStatusTone("success");
+      setSocialPublishNote("");
+    } catch (error) {
+      setSocialPublishStatus(
+        error instanceof Error ? error.message : "That preset could not be published."
+      );
+      setSocialPublishStatusTone("error");
+    } finally {
+      setSocialPublishing(false);
+    }
+  }, [
+    currentUser.photoURL,
+    currentUser.uid,
+    currentUserDisplayName,
+    firebaseDb,
+    selectedSocialPublishPreset,
+    socialPublishNote
+  ]);
+
+  const handleRunSocialPreset = useCallback(
+    (preset: SocialPresetFeedItem) => {
+      applySettings(preset.settings);
+      setSelectedSurfaceTab("backtest");
+      setSelectedBacktestTab("mainStats");
+      setSocialPublishStatus(`Running ${preset.presetName} from ${preset.authorDisplayName}.`);
+      setSocialPublishStatusTone("neutral");
+      if (presetAutoRunTimeoutRef.current) {
+        window.clearTimeout(presetAutoRunTimeoutRef.current);
+      }
+      presetAutoRunTimeoutRef.current = window.setTimeout(() => {
+        applyBacktestSettingsSnapshot({ forceFullReload: true });
+      }, 0);
+    },
+    [applyBacktestSettingsSnapshot, applySettings]
+  );
+
+  const handleDeleteSocialPreset = useCallback(
+    async (preset: SocialPresetFeedItem) => {
+      if (!firebaseDb || preset.authorUid !== currentUser.uid) {
+        return;
+      }
+
+      setSocialPresetActionId(preset.id);
+      setSocialPublishStatus("");
+
+      try {
+        await deleteDoc(doc(firebaseDb, "socialPresets", preset.id));
+        setSocialPublishStatus(`Removed ${preset.presetName} from the community feed.`);
+        setSocialPublishStatusTone("neutral");
+      } catch (error) {
+        setSocialPublishStatus(
+          error instanceof Error ? error.message : "That published preset could not be removed."
+        );
+        setSocialPublishStatusTone("error");
+      } finally {
+        setSocialPresetActionId(null);
+      }
+    },
+    [currentUser.uid, firebaseDb]
+  );
 
   const aiZipClusterSourceCandles = useMemo(() => {
     if (!isClusterBacktestTabActive) {
@@ -24470,6 +24772,282 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               onRunChartActions={runAssistantChartActions}
               onImportStrategyModel={handleImportAssistantStrategyModel}
             />
+          </section>
+        ) : null}
+
+        {selectedSurfaceTab === "social" ? (
+          <section className="social-surface" aria-label="social preset workspace">
+            <div className="social-shell">
+              <div className="social-hero">
+                <article className="social-hero-copy">
+                  <span className="social-kicker">Community Presets</span>
+                  <h2>Share the setups that are actually worth rerunning.</h2>
+                  <p>
+                    Publish one of your saved workspace presets, browse the community feed, and
+                    pull any shared setup straight back into a fresh backtest run.
+                  </p>
+                </article>
+                <div className="social-hero-stats">
+                  <article className="social-stat-card">
+                    <span>Live Feed</span>
+                    <strong>{socialPresets.length.toLocaleString("en-US")}</strong>
+                    <small>Signed-in traders can see every published setup.</small>
+                  </article>
+                  <article className="social-stat-card">
+                    <span>Your Posts</span>
+                    <strong>{socialPublishedCount.toLocaleString("en-US")}</strong>
+                    <small>Publish from any preset you already keep in your workspace.</small>
+                  </article>
+                  <article className="social-stat-card">
+                    <span>Freshest Drop</span>
+                    <strong>{socialFeaturedPreset ? socialFeaturedPreset.presetName : "Waiting"}</strong>
+                    <small>
+                      {socialFeaturedPreset
+                        ? `${socialFeaturedPreset.authorDisplayName} · ${formatRelativeTimeLabel(
+                            socialFeaturedPreset.publishedAtMs
+                          )}`
+                        : "The first shared preset will land here."}
+                    </small>
+                  </article>
+                </div>
+              </div>
+
+              <div className="social-layout">
+                <aside className="social-publish-card">
+                  <div className="social-card-head">
+                    <div>
+                      <span className="social-kicker">Publish</span>
+                      <h3>Put a saved preset into the feed</h3>
+                      <p>
+                        Choose one of your saved workspace presets, add a short angle if you want,
+                        and publish it for the rest of the community.
+                      </p>
+                    </div>
+                    <div className="social-author-badge">
+                      {currentUser.photoURL ? (
+                        <span
+                          className="social-author-avatar social-author-avatar--photo"
+                          style={{ backgroundImage: `url("${currentUser.photoURL}")` }}
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <span className="social-author-avatar" aria-hidden="true">
+                          {currentUserInitials}
+                        </span>
+                      )}
+                      <span>{currentUserDisplayName}</span>
+                    </div>
+                  </div>
+
+                  {mobileSavedPresets.length === 0 ? (
+                    <div className="social-empty-state">
+                      <strong>No saved presets yet.</strong>
+                      <span>
+                        Save a preset first, then come back here to publish it for everyone else.
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <label className="social-field">
+                        <span>Saved Preset</span>
+                        <select
+                          value={socialPublishPresetName}
+                          onChange={(event) => setSocialPublishPresetName(event.target.value)}
+                        >
+                          {mobileSavedPresets.map((preset) => (
+                            <option key={preset.name} value={preset.name}>
+                              {preset.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="social-field">
+                        <span>Context Note</span>
+                        <textarea
+                          value={socialPublishNote}
+                          onChange={(event) => setSocialPublishNote(event.target.value.slice(0, 180))}
+                          placeholder="Optional: what makes this setup worth a rerun?"
+                          rows={3}
+                        />
+                      </label>
+
+                      {selectedSocialPublishPreview ? (
+                        <div className="social-preview-card">
+                          <div className="social-preview-title">
+                            <strong>{selectedSocialPublishPreset?.name}</strong>
+                            <span>
+                              Saved {new Date(selectedSocialPublishPreset?.savedAt ?? Date.now()).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <div className="social-chip-row">
+                            <span className="social-chip">{selectedSocialPublishPreview.symbol}</span>
+                            <span className="social-chip">
+                              {selectedSocialPublishPreview.analysisTimeframe} analysis
+                            </span>
+                            <span className="social-chip">
+                              {selectedSocialPublishPreview.minutePreciseEnabled
+                                ? `${selectedSocialPublishPreview.precisionTimeframe} precision`
+                                : "analysis only"}
+                            </span>
+                            <span className="social-chip">
+                              {selectedSocialPublishPreview.aiMode === "off"
+                                ? "AI Off"
+                                : selectedSocialPublishPreview.aiMode.toUpperCase()}
+                            </span>
+                            <span className="social-chip">
+                              {selectedSocialPublishPreview.enabledModelCount.toLocaleString("en-US")} models
+                            </span>
+                            <span className="social-chip">
+                              {selectedSocialPublishPreview.maxConcurrentTrades.toLocaleString("en-US")} max concurrent
+                            </span>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div className="social-publish-actions">
+                        <button
+                          type="button"
+                          className="social-action-btn social-action-btn--primary"
+                          onClick={handlePublishSocialPreset}
+                          disabled={socialPublishing || !selectedSocialPublishPreset}
+                        >
+                          {socialPublishing ? "Publishing..." : "Publish Preset"}
+                        </button>
+                        <span>Publishes the full saved workspace settings behind this preset.</span>
+                      </div>
+                    </>
+                  )}
+
+                  {socialPublishStatus ? (
+                    <div className={`social-inline-status ${socialPublishStatusTone}`}>
+                      {socialPublishStatus}
+                    </div>
+                  ) : null}
+                </aside>
+
+                <section className="social-feed-card" aria-label="community preset feed">
+                  <div className="social-card-head">
+                    <div>
+                      <span className="social-kicker">Feed</span>
+                      <h3>Shared by the community</h3>
+                      <p>
+                        Load any preset into your workspace and rerun it immediately against your
+                        current market data and backtest engine.
+                      </p>
+                    </div>
+                    <div className="social-feed-headline">
+                      <span>{socialVisiblePresets.length.toLocaleString("en-US")} visible now</span>
+                    </div>
+                  </div>
+
+                  {socialPresetsLoading ? (
+                    <div className="social-empty-state">
+                      <strong>Loading community presets...</strong>
+                      <span>Pulling the latest shared setups from the live account feed.</span>
+                    </div>
+                  ) : socialPresetsError ? (
+                    <div className="social-inline-status error">{socialPresetsError}</div>
+                  ) : socialVisiblePresets.length === 0 ? (
+                    <div className="social-empty-state">
+                      <strong>No community presets yet.</strong>
+                      <span>
+                        Publish the first one from the card on the left and it will appear here for
+                        every signed-in account.
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="social-feed-list">
+                      {socialVisiblePresets.map((preset) => {
+                        const presetInitials = resolveUserInitials({
+                          displayName: preset.authorDisplayName,
+                          email: null
+                        });
+                        const isOwner = preset.authorUid === currentUser.uid;
+                        return (
+                          <article key={preset.id} className="social-feed-item">
+                            <div className="social-feed-item-head">
+                              <div className="social-feed-author">
+                                {preset.authorPhotoURL ? (
+                                  <span
+                                    className="social-author-avatar social-author-avatar--photo"
+                                    style={{ backgroundImage: `url("${preset.authorPhotoURL}")` }}
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <span className="social-author-avatar" aria-hidden="true">
+                                    {presetInitials}
+                                  </span>
+                                )}
+                                <div className="social-feed-author-copy">
+                                  <strong>{preset.authorDisplayName}</strong>
+                                  <span>{formatRelativeTimeLabel(preset.publishedAtMs)}</span>
+                                </div>
+                              </div>
+                              {isOwner ? <span className="social-owner-pill">You</span> : null}
+                            </div>
+
+                            <div className="social-feed-item-body">
+                              <div className="social-feed-item-title-row">
+                                <h4>{preset.presetName}</h4>
+                                <span>{new Date(preset.publishedAtMs).toLocaleDateString()}</span>
+                              </div>
+                              <p>
+                                {preset.note ||
+                                  "Published without a note. Load it into the workspace to inspect the exact settings mix and rerun it immediately."}
+                              </p>
+                              <div className="social-chip-row">
+                                <span className="social-chip">{preset.symbol}</span>
+                                <span className="social-chip">{preset.analysisTimeframe} analysis</span>
+                                <span className="social-chip">
+                                  {preset.minutePreciseEnabled
+                                    ? `${preset.precisionTimeframe} precision`
+                                    : "analysis only"}
+                                </span>
+                                <span className="social-chip">
+                                  {preset.aiMode === "off" ? "AI Off" : preset.aiMode.toUpperCase()}
+                                </span>
+                                <span className="social-chip">
+                                  {preset.enabledModelCount.toLocaleString("en-US")} models
+                                </span>
+                                <span className="social-chip">
+                                  {preset.maxConcurrentTrades.toLocaleString("en-US")} max concurrent
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="social-feed-item-footer">
+                              <span>
+                                Saved locally on {new Date(preset.savedAt).toLocaleDateString("en-US")}
+                              </span>
+                              <div className="social-feed-actions">
+                                <button
+                                  type="button"
+                                  className="social-action-btn social-action-btn--primary"
+                                  onClick={() => handleRunSocialPreset(preset)}
+                                >
+                                  Run Preset
+                                </button>
+                                {isOwner ? (
+                                  <button
+                                    type="button"
+                                    className="social-action-btn"
+                                    onClick={() => void handleDeleteSocialPreset(preset)}
+                                    disabled={socialPresetActionId === preset.id}
+                                  >
+                                    {socialPresetActionId === preset.id ? "Removing..." : "Remove"}
+                                  </button>
+                                ) : null}
+                              </div>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+              </div>
+            </div>
           </section>
         ) : null}
 
