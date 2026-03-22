@@ -170,7 +170,74 @@ const Tooltip = dynamic<any>(() => loadRecharts().then((mod) => mod.Tooltip), { 
 const XAxis = dynamic<any>(() => loadRecharts().then((mod) => mod.XAxis), { ssr: false });
 const YAxis = dynamic<any>(() => loadRecharts().then((mod) => mod.YAxis), { ssr: false });
 
-const loadAiZipClusterModule = () => import("./AIZipClusterModule");
+const CHUNK_RECOVERY_RELOAD_PREFIX = "korra-chunk-recovery:";
+
+const delay = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+const isRecoverableChunkLoadError = (error: unknown) => {
+  const message =
+    error instanceof Error
+      ? `${error.name} ${error.message}`
+      : typeof error === "string"
+        ? error
+        : error != null
+          ? JSON.stringify(error)
+          : "";
+
+  return /ChunkLoadError|Loading chunk [\d]+ failed|Failed to fetch dynamically imported module|ERR_CERT_VERIFIER_CHANGED|Importing a module script failed/i.test(
+    message
+  );
+};
+
+const withChunkRecovery = async <T,>(
+  cacheKey: string,
+  loader: () => Promise<T>
+): Promise<T> => {
+  const reloadKey = `${CHUNK_RECOVERY_RELOAD_PREFIX}${cacheKey}`;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const loaded = await loader();
+      if (typeof window !== "undefined") {
+        try {
+          window.sessionStorage.removeItem(reloadKey);
+        } catch {}
+      }
+      return loaded;
+    } catch (error) {
+      if (!isRecoverableChunkLoadError(error)) {
+        throw error;
+      }
+
+      if (attempt === 0) {
+        await delay(450);
+        continue;
+      }
+
+      if (typeof window !== "undefined") {
+        try {
+          const alreadyReloaded = window.sessionStorage.getItem(reloadKey) === "1";
+          if (!alreadyReloaded) {
+            window.sessionStorage.setItem(reloadKey, "1");
+            window.location.reload();
+            return new Promise<T>(() => {});
+          }
+          window.sessionStorage.removeItem(reloadKey);
+        } catch {}
+      }
+
+      throw error;
+    }
+  }
+
+  throw new Error(`Failed to load dynamic chunk for ${cacheKey}.`);
+};
+
+const loadAiZipClusterModule = () =>
+  withChunkRecovery("aizip-cluster-module", () => import("./AIZipClusterModule"));
 const AIZipTradeDetailsModal = dynamic<any>(
   () => loadAiZipClusterModule().then((mod) => mod.AIZipTradeDetailsModal),
   { ssr: false }
