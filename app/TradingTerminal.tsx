@@ -2847,6 +2847,38 @@ const buildUniqueSavedPresetName = (
   return `${baseName} (${suffix})`;
 };
 
+const isGenericSocialPresetAuthorName = (value: string): boolean => {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "trader" || normalized === "unknown trader";
+};
+
+const trimTrailingPresetSeparator = (value: string): string => {
+  let result = value.trimEnd();
+  while (result.length > 0) {
+    const char = result[result.length - 1];
+    if ((char >= "0" && char <= "9") || (char >= "A" && char <= "Z") || (char >= "a" && char <= "z") || char === ")") {
+      break;
+    }
+    result = result.slice(0, -1).trimEnd();
+  }
+  return result;
+};
+
+const getSocialPublishPresetDisplayName = (value: string): string => {
+  const trimmed = value.trim();
+  const lower = trimmed.toLowerCase();
+
+  if (lower.endsWith("unknown trader")) {
+    return trimTrailingPresetSeparator(trimmed.slice(0, -("Unknown Trader".length))) || trimmed;
+  }
+
+  if (lower.endsWith("trader")) {
+    return trimTrailingPresetSeparator(trimmed.slice(0, -("Trader".length))) || trimmed;
+  }
+
+  return trimmed;
+};
+
 const parseUploadedStrategyModelList = (
   value: unknown
 ): { models: StrategyModelCatalogEntry[]; invalidCount: number } => {
@@ -24266,10 +24298,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   );
   const handleSaveSocialPresetToSaves = useCallback(
     (preset: SocialPresetFeedItem) => {
+      const authorDisplayName = preset.authorDisplayName.trim();
       const preferredName =
-        preset.authorUid === currentUser.uid
+        preset.authorUid === currentUser.uid || isGenericSocialPresetAuthorName(authorDisplayName)
           ? preset.presetName
-          : `${preset.presetName} Â· ${preset.authorDisplayName}`;
+          : `${preset.presetName} - ${authorDisplayName}`;
       const nextName = buildUniqueSavedPresetName(savedPresets, preferredName);
       const nextPresets = [
         ...savedPresets,
@@ -26682,7 +26715,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                     onClick={() => setPresetMenuOpen(null)}
                     aria-label="Close preset list"
                   >
-                    Ã—
+                    x
                   </button>
                 </div>
                 {mobileSavedPresets.length === 0 ? (
@@ -26748,7 +26781,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                   onClick={() => setProfileDialogMode(null)}
                   aria-label="Close profile dialog"
                 >
-                  Ã—
+                  x
                 </button>
               </div>
 
@@ -26992,7 +27025,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                     <div className="preset-save-row">
                       <input
                         className="preset-name-input"
-                        placeholder="Preset nameâ€¦"
+                        placeholder="Preset name..."
                         value={presetNameInput}
                         onChange={(e) => setPresetNameInput(e.target.value)}
                         onKeyDown={(e) => { if (e.key === "Enter") handleSavePreset(); }}
@@ -27029,7 +27062,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                               <span className="preset-item-name">{p.name}</span>
                               <span className="preset-item-date">{new Date(p.savedAt).toLocaleDateString()}</span>
                             </button>
-                            <button type="button" className="preset-delete-btn" onClick={(e) => handleDeletePreset(p.name, e)} aria-label={`Delete ${p.name}`}>Ã—</button>
+                            <button type="button" className="preset-delete-btn" onClick={(e) => handleDeletePreset(p.name, e)} aria-label={`Delete ${p.name}`}>x</button>
                           </div>
                         ))}
                       </div>
@@ -27063,7 +27096,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 <line x1="12" y1="18" x2="12" y2="12" />
                 <polyline points="9 15 12 18 15 15" />
               </svg>
-              <span className="settings-io-label">File â†“</span>
+              <span className="settings-io-label">Export</span>
             </button>
             <button
               type="button"
@@ -27077,7 +27110,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 <line x1="12" y1="12" x2="12" y2="18" />
                 <polyline points="9 15 12 12 15 15" />
               </svg>
-              <span className="settings-io-label">File â†‘</span>
+              <span className="settings-io-label">Import</span>
             </button>
             <div className="notif-wrap" ref={notificationRef}>
               <button
@@ -27932,7 +27965,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                                 setSocialPublishPresetDdOpen((current) => !current);
                               }}
                             >
-                              <span>{selectedSocialPublishPreset?.name || "Choose preset"}</span>
+                              <span>
+                                {selectedSocialPublishPreset
+                                  ? getSocialPublishPresetDisplayName(selectedSocialPublishPreset.name)
+                                  : "Choose preset"}
+                              </span>
                               <span className="backtest-date-preset-chevron">
                                 {socialPublishPresetDdOpen ? "^" : "v"}
                               </span>
@@ -27951,7 +27988,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                                       setSocialPublishPresetDdOpen(false);
                                     }}
                                   >
-                                    {preset.name}
+                                    {getSocialPublishPresetDisplayName(preset.name)}
                                   </button>
                                 ))}
                               </div>
@@ -27972,7 +28009,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       <div className="social-simple-helper-row">
                         <span className="social-simple-helper-text">
                           {selectedSocialPublishPreset
-                            ? `Posting ${selectedSocialPublishPreset.name} as ${currentUserDisplayName}.`
+                            ? `Posting ${getSocialPublishPresetDisplayName(selectedSocialPublishPreset.name)} as ${currentUserDisplayName}.`
                             : "Choose a preset to publish."}
                         </span>
                         <button
@@ -28169,7 +28206,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                               ?.label ?? "Custom"
                           }
                           <span className="backtest-date-preset-chevron" aria-hidden="true">
-                            {statsDatePresetDdOpen ? "â–´" : "â–¾"}
+                            {statsDatePresetDdOpen ? "^" : "v"}
                           </span>
                         </button>
                         {statsDatePresetDdOpen ? (
@@ -28220,7 +28257,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                         >
                           {TIMEFRAME_DISPLAY_LABELS[selectedBacktestTimeframe]}
                           <span className="stats-timeframe-chevron" aria-hidden="true">
-                            {statsTimeframeDdOpen ? "â–´" : "â–¾"}
+                            {statsTimeframeDdOpen ? "^" : "v"}
                           </span>
                         </button>
                         {statsTimeframeDdOpen && (
@@ -28464,7 +28501,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                                 ?.label ?? "Past Month"
                             }
                             <span className="backtest-date-preset-chevron" aria-hidden="true">
-                              {modelRunPresetDdOpen ? "â–´" : "â–¾"}
+                              {modelRunPresetDdOpen ? "^" : "v"}
                             </span>
                           </button>
                           {modelRunPresetDdOpen ? (
@@ -28505,7 +28542,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                           >
                             {TIMEFRAME_DISPLAY_LABELS[modelRunTimeframe]}
                             <span className="stats-timeframe-chevron" aria-hidden="true">
-                              {modelRunTimeframeDdOpen ? "â–´" : "â–¾"}
+                              {modelRunTimeframeDdOpen ? "^" : "v"}
                             </span>
                           </button>
                           {modelRunTimeframeDdOpen ? (
@@ -29782,7 +29819,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                                     }}
                                     title="Remove"
                                   >
-                                    Ã—
+                                    x
                                   </button>
                                 </div>
                               </article>
@@ -32354,7 +32391,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 onClick={() => setProfileDialogMode(null)}
                 aria-label="Close profile dialog"
               >
-                Ã—
+                x
               </button>
             </div>
 

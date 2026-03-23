@@ -56,7 +56,7 @@ button {
   border-bottom: 1px solid var(--line);
   background: #0a0f16;
   overflow: visible;
-  z-index: 70;
+  z-index: 2600;
 }
 
 .surface-brand {
@@ -70,10 +70,13 @@ button {
   display: flex;
   align-items: stretch;
   height: 100%;
+  z-index: 1;
 }
 
 .surface-actions {
   margin-left: auto;
+  position: relative;
+  z-index: 2;
 }
 
 .surface-tab {
@@ -646,6 +649,7 @@ body.account-screen-loading-lock {
   position: relative;
   display: flex;
   align-items: center;
+  z-index: 3400;
 }
 
 .profile-avatar-btn {
@@ -697,7 +701,7 @@ body.account-screen-loading-lock {
     0 14px 44px rgba(0, 0, 0, 0.52),
     0 0 0 1px rgba(255, 255, 255, 0.03) inset;
   overflow: hidden;
-  z-index: 1800;
+  z-index: 3600;
 }
 
 .profile-menu-header {
@@ -3376,7 +3380,7 @@ body.mobile-terminal-viewport-lock {
   align-items: center;
   gap: 0.3rem;
   position: relative;
-  z-index: 80;
+  z-index: 3200;
 }
 
 .notif-wrap {
@@ -3487,7 +3491,7 @@ body.mobile-terminal-viewport-lock {
 }
 
 .preset-wrap.is-open {
-  z-index: 1800;
+  z-index: 3400;
 }
 
 .preset-popover {
@@ -3502,7 +3506,7 @@ body.mobile-terminal-viewport-lock {
   border-radius: 8px;
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.03) inset;
   isolation: isolate;
-  z-index: 1801;
+  z-index: 3500;
   overflow: visible;
   padding: 6px 0;
 }
