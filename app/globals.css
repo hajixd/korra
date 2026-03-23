@@ -2269,6 +2269,10 @@ body.mobile-terminal-viewport-lock {
   padding: 0.88rem 0 0.2rem;
 }
 
+.mobile-phone-card-active .mobile-phone-empty-state {
+  padding-top: 2.3rem;
+}
+
 .mobile-phone-empty-state h2 {
   font-size: 1.34rem;
   line-height: 0.96;
@@ -2507,7 +2511,7 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-shell.mobile-phone-shell-standalone .mobile-phone-tabbar {
-  padding-bottom: max(calc(env(safe-area-inset-bottom, 0px) + 0.26rem), 0.52rem);
+  padding-bottom: max(calc(env(safe-area-inset-bottom, 0px) + 0.04rem), 0.24rem);
 }
 
 .mobile-phone-tab {
@@ -2607,9 +2611,10 @@ body.mobile-terminal-viewport-lock {
   }
 
   .account-auth-loader-loading {
-    width: 40px;
-    height: 40px;
+    width: 54px;
+    height: 54px;
     margin: 0 auto;
+    transform: translateY(-18px);
   }
 
   .account-shell-header-loading {
