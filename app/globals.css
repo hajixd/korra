@@ -55,6 +55,8 @@ button {
   padding: 0 0.85rem;
   border-bottom: 1px solid var(--line);
   background: #0a0f16;
+  overflow: visible;
+  z-index: 70;
 }
 
 .surface-brand {
@@ -3374,6 +3376,7 @@ body.mobile-terminal-viewport-lock {
   align-items: center;
   gap: 0.3rem;
   position: relative;
+  z-index: 80;
 }
 
 .notif-wrap {
@@ -3483,6 +3486,10 @@ body.mobile-terminal-viewport-lock {
   position: relative;
 }
 
+.preset-wrap.is-open {
+  z-index: 1800;
+}
+
 .preset-popover {
   position: absolute;
   top: calc(100% + 6px);
@@ -3495,19 +3502,17 @@ body.mobile-terminal-viewport-lock {
   border-radius: 8px;
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.03) inset;
   isolation: isolate;
-  z-index: 25;
-  overflow: hidden;
+  z-index: 1801;
+  overflow: visible;
   padding: 6px 0;
 }
 
-.preset-popover-load::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background: rgba(5, 8, 14, 0.42);
-  backdrop-filter: blur(10px);
-  pointer-events: none;
-  z-index: -1;
+.preset-popover-load {
+  left: auto;
+  right: 0;
+  transform: none;
+  min-width: 260px;
+  max-width: min(360px, calc(100vw - 1rem));
 }
 
 .preset-popover-header {
@@ -3571,7 +3576,7 @@ body.mobile-terminal-viewport-lock {
 }
 
 .preset-list {
-  max-height: 200px;
+  max-height: 320px;
   overflow-y: auto;
   padding: 0 4px;
 }
@@ -4262,6 +4267,52 @@ body.mobile-terminal-viewport-lock {
   flex: 1 1 auto;
   display: grid;
   gap: 0.45rem;
+}
+
+.social-simple-preset-wrap {
+  z-index: 320;
+}
+
+.social-simple-preset-wrap.is-open {
+  z-index: 1600;
+}
+
+.social-simple-preset-trigger {
+  min-height: 42px;
+  padding: 0.7rem 0.8rem;
+  border-radius: 12px;
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(9, 12, 18, 0.96);
+  box-shadow: none;
+  color: rgba(242, 246, 250, 0.96);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.social-simple-preset-trigger:hover,
+.social-simple-preset-trigger:focus-visible {
+  border-color: rgba(124, 232, 182, 0.34);
+}
+
+.social-simple-preset-dd {
+  width: 100%;
+  min-width: 100%;
+  padding: 0.28rem;
+  border-radius: 12px;
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(9, 12, 18, 0.98);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.55);
+}
+
+.social-simple-preset-option {
+  color: rgba(242, 246, 250, 0.86);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.social-simple-preset-option.active {
+  background: rgba(124, 232, 182, 0.12);
+  color: rgba(173, 242, 195, 0.96);
 }
 
 .social-simple-select {
