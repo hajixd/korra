@@ -2027,7 +2027,7 @@ body.mobile-terminal-viewport-lock {
   padding:
     calc(env(safe-area-inset-top, 0px) + 0.58rem)
     1rem
-    max(calc(env(safe-area-max-inset-bottom, env(safe-area-inset-bottom, 0px)) + 0.16rem), 0.34rem);
+    max(calc(env(safe-area-max-inset-bottom, env(safe-area-inset-bottom, 0px)) + 0.72rem), 1.05rem);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 0.44rem;
@@ -3175,7 +3175,9 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-tabbar {
-  padding: 0.3rem 0 0.08rem;
+  padding:
+    0.3rem 0
+    max(calc(env(safe-area-max-inset-bottom, env(safe-area-inset-bottom, 0px)) * 0.22), 0.22rem);
   border-top: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 0;
   background: #000;
@@ -3237,7 +3239,7 @@ body.mobile-terminal-viewport-lock {
     padding:
       calc(env(safe-area-inset-top, 0px) + 0.5rem)
       0.78rem
-      max(calc(env(safe-area-max-inset-bottom, env(safe-area-inset-bottom, 0px)) + 0.16rem), 0.34rem);
+      max(calc(env(safe-area-max-inset-bottom, env(safe-area-inset-bottom, 0px)) + 0.72rem), 1.05rem);
   }
 
   .mobile-phone-brand-copy h1 {
