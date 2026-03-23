@@ -10538,8 +10538,8 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     return (
       <main className="terminal account-screen">
         <section className="account-screen-shell">
-          <div className="account-shell-panel">
-            <div className="account-auth-loader" aria-hidden="true">
+          <div className="account-shell-panel account-shell-panel-loading">
+            <div className="account-auth-loader account-auth-loader-loading" aria-hidden="true">
               <span className="account-auth-loader__halo" />
               <span className="account-auth-loader__ring account-auth-loader__ring--outer" />
               <span className="account-auth-loader__ring account-auth-loader__ring--middle" />
@@ -10549,7 +10549,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 <span className="account-auth-loader__core-dot" />
               </span>
             </div>
-            <div className="account-shell-header">
+            <div className="account-shell-header account-shell-header-loading">
               <div className="account-shell-kicker">Secure Access</div>
               <h1>Logging In</h1>
               <p>Restoring your workspace, profile, and saved state.</p>
@@ -24560,7 +24560,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                   <div className="mobile-phone-empty-state">
                     <span className="mobile-phone-card-kicker">History</span>
                     <h2>No trades yet</h2>
-                    <p>{backtestHasRun ? "No closed trades are available yet." : "Run a backtest to populate history."}</p>
+                    {backtestHasRun ? <p>No closed trades are available yet.</p> : null}
                   </div>
                 ) : (
                   <div className="mobile-phone-history-list">
@@ -24609,6 +24609,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 </div>
 
                 <div className="mobile-phone-action-list">
+                  <button
+                    type="button"
+                    className="mobile-phone-action-btn"
+                    onClick={() => setPresetMenuOpen((current) => (current === "load" ? null : "load"))}
+                  >
+                    <strong>Load Preset</strong>
+                  </button>
                   <button
                     type="button"
                     className="mobile-phone-action-btn"
@@ -24665,6 +24672,59 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               </button>
             ))}
           </nav>
+
+          {presetMenuOpen === "load" ? (
+            <div
+              className="mobile-preset-sheet-backdrop"
+              role="presentation"
+              onClick={() => setPresetMenuOpen(null)}
+            >
+              <div
+                className="mobile-preset-sheet mobile-preset-sheet-inline"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Load preset"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="mobile-preset-sheet-head">
+                  <strong>Load Preset</strong>
+                  <button
+                    type="button"
+                    className="mobile-preset-sheet-close"
+                    onClick={() => setPresetMenuOpen(null)}
+                    aria-label="Close preset list"
+                  >
+                    ×
+                  </button>
+                </div>
+                {mobileSavedPresets.length === 0 ? (
+                  <div className="mobile-empty-state compact">
+                    <strong>No saved presets</strong>
+                  </div>
+                ) : (
+                  <div className="mobile-preset-list">
+                    {mobileSavedPresets.map((preset) => (
+                      <button
+                        key={preset.name}
+                        type="button"
+                        className="mobile-preset-item"
+                        onClick={() => {
+                          handleLoadPreset(preset);
+                          setMobileWorkspaceTab("active");
+                        }}
+                      >
+                        <div className="mobile-preset-copy">
+                          <strong>{preset.name}</strong>
+                          <small>{new Date(preset.savedAt).toLocaleDateString()}</small>
+                        </div>
+                        <span className="mobile-preset-cta">Load</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : null}
         </section>
 
         {statsRefreshOverlayVisible && statsRefreshOverlayMode === "loading" ? (
