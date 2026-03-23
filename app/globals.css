@@ -274,7 +274,7 @@ button {
   display: grid;
   place-items: center;
   isolation: isolate;
-  margin: 0 auto 0.6rem;
+  margin: 0 auto;
 }
 
 .account-auth-loader__halo,
@@ -2331,6 +2331,7 @@ body.mobile-terminal-viewport-lock {
   display: grid;
   justify-items: end;
   gap: 0.16rem;
+  padding-right: 12px;
 }
 
 .mobile-phone-history-values strong {
@@ -2580,9 +2581,9 @@ body.mobile-terminal-viewport-lock {
   }
 
   .account-auth-loader-loading {
-    width: 104px;
-    height: 104px;
-    margin: 10svh auto 0;
+    width: 44px;
+    height: 44px;
+    margin: 8svh auto 0;
   }
 
   .account-shell-header-loading {

@@ -257,6 +257,7 @@ const UI_PREFERENCES_STORAGE_KEY = "korra-ui-preferences";
 const PRESETS_STORAGE_KEY = "korra-presets";
 const UPLOADED_STRATEGY_MODELS_STORAGE_KEY = "korra-uploaded-strategy-models";
 const TERMINAL_VIEW_STATE_STORAGE_KEY = "korra-terminal-view-state";
+const MOBILE_RECENT_TRADES_CACHE_STORAGE_KEY = "korra-mobile-recent-trades";
 const DEFAULT_COPYTRADE_ROUTE_PATHNAME = "/settings/account";
 const DEFAULT_COPYTRADE_ROUTE_SEARCH = "?view=list";
 const DEFAULT_COPYTRADE_ROUTE =
@@ -10565,11 +10566,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                 <span className="account-auth-loader__core-dot" />
               </span>
             </div>
-            <div className="account-shell-header account-shell-header-loading">
-              <div className="account-shell-kicker">Secure Access</div>
-              <h1>Logging In</h1>
-              <p>Restoring your workspace, profile, and saved state.</p>
-            </div>
           </div>
         </section>
       </main>
@@ -10753,6 +10749,10 @@ function TradingTerminalWorkspace({
   );
   const scopedPresetsStorageKey = useMemo(
     () => scopeStorageKey(PRESETS_STORAGE_KEY, currentUser.uid),
+    [currentUser.uid]
+  );
+  const scopedMobileRecentTradesCacheStorageKey = useMemo(
+    () => scopeStorageKey(MOBILE_RECENT_TRADES_CACHE_STORAGE_KEY, currentUser.uid),
     [currentUser.uid]
   );
   const scopedUploadedStrategyModelsStorageKey = useMemo(
@@ -11077,6 +11077,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [isMobileWorkspace, setIsMobileWorkspace] = useState(false);
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab>("active");
   const [mobileTradeLimit, setMobileTradeLimit] = useState(24);
+  const [mobileRecentTradesCache, setMobileRecentTradesCache] = useState<HistoryItem[]>([]);
   const [aggressorPressure, setAggressorPressure] = useState<AggressorPressureSnapshot>(() => ({
     buyPressure: 0,
     sellPressure: 0,
@@ -22525,6 +22526,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime))
       .slice(0, mobileTradeLimit);
   }, [deferredBacktestAnalyticsTrades, mobileTradeLimit]);
+  const mobileVisibleRecentTrades = useMemo(() => {
+    return mobileRecentTrades.length > 0 ? mobileRecentTrades : mobileRecentTradesCache;
+  }, [mobileRecentTrades, mobileRecentTradesCache]);
   const mobileSavedPresets = useMemo(() => {
     return [...savedPresets].sort((a, b) => b.savedAt - a.savedAt);
   }, [savedPresets]);
@@ -22537,6 +22541,58 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const socialVisiblePresets = useMemo(() => {
     return socialPresets.slice(0, 36);
   }, [socialPresets]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const raw = localStorage.getItem(scopedMobileRecentTradesCacheStorageKey);
+      if (!raw) {
+        setMobileRecentTradesCache([]);
+        return;
+      }
+
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        setMobileRecentTradesCache([]);
+        return;
+      }
+
+      const normalized = parsed
+        .filter((item): item is HistoryItem => {
+          return (
+            item != null &&
+            typeof item === "object" &&
+            typeof (item as HistoryItem).id === "string" &&
+            typeof (item as HistoryItem).symbol === "string"
+          );
+        })
+        .slice(0, 32);
+
+      setMobileRecentTradesCache(normalized);
+    } catch {
+      setMobileRecentTradesCache([]);
+    }
+  }, [scopedMobileRecentTradesCacheStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || mobileRecentTrades.length === 0) {
+      return;
+    }
+
+    setMobileRecentTradesCache(mobileRecentTrades);
+
+    try {
+      localStorage.setItem(
+        scopedMobileRecentTradesCacheStorageKey,
+        JSON.stringify(mobileRecentTrades)
+      );
+    } catch {
+      // Ignore storage failures for the mobile recent-trades cache.
+    }
+  }, [mobileRecentTrades, scopedMobileRecentTradesCacheStorageKey]);
 
   useEffect(() => {
     if (mobileSavedPresets.length === 0) {
@@ -24576,18 +24632,18 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                     <h2>History</h2>
                   </div>
                   <span className="mobile-phone-count-chip">
-                    {mobileRecentTrades.length.toLocaleString("en-US")}
+                    {mobileVisibleRecentTrades.length.toLocaleString("en-US")}
                   </span>
                 </div>
 
-                {mobileRecentTrades.length === 0 ? (
+                {mobileVisibleRecentTrades.length === 0 ? (
                   <div className="mobile-phone-empty-state">
                     <span className="mobile-phone-card-kicker">History</span>
                     <h2>No trades yet</h2>
                   </div>
                 ) : (
                   <div className="mobile-phone-history-list">
-                    {mobileRecentTrades.map((trade) => {
+                    {mobileVisibleRecentTrades.map((trade) => {
                       const railTone = getMobileHistoryRailTone(trade);
 
                       return (
@@ -24626,7 +24682,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       );
                     })}
                   </div>
-                )}
+                  )}
               </section>
             ) : (
               <section className="mobile-phone-card mobile-phone-card-settings">

@@ -1149,7 +1149,7 @@ function TradeDetailsModalImpl({
       <div
         style={{
           width: compactViewport ? "min(1120px, 99vw)" : "min(1120px, 96vw)",
-          height: compactViewport ? "min(900px, 96vh)" : "min(900px, 90vh)",
+          height: compactViewport ? "min(680px, 78vh)" : "min(820px, 84vh)",
           borderRadius: 0,
           border: "1px solid rgba(255,255,255,0.10)",
           background: "rgba(12,12,12,0.96)",
@@ -1404,7 +1404,7 @@ function TradeDetailsModalImpl({
               parseMode={parseMode}
               tpDist={tpDist}
               slDist={slDist}
-              heightPx={420}
+              heightPx={compactViewport ? 260 : 360}
             />
           </div>
 
