@@ -26895,25 +26895,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 type="button"
                 className="profile-menu-item"
                 onClick={() => {
-                  void onSendTestNotification();
-                }}
-                disabled={testNotificationBusy}
-              >
-                {testNotificationBusy ? "Sending Test Notification..." : "Test Notification"}
-              </button>
-              {testNotificationStatus ? (
-                <div
-                  className={`profile-menu-status${
-                    testNotificationStatusTone === "error" ? " error" : " success"
-                  }`}
-                >
-                  {testNotificationStatus}
-                </div>
-              ) : null}
-              <button
-                type="button"
-                className="profile-menu-item"
-                onClick={() => {
                   setProfileUsernameInput(currentUserDisplayName);
                   setProfileDialogStatus("");
                   setProfileDialogMode("username");
@@ -26934,6 +26915,25 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               >
                 Change Password
               </button>
+              <button
+                type="button"
+                className="profile-menu-item"
+                onClick={() => {
+                  void onSendTestNotification();
+                }}
+                disabled={testNotificationBusy}
+              >
+                {testNotificationBusy ? "Sending Test Notification..." : "Test Notification"}
+              </button>
+              {testNotificationStatus ? (
+                <div
+                  className={`profile-menu-status${
+                    testNotificationStatusTone === "error" ? " error" : " success"
+                  }`}
+                >
+                  {testNotificationStatus}
+                </div>
+              ) : null}
               <button
                 type="button"
                 className="profile-menu-item danger"

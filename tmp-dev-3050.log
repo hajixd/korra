@@ -1,0 +1,19 @@
+
+> korra-space@0.1.0 dev
+> next dev
+
+   ▲ Next.js 15.5.12
+   - Local:        http://localhost:3050
+   - Network:      http://192.168.1.155:3050
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 1846ms
+ ○ Compiling / ...
+ ✓ Compiled / in 2.9s (1939 modules)
+ GET / 200 in 454ms
+ GET / 200 in 548ms
+ ⚠ Cross origin request detected from 127.0.0.1 to /_next/* resource. In a future major version of Next.js, you will need to explicitly configure "allowedDevOrigins" in next.config to allow this.
+Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
+ GET / 200 in 554ms
+[?25h
