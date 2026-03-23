@@ -296,7 +296,7 @@ type BacktestTab =
   | "dimensions"
   | "propFirm";
 type PanelTab = "active" | "assets" | "history" | "actions";
-type MobileWorkspaceTab = "chart" | "trade" | "history" | "settings";
+type MobileWorkspaceTab = "chart" | "trade" | "history" | "social" | "settings";
 type MainStatisticsCard = {
   label: string;
   value: ReactNode;
@@ -6475,6 +6475,29 @@ const formatMobileTimelineTime = (timestampMs: number): string => {
   });
 };
 
+const formatMobileTimelineInputDate = (timestampMs: number): string => {
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
+    return "";
+  }
+
+  const date = new Date(timestampMs);
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const formatMobileTimelineInputTime = (timestampMs: number): string => {
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
+    return "";
+  }
+
+  const date = new Date(timestampMs);
+  const hour = `${date.getHours()}`.padStart(2, "0");
+  const minute = `${date.getMinutes()}`.padStart(2, "0");
+  return `${hour}:${minute}`;
+};
+
 const resolveTradeMarkPriceAtSeconds = (
   trade: Pick<HistoryItem, "entryPrice" | "outcomePrice" | "entryTime" | "exitTime">,
   asOfSec: number,
@@ -9840,6 +9863,29 @@ const MobileWorkspaceTabIcon = ({
     );
   }
 
+  if (tab === "social") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <circle cx="8" cy="9" r="2.6" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        <circle cx="16.2" cy="8.2" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        <path
+          d="M4.8 18.2c.8-2.4 2.4-3.6 4.9-3.6s4.2 1.2 5 3.6"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+        />
+        <path
+          d="M12.3 14.8c.7-1.6 1.9-2.4 3.7-2.4 1.6 0 2.8.7 3.6 2.2"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
+
   return (
     <svg viewBox="0 0 24 24" aria-hidden>
       <path
@@ -11251,6 +11297,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [mobileTimelineOverrideSec, setMobileTimelineOverrideSec] = useState<number | null>(null);
   const [mobileActiveChartScrubIndex, setMobileActiveChartScrubIndex] = useState<number | null>(null);
   const [mobileMarketChartScrubIndex, setMobileMarketChartScrubIndex] = useState<number | null>(null);
+  const [mobileTimelinePickerOpen, setMobileTimelinePickerOpen] = useState(false);
+  const [mobileTimelinePickerDate, setMobileTimelinePickerDate] = useState("");
+  const [mobileTimelinePickerTime, setMobileTimelinePickerTime] = useState("");
   const [mobileTimelineNowMs, setMobileTimelineNowMs] = useState(() => Date.now());
   const [aggressorPressure, setAggressorPressure] = useState<AggressorPressureSnapshot>(() => ({
     buyPressure: 0,
@@ -22915,9 +22964,21 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     return [...deduped.values()].sort((a, b) => Number(a.entryTime) - Number(b.entryTime));
   }, [activePanelHistoryRows, deferredBacktestAnalyticsTrades, mobileRecentTradesCache]);
   const mobileTimelineStepSec = useMemo(() => {
+    const candleTimes = selectedCandles
+      .map((candle) => Number(toUtcTimestamp(candle.time)))
+      .filter((timestampSec) => Number.isFinite(timestampSec) && timestampSec > 0)
+      .sort((left, right) => left - right);
+
+    for (let index = 1; index < candleTimes.length; index += 1) {
+      const stepSec = Math.floor(candleTimes[index]! - candleTimes[index - 1]!);
+      if (stepSec > 0) {
+        return stepSec;
+      }
+    }
+
     const timeframeStepSec = Math.floor((timeframeMinutes[selectedTimeframe] ?? 15) * 60);
     return Math.max(60, Math.min(3600, timeframeStepSec || 60));
-  }, [selectedTimeframe]);
+  }, [selectedCandles, selectedTimeframe]);
   const mobileTimelineLiveSec = useMemo(() => {
     const latestTradeSec = mobileTimelineSourceTrades.reduce((max, trade) => {
       return Math.max(max, Number(trade.entryTime), Number(trade.exitTime));
@@ -22975,15 +23036,63 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const mobileTimelineTimestampMs = mobileTimelineCursorSec * 1000;
   const mobileTimelineDateLabel = formatMobileTimelineDate(mobileTimelineTimestampMs);
   const mobileTimelineTimeLabel = formatMobileTimelineTime(mobileTimelineTimestampMs);
-  const mobileTimelineSliderMax = Math.max(
-    0,
-    mobileTimelineBounds.endSec - mobileTimelineBounds.startSec
-  );
-  const mobileTimelineSliderValue = clamp(
-    mobileTimelineCursorSec - mobileTimelineBounds.startSec,
-    0,
-    mobileTimelineSliderMax
-  );
+  const mobileTimelineTickSecs = useMemo(() => {
+    const ticks = new Set<number>();
+
+    ticks.add(mobileTimelineBounds.startSec);
+    ticks.add(mobileTimelineBounds.endSec);
+
+    for (const candle of selectedCandles) {
+      const candleSec = Number(toUtcTimestamp(candle.time));
+      if (
+        Number.isFinite(candleSec) &&
+        candleSec >= mobileTimelineBounds.startSec &&
+        candleSec <= mobileTimelineBounds.endSec
+      ) {
+        ticks.add(candleSec);
+      }
+    }
+
+    for (const trade of mobileTimelineSourceTrades) {
+      const entrySec = Math.floor(Number(trade.entryTime));
+      const exitSec = Math.floor(Number(trade.exitTime));
+      if (
+        Number.isFinite(entrySec) &&
+        entrySec >= mobileTimelineBounds.startSec &&
+        entrySec <= mobileTimelineBounds.endSec
+      ) {
+        ticks.add(entrySec);
+      }
+      if (
+        Number.isFinite(exitSec) &&
+        exitSec >= mobileTimelineBounds.startSec &&
+        exitSec <= mobileTimelineBounds.endSec
+      ) {
+        ticks.add(exitSec);
+      }
+    }
+
+    return [...ticks].sort((left, right) => left - right);
+  }, [mobileTimelineBounds.endSec, mobileTimelineBounds.startSec, mobileTimelineSourceTrades, selectedCandles]);
+  const mobileTimelineSliderMax = Math.max(0, mobileTimelineTickSecs.length - 1);
+  const mobileTimelineSliderValue = useMemo(() => {
+    if (mobileTimelineTickSecs.length <= 1) {
+      return 0;
+    }
+
+    let nearestIndex = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    mobileTimelineTickSecs.forEach((tickSec, index) => {
+      const distance = Math.abs(tickSec - mobileTimelineCursorSec);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+
+    return nearestIndex;
+  }, [mobileTimelineCursorSec, mobileTimelineTickSecs]);
   const mobileTimelineActiveSourceTrade = useMemo<HistoryItem | null>(() => {
     return (
       [...mobileTimelineSourceTrades]
@@ -23471,6 +23580,49 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       setMobileTimelineOverrideSec(clampedValue);
     }
   }, [mobileTimelineBounds.endSec, mobileTimelineBounds.startSec, mobileTimelineOverrideSec]);
+  const openMobileTimelinePicker = useCallback(() => {
+    triggerMobileHaptic();
+    setMobileTimelinePickerDate(formatMobileTimelineInputDate(mobileTimelineTimestampMs));
+    setMobileTimelinePickerTime(formatMobileTimelineInputTime(mobileTimelineTimestampMs));
+    setMobileTimelinePickerOpen(true);
+  }, [mobileTimelineTimestampMs, triggerMobileHaptic]);
+  const closeMobileTimelinePicker = useCallback(() => {
+    setMobileTimelinePickerOpen(false);
+  }, []);
+  const applyMobileTimelinePicker = useCallback(() => {
+    if (!mobileTimelinePickerDate || !mobileTimelinePickerTime) {
+      setMobileTimelinePickerOpen(false);
+      return;
+    }
+
+    const nextTimestampMs = new Date(
+      `${mobileTimelinePickerDate}T${mobileTimelinePickerTime}:00`
+    ).getTime();
+
+    if (!Number.isFinite(nextTimestampMs)) {
+      setMobileTimelinePickerOpen(false);
+      return;
+    }
+
+    const nextSec = clamp(
+      Math.floor(nextTimestampMs / 1000),
+      mobileTimelineBounds.startSec,
+      mobileTimelineBounds.endSec
+    );
+
+    if (nextSec >= mobileTimelineBounds.endSec) {
+      setMobileTimelineOverrideSec(null);
+    } else {
+      setMobileTimelineOverrideSec(nextSec);
+    }
+
+    setMobileTimelinePickerOpen(false);
+  }, [
+    mobileTimelineBounds.endSec,
+    mobileTimelineBounds.startSec,
+    mobileTimelinePickerDate,
+    mobileTimelinePickerTime
+  ]);
 
   const mobileSavedPresets = useMemo(() => {
     return [...savedPresets].sort((a, b) => b.savedAt - a.savedAt);
@@ -23556,7 +23708,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, [mobileSavedPresets, socialPublishPresetName]);
 
   useEffect(() => {
-    if (selectedSurfaceTab !== "social") {
+    const mobileSocialVisible = isMobileWorkspace && mobileWorkspaceTab === "social";
+    if (selectedSurfaceTab !== "social" && !mobileSocialVisible) {
       return;
     }
 
@@ -23597,7 +23750,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     return () => {
       unsubscribe();
     };
-  }, [firebaseDb, selectedSurfaceTab]);
+  }, [firebaseDb, isMobileWorkspace, mobileWorkspaceTab, selectedSurfaceTab]);
 
   const handlePublishSocialPreset = useCallback(async () => {
     if (!firebaseDb) {
@@ -25495,7 +25648,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     const showMobileTimeline =
       mobileWorkspaceTab === "trade" || mobileWorkspaceTab === "history";
     const mobileShellStyle =
-      mobileViewportHeightPx && mobileViewportHeightPx > 0
+      !isStandaloneMobileWorkspace && mobileViewportHeightPx && mobileViewportHeightPx > 0
         ? ({
             ["--mobile-workspace-height"]: `${mobileViewportHeightPx}px`
           } as CSSProperties & Record<"--mobile-workspace-height", string>)
@@ -25521,13 +25674,21 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                         ? "Trade"
                         : mobileWorkspaceTab === "history"
                           ? "Trade History"
-                          : "Settings"}
+                          : mobileWorkspaceTab === "social"
+                            ? "Social"
+                            : "Settings"}
                     </h1>
                     {showMobileTimeline ? (
                       <>
                         <p className="mobile-phone-header-date">{mobileTimelineDateLabel}</p>
                         <div className="mobile-phone-header-time-row">
-                          <span className="mobile-phone-header-time">{mobileTimelineTimeLabel}</span>
+                          <button
+                            type="button"
+                            className="mobile-phone-header-time-trigger"
+                            onClick={openMobileTimelinePicker}
+                          >
+                            <span className="mobile-phone-header-time">{mobileTimelineTimeLabel}</span>
+                          </button>
                           <span
                             className={`mobile-phone-header-time-badge${
                               mobileTimelineIsLive ? " live" : ""
@@ -25547,16 +25708,17 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       className="mobile-phone-timeline-slider"
                       min={0}
                       max={mobileTimelineSliderMax}
-                      step={mobileTimelineStepSec}
+                      step={1}
                       value={mobileTimelineSliderValue}
                       onChange={(event) => {
-                        const rawOffset = Math.floor(Number(event.target.value) || 0);
-                        const nextOffset = clamp(rawOffset, 0, mobileTimelineSliderMax);
-                        const nextSec = mobileTimelineBounds.startSec + nextOffset;
+                        const rawIndex = Math.floor(Number(event.target.value) || 0);
+                        const nextIndex = clamp(rawIndex, 0, mobileTimelineSliderMax);
+                        const nextSec =
+                          mobileTimelineTickSecs[nextIndex] ?? mobileTimelineBounds.endSec;
 
                         if (
                           mobileTimelineSliderMax === 0 ||
-                          nextSec >= mobileTimelineBounds.endSec - mobileTimelineStepSec
+                          nextIndex >= mobileTimelineSliderMax
                         ) {
                           setMobileTimelineOverrideSec(null);
                           return;
@@ -25744,14 +25906,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                               d={mobileActivePnlSparkline.path}
                               className="mobile-phone-active-chart-path"
                             />
-                            {mobileActivePnlSparkline.points.length > 0 ? (
-                              <circle
-                                cx={mobileActivePnlSparkline.points[mobileActivePnlSparkline.points.length - 1]!.x}
-                                cy={mobileActivePnlSparkline.points[mobileActivePnlSparkline.points.length - 1]!.y}
-                                r="4.4"
-                                className="mobile-phone-active-chart-endpoint"
-                              />
-                            ) : null}
                             {mobileActiveChartScrubIndex != null && mobileActiveChartDisplayPoint ? (
                               <>
                                 <line
@@ -25761,15 +25915,27 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                                   y2={mobileActivePnlSparkline.height}
                                   className="mobile-phone-active-chart-scrubline"
                                 />
-                                <circle
-                                  cx={mobileActiveChartDisplayPoint.x}
-                                  cy={mobileActiveChartDisplayPoint.y}
-                                  r="4.8"
-                                  className="mobile-phone-active-chart-point"
-                                />
                               </>
                             ) : null}
                           </svg>
+                          {mobileActivePnlSparkline.points.length > 0 ? (
+                            <span
+                              className="mobile-phone-active-chart-dot mobile-phone-active-chart-endpoint"
+                              style={{
+                                left: `${(mobileActivePnlSparkline.points[mobileActivePnlSparkline.points.length - 1]!.x / mobileActivePnlSparkline.width) * 100}%`,
+                                top: `${(mobileActivePnlSparkline.points[mobileActivePnlSparkline.points.length - 1]!.y / mobileActivePnlSparkline.height) * 100}%`
+                              }}
+                            />
+                          ) : null}
+                          {mobileActiveChartScrubIndex != null && mobileActiveChartDisplayPoint ? (
+                            <span
+                              className="mobile-phone-active-chart-dot mobile-phone-active-chart-point"
+                              style={{
+                                left: `${(mobileActiveChartDisplayPoint.x / mobileActivePnlSparkline.width) * 100}%`,
+                                top: `${(mobileActiveChartDisplayPoint.y / mobileActivePnlSparkline.height) * 100}%`
+                              }}
+                            />
+                          ) : null}
                         </div>
                       </div>
                     ) : null}
@@ -25862,6 +26028,71 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                   </div>
                   )}
               </section>
+            ) : mobileWorkspaceTab === "social" ? (
+              <section className="mobile-phone-card mobile-phone-card-social">
+                <div className="mobile-phone-card-head">
+                  <div className="mobile-phone-card-copy">
+                    <span className="mobile-phone-card-kicker">Community Presets</span>
+                    <h2>Social</h2>
+                  </div>
+                  <span className="mobile-phone-count-chip">
+                    {socialVisiblePresets.length.toLocaleString("en-US")}
+                  </span>
+                </div>
+
+                {socialPresetsLoading ? (
+                  <div className="mobile-phone-empty-state">
+                    <span className="mobile-phone-card-kicker">Loading</span>
+                    <h2>Fetching presets</h2>
+                  </div>
+                ) : socialPresetsError ? (
+                  <div className="mobile-phone-empty-state">
+                    <span className="mobile-phone-card-kicker">Unavailable</span>
+                    <h2>Social feed offline</h2>
+                    <p>{socialPresetsError}</p>
+                  </div>
+                ) : socialVisiblePresets.length === 0 ? (
+                  <div className="mobile-phone-empty-state">
+                    <span className="mobile-phone-card-kicker">Social</span>
+                    <h2>No presets yet</h2>
+                  </div>
+                ) : (
+                  <div className="mobile-phone-social-list">
+                    {socialVisiblePresets.map((preset) => (
+                      <article key={preset.id} className="mobile-phone-social-row">
+                        <div className="mobile-phone-social-copy">
+                          <strong>{preset.presetName}</strong>
+                          <span>{preset.authorDisplayName}</span>
+                          {preset.description ? <p>{preset.description}</p> : null}
+                        </div>
+                        <div className="mobile-phone-social-actions">
+                          <button
+                            type="button"
+                            className="mobile-phone-social-btn"
+                            onClick={() => {
+                              triggerMobileHaptic();
+                              handleSaveSocialPresetToSaves(preset);
+                            }}
+                          >
+                            Add to Saves
+                          </button>
+                          <button
+                            type="button"
+                            className="mobile-phone-social-btn mobile-phone-social-btn-primary"
+                            onClick={() => {
+                              triggerMobileHaptic();
+                              handleRunSocialPreset(preset);
+                              setMobileWorkspaceTab("trade");
+                            }}
+                          >
+                            Run
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
             ) : (
               <section className="mobile-phone-card mobile-phone-card-settings">
                 <div className="mobile-phone-account-card">
@@ -25928,11 +26159,74 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
             )}
           </div>
 
+          {mobileTimelinePickerOpen ? (
+            <div
+              className="mobile-phone-timepicker-overlay"
+              onClick={closeMobileTimelinePicker}
+              role="presentation"
+            >
+              <div
+                className="mobile-phone-timepicker-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Choose date and time"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="mobile-phone-timepicker-copy">
+                  <span>Jump To Time</span>
+                  <strong>{mobileTimelineDateLabel}</strong>
+                </div>
+                <div className="mobile-phone-timepicker-fields">
+                  <label className="mobile-phone-timepicker-field">
+                    <span>Date</span>
+                    <input
+                      type="date"
+                      value={mobileTimelinePickerDate}
+                      onChange={(event) => setMobileTimelinePickerDate(event.target.value)}
+                    />
+                  </label>
+                  <label className="mobile-phone-timepicker-field">
+                    <span>Time</span>
+                    <input
+                      type="time"
+                      value={mobileTimelinePickerTime}
+                      step={60}
+                      onChange={(event) => setMobileTimelinePickerTime(event.target.value)}
+                    />
+                  </label>
+                </div>
+                <div className="mobile-phone-timepicker-actions">
+                  <button
+                    type="button"
+                    className="mobile-phone-timepicker-btn"
+                    onClick={() => {
+                      triggerMobileHaptic();
+                      closeMobileTimelinePicker();
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="mobile-phone-timepicker-btn mobile-phone-timepicker-btn-primary"
+                    onClick={() => {
+                      triggerMobileHaptic();
+                      applyMobileTimelinePicker();
+                    }}
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           <nav className="mobile-phone-tabbar" aria-label="Mobile workspace tabs">
             {([
               { id: "chart", label: "Chart" },
               { id: "trade", label: "Trade" },
               { id: "history", label: "History" },
+              { id: "social", label: "Social" },
               { id: "settings", label: "Settings" }
             ] as Array<{ id: MobileWorkspaceTab; label: string }>).map((tab) => (
               <button

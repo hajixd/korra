@@ -33,3 +33,5 @@ pnpm-debug.log*
 next-env.d.ts
 .next-dev.err.log
 .next-dev.log
+tmp-next-dev.err.log
+tmp-next-dev.log

@@ -1978,8 +1978,8 @@ body.mobile-terminal-viewport-lock {
 .mobile-phone-shell.mobile-phone-shell-standalone {
   position: fixed;
   inset: 0;
-  min-height: 100%;
-  height: 100% !important;
+  min-height: 100lvh;
+  height: 100lvh !important;
 }
 
 .mobile-phone-shell.mobile-phone-shell-snapshot::after {
@@ -2010,8 +2010,8 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-shell.mobile-phone-shell-standalone .mobile-phone-frame {
-  min-height: 100% !important;
-  height: 100% !important;
+  min-height: 100lvh !important;
+  height: 100lvh !important;
 }
 
 .mobile-phone-header {
@@ -2086,6 +2086,15 @@ body.mobile-terminal-viewport-lock {
   justify-content: center;
   flex-wrap: wrap;
   gap: 0.38rem;
+}
+
+.mobile-phone-header-time-trigger {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
 }
 
 .mobile-phone-header-time {
@@ -2427,7 +2436,7 @@ body.mobile-terminal-viewport-lock {
   align-items: center;
   justify-content: space-between;
   gap: 0.32rem;
-  padding: 0.3rem 0 0.16rem;
+  padding: 0.56rem 0 0.08rem;
 }
 
 .mobile-phone-market-timeframe {
@@ -2613,15 +2622,31 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-active-chart-point {
-  fill: #060706;
-  stroke: #f7faf7;
-  stroke-width: 1.8;
+  border: 2px solid #f7faf7;
 }
 
 .mobile-phone-active-chart-endpoint {
-  fill: #060706;
-  stroke: #d6ff12;
-  stroke-width: 1.4;
+  border: 1.6px solid #d6ff12;
+}
+
+.mobile-phone-active-chart-dot {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #060706;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.mobile-phone-active-chart-point.mobile-phone-active-chart-dot {
+  width: 10px;
+  height: 10px;
+}
+
+.mobile-phone-active-chart-endpoint.mobile-phone-active-chart-dot {
+  width: 9px;
+  height: 9px;
 }
 
 .mobile-phone-active-chart-up .mobile-phone-active-chart-path {
@@ -2935,6 +2960,157 @@ body.mobile-terminal-viewport-lock {
   background: rgba(255, 255, 255, 0.01);
 }
 
+.mobile-phone-card-social {
+  gap: 0.62rem;
+}
+
+.mobile-phone-social-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: 0;
+}
+
+.mobile-phone-social-row {
+  padding: 0.82rem 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  display: grid;
+  gap: 0.56rem;
+}
+
+.mobile-phone-social-copy {
+  display: grid;
+  gap: 0.14rem;
+}
+
+.mobile-phone-social-copy strong {
+  color: #f8fbf7;
+  font-size: 0.88rem;
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+}
+
+.mobile-phone-social-copy span,
+.mobile-phone-social-copy p {
+  margin: 0;
+  color: rgba(230, 235, 229, 0.62);
+  font-size: 0.58rem;
+  line-height: 1.34;
+}
+
+.mobile-phone-social-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.52rem;
+}
+
+.mobile-phone-social-btn {
+  min-height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(244, 248, 243, 0.92);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+
+.mobile-phone-social-btn-primary {
+  border-color: rgba(88, 233, 116, 0.18);
+  background: rgba(88, 233, 116, 0.08);
+  color: #8df4a8;
+}
+
+.mobile-phone-timepicker-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  background: rgba(0, 0, 0, 0.78);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.mobile-phone-timepicker-modal {
+  width: min(100%, 320px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #050605;
+  padding: 1rem;
+  display: grid;
+  gap: 0.84rem;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.mobile-phone-timepicker-copy {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.mobile-phone-timepicker-copy span {
+  color: rgba(234, 239, 232, 0.58);
+  font-size: 0.54rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mobile-phone-timepicker-copy strong {
+  color: #f8fbf7;
+  font-size: 1rem;
+  line-height: 1.04;
+  letter-spacing: -0.04em;
+}
+
+.mobile-phone-timepicker-fields {
+  display: grid;
+  gap: 0.68rem;
+}
+
+.mobile-phone-timepicker-field {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.mobile-phone-timepicker-field span {
+  color: rgba(234, 239, 232, 0.6);
+  font-size: 0.56rem;
+}
+
+.mobile-phone-timepicker-field input {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+  color: #f8fbf7;
+  padding: 0 0.72rem;
+  border-radius: 0;
+  font-size: 0.82rem;
+}
+
+.mobile-phone-timepicker-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.56rem;
+}
+
+.mobile-phone-timepicker-btn {
+  min-height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(244, 248, 243, 0.9);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+
+.mobile-phone-timepicker-btn-primary {
+  border-color: rgba(88, 233, 116, 0.18);
+  background: rgba(88, 233, 116, 0.08);
+  color: #8df4a8;
+}
+
 .mobile-phone-tabbar {
   padding:
     0.34rem 0
@@ -2944,7 +3120,7 @@ body.mobile-terminal-viewport-lock {
   background: #000;
   box-shadow: none;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0.18rem;
   align-self: end;
 }
@@ -2988,8 +3164,9 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-tab-label {
-  font-size: 0.42rem;
+  font-size: 0.39rem;
   font-weight: 700;
+  line-height: 1;
 }
 
 .mobile-phone-history-row:hover,
