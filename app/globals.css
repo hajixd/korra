@@ -1019,7 +1019,8 @@ button {
   z-index: 2300;
   background: rgba(0, 0, 0, 0.7);
   display: grid;
-  align-items: end;
+  align-items: center;
+  justify-items: center;
   padding:
     calc(env(safe-area-inset-top, 0px) + 0.7rem)
     0.78rem
@@ -1031,7 +1032,8 @@ button {
   top: auto;
   left: auto;
   right: auto;
-  max-width: none;
+  width: min(100%, 360px);
+  max-width: 360px;
   padding: 0.9rem 0.82rem 0.82rem;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 0;
@@ -2272,6 +2274,7 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-history-row {
+  position: relative;
   border-radius: 0;
   border-left: 0;
   border-right: 0;
@@ -2284,6 +2287,31 @@ body.mobile-terminal-viewport-lock {
 
 .mobile-phone-history-row:first-child {
   border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mobile-phone-history-rail {
+  position: absolute;
+  top: 9px;
+  right: 0;
+  bottom: 9px;
+  width: 5px;
+  pointer-events: none;
+}
+
+.mobile-phone-history-rail.tp {
+  background: #62ef8a;
+}
+
+.mobile-phone-history-rail.sl {
+  background: #ff6d76;
+}
+
+.mobile-phone-history-rail.model-win {
+  background: #f0d85b;
+}
+
+.mobile-phone-history-rail.model-loss {
+  background: #ff9d3b;
 }
 
 .mobile-phone-history-copy {
@@ -2547,12 +2575,14 @@ body.mobile-terminal-viewport-lock {
   .account-shell-panel-loading {
     min-height: 100svh;
     padding: 0;
+    align-content: center;
+    justify-items: center;
   }
 
   .account-auth-loader-loading {
     width: 104px;
     height: 104px;
-    margin: 0;
+    margin: 10svh auto 0;
   }
 
   .account-shell-header-loading {

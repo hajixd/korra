@@ -6939,6 +6939,22 @@ const getBacktestExitLabel = (trade: HistoryItem): string => {
   return "Model Exit";
 };
 
+const getMobileHistoryRailTone = (
+  trade: HistoryItem
+): "tp" | "sl" | "model-win" | "model-loss" => {
+  const exitLabel = getBacktestExitLabel(trade);
+
+  if (exitLabel === "Take Profit") {
+    return "tp";
+  }
+
+  if (exitLabel === "Stop Loss") {
+    return "sl";
+  }
+
+  return trade.result === "Win" ? "model-win" : "model-loss";
+};
+
 const getEntryExitBarFill = (bucket: string): string => {
   const normalized = bucket.trim().toLowerCase();
 
@@ -24571,36 +24587,44 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                   </div>
                 ) : (
                   <div className="mobile-phone-history-list">
-                    {mobileRecentTrades.map((trade) => (
-                      <button
-                        key={trade.id}
-                        type="button"
-                        className="mobile-phone-history-row"
-                        onClick={() => openBacktestTradeDetails(trade)}
-                      >
-                        <div className="mobile-phone-history-main">
-                          <div className="mobile-phone-history-copy">
-                            <strong>{trade.symbol.replaceAll("_", "/")}</strong>
-                            <span>
-                              {trade.side === "Long" ? "Buy" : "Sell"} | {getBacktestExitLabel(trade)}
-                            </span>
+                    {mobileRecentTrades.map((trade) => {
+                      const railTone = getMobileHistoryRailTone(trade);
+
+                      return (
+                        <button
+                          key={trade.id}
+                          type="button"
+                          className="mobile-phone-history-row"
+                          onClick={() => openBacktestTradeDetails(trade)}
+                        >
+                          <div className="mobile-phone-history-main">
+                            <div className="mobile-phone-history-copy">
+                              <strong>{trade.symbol.replaceAll("_", "/")}</strong>
+                              <span>
+                                {trade.side === "Long" ? "Buy" : "Sell"} | {getBacktestExitLabel(trade)}
+                              </span>
+                            </div>
+                            <div className="mobile-phone-history-values">
+                              <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
+                                {formatSignedUsd(trade.pnlUsd)}
+                              </strong>
+                              <span className={trade.pnlPct >= 0 ? "up" : "down"}>
+                                {formatSignedPercent(trade.pnlPct)}
+                              </span>
+                            </div>
                           </div>
-                          <div className="mobile-phone-history-values">
-                            <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
-                              {formatSignedUsd(trade.pnlUsd)}
-                            </strong>
-                            <span className={trade.pnlPct >= 0 ? "up" : "down"}>
-                              {formatSignedPercent(trade.pnlPct)}
-                            </span>
+                          <div className="mobile-phone-history-meta">
+                            <span>{getHistoryTradeExitLabel(trade)}</span>
+                            <span>Entry {formatPrice(trade.entryPrice)}</span>
+                            <span>Exit {formatPrice(trade.outcomePrice)}</span>
                           </div>
-                        </div>
-                        <div className="mobile-phone-history-meta">
-                          <span>{getHistoryTradeExitLabel(trade)}</span>
-                          <span>Entry {formatPrice(trade.entryPrice)}</span>
-                          <span>Exit {formatPrice(trade.outcomePrice)}</span>
-                        </div>
-                      </button>
-                    ))}
+                          <span
+                            className={`mobile-phone-history-rail ${railTone}`}
+                            aria-hidden="true"
+                          />
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </section>
@@ -24733,9 +24757,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       >
                         <div className="mobile-preset-copy">
                           <strong>{preset.name}</strong>
-                          <small>{new Date(preset.savedAt).toLocaleDateString()}</small>
                         </div>
-                        <span className="mobile-preset-cta">Load</span>
                       </button>
                     ))}
                   </div>
