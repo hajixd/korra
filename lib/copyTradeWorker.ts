@@ -372,6 +372,7 @@ const processCopyTradeAccount = async (
         side: signal.side,
         symbol: account.symbol,
         openedAt: heartbeat,
+        units: signal.units,
         entryPrice: Number.isFinite(openResult.filledPrice ?? Number.NaN)
           ? Number(openResult.filledPrice)
           : signal.entryPrice,

@@ -1,6 +1,7 @@
 import {
   COPYTRADE_BACKTEST_STATE_KEY,
   COPYTRADE_LAST_ROUTE_STORAGE_KEY,
+  COPYTRADE_OWNER_UID_STORAGE_KEY,
   DEFAULT_COPYTRADE_DASHBOARD_TEMPLATE
 } from "./copytradeDashboardSeed";
 
@@ -3570,6 +3571,20 @@ const injectedScript = `
       symbol: normalizeSymbol(source.symbol),
       timeframe: normalizeCopyTradeTimeframe(source.timeframe),
       lot: String(clampNumber(source.lot, 0.01, 100, COPYTRADE_BRIDGE_DEFAULTS.lot)),
+      chunkBars: String(
+        Math.max(
+          8,
+          Math.min(
+            180,
+            Math.trunc(
+              clampNumber(source.chunkBars, 8, 180, COPYTRADE_BRIDGE_DEFAULTS.chunkBars)
+            )
+          )
+        )
+      ),
+      dollarsPerMove: String(
+        clampNumber(source.dollarsPerMove, 1, 5000, COPYTRADE_BRIDGE_DEFAULTS.dollarsPerMove)
+      ),
       tpDollars: String(
         clampNumber(source.tpDollars, 1, 1000000, COPYTRADE_BRIDGE_DEFAULTS.tpDollars)
       ),
@@ -3591,6 +3606,39 @@ const injectedScript = `
             )
           )
         )
+      ),
+      stopMode: String(
+        Math.max(
+          0,
+          Math.min(
+            2,
+            Math.trunc(clampNumber(source.stopMode, 0, 2, COPYTRADE_BRIDGE_DEFAULTS.stopMode))
+          )
+        )
+      ),
+      breakEvenTriggerPct: String(
+        clampNumber(
+          source.breakEvenTriggerPct,
+          0,
+          100,
+          COPYTRADE_BRIDGE_DEFAULTS.breakEvenTriggerPct
+        )
+      ),
+      trailingStartPct: String(
+        clampNumber(
+          source.trailingStartPct,
+          0,
+          100,
+          COPYTRADE_BRIDGE_DEFAULTS.trailingStartPct
+        )
+      ),
+      trailingDistPct: String(
+        clampNumber(
+          source.trailingDistPct,
+          0,
+          100,
+          COPYTRADE_BRIDGE_DEFAULTS.trailingDistPct
+        )
       )
     };
   };
@@ -3601,9 +3649,15 @@ const injectedScript = `
       symbol: source.symbol,
       timeframe: source.timeframe,
       lot: source.lot,
+      chunkBars: source.chunkBars,
+      dollarsPerMove: source.dollarsPerMove,
       tpDollars: source.tpDollars,
       slDollars: source.slDollars,
-      maxConcurrentTrades: source.maxConcurrentTrades
+      maxConcurrentTrades: source.maxConcurrentTrades,
+      stopMode: source.stopMode,
+      breakEvenTriggerPct: source.breakEvenTriggerPct,
+      trailingStartPct: source.trailingStartPct,
+      trailingDistPct: source.trailingDistPct
     });
   };
 
@@ -4727,9 +4781,11 @@ const injectedScript = `
   };
 
   const upsertMt5CopyTradeAccount = async (formData, options = {}) => {
+    const ownerUid = String(window.localStorage.getItem(COPYTRADE_OWNER_UID_STORAGE_KEY) || "").trim();
     const nextPayload = {
       ...buildCopyTradeAccountPayload(formData),
-      ...(options && typeof options.provider === "string" ? { provider: options.provider } : {})
+      ...(options && typeof options.provider === "string" ? { provider: options.provider } : {}),
+      ...(ownerUid ? { ownerUid } : {})
     };
 
     if (!nextPayload.login || !nextPayload.password || !nextPayload.server) {
@@ -6291,6 +6347,21 @@ const injectedScript = `
       symbol: normalizeSymbol(formState.symbol),
       timeframe: normalizeCopyTradeTimeframe(formState.timeframe),
       lot: clampNumber(formState.lot, 0.01, 100, COPYTRADE_BRIDGE_DEFAULTS.lot),
+      chunkBars: Math.max(
+        8,
+        Math.min(
+          180,
+          Math.trunc(
+            clampNumber(formState.chunkBars, 8, 180, COPYTRADE_BRIDGE_DEFAULTS.chunkBars)
+          )
+        )
+      ),
+      dollarsPerMove: clampNumber(
+        formState.dollarsPerMove,
+        1,
+        5000,
+        COPYTRADE_BRIDGE_DEFAULTS.dollarsPerMove
+      ),
       tpDollars: clampNumber(
         formState.tpDollars,
         1,
@@ -6316,6 +6387,33 @@ const injectedScript = `
             )
           )
         )
+      ),
+      stopMode: Math.max(
+        0,
+        Math.min(
+          2,
+          Math.trunc(
+            clampNumber(formState.stopMode, 0, 2, COPYTRADE_BRIDGE_DEFAULTS.stopMode)
+          )
+        )
+      ),
+      breakEvenTriggerPct: clampNumber(
+        formState.breakEvenTriggerPct,
+        0,
+        100,
+        COPYTRADE_BRIDGE_DEFAULTS.breakEvenTriggerPct
+      ),
+      trailingStartPct: clampNumber(
+        formState.trailingStartPct,
+        0,
+        100,
+        COPYTRADE_BRIDGE_DEFAULTS.trailingStartPct
+      ),
+      trailingDistPct: clampNumber(
+        formState.trailingDistPct,
+        0,
+        100,
+        COPYTRADE_BRIDGE_DEFAULTS.trailingDistPct
       )
     };
   };
