@@ -10567,6 +10567,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       <main className="terminal account-screen">
         <section className="account-screen-shell">
           <div className="account-shell-panel">
+            <div className="account-shell-header account-shell-header-auth">
+              <div className="account-shell-kicker">Korra</div>
+              <h1>{authMode === "create" ? "Create Your Account" : "Welcome Back"}</h1>
+              <p>Access your trading workspace, saved presets, and live history from one place.</p>
+            </div>
             <div className="account-mode-grid">
               <button
                 type="button"
@@ -11055,7 +11060,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [socialPresetActionId, setSocialPresetActionId] = useState<string | null>(null);
   const [isMobileWorkspace, setIsMobileWorkspace] = useState(false);
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab>("active");
-  const [mobileTradeLimit, setMobileTradeLimit] = useState(3);
+  const [mobileTradeLimit, setMobileTradeLimit] = useState(24);
   const [aggressorPressure, setAggressorPressure] = useState<AggressorPressureSnapshot>(() => ({
     buyPressure: 0,
     sellPressure: 0,
@@ -11251,7 +11256,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       const hasTouch = navigator.maxTouchPoints > 0;
       const mobileByUa = mobileUserAgentPattern.test(navigator.userAgent);
       setIsMobileWorkspace(mobileByUa || (mobileByViewport && (coarsePointer || hasTouch)));
-      setMobileTradeLimit(window.innerHeight <= 760 ? 12 : 18);
+      setMobileTradeLimit(window.innerHeight <= 760 ? 18 : 32);
     };
     const addQueryListener = (
       query: MediaQueryList,
@@ -22492,52 +22497,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const mobileSavedPresets = useMemo(() => {
     return [...savedPresets].sort((a, b) => b.savedAt - a.savedAt);
   }, [savedPresets]);
-  const mobileSymbolLabel = useMemo(() => {
-    return String(selectedSymbol || "XAU_USD").replaceAll("_", "/");
-  }, [selectedSymbol]);
-  const mobileSettingsSummaryRows = useMemo(
-    () => [
-      {
-        label: "Analysis",
-        value: `${appliedBacktestSettings.symbol.replaceAll("_", "/")} · ${appliedBacktestSettings.timeframe}`
-      },
-      {
-        label: "Precision",
-        value: appliedBacktestSettings.minutePreciseEnabled
-          ? appliedBacktestSettings.precisionTimeframe
-          : "Matches analysis"
-      },
-      {
-        label: "AI Mode",
-        value:
-          appliedBacktestSettings.aiMode === "off"
-            ? "Off"
-            : appliedBacktestSettings.aiFilterEnabled
-              ? `${appliedBacktestSettings.aiMode.toUpperCase()} Filter`
-              : appliedBacktestSettings.aiMode.toUpperCase()
-      },
-      {
-        label: "Risk",
-        value: `TP $${formatUsd(appliedBacktestSettings.tpDollars)} · SL $${formatUsd(appliedBacktestSettings.slDollars)}`
-      },
-      {
-        label: "Window",
-        value: `${appliedBacktestSettings.statsDateStart} → ${appliedBacktestSettings.statsDateEnd}`
-      },
-      {
-        label: "Libraries",
-        value:
-          appliedBacktestSettings.selectedAiLibraries.length > 0
-            ? appliedBacktestSettings.selectedAiLibraries.join(", ")
-            : "None selected"
-      }
-    ],
-    [appliedBacktestSettings]
-  );
-  const mobilePrimaryStats = useMemo(() => {
-    return backtestHeroStats.slice(0, 4);
-  }, [backtestHeroStats]);
-  const mobileLatestTrade = mobileRecentTrades[0] ?? null;
   const selectedSocialPublishPreset = useMemo(() => {
     return mobileSavedPresets.find((preset) => preset.name === socialPublishPresetName) ?? null;
   }, [mobileSavedPresets, socialPublishPresetName]);
@@ -24502,434 +24461,203 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     selectedSurfaceTab === "models" ? "Loading Models..." : "Preparing Backtest...";
 
   if (isMobileWorkspace) {
+    const mobileActiveSymbol = (activeTrade?.symbol ?? appliedBacktestSettings.symbol).replaceAll("_", "/");
+
     return (
-      <main className="terminal mobile-terminal-shell">
-        <section className="mobile-app-frame">
-          <header className="mobile-app-topbar">
-            <div className="mobile-app-topbar-copy">
-              <span className="mobile-app-kicker">Korra Mobile</span>
-              <div className="mobile-app-topbar-title-row">
+      <main className="terminal mobile-terminal-shell mobile-phone-shell">
+        <section className="mobile-phone-frame">
+          <header className="mobile-phone-header">
+            <div className="mobile-phone-brand-row">
+              <div className="mobile-phone-brand-copy">
+                <span className="mobile-phone-brand">Korra</span>
                 <h1>
                   {mobileWorkspaceTab === "active"
                     ? "Active Trade"
                     : mobileWorkspaceTab === "history"
                       ? "Trade History"
-                      : "Run Settings"}
+                      : "Settings"}
                 </h1>
-                <span className="mobile-app-symbol-pill">
-                  {mobileSymbolLabel} · {appliedBacktestSettings.timeframe}
-                </span>
               </div>
-              <p>
-                {mobileWorkspaceTab === "active"
-                  ? activeTrade
-                    ? "Live trade state, quote context, and the latest backtest pulse."
-                    : "Standby view with the latest backtest pulse and quick market context."
-                  : mobileWorkspaceTab === "history"
-                    ? "Tap any recent trade to open the full replay detail view."
-                    : "Load presets, review the current run, and manage your account."}
-              </p>
+              <span className="mobile-phone-user-chip">{currentUserInitials}</span>
             </div>
-
-            <div className="profile-menu-wrap mobile-app-profile" ref={profileMenuRef}>
-              <button
-                type="button"
-                className="profile-avatar-btn"
-                aria-label="Profile menu"
-                onClick={() => setProfileMenuOpen((open) => !open)}
-              >
-                {currentUser.photoURL ? (
-                  <span
-                    className="profile-avatar-photo"
-                    style={{ backgroundImage: `url("${currentUser.photoURL}")` }}
-                    aria-hidden
-                  />
-                ) : (
-                  <span className="profile-avatar-fallback">{currentUserInitials}</span>
-                )}
-              </button>
-
-              {profileMenuOpen ? (
-                <div className="profile-menu-popover">
-                  <div className="profile-menu-header">
-                    <strong>{`Welcome ${currentUserDisplayName}`}</strong>
-                  </div>
-                  <button
-                    type="button"
-                    className="profile-menu-item"
-                    onClick={() => {
-                      setProfileUsernameInput(currentUserDisplayName);
-                      setProfileDialogStatus("");
-                      setProfileDialogMode("username");
-                      setProfileMenuOpen(false);
-                    }}
-                  >
-                    Change Username
-                  </button>
-                  <button
-                    type="button"
-                    className="profile-menu-item"
-                    onClick={() => {
-                      setProfilePasswordForm(EMPTY_ACCOUNT_PASSWORD_FORM);
-                      setProfileDialogStatus("");
-                      setProfileDialogMode("password");
-                      setProfileMenuOpen(false);
-                    }}
-                  >
-                    Change Password
-                  </button>
-                  <button
-                    type="button"
-                    className="profile-menu-item danger"
-                    onClick={() => {
-                      setProfileMenuOpen(false);
-                      void onLogOut();
-                    }}
-                  >
-                    Log Out
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          </header>
-
-          <div className="mobile-app-body">
-            <section className="mobile-app-quote-strip">
-              <div className="mobile-app-mini-card">
-                <span>Bid</span>
-                <strong>{liveQuote.bid != null ? formatPrice(liveQuote.bid) : "—"}</strong>
-              </div>
-              <div className="mobile-app-mini-card">
-                <span>Ask</span>
-                <strong>{liveQuote.ask != null ? formatPrice(liveQuote.ask) : "—"}</strong>
-              </div>
-              <div className="mobile-app-mini-card">
-                <span>Spread</span>
-                <strong>{liveQuote.spread != null ? liveQuote.spread.toFixed(2) : "—"}</strong>
-              </div>
-              <div className="mobile-app-mini-card">
-                <span>Win Rate</span>
-                <strong>{backtestSummary.winRate.toFixed(1)}%</strong>
-              </div>
-            </section>
-
+            <p className="mobile-phone-header-note">
+              {mobileWorkspaceTab === "active"
+                ? activeTrade
+                  ? "Live trade summary with the numbers that matter."
+                  : "No live position is open right now."
+                : mobileWorkspaceTab === "history"
+                  ? "Recent closed trades with simple PnL and price details."
+                  : "Manage your account credentials and sign out."}
+            </p>
             {statsRefreshOverlayMode === "loading" ? (
-              <div className="mobile-app-sync-banner">
-                <span className="mobile-app-sync-dot" aria-hidden="true" />
-                Rebuilding the backtest and refreshing the mobile workspace.
+              <div className="mobile-phone-sync-pill">
+                <span className="mobile-phone-sync-dot" aria-hidden="true" />
+                Updating workspace
               </div>
             ) : null}
+          </header>
 
+          <div className="mobile-phone-body">
             {mobileWorkspaceTab === "active" ? (
-              <>
-                <section className="mobile-app-card mobile-app-hero-card">
-                  {activeTrade ? (
-                    <>
-                      <div className="mobile-app-hero-head">
-                        <div>
-                          <span
-                            className={`mobile-app-side-tag ${
-                              activeTrade.side === "Long" ? "up" : "down"
-                            }`}
-                          >
-                            {activeTrade.side}
-                          </span>
-                          <h2>{activeTrade.symbol.replaceAll("_", "/")}</h2>
-                        </div>
-                        <span className="mobile-app-live-pill">Live</span>
+              <section className="mobile-phone-card mobile-phone-card-active">
+                {activeTrade ? (
+                  <>
+                    <div className="mobile-phone-card-head">
+                      <div className="mobile-phone-card-copy">
+                        <span className="mobile-phone-card-kicker">Live Position</span>
+                        <h2>{mobileActiveSymbol}</h2>
                       </div>
-
-                      <div className="mobile-app-hero-pnl">
-                        <span>Unrealized PnL</span>
-                        <strong className={activeTrade.pnlValue >= 0 ? "up" : "down"}>
-                          {formatSignedUsd(activeTrade.pnlValue)}
-                        </strong>
-                        <small className={activeTrade.pnlPct >= 0 ? "up" : "down"}>
-                          {activeTrade.pnlPct >= 0 ? "+" : ""}
-                          {activeTrade.pnlPct.toFixed(2)}%
-                        </small>
-                      </div>
-
-                      <div className="mobile-app-metric-grid">
-                        <div className="mobile-app-metric-tile">
-                          <span>Entry</span>
-                          <strong>{formatPrice(activeTrade.entryPrice)}</strong>
-                        </div>
-                        <div className="mobile-app-metric-tile">
-                          <span>Mark</span>
-                          <strong>{formatPrice(activeTrade.markPrice)}</strong>
-                        </div>
-                        <div className="mobile-app-metric-tile">
-                          <span>Take Profit</span>
-                          <strong className="up">{formatPrice(activeTrade.targetPrice)}</strong>
-                        </div>
-                        <div className="mobile-app-metric-tile">
-                          <span>Stop Loss</span>
-                          <strong className="down">{formatPrice(activeTrade.stopPrice)}</strong>
-                        </div>
-                        <div className="mobile-app-metric-tile">
-                          <span>Size</span>
-                          <strong>{formatUnits(activeTrade.units)} units</strong>
-                        </div>
-                        <div className="mobile-app-metric-tile">
-                          <span>R:R</span>
-                          <strong>1:{activeTrade.rr.toFixed(2)}</strong>
-                        </div>
-                        <div className="mobile-app-metric-tile">
-                          <span>Opened</span>
-                          <strong>{activeTrade.openedAtLabel}</strong>
-                        </div>
-                        <div className="mobile-app-metric-tile">
-                          <span>Duration</span>
-                          <strong>{activeTrade.elapsed}</strong>
-                        </div>
-                      </div>
-
-                      <div className="mobile-app-progress-card">
-                        <div className="mobile-app-progress-head">
-                          <span>Progress To TP</span>
-                          <strong>{activeTrade.progressPct.toFixed(1)}%</strong>
-                        </div>
-                        <div className="mobile-app-progress-track">
-                          <div
-                            className="mobile-app-progress-fill"
-                            style={{ width: `${activeTrade.progressPct}%` }}
-                          />
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="mobile-app-empty-state">
-                      <span className="mobile-app-kicker">Standby</span>
-                      <h2>No active trade right now</h2>
-                      <p>
-                        {latestTradeBarsAgo !== null
-                          ? `The latest closed trade was ${latestTradeBarsAgo} bar${latestTradeBarsAgo !== 1 ? "s" : ""} ago.`
-                          : "Run or refresh a preset to populate the latest trade flow."}
-                      </p>
-                      {mobileLatestTrade ? (
-                        <button
-                          type="button"
-                          className="mobile-app-inline-action"
-                          onClick={() => openBacktestTradeDetails(mobileLatestTrade)}
-                        >
-                          Open Latest Closed Trade
-                        </button>
-                      ) : null}
+                      <span
+                        className={`mobile-phone-side-pill ${
+                          activeTrade.side === "Long" ? "up" : "down"
+                        }`}
+                      >
+                        {activeTrade.side === "Long" ? "Buy" : "Sell"}
+                      </span>
                     </div>
-                  )}
-                </section>
 
-                <section className="mobile-app-card">
-                  <div className="mobile-app-section-head">
-                    <div>
-                      <span className="mobile-app-eyebrow">Snapshot</span>
-                      <h3>Backtest Pulse</h3>
+                    <div className="mobile-phone-pnl-block">
+                      <span>Open PnL</span>
+                      <strong className={activeTrade.pnlValue >= 0 ? "up" : "down"}>
+                        {formatSignedUsd(activeTrade.pnlValue)}
+                      </strong>
+                      <small className={activeTrade.pnlPct >= 0 ? "up" : "down"}>
+                        {formatSignedPercent(activeTrade.pnlPct)}
+                      </small>
                     </div>
-                    <span className="mobile-app-count-pill">
-                      {backtestSummary.tradeCount.toLocaleString("en-US")}
-                    </span>
-                  </div>
 
-                  <div className="mobile-app-stat-grid">
-                    {mobilePrimaryStats.map((stat) => (
-                      <div key={stat.label} className="mobile-app-stat-card">
-                        <span>{stat.label}</span>
-                        <strong
-                          className={
-                            stat.tone === "up" ? "up" : stat.tone === "down" ? "down" : ""
-                          }
-                        >
-                          {stat.value}
-                        </strong>
-                        <small>{stat.meta}</small>
+                    <div className="mobile-phone-detail-list">
+                      <div className="mobile-phone-detail-row">
+                        <span>Entry Price</span>
+                        <strong>{formatPrice(activeTrade.entryPrice)}</strong>
                       </div>
-                    ))}
+                      <div className="mobile-phone-detail-row">
+                        <span>Take Profit</span>
+                        <strong className="up">{formatPrice(activeTrade.targetPrice)}</strong>
+                      </div>
+                      <div className="mobile-phone-detail-row">
+                        <span>Stop Loss</span>
+                        <strong className="down">{formatPrice(activeTrade.stopPrice)}</strong>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="mobile-phone-empty-state">
+                    <span className="mobile-phone-card-kicker">Active Position</span>
+                    <h2>No active trade</h2>
+                    <p>
+                      {latestTradeBarsAgo !== null
+                        ? `The latest closed trade was ${latestTradeBarsAgo} bar${latestTradeBarsAgo !== 1 ? "s" : ""} ago.`
+                        : "Run a backtest or wait for the next live entry."}
+                    </p>
                   </div>
-                </section>
-              </>
+                )}
+              </section>
             ) : mobileWorkspaceTab === "history" ? (
-              <section className="mobile-app-card mobile-app-history-card">
-                <div className="mobile-app-section-head">
-                  <div>
-                    <span className="mobile-app-eyebrow">History</span>
-                    <h3>Recent Trades</h3>
+              <section className="mobile-phone-card mobile-phone-card-history">
+                <div className="mobile-phone-card-head">
+                  <div className="mobile-phone-card-copy">
+                    <span className="mobile-phone-card-kicker">Recent Trades</span>
+                    <h2>History</h2>
                   </div>
-                  <span className="mobile-app-count-pill">
+                  <span className="mobile-phone-count-chip">
                     {mobileRecentTrades.length.toLocaleString("en-US")}
                   </span>
                 </div>
 
                 {mobileRecentTrades.length === 0 ? (
-                  <div className="mobile-app-empty-state compact">
-                    <h2>{backtestHasRun ? "No recent trades yet" : "No backtest has run yet"}</h2>
-                    <p>
-                      {mobileSavedPresets.length > 0
-                        ? "Load a preset from Settings to rebuild the history feed."
-                        : "Save a preset on desktop first, then load it here from Settings."}
-                    </p>
+                  <div className="mobile-phone-empty-state">
+                    <span className="mobile-phone-card-kicker">History</span>
+                    <h2>No trades yet</h2>
+                    <p>{backtestHasRun ? "No closed trades are available yet." : "Run a backtest to populate history."}</p>
                   </div>
                 ) : (
-                  <div className="mobile-app-history-list">
-                    {mobileRecentTrades.map((trade) => {
-                      const durationMinutes = Math.max(
-                        1,
-                        (Number(trade.exitTime) - Number(trade.entryTime)) / 60
-                      );
-                      const confidencePct = Math.round(getEffectiveTradeConfidenceScore(trade) * 100);
-
-                      return (
-                        <button
-                          key={trade.id}
-                          type="button"
-                          className="mobile-app-history-item"
-                          onClick={() => openBacktestTradeDetails(trade)}
-                        >
-                          <div className="mobile-app-history-head">
-                            <div className="mobile-app-history-copy">
-                              <strong>{getAiZipTradeDisplayId(trade)}</strong>
-                              <span>
-                                {trade.symbol.replaceAll("_", "/")} ·{" "}
-                                {trade.side === "Long" ? "Buy" : "Sell"} ·{" "}
-                                {getSessionLabel(trade.entryTime)}
-                              </span>
-                            </div>
+                  <div className="mobile-phone-history-list">
+                    {mobileRecentTrades.map((trade) => (
+                      <button
+                        key={trade.id}
+                        type="button"
+                        className="mobile-phone-history-row"
+                        onClick={() => openBacktestTradeDetails(trade)}
+                      >
+                        <div className="mobile-phone-history-main">
+                          <div className="mobile-phone-history-copy">
+                            <strong>{trade.symbol.replaceAll("_", "/")}</strong>
+                            <span>
+                              {trade.side === "Long" ? "Buy" : "Sell"} | {getBacktestExitLabel(trade)}
+                            </span>
+                          </div>
+                          <div className="mobile-phone-history-values">
                             <strong className={trade.pnlUsd >= 0 ? "up" : "down"}>
                               {formatSignedUsd(trade.pnlUsd)}
                             </strong>
+                            <span className={trade.pnlPct >= 0 ? "up" : "down"}>
+                              {formatSignedPercent(trade.pnlPct)}
+                            </span>
                           </div>
-
-                          <div className="mobile-app-history-chips">
-                            <span>{trade.entrySource}</span>
-                            <span>{getBacktestExitLabel(trade)}</span>
-                            <span>{formatMinutesCompact(durationMinutes)}</span>
-                            <span>{confidencePct}% conf</span>
-                          </div>
-                        </button>
-                      );
-                    })}
+                        </div>
+                        <div className="mobile-phone-history-meta">
+                          <span>{getHistoryTradeExitLabel(trade)}</span>
+                          <span>Entry {formatPrice(trade.entryPrice)}</span>
+                          <span>Exit {formatPrice(trade.outcomePrice)}</span>
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 )}
               </section>
             ) : (
-              <>
-                <section className="mobile-app-card">
-                  <div className="mobile-app-section-head">
-                    <div>
-                      <span className="mobile-app-eyebrow">Configuration</span>
-                      <h3>Current Run</h3>
-                    </div>
+              <section className="mobile-phone-card mobile-phone-card-settings">
+                <div className="mobile-phone-account-card">
+                  <div className="mobile-phone-account-avatar">{currentUserInitials}</div>
+                  <div className="mobile-phone-account-copy">
+                    <span>Signed In</span>
+                    <strong>{currentUserDisplayName}</strong>
+                    <small>{currentUser.email ?? "Protected account"}</small>
                   </div>
-                  <div className="mobile-app-settings-list">
-                    {mobileSettingsSummaryRows.map((row) => (
-                      <div key={row.label} className="mobile-app-settings-row">
-                        <span>{row.label}</span>
-                        <strong>{row.value}</strong>
-                      </div>
-                    ))}
-                  </div>
-                </section>
+                </div>
 
-                <section className="mobile-app-card">
-                  <div className="mobile-app-section-head">
-                    <div>
-                      <span className="mobile-app-eyebrow">Presets</span>
-                      <h3>Saved Presets</h3>
-                    </div>
-                    <span className="mobile-app-count-pill">
-                      {mobileSavedPresets.length.toLocaleString("en-US")}
-                    </span>
-                  </div>
-
-                  {mobileSavedPresets.length === 0 ? (
-                    <div className="mobile-app-empty-state compact">
-                      <h2>No saved presets yet</h2>
-                      <p>Save presets on desktop first, then they’ll appear here for quick reruns.</p>
-                    </div>
-                  ) : (
-                    <div className="mobile-app-preset-list">
-                      {mobileSavedPresets.map((preset) => {
-                        const presetSymbol = String(
-                          preset.settings.selectedSymbol ?? preset.settings.symbol ?? "XAU_USD"
-                        ).replaceAll("_", "/");
-                        const presetTimeframe = String(
-                          preset.settings.selectedBacktestTimeframe ??
-                            preset.settings.timeframe ??
-                            "15m"
-                        );
-
-                        return (
-                          <button
-                            key={preset.name}
-                            type="button"
-                            className="mobile-app-preset-item"
-                            onClick={() => {
-                              handleLoadPreset(preset);
-                              setMobileWorkspaceTab("active");
-                            }}
-                          >
-                            <div className="mobile-app-preset-copy">
-                              <strong>{preset.name}</strong>
-                              <span>
-                                {presetSymbol} · {presetTimeframe} ·{" "}
-                                {new Date(preset.savedAt).toLocaleDateString()}
-                              </span>
-                            </div>
-                            <span className="mobile-app-preset-cta">Load</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </section>
-
-                <section className="mobile-app-card">
-                  <div className="mobile-app-section-head">
-                    <div>
-                      <span className="mobile-app-eyebrow">Account</span>
-                      <h3>Profile Actions</h3>
-                    </div>
-                  </div>
-
-                  <div className="mobile-app-action-stack">
-                    <button
-                      type="button"
-                      className="mobile-app-action-button"
-                      onClick={() => {
-                        setProfileUsernameInput(currentUserDisplayName);
-                        setProfileDialogStatus("");
-                        setProfileDialogMode("username");
-                      }}
-                    >
-                      Change Username
-                    </button>
-                    <button
-                      type="button"
-                      className="mobile-app-action-button"
-                      onClick={() => {
-                        setProfilePasswordForm(EMPTY_ACCOUNT_PASSWORD_FORM);
-                        setProfileDialogStatus("");
-                        setProfileDialogMode("password");
-                      }}
-                    >
-                      Change Password
-                    </button>
-                    <button
-                      type="button"
-                      className="mobile-app-action-button danger"
-                      onClick={() => {
-                        void onLogOut();
-                      }}
-                    >
-                      Log Out
-                    </button>
-                  </div>
-                </section>
-              </>
+                <div className="mobile-phone-action-list">
+                  <button
+                    type="button"
+                    className="mobile-phone-action-btn"
+                    onClick={() => {
+                      setProfileUsernameInput(currentUserDisplayName);
+                      setProfileDialogStatus("");
+                      setProfileDialogMode("username");
+                    }}
+                  >
+                    <span>Username</span>
+                    <strong>{currentUserDisplayName}</strong>
+                  </button>
+                  <button
+                    type="button"
+                    className="mobile-phone-action-btn"
+                    onClick={() => {
+                      setProfilePasswordForm(EMPTY_ACCOUNT_PASSWORD_FORM);
+                      setProfileDialogStatus("");
+                      setProfileDialogMode("password");
+                    }}
+                  >
+                    <span>Password</span>
+                    <strong>Change Password</strong>
+                  </button>
+                  <button
+                    type="button"
+                    className="mobile-phone-action-btn danger"
+                    onClick={() => {
+                      void onLogOut();
+                    }}
+                  >
+                    <span>Session</span>
+                    <strong>Log Out</strong>
+                  </button>
+                </div>
+              </section>
             )}
           </div>
 
-          <nav className="mobile-app-tabbar" aria-label="Mobile workspace tabs">
+          <nav className="mobile-phone-tabbar" aria-label="Mobile workspace tabs">
             {([
               { id: "active", label: "Active" },
               { id: "history", label: "History" },
@@ -24938,14 +24666,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               <button
                 key={tab.id}
                 type="button"
-                className={`mobile-app-tab${mobileWorkspaceTab === tab.id ? " active" : ""}`}
+                className={`mobile-phone-tab${mobileWorkspaceTab === tab.id ? " active" : ""}`}
                 onClick={() => setMobileWorkspaceTab(tab.id)}
                 aria-pressed={mobileWorkspaceTab === tab.id}
               >
-                <span className="mobile-app-tab-icon">
+                <span className="mobile-phone-tab-icon">
                   <MobileWorkspaceTabIcon tab={tab.id} />
                 </span>
-                <span className="mobile-app-tab-label">{tab.label}</span>
+                <span className="mobile-phone-tab-label">{tab.label}</span>
               </button>
             ))}
           </nav>
