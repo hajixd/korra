@@ -6450,6 +6450,63 @@ const formatSignedPercent = (value: number): string => {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 };
 
+const formatMobileTimelineDate = (timestampMs: number): string => {
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
+    return "No date available";
+  }
+
+  return new Date(timestampMs).toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric"
+  });
+};
+
+const formatMobileTimelineTime = (timestampMs: number): string => {
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
+    return "No time available";
+  }
+
+  return new Date(timestampMs).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+};
+
+const resolveTradeMarkPriceAtSeconds = (
+  trade: Pick<HistoryItem, "entryPrice" | "outcomePrice" | "entryTime" | "exitTime">,
+  asOfSec: number,
+  candles: Candle[]
+): number => {
+  const entrySec = Number(trade.entryTime);
+  const exitSec = Number(trade.exitTime);
+
+  if (!Number.isFinite(asOfSec)) {
+    return trade.entryPrice;
+  }
+
+  if (asOfSec <= entrySec) {
+    return trade.entryPrice;
+  }
+
+  if (asOfSec >= exitSec) {
+    return trade.outcomePrice;
+  }
+
+  if (candles.length === 0) {
+    return trade.entryPrice;
+  }
+
+  const candleIndex = findCandleIndexAtOrBefore(candles, Math.floor(asOfSec * 1000));
+  if (candleIndex < 0) {
+    return trade.entryPrice;
+  }
+
+  return candles[candleIndex]!.close;
+};
+
 const formatAggressorPressure = (value: number): string => {
   if (!Number.isFinite(value) || value <= 0) {
     return "0";
@@ -11101,6 +11158,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab>("active");
   const [mobileTradeLimit, setMobileTradeLimit] = useState(24);
   const [mobileRecentTradesCache, setMobileRecentTradesCache] = useState<HistoryItem[]>([]);
+  const [mobileTimelineOverrideSec, setMobileTimelineOverrideSec] = useState<number | null>(null);
+  const [mobileTimelineNowMs, setMobileTimelineNowMs] = useState(() => Date.now());
   const [aggressorPressure, setAggressorPressure] = useState<AggressorPressureSnapshot>(() => ({
     buyPressure: 0,
     sellPressure: 0,
@@ -11384,6 +11443,19 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
     html.classList.remove("mobile-terminal-viewport-lock");
     body.classList.remove("mobile-terminal-viewport-lock");
+  }, [isMobileWorkspace]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !isMobileWorkspace) {
+      return;
+    }
+
+    setMobileTimelineNowMs(Date.now());
+    const intervalId = window.setInterval(() => {
+      setMobileTimelineNowMs(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
   }, [isMobileWorkspace]);
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
@@ -22586,6 +22658,203 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const mobileVisibleRecentTrades = useMemo(() => {
     return mobileRecentTrades.length > 0 ? mobileRecentTrades : mobileRecentTradesCache;
   }, [mobileRecentTrades, mobileRecentTradesCache]);
+  const mobileTimelineSourceTrades = useMemo(() => {
+    const deduped = new Map<string, HistoryItem>();
+
+    const registerTrade = (trade: HistoryItem) => {
+      if (!trade?.id || deduped.has(trade.id)) {
+        return;
+      }
+      deduped.set(trade.id, trade);
+    };
+
+    for (const trade of deferredBacktestAnalyticsTrades) {
+      registerTrade(trade);
+    }
+
+    for (const trade of activePanelHistoryRows) {
+      registerTrade(trade);
+    }
+
+    for (const trade of mobileRecentTradesCache) {
+      registerTrade(trade);
+    }
+
+    return [...deduped.values()].sort((a, b) => Number(a.entryTime) - Number(b.entryTime));
+  }, [activePanelHistoryRows, deferredBacktestAnalyticsTrades, mobileRecentTradesCache]);
+  const mobileTimelineStepSec = useMemo(() => {
+    const timeframeStepSec = Math.floor((timeframeMinutes[selectedTimeframe] ?? 15) * 60);
+    return Math.max(60, Math.min(3600, timeframeStepSec || 60));
+  }, [selectedTimeframe]);
+  const mobileTimelineLiveSec = useMemo(() => {
+    const latestTradeSec = mobileTimelineSourceTrades.reduce((max, trade) => {
+      return Math.max(max, Number(trade.entryTime), Number(trade.exitTime));
+    }, 0);
+    const chartNowSec =
+      selectedCandles.length > 0
+        ? toUtcTimestamp(selectedCandles[selectedCandles.length - 1]!.time)
+        : 0;
+    const fallbackNowSec = Math.floor(mobileTimelineNowMs / 1000);
+
+    return Math.max(
+      latestTradeSec,
+      chartNowSec,
+      latestTradeSec === 0 && chartNowSec === 0 ? fallbackNowSec : 0
+    );
+  }, [mobileTimelineNowMs, mobileTimelineSourceTrades, selectedCandles]);
+  const mobileTimelineBounds = useMemo(() => {
+    let earliestSec = Number.POSITIVE_INFINITY;
+
+    for (const trade of mobileTimelineSourceTrades) {
+      const entrySec = Number(trade.entryTime);
+      const exitSec = Number(trade.exitTime);
+
+      if (Number.isFinite(entrySec) && entrySec > 0) {
+        earliestSec = Math.min(earliestSec, entrySec);
+      }
+      if (Number.isFinite(exitSec) && exitSec > 0) {
+        earliestSec = Math.min(earliestSec, exitSec);
+      }
+    }
+
+    if (selectedCandles.length > 0) {
+      earliestSec = Math.min(earliestSec, toUtcTimestamp(selectedCandles[0]!.time));
+    }
+
+    if (!Number.isFinite(earliestSec)) {
+      earliestSec = Math.max(0, mobileTimelineLiveSec - Math.max(14_400, mobileTimelineStepSec * 48));
+    }
+
+    const paddingSec = Math.max(300, mobileTimelineStepSec * 2);
+    const startSec = Math.max(0, Math.floor(earliestSec - paddingSec));
+    const endSec = Math.max(startSec, Math.floor(mobileTimelineLiveSec));
+
+    return { startSec, endSec };
+  }, [mobileTimelineLiveSec, mobileTimelineSourceTrades, mobileTimelineStepSec, selectedCandles]);
+  const mobileTimelineCursorSec =
+    mobileTimelineOverrideSec == null
+      ? mobileTimelineBounds.endSec
+      : clamp(
+          Math.floor(mobileTimelineOverrideSec),
+          mobileTimelineBounds.startSec,
+          mobileTimelineBounds.endSec
+        );
+  const mobileTimelineIsLive = mobileTimelineOverrideSec == null;
+  const mobileTimelineTimestampMs = mobileTimelineCursorSec * 1000;
+  const mobileTimelineDateLabel = formatMobileTimelineDate(mobileTimelineTimestampMs);
+  const mobileTimelineTimeLabel = formatMobileTimelineTime(mobileTimelineTimestampMs);
+  const mobileTimelineSliderMax = Math.max(
+    0,
+    mobileTimelineBounds.endSec - mobileTimelineBounds.startSec
+  );
+  const mobileTimelineSliderValue = clamp(
+    mobileTimelineCursorSec - mobileTimelineBounds.startSec,
+    0,
+    mobileTimelineSliderMax
+  );
+  const mobileTimelineActiveTrade = useMemo<ActiveTrade | null>(() => {
+    const activeSnapshotTrade = [...mobileTimelineSourceTrades]
+      .filter((trade) => {
+        const entrySec = Number(trade.entryTime);
+        const exitSec = Number(trade.exitTime);
+        return entrySec <= mobileTimelineCursorSec && exitSec > mobileTimelineCursorSec;
+      })
+      .sort((a, b) => Number(b.entryTime) - Number(a.entryTime))[0];
+
+    if (!activeSnapshotTrade) {
+      return mobileTimelineIsLive ? activeTrade : null;
+    }
+
+    const markPrice =
+      mobileTimelineIsLive &&
+      activeTrade &&
+      activeTrade.symbol === activeSnapshotTrade.symbol &&
+      Number(activeTrade.openedAt) === Number(activeSnapshotTrade.entryTime)
+        ? activeTrade.markPrice
+        : resolveTradeMarkPriceAtSeconds(
+            activeSnapshotTrade,
+            mobileTimelineCursorSec,
+            getHistoryCandlesForSymbol(activeSnapshotTrade.symbol)
+          );
+    const pnlValue =
+      activeSnapshotTrade.side === "Long"
+        ? (markPrice - activeSnapshotTrade.entryPrice) * activeSnapshotTrade.units
+        : (activeSnapshotTrade.entryPrice - markPrice) * activeSnapshotTrade.units;
+    const pnlPct =
+      activeSnapshotTrade.entryPrice > 0
+        ? activeSnapshotTrade.side === "Long"
+          ? ((markPrice - activeSnapshotTrade.entryPrice) / activeSnapshotTrade.entryPrice) * 100
+          : ((activeSnapshotTrade.entryPrice - markPrice) / activeSnapshotTrade.entryPrice) * 100
+        : 0;
+    const riskDist = Math.abs(activeSnapshotTrade.entryPrice - activeSnapshotTrade.stopPrice);
+    const rewardDist = Math.abs(activeSnapshotTrade.targetPrice - activeSnapshotTrade.entryPrice);
+    const rr = riskDist > 0 ? rewardDist / riskDist : 0;
+    const progressRaw =
+      activeSnapshotTrade.side === "Long"
+        ? (markPrice - activeSnapshotTrade.stopPrice) /
+          Math.max(0.000001, activeSnapshotTrade.targetPrice - activeSnapshotTrade.stopPrice)
+        : (activeSnapshotTrade.stopPrice - markPrice) /
+          Math.max(0.000001, activeSnapshotTrade.stopPrice - activeSnapshotTrade.targetPrice);
+
+    return {
+      symbol: activeSnapshotTrade.symbol,
+      side: activeSnapshotTrade.side,
+      units: activeSnapshotTrade.units,
+      entryPrice: activeSnapshotTrade.entryPrice,
+      markPrice,
+      targetPrice: activeSnapshotTrade.targetPrice,
+      stopPrice: activeSnapshotTrade.stopPrice,
+      openedAt: activeSnapshotTrade.entryTime,
+      openedAtLabel: getHistoryTradeEntryLabel(activeSnapshotTrade),
+      elapsed: formatElapsed(
+        Number(activeSnapshotTrade.entryTime),
+        Math.max(Number(activeSnapshotTrade.entryTime), mobileTimelineCursorSec)
+      ),
+      pnlPct,
+      pnlValue,
+      progressPct: clamp(progressRaw * 100, 0, 100),
+      rr
+    };
+  }, [
+    activeTrade,
+    getHistoryCandlesForSymbol,
+    mobileTimelineCursorSec,
+    mobileTimelineIsLive,
+    mobileTimelineSourceTrades
+  ]);
+  const mobileTimelineHistoryTrades = useMemo(() => {
+    const sourceTrades =
+      deferredBacktestAnalyticsTrades.length > 0
+        ? deferredBacktestAnalyticsTrades
+        : mobileVisibleRecentTrades;
+
+    return [...sourceTrades]
+      .filter((trade) => Number(trade.exitTime) <= mobileTimelineCursorSec)
+      .sort((a, b) => Number(b.exitTime) - Number(a.exitTime))
+      .slice(0, mobileTradeLimit);
+  }, [
+    deferredBacktestAnalyticsTrades,
+    mobileTradeLimit,
+    mobileTimelineCursorSec,
+    mobileVisibleRecentTrades
+  ]);
+
+  useEffect(() => {
+    if (mobileTimelineOverrideSec == null) {
+      return;
+    }
+
+    const clampedValue = clamp(
+      Math.floor(mobileTimelineOverrideSec),
+      mobileTimelineBounds.startSec,
+      mobileTimelineBounds.endSec
+    );
+
+    if (clampedValue !== mobileTimelineOverrideSec) {
+      setMobileTimelineOverrideSec(clampedValue);
+    }
+  }, [mobileTimelineBounds.endSec, mobileTimelineBounds.startSec, mobileTimelineOverrideSec]);
+
   const mobileSavedPresets = useMemo(() => {
     return [...savedPresets].sort((a, b) => b.savedAt - a.savedAt);
   }, [savedPresets]);
@@ -24605,12 +24874,19 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     selectedSurfaceTab === "models" ? "Loading Models..." : "Preparing Backtest...";
 
   if (isMobileWorkspace) {
-    const mobileActiveSymbol = (activeTrade?.symbol ?? appliedBacktestSettings.symbol).replaceAll("_", "/");
+    const mobileActiveDisplayTrade = mobileTimelineActiveTrade;
+    const mobileActiveSymbol = (
+      mobileActiveDisplayTrade?.symbol ?? appliedBacktestSettings.symbol
+    ).replaceAll("_", "/");
+    const showMobileTimeline =
+      mobileWorkspaceTab === "active" || mobileWorkspaceTab === "history";
 
     return (
       <main
         className={`terminal mobile-terminal-shell mobile-phone-shell${
           isStandaloneMobileWorkspace ? " mobile-phone-shell-standalone" : ""
+        }${
+          mobileWorkspaceTab === "history" ? " mobile-phone-shell-history" : ""
         }`}
       >
         <section className="mobile-phone-frame">
@@ -24624,8 +24900,61 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       ? "Trade History"
                       : "Settings"}
                 </h1>
+                {showMobileTimeline ? (
+                  <>
+                    <p className="mobile-phone-header-date">{mobileTimelineDateLabel}</p>
+                    <div className="mobile-phone-header-time-row">
+                      <span className="mobile-phone-header-time">{mobileTimelineTimeLabel}</span>
+                      <span
+                        className={`mobile-phone-header-time-badge${
+                          mobileTimelineIsLive ? " live" : ""
+                        }`}
+                      >
+                        {mobileTimelineIsLive ? "Live" : "As Of"}
+                      </span>
+                    </div>
+                  </>
+                ) : null}
               </div>
             </div>
+            {showMobileTimeline ? (
+              <div className="mobile-phone-timeline-strip">
+                <input
+                  type="range"
+                  className="mobile-phone-timeline-slider"
+                  min={0}
+                  max={mobileTimelineSliderMax}
+                  step={mobileTimelineStepSec}
+                  value={mobileTimelineSliderValue}
+                  onChange={(event) => {
+                    const rawOffset = Math.floor(Number(event.target.value) || 0);
+                    const nextOffset = clamp(rawOffset, 0, mobileTimelineSliderMax);
+                    const nextSec = mobileTimelineBounds.startSec + nextOffset;
+
+                    if (
+                      mobileTimelineSliderMax === 0 ||
+                      nextSec >= mobileTimelineBounds.endSec - mobileTimelineStepSec
+                    ) {
+                      setMobileTimelineOverrideSec(null);
+                      return;
+                    }
+
+                    setMobileTimelineOverrideSec(nextSec);
+                  }}
+                  disabled={mobileTimelineSliderMax === 0}
+                  aria-label="Mobile timeline"
+                />
+                <button
+                  type="button"
+                  className={`mobile-phone-timeline-live-btn${
+                    mobileTimelineIsLive ? " active" : ""
+                  }`}
+                  onClick={() => setMobileTimelineOverrideSec(null)}
+                >
+                  Live
+                </button>
+              </div>
+            ) : null}
             {statsRefreshOverlayMode === "loading" ? (
               <div className="mobile-phone-sync-pill">
                 <span className="mobile-phone-sync-dot" aria-hidden="true" />
@@ -24637,51 +24966,53 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           <div className="mobile-phone-body">
             {mobileWorkspaceTab === "active" ? (
               <section className="mobile-phone-card mobile-phone-card-active">
-                {activeTrade ? (
+                {mobileActiveDisplayTrade ? (
                   <>
                     <div className="mobile-phone-card-head">
                       <div className="mobile-phone-card-copy">
-                        <span className="mobile-phone-card-kicker">Live Position</span>
+                        <span className="mobile-phone-card-kicker">
+                          {mobileTimelineIsLive ? "Live Position" : "As-Of Position"}
+                        </span>
                         <h2>{mobileActiveSymbol}</h2>
                       </div>
                       <span
                         className={`mobile-phone-side-pill ${
-                          activeTrade.side === "Long" ? "up" : "down"
+                          mobileActiveDisplayTrade.side === "Long" ? "up" : "down"
                         }`}
                       >
-                        {activeTrade.side === "Long" ? "Buy" : "Sell"}
+                        {mobileActiveDisplayTrade.side === "Long" ? "Buy" : "Sell"}
                       </span>
                     </div>
 
                     <div className="mobile-phone-pnl-block">
                       <span>Open PnL</span>
-                      <strong className={activeTrade.pnlValue >= 0 ? "up" : "down"}>
-                        {formatSignedUsd(activeTrade.pnlValue)}
+                      <strong className={mobileActiveDisplayTrade.pnlValue >= 0 ? "up" : "down"}>
+                        {formatSignedUsd(mobileActiveDisplayTrade.pnlValue)}
                       </strong>
-                      <small className={activeTrade.pnlPct >= 0 ? "up" : "down"}>
-                        {formatSignedPercent(activeTrade.pnlPct)}
+                      <small className={mobileActiveDisplayTrade.pnlPct >= 0 ? "up" : "down"}>
+                        {formatSignedPercent(mobileActiveDisplayTrade.pnlPct)}
                       </small>
                     </div>
 
                     <div className="mobile-phone-detail-list">
                       <div className="mobile-phone-detail-row">
                         <span>Entry Price</span>
-                        <strong>{formatPrice(activeTrade.entryPrice)}</strong>
+                        <strong>{formatPrice(mobileActiveDisplayTrade.entryPrice)}</strong>
                       </div>
                       <div className="mobile-phone-detail-row">
                         <span>Take Profit</span>
-                        <strong className="up">{formatPrice(activeTrade.targetPrice)}</strong>
+                        <strong className="up">{formatPrice(mobileActiveDisplayTrade.targetPrice)}</strong>
                       </div>
                       <div className="mobile-phone-detail-row">
                         <span>Stop Loss</span>
-                        <strong className="down">{formatPrice(activeTrade.stopPrice)}</strong>
+                        <strong className="down">{formatPrice(mobileActiveDisplayTrade.stopPrice)}</strong>
                       </div>
                     </div>
                   </>
                 ) : (
                   <div className="mobile-phone-empty-state">
                     <span className="mobile-phone-card-kicker">Active Position</span>
-                    <h2>No active trade</h2>
+                    <h2>{mobileTimelineIsLive ? "No active trade" : "No active trade at this time"}</h2>
                   </div>
                 )}
               </section>
@@ -24689,22 +25020,24 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               <section className="mobile-phone-card mobile-phone-card-history">
                 <div className="mobile-phone-card-head">
                   <div className="mobile-phone-card-copy">
-                    <span className="mobile-phone-card-kicker">Recent Trades</span>
+                    <span className="mobile-phone-card-kicker">
+                      {mobileTimelineIsLive ? "Recent Trades" : "Closed by This Time"}
+                    </span>
                     <h2>History</h2>
                   </div>
                   <span className="mobile-phone-count-chip">
-                    {mobileVisibleRecentTrades.length.toLocaleString("en-US")}
+                    {mobileTimelineHistoryTrades.length.toLocaleString("en-US")}
                   </span>
                 </div>
 
-                {mobileVisibleRecentTrades.length === 0 ? (
+                {mobileTimelineHistoryTrades.length === 0 ? (
                   <div className="mobile-phone-empty-state">
                     <span className="mobile-phone-card-kicker">History</span>
-                    <h2>No trades yet</h2>
+                    <h2>{mobileTimelineIsLive ? "No trades yet" : "No trades by this time"}</h2>
                   </div>
                 ) : (
                   <div className="mobile-phone-history-list">
-                    {mobileVisibleRecentTrades.map((trade) => {
+                    {mobileTimelineHistoryTrades.map((trade) => {
                       const railTone = getMobileHistoryRailTone(trade);
 
                       return (

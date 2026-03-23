@@ -82,6 +82,7 @@ export type BacktestHistoryTradeBlueprint = {
   result: BacktestHistoryTradeResult;
   entryMs: number;
   exitMs: number;
+  exitReason?: string;
   riskPct: number;
   rr: number;
   units: number;
@@ -466,7 +467,7 @@ export const computeBacktestHistoryRowsChunk = ({
       let resolvedExitIndex = exitIndex;
       let outcomePrice = list[exitIndex].close;
       let resolvedExitTimeMs = list[exitIndex].time;
-      let exitReason = "Model Exit";
+      let exitReason = String(blueprint.exitReason ?? "").trim() || "Model Exit";
       let tradeResult: BacktestHistoryTradeResult | null = null;
       let bestTrail = currentStopPrice;
       const resolveStopExitReason = () => {

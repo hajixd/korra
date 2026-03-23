@@ -666,7 +666,7 @@ const resolveTradeExitIndex = ({
   trailingStartPct: number;
   trailingDistPct: number;
   maxBarsInTrade: number;
-}): number => {
+}): { index: number; reason: string } => {
   const entryIndex = signalIndex + 1;
   const direction = side === "Long" ? 1 : -1;
   const breakEvenOn = stopMode === 1;
@@ -734,14 +734,22 @@ const resolveTradeExitIndex = ({
       continue;
     }
 
-    if (forcedStop || forcedTarget || forcedMaxBars) {
-      return index;
+    if (forcedStop) {
+      return { index, reason: "Stop Loss" };
     }
 
-    return index;
+    if (forcedTarget) {
+      return { index, reason: "Take Profit" };
+    }
+
+    if (forcedMaxBars) {
+      return { index, reason: "Max Bars" };
+    }
+
+    return { index, reason: "Model Exit" };
   }
 
-  return candles.length - 1;
+  return { index: candles.length - 1, reason: "End of Data" };
 };
 
 const resolveFallbackDistance = (
@@ -876,7 +884,7 @@ export const buildStrategyReplayTradeBlueprints = ({
           slDollars > 0
             ? Math.max(0.000001, slDollars / safeUnits)
             : resolveFallbackDistance(model, entryPrice, false);
-        const exitIndex = resolveTradeExitIndex({
+        const resolvedExit = resolveTradeExitIndex({
           candles,
           featureSeries,
           model,
@@ -894,6 +902,7 @@ export const buildStrategyReplayTradeBlueprints = ({
           maxBarsInTrade
         });
 
+        const exitIndex = resolvedExit.index;
         if (exitIndex <= entryIndex || exitIndex >= candles.length) {
           continue;
         }
@@ -911,6 +920,7 @@ export const buildStrategyReplayTradeBlueprints = ({
           result: "Win",
           entryMs: entryCandle.time,
           exitMs: candles[exitIndex]!.time,
+          exitReason: resolvedExit.reason,
           riskPct,
           rr,
           units: safeUnits
