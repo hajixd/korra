@@ -6590,6 +6590,11 @@ body.mobile-terminal-viewport-lock {
   pointer-events: none;
 }
 
+.stats-refresh-overlay-mobile {
+  background: #000;
+  pointer-events: auto;
+}
+
 .stats-refresh-card {
   max-width: min(calc(100vw - 2rem), 520px);
   padding: 10px 12px;
@@ -6627,8 +6632,9 @@ body.mobile-terminal-viewport-lock {
   align-items: center;
   justify-content: center;
   padding: 1.25rem;
-  background: #000;
-  backdrop-filter: none;
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .stats-refresh-loading-shell {
@@ -6639,8 +6645,10 @@ body.mobile-terminal-viewport-lock {
   flex-direction: column;
   border-radius: 20px;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  background: #000;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03);
+  background: rgba(0, 0, 0, 0.82);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .stats-refresh-loading-head {

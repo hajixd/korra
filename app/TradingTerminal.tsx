@@ -24885,7 +24885,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         </section>
 
         {statsRefreshOverlayVisible && statsRefreshOverlayMode === "loading" ? (
-          <div className="stats-refresh-overlay" aria-live="polite" aria-atomic="true">
+          <div
+            className="stats-refresh-overlay stats-refresh-overlay-mobile"
+            aria-live="polite"
+            aria-atomic="true"
+          >
             <div className="stats-refresh-loading-card">
               {statsRefreshLoadingContent}
             </div>
