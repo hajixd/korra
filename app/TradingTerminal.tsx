@@ -11752,12 +11752,20 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       const viewportCandidates = [visualHeight, innerHeight, clientHeight].filter(
         (value) => value > 0
       );
+      const baseViewportHeight =
+        visualHeight > 0
+          ? visualHeight
+          : clientHeight > 0
+            ? clientHeight
+            : innerHeight;
       const resolvedHeight =
         viewportCandidates.length === 0
           ? 0
           : keyboardLikelyOpen
             ? Math.min(...viewportCandidates)
-            : Math.max(...viewportCandidates);
+            : baseViewportHeight > 0
+              ? baseViewportHeight
+              : Math.max(...viewportCandidates);
 
       if (resolvedHeight > 0) {
         setMobileViewportHeightPx(resolvedHeight);
@@ -26475,14 +26483,22 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               </section>
             ) : mobileWorkspaceTab === "social" ? (
               <section className="mobile-phone-card mobile-phone-card-social">
-                <div className="mobile-phone-card-head">
-                  <div className="mobile-phone-card-copy">
+                <div className="mobile-phone-social-hero">
+                  <div className="mobile-phone-social-hero-copy">
                     <span className="mobile-phone-card-kicker">Community Presets</span>
-                    <h2>Social</h2>
+                    <h2>Discover setups</h2>
+                    <p>Browse the feed, save what you like, and run a preset in one tap.</p>
                   </div>
-                  <span className="mobile-phone-count-chip">
-                    {socialVisiblePresets.length.toLocaleString("en-US")}
-                  </span>
+                  <div className="mobile-phone-social-hero-stats" aria-label="social feed summary">
+                    <div className="mobile-phone-social-hero-stat">
+                      <strong>{socialVisiblePresets.length.toLocaleString("en-US")}</strong>
+                      <span>Visible</span>
+                    </div>
+                    <div className="mobile-phone-social-hero-stat">
+                      <strong>{mobileSavedPresets.length.toLocaleString("en-US")}</strong>
+                      <span>Saved</span>
+                    </div>
+                  </div>
                 </div>
 
                 {socialPresetsLoading ? (
@@ -26502,39 +26518,67 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                     <h2>No presets yet</h2>
                   </div>
                 ) : (
-                  <div className="mobile-phone-social-list">
-                    {socialVisiblePresets.map((preset) => (
-                      <article key={preset.id} className="mobile-phone-social-row">
-                        <div className="mobile-phone-social-copy">
-                          <strong>{preset.presetName}</strong>
-                          <span>{preset.authorDisplayName}</span>
-                          {preset.description ? <p>{preset.description}</p> : null}
-                        </div>
-                        <div className="mobile-phone-social-actions">
-                          <button
-                            type="button"
-                            className="mobile-phone-social-btn"
-                            onClick={() => {
-                              triggerMobileHaptic();
-                              handleSaveSocialPresetToSaves(preset);
-                            }}
+                  <div className="mobile-phone-social-feed">
+                    {socialVisiblePresets.map((preset) => {
+                      const isOwner = preset.authorUid === currentUser.uid;
+                      const authorDisplayName = isGenericSocialPresetAuthorName(
+                        preset.authorDisplayName
+                      )
+                        ? isOwner
+                          ? "You"
+                          : "Community"
+                        : preset.authorDisplayName;
+
+                      return (
+                        <article key={preset.id} className="mobile-phone-social-card">
+                          <div className="mobile-phone-social-card-head">
+                            <div className="mobile-phone-social-card-copy">
+                              <span className="mobile-phone-social-card-kicker">
+                                {isOwner ? "Your preset" : "Community preset"}
+                              </span>
+                              <strong>{preset.presetName}</strong>
+                            </div>
+                            <span className="mobile-phone-social-card-author">
+                              {authorDisplayName}
+                            </span>
+                          </div>
+                          <p
+                            className={`mobile-phone-social-card-note${
+                              preset.description ? "" : " is-empty"
+                            }`}
                           >
-                            Add to Saves
-                          </button>
-                          <button
-                            type="button"
-                            className="mobile-phone-social-btn mobile-phone-social-btn-primary"
-                            onClick={() => {
-                              triggerMobileHaptic();
-                              handleRunSocialPreset(preset);
-                              setMobileWorkspaceTab("trade");
-                            }}
-                          >
-                            Run
-                          </button>
-                        </div>
-                      </article>
-                    ))}
+                            {preset.description || "No description added yet."}
+                          </p>
+                          <div className="mobile-phone-social-card-meta">
+                            <span>{formatRelativeTimeLabel(preset.publishedAtMs)}</span>
+                            <span>{isOwner ? "Already yours" : "Ready to run"}</span>
+                          </div>
+                          <div className="mobile-phone-social-card-actions">
+                            <button
+                              type="button"
+                              className="mobile-phone-social-card-btn"
+                              onClick={() => {
+                                triggerMobileHaptic();
+                                handleSaveSocialPresetToSaves(preset);
+                              }}
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              className="mobile-phone-social-card-btn mobile-phone-social-card-btn-primary"
+                              onClick={() => {
+                                triggerMobileHaptic();
+                                handleRunSocialPreset(preset);
+                                setMobileWorkspaceTab("trade");
+                              }}
+                            >
+                              Run Now
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}
                   </div>
                 )}
               </section>

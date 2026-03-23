@@ -1994,8 +1994,8 @@ body.mobile-terminal-viewport-lock {
 .mobile-phone-shell {
   position: relative;
   overflow: hidden;
-  min-height: var(--mobile-workspace-height, 100svh);
-  height: var(--mobile-workspace-height, 100svh);
+  min-height: var(--mobile-workspace-height, 100dvh);
+  height: var(--mobile-workspace-height, 100dvh);
   background: #000;
   color: #f4f8f3;
 }
@@ -2021,8 +2021,8 @@ body.mobile-terminal-viewport-lock {
   z-index: 1;
   width: 100%;
   max-width: none;
-  min-height: var(--mobile-workspace-height, 100svh);
-  height: var(--mobile-workspace-height, 100svh);
+  min-height: var(--mobile-workspace-height, 100dvh);
+  height: var(--mobile-workspace-height, 100dvh);
   margin: 0 auto;
   padding:
     calc(env(safe-area-inset-top, 0px) + 0.58rem)
@@ -2989,59 +2989,200 @@ body.mobile-terminal-viewport-lock {
   gap: 0.62rem;
 }
 
-.mobile-phone-social-list {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
+.mobile-phone-social-hero {
   display: grid;
-  gap: 0;
+  gap: 0.72rem;
+  padding: 0.08rem 0 0.18rem;
 }
 
-.mobile-phone-social-row {
-  padding: 0.82rem 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
+.mobile-phone-social-hero-copy {
   display: grid;
-  gap: 0.56rem;
+  gap: 0.22rem;
 }
 
-.mobile-phone-social-copy {
-  display: grid;
-  gap: 0.14rem;
-}
-
-.mobile-phone-social-copy strong {
-  color: #f8fbf7;
-  font-size: 0.88rem;
-  line-height: 1.02;
-  letter-spacing: -0.03em;
-}
-
-.mobile-phone-social-copy span,
-.mobile-phone-social-copy p {
+.mobile-phone-social-hero-copy h2 {
   margin: 0;
-  color: rgba(230, 235, 229, 0.62);
-  font-size: 0.58rem;
-  line-height: 1.34;
+  color: #fbfdfb;
+  font-size: clamp(1.16rem, 6vw, 1.44rem);
+  line-height: 0.98;
+  letter-spacing: -0.06em;
 }
 
-.mobile-phone-social-actions {
+.mobile-phone-social-hero-copy p {
+  margin: 0;
+  max-width: 34ch;
+  color: rgba(230, 235, 229, 0.64);
+  font-size: 0.64rem;
+  line-height: 1.42;
+}
+
+.mobile-phone-social-hero-stats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.52rem;
 }
 
-.mobile-phone-social-btn {
-  min-height: 36px;
+.mobile-phone-social-hero-stat {
+  min-height: 78px;
+  padding: 0.74rem 0.78rem;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(244, 248, 243, 0.92);
-  font-size: 0.58rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  cursor: pointer;
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015)),
+    radial-gradient(circle at top right, rgba(104, 255, 143, 0.16), transparent 55%);
+  display: grid;
+  align-content: start;
+  gap: 0.18rem;
 }
 
-.mobile-phone-social-btn-primary {
+.mobile-phone-social-hero-stat strong {
+  color: #f8fbf7;
+  font-size: 1.08rem;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.mobile-phone-social-hero-stat span {
+  color: rgba(232, 237, 231, 0.58);
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mobile-phone-social-feed {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: 0.78rem;
+  padding: 0.08rem 0 0.12rem;
+}
+
+.mobile-phone-social-card {
+  padding: 0.86rem 0.88rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015)),
+    radial-gradient(circle at top right, rgba(92, 240, 126, 0.12), transparent 56%);
+  display: grid;
+  gap: 0.66rem;
+}
+
+.mobile-phone-social-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.68rem;
+}
+
+.mobile-phone-social-card-copy {
+  min-width: 0;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.mobile-phone-social-card-kicker,
+.mobile-phone-social-card-author,
+.mobile-phone-social-card-meta span,
+.mobile-phone-social-card-btn {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mobile-phone-social-card-kicker {
+  color: rgba(142, 247, 144, 0.78);
+  font-size: 0.5rem;
+  font-weight: 800;
+}
+
+.mobile-phone-social-card-copy strong {
+  color: #f8fbf7;
+  font-size: 0.98rem;
+  line-height: 1;
+  letter-spacing: -0.045em;
+}
+
+.mobile-phone-social-card-author {
+  flex: 0 0 auto;
+  max-width: 44%;
+  min-height: 24px;
+  padding: 0 0.56rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(236, 241, 235, 0.78);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.48rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mobile-phone-social-card-note {
+  margin: 0;
+  color: rgba(230, 235, 229, 0.72);
+  font-size: 0.63rem;
+  line-height: 1.46;
+}
+
+.mobile-phone-social-card-note.is-empty {
+  color: rgba(230, 235, 229, 0.42);
+}
+
+.mobile-phone-social-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.mobile-phone-social-card-meta span {
+  min-height: 24px;
+  padding: 0 0.52rem;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.025);
+  color: rgba(232, 237, 231, 0.62);
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.49rem;
+  font-weight: 700;
+}
+
+.mobile-phone-social-card-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.52rem;
+}
+
+.mobile-phone-social-card-btn {
+  min-height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(244, 248, 243, 0.92);
+  font-size: 0.53rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.mobile-phone-social-card-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.mobile-phone-social-card-btn-primary {
   border-color: rgba(88, 233, 116, 0.18);
   background: rgba(88, 233, 116, 0.08);
   color: #8df4a8;
