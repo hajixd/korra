@@ -11250,6 +11250,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [mobileRecentTradesCache, setMobileRecentTradesCache] = useState<HistoryItem[]>([]);
   const [mobileTimelineOverrideSec, setMobileTimelineOverrideSec] = useState<number | null>(null);
   const [mobileActiveChartScrubIndex, setMobileActiveChartScrubIndex] = useState<number | null>(null);
+  const [mobileMarketChartScrubIndex, setMobileMarketChartScrubIndex] = useState<number | null>(null);
   const [mobileTimelineNowMs, setMobileTimelineNowMs] = useState(() => Date.now());
   const [aggressorPressure, setAggressorPressure] = useState<AggressorPressureSnapshot>(() => ({
     buyPressure: 0,
@@ -11518,12 +11519,32 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     const visualViewport = window.visualViewport;
 
     const applyViewportMetrics = () => {
-      const resolvedHeight = Math.round(
-        Math.max(
-          0,
-          visualViewport?.height ?? window.innerHeight ?? document.documentElement.clientHeight ?? 0
-        )
+      const visualHeight = Math.round(Math.max(0, visualViewport?.height ?? 0));
+      const innerHeight = Math.round(Math.max(0, window.innerHeight ?? 0));
+      const clientHeight = Math.round(
+        Math.max(0, document.documentElement.clientHeight ?? 0)
       );
+      const focusedElement = document.activeElement as HTMLElement | null;
+      const textInputFocused = Boolean(
+        focusedElement &&
+        (focusedElement.tagName === "INPUT" ||
+          focusedElement.tagName === "TEXTAREA" ||
+          focusedElement.isContentEditable)
+      );
+      const keyboardLikelyOpen =
+        textInputFocused &&
+        visualHeight > 0 &&
+        innerHeight > 0 &&
+        innerHeight - visualHeight > 120;
+      const viewportCandidates = [visualHeight, innerHeight, clientHeight].filter(
+        (value) => value > 0
+      );
+      const resolvedHeight =
+        viewportCandidates.length === 0
+          ? 0
+          : keyboardLikelyOpen
+            ? Math.min(...viewportCandidates)
+            : Math.max(...viewportCandidates);
 
       if (resolvedHeight > 0) {
         setMobileViewportHeightPx(resolvedHeight);
@@ -11622,10 +11643,23 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
     return () => window.clearInterval(intervalId);
   }, [isMobileWorkspace]);
+  const triggerMobileHaptic = useCallback((pattern: number | number[] = 8) => {
+    if (typeof navigator === "undefined" || typeof navigator.vibrate !== "function") {
+      return;
+    }
+
+    try {
+      navigator.vibrate(pattern);
+    } catch {
+      // Ignore unsupported vibration requests on browsers that expose but reject the API.
+    }
+  }, []);
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const mobileActiveChartRef = useRef<HTMLDivElement | null>(null);
   const mobileActiveChartPointerIdRef = useRef<number | null>(null);
+  const mobileMarketChartRef = useRef<HTMLDivElement | null>(null);
+  const mobileMarketChartPointerIdRef = useRef<number | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const gaplessToRealRef = useRef<Map<number, number>>(new Map());
   const countdownOverlayRef = useRef<HTMLDivElement | null>(null);
@@ -23248,28 +23282,47 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       return null;
     }
 
-    const closeSeries = mobileChartCandles.map((candle) => candle.close);
-    const sampledSeries = sampleNumericSeries(closeSeries, 120);
+    const closeSeries = sampleSeriesItems(
+      mobileChartCandles.map((candle) => ({
+        timestampSec: Number(toUtcTimestamp(candle.time)),
+        value: candle.close
+      })),
+      120
+    );
 
-    if (sampledSeries.length === 0) {
+    if (closeSeries.length === 0) {
       return null;
     }
 
     const width = 344;
     const height = 296;
-    const min = Math.min(...sampledSeries);
-    const max = Math.max(...sampledSeries);
+    const sampledValues = closeSeries.map((point) => point.value);
+    const min = Math.min(...sampledValues);
+    const max = Math.max(...sampledValues);
     const range = Math.max(0.000001, max - min);
-    const latestValue = sampledSeries[sampledSeries.length - 1]!;
-    const firstValue = sampledSeries[0]!;
+    const latestValue = closeSeries[closeSeries.length - 1]!.value;
+    const firstValue = closeSeries[0]!.value;
     const changeValue = latestValue - firstValue;
     const changePct = firstValue > 0 ? (changeValue / firstValue) * 100 : 0;
-    const referenceY = height - ((latestValue - min) / range) * height;
+    const sparklineGeometry = buildSparklineGeometry(sampledValues, width, height, {
+      left: 2,
+      right: width * 0.52,
+      top: 8,
+      bottom: height - 8
+    });
+    const referenceY =
+      sparklineGeometry.points[sparklineGeometry.points.length - 1]?.y ??
+      height - ((latestValue - min) / range) * height;
 
     return {
-      path: buildSparklinePath(sampledSeries, width, height),
+      path: sparklineGeometry.path,
       width,
       height,
+      points: closeSeries.map((point, index) => ({
+        ...point,
+        x: sparklineGeometry.points[index]?.x ?? 0,
+        y: sparklineGeometry.points[index]?.y ?? height / 2
+      })),
       tone: changeValue >= 0 ? "up" : "down",
       latestValue,
       changeValue,
@@ -23277,6 +23330,115 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       referenceY: clamp(referenceY, 0, height)
     };
   }, [mobileChartCandles]);
+  const mobileMarketDisplayPoint = useMemo(() => {
+    if (!mobileMarketSparkline || mobileMarketSparkline.points.length === 0) {
+      return null;
+    }
+
+    if (mobileMarketChartScrubIndex == null) {
+      return mobileMarketSparkline.points[mobileMarketSparkline.points.length - 1] ?? null;
+    }
+
+    const clampedIndex = clamp(
+      mobileMarketChartScrubIndex,
+      0,
+      mobileMarketSparkline.points.length - 1
+    );
+
+    return mobileMarketSparkline.points[clampedIndex] ?? null;
+  }, [mobileMarketChartScrubIndex, mobileMarketSparkline]);
+  const mobileMarketBaseValue = mobileMarketSparkline?.points[0]?.value ?? 0;
+  const mobileMarketDisplayValue =
+    mobileMarketDisplayPoint?.value ?? mobileMarketSparkline?.latestValue ?? 0;
+  const mobileMarketDisplayChangeValue = mobileMarketDisplayValue - mobileMarketBaseValue;
+  const mobileMarketDisplayChangePct =
+    mobileMarketBaseValue > 0 ? (mobileMarketDisplayChangeValue / mobileMarketBaseValue) * 100 : 0;
+  const mobileMarketDisplayTone = mobileMarketDisplayChangeValue >= 0 ? "up" : "down";
+  const mobileMarketDisplayReferenceY =
+    mobileMarketDisplayPoint?.y ?? mobileMarketSparkline?.referenceY ?? 0;
+  useEffect(() => {
+    setMobileMarketChartScrubIndex(null);
+    mobileMarketChartPointerIdRef.current = null;
+  }, [mobileChartDisplaySymbol, selectedTimeframe]);
+  const scrubMobileMarketChartAtClientX = useCallback(
+    (clientX: number) => {
+      const chartElement = mobileMarketChartRef.current;
+      if (!chartElement || !mobileMarketSparkline || mobileMarketSparkline.points.length === 0) {
+        setMobileMarketChartScrubIndex(null);
+        return;
+      }
+
+      const rect = chartElement.getBoundingClientRect();
+      if (rect.width <= 0) {
+        return;
+      }
+
+      const chartX = clamp(
+        ((clientX - rect.left) / rect.width) * mobileMarketSparkline.width,
+        0,
+        mobileMarketSparkline.width
+      );
+      let nextIndex = 0;
+      let nearestDistance = Number.POSITIVE_INFINITY;
+
+      mobileMarketSparkline.points.forEach((point, index) => {
+        const distance = Math.abs(point.x - chartX);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nextIndex = index;
+        }
+      });
+
+      setMobileMarketChartScrubIndex(nextIndex);
+    },
+    [mobileMarketSparkline]
+  );
+  const handleMobileMarketChartPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      mobileMarketChartPointerIdRef.current = event.pointerId;
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Ignore capture failures on unsupported pointer types.
+      }
+      scrubMobileMarketChartAtClientX(event.clientX);
+    },
+    [scrubMobileMarketChartAtClientX]
+  );
+  const handleMobileMarketChartPointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (
+        event.pointerType !== "mouse" &&
+        mobileMarketChartPointerIdRef.current !== event.pointerId
+      ) {
+        return;
+      }
+
+      if (event.pointerType !== "mouse") {
+        event.preventDefault();
+      }
+      scrubMobileMarketChartAtClientX(event.clientX);
+    },
+    [scrubMobileMarketChartAtClientX]
+  );
+  const handleMobileMarketChartPointerEnd = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (
+        mobileMarketChartPointerIdRef.current != null &&
+        mobileMarketChartPointerIdRef.current === event.pointerId
+      ) {
+        try {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        } catch {
+          // Ignore release failures when capture was never established.
+        }
+      }
+
+      mobileMarketChartPointerIdRef.current = null;
+      setMobileMarketChartScrubIndex(null);
+    },
+    []
+  );
   const mobileTimelineHistoryTrades = useMemo(() => {
     const sourceTrades =
       deferredBacktestAnalyticsTrades.length > 0
@@ -25330,9 +25492,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
   if (isMobileWorkspace) {
     const mobileActiveDisplayTrade = mobileTimelineActiveTrade;
-    const mobileActiveSymbol = (
-      mobileActiveDisplayTrade?.symbol ?? appliedBacktestSettings.symbol
-    ).replaceAll("_", "/");
     const showMobileTimeline =
       mobileWorkspaceTab === "trade" || mobileWorkspaceTab === "history";
     const mobileShellStyle =
@@ -25413,7 +25572,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       className={`mobile-phone-timeline-live-btn${
                         mobileTimelineIsLive ? " active" : ""
                       }`}
-                      onClick={() => setMobileTimelineOverrideSec(null)}
+                      onClick={() => {
+                        triggerMobileHaptic();
+                        setMobileTimelineOverrideSec(null);
+                      }}
                     >
                       Live
                     </button>
@@ -25432,113 +25594,36 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           <div className="mobile-phone-body">
             {mobileWorkspaceTab === "chart" ? (
               <section className="mobile-phone-card mobile-phone-card-market">
-                <div className="mobile-phone-market-toolbar">
-                  <button
-                    type="button"
-                    className="mobile-phone-market-toolbar-btn"
-                    aria-label="Go to trade tab"
-                    onClick={() => setMobileWorkspaceTab("trade")}
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden>
-                      <path
-                        d="M14.8 4.8L7.6 12l7.2 7.2"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </button>
-                  <div className="mobile-phone-market-toolbar-actions">
-                    <button
-                      type="button"
-                      className="mobile-phone-market-toolbar-btn"
-                      aria-label="Open history tab"
-                      onClick={() => setMobileWorkspaceTab("history")}
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden>
-                        <path
-                          d="M12 5.2A6.8 6.8 0 1 1 5.2 12"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.9"
-                          strokeLinecap="round"
-                        />
-                        <path
-                          d="M12 8.5V12l2.6 1.7"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.9"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </button>
-                    <button
-                      type="button"
-                      className="mobile-phone-market-toolbar-btn"
-                      aria-label="Open settings tab"
-                      onClick={() => setMobileWorkspaceTab("settings")}
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden>
-                        <path
-                          d="M12 5v14M5 12h14"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                        />
-                        <circle
-                          cx="12"
-                          cy="12"
-                          r="8.2"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.8"
-                        />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-
                 <div className="mobile-phone-market-copy">
                   <span className="mobile-phone-market-symbol">{mobileChartTicker}</span>
                   <h2>{mobileChartName}</h2>
-                  <strong>
-                    {mobileMarketSparkline ? formatPrice(mobileMarketSparkline.latestValue) : "--"}
-                  </strong>
+                  <strong>{mobileMarketSparkline ? formatPrice(mobileMarketDisplayValue) : "--"}</strong>
                   {mobileMarketSparkline ? (
-                    <div className={`mobile-phone-market-change ${mobileMarketSparkline.tone}`}>
+                    <div className={`mobile-phone-market-change ${mobileMarketDisplayTone}`}>
                       <span className="mobile-phone-market-change-arrow" aria-hidden="true">
                         {mobileMarketSparkline.changeValue >= 0 ? "↗" : "↘"}
                       </span>
-                      <strong>{formatPrice(Math.abs(mobileMarketSparkline.changeValue))}</strong>
-                      <span>({formatSignedPercent(mobileMarketSparkline.changePct).replace("+", "")})</span>
+                      <strong>{formatSignedUsd(mobileMarketDisplayChangeValue)}</strong>
+                      <span>{formatSignedPercent(mobileMarketDisplayChangePct)}</span>
                     </div>
                   ) : null}
                 </div>
 
                 {mobileMarketSparkline ? (
                   <>
-                    <div className={`mobile-phone-market-chart mobile-phone-market-chart-${mobileMarketSparkline.tone}`}>
-                      <button
-                        type="button"
-                        className="mobile-phone-market-expand"
-                        aria-label="Jump to trade tab"
-                        onClick={() => setMobileWorkspaceTab("trade")}
-                      >
-                        <svg viewBox="0 0 24 24" aria-hidden>
-                          <path
-                            d="M8 16l8-8M10 8h6v6"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.8"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </button>
+                    <div
+                      ref={mobileMarketChartRef}
+                      className={`mobile-phone-market-chart mobile-phone-market-chart-${mobileMarketDisplayTone}`}
+                      onPointerDown={handleMobileMarketChartPointerDown}
+                      onPointerMove={handleMobileMarketChartPointerMove}
+                      onPointerUp={handleMobileMarketChartPointerEnd}
+                      onPointerCancel={handleMobileMarketChartPointerEnd}
+                      onPointerLeave={(event) => {
+                        if (event.pointerType === "mouse") {
+                          setMobileMarketChartScrubIndex(null);
+                        }
+                      }}
+                    >
                       <svg
                         viewBox={`0 0 ${mobileMarketSparkline.width} ${mobileMarketSparkline.height}`}
                         preserveAspectRatio="none"
@@ -25546,15 +25631,40 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       >
                         <line
                           x1="0"
-                          y1={mobileMarketSparkline.referenceY}
+                          y1={mobileMarketDisplayReferenceY}
                           x2={mobileMarketSparkline.width}
-                          y2={mobileMarketSparkline.referenceY}
+                          y2={mobileMarketDisplayReferenceY}
                           className="mobile-phone-market-reference"
                         />
                         <path
                           d={mobileMarketSparkline.path}
                           className="mobile-phone-market-path"
                         />
+                        {mobileMarketSparkline.points.length > 0 ? (
+                          <circle
+                            cx={mobileMarketSparkline.points[mobileMarketSparkline.points.length - 1]!.x}
+                            cy={mobileMarketSparkline.points[mobileMarketSparkline.points.length - 1]!.y}
+                            r="4.8"
+                            className="mobile-phone-market-endpoint"
+                          />
+                        ) : null}
+                        {mobileMarketChartScrubIndex != null && mobileMarketDisplayPoint ? (
+                          <>
+                            <line
+                              x1={mobileMarketDisplayPoint.x}
+                              y1="0"
+                              x2={mobileMarketDisplayPoint.x}
+                              y2={mobileMarketSparkline.height}
+                              className="mobile-phone-market-scrubline"
+                            />
+                            <circle
+                              cx={mobileMarketDisplayPoint.x}
+                              cy={mobileMarketDisplayPoint.y}
+                              r="5"
+                              className="mobile-phone-market-point"
+                            />
+                          </>
+                        ) : null}
                       </svg>
                     </div>
                     <div className="mobile-phone-market-timeframes">
@@ -25565,7 +25675,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                           className={`mobile-phone-market-timeframe${
                             timeframe === selectedTimeframe ? " active" : ""
                           }`}
-                          onClick={() => setSelectedTimeframe(timeframe)}
+                          onClick={() => {
+                            triggerMobileHaptic();
+                            setSelectedTimeframe(timeframe);
+                          }}
                         >
                           {timeframe}
                         </button>
@@ -25583,13 +25696,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               <section className="mobile-phone-card mobile-phone-card-active">
                 {mobileActiveDisplayTrade ? (
                   <>
-                    <div className="mobile-phone-card-head">
-                      <div className="mobile-phone-card-copy">
-                        <span className="mobile-phone-card-kicker">Position</span>
-                        <h2>{mobileActiveSymbol}</h2>
-                      </div>
-                    </div>
-
                     <div className="mobile-phone-pnl-block">
                       <span>Open PnL</span>
                       <strong className={mobileActiveDisplayTone}>
@@ -25638,6 +25744,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                               d={mobileActivePnlSparkline.path}
                               className="mobile-phone-active-chart-path"
                             />
+                            {mobileActivePnlSparkline.points.length > 0 ? (
+                              <circle
+                                cx={mobileActivePnlSparkline.points[mobileActivePnlSparkline.points.length - 1]!.x}
+                                cy={mobileActivePnlSparkline.points[mobileActivePnlSparkline.points.length - 1]!.y}
+                                r="4.4"
+                                className="mobile-phone-active-chart-endpoint"
+                              />
+                            ) : null}
                             {mobileActiveChartScrubIndex != null && mobileActiveChartDisplayPoint ? (
                               <>
                                 <line
@@ -25825,7 +25939,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 key={tab.id}
                 type="button"
                 className={`mobile-phone-tab${mobileWorkspaceTab === tab.id ? " active" : ""}`}
-                onClick={() => setMobileWorkspaceTab(tab.id)}
+                onClick={() => {
+                  triggerMobileHaptic();
+                  setMobileWorkspaceTab(tab.id);
+                }}
                 aria-pressed={mobileWorkspaceTab === tab.id}
               >
                 <span className="mobile-phone-tab-icon">

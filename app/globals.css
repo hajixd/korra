@@ -1978,8 +1978,8 @@ body.mobile-terminal-viewport-lock {
 .mobile-phone-shell.mobile-phone-shell-standalone {
   position: fixed;
   inset: 0;
-  min-height: var(--mobile-workspace-height, 100dvh);
-  height: auto !important;
+  min-height: 100%;
+  height: 100% !important;
 }
 
 .mobile-phone-shell.mobile-phone-shell-snapshot::after {
@@ -2264,7 +2264,7 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-card-market {
-  gap: 0.9rem;
+  gap: 0.54rem;
   padding-top: 0.08rem;
 }
 
@@ -2307,13 +2307,13 @@ body.mobile-terminal-viewport-lock {
 
 .mobile-phone-market-copy {
   display: grid;
-  gap: 0.3rem;
+  gap: 0.22rem;
 }
 
 .mobile-phone-market-symbol {
   color: rgba(247, 251, 246, 0.86);
-  font-size: 0.7rem;
-  font-weight: 800;
+  font-size: 0.58rem;
+  font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -2321,16 +2321,16 @@ body.mobile-terminal-viewport-lock {
 .mobile-phone-market-copy h2 {
   margin: 0;
   color: #fbfdfb;
-  font-size: clamp(2rem, 11vw, 2.9rem);
-  line-height: 0.96;
-  letter-spacing: -0.07em;
+  font-size: clamp(1.6rem, 8.8vw, 2.18rem);
+  line-height: 0.98;
+  letter-spacing: -0.055em;
 }
 
 .mobile-phone-market-copy strong {
   color: #fbfdfb;
-  font-size: clamp(2.18rem, 12vw, 3.2rem);
-  line-height: 0.94;
-  letter-spacing: -0.08em;
+  font-size: clamp(1.86rem, 10vw, 2.44rem);
+  line-height: 0.96;
+  letter-spacing: -0.06em;
   font-weight: 500;
 }
 
@@ -2338,19 +2338,18 @@ body.mobile-terminal-viewport-lock {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.34rem;
-  font-size: 0.86rem;
+  gap: 0.28rem;
+  font-size: 0.72rem;
   font-weight: 700;
 }
 
 .mobile-phone-market-change-arrow {
-  font-size: 1rem;
-  line-height: 1;
+  display: none;
 }
 
 .mobile-phone-market-change strong,
 .mobile-phone-market-change span {
-  font-size: 0.86rem;
+  font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: -0.02em;
 }
@@ -2360,8 +2359,10 @@ body.mobile-terminal-viewport-lock {
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
-  max-height: 430px;
+  max-height: 410px;
   overflow: hidden;
+  touch-action: none;
+  user-select: none;
 }
 
 .mobile-phone-market-chart svg {
@@ -2383,15 +2384,15 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-market-reference {
-  stroke: rgba(255, 255, 255, 0.5);
-  stroke-width: 1.1;
+  stroke: rgba(255, 255, 255, 0.36);
+  stroke-width: 0.9;
   stroke-linecap: round;
   stroke-dasharray: 1 8;
 }
 
 .mobile-phone-market-path {
   fill: none;
-  stroke-width: 4.1;
+  stroke-width: 2.35;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -2401,28 +2402,48 @@ body.mobile-terminal-viewport-lock {
   stroke: #d6ff12;
 }
 
+.mobile-phone-market-scrubline {
+  stroke: rgba(255, 255, 255, 0.24);
+  stroke-width: 1;
+  stroke-linecap: round;
+}
+
+.mobile-phone-market-point,
+.mobile-phone-market-endpoint {
+  fill: #060706;
+  stroke: #d6ff12;
+}
+
+.mobile-phone-market-point {
+  stroke-width: 1.8;
+}
+
+.mobile-phone-market-endpoint {
+  stroke-width: 1.4;
+}
+
 .mobile-phone-market-timeframes {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.32rem;
-  padding: 0 0 0.24rem;
+  padding: 0.3rem 0 0.16rem;
 }
 
 .mobile-phone-market-timeframe {
   flex: 1 1 0;
-  min-height: 34px;
+  min-height: 31px;
   border: 0;
   background: transparent;
   color: #d6ff12;
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   font-weight: 800;
   letter-spacing: 0.02em;
   cursor: pointer;
 }
 
 .mobile-phone-market-timeframe.active {
-  border-radius: 12px;
+  border-radius: 10px;
   background: #d6ff12;
   color: #060706;
 }
@@ -2513,13 +2534,13 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-pnl-block strong {
-  font-size: clamp(1.62rem, 8.8vw, 2.18rem);
+  font-size: clamp(1.42rem, 7.6vw, 1.92rem);
   line-height: 0.98;
-  letter-spacing: -0.065em;
+  letter-spacing: -0.052em;
 }
 
 .mobile-phone-pnl-block small {
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   font-weight: 600;
 }
 
@@ -2580,7 +2601,7 @@ body.mobile-terminal-viewport-lock {
 
 .mobile-phone-active-chart-path {
   fill: none;
-  stroke-width: 2.35;
+  stroke-width: 1.95;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -2595,6 +2616,12 @@ body.mobile-terminal-viewport-lock {
   fill: #060706;
   stroke: #f7faf7;
   stroke-width: 1.8;
+}
+
+.mobile-phone-active-chart-endpoint {
+  fill: #060706;
+  stroke: #d6ff12;
+  stroke-width: 1.4;
 }
 
 .mobile-phone-active-chart-up .mobile-phone-active-chart-path {
@@ -2670,7 +2697,7 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-detail-row strong {
-  font-size: 0.92rem;
+  font-size: 0.86rem;
 }
 
 .mobile-phone-empty-state {
@@ -2923,7 +2950,7 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-shell.mobile-phone-shell-standalone .mobile-phone-tabbar {
-  padding-bottom: max(calc(env(safe-area-inset-bottom, 0px) + 0.04rem), 0.24rem);
+  padding-bottom: max(calc(env(safe-area-max-inset-bottom, env(safe-area-inset-bottom, 0px)) + 0.02rem), 0.18rem);
 }
 
 .mobile-phone-tab {
