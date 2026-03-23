@@ -26483,104 +26483,212 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               </section>
             ) : mobileWorkspaceTab === "social" ? (
               <section className="mobile-phone-card mobile-phone-card-social">
-                <div className="mobile-phone-social-hero">
-                  <div className="mobile-phone-social-hero-copy">
-                    <span className="mobile-phone-card-kicker">Community Presets</span>
-                    <h2>Discover setups</h2>
-                    <p>Browse the feed, save what you like, and run a preset in one tap.</p>
+                <div className="mobile-phone-social-stack">
+                  <div className="backtest-card compact social-simple-overview mobile-social-simple-overview">
+                    <div className="backtest-card-head backtest-stats-head">
+                      <div>
+                        <h3>Social</h3>
+                      </div>
+                      <div className="models-surface-overview-actions social-simple-overview-actions">
+                        <span className="social-simple-counter">
+                          {socialPresets.length.toLocaleString("en-US")} shared
+                        </span>
+                        <span className="social-simple-counter">
+                          {socialPublishedCount.toLocaleString("en-US")} yours
+                        </span>
+                      </div>
+                    </div>
+                    <div className="backtest-toolbar-note backtest-toolbar-note-stack">
+                      <span className="backtest-toolbar-note-meta">
+                        Publish a saved preset, browse community posts, and save any setup into your own preset list.
+                      </span>
+                      {socialPublishStatus ? (
+                        <span className={`backtest-toolbar-note-meta social-simple-status ${socialPublishStatusTone}`}>
+                          {socialPublishStatus}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
-                  <div className="mobile-phone-social-hero-stats" aria-label="social feed summary">
-                    <div className="mobile-phone-social-hero-stat">
-                      <strong>{socialVisiblePresets.length.toLocaleString("en-US")}</strong>
-                      <span>Visible</span>
-                    </div>
-                    <div className="mobile-phone-social-hero-stat">
-                      <strong>{mobileSavedPresets.length.toLocaleString("en-US")}</strong>
-                      <span>Saved</span>
-                    </div>
+                  <div className="social-simple-layout mobile-social-simple-layout">
+                    <section className="backtest-card compact social-simple-card">
+                      <div className="backtest-card-head backtest-stats-head">
+                        <div>
+                          <h3>Publish Preset</h3>
+                        </div>
+                      </div>
+
+                      {mobileSavedPresets.length === 0 ? (
+                        <div className="social-simple-empty">
+                          Save a preset first, then you can publish it here for everyone with an account.
+                        </div>
+                      ) : (
+                        <>
+                          <div className="social-simple-publish-row">
+                            <label className="social-simple-field">
+                              <span>Saved Preset</span>
+                              <div
+                                ref={socialPublishPresetDdRef}
+                                className={`backtest-date-preset-wrap social-simple-preset-wrap${
+                                  socialPublishPresetDdOpen ? " is-open" : ""
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  className="backtest-date-preset-trigger social-simple-preset-trigger"
+                                  aria-haspopup="listbox"
+                                  aria-expanded={socialPublishPresetDdOpen}
+                                  onClick={() => {
+                                    triggerMobileHaptic();
+                                    setSocialPublishPresetDdOpen((current) => !current);
+                                  }}
+                                >
+                                  <span>
+                                    {selectedSocialPublishPreset
+                                      ? getSocialPublishPresetDisplayName(selectedSocialPublishPreset.name)
+                                      : "Choose preset"}
+                                  </span>
+                                  <span className="backtest-date-preset-chevron">
+                                    {socialPublishPresetDdOpen ? "^" : "v"}
+                                  </span>
+                                </button>
+                                {socialPublishPresetDdOpen ? (
+                                  <div className="backtest-date-preset-dd social-simple-preset-dd" role="listbox">
+                                    {mobileSavedPresets.map((preset) => (
+                                      <button
+                                        key={preset.name}
+                                        type="button"
+                                        className={`backtest-date-preset-option social-simple-preset-option${
+                                          preset.name === socialPublishPresetName ? " active" : ""
+                                        }`}
+                                        onClick={() => {
+                                          triggerMobileHaptic();
+                                          setSocialPublishPresetName(preset.name);
+                                          setSocialPublishPresetDdOpen(false);
+                                        }}
+                                      >
+                                        {getSocialPublishPresetDisplayName(preset.name)}
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </label>
+                          </div>
+                          <label className="social-simple-field">
+                            <span>Description</span>
+                            <textarea
+                              className="social-simple-textarea"
+                              value={socialPublishDescription}
+                              onChange={(event) => setSocialPublishDescription(event.target.value)}
+                              rows={4}
+                              maxLength={220}
+                            />
+                          </label>
+                          <div className="social-simple-helper-row">
+                            <span className="social-simple-helper-text">
+                              {selectedSocialPublishPreset
+                                ? `Posting ${getSocialPublishPresetDisplayName(selectedSocialPublishPreset.name)} as ${currentUserDisplayName}.`
+                                : "Choose a preset to publish."}
+                            </span>
+                            <button
+                              type="button"
+                              className="panel-action-btn"
+                              onClick={() => {
+                                triggerMobileHaptic();
+                                handlePublishSocialPreset();
+                              }}
+                              disabled={socialPublishing || !selectedSocialPublishPreset}
+                            >
+                              {socialPublishing ? "Publishing..." : "Publish"}
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </section>
+
+                    <section className="backtest-card compact social-simple-card" aria-label="community preset feed">
+                      <div className="backtest-card-head backtest-stats-head">
+                        <div>
+                          <h3>Community Feed</h3>
+                        </div>
+                        <div className="models-surface-overview-actions social-simple-overview-actions">
+                          <span className="social-simple-counter">
+                            {socialVisiblePresets.length.toLocaleString("en-US")} visible
+                          </span>
+                        </div>
+                      </div>
+
+                      {socialPresetsLoading ? (
+                        <div className="social-simple-empty">
+                          Loading community presets...
+                        </div>
+                      ) : socialPresetsError ? (
+                        <div className="social-simple-empty social-simple-empty-error">
+                          {socialPresetsError}
+                        </div>
+                      ) : socialVisiblePresets.length === 0 ? (
+                        <div className="social-simple-empty">
+                          No shared presets yet.
+                        </div>
+                      ) : (
+                        <div className="social-simple-feed">
+                          {socialVisiblePresets.map((preset) => {
+                            const isOwner = preset.authorUid === currentUser.uid;
+
+                            return (
+                              <article key={preset.id} className="social-simple-row">
+                                <div className="social-simple-row-main">
+                                  <div className="social-simple-row-head">
+                                    <strong>{preset.presetName}</strong>
+                                  </div>
+                                  <div className="social-simple-row-note">
+                                    {preset.description || "No description added yet."}
+                                  </div>
+                                </div>
+                                <div className="social-simple-row-actions">
+                                  <button
+                                    type="button"
+                                    className="panel-action-btn"
+                                    onClick={() => {
+                                      triggerMobileHaptic();
+                                      handleRunSocialPreset(preset);
+                                      setMobileWorkspaceTab("trade");
+                                    }}
+                                  >
+                                    Run
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="panel-action-btn"
+                                    onClick={() => {
+                                      triggerMobileHaptic();
+                                      handleSaveSocialPresetToSaves(preset);
+                                    }}
+                                  >
+                                    Add to Saves
+                                  </button>
+                                  {isOwner ? (
+                                    <button
+                                      type="button"
+                                      className="panel-action-btn social-simple-remove-btn"
+                                      onClick={() => {
+                                        triggerMobileHaptic();
+                                        void handleDeleteSocialPreset(preset);
+                                      }}
+                                      disabled={socialPresetActionId === preset.id}
+                                    >
+                                      {socialPresetActionId === preset.id ? "Removing..." : "Remove"}
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </article>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </section>
                   </div>
                 </div>
-
-                {socialPresetsLoading ? (
-                  <div className="mobile-phone-empty-state">
-                    <span className="mobile-phone-card-kicker">Loading</span>
-                    <h2>Fetching presets</h2>
-                  </div>
-                ) : socialPresetsError ? (
-                  <div className="mobile-phone-empty-state">
-                    <span className="mobile-phone-card-kicker">Unavailable</span>
-                    <h2>Social feed offline</h2>
-                    <p>{socialPresetsError}</p>
-                  </div>
-                ) : socialVisiblePresets.length === 0 ? (
-                  <div className="mobile-phone-empty-state">
-                    <span className="mobile-phone-card-kicker">Social</span>
-                    <h2>No presets yet</h2>
-                  </div>
-                ) : (
-                  <div className="mobile-phone-social-feed">
-                    {socialVisiblePresets.map((preset) => {
-                      const isOwner = preset.authorUid === currentUser.uid;
-                      const authorDisplayName = isGenericSocialPresetAuthorName(
-                        preset.authorDisplayName
-                      )
-                        ? isOwner
-                          ? "You"
-                          : "Community"
-                        : preset.authorDisplayName;
-
-                      return (
-                        <article key={preset.id} className="mobile-phone-social-card">
-                          <div className="mobile-phone-social-card-head">
-                            <div className="mobile-phone-social-card-copy">
-                              <span className="mobile-phone-social-card-kicker">
-                                {isOwner ? "Your preset" : "Community preset"}
-                              </span>
-                              <strong>{preset.presetName}</strong>
-                            </div>
-                            <span className="mobile-phone-social-card-author">
-                              {authorDisplayName}
-                            </span>
-                          </div>
-                          <p
-                            className={`mobile-phone-social-card-note${
-                              preset.description ? "" : " is-empty"
-                            }`}
-                          >
-                            {preset.description || "No description added yet."}
-                          </p>
-                          <div className="mobile-phone-social-card-meta">
-                            <span>{formatRelativeTimeLabel(preset.publishedAtMs)}</span>
-                            <span>{isOwner ? "Already yours" : "Ready to run"}</span>
-                          </div>
-                          <div className="mobile-phone-social-card-actions">
-                            <button
-                              type="button"
-                              className="mobile-phone-social-card-btn"
-                              onClick={() => {
-                                triggerMobileHaptic();
-                                handleSaveSocialPresetToSaves(preset);
-                              }}
-                            >
-                              Save
-                            </button>
-                            <button
-                              type="button"
-                              className="mobile-phone-social-card-btn mobile-phone-social-card-btn-primary"
-                              onClick={() => {
-                                triggerMobileHaptic();
-                                handleRunSocialPreset(preset);
-                                setMobileWorkspaceTab("trade");
-                              }}
-                            >
-                              Run Now
-                            </button>
-                          </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                )}
               </section>
             ) : (
               <section className="mobile-phone-card mobile-phone-card-settings">
