@@ -729,8 +729,27 @@ body.account-screen-loading-lock {
   color: #eef4ff;
 }
 
+.profile-menu-item:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
 .profile-menu-item.danger {
   color: rgba(240, 129, 144, 0.96);
+}
+
+.profile-menu-status {
+  padding: 0.02rem 0.82rem 0.72rem;
+  font-size: 0.61rem;
+  line-height: 1.5;
+}
+
+.profile-menu-status.success {
+  color: #87e7bb;
+}
+
+.profile-menu-status.error {
+  color: #f5a4af;
 }
 
 .profile-dialog-backdrop {

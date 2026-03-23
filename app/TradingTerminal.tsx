@@ -2481,6 +2481,10 @@ type TradingTerminalWorkspaceProps = TradingTerminalProps & {
     newPassword: string;
   }) => Promise<void>;
   onLogOut: () => Promise<void>;
+  onSendTestNotification: () => Promise<void>;
+  testNotificationBusy: boolean;
+  testNotificationStatus: string;
+  testNotificationStatusTone: "success" | "error" | null;
 };
 
 type AccountAuthMode = "login" | "create" | null;
@@ -10499,6 +10503,11 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
   const [authForm, setAuthForm] = useState<AccountAuthFormState>(EMPTY_ACCOUNT_AUTH_FORM);
   const [authBusy, setAuthBusy] = useState<"login" | "create" | null>(null);
   const [authError, setAuthError] = useState("");
+  const [testNotificationBusy, setTestNotificationBusy] = useState(false);
+  const [testNotificationStatus, setTestNotificationStatus] = useState("");
+  const [testNotificationStatusTone, setTestNotificationStatusTone] = useState<
+    "success" | "error" | null
+  >(null);
   const accountSetupMessage = firebaseClientConfigReady
     ? ""
     : `Add ${firebaseClientMissingEnvVars.join(", ")} to .env.local to finish setting up account access.`;
@@ -10782,6 +10791,52 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     setAuthError("");
   }, [firebaseAuth]);
 
+  const handleSendTestNotification = useCallback(async () => {
+    if (!firebaseAuth?.currentUser) {
+      setTestNotificationStatusTone("error");
+      setTestNotificationStatus("Sign in again to send a test notification.");
+      return;
+    }
+
+    setTestNotificationBusy(true);
+    setTestNotificationStatus("");
+    setTestNotificationStatusTone(null);
+
+    try {
+      const idToken = await firebaseAuth.currentUser.getIdToken();
+      const response = await fetch("/api/notifications/test", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${idToken}`
+        },
+        cache: "no-store"
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            error?: unknown;
+            deviceCount?: unknown;
+          }
+        | null;
+
+      if (!response.ok || !payload?.ok) {
+        throw new Error(String(payload?.error ?? "Failed to send a test notification."));
+      }
+
+      const deviceCount = Math.max(0, Math.trunc(Number(payload.deviceCount ?? 0)));
+      const deviceLabel = deviceCount === 1 ? "1 device" : `${deviceCount} devices`;
+      setTestNotificationStatusTone("success");
+      setTestNotificationStatus(`Test notification sent to ${deviceLabel}.`);
+    } catch (error) {
+      setTestNotificationStatusTone("error");
+      setTestNotificationStatus(
+        (error as Error).message || "Failed to send a test notification."
+      );
+    } finally {
+      setTestNotificationBusy(false);
+    }
+  }, [firebaseAuth]);
+
   if (!authReady) {
     return (
       <main className="terminal account-screen account-screen-loading">
@@ -10936,6 +10991,10 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       onChangeDisplayName={handleChangeDisplayName}
       onChangePassword={handleChangePassword}
       onLogOut={handleLogOut}
+      onSendTestNotification={handleSendTestNotification}
+      testNotificationBusy={testNotificationBusy}
+      testNotificationStatus={testNotificationStatus}
+      testNotificationStatusTone={testNotificationStatusTone}
     />
   );
 }
@@ -10946,7 +11005,11 @@ function TradingTerminalWorkspace({
   firebaseDb,
   onChangeDisplayName,
   onChangePassword,
-  onLogOut
+  onLogOut,
+  onSendTestNotification,
+  testNotificationBusy,
+  testNotificationStatus,
+  testNotificationStatusTone
 }: TradingTerminalWorkspaceProps) {
   const modelProfiles = useMemo(() => {
     return buildModelProfiles(aiZipModelNames);
@@ -26828,6 +26891,25 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               <div className="profile-menu-header">
                 <strong>{`Welcome ${currentUserDisplayName}`}</strong>
               </div>
+              <button
+                type="button"
+                className="profile-menu-item"
+                onClick={() => {
+                  void onSendTestNotification();
+                }}
+                disabled={testNotificationBusy}
+              >
+                {testNotificationBusy ? "Sending Test Notification..." : "Test Notification"}
+              </button>
+              {testNotificationStatus ? (
+                <div
+                  className={`profile-menu-status${
+                    testNotificationStatusTone === "error" ? " error" : " success"
+                  }`}
+                >
+                  {testNotificationStatus}
+                </div>
+              ) : null}
               <button
                 type="button"
                 className="profile-menu-item"
