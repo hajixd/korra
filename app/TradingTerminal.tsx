@@ -7213,6 +7213,22 @@ const buildSparklinePath = (values: number[], width: number, height: number): st
     .join(" ");
 };
 
+const sampleNumericSeries = (values: number[], maxPoints: number): number[] => {
+  if (values.length <= maxPoints) {
+    return values;
+  }
+
+  const targetCount = Math.max(2, Math.floor(maxPoints));
+  const sampled: number[] = [];
+
+  for (let index = 0; index < targetCount; index += 1) {
+    const sourceIndex = Math.round((index / (targetCount - 1)) * (values.length - 1));
+    sampled.push(values[sourceIndex]!);
+  }
+
+  return sampled;
+};
+
 const formatPropFirmDuration = (mins: number): string => {
   if (!Number.isFinite(mins) || mins <= 0) {
     return "0 Minutes";
@@ -22858,14 +22874,19 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     0,
     mobileTimelineSliderMax
   );
+  const mobileTimelineActiveSourceTrade = useMemo<HistoryItem | null>(() => {
+    return (
+      [...mobileTimelineSourceTrades]
+        .filter((trade) => {
+          const entrySec = Number(trade.entryTime);
+          const exitSec = Number(trade.exitTime);
+          return entrySec <= mobileTimelineCursorSec && exitSec > mobileTimelineCursorSec;
+        })
+        .sort((a, b) => Number(b.entryTime) - Number(a.entryTime))[0] ?? null
+    );
+  }, [mobileTimelineCursorSec, mobileTimelineSourceTrades]);
   const mobileTimelineActiveTrade = useMemo<ActiveTrade | null>(() => {
-    const activeSnapshotTrade = [...mobileTimelineSourceTrades]
-      .filter((trade) => {
-        const entrySec = Number(trade.entryTime);
-        const exitSec = Number(trade.exitTime);
-        return entrySec <= mobileTimelineCursorSec && exitSec > mobileTimelineCursorSec;
-      })
-      .sort((a, b) => Number(b.entryTime) - Number(a.entryTime))[0];
+    const activeSnapshotTrade = mobileTimelineActiveSourceTrade;
 
     if (!activeSnapshotTrade) {
       return mobileTimelineIsLive ? activeTrade : null;
@@ -22926,7 +22947,58 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     getHistoryCandlesForSymbol,
     mobileTimelineCursorSec,
     mobileTimelineIsLive,
-    mobileTimelineSourceTrades
+    mobileTimelineActiveSourceTrade
+  ]);
+  const mobileActivePnlSparkline = useMemo(() => {
+    if (!mobileTimelineActiveSourceTrade || !mobileTimelineActiveTrade) {
+      return null;
+    }
+
+    const trade = mobileTimelineActiveSourceTrade;
+    const candles = getHistoryCandlesForSymbol(trade.symbol);
+    const entrySec = Number(trade.entryTime);
+    const cursorSec = Math.max(entrySec, mobileTimelineCursorSec);
+    const filteredCandles = candles.filter((candle) => {
+      const candleSec = toUtcTimestamp(candle.time);
+      return candleSec >= entrySec && candleSec <= cursorSec;
+    });
+
+    const pnlSeries = filteredCandles.map((candle) => {
+      return trade.side === "Long"
+        ? (candle.close - trade.entryPrice) * trade.units
+        : (trade.entryPrice - candle.close) * trade.units;
+    });
+
+    if (pnlSeries.length === 0 || pnlSeries[0] !== 0) {
+      pnlSeries.unshift(0);
+    }
+
+    const latestPnlValue = mobileTimelineActiveTrade.pnlValue;
+    if (
+      pnlSeries.length === 0 ||
+      Math.abs(pnlSeries[pnlSeries.length - 1]! - latestPnlValue) > 0.0001
+    ) {
+      pnlSeries.push(latestPnlValue);
+    }
+
+    const sampledSeries = sampleNumericSeries(pnlSeries, 72);
+    const chartWidth = 320;
+    const chartHeight = 158;
+    const sparklinePath = buildSparklinePath(sampledSeries, chartWidth, chartHeight);
+
+    return {
+      path: sparklinePath,
+      width: chartWidth,
+      height: chartHeight,
+      tone: latestPnlValue >= 0 ? "up" : "down",
+      currentValue: latestPnlValue,
+      currentPct: mobileTimelineActiveTrade.pnlPct
+    };
+  }, [
+    getHistoryCandlesForSymbol,
+    mobileTimelineActiveSourceTrade,
+    mobileTimelineActiveTrade,
+    mobileTimelineCursorSec
   ]);
   const mobileTimelineHistoryTrades = useMemo(() => {
     const sourceTrades =
@@ -25106,6 +25178,46 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                         {formatSignedPercent(mobileActiveDisplayTrade.pnlPct)}
                       </small>
                     </div>
+
+                    {mobileActivePnlSparkline ? (
+                      <div className="mobile-phone-active-chart-shell">
+                        <div className={`mobile-phone-active-chart-change ${mobileActivePnlSparkline.tone}`}>
+                          <span className="mobile-phone-active-chart-arrow" aria-hidden="true">
+                            {mobileActivePnlSparkline.currentValue >= 0 ? "▲" : "▼"}
+                          </span>
+                          <strong>{formatSignedUsd(mobileActivePnlSparkline.currentValue)}</strong>
+                          <span>{formatSignedPercent(mobileActivePnlSparkline.currentPct)}</span>
+                          <em>{mobileTimelineIsLive ? "Live" : "As Of"}</em>
+                        </div>
+                        <div className={`mobile-phone-active-chart mobile-phone-active-chart-${mobileActivePnlSparkline.tone}`}>
+                          <svg
+                            viewBox={`0 0 ${mobileActivePnlSparkline.width} ${mobileActivePnlSparkline.height}`}
+                            preserveAspectRatio="none"
+                            aria-hidden="true"
+                          >
+                            <line
+                              x1="0"
+                              y1={mobileActivePnlSparkline.height - 1}
+                              x2={mobileActivePnlSparkline.width}
+                              y2={mobileActivePnlSparkline.height - 1}
+                              className="mobile-phone-active-chart-baseline"
+                            />
+                            <path
+                              d={mobileActivePnlSparkline.path}
+                              className="mobile-phone-active-chart-path"
+                            />
+                          </svg>
+                        </div>
+                        <div className="mobile-phone-active-chart-footer">
+                          <span className="mobile-phone-active-chart-chip">
+                            {mobileTimelineIsLive ? "LIVE" : "SNAPSHOT"}
+                          </span>
+                          <span className="mobile-phone-active-chart-chip">
+                            {mobileActiveDisplayTrade.elapsed}
+                          </span>
+                        </div>
+                      </div>
+                    ) : null}
 
                     <div className="mobile-phone-detail-list">
                       <div className="mobile-phone-detail-row">
