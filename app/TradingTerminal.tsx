@@ -11077,6 +11077,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     askTone: "neutral",
     updatedAtMs: 0
   }));
+  const [mobileNotificationsEnabled, setMobileNotificationsEnabled] = useState(true);
   const [volumeNowcast, setVolumeNowcast] = useState<VolumeNowcastSnapshot>(() => ({
     estimatedCurrentVolume: 0,
     estimatedFinalVolume: 0,
@@ -16604,7 +16605,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     clusterViewSession,
     clusterViewMonth,
     clusterViewWeekday,
-    clusterViewHour
+    clusterViewHour,
+    mobileNotificationsEnabled
   }), [
     activePanelTab,
     aiZipClusterMapView,
@@ -16616,6 +16618,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     clusterViewSession,
     clusterViewWeekday,
     isGraphsCollapsed,
+    mobileNotificationsEnabled,
     panelExpanded,
     performanceStatsCollapsed,
     showActiveTradeOnChart,
@@ -16671,6 +16674,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     if (typeof prefs.clusterViewMonth === "string") setClusterViewMonth(prefs.clusterViewMonth);
     if (typeof prefs.clusterViewWeekday === "string") setClusterViewWeekday(prefs.clusterViewWeekday);
     if (typeof prefs.clusterViewHour === "string") setClusterViewHour(prefs.clusterViewHour);
+    if (prefs.mobileNotificationsEnabled != null) {
+      setMobileNotificationsEnabled(Boolean(prefs.mobileNotificationsEnabled));
+    }
   }, [
     setActivePanelTab,
     setAiZipClusterMapView,
@@ -16682,6 +16688,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     setClusterViewSession,
     setClusterViewWeekday,
     setIsGraphsCollapsed,
+    setMobileNotificationsEnabled,
     setPanelExpanded,
     setPerformanceStatsCollapsed,
     setShowActiveTradeOnChart,
@@ -17018,6 +17025,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     setBacktestHistoryCollapsed(false);
     setPerformanceStatsCollapsed(false);
     setIsGraphsCollapsed(false);
+    setMobileNotificationsEnabled(true);
     setAiZipClusterMapView("2d");
     setClusterLegendToggles({ ...BACKTEST_CLUSTER_LEGEND_DEFAULTS });
     setClusterViewDir("All");
@@ -24560,7 +24568,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                   <div className="mobile-phone-empty-state">
                     <span className="mobile-phone-card-kicker">History</span>
                     <h2>No trades yet</h2>
-                    {backtestHasRun ? <p>No closed trades are available yet.</p> : null}
                   </div>
                 ) : (
                   <div className="mobile-phone-history-list">
@@ -24609,6 +24616,17 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 </div>
 
                 <div className="mobile-phone-action-list">
+                  <div className="mobile-phone-toggle-row">
+                    <strong>Notifications</strong>
+                    <button
+                      type="button"
+                      className={`mobile-phone-toggle${mobileNotificationsEnabled ? " active" : ""}`}
+                      aria-pressed={mobileNotificationsEnabled}
+                      onClick={() => setMobileNotificationsEnabled((current) => !current)}
+                    >
+                      <span className="mobile-phone-toggle-knob" />
+                    </button>
+                  </div>
                   <button
                     type="button"
                     className="mobile-phone-action-btn"
