@@ -28010,8 +28010,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             <div className="social-simple-row-main">
                               <div className="social-simple-row-head">
                                 <strong>{preset.presetName}</strong>
-                                <span>
-                                  {preset.authorDisplayName}
+                                <span hidden>
+                                  {""}
                                   {isOwner ? " · You" : ""}
                                 </span>
                               </div>
