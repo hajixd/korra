@@ -11294,6 +11294,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     if (isMobileWorkspace) {
       html.classList.add("mobile-terminal-viewport-lock");
       body.classList.add("mobile-terminal-viewport-lock");
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      }
+      html.scrollTop = 0;
+      html.scrollLeft = 0;
+      body.scrollTop = 0;
+      body.scrollLeft = 0;
       return () => {
         html.classList.remove("mobile-terminal-viewport-lock");
         body.classList.remove("mobile-terminal-viewport-lock");

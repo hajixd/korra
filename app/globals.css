@@ -1348,8 +1348,7 @@ body.mobile-terminal-viewport-lock {
 }
 
 body.mobile-terminal-viewport-lock {
-  position: fixed;
-  inset: 0;
+  position: relative;
 }
 
 .mobile-app-frame {
@@ -1930,8 +1929,9 @@ body.mobile-terminal-viewport-lock {
 .mobile-phone-frame {
   position: relative;
   z-index: 1;
-  width: min(100%, 430px);
-  height: 100dvh;
+  width: 100%;
+  max-width: 430px;
+  height: 100%;
   margin: 0 auto;
   padding:
     calc(env(safe-area-inset-top, 0px) + 0.88rem)
