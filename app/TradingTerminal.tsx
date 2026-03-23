@@ -24604,7 +24604,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                   <div className="mobile-phone-account-copy">
                     <span>Signed In</span>
                     <strong>{currentUserDisplayName}</strong>
-                    <small>{currentUser.email ?? "Protected account"}</small>
+                    {currentUser.email ? <small>{currentUser.email}</small> : null}
                   </div>
                 </div>
 
@@ -24618,8 +24618,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       setProfileDialogMode("username");
                     }}
                   >
-                    <span>Username</span>
-                    <strong>{currentUserDisplayName}</strong>
+                    <strong>Change Username</strong>
                   </button>
                   <button
                     type="button"
@@ -24630,7 +24629,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       setProfileDialogMode("password");
                     }}
                   >
-                    <span>Password</span>
                     <strong>Change Password</strong>
                   </button>
                   <button
@@ -24640,7 +24638,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       void onLogOut();
                     }}
                   >
-                    <span>Session</span>
                     <strong>Log Out</strong>
                   </button>
                 </div>
