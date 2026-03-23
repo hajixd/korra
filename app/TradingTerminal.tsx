@@ -21561,6 +21561,37 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     totalPreAiLiveTrades > 0
       ? (acceptedLiveTrades / totalPreAiLiveTrades) * 100
       : 0;
+  const liveTradeAiEfficiency = useMemo(() => {
+    const acceptedTradeIds = new Set(backtestTrades.map((trade) => trade.id));
+    let truePositive = 0;
+    let trueNegative = 0;
+    let falsePositive = 0;
+    let falseNegative = 0;
+
+    for (const trade of backtestTimeFilteredTrades) {
+      const accepted = acceptedTradeIds.has(trade.id);
+      const won = trade.result === "Win";
+
+      if (accepted) {
+        if (won) {
+          truePositive += 1;
+        } else {
+          falsePositive += 1;
+        }
+      } else if (won) {
+        falseNegative += 1;
+      } else {
+        trueNegative += 1;
+      }
+    }
+
+    return {
+      truePositive,
+      trueNegative,
+      falsePositive,
+      falseNegative
+    };
+  }, [backtestTimeFilteredTrades, backtestTrades]);
   const cheatedAcceptedLiveTradePct =
     acceptedLiveTrades > 0
       ? (cheatedAcceptedLiveTrades / acceptedLiveTrades) * 100
@@ -24886,7 +24917,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         className={`terminal mobile-terminal-shell mobile-phone-shell${
           isStandaloneMobileWorkspace ? " mobile-phone-shell-standalone" : ""
         }${
-          mobileWorkspaceTab === "history" ? " mobile-phone-shell-history" : ""
+          showMobileTimeline && !mobileTimelineIsLive ? " mobile-phone-shell-snapshot" : ""
         }`}
       >
         <section className="mobile-phone-frame">
@@ -26829,6 +26860,33 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       &middot;
                     </span>
                     Acceptance Rate: <strong>{liveTradeAcceptanceRatePct.toFixed(1)}%</strong>
+                  </span>
+                  <span className="backtest-toolbar-note-meta">
+                    True Positive:{" "}
+                    <strong style={{ color: "rgba(52,211,153,0.98)" }}>
+                      {liveTradeAiEfficiency.truePositive.toLocaleString("en-US")}
+                    </strong>
+                    <span className="backtest-toolbar-note-separator" aria-hidden="true">
+                      &middot;
+                    </span>
+                    True Negative:{" "}
+                    <strong style={{ color: "rgba(96,165,250,0.98)" }}>
+                      {liveTradeAiEfficiency.trueNegative.toLocaleString("en-US")}
+                    </strong>
+                    <span className="backtest-toolbar-note-separator" aria-hidden="true">
+                      &middot;
+                    </span>
+                    False Positive:{" "}
+                    <strong style={{ color: "rgba(249,115,22,0.98)" }}>
+                      {liveTradeAiEfficiency.falsePositive.toLocaleString("en-US")}
+                    </strong>
+                    <span className="backtest-toolbar-note-separator" aria-hidden="true">
+                      &middot;
+                    </span>
+                    False Negative:{" "}
+                    <strong style={{ color: "rgba(239,68,68,0.98)" }}>
+                      {liveTradeAiEfficiency.falseNegative.toLocaleString("en-US")}
+                    </strong>
                   </span>
                   <span className="backtest-toolbar-note-meta">
                     Cheating Count:{" "}
