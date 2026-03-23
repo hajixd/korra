@@ -11157,6 +11157,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [isStandaloneMobileWorkspace, setIsStandaloneMobileWorkspace] = useState(false);
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab>("active");
   const [mobileTradeLimit, setMobileTradeLimit] = useState(24);
+  const [mobileViewportHeightPx, setMobileViewportHeightPx] = useState<number | null>(null);
   const [mobileRecentTradesCache, setMobileRecentTradesCache] = useState<HistoryItem[]>([]);
   const [mobileTimelineOverrideSec, setMobileTimelineOverrideSec] = useState<number | null>(null);
   const [mobileTimelineNowMs, setMobileTimelineNowMs] = useState(() => Date.now());
@@ -11416,6 +11417,80 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     standaloneQuery.addListener(evaluateStandaloneWorkspace);
     return () => standaloneQuery.removeListener(evaluateStandaloneWorkspace);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !isMobileWorkspace) {
+      return;
+    }
+
+    let timeoutId = 0;
+    let animationFrameId = 0;
+    const visualViewport = window.visualViewport;
+
+    const applyViewportMetrics = () => {
+      const resolvedHeight = Math.round(
+        Math.max(
+          0,
+          visualViewport?.height ?? window.innerHeight ?? document.documentElement.clientHeight ?? 0
+        )
+      );
+
+      if (resolvedHeight > 0) {
+        setMobileViewportHeightPx(resolvedHeight);
+        setMobileTradeLimit(resolvedHeight <= 760 ? 18 : 32);
+      }
+    };
+
+    const scheduleViewportRefresh = () => {
+      applyViewportMetrics();
+
+      if (animationFrameId) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+      animationFrameId = window.requestAnimationFrame(() => {
+        applyViewportMetrics();
+      });
+
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
+      timeoutId = window.setTimeout(() => {
+        applyViewportMetrics();
+      }, 320);
+    };
+
+    scheduleViewportRefresh();
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        scheduleViewportRefresh();
+      }
+    };
+
+    window.addEventListener("resize", scheduleViewportRefresh);
+    window.addEventListener("orientationchange", scheduleViewportRefresh);
+    window.addEventListener("pageshow", scheduleViewportRefresh);
+    window.addEventListener("focus", scheduleViewportRefresh);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    visualViewport?.addEventListener("resize", scheduleViewportRefresh);
+    visualViewport?.addEventListener("scroll", scheduleViewportRefresh);
+
+    return () => {
+      if (animationFrameId) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
+      window.removeEventListener("resize", scheduleViewportRefresh);
+      window.removeEventListener("orientationchange", scheduleViewportRefresh);
+      window.removeEventListener("pageshow", scheduleViewportRefresh);
+      window.removeEventListener("focus", scheduleViewportRefresh);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      visualViewport?.removeEventListener("resize", scheduleViewportRefresh);
+      visualViewport?.removeEventListener("scroll", scheduleViewportRefresh);
+    };
+  }, [isMobileWorkspace]);
 
   useEffect(() => {
     if (typeof document === "undefined") {
@@ -24911,6 +24986,12 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     ).replaceAll("_", "/");
     const showMobileTimeline =
       mobileWorkspaceTab === "active" || mobileWorkspaceTab === "history";
+    const mobileShellStyle =
+      mobileViewportHeightPx && mobileViewportHeightPx > 0
+        ? ({
+            ["--mobile-workspace-height"]: `${mobileViewportHeightPx}px`
+          } as CSSProperties & Record<"--mobile-workspace-height", string>)
+        : undefined;
 
     return (
       <main
@@ -24919,6 +25000,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         }${
           showMobileTimeline && !mobileTimelineIsLive ? " mobile-phone-shell-snapshot" : ""
         }`}
+        style={mobileShellStyle}
       >
         <section className="mobile-phone-frame">
           <header className="mobile-phone-header">
@@ -25549,7 +25631,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                   <span className="settings-io-label">Load</span>
                 </button>
                 {presetMenuOpen === "load" ? (
-                  <div className="preset-popover">
+                  <div className="preset-popover preset-popover-load">
                     <div className="preset-popover-header">Load Preset</div>
                     {savedPresets.length === 0 ? (
                       <div className="preset-empty">No saved presets</div>

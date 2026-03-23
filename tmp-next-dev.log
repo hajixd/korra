@@ -1,0 +1,124 @@
+   ▲ Next.js 15.5.12
+   - Local:        http://localhost:3050
+   - Network:      http://192.168.1.154:3050
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 2.4s
+ ○ Compiling / ...
+ ✓ Compiled / in 3s (1921 modules)
+ GET / 200 in 4229ms
+ ○ Compiling /api/history/candles ...
+ ✓ Compiled /api/history/candles in 1165ms (1943 modules)
+ GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=5000 200 in 2977ms
+ ✓ Compiled /api/market/candles in 253ms (1945 modules)
+ GET /api/market/candles?pair=XAU_USD&timeframe=M15&limit=5000 200 in 1391ms
+ ✓ Compiled /api/market/stream in 234ms (1947 modules)
+ GET /api/market/stream?pairs=XAU_USD 200 in 4029ms
+ ✓ Compiled in 1825ms (1922 modules)
+ ✓ Compiled in 1390ms (1922 modules)
+ ✓ Compiled in 1654ms (1922 modules)
+ ✓ Compiled in 1381ms (1922 modules)
+ ✓ Compiled in 1371ms (1922 modules)
+ ✓ Compiled in 1518ms (1922 modules)
+ ✓ Compiled in 1602ms (1922 modules)
+ ✓ Compiled in 1659ms (1922 modules)
+ ✓ Compiled in 1473ms (1922 modules)
+ ✓ Compiled in 2.4s (1922 modules)
+ ✓ Compiled in 1813ms (1922 modules)
+ ✓ Compiled in 2s (1922 modules)
+ ✓ Compiled in 2.1s (1922 modules)
+ ✓ Compiled in 1878ms (1922 modules)
+ ✓ Compiled in 1736ms (1922 modules)
+ ✓ Compiled in 1519ms (1922 modules)
+ GET / 200 in 1219ms
+ ✓ Compiled /api/history/candles in 310ms (1105 modules)
+ GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=5000 200 in 1892ms
+ ✓ Compiled /api/market/candles in 187ms (1107 modules)
+ GET /api/market/candles?pair=XAU_USD&timeframe=M15&limit=5000 200 in 1188ms
+ ✓ Compiled /api/market/stream in 172ms (1109 modules)
+ GET /api/market/stream?pairs=XAU_USD 200 in 31968ms
+ ✓ Compiled in 2.2s (1922 modules)
+ ✓ Compiled in 1928ms (1922 modules)
+ GET / 200 in 1272ms
+ ✓ Compiled /api/history/candles in 162ms (1105 modules)
+ GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=5000 200 in 1201ms
+ ✓ Compiled /api/market/candles in 183ms (1107 modules)
+ GET /api/market/candles?pair=XAU_USD&timeframe=M15&limit=5000 200 in 1468ms
+ ✓ Compiled /api/market/stream in 253ms (1109 modules)
+ GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=35112&start=2025-03-20T06%3A00%3A00.000Z&end=2026-03-20T23%3A59%3A59.999Z 200 in 12345ms
+ GET /api/history/candles?pair=XAU_USD&timeframe=M15&count=35112 200 in 12889ms
+ GET /api/market/candles?pair=XAU_USD&timeframe=M15&limit=25000 200 in 40ms
+ ✓ Compiled /api/backtest/history in 448ms (1950 modules)
+ POST /api/backtest/history 200 in 647ms
+ POST /api/backtest/history 200 in 381ms
+ GET /api/market/stream?pairs=XAU_USD 200 in 147576ms
+ ✓ Compiled in 1787ms (1922 modules)
+ ✓ Compiled in 2.1s (1922 modules)
+ ✓ Compiled in 2.1s (1922 modules)
+ ✓ Compiled in 1754ms (1922 modules)
+ ✓ Compiled in 2.1s (1922 modules)
+ ✓ Compiled in 1840ms (1922 modules)
+ ✓ Compiled in 2s (1922 modules)
+ ✓ Compiled in 1954ms (1922 modules)
+ ✓ Compiled in 1862ms (1922 modules)
+ ✓ Compiled in 1945ms (1922 modules)
+ ✓ Compiled in 1925ms (1922 modules)
+ ✓ Compiled in 2.1s (1922 modules)
+ ✓ Compiled in 1911ms (1922 modules)
+ ✓ Compiled in 1859ms (1922 modules)
+ ✓ Compiled in 2.2s (1922 modules)
+ ✓ Compiled in 1480ms (1922 modules)
+ ✓ Compiled in 1589ms (1922 modules)
+ ✓ Compiled in 1460ms (1922 modules)
+ ✓ Compiled in 1683ms (1922 modules)
+ ✓ Compiled in 1395ms (1922 modules)
+ ✓ Compiled in 1517ms (1922 modules)
+ ✓ Compiled in 1508ms (1922 modules)
+ ✓ Compiled in 1536ms (1922 modules)
+ ✓ Compiled in 1506ms (1922 modules)
+ ✓ Compiled in 1515ms (1922 modules)
+ ✓ Compiled in 1495ms (1922 modules)
+ ✓ Compiled in 1720ms (1922 modules)
+ ✓ Compiled in 1418ms (1922 modules)
+ ✓ Compiled in 2.1s (1922 modules)
+ ✓ Compiled in 1977ms (1922 modules)
+ ✓ Compiled in 2.1s (1922 modules)
+ ✓ Compiled in 2s (1922 modules)
+ ✓ Compiled in 2.2s (1922 modules)
+ ✓ Compiled in 1552ms (1922 modules)
+ ✓ Compiled in 1974ms (1922 modules)
+ ✓ Compiled in 1643ms (1922 modules)
+ ✓ Compiled in 2.2s (1922 modules)
+ ✓ Compiled in 2.1s (1922 modules)
+ ✓ Compiled in 2.3s (1922 modules)
+ ✓ Compiled in 2s (1922 modules)
+ ✓ Compiled in 2.3s (1922 modules)
+ ✓ Compiled in 2.8s (1922 modules)
+ ✓ Compiled in 3s (1922 modules)
+ ✓ Compiled in 2.4s (1922 modules)
+ ✓ Compiled in 1877ms (1922 modules)
+ ✓ Compiled in 2.5s (1922 modules)
+ ✓ Compiled in 2s (1922 modules)
+ ✓ Compiled in 2.1s (1922 modules)
+ ✓ Compiled in 1898ms (1922 modules)
+ ✓ Compiled in 1493ms (1922 modules)
+ ✓ Compiled in 2.4s (1922 modules)
+ ✓ Compiled in 518ms (1922 modules)
+ ✓ Compiled in 1326ms (1922 modules)
+ ✓ Compiled in 243ms (1922 modules)
+ ✓ Compiled in 2.1s (1922 modules)
+ ✓ Compiled in 1410ms (1922 modules)
+ ✓ Compiled in 1569ms (1922 modules)
+ ✓ Compiled in 1609ms (1922 modules)
+ ✓ Compiled in 1328ms (1922 modules)
+ ✓ Compiled in 1322ms (1922 modules)
+ ✓ Compiled in 1652ms (1922 modules)
+ ✓ Compiled in 1762ms (1922 modules)
+ ✓ Compiled in 1862ms (1922 modules)
+ ✓ Compiled in 1700ms (1922 modules)
+ ✓ Compiled in 1425ms (1922 modules)
+ ✓ Compiled in 1792ms (1922 modules)
+ ✓ Compiled in 1299ms (1922 modules)
+ ✓ Compiled in 1340ms (1922 modules)
+ ✓ Compiled in 1549ms (1922 modules)
