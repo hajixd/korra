@@ -71,6 +71,7 @@ import {
 import {
   COPYTRADE_BACKTEST_STATE_KEY,
   COPYTRADE_LAST_ROUTE_STORAGE_KEY,
+  COPYTRADE_OWNER_UID_STORAGE_KEY,
   DEFAULT_COPYTRADE_DASHBOARD_TEMPLATE,
   type CopytradeDashboardSeed,
   type CopytradeDashboardStatsPayload
@@ -110,6 +111,17 @@ import {
   getFirebaseClientAuth,
   getFirebaseClientDb
 } from "../lib/firebase";
+import {
+  deleteFirebaseMessagingToken,
+  isFirebaseMessagingSupported,
+  requestFirebaseMessagingToken,
+  subscribeToForegroundMessages
+} from "../lib/firebaseMessaging";
+import {
+  normalizeNotificationDevices,
+  removeNotificationDevice,
+  upsertNotificationDevice
+} from "../lib/notificationDevices";
 import {
   AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT,
   AI_LIBRARY_DEFAULT_MAX_SAMPLES,
@@ -10978,6 +10990,18 @@ function TradingTerminalWorkspace({
   }, [currentUser.uid, firebaseDb]);
   const currentUserDisplayName = useMemo(() => resolveUserDisplayName(currentUser), [currentUser]);
   const currentUserInitials = useMemo(() => resolveUserInitials(currentUser), [currentUser]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(COPYTRADE_OWNER_UID_STORAGE_KEY, currentUser.uid);
+    } catch {
+      // Ignore storage failures for optional embedded copy-trade ownership hints.
+    }
+  }, [currentUser.uid]);
   const aiLibraryDefs = useMemo(() => {
     return buildAiLibraryDefs(availableAiModelNames);
   }, [availableAiModelNames]);
@@ -11318,6 +11342,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     updatedAtMs: 0
   }));
   const [mobileNotificationsEnabled, setMobileNotificationsEnabled] = useState(true);
+  const pushNotificationTokenRef = useRef<string | null>(null);
+  const pushRegistrationInFlightRef = useRef(false);
   const [volumeNowcast, setVolumeNowcast] = useState<VolumeNowcastSnapshot>(() => ({
     estimatedCurrentVolume: 0,
     estimatedFinalVolume: 0,
@@ -11334,52 +11360,108 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const backtestPrecisionEnabled =
     effectiveSelectedBacktestPrecisionTimeframe !== selectedBacktestTimeframe;
 
-  const buildCurrentBacktestSettingsSnapshot = (): BacktestSettingsSnapshot => ({
-    symbol: selectedSymbol,
-    timeframe: selectedBacktestTimeframe,
-    precisionTimeframe: effectiveSelectedBacktestPrecisionTimeframe,
-    minutePreciseEnabled: backtestPrecisionEnabled,
-    statsDateStart,
-    statsDateEnd,
-    enabledBacktestWeekdays: [...enabledBacktestWeekdays],
-    enabledBacktestSessions: [...enabledBacktestSessions],
-    enabledBacktestMonths: [...enabledBacktestMonths],
-    enabledBacktestHours: [...enabledBacktestHours],
-    aiMode,
-    aiFilterEnabled,
-    confidenceThreshold,
-    ancThreshold,
-    tpDollars,
-    slDollars,
-    dollarsPerMove,
-    stopMode,
-    breakEvenTriggerPct,
-    trailingStartPct,
-    trailingDistPct,
-    maxBarsInTrade,
-    maxConcurrentTrades,
-    aiModelStates: { ...aiModelStates },
-    aiFeatureLevels: { ...aiFeatureLevels },
-    aiFeatureModes: { ...aiFeatureModes },
-    selectedAiLibraries: [...selectedAiLibraries],
-    selectedAiLibrarySettings: cloneAiLibrarySettings(selectedAiLibrarySettings),
-    chunkBars,
-    distanceMetric,
-    knnNeighborSpace,
-    selectedAiDomains: [...selectedAiDomains],
-    remapOppositeOutcomes,
-    dimensionAmount,
-    compressionMethod,
-    kEntry,
-    kExit,
-    knnVoteMode,
-    hdbMinClusterSize,
-    hdbMinSamples,
-    hdbEpsQuantile,
-    staticLibrariesClusters,
-    antiCheatEnabled,
-    validationMode
-  });
+  const buildCurrentBacktestSettingsSnapshot = useCallback(
+    (): BacktestSettingsSnapshot => ({
+      symbol: selectedSymbol,
+      timeframe: selectedBacktestTimeframe,
+      precisionTimeframe: effectiveSelectedBacktestPrecisionTimeframe,
+      minutePreciseEnabled: backtestPrecisionEnabled,
+      statsDateStart,
+      statsDateEnd,
+      enabledBacktestWeekdays: [...enabledBacktestWeekdays],
+      enabledBacktestSessions: [...enabledBacktestSessions],
+      enabledBacktestMonths: [...enabledBacktestMonths],
+      enabledBacktestHours: [...enabledBacktestHours],
+      aiMode,
+      aiFilterEnabled,
+      confidenceThreshold,
+      ancThreshold,
+      tpDollars,
+      slDollars,
+      dollarsPerMove,
+      stopMode,
+      breakEvenTriggerPct,
+      trailingStartPct,
+      trailingDistPct,
+      maxBarsInTrade,
+      maxConcurrentTrades,
+      aiModelStates: { ...aiModelStates },
+      aiFeatureLevels: { ...aiFeatureLevels },
+      aiFeatureModes: { ...aiFeatureModes },
+      selectedAiLibraries: [...selectedAiLibraries],
+      selectedAiLibrarySettings: cloneAiLibrarySettings(selectedAiLibrarySettings),
+      chunkBars,
+      distanceMetric,
+      knnNeighborSpace,
+      selectedAiDomains: [...selectedAiDomains],
+      remapOppositeOutcomes,
+      dimensionAmount,
+      compressionMethod,
+      kEntry,
+      kExit,
+      knnVoteMode,
+      hdbMinClusterSize,
+      hdbMinSamples,
+      hdbEpsQuantile,
+      staticLibrariesClusters,
+      antiCheatEnabled,
+      validationMode
+    }),
+    [
+      selectedSymbol,
+      selectedBacktestTimeframe,
+      effectiveSelectedBacktestPrecisionTimeframe,
+      backtestPrecisionEnabled,
+      statsDateStart,
+      statsDateEnd,
+      enabledBacktestWeekdays,
+      enabledBacktestSessions,
+      enabledBacktestMonths,
+      enabledBacktestHours,
+      aiMode,
+      aiFilterEnabled,
+      confidenceThreshold,
+      ancThreshold,
+      tpDollars,
+      slDollars,
+      dollarsPerMove,
+      stopMode,
+      breakEvenTriggerPct,
+      trailingStartPct,
+      trailingDistPct,
+      maxBarsInTrade,
+      maxConcurrentTrades,
+      aiModelStates,
+      aiFeatureLevels,
+      aiFeatureModes,
+      selectedAiLibraries,
+      selectedAiLibrarySettings,
+      chunkBars,
+      distanceMetric,
+      knnNeighborSpace,
+      selectedAiDomains,
+      remapOppositeOutcomes,
+      dimensionAmount,
+      compressionMethod,
+      kEntry,
+      kExit,
+      knnVoteMode,
+      hdbMinClusterSize,
+      hdbMinSamples,
+      hdbEpsQuantile,
+      staticLibrariesClusters,
+      antiCheatEnabled,
+      validationMode
+    ]
+  );
+  const currentStrategyNotificationSettingsSignature = useMemo(
+    () => serializeBacktestSettingsSnapshot(buildCurrentBacktestSettingsSnapshot()),
+    [buildCurrentBacktestSettingsSnapshot]
+  );
+  const currentStrategyNotificationSettings = useMemo<BacktestSettingsSnapshot>(
+    () => JSON.parse(currentStrategyNotificationSettingsSignature) as BacktestSettingsSnapshot,
+    [currentStrategyNotificationSettingsSignature]
+  );
   const [appliedBacktestSettings, setAppliedBacktestSettings] = useState<BacktestSettingsSnapshot>(
     () => buildCurrentBacktestSettingsSnapshot()
   );
@@ -17349,6 +17431,267 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     }
   }, [collectUiPreferences, scopedUiPreferencesStorageKey]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!accountWorkspaceDocRef || !mobileNotificationsEnabled || !firebaseClientConfigReady) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const registerPushNotifications = async () => {
+      if (pushRegistrationInFlightRef.current) {
+        return;
+      }
+
+      const supported = await isFirebaseMessagingSupported();
+      if (!supported) {
+        if (!cancelled) {
+          setMobileNotificationsEnabled(false);
+        }
+        return;
+      }
+
+      if (typeof window === "undefined" || !("Notification" in window)) {
+        if (!cancelled) {
+          setMobileNotificationsEnabled(false);
+        }
+        return;
+      }
+
+      if (Notification.permission !== "granted") {
+        if (!cancelled) {
+          setMobileNotificationsEnabled(false);
+        }
+        return;
+      }
+
+      pushRegistrationInFlightRef.current = true;
+
+      try {
+        const token = await requestFirebaseMessagingToken();
+        if (!token) {
+          if (!cancelled) {
+            setMobileNotificationsEnabled(false);
+          }
+          return;
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        pushNotificationTokenRef.current = token;
+        const snapshot = await getDoc(accountWorkspaceDocRef);
+        const existing = snapshot.exists() ? snapshot.data() : null;
+        const currentDevices = normalizeNotificationDevices(existing?.notificationDevices);
+        const existingDevice = currentDevices.find((device) => device.token === token);
+        const now = Date.now();
+        const nextDevices = upsertNotificationDevice(currentDevices, {
+          token,
+          platform: "web",
+          enabled: true,
+          userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
+          createdAt: existingDevice?.createdAt ?? now,
+          updatedAt: now,
+          strategySettings: currentStrategyNotificationSettings,
+          strategyRuntime: existingDevice?.strategyRuntime ?? null
+        });
+
+        await setDoc(
+          accountWorkspaceDocRef,
+          {
+            notificationDevices: nextDevices
+          },
+          { merge: true }
+        );
+      } catch (error) {
+        console.error("Failed to register push notifications.", error);
+      } finally {
+        pushRegistrationInFlightRef.current = false;
+      }
+    };
+
+    void registerPushNotifications();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accountWorkspaceDocRef, currentStrategyNotificationSettings, mobileNotificationsEnabled]);
+
+  useEffect(() => {
+    if (
+      !accountWorkspaceDocRef ||
+      !mobileNotificationsEnabled ||
+      !firebaseClientConfigReady ||
+      !pushNotificationTokenRef.current
+    ) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const syncActiveDeviceStrategy = async () => {
+        const token = pushNotificationTokenRef.current;
+        if (!token) {
+          return;
+        }
+
+        const snapshot = await getDoc(accountWorkspaceDocRef);
+        const existing = snapshot.exists() ? snapshot.data() : null;
+        const currentDevices = normalizeNotificationDevices(existing?.notificationDevices);
+        const existingDevice = currentDevices.find((device) => device.token === token);
+        const now = Date.now();
+        const nextDevices = upsertNotificationDevice(currentDevices, {
+          token,
+          platform: "web",
+          enabled: true,
+          userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
+          createdAt: existingDevice?.createdAt ?? now,
+          updatedAt: now,
+          strategySettings: currentStrategyNotificationSettings,
+          strategyRuntime: existingDevice?.strategyRuntime ?? null
+        });
+
+        await setDoc(
+          accountWorkspaceDocRef,
+          {
+            notificationDevices: nextDevices
+          },
+          { merge: true }
+        );
+      };
+
+      void syncActiveDeviceStrategy().catch((error) => {
+        console.error("Failed to sync notification device strategy settings.", error);
+      });
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    accountWorkspaceDocRef,
+    currentStrategyNotificationSettings,
+    mobileNotificationsEnabled
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!accountWorkspaceDocRef || mobileNotificationsEnabled) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const unregisterPushNotifications = async () => {
+      try {
+        const snapshot = await getDoc(accountWorkspaceDocRef);
+        const existing = snapshot.exists() ? snapshot.data() : null;
+        const token = pushNotificationTokenRef.current;
+        const currentDevices = normalizeNotificationDevices(existing?.notificationDevices);
+        const nextDevices = token ? removeNotificationDevice(currentDevices, token) : currentDevices;
+
+        if (token && nextDevices.length !== currentDevices.length) {
+          await setDoc(
+            accountWorkspaceDocRef,
+            {
+              notificationDevices: nextDevices
+            },
+            { merge: true }
+          );
+        }
+
+        await deleteFirebaseMessagingToken().catch(() => undefined);
+      } catch (error) {
+        console.error("Failed to unregister push notifications.", error);
+      } finally {
+        if (!cancelled) {
+          pushNotificationTokenRef.current = null;
+        }
+      }
+    };
+
+    void unregisterPushNotifications();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accountWorkspaceDocRef, mobileNotificationsEnabled]);
+
+  useEffect(() => {
+    let unsubscribe: (() => void) | null = null;
+
+    void subscribeToForegroundMessages((payload) => {
+      if (
+        typeof window === "undefined" ||
+        !("Notification" in window) ||
+        !mobileNotificationsEnabled ||
+        Notification.permission !== "granted"
+      ) {
+        return;
+      }
+
+      const title = String(payload.notification?.title ?? "Korra notification").trim();
+      const body = String(payload.notification?.body ?? "").trim();
+      const link = String(payload.data?.link ?? "/settings/account").trim() || "/settings/account";
+      const notification = new Notification(title, {
+        body,
+        icon: "/favicon.ico",
+        badge: "/favicon.ico",
+        data: {
+          link
+        }
+      });
+
+      notification.onclick = () => {
+        window.focus();
+        window.location.assign(link);
+        notification.close();
+      };
+    }).then((cleanup) => {
+      unsubscribe = cleanup;
+    });
+
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
+  }, [mobileNotificationsEnabled]);
+
+  const handleMobileNotificationsToggle = useCallback(async () => {
+    const nextEnabled = !mobileNotificationsEnabled;
+
+    if (!nextEnabled) {
+      setMobileNotificationsEnabled(false);
+      return;
+    }
+
+    if (!firebaseClientConfigReady) {
+      return;
+    }
+
+    const supported = await isFirebaseMessagingSupported();
+    if (!supported || typeof window === "undefined" || !("Notification" in window)) {
+      setMobileNotificationsEnabled(false);
+      return;
+    }
+
+    let permission = Notification.permission;
+    if (permission === "default") {
+      permission = await Notification.requestPermission();
+    }
+
+    if (permission !== "granted") {
+      setMobileNotificationsEnabled(false);
+      return;
+    }
+
+    setMobileNotificationsEnabled(true);
+  }, [mobileNotificationsEnabled]);
+
 
   const handleResetSettings = useCallback(() => {
     localStorage.removeItem(scopedSettingsStorageKey);
@@ -18028,11 +18371,16 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       return;
     }
 
+    const strategyNotificationSettings = JSON.parse(
+      currentStrategyNotificationSettingsSignature
+    ) as BacktestSettingsSnapshot;
+
     const timeoutId = window.setTimeout(() => {
       void setDoc(
         accountWorkspaceDocRef,
         {
           savedPresets,
+          strategyNotificationSettings,
           uploadedStrategyModels,
           workspaceUpdatedAt: serverTimestamp()
         },
@@ -18048,6 +18396,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, [
     accountWorkspaceDocRef,
     cloudWorkspaceReady,
+    currentStrategyNotificationSettingsSignature,
     savedPresets,
     savedPresetsReady,
     uploadedStrategyModels,
@@ -26111,7 +26460,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       type="button"
                       className={`mobile-phone-toggle${mobileNotificationsEnabled ? " active" : ""}`}
                       aria-pressed={mobileNotificationsEnabled}
-                      onClick={() => setMobileNotificationsEnabled((current) => !current)}
+                      onClick={() => {
+                        void handleMobileNotificationsToggle();
+                      }}
                     >
                       <span className="mobile-phone-toggle-knob" />
                     </button>

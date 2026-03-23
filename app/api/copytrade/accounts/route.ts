@@ -126,6 +126,7 @@ export async function POST(request: Request) {
 
   try {
     const account = await createCopyTradeAccount({
+      ownerUid: typeof payload.ownerUid === "string" ? payload.ownerUid : undefined,
       login,
       password,
       server,

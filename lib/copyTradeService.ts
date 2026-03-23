@@ -9,6 +9,7 @@ import {
   listMetaApiAccountSnapshots,
   undeployMetaApiAccountById
 } from "./metaApiCloud";
+import { sendPushNotification } from "./firebaseServerNotifications";
 
 export type CopyTradeAccountStatus = "Connected" | "Disconnected" | "Error";
 export type CopyTradeSignalSide = "Long" | "Short";
@@ -20,6 +21,7 @@ export type CopyTradeRuntimePosition = {
   side: CopyTradeSignalSide;
   symbol: string;
   openedAt: number;
+  units: number;
   entryPrice: number;
   takeProfit: number | null;
   stopLoss: number | null;
@@ -27,6 +29,7 @@ export type CopyTradeRuntimePosition = {
 
 type CopyTradeAccountRecord = {
   id: string;
+  ownerUid?: string;
   login: string;
   server: string;
   encryptedPassword: string;
@@ -74,6 +77,7 @@ export type CopyTradeAccountWorkerRecord = Omit<CopyTradeAccountRecord, "encrypt
 };
 
 export type CopyTradeAccountCreateInput = {
+  ownerUid?: string;
   login: string;
   password: string;
   server: string;
@@ -277,6 +281,125 @@ const normalizePassword = (value: unknown): string => {
     return "";
   }
   return value;
+};
+
+const normalizeOwnerUid = (value: unknown): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized || undefined;
+};
+
+const cloneRuntimePosition = (
+  position: CopyTradeRuntimePosition | null | undefined
+): CopyTradeRuntimePosition | null => {
+  if (!position) {
+    return null;
+  }
+
+  return {
+    ...position
+  };
+};
+
+const cloneAccountRecord = (account: CopyTradeAccountRecord): CopyTradeAccountRecord => ({
+  ...account,
+  openPosition: cloneRuntimePosition(account.openPosition)
+});
+
+const formatNotificationPrice = (value: number | null | undefined): string => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(2) : "—";
+};
+
+const formatNotificationUnits = (value: number | null | undefined): string => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? String(Number(numeric.toFixed(2))) : "—";
+};
+
+const buildEntryNotificationBody = (
+  account: CopyTradeAccountRecord,
+  position: CopyTradeRuntimePosition
+) => {
+  return [
+    `${account.presetName || account.login} · ${position.side} Entry`,
+    `Entry Price: ${formatNotificationPrice(position.entryPrice)}`,
+    `Take Profit: ${formatNotificationPrice(position.takeProfit)}`,
+    `Stop Loss: ${formatNotificationPrice(position.stopLoss)}`,
+    `Unit Size: ${formatNotificationUnits(position.units)}`
+  ].join("\n");
+};
+
+const buildExitNotificationBody = (
+  account: CopyTradeAccountRecord,
+  position: CopyTradeRuntimePosition
+) => {
+  return [
+    `${account.presetName || account.login} · ${position.side} Exit`,
+    `Entry Price: ${formatNotificationPrice(position.entryPrice)}`,
+    `Take Profit: ${formatNotificationPrice(position.takeProfit)}`,
+    `Stop Loss: ${formatNotificationPrice(position.stopLoss)}`,
+    `Unit Size: ${formatNotificationUnits(position.units)}`
+  ].join("\n");
+};
+
+const dispatchCopyTradeRuntimeNotifications = async (
+  previous: CopyTradeAccountRecord,
+  next: CopyTradeAccountRecord
+) => {
+  if (previous.openPosition?.signalId !== next.openPosition?.signalId) {
+    if (!previous.openPosition && next.openPosition) {
+      await sendPushNotification({
+        ownerUid: next.ownerUid,
+        title: `${next.symbol} ${next.openPosition.side} entry`,
+        body: buildEntryNotificationBody(next, next.openPosition),
+        link: "/settings/account?view=copytrade",
+        data: {
+          accountId: next.id,
+          eventType: "trade_opened",
+          symbol: next.symbol,
+          side: next.openPosition.side,
+          entryPrice: formatNotificationPrice(next.openPosition.entryPrice),
+          takeProfit: formatNotificationPrice(next.openPosition.takeProfit),
+          stopLoss: formatNotificationPrice(next.openPosition.stopLoss),
+          unitSize: formatNotificationUnits(next.openPosition.units)
+        }
+      });
+    } else if (previous.openPosition && !next.openPosition) {
+      await sendPushNotification({
+        ownerUid: next.ownerUid,
+        title: `${next.symbol} ${previous.openPosition.side} exit`,
+        body: buildExitNotificationBody(next, previous.openPosition),
+        link: "/settings/account?view=copytrade",
+        data: {
+          accountId: next.id,
+          eventType: "trade_closed",
+          symbol: next.symbol,
+          side: previous.openPosition.side,
+          entryPrice: formatNotificationPrice(previous.openPosition.entryPrice),
+          takeProfit: formatNotificationPrice(previous.openPosition.takeProfit),
+          stopLoss: formatNotificationPrice(previous.openPosition.stopLoss),
+          unitSize: formatNotificationUnits(previous.openPosition.units)
+        }
+      });
+    }
+  }
+
+  if (next.lastError && next.lastError !== previous.lastError) {
+    await sendPushNotification({
+      ownerUid: next.ownerUid,
+      title: `${next.presetName || next.login} needs attention`,
+      body: next.lastError,
+      link: "/settings/account?view=copytrade",
+      data: {
+        accountId: next.id,
+        eventType: "worker_error",
+        symbol: next.symbol
+      }
+    });
+  }
 };
 
 const normalizeLot = (value: unknown): number => {
@@ -730,6 +853,7 @@ export const createCopyTradeAccount = async (
     const server = normalizeServer(input.server);
     const password = normalizePassword(input.password);
     const provider = normalizeProvider(input.provider);
+    const ownerUid = normalizeOwnerUid(input.ownerUid);
 
     if (!login || !server || !password) {
       throw new Error("MT5 login, password, and server are required.");
@@ -821,6 +945,7 @@ export const createCopyTradeAccount = async (
       ? {
           ...reusableHiddenAccount,
           id: nextId,
+          ownerUid: ownerUid ?? reusableHiddenAccount.ownerUid,
           login,
           server,
           encryptedPassword: encryptPassword(password),
@@ -857,6 +982,7 @@ export const createCopyTradeAccount = async (
         }
       : {
           id: nextId,
+          ownerUid,
           login,
           server,
           encryptedPassword: encryptPassword(password),
@@ -1193,6 +1319,7 @@ export const patchCopyTradeAccountRuntime = async (
     }
 
     let changed = false;
+    const previousAccount = cloneAccountRecord(account);
 
     const assign = <K extends keyof CopyTradeAccountRecord>(key: K, value: CopyTradeAccountRecord[K]) => {
       if (account[key] !== value) {
@@ -1218,6 +1345,7 @@ export const patchCopyTradeAccountRuntime = async (
     if (changed) {
       account.updatedAt = Date.now();
       await saveStateToDisk(state);
+      await dispatchCopyTradeRuntimeNotifications(previousAccount, account).catch(() => undefined);
     }
 
     return toPublicAccount(account);

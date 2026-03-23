@@ -367,6 +367,10 @@ export const resolveLocalBridgePosition = (
     side,
     symbol: normalizeSignalSymbol(searchParams.get("symbol"), fallbackSymbol),
     openedAt: parseTimestamp(searchParams.get("openedAt"), Date.now()),
+    units:
+      parseNullableNumber(searchParams.get("units")) ??
+      parseNullableNumber(searchParams.get("lot")) ??
+      0,
     entryPrice: entryPrice ?? 0,
     takeProfit: parseNullableNumber(searchParams.get("tp")),
     stopLoss: parseNullableNumber(searchParams.get("sl"))
