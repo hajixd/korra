@@ -10393,6 +10393,29 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
     };
   }, [firebaseAuth, syncAccountProfile]);
 
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const html = document.documentElement;
+    const body = document.body;
+
+    if (!authReady) {
+      html.classList.add("account-screen-loading-lock");
+      body.classList.add("account-screen-loading-lock");
+      html.scrollTop = 0;
+      body.scrollTop = 0;
+      return () => {
+        html.classList.remove("account-screen-loading-lock");
+        body.classList.remove("account-screen-loading-lock");
+      };
+    }
+
+    html.classList.remove("account-screen-loading-lock");
+    body.classList.remove("account-screen-loading-lock");
+  }, [authReady]);
+
   const handleAuthSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
@@ -10553,7 +10576,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
 
   if (!authReady) {
     return (
-      <main className="terminal account-screen">
+      <main className="terminal account-screen account-screen-loading">
         <section className="account-screen-shell">
           <div className="account-shell-panel account-shell-panel-loading">
             <div className="account-auth-loader account-auth-loader-loading" aria-hidden="true">
@@ -10579,11 +10602,6 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
       <main className="terminal account-screen">
         <section className="account-screen-shell">
           <div className="account-shell-panel">
-            <div className="account-shell-header account-shell-header-auth">
-              <div className="account-shell-kicker">Korra</div>
-              <h1>{authMode === "create" ? "Create Your Account" : "Welcome Back"}</h1>
-              <p>Access your trading workspace, saved presets, and live history from one place.</p>
-            </div>
             <div className="account-mode-grid">
               <button
                 type="button"
@@ -11075,6 +11093,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [socialPublishing, setSocialPublishing] = useState(false);
   const [socialPresetActionId, setSocialPresetActionId] = useState<string | null>(null);
   const [isMobileWorkspace, setIsMobileWorkspace] = useState(false);
+  const [isStandaloneMobileWorkspace, setIsStandaloneMobileWorkspace] = useState(false);
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab>("active");
   const [mobileTradeLimit, setMobileTradeLimit] = useState(24);
   const [mobileRecentTradesCache, setMobileRecentTradesCache] = useState<HistoryItem[]>([]);
@@ -11299,6 +11318,40 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       removePointerListener();
       window.removeEventListener("resize", evaluateMobileWorkspace);
     };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const standaloneQuery =
+      typeof window.matchMedia === "function"
+        ? window.matchMedia("(display-mode: standalone)")
+        : null;
+    const evaluateStandaloneWorkspace = () => {
+      const standaloneByMedia = standaloneQuery?.matches ?? false;
+      const standaloneByNavigator =
+        typeof navigator !== "undefined" &&
+        "standalone" in navigator &&
+        (navigator as Navigator & { standalone?: boolean }).standalone === true;
+      setIsStandaloneMobileWorkspace(Boolean(standaloneByMedia || standaloneByNavigator));
+    };
+
+    evaluateStandaloneWorkspace();
+
+    if (!standaloneQuery) {
+      return;
+    }
+
+    if (typeof standaloneQuery.addEventListener === "function") {
+      standaloneQuery.addEventListener("change", evaluateStandaloneWorkspace);
+      return () =>
+        standaloneQuery.removeEventListener("change", evaluateStandaloneWorkspace);
+    }
+
+    standaloneQuery.addListener(evaluateStandaloneWorkspace);
+    return () => standaloneQuery.removeListener(evaluateStandaloneWorkspace);
   }, []);
 
   useEffect(() => {
@@ -24551,7 +24604,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     const mobileActiveSymbol = (activeTrade?.symbol ?? appliedBacktestSettings.symbol).replaceAll("_", "/");
 
     return (
-      <main className="terminal mobile-terminal-shell mobile-phone-shell">
+      <main
+        className={`terminal mobile-terminal-shell mobile-phone-shell${
+          isStandaloneMobileWorkspace ? " mobile-phone-shell-standalone" : ""
+        }`}
+      >
         <section className="mobile-phone-frame">
           <header className="mobile-phone-header">
             <div className="mobile-phone-brand-row mobile-phone-brand-row-centered">

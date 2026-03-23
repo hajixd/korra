@@ -702,6 +702,20 @@ function TradeDetailsModalImpl({
     }
     return window.innerWidth <= 920;
   });
+  const [mobileViewport, setMobileViewport] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    const hasCoarsePointer =
+      typeof window.matchMedia === "function"
+        ? window.matchMedia("(pointer: coarse)").matches
+        : false;
+    const hasTouchPoints =
+      typeof navigator !== "undefined" &&
+      Number.isFinite(navigator.maxTouchPoints) &&
+      navigator.maxTouchPoints > 0;
+    return window.innerWidth <= 920 && (hasCoarsePointer || hasTouchPoints);
+  });
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -709,7 +723,17 @@ function TradeDetailsModalImpl({
     }
 
     const onResize = () => {
-      setCompactViewport(window.innerWidth <= 920);
+      const compact = window.innerWidth <= 920;
+      const hasCoarsePointer =
+        typeof window.matchMedia === "function"
+          ? window.matchMedia("(pointer: coarse)").matches
+          : false;
+      const hasTouchPoints =
+        typeof navigator !== "undefined" &&
+        Number.isFinite(navigator.maxTouchPoints) &&
+        navigator.maxTouchPoints > 0;
+      setCompactViewport(compact);
+      setMobileViewport(compact && (hasCoarsePointer || hasTouchPoints));
     };
 
     onResize();
@@ -1396,125 +1420,127 @@ function TradeDetailsModalImpl({
             />
           </div>
 
-          <div style={{ marginTop: compactViewport ? 14 : 18 }}>
-            <TradeCandlestickChart
-              trade={trade}
-              candles={candles}
-              interval={interval}
-              parseMode={parseMode}
-              tpDist={tpDist}
-              slDist={slDist}
-              heightPx={compactViewport ? 260 : 360}
-            />
-          </div>
-
-          <div
-            style={{
-              marginTop: compactViewport ? 10 : 12,
-              border: "1px solid rgba(255,255,255,0.08)",
-              background:
-                "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015))",
-              borderRadius: 0,
-              padding: compactViewport ? "10px 10px" : "12px 12px",
-              boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.03)",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "baseline",
-                justifyContent: "space-between",
-                gap: 10,
-                marginBottom: 10,
-              }}
-            >
-              <div>
-                <div
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 900,
-                    letterSpacing: 0.7,
-                    textTransform: "uppercase",
-                    color: "rgba(255,255,255,0.86)",
-                  }}
-                >
-                  Dimension Entry Profile
-                </div>
-                <div
-                  style={{
-                    fontSize: 10,
-                    lineHeight: 1.35,
-                    color: "rgba(255,255,255,0.52)",
-                    marginTop: 3,
-                  }}
-                >
-                  Switch between raw and standardized scales. The vertical line
-                  marks this trade&apos;s entry value for that dimension.
-                </div>
+          {!mobileViewport ? (
+            <>
+              <div style={{ marginTop: compactViewport ? 14 : 18 }}>
+                <TradeCandlestickChart
+                  trade={trade}
+                  candles={candles}
+                  interval={interval}
+                  parseMode={parseMode}
+                  tpDist={tpDist}
+                  slDist={slDist}
+                  heightPx={compactViewport ? 260 : 360}
+                />
               </div>
+
               <div
                 style={{
-                  fontSize: 10,
-                  color: "rgba(255,255,255,0.45)",
-                  whiteSpace: "nowrap",
+                  marginTop: compactViewport ? 10 : 12,
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  background:
+                    "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015))",
+                  borderRadius: 0,
+                  padding: compactViewport ? "10px 10px" : "12px 12px",
+                  boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.03)",
                 }}
               >
-                {normalizedDimensionRows.length} active dims
-              </div>
-            </div>
-
-            <div
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: 3,
-                marginBottom: 12,
-                border: "1px solid rgba(255,255,255,0.08)",
-                background: "rgba(255,255,255,0.03)",
-              }}
-            >
-              {([
-                { id: "raw", label: "Non-Standardized" },
-                { id: "standardized", label: "Standardized" },
-              ] as Array<{ id: DimensionProfileScaleMode; label: string }>).map((tab) => {
-                const active = dimensionProfileScaleMode === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setDimensionProfileScaleMode(tab.id)}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "baseline",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    marginBottom: 10,
+                  }}
+                >
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 900,
+                        letterSpacing: 0.7,
+                        textTransform: "uppercase",
+                        color: "rgba(255,255,255,0.86)",
+                      }}
+                    >
+                      Dimension Entry Profile
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 10,
+                        lineHeight: 1.35,
+                        color: "rgba(255,255,255,0.52)",
+                        marginTop: 3,
+                      }}
+                    >
+                      Switch between raw and standardized scales. The vertical line
+                      marks this trade&apos;s entry value for that dimension.
+                    </div>
+                  </div>
+                  <div
                     style={{
-                      border: "1px solid rgba(255,255,255,0.10)",
-                      background: active
-                        ? "rgba(255,255,255,0.14)"
-                        : "rgba(255,255,255,0.02)",
-                      color: active
-                        ? "rgba(255,255,255,0.96)"
-                        : "rgba(255,255,255,0.64)",
                       fontSize: 10,
-                      fontWeight: 800,
-                      padding: "6px 10px",
-                      cursor: "pointer",
+                      color: "rgba(255,255,255,0.45)",
+                      whiteSpace: "nowrap",
                     }}
                   >
-                    {tab.label}
-                  </button>
-                );
-              })}
-            </div>
+                    {normalizedDimensionRows.length} active dims
+                  </div>
+                </div>
 
-            {normalizedDimensionRows.length ? (
-              <div
-                style={{
-                  maxHeight: compactViewport ? 260 : 320,
-                  overflowY: "auto",
-                  paddingRight: 4,
-                  display: "grid",
-                  gap: 24,
-                }}
-              >
-                {normalizedDimensionRows.map((dimension) => {
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: 3,
+                    marginBottom: 12,
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    background: "rgba(255,255,255,0.03)",
+                  }}
+                >
+                  {([
+                    { id: "raw", label: "Non-Standardized" },
+                    { id: "standardized", label: "Standardized" },
+                  ] as Array<{ id: DimensionProfileScaleMode; label: string }>).map((tab) => {
+                    const active = dimensionProfileScaleMode === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setDimensionProfileScaleMode(tab.id)}
+                        style={{
+                          border: "1px solid rgba(255,255,255,0.10)",
+                          background: active
+                            ? "rgba(255,255,255,0.14)"
+                            : "rgba(255,255,255,0.02)",
+                          color: active
+                            ? "rgba(255,255,255,0.96)"
+                            : "rgba(255,255,255,0.64)",
+                          fontSize: 10,
+                          fontWeight: 800,
+                          padding: "6px 10px",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {tab.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {normalizedDimensionRows.length ? (
+                  <div
+                    style={{
+                      maxHeight: compactViewport ? 260 : 320,
+                      overflowY: "auto",
+                      paddingRight: 4,
+                      display: "grid",
+                      gap: 24,
+                    }}
+                  >
+                    {normalizedDimensionRows.map((dimension) => {
                   const rowKey = String((dimension as any).key ?? "");
                   const scaleData = getDimensionScaleData(
                     dimension,
@@ -1888,10 +1914,12 @@ function TradeDetailsModalImpl({
                   padding: "4px 2px 2px",
                 }}
               >
-                No dimension profile available for this trade yet.
+                    No dimension profile available for this trade yet.
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          ) : null}
         </div>
 
         </div>
