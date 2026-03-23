@@ -24474,9 +24474,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       <main className="terminal mobile-terminal-shell mobile-phone-shell">
         <section className="mobile-phone-frame">
           <header className="mobile-phone-header">
-            <div className="mobile-phone-brand-row">
-              <div className="mobile-phone-brand-copy">
-                <span className="mobile-phone-brand">Korra</span>
+            <div className="mobile-phone-brand-row mobile-phone-brand-row-centered">
+              <div className="mobile-phone-brand-copy mobile-phone-brand-copy-centered">
                 <h1>
                   {mobileWorkspaceTab === "active"
                     ? "Active Trade"
@@ -24486,13 +24485,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 </h1>
               </div>
             </div>
-            <p className="mobile-phone-header-note">
-              {mobileWorkspaceTab === "active"
-                ? mobileActiveSymbol
-                : mobileWorkspaceTab === "history"
-                  ? `${mobileRecentTrades.length.toLocaleString("en-US")} recent trades`
-                  : currentUserDisplayName}
-            </p>
             {statsRefreshOverlayMode === "loading" ? (
               <div className="mobile-phone-sync-pill">
                 <span className="mobile-phone-sync-dot" aria-hidden="true" />
@@ -24549,11 +24541,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                   <div className="mobile-phone-empty-state">
                     <span className="mobile-phone-card-kicker">Active Position</span>
                     <h2>No active trade</h2>
-                    <p>
-                      {latestTradeBarsAgo !== null
-                        ? `The latest closed trade was ${latestTradeBarsAgo} bar${latestTradeBarsAgo !== 1 ? "s" : ""} ago.`
-                        : "Run a backtest or wait for the next live entry."}
-                    </p>
                   </div>
                 )}
               </section>
