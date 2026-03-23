@@ -9716,9 +9716,11 @@ const MobileWorkspaceTabIcon = ({
 
 const TradeDetailsLoadingModal = ({
   trade,
+  isMobile,
   onClose,
 }: {
   trade: Record<string, unknown> | null;
+  isMobile?: boolean;
   onClose: () => void;
 }) => {
   const tradeId =
@@ -9751,8 +9753,8 @@ const TradeDetailsLoadingModal = ({
     >
       <div
         style={{
-          width: "min(1120px, 96vw)",
-          height: "min(900px, 90vh)",
+          width: isMobile ? "min(1120px, 95vw)" : "min(1120px, 96vw)",
+          height: isMobile ? "min(520px, 66vh)" : "min(900px, 90vh)",
           borderRadius: 0,
           border: "1px solid rgba(255,255,255,0.10)",
           background: "rgba(12,12,12,0.96)",
@@ -9838,27 +9840,29 @@ const TradeDetailsLoadingModal = ({
           }}
         >
           <ChartLoadingSpinner label="Loading trade details..." />
-          <div
-            style={{
-              position: "absolute",
-              left: "50%",
-              bottom: 26,
-              transform: "translateX(-50%)",
-              padding: "8px 12px",
-              borderRadius: 0,
-              border: "1px solid rgba(255,255,255,0.08)",
-              background: "rgba(8,12,15,0.76)",
-              color: "rgba(226,255,240,0.72)",
-              fontSize: 11,
-              lineHeight: 1.4,
-              letterSpacing: 0.02,
-              textAlign: "center",
-              width: "min(540px, calc(100% - 32px))",
-            }}
-          >
-            Preparing the candlestick window, dimension profile, and nearest-neighbor context for
-            this trade.
-          </div>
+          {!isMobile ? (
+            <div
+              style={{
+                position: "absolute",
+                left: "50%",
+                bottom: 26,
+                transform: "translateX(-50%)",
+                padding: "8px 12px",
+                borderRadius: 0,
+                border: "1px solid rgba(255,255,255,0.08)",
+                background: "rgba(8,12,15,0.76)",
+                color: "rgba(226,255,240,0.72)",
+                fontSize: 11,
+                lineHeight: 1.4,
+                letterSpacing: 0.02,
+                textAlign: "center",
+                width: "min(540px, calc(100% - 32px))",
+              }}
+            >
+              Preparing the candlestick window, dimension profile, and nearest-neighbor context for
+              this trade.
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -25008,6 +25012,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           activeBacktestTradeDetailsLoading || !activeBacktestTradeDetails ? (
             <TradeDetailsLoadingModal
               trade={visibleBacktestTradeDetails}
+              isMobile
               onClose={closeBacktestTradeDetails}
             />
           ) : (
@@ -30568,10 +30573,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
       {visibleBacktestTradeDetails ? (
         activeBacktestTradeDetailsLoading || !activeBacktestTradeDetails ? (
-          <TradeDetailsLoadingModal
-            trade={visibleBacktestTradeDetails}
-            onClose={closeBacktestTradeDetails}
-          />
+            <TradeDetailsLoadingModal
+              trade={visibleBacktestTradeDetails}
+              isMobile={false}
+              onClose={closeBacktestTradeDetails}
+            />
         ) : (
           <AIZipTradeDetailsModal
             trade={activeBacktestTradeDetails}

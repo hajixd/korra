@@ -763,6 +763,12 @@ function TradeDetailsModalImpl({
           maximumFractionDigits: 2,
         })}`
       : "—";
+  const fmtLossUsd = (v) =>
+    Number.isFinite(v)
+      ? `-$${Math.abs(v).toLocaleString(undefined, {
+          maximumFractionDigits: 2,
+        })}`
+      : "—";
 
   const fmtPct = (v, d = 1) =>
     Number.isFinite(v) ? `${(Number(v) * 100).toFixed(d)}%` : "—";
@@ -1173,7 +1179,11 @@ function TradeDetailsModalImpl({
       <div
         style={{
           width: compactViewport ? "min(1120px, 99vw)" : "min(1120px, 96vw)",
-          height: compactViewport ? "min(680px, 78vh)" : "min(820px, 84vh)",
+          height: mobileViewport
+            ? "min(540px, 68vh)"
+            : compactViewport
+              ? "min(680px, 78vh)"
+              : "min(820px, 84vh)",
           borderRadius: 0,
           border: "1px solid rgba(255,255,255,0.10)",
           background: "rgba(12,12,12,0.96)",
@@ -1224,23 +1234,6 @@ function TradeDetailsModalImpl({
             >
               {(trade as any).isOpen ? "OPEN" : isWin ? "WIN" : "LOSS"}
             </div>
-            {(trade as any).entryModel ?? (trade as any).model ? (
-              <div
-                style={{
-                  fontSize: compactViewport ? 11 : 12,
-                  opacity: 0.85,
-                  color: "rgba(255,255,255,0.72)",
-                }}
-              >
-                <span
-                  style={{ fontWeight: 800, color: "rgba(255,255,255,0.82)" }}
-                >
-                  {canonicalModelName(
-                    (trade as any).entryModel ?? (trade as any).model
-                  )}
-                </span>
-              </div>
-            ) : null}
           </div>
 
           <button
@@ -1377,7 +1370,7 @@ function TradeDetailsModalImpl({
               label="DD (MAE)"
               value={
                 pathStats?.maxAdverse != null
-                  ? fmtUsd(pathStats.maxAdverse)
+                  ? fmtLossUsd(pathStats.maxAdverse)
                   : "—"
               }
               tone="red"
