@@ -822,7 +822,7 @@ button {
   overflow-x: hidden;
   overflow-y: hidden;
   overscroll-behavior: none;
-  touch-action: manipulation;
+  touch-action: pan-x pan-y;
   background:
     radial-gradient(circle at top left, rgba(255, 255, 255, 0.08), transparent 32%),
     radial-gradient(circle at top right, rgba(255, 255, 255, 0.04), transparent 24%),
@@ -1930,7 +1930,7 @@ body.mobile-terminal-viewport-lock {
   position: relative;
   z-index: 1;
   width: 100%;
-  max-width: 430px;
+  max-width: none;
   height: 100%;
   margin: 0 auto;
   padding:
@@ -2054,10 +2054,12 @@ body.mobile-terminal-viewport-lock {
   min-height: 0;
   overflow: hidden;
   display: flex;
+  width: 100%;
 }
 
 .mobile-phone-card {
   flex: 1 1 auto;
+  width: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
