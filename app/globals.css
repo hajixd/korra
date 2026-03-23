@@ -2019,6 +2019,10 @@ body.mobile-terminal-viewport-lock {
   gap: 0.34rem;
 }
 
+.mobile-phone-header-chart {
+  display: none;
+}
+
 .mobile-phone-brand-row {
   display: flex;
   align-items: flex-start;
@@ -2255,6 +2259,178 @@ body.mobile-terminal-viewport-lock {
   overflow: hidden;
 }
 
+.mobile-phone-frame-chart {
+  gap: 0;
+}
+
+.mobile-phone-card-market {
+  gap: 0.9rem;
+  padding-top: 0.08rem;
+}
+
+.mobile-phone-market-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.mobile-phone-market-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.mobile-phone-market-toolbar-btn,
+.mobile-phone-market-expand {
+  border: 0;
+  background: transparent;
+  color: #d8ff14;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+}
+
+.mobile-phone-market-toolbar-btn {
+  width: 28px;
+  height: 28px;
+}
+
+.mobile-phone-market-toolbar-btn svg,
+.mobile-phone-market-expand svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.mobile-phone-market-copy {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.mobile-phone-market-symbol {
+  color: rgba(247, 251, 246, 0.86);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mobile-phone-market-copy h2 {
+  margin: 0;
+  color: #fbfdfb;
+  font-size: clamp(2rem, 11vw, 2.9rem);
+  line-height: 0.96;
+  letter-spacing: -0.07em;
+}
+
+.mobile-phone-market-copy strong {
+  color: #fbfdfb;
+  font-size: clamp(2.18rem, 12vw, 3.2rem);
+  line-height: 0.94;
+  letter-spacing: -0.08em;
+  font-weight: 500;
+}
+
+.mobile-phone-market-change {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.mobile-phone-market-change-arrow {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.mobile-phone-market-change strong,
+.mobile-phone-market-change span {
+  font-size: 0.86rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.mobile-phone-market-chart {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  max-height: 430px;
+  overflow: hidden;
+}
+
+.mobile-phone-market-chart svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.mobile-phone-market-expand {
+  position: absolute;
+  top: 0.7rem;
+  right: 0;
+  width: 54px;
+  height: 54px;
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.96);
+  z-index: 1;
+}
+
+.mobile-phone-market-reference {
+  stroke: rgba(255, 255, 255, 0.5);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  stroke-dasharray: 1 8;
+}
+
+.mobile-phone-market-path {
+  fill: none;
+  stroke-width: 4.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mobile-phone-market-chart-up .mobile-phone-market-path,
+.mobile-phone-market-chart-down .mobile-phone-market-path {
+  stroke: #d6ff12;
+}
+
+.mobile-phone-market-timeframes {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.32rem;
+  padding: 0 0 0.24rem;
+}
+
+.mobile-phone-market-timeframe {
+  flex: 1 1 0;
+  min-height: 34px;
+  border: 0;
+  background: transparent;
+  color: #d6ff12;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.mobile-phone-market-timeframe.active {
+  border-radius: 12px;
+  background: #d6ff12;
+  color: #060706;
+}
+
+.mobile-phone-market-empty {
+  padding-top: 1.4rem;
+}
+
 .mobile-phone-card-head,
 .mobile-phone-history-main {
   display: flex;
@@ -2337,42 +2513,42 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-pnl-block strong {
-  font-size: clamp(2rem, 11vw, 2.9rem);
-  line-height: 0.96;
-  letter-spacing: -0.08em;
+  font-size: clamp(1.62rem, 8.8vw, 2.18rem);
+  line-height: 0.98;
+  letter-spacing: -0.065em;
 }
 
 .mobile-phone-pnl-block small {
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   font-weight: 600;
 }
 
 .mobile-phone-active-chart-shell {
   display: grid;
-  gap: 0.62rem;
-  padding: 0.18rem 0 0.12rem;
+  gap: 0.42rem;
+  padding: 0.14rem 0 0.04rem;
 }
 
 .mobile-phone-active-chart-change {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.34rem;
-  font-size: 0.78rem;
+  gap: 0.3rem;
+  font-size: 0.72rem;
   line-height: 1.15;
 }
 
 .mobile-phone-active-chart-arrow {
-  font-size: 0.84rem;
+  font-size: 0.72rem;
 }
 
 .mobile-phone-active-chart-change strong {
-  font-size: 0.82rem;
-  letter-spacing: -0.03em;
+  font-size: 0.76rem;
+  letter-spacing: -0.02em;
 }
 
 .mobile-phone-active-chart-change span {
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   font-weight: 700;
 }
 
@@ -2387,6 +2563,8 @@ body.mobile-terminal-viewport-lock {
   width: 100%;
   height: 166px;
   overflow: hidden;
+  touch-action: none;
+  user-select: none;
 }
 
 .mobile-phone-active-chart svg {
@@ -2396,15 +2574,27 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-active-chart-baseline {
-  stroke: rgba(255, 255, 255, 0.08);
+  stroke: rgba(255, 255, 255, 0.07);
   stroke-width: 1;
 }
 
 .mobile-phone-active-chart-path {
   fill: none;
-  stroke-width: 4.25;
+  stroke-width: 2.35;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.mobile-phone-active-chart-scrubline {
+  stroke: rgba(255, 255, 255, 0.28);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+}
+
+.mobile-phone-active-chart-point {
+  fill: #060706;
+  stroke: #f7faf7;
+  stroke-width: 1.8;
 }
 
 .mobile-phone-active-chart-up .mobile-phone-active-chart-path {
@@ -2727,7 +2917,7 @@ body.mobile-terminal-viewport-lock {
   background: #000;
   box-shadow: none;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.18rem;
   align-self: end;
 }

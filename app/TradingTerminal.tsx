@@ -296,7 +296,7 @@ type BacktestTab =
   | "dimensions"
   | "propFirm";
 type PanelTab = "active" | "assets" | "history" | "actions";
-type MobileWorkspaceTab = "active" | "history" | "settings";
+type MobileWorkspaceTab = "chart" | "trade" | "history" | "settings";
 type MainStatisticsCard = {
   label: string;
   value: ReactNode;
@@ -7194,23 +7194,57 @@ const buildBacktestClusterGroups = (nodes: BacktestClusterNode[]): BacktestClust
   });
 };
 
-const buildSparklinePath = (values: number[], width: number, height: number): string => {
+const buildSparklineGeometry = (
+  values: number[],
+  width: number,
+  height: number,
+  bounds?: {
+    left?: number;
+    right?: number;
+    top?: number;
+    bottom?: number;
+  }
+): {
+  path: string;
+  points: Array<{ x: number; y: number; value: number }>;
+} => {
   if (values.length === 0) {
-    return "";
+    return { path: "", points: [] };
   }
 
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = Math.max(0.000001, max - min);
+  const left = clamp(bounds?.left ?? 0, 0, width);
+  const right = clamp(bounds?.right ?? width, left, width);
+  const top = clamp(bounds?.top ?? 0, 0, height);
+  const bottom = clamp(bounds?.bottom ?? height, top, height);
+  const plotWidth = Math.max(1, right - left);
+  const plotHeight = Math.max(1, bottom - top);
 
-  return values
-    .map((value, index) => {
-      const x = values.length === 1 ? width / 2 : (index / (values.length - 1)) * width;
-      const y = height - ((value - min) / range) * height;
+  const points = values.map((value, index) => {
+    const x =
+      values.length === 1 ? left + plotWidth / 2 : left + (index / (values.length - 1)) * plotWidth;
+    const y = bottom - ((value - min) / range) * plotHeight;
 
-      return `${index === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
+    return {
+      x,
+      y,
+      value
+    };
+  });
+
+  const path = points
+    .map((point, index) => {
+      return `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
     })
     .join(" ");
+
+  return { path, points };
+};
+
+const buildSparklinePath = (values: number[], width: number, height: number): string => {
+  return buildSparklineGeometry(values, width, height).path;
 };
 
 const sampleNumericSeries = (values: number[], maxPoints: number): number[] => {
@@ -7220,6 +7254,22 @@ const sampleNumericSeries = (values: number[], maxPoints: number): number[] => {
 
   const targetCount = Math.max(2, Math.floor(maxPoints));
   const sampled: number[] = [];
+
+  for (let index = 0; index < targetCount; index += 1) {
+    const sourceIndex = Math.round((index / (targetCount - 1)) * (values.length - 1));
+    sampled.push(values[sourceIndex]!);
+  }
+
+  return sampled;
+};
+
+const sampleSeriesItems = <T,>(values: T[], maxPoints: number): T[] => {
+  if (values.length <= maxPoints) {
+    return values;
+  }
+
+  const targetCount = Math.max(2, Math.floor(maxPoints));
+  const sampled: T[] = [];
 
   for (let index = 0; index < targetCount; index += 1) {
     const sourceIndex = Math.round((index / (targetCount - 1)) * (values.length - 1));
@@ -9722,7 +9772,30 @@ const MobileWorkspaceTabIcon = ({
 }: {
   tab: MobileWorkspaceTab;
 }) => {
-  if (tab === "active") {
+  if (tab === "chart") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path
+          d="M4.5 17.2l4.1-4.1 2.7 2.5 4.7-6 3.5 2.6"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M4.5 19.5h15"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          opacity="0.34"
+        />
+      </svg>
+    );
+  }
+
+  if (tab === "trade") {
     return (
       <svg viewBox="0 0 24 24" aria-hidden>
         <path
@@ -11171,11 +11244,12 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [socialPresetActionId, setSocialPresetActionId] = useState<string | null>(null);
   const [isMobileWorkspace, setIsMobileWorkspace] = useState(false);
   const [isStandaloneMobileWorkspace, setIsStandaloneMobileWorkspace] = useState(false);
-  const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab>("active");
+  const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab>("trade");
   const [mobileTradeLimit, setMobileTradeLimit] = useState(24);
   const [mobileViewportHeightPx, setMobileViewportHeightPx] = useState<number | null>(null);
   const [mobileRecentTradesCache, setMobileRecentTradesCache] = useState<HistoryItem[]>([]);
   const [mobileTimelineOverrideSec, setMobileTimelineOverrideSec] = useState<number | null>(null);
+  const [mobileActiveChartScrubIndex, setMobileActiveChartScrubIndex] = useState<number | null>(null);
   const [mobileTimelineNowMs, setMobileTimelineNowMs] = useState(() => Date.now());
   const [aggressorPressure, setAggressorPressure] = useState<AggressorPressureSnapshot>(() => ({
     buyPressure: 0,
@@ -11550,6 +11624,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, [isMobileWorkspace]);
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
+  const mobileActiveChartRef = useRef<HTMLDivElement | null>(null);
+  const mobileActiveChartPointerIdRef = useRef<number | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const gaplessToRealRef = useRef<Map<number, number>>(new Map());
   const countdownOverlayRef = useRef<HTMLDivElement | null>(null);
@@ -22959,40 +23035,80 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     const entrySec = Number(trade.entryTime);
     const cursorSec = Math.max(entrySec, mobileTimelineCursorSec);
     const filteredCandles = candles.filter((candle) => {
-      const candleSec = toUtcTimestamp(candle.time);
+      const candleSec = Number(toUtcTimestamp(candle.time));
       return candleSec >= entrySec && candleSec <= cursorSec;
     });
 
     const pnlSeries = filteredCandles.map((candle) => {
-      return trade.side === "Long"
-        ? (candle.close - trade.entryPrice) * trade.units
-        : (trade.entryPrice - candle.close) * trade.units;
+      const candleSec = Number(toUtcTimestamp(candle.time));
+      const pnlValue =
+        trade.side === "Long"
+          ? (candle.close - trade.entryPrice) * trade.units
+          : (trade.entryPrice - candle.close) * trade.units;
+      const pnlPct =
+        trade.entryPrice > 0
+          ? trade.side === "Long"
+            ? ((candle.close - trade.entryPrice) / trade.entryPrice) * 100
+            : ((trade.entryPrice - candle.close) / trade.entryPrice) * 100
+          : 0;
+
+      return {
+        timestampSec: candleSec,
+        value: pnlValue,
+        pct: pnlPct
+      };
     });
 
-    if (pnlSeries.length === 0 || pnlSeries[0] !== 0) {
-      pnlSeries.unshift(0);
+    if (pnlSeries.length === 0 || pnlSeries[0]?.timestampSec !== entrySec) {
+      pnlSeries.unshift({
+        timestampSec: Number(entrySec),
+        value: 0,
+        pct: 0
+      });
     }
 
     const latestPnlValue = mobileTimelineActiveTrade.pnlValue;
+    const latestPnlPct = mobileTimelineActiveTrade.pnlPct;
+    const lastPoint = pnlSeries[pnlSeries.length - 1] ?? null;
     if (
-      pnlSeries.length === 0 ||
-      Math.abs(pnlSeries[pnlSeries.length - 1]! - latestPnlValue) > 0.0001
+      !lastPoint ||
+      Math.abs(lastPoint.value - latestPnlValue) > 0.0001 ||
+      lastPoint.timestampSec !== cursorSec
     ) {
-      pnlSeries.push(latestPnlValue);
+      pnlSeries.push({
+        timestampSec: Number(cursorSec),
+        value: latestPnlValue,
+        pct: latestPnlPct
+      });
     }
 
-    const sampledSeries = sampleNumericSeries(pnlSeries, 72);
+    const sampledSeries = sampleSeriesItems(pnlSeries, 72);
     const chartWidth = 320;
     const chartHeight = 158;
-    const sparklinePath = buildSparklinePath(sampledSeries, chartWidth, chartHeight);
+    const sparklineGeometry = buildSparklineGeometry(
+      sampledSeries.map((point) => point.value),
+      chartWidth,
+      chartHeight,
+      {
+        left: 2,
+        right: chartWidth * 0.52,
+        top: 10,
+        bottom: chartHeight - 10
+      }
+    );
 
     return {
-      path: sparklinePath,
+      path: sparklineGeometry.path,
       width: chartWidth,
       height: chartHeight,
+      points: sampledSeries.map((point, index) => ({
+        ...point,
+        x: sparklineGeometry.points[index]?.x ?? 0,
+        y: sparklineGeometry.points[index]?.y ?? chartHeight / 2
+      })),
       tone: latestPnlValue >= 0 ? "up" : "down",
       currentValue: latestPnlValue,
-      currentPct: mobileTimelineActiveTrade.pnlPct
+      currentPct: latestPnlPct
     };
   }, [
     getHistoryCandlesForSymbol,
@@ -23000,6 +23116,167 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     mobileTimelineActiveTrade,
     mobileTimelineCursorSec
   ]);
+  const mobileActiveChartDisplayPoint = useMemo(() => {
+    if (!mobileActivePnlSparkline || mobileActivePnlSparkline.points.length === 0) {
+      return null;
+    }
+
+    if (mobileActiveChartScrubIndex == null) {
+      return mobileActivePnlSparkline.points[mobileActivePnlSparkline.points.length - 1] ?? null;
+    }
+
+    const clampedIndex = clamp(
+      mobileActiveChartScrubIndex,
+      0,
+      mobileActivePnlSparkline.points.length - 1
+    );
+
+    return mobileActivePnlSparkline.points[clampedIndex] ?? null;
+  }, [mobileActiveChartScrubIndex, mobileActivePnlSparkline]);
+  const mobileActiveDisplayPnlValue =
+    mobileActiveChartDisplayPoint?.value ?? mobileTimelineActiveTrade?.pnlValue ?? 0;
+  const mobileActiveDisplayPnlPct =
+    mobileActiveChartDisplayPoint?.pct ?? mobileTimelineActiveTrade?.pnlPct ?? 0;
+  const mobileActiveDisplayTone = mobileActiveDisplayPnlValue >= 0 ? "up" : "down";
+  useEffect(() => {
+    setMobileActiveChartScrubIndex(null);
+    mobileActiveChartPointerIdRef.current = null;
+  }, [mobileTimelineActiveSourceTrade?.id, mobileTimelineOverrideSec, mobileWorkspaceTab]);
+  const scrubMobileActiveChartAtClientX = useCallback(
+    (clientX: number) => {
+      const chartElement = mobileActiveChartRef.current;
+      if (!chartElement || !mobileActivePnlSparkline || mobileActivePnlSparkline.points.length === 0) {
+        setMobileActiveChartScrubIndex(null);
+        return;
+      }
+
+      const rect = chartElement.getBoundingClientRect();
+      if (rect.width <= 0) {
+        return;
+      }
+
+      const chartX = clamp(((clientX - rect.left) / rect.width) * mobileActivePnlSparkline.width, 0, mobileActivePnlSparkline.width);
+      let nextIndex = 0;
+      let nearestDistance = Number.POSITIVE_INFINITY;
+
+      mobileActivePnlSparkline.points.forEach((point, index) => {
+        const distance = Math.abs(point.x - chartX);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nextIndex = index;
+        }
+      });
+
+      setMobileActiveChartScrubIndex(nextIndex);
+    },
+    [mobileActivePnlSparkline]
+  );
+  const handleMobileActiveChartPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      mobileActiveChartPointerIdRef.current = event.pointerId;
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Ignore capture failures on unsupported pointer types.
+      }
+      scrubMobileActiveChartAtClientX(event.clientX);
+    },
+    [scrubMobileActiveChartAtClientX]
+  );
+  const handleMobileActiveChartPointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (
+        event.pointerType !== "mouse" &&
+        mobileActiveChartPointerIdRef.current !== event.pointerId
+      ) {
+        return;
+      }
+
+      if (event.pointerType !== "mouse") {
+        event.preventDefault();
+      }
+      scrubMobileActiveChartAtClientX(event.clientX);
+    },
+    [scrubMobileActiveChartAtClientX]
+  );
+  const handleMobileActiveChartPointerEnd = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (
+        mobileActiveChartPointerIdRef.current != null &&
+        mobileActiveChartPointerIdRef.current === event.pointerId
+      ) {
+        try {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        } catch {
+          // Ignore release failures when capture was never established.
+        }
+      }
+
+      mobileActiveChartPointerIdRef.current = null;
+      setMobileActiveChartScrubIndex(null);
+    },
+    []
+  );
+  const mobileChartCandles = useMemo(() => {
+    return selectedCandles.length > 0 ? selectedCandles : selectedChartCandles;
+  }, [selectedCandles, selectedChartCandles]);
+  const mobileChartDisplaySymbol = useMemo(() => {
+    const rawSymbol = String(selectedSymbol ?? appliedBacktestSettings.symbol ?? "XAUUSD").trim();
+    if (!rawSymbol) {
+      return "XAU/USD";
+    }
+
+    const upper = rawSymbol.toUpperCase();
+    if (upper === "XAUUSD" || upper === "XAU_USD") {
+      return "XAU/USD";
+    }
+
+    return rawSymbol.replaceAll("_", "/");
+  }, [appliedBacktestSettings.symbol, selectedSymbol]);
+  const mobileChartTicker = useMemo(() => {
+    return mobileChartDisplaySymbol.replaceAll("/", "").replaceAll("-", "");
+  }, [mobileChartDisplaySymbol]);
+  const mobileChartName = useMemo(() => {
+    if (mobileChartDisplaySymbol === "XAU/USD") {
+      return "Gold Spot";
+    }
+
+    return mobileChartDisplaySymbol;
+  }, [mobileChartDisplaySymbol]);
+  const mobileMarketSparkline = useMemo(() => {
+    if (mobileChartCandles.length === 0) {
+      return null;
+    }
+
+    const closeSeries = mobileChartCandles.map((candle) => candle.close);
+    const sampledSeries = sampleNumericSeries(closeSeries, 120);
+
+    if (sampledSeries.length === 0) {
+      return null;
+    }
+
+    const width = 344;
+    const height = 296;
+    const min = Math.min(...sampledSeries);
+    const max = Math.max(...sampledSeries);
+    const range = Math.max(0.000001, max - min);
+    const latestValue = sampledSeries[sampledSeries.length - 1]!;
+    const firstValue = sampledSeries[0]!;
+    const changeValue = latestValue - firstValue;
+    const changePct = firstValue > 0 ? (changeValue / firstValue) * 100 : 0;
+    const referenceY = height - ((latestValue - min) / range) * height;
+
+    return {
+      path: buildSparklinePath(sampledSeries, width, height),
+      width,
+      height,
+      tone: changeValue >= 0 ? "up" : "down",
+      latestValue,
+      changeValue,
+      changePct,
+      referenceY: clamp(referenceY, 0, height)
+    };
+  }, [mobileChartCandles]);
   const mobileTimelineHistoryTrades = useMemo(() => {
     const sourceTrades =
       deferredBacktestAnalyticsTrades.length > 0
@@ -25057,7 +25334,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       mobileActiveDisplayTrade?.symbol ?? appliedBacktestSettings.symbol
     ).replaceAll("_", "/");
     const showMobileTimeline =
-      mobileWorkspaceTab === "active" || mobileWorkspaceTab === "history";
+      mobileWorkspaceTab === "trade" || mobileWorkspaceTab === "history";
     const mobileShellStyle =
       mobileViewportHeightPx && mobileViewportHeightPx > 0
         ? ({
@@ -25074,122 +25351,277 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         }`}
         style={mobileShellStyle}
       >
-        <section className="mobile-phone-frame">
-          <header className="mobile-phone-header">
-            <div className="mobile-phone-brand-row mobile-phone-brand-row-centered">
-              <div className="mobile-phone-brand-copy mobile-phone-brand-copy-centered">
-                <h1>
-                  {mobileWorkspaceTab === "active"
-                    ? "Active Trade"
-                    : mobileWorkspaceTab === "history"
-                      ? "Trade History"
-                      : "Settings"}
-                </h1>
+        <section className={`mobile-phone-frame${mobileWorkspaceTab === "chart" ? " mobile-phone-frame-chart" : ""}`}>
+          <header className={`mobile-phone-header${mobileWorkspaceTab === "chart" ? " mobile-phone-header-chart" : ""}`}>
+            {mobileWorkspaceTab !== "chart" ? (
+              <>
+                <div className="mobile-phone-brand-row mobile-phone-brand-row-centered">
+                  <div className="mobile-phone-brand-copy mobile-phone-brand-copy-centered">
+                    <h1>
+                      {mobileWorkspaceTab === "trade"
+                        ? "Trade"
+                        : mobileWorkspaceTab === "history"
+                          ? "Trade History"
+                          : "Settings"}
+                    </h1>
+                    {showMobileTimeline ? (
+                      <>
+                        <p className="mobile-phone-header-date">{mobileTimelineDateLabel}</p>
+                        <div className="mobile-phone-header-time-row">
+                          <span className="mobile-phone-header-time">{mobileTimelineTimeLabel}</span>
+                          <span
+                            className={`mobile-phone-header-time-badge${
+                              mobileTimelineIsLive ? " live" : ""
+                            }`}
+                          >
+                            {mobileTimelineIsLive ? "Live" : "As Of"}
+                          </span>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
                 {showMobileTimeline ? (
-                  <>
-                    <p className="mobile-phone-header-date">{mobileTimelineDateLabel}</p>
-                    <div className="mobile-phone-header-time-row">
-                      <span className="mobile-phone-header-time">{mobileTimelineTimeLabel}</span>
-                      <span
-                        className={`mobile-phone-header-time-badge${
-                          mobileTimelineIsLive ? " live" : ""
-                        }`}
-                      >
-                        {mobileTimelineIsLive ? "Live" : "As Of"}
-                      </span>
-                    </div>
-                  </>
+                  <div className="mobile-phone-timeline-strip">
+                    <input
+                      type="range"
+                      className="mobile-phone-timeline-slider"
+                      min={0}
+                      max={mobileTimelineSliderMax}
+                      step={mobileTimelineStepSec}
+                      value={mobileTimelineSliderValue}
+                      onChange={(event) => {
+                        const rawOffset = Math.floor(Number(event.target.value) || 0);
+                        const nextOffset = clamp(rawOffset, 0, mobileTimelineSliderMax);
+                        const nextSec = mobileTimelineBounds.startSec + nextOffset;
+
+                        if (
+                          mobileTimelineSliderMax === 0 ||
+                          nextSec >= mobileTimelineBounds.endSec - mobileTimelineStepSec
+                        ) {
+                          setMobileTimelineOverrideSec(null);
+                          return;
+                        }
+
+                        setMobileTimelineOverrideSec(nextSec);
+                      }}
+                      disabled={mobileTimelineSliderMax === 0}
+                      aria-label="Mobile timeline"
+                    />
+                    <button
+                      type="button"
+                      className={`mobile-phone-timeline-live-btn${
+                        mobileTimelineIsLive ? " active" : ""
+                      }`}
+                      onClick={() => setMobileTimelineOverrideSec(null)}
+                    >
+                      Live
+                    </button>
+                  </div>
                 ) : null}
-              </div>
-            </div>
-            {showMobileTimeline ? (
-              <div className="mobile-phone-timeline-strip">
-                <input
-                  type="range"
-                  className="mobile-phone-timeline-slider"
-                  min={0}
-                  max={mobileTimelineSliderMax}
-                  step={mobileTimelineStepSec}
-                  value={mobileTimelineSliderValue}
-                  onChange={(event) => {
-                    const rawOffset = Math.floor(Number(event.target.value) || 0);
-                    const nextOffset = clamp(rawOffset, 0, mobileTimelineSliderMax);
-                    const nextSec = mobileTimelineBounds.startSec + nextOffset;
-
-                    if (
-                      mobileTimelineSliderMax === 0 ||
-                      nextSec >= mobileTimelineBounds.endSec - mobileTimelineStepSec
-                    ) {
-                      setMobileTimelineOverrideSec(null);
-                      return;
-                    }
-
-                    setMobileTimelineOverrideSec(nextSec);
-                  }}
-                  disabled={mobileTimelineSliderMax === 0}
-                  aria-label="Mobile timeline"
-                />
-                <button
-                  type="button"
-                  className={`mobile-phone-timeline-live-btn${
-                    mobileTimelineIsLive ? " active" : ""
-                  }`}
-                  onClick={() => setMobileTimelineOverrideSec(null)}
-                >
-                  Live
-                </button>
-              </div>
-            ) : null}
-            {statsRefreshOverlayMode === "loading" ? (
-              <div className="mobile-phone-sync-pill">
-                <span className="mobile-phone-sync-dot" aria-hidden="true" />
-                Updating workspace
-              </div>
+                {statsRefreshOverlayMode === "loading" ? (
+                  <div className="mobile-phone-sync-pill">
+                    <span className="mobile-phone-sync-dot" aria-hidden="true" />
+                    Updating workspace
+                  </div>
+                ) : null}
+              </>
             ) : null}
           </header>
 
           <div className="mobile-phone-body">
-            {mobileWorkspaceTab === "active" ? (
+            {mobileWorkspaceTab === "chart" ? (
+              <section className="mobile-phone-card mobile-phone-card-market">
+                <div className="mobile-phone-market-toolbar">
+                  <button
+                    type="button"
+                    className="mobile-phone-market-toolbar-btn"
+                    aria-label="Go to trade tab"
+                    onClick={() => setMobileWorkspaceTab("trade")}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden>
+                      <path
+                        d="M14.8 4.8L7.6 12l7.2 7.2"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                  <div className="mobile-phone-market-toolbar-actions">
+                    <button
+                      type="button"
+                      className="mobile-phone-market-toolbar-btn"
+                      aria-label="Open history tab"
+                      onClick={() => setMobileWorkspaceTab("history")}
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden>
+                        <path
+                          d="M12 5.2A6.8 6.8 0 1 1 5.2 12"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.9"
+                          strokeLinecap="round"
+                        />
+                        <path
+                          d="M12 8.5V12l2.6 1.7"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.9"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      className="mobile-phone-market-toolbar-btn"
+                      aria-label="Open settings tab"
+                      onClick={() => setMobileWorkspaceTab("settings")}
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden>
+                        <path
+                          d="M12 5v14M5 12h14"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                        />
+                        <circle
+                          cx="12"
+                          cy="12"
+                          r="8.2"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mobile-phone-market-copy">
+                  <span className="mobile-phone-market-symbol">{mobileChartTicker}</span>
+                  <h2>{mobileChartName}</h2>
+                  <strong>
+                    {mobileMarketSparkline ? formatPrice(mobileMarketSparkline.latestValue) : "--"}
+                  </strong>
+                  {mobileMarketSparkline ? (
+                    <div className={`mobile-phone-market-change ${mobileMarketSparkline.tone}`}>
+                      <span className="mobile-phone-market-change-arrow" aria-hidden="true">
+                        {mobileMarketSparkline.changeValue >= 0 ? "↗" : "↘"}
+                      </span>
+                      <strong>{formatPrice(Math.abs(mobileMarketSparkline.changeValue))}</strong>
+                      <span>({formatSignedPercent(mobileMarketSparkline.changePct).replace("+", "")})</span>
+                    </div>
+                  ) : null}
+                </div>
+
+                {mobileMarketSparkline ? (
+                  <>
+                    <div className={`mobile-phone-market-chart mobile-phone-market-chart-${mobileMarketSparkline.tone}`}>
+                      <button
+                        type="button"
+                        className="mobile-phone-market-expand"
+                        aria-label="Jump to trade tab"
+                        onClick={() => setMobileWorkspaceTab("trade")}
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden>
+                          <path
+                            d="M8 16l8-8M10 8h6v6"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                      <svg
+                        viewBox={`0 0 ${mobileMarketSparkline.width} ${mobileMarketSparkline.height}`}
+                        preserveAspectRatio="none"
+                        aria-hidden="true"
+                      >
+                        <line
+                          x1="0"
+                          y1={mobileMarketSparkline.referenceY}
+                          x2={mobileMarketSparkline.width}
+                          y2={mobileMarketSparkline.referenceY}
+                          className="mobile-phone-market-reference"
+                        />
+                        <path
+                          d={mobileMarketSparkline.path}
+                          className="mobile-phone-market-path"
+                        />
+                      </svg>
+                    </div>
+                    <div className="mobile-phone-market-timeframes">
+                      {timeframes.map((timeframe) => (
+                        <button
+                          key={timeframe}
+                          type="button"
+                          className={`mobile-phone-market-timeframe${
+                            timeframe === selectedTimeframe ? " active" : ""
+                          }`}
+                          onClick={() => setSelectedTimeframe(timeframe)}
+                        >
+                          {timeframe}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="mobile-phone-empty-state mobile-phone-market-empty">
+                    <span className="mobile-phone-card-kicker">Market</span>
+                    <h2>No chart data</h2>
+                  </div>
+                )}
+              </section>
+            ) : mobileWorkspaceTab === "trade" ? (
               <section className="mobile-phone-card mobile-phone-card-active">
                 {mobileActiveDisplayTrade ? (
                   <>
                     <div className="mobile-phone-card-head">
                       <div className="mobile-phone-card-copy">
-                        <span className="mobile-phone-card-kicker">
-                          {mobileTimelineIsLive ? "Live Position" : "As-Of Position"}
-                        </span>
+                        <span className="mobile-phone-card-kicker">Position</span>
                         <h2>{mobileActiveSymbol}</h2>
                       </div>
-                      <span
-                        className={`mobile-phone-side-pill ${
-                          mobileActiveDisplayTrade.side === "Long" ? "up" : "down"
-                        }`}
-                      >
-                        {mobileActiveDisplayTrade.side === "Long" ? "Buy" : "Sell"}
-                      </span>
                     </div>
 
                     <div className="mobile-phone-pnl-block">
                       <span>Open PnL</span>
-                      <strong className={mobileActiveDisplayTrade.pnlValue >= 0 ? "up" : "down"}>
-                        {formatSignedUsd(mobileActiveDisplayTrade.pnlValue)}
+                      <strong className={mobileActiveDisplayTone}>
+                        {formatSignedUsd(mobileActiveDisplayPnlValue)}
                       </strong>
-                      <small className={mobileActiveDisplayTrade.pnlPct >= 0 ? "up" : "down"}>
-                        {formatSignedPercent(mobileActiveDisplayTrade.pnlPct)}
+                      <small className={mobileActiveDisplayPnlPct >= 0 ? "up" : "down"}>
+                        {formatSignedPercent(mobileActiveDisplayPnlPct)}
                       </small>
                     </div>
 
                     {mobileActivePnlSparkline ? (
                       <div className="mobile-phone-active-chart-shell">
-                        <div className={`mobile-phone-active-chart-change ${mobileActivePnlSparkline.tone}`}>
+                        <div className={`mobile-phone-active-chart-change ${mobileActiveDisplayTone}`}>
                           <span className="mobile-phone-active-chart-arrow" aria-hidden="true">
-                            {mobileActivePnlSparkline.currentValue >= 0 ? "▲" : "▼"}
+                            {mobileActiveDisplayPnlValue >= 0 ? "▲" : "▼"}
                           </span>
-                          <strong>{formatSignedUsd(mobileActivePnlSparkline.currentValue)}</strong>
-                          <span>{formatSignedPercent(mobileActivePnlSparkline.currentPct)}</span>
-                          <em>{mobileTimelineIsLive ? "Live" : "As Of"}</em>
+                          <strong>{formatSignedUsd(mobileActiveDisplayPnlValue)}</strong>
+                          <span>{formatSignedPercent(mobileActiveDisplayPnlPct)}</span>
                         </div>
-                        <div className={`mobile-phone-active-chart mobile-phone-active-chart-${mobileActivePnlSparkline.tone}`}>
+                        <div
+                          ref={mobileActiveChartRef}
+                          className={`mobile-phone-active-chart mobile-phone-active-chart-${mobileActiveDisplayTone}`}
+                          onPointerDown={handleMobileActiveChartPointerDown}
+                          onPointerMove={handleMobileActiveChartPointerMove}
+                          onPointerUp={handleMobileActiveChartPointerEnd}
+                          onPointerCancel={handleMobileActiveChartPointerEnd}
+                          onPointerLeave={(event) => {
+                            if (event.pointerType === "mouse") {
+                              setMobileActiveChartScrubIndex(null);
+                            }
+                          }}
+                        >
                           <svg
                             viewBox={`0 0 ${mobileActivePnlSparkline.width} ${mobileActivePnlSparkline.height}`}
                             preserveAspectRatio="none"
@@ -25206,20 +25638,35 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                               d={mobileActivePnlSparkline.path}
                               className="mobile-phone-active-chart-path"
                             />
+                            {mobileActiveChartScrubIndex != null && mobileActiveChartDisplayPoint ? (
+                              <>
+                                <line
+                                  x1={mobileActiveChartDisplayPoint.x}
+                                  y1="0"
+                                  x2={mobileActiveChartDisplayPoint.x}
+                                  y2={mobileActivePnlSparkline.height}
+                                  className="mobile-phone-active-chart-scrubline"
+                                />
+                                <circle
+                                  cx={mobileActiveChartDisplayPoint.x}
+                                  cy={mobileActiveChartDisplayPoint.y}
+                                  r="4.8"
+                                  className="mobile-phone-active-chart-point"
+                                />
+                              </>
+                            ) : null}
                           </svg>
-                        </div>
-                        <div className="mobile-phone-active-chart-footer">
-                          <span className="mobile-phone-active-chart-chip">
-                            {mobileTimelineIsLive ? "LIVE" : "SNAPSHOT"}
-                          </span>
-                          <span className="mobile-phone-active-chart-chip">
-                            {mobileActiveDisplayTrade.elapsed}
-                          </span>
                         </div>
                       </div>
                     ) : null}
 
                     <div className="mobile-phone-detail-list">
+                      <div className="mobile-phone-detail-row">
+                        <span>Direction</span>
+                        <strong className={mobileActiveDisplayTrade.side === "Long" ? "up" : "down"}>
+                          {mobileActiveDisplayTrade.side === "Long" ? "Buy" : "Sell"}
+                        </strong>
+                      </div>
                       <div className="mobile-phone-detail-row">
                         <span>Entry Price</span>
                         <strong>{formatPrice(mobileActiveDisplayTrade.entryPrice)}</strong>
@@ -25237,7 +25684,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 ) : (
                   <div className="mobile-phone-empty-state">
                     <span className="mobile-phone-card-kicker">Active Position</span>
-                    <h2>{mobileTimelineIsLive ? "No active trade" : "No active trade at this time"}</h2>
+                    <h2>No active trade</h2>
                   </div>
                 )}
               </section>
@@ -25245,9 +25692,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               <section className="mobile-phone-card mobile-phone-card-history">
                 <div className="mobile-phone-card-head">
                   <div className="mobile-phone-card-copy">
-                    <span className="mobile-phone-card-kicker">
-                      {mobileTimelineIsLive ? "Recent Trades" : "Closed by This Time"}
-                    </span>
+                    <span className="mobile-phone-card-kicker">Recent Trades</span>
                     <h2>History</h2>
                   </div>
                   <span className="mobile-phone-count-chip">
@@ -25371,7 +25816,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
           <nav className="mobile-phone-tabbar" aria-label="Mobile workspace tabs">
             {([
-              { id: "active", label: "Active" },
+              { id: "chart", label: "Chart" },
+              { id: "trade", label: "Trade" },
               { id: "history", label: "History" },
               { id: "settings", label: "Settings" }
             ] as Array<{ id: MobileWorkspaceTab; label: string }>).map((tab) => (
@@ -25427,7 +25873,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                         className="mobile-preset-item"
                         onClick={() => {
                           handleLoadPreset(preset);
-                          setMobileWorkspaceTab("active");
+                          setMobileWorkspaceTab("trade");
                         }}
                       >
                         <div className="mobile-preset-copy">
