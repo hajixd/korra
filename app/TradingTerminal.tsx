@@ -24485,16 +24485,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       : "Settings"}
                 </h1>
               </div>
-              <span className="mobile-phone-user-chip">{currentUserInitials}</span>
             </div>
             <p className="mobile-phone-header-note">
               {mobileWorkspaceTab === "active"
-                ? activeTrade
-                  ? "Live trade summary with the numbers that matter."
-                  : "No live position is open right now."
+                ? mobileActiveSymbol
                 : mobileWorkspaceTab === "history"
-                  ? "Recent closed trades with simple PnL and price details."
-                  : "Manage your account credentials and sign out."}
+                  ? `${mobileRecentTrades.length.toLocaleString("en-US")} recent trades`
+                  : currentUserDisplayName}
             </p>
             {statsRefreshOverlayMode === "loading" ? (
               <div className="mobile-phone-sync-pill">
