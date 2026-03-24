@@ -133,6 +133,18 @@ export const usesAizipEveryCandleMode = (
   return aiMode !== "off" && !aiFilterEnabled;
 };
 
+export const doesAizipReplayEntryModeChange = (
+  previousAiMode: AIZipMode,
+  previousAiFilterEnabled: boolean,
+  nextAiMode: AIZipMode,
+  nextAiFilterEnabled: boolean
+): boolean => {
+  return (
+    usesAizipEveryCandleMode(previousAiMode, previousAiFilterEnabled) !==
+    usesAizipEveryCandleMode(nextAiMode, nextAiFilterEnabled)
+  );
+};
+
 export const shouldSkipAizipBacktestHistoryFetch = (params: {
   antiCheatEnabled: boolean;
   selectedModelCount: number;

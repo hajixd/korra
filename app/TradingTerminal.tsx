@@ -145,6 +145,7 @@ import {
   isGhostLearningLibraryId,
   isOnlineLearningLibraryId,
   isVisibleAizipLibraryId,
+  doesAizipReplayEntryModeChange,
   shouldSkipAizipBacktestHistoryFetch,
   usesAizipEveryCandleMode
 } from "./aizipRuntime";
@@ -10354,6 +10355,16 @@ const doesBacktestHistoryGenerationInputChange = (
   if (previous.timeframe !== next.timeframe) return true;
   if (previous.precisionTimeframe !== next.precisionTimeframe) return true;
   if (previous.minutePreciseEnabled !== next.minutePreciseEnabled) return true;
+  if (
+    doesAizipReplayEntryModeChange(
+      previous.aiMode,
+      previous.aiFilterEnabled,
+      next.aiMode,
+      next.aiFilterEnabled
+    )
+  ) {
+    return true;
+  }
   if (!areAiModelStatesEqual(previous.aiModelStates, next.aiModelStates)) return true;
   if (previous.dollarsPerMove !== next.dollarsPerMove) return true;
   if (previous.tpDollars !== next.tpDollars) return true;

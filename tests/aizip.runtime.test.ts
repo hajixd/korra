@@ -8,6 +8,7 @@ import {
   canRunAizipLibraries,
   canRunAizipLibrariesForSettings,
   countEnabledAizipModels,
+  doesAizipReplayEntryModeChange,
   doesAizipHistorySeedSettingsChange,
   getSyntheticLibraryBarCount,
   getVisibleAizipLibraryIds,
@@ -102,6 +103,13 @@ test("every-candle mode only applies when AI mode is on and filter-only mode is 
   assert.equal(usesAizipEveryCandleMode("knn", false), true);
   assert.equal(usesAizipEveryCandleMode("knn", true), false);
   assert.equal(usesAizipEveryCandleMode("off", false), false);
+});
+
+test("replay entry mode change only triggers when switching in or out of every-bar mode", () => {
+  assert.equal(doesAizipReplayEntryModeChange("off", false, "knn", true), false);
+  assert.equal(doesAizipReplayEntryModeChange("knn", true, "hdbscan", true), false);
+  assert.equal(doesAizipReplayEntryModeChange("knn", true, "knn", false), true);
+  assert.equal(doesAizipReplayEntryModeChange("knn", false, "off", false), true);
 });
 
 test("seeded library trades are stamped in seconds, not milliseconds", () => {
