@@ -10978,10 +10978,18 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                   {authBusy === authMode
                     ? (
                         <span className="account-submit-state">
-                          <span className="account-submit-spinner" aria-hidden="true">
-                            <span />
-                            <span />
-                            <span />
+                          <span
+                            className="account-auth-loader account-auth-loader-inline"
+                            aria-hidden="true"
+                          >
+                            <span className="account-auth-loader__halo" />
+                            <span className="account-auth-loader__ring account-auth-loader__ring--outer" />
+                            <span className="account-auth-loader__ring account-auth-loader__ring--middle" />
+                            <span className="account-auth-loader__ring account-auth-loader__ring--inner" />
+                            <span className="account-auth-loader__beam" />
+                            <span className="account-auth-loader__core">
+                              <span className="account-auth-loader__core-dot" />
+                            </span>
                           </span>
                           <span>
                             {authMode === "login" ? "Logging In" : "Creating Account"}
@@ -11382,6 +11390,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [savedPresets, setSavedPresets] = useState<SavedPreset[]>([]);
   const [presetMenuOpen, setPresetMenuOpen] = useState<"save" | "load" | null>(null);
   const [presetNameInput, setPresetNameInput] = useState("");
+  const [loadedPresetSession, setLoadedPresetSession] = useState<{
+    name: string;
+    signature: string;
+  } | null>(null);
   const [socialPresets, setSocialPresets] = useState<SocialPresetFeedItem[]>([]);
   const [socialPresetsLoading, setSocialPresetsLoading] = useState(false);
   const [socialPresetsError, setSocialPresetsError] = useState("");
@@ -17362,18 +17374,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     () => JSON.stringify(collectSettings()),
     [collectSettings]
   );
-  const currentLoadedPresetLabel = useMemo(() => {
-    const activePreset =
-      savedPresets.find((preset) => {
-        try {
-          return JSON.stringify(preset.settings) === currentPresetSettingsSignature;
-        } catch {
-          return false;
-        }
-      }) ?? null;
-
-    return activePreset?.name ?? "No Preset Loaded";
-  }, [currentPresetSettingsSignature, savedPresets]);
+  const currentLoadedPresetLabel = loadedPresetSession?.name ?? "No Preset Loaded";
 
   const applySettings = useCallback((s: Record<string, any>) => {
     if (s.selectedSymbol != null) setSelectedSymbol(s.selectedSymbol);
@@ -17828,6 +17829,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
 
   const handleResetSettings = useCallback(() => {
+    setLoadedPresetSession(null);
     localStorage.removeItem(scopedSettingsStorageKey);
     localStorage.removeItem(scopedUiPreferencesStorageKey);
     setSelectedSymbol(futuresAssets[0].symbol);
@@ -17940,6 +17942,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, [presetNameInput, collectSettings, savedPresets, persistPresets]);
 
   const handleLoadPreset = useCallback((preset: SavedPreset) => {
+    setLoadedPresetSession({
+      name: preset.name,
+      signature: JSON.stringify(preset.settings)
+    });
     applySettings(preset.settings);
     setPresetMenuOpen(null);
     if (presetAutoRunTimeoutRef.current) {
@@ -17952,8 +17958,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
   const handleDeletePreset = useCallback((name: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (loadedPresetSession?.name === name) {
+      setLoadedPresetSession(null);
+    }
     persistPresets(savedPresets.filter((p) => p.name !== name));
-  }, [savedPresets, persistPresets]);
+  }, [loadedPresetSession?.name, savedPresets, persistPresets]);
 
   const handleSaveToFile = useCallback(() => {
     const settings = collectSettings();
@@ -17971,7 +17980,12 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (evt) => {
-      try { applySettings(JSON.parse(evt.target?.result as string)); } catch { /* invalid */ }
+      try {
+        setLoadedPresetSession(null);
+        applySettings(JSON.parse(evt.target?.result as string));
+      } catch {
+        /* invalid */
+      }
     };
     reader.readAsText(file);
     e.target.value = "";
@@ -24153,6 +24167,26 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, [scopedMobileRecentTradesCacheStorageKey]);
 
   useEffect(() => {
+    if (!loadedPresetSession) {
+      return;
+    }
+
+    if (loadedPresetSession.signature !== currentPresetSettingsSignature) {
+      setLoadedPresetSession(null);
+    }
+  }, [currentPresetSettingsSignature, loadedPresetSession]);
+
+  useEffect(() => {
+    if (!loadedPresetSession) {
+      return;
+    }
+
+    if (!savedPresets.some((preset) => preset.name === loadedPresetSession.name)) {
+      setLoadedPresetSession(null);
+    }
+  }, [loadedPresetSession, savedPresets]);
+
+  useEffect(() => {
     if (typeof window === "undefined" || mobileRecentTrades.length === 0) {
       return;
     }
@@ -27114,7 +27148,12 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                     <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
                   </svg>
                   <span className="settings-io-label">Load</span>
-                  <span className="settings-io-status" title={currentLoadedPresetLabel}>
+                  <span
+                    className={`settings-io-status${
+                      loadedPresetSession ? "" : " is-empty"
+                    }`}
+                    title={currentLoadedPresetLabel}
+                  >
                     - {currentLoadedPresetLabel}
                   </span>
                 </button>
