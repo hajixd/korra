@@ -5356,6 +5356,159 @@ const isXauTradingTime = (timestampMs: number): boolean => {
   return true;
 };
 
+const TRADING_DAY_MS = 86_400_000;
+const tradingSlotEstimateCache = new Map<string, number>();
+
+const getXauTradingWindowsForUtcDay = (dayStartMs: number): Array<{ startMs: number; endMs: number }> => {
+  const day = new Date(dayStartMs).getUTCDay();
+
+  if (day === 6) {
+    return [];
+  }
+
+  if (day === 0) {
+    return [
+      {
+        startMs: dayStartMs + 23 * 60 * 60_000,
+        endMs: dayStartMs + TRADING_DAY_MS
+      }
+    ];
+  }
+
+  if (day === 5) {
+    return [
+      {
+        startMs: dayStartMs,
+        endMs: dayStartMs + 22 * 60 * 60_000
+      }
+    ];
+  }
+
+  return [
+    {
+      startMs: dayStartMs,
+      endMs: dayStartMs + 22 * 60 * 60_000
+    },
+    {
+      startMs: dayStartMs + 23 * 60 * 60_000,
+      endMs: dayStartMs + TRADING_DAY_MS
+    }
+  ];
+};
+
+const countTradingSlotStartsInWindow = (
+  windowStartMs: number,
+  windowEndMs: number,
+  timeframe: Timeframe
+): number => {
+  if (!Number.isFinite(windowStartMs) || !Number.isFinite(windowEndMs) || windowEndMs <= windowStartMs) {
+    return 0;
+  }
+
+  const stepMs = Math.max(60_000, getTimeframeMs(timeframe));
+  let slotStartMs = floorToTimeframe(windowStartMs, timeframe);
+  if (slotStartMs < windowStartMs) {
+    slotStartMs += stepMs;
+  }
+
+  if (slotStartMs >= windowEndMs) {
+    return 0;
+  }
+
+  return Math.floor((windowEndMs - 1 - slotStartMs) / stepMs) + 1;
+};
+
+const countTradingSlotsInRange = (
+  startMs: number,
+  endMs: number,
+  timeframe: Timeframe
+): number => {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return 0;
+  }
+
+  const cacheKey = `${timeframe}|${startMs}|${endMs}`;
+  const cached = tradingSlotEstimateCache.get(cacheKey);
+  if (cached != null) {
+    return cached;
+  }
+
+  let total = 0;
+  let dayStartMs = Date.UTC(
+    new Date(startMs).getUTCFullYear(),
+    new Date(startMs).getUTCMonth(),
+    new Date(startMs).getUTCDate()
+  );
+
+  while (dayStartMs < endMs) {
+    const nextDayStartMs = dayStartMs + TRADING_DAY_MS;
+    const dayWindowStartMs = Math.max(startMs, dayStartMs);
+    const dayWindowEndMs = Math.min(endMs, nextDayStartMs);
+
+    if (dayWindowEndMs > dayWindowStartMs) {
+      for (const window of getXauTradingWindowsForUtcDay(dayStartMs)) {
+        total += countTradingSlotStartsInWindow(
+          Math.max(dayWindowStartMs, window.startMs),
+          Math.min(dayWindowEndMs, window.endMs),
+          timeframe
+        );
+      }
+    }
+
+    dayStartMs = nextDayStartMs;
+  }
+
+  tradingSlotEstimateCache.set(cacheKey, total);
+  return total;
+};
+
+const findLastTradingSlotBefore = (timestampMs: number, timeframe: Timeframe): number | null => {
+  if (!Number.isFinite(timestampMs)) {
+    return null;
+  }
+
+  const stepMs = Math.max(60_000, getTimeframeMs(timeframe));
+  let probeMs = floorToTimeframe(timestampMs - 1, timeframe);
+
+  while (probeMs >= 0) {
+    if (isXauTradingTime(probeMs)) {
+      return probeMs;
+    }
+    probeMs -= stepMs;
+  }
+
+  return null;
+};
+
+const shiftTradingSlotsBackward = (
+  timestampMs: number,
+  timeframe: Timeframe,
+  slotCount: number
+): number | null => {
+  if (!Number.isFinite(timestampMs)) {
+    return null;
+  }
+
+  const requiredSlots = Math.max(0, Math.floor(slotCount));
+  if (requiredSlots === 0) {
+    return floorToTimeframe(timestampMs, timeframe);
+  }
+
+  let cursorMs = timestampMs;
+  let remainingSlots = requiredSlots;
+
+  while (remainingSlots > 0) {
+    const previousSlotMs = findLastTradingSlotBefore(cursorMs, timeframe);
+    if (previousSlotMs == null) {
+      return null;
+    }
+    cursorMs = previousSlotMs;
+    remainingSlots -= 1;
+  }
+
+  return cursorMs;
+};
+
 const normalizeMarketCandles = (candles: MarketApiCandle[]): Candle[] => {
   const normalized = candles
     .map((candle) => {
@@ -6749,7 +6902,7 @@ const buildHistoryApiRequestWindow = (params: {
   }
 
   const paddedStartMs =
-    startMs - Math.max(0, Math.floor(leadingBars)) * getTimeframeMs(timeframe);
+    shiftTradingSlotsBackward(startMs, timeframe, leadingBars) ?? startMs;
   const safeEndMs = Math.max(paddedStartMs, endExclusiveMs - 1);
 
   return {
@@ -6772,7 +6925,7 @@ const estimateHistoryBarsForDateRange = (
     return fallbackBars;
   }
 
-  const baseBars = Math.ceil((endExclusiveMs - startMs) / Math.max(60_000, getTimeframeMs(timeframe)));
+  const baseBars = countTradingSlotsInRange(startMs, endExclusiveMs, timeframe);
   return clamp(baseBars + Math.max(12, Math.floor(paddingBars)), MIN_SEED_CANDLES, BACKTEST_MAX_HISTORY_CANDLES);
 };
 
@@ -6790,8 +6943,7 @@ const estimateHistoryBarsForTimeWindow = (
     );
   }
 
-  const stepMs = Math.max(60_000, getTimeframeMs(timeframe));
-  const baseBars = Math.ceil((endMs - startMs) / stepMs);
+  const baseBars = countTradingSlotsInRange(startMs, endMs, timeframe);
   return clamp(
     baseBars + Math.max(12, Math.floor(paddingBars)),
     MIN_SEED_CANDLES,
@@ -6817,11 +6969,13 @@ const candlesCoverDateRange = (
     return false;
   }
 
-  const paddingMs = Math.max(0, Math.floor(leadingBars)) * getTimeframeMs(timeframe);
+  const earliestRequiredSlotMs =
+    shiftTradingSlotsBackward(startMs, timeframe, leadingBars) ?? Number.NEGATIVE_INFINITY;
+  const latestRequiredSlotMs = findLastTradingSlotBefore(endExclusiveMs, timeframe);
   const firstTime = candles[0]?.time ?? Number.POSITIVE_INFINITY;
   const lastTime = candles[candles.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
 
-  return firstTime <= startMs - paddingMs && lastTime >= endExclusiveMs - getTimeframeMs(timeframe);
+  return latestRequiredSlotMs != null && firstTime <= earliestRequiredSlotMs && lastTime >= latestRequiredSlotMs;
 };
 
 const candlesReachDateRangeStart = (
@@ -6840,10 +6994,11 @@ const candlesReachDateRangeStart = (
     return false;
   }
 
-  const paddingMs = Math.max(0, Math.floor(leadingBars)) * getTimeframeMs(timeframe);
+  const earliestRequiredSlotMs =
+    shiftTradingSlotsBackward(startMs, timeframe, leadingBars) ?? Number.NEGATIVE_INFINITY;
   const firstTime = candles[0]?.time ?? Number.POSITIVE_INFINITY;
 
-  return firstTime <= startMs - paddingMs;
+  return firstTime <= earliestRequiredSlotMs;
 };
 
 const filterCandlesToDateRange = (
@@ -6861,7 +7016,7 @@ const filterCandlesToDateRange = (
   }
 
   const paddedStartMs =
-    startMs - Math.max(0, Math.floor(leadingBars)) * getTimeframeMs(timeframe);
+    shiftTradingSlotsBackward(startMs, timeframe, leadingBars) ?? startMs;
   const filtered = candles.filter(
     (candle) => candle.time >= paddedStartMs && candle.time < endExclusiveMs
   );
@@ -14112,7 +14267,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       !hasDateRange && (shouldLoadPrecisionSupport || appliedBacktestSettings.timeframe === "1m");
     const needsHistory =
       existingCandles.length < MIN_SEED_CANDLES ||
-      existingCandles.length < targetBars ||
+      (!hasDateRange && existingCandles.length < targetBars) ||
       (hasDateRange &&
         !candlesCoverDateRange(
           existingCandles,
@@ -14124,7 +14279,15 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     const needsPrecisionSupport =
       shouldLoadPrecisionSupport &&
       (existingPrecisionCandles.length < MIN_SEED_CANDLES ||
-        existingPrecisionCandles.length < precisionTargetBars);
+        (!hasDateRange && existingPrecisionCandles.length < precisionTargetBars) ||
+        (hasDateRange &&
+          !candlesCoverDateRange(
+            existingPrecisionCandles,
+            precisionTimeframe,
+            appliedBacktestSettings.statsDateStart,
+            appliedBacktestSettings.statsDateEnd,
+            precisionPaddingBars
+          )));
 
     updateStatsRefreshOperation({
       label: "Scanning cached analysis and precision candles",
@@ -20825,7 +20988,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         !hasDateRange && (shouldLoadPrecisionSupport || timeframe === "1m");
       const needsHistory =
         existingCandles.length < MIN_SEED_CANDLES ||
-        existingCandles.length < targetBars ||
+        (!hasDateRange && existingCandles.length < targetBars) ||
         (hasDateRange &&
           !candlesCoverDateRange(
             existingCandles,
@@ -20837,7 +21000,15 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       const needsOneMinute =
         shouldLoadPrecisionSupport &&
         (existingOneMinute.length < MIN_SEED_CANDLES ||
-          existingOneMinute.length < precisionTargetBars);
+          (!hasDateRange && existingOneMinute.length < precisionTargetBars) ||
+          (hasDateRange &&
+            !candlesCoverDateRange(
+              existingOneMinute,
+              precisionTimeframe,
+              settings.statsDateStart,
+              settings.statsDateEnd,
+              precisionPaddingBars
+            )));
 
       if (!needsHistory && !needsOneMinute) {
         return {
@@ -26543,7 +26714,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
             ) : mobileWorkspaceTab === "social" ? (
               <section className="mobile-phone-card mobile-phone-card-social">
                 <div className="mobile-phone-social-stack">
-                  <section className="backtest-card compact social-simple-card" aria-label="community preset feed">
+                  <section
+                    className="backtest-card compact social-simple-card mobile-phone-social-feed-shell"
+                    aria-label="community preset feed"
+                  >
                     <div className="backtest-card-head backtest-stats-head">
                       <div>
                         <h3>Community Feed</h3>
@@ -26666,9 +26840,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                   <button
                     type="button"
                     className="mobile-phone-action-btn"
+                    aria-label={`Load preset. ${currentLoadedPresetLabel}.`}
                     onClick={() => setPresetMenuOpen((current) => (current === "load" ? null : "load"))}
                   >
                     <strong>Load Preset</strong>
+                    <span>{currentLoadedPresetLabel}</span>
                   </button>
                   <button
                     type="button"
@@ -26808,7 +26984,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 onClick={(event) => event.stopPropagation()}
               >
                 <div className="mobile-preset-sheet-head">
-                  <strong>Load Preset</strong>
+                  <div>
+                    <strong>Load Preset</strong>
+                    <span>{currentLoadedPresetLabel}</span>
+                  </div>
                   <button
                     type="button"
                     className="mobile-preset-sheet-close"
