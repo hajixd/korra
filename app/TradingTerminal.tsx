@@ -17358,6 +17358,22 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     propDailyMaxLoss, propTotalMaxLoss, propProfitTarget, propProjectionMethod,
     statsDatePreset, statsDateStart, statsDateEnd,
   ]);
+  const currentPresetSettingsSignature = useMemo(
+    () => JSON.stringify(collectSettings()),
+    [collectSettings]
+  );
+  const currentLoadedPresetLabel = useMemo(() => {
+    const activePreset =
+      savedPresets.find((preset) => {
+        try {
+          return JSON.stringify(preset.settings) === currentPresetSettingsSignature;
+        } catch {
+          return false;
+        }
+      }) ?? null;
+
+    return activePreset?.name ?? "No Preset Loaded";
+  }, [currentPresetSettingsSignature, savedPresets]);
 
   const applySettings = useCallback((s: Record<string, any>) => {
     if (s.selectedSymbol != null) setSelectedSymbol(s.selectedSymbol);
@@ -17766,7 +17782,20 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     };
   }, [mobileNotificationsEnabled]);
 
+  useEffect(() => {
+    if (!savedPresetsReady || savedPresets.length > 0 || !mobileNotificationsEnabled) {
+      return;
+    }
+
+    setMobileNotificationsEnabled(false);
+  }, [mobileNotificationsEnabled, savedPresets.length, savedPresetsReady]);
+
   const handleMobileNotificationsToggle = useCallback(async () => {
+    if (!savedPresetsReady || savedPresets.length === 0) {
+      setMobileNotificationsEnabled(false);
+      return;
+    }
+
     const nextEnabled = !mobileNotificationsEnabled;
 
     if (!nextEnabled) {
@@ -17795,7 +17824,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     }
 
     setMobileNotificationsEnabled(true);
-  }, [mobileNotificationsEnabled]);
+  }, [mobileNotificationsEnabled, savedPresets.length, savedPresetsReady]);
 
 
   const handleResetSettings = useCallback(() => {
@@ -23828,9 +23857,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
     return rawSymbol.replaceAll("_", "/");
   }, [appliedBacktestSettings.symbol, selectedSymbol]);
-  const mobileChartTicker = useMemo(() => {
-    return mobileChartDisplaySymbol.replaceAll("/", "").replaceAll("-", "");
-  }, [mobileChartDisplaySymbol]);
   const mobileChartName = useMemo(() => {
     if (mobileChartDisplaySymbol === "XAU/USD") {
       return "Gold Spot";
@@ -24079,6 +24105,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const mobileSavedPresets = useMemo(() => {
     return [...savedPresets].sort((a, b) => b.savedAt - a.savedAt);
   }, [savedPresets]);
+  const mobileNotificationsToggleDisabled = !savedPresetsReady || mobileSavedPresets.length === 0;
+  const mobileNotificationsMissingPreset = savedPresetsReady && mobileSavedPresets.length === 0;
   const selectedSocialPublishPreset = useMemo(() => {
     return mobileSavedPresets.find((preset) => preset.name === socialPublishPresetName) ?? null;
   }, [mobileSavedPresets, socialPublishPresetName]);
@@ -26099,7 +26127,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   if (isMobileWorkspace) {
     const mobileActiveDisplayTrade = mobileTimelineActiveTrade;
     const showMobileTimeline =
-      mobileWorkspaceTab === "trade" || mobileWorkspaceTab === "history";
+      mobileWorkspaceTab === "chart" || mobileWorkspaceTab === "trade" || mobileWorkspaceTab === "history";
     const mobileShellStyle =
       !isStandaloneMobileWorkspace && mobileViewportHeightPx && mobileViewportHeightPx > 0
         ? ({
@@ -26118,91 +26146,89 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       >
         <section className={`mobile-phone-frame${mobileWorkspaceTab === "chart" ? " mobile-phone-frame-chart" : ""}`}>
           <header className={`mobile-phone-header${mobileWorkspaceTab === "chart" ? " mobile-phone-header-chart" : ""}`}>
-            {mobileWorkspaceTab !== "chart" ? (
-              <>
-                <div className="mobile-phone-brand-row mobile-phone-brand-row-centered">
-                  <div className="mobile-phone-brand-copy mobile-phone-brand-copy-centered">
-                    <h1>
-                      {mobileWorkspaceTab === "trade"
-                        ? "Trade"
-                        : mobileWorkspaceTab === "history"
-                          ? "Trade History"
-                          : mobileWorkspaceTab === "social"
-                            ? "Social"
-                            : "Settings"}
-                    </h1>
-                    {showMobileTimeline ? (
-                      <>
-                        <p className="mobile-phone-header-date">{mobileTimelineDateLabel}</p>
-                        <div className="mobile-phone-header-time-row">
-                          <button
-                            type="button"
-                            className="mobile-phone-header-time-trigger"
-                            onClick={openMobileTimelinePicker}
-                          >
-                            <span className="mobile-phone-header-time">{mobileTimelineTimeLabel}</span>
-                          </button>
-                          <span
-                            className={`mobile-phone-header-time-badge${
-                              mobileTimelineIsLive ? " live" : ""
-                            }`}
-                          >
-                            {mobileTimelineIsLive ? "Live" : "As Of"}
-                          </span>
-                        </div>
-                      </>
-                    ) : null}
-                  </div>
-                </div>
+            <div className="mobile-phone-brand-row mobile-phone-brand-row-centered">
+              <div className="mobile-phone-brand-copy mobile-phone-brand-copy-centered">
+                <h1>
+                  {mobileWorkspaceTab === "chart"
+                    ? "Chart"
+                    : mobileWorkspaceTab === "trade"
+                      ? "Trade"
+                      : mobileWorkspaceTab === "history"
+                        ? "Trade History"
+                        : mobileWorkspaceTab === "social"
+                          ? "Social"
+                          : "Settings"}
+                </h1>
                 {showMobileTimeline ? (
-                  <div className="mobile-phone-timeline-strip">
-                    <input
-                      type="range"
-                      className="mobile-phone-timeline-slider"
-                      min={0}
-                      max={mobileTimelineSliderMax}
-                      step={1}
-                      value={mobileTimelineSliderValue}
-                      onChange={(event) => {
-                        const rawIndex = Math.floor(Number(event.target.value) || 0);
-                        const nextIndex = clamp(rawIndex, 0, mobileTimelineSliderMax);
-                        const nextSec =
-                          mobileTimelineTickSecs[nextIndex] ?? mobileTimelineBounds.endSec;
-
-                        if (
-                          mobileTimelineSliderMax === 0 ||
-                          nextIndex >= mobileTimelineSliderMax
-                        ) {
-                          setMobileTimelineOverrideSec(null);
-                          return;
-                        }
-
-                        setMobileTimelineOverrideSec(nextSec);
-                      }}
-                      disabled={mobileTimelineSliderMax === 0}
-                      aria-label="Mobile timeline"
-                    />
-                    <button
-                      type="button"
-                      className={`mobile-phone-timeline-live-btn${
-                        mobileTimelineIsLive ? " active" : ""
-                      }`}
-                      onClick={() => {
-                        triggerMobileHaptic();
-                        setMobileTimelineOverrideSec(null);
-                      }}
-                    >
-                      Live
-                    </button>
-                  </div>
+                  <>
+                    <p className="mobile-phone-header-date">{mobileTimelineDateLabel}</p>
+                    <div className="mobile-phone-header-time-row">
+                      <button
+                        type="button"
+                        className="mobile-phone-header-time-trigger"
+                        onClick={openMobileTimelinePicker}
+                      >
+                        <span className="mobile-phone-header-time">{mobileTimelineTimeLabel}</span>
+                      </button>
+                      <span
+                        className={`mobile-phone-header-time-badge${
+                          mobileTimelineIsLive ? " live" : ""
+                        }`}
+                      >
+                        {mobileTimelineIsLive ? "Live" : "As Of"}
+                      </span>
+                    </div>
+                  </>
                 ) : null}
-                {statsRefreshOverlayMode === "loading" ? (
-                  <div className="mobile-phone-sync-pill">
-                    <span className="mobile-phone-sync-dot" aria-hidden="true" />
-                    Updating workspace
-                  </div>
-                ) : null}
-              </>
+              </div>
+            </div>
+            {showMobileTimeline ? (
+              <div className="mobile-phone-timeline-strip">
+                <input
+                  type="range"
+                  className="mobile-phone-timeline-slider"
+                  min={0}
+                  max={mobileTimelineSliderMax}
+                  step={1}
+                  value={mobileTimelineSliderValue}
+                  onChange={(event) => {
+                    const rawIndex = Math.floor(Number(event.target.value) || 0);
+                    const nextIndex = clamp(rawIndex, 0, mobileTimelineSliderMax);
+                    const nextSec =
+                      mobileTimelineTickSecs[nextIndex] ?? mobileTimelineBounds.endSec;
+
+                    if (
+                      mobileTimelineSliderMax === 0 ||
+                      nextIndex >= mobileTimelineSliderMax
+                    ) {
+                      setMobileTimelineOverrideSec(null);
+                      return;
+                    }
+
+                    setMobileTimelineOverrideSec(nextSec);
+                  }}
+                  disabled={mobileTimelineSliderMax === 0}
+                  aria-label="Mobile timeline"
+                />
+                <button
+                  type="button"
+                  className={`mobile-phone-timeline-live-btn${
+                    mobileTimelineIsLive ? " active" : ""
+                  }`}
+                  onClick={() => {
+                    triggerMobileHaptic();
+                    setMobileTimelineOverrideSec(null);
+                  }}
+                >
+                  Live
+                </button>
+              </div>
+            ) : null}
+            {statsRefreshOverlayMode === "loading" ? (
+              <div className="mobile-phone-sync-pill">
+                <span className="mobile-phone-sync-dot" aria-hidden="true" />
+                Updating workspace
+              </div>
             ) : null}
           </header>
 
@@ -26210,7 +26236,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
             {mobileWorkspaceTab === "chart" ? (
               <section className="mobile-phone-card mobile-phone-card-market">
                 <div className="mobile-phone-market-copy">
-                  <span className="mobile-phone-market-symbol">{mobileChartTicker}</span>
                   <h2>{mobileChartName}</h2>
                   <strong>{mobileMarketSparkline ? formatPrice(mobileMarketDisplayValue) : "--"}</strong>
                   {mobileMarketSparkline ? (
@@ -26518,6 +26543,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                               <div className="social-simple-row-main">
                                 <div className="social-simple-row-head">
                                   <strong>{preset.presetName}</strong>
+                                  <span className="social-simple-row-author">
+                                    by {preset.authorDisplayName}
+                                  </span>
                                 </div>
                                 <div className="social-simple-row-note">
                                   {preset.description || "No description added yet."}
@@ -26580,11 +26608,20 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
                 <div className="mobile-phone-action-list">
                   <div className="mobile-phone-toggle-row">
-                    <strong>Notifications</strong>
+                    <div className="mobile-phone-toggle-copy">
+                      <strong>Notifications</strong>
+                      {mobileNotificationsMissingPreset ? (
+                        <small>Save a preset to enable alerts.</small>
+                      ) : null}
+                    </div>
                     <button
                       type="button"
-                      className={`mobile-phone-toggle${mobileNotificationsEnabled ? " active" : ""}`}
+                      className={`mobile-phone-toggle${mobileNotificationsEnabled ? " active" : ""}${
+                        mobileNotificationsToggleDisabled ? " disabled" : ""
+                      }`}
                       aria-pressed={mobileNotificationsEnabled}
+                      aria-disabled={mobileNotificationsToggleDisabled}
+                      disabled={mobileNotificationsToggleDisabled}
                       onClick={() => {
                         void handleMobileNotificationsToggle();
                       }}
@@ -27069,7 +27106,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 <button
                   type="button"
                   className="settings-io-btn"
-                  aria-label="Load preset"
+                  aria-label={`Load preset - ${currentLoadedPresetLabel}`}
                   onClick={() => setPresetMenuOpen((v) => (v === "load" ? null : "load"))}
                 >
                   <svg className="settings-io-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -27077,6 +27114,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                     <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
                   </svg>
                   <span className="settings-io-label">Load</span>
+                  <span className="settings-io-status" title={currentLoadedPresetLabel}>
+                    - {currentLoadedPresetLabel}
+                  </span>
                 </button>
                 {presetMenuOpen === "load" ? (
                   <div className="preset-popover preset-popover-load">
@@ -28088,6 +28128,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             <div className="social-simple-row-main">
                               <div className="social-simple-row-head">
                                 <strong>{preset.presetName}</strong>
+                                <span className="social-simple-row-author">
+                                  by {preset.authorDisplayName}
+                                </span>
                               </div>
                               <div className="social-simple-row-note">
                                 {preset.description || "No description added yet."}

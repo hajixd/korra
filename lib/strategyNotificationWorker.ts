@@ -6,6 +6,7 @@ import {
   computeActiveStrategyNotificationSignal,
   type StrategyNotificationSettings
 } from "./strategyNotificationEngine";
+import { getStrategyNotificationMarketWindow } from "./strategyNotificationMarketHours";
 import { fetchTwelveDataCandles } from "./twelveDataMarketData";
 
 const MARKET_TIMEFRAME_BY_UI: Record<StrategyNotificationSettings["timeframe"], string> = {
@@ -35,6 +36,10 @@ export type StrategyNotificationSweepResult = {
   entryNotifications: number;
   exitNotifications: number;
   errorNotifications: number;
+  marketOpen: boolean;
+  skipReason: "market_closed_weekend" | "market_closed_rollover" | null;
+  marketTimeLabel: string;
+  marketTimeZone: string;
 };
 
 const normalizePair = (symbol: string): string => {
@@ -384,15 +389,31 @@ const processUserStrategyNotifications = async (userDoc: {
 };
 
 export const runStrategyNotificationSweep = async (): Promise<StrategyNotificationSweepResult> => {
-  const userDocs = await listFirebaseUserDocuments();
+  const marketWindow = getStrategyNotificationMarketWindow();
   const result: StrategyNotificationSweepResult = {
-    totalUsers: userDocs.length,
+    totalUsers: 0,
     processedUsers: 0,
     skippedUsers: 0,
     entryNotifications: 0,
     exitNotifications: 0,
-    errorNotifications: 0
+    errorNotifications: 0,
+    marketOpen: marketWindow.marketOpen,
+    skipReason:
+      marketWindow.reason === "weekend"
+        ? "market_closed_weekend"
+        : marketWindow.reason === "rollover"
+          ? "market_closed_rollover"
+          : null,
+    marketTimeLabel: marketWindow.localTimeLabel,
+    marketTimeZone: marketWindow.timeZone
   };
+
+  if (!marketWindow.marketOpen) {
+    return result;
+  }
+
+  const userDocs = await listFirebaseUserDocuments();
+  result.totalUsers = userDocs.length;
 
   for (const userDoc of userDocs) {
     const userResult = await processUserStrategyNotifications(userDoc);

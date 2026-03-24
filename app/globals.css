@@ -2045,7 +2045,7 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-header-chart {
-  display: none;
+  gap: 0.3rem;
 }
 
 .mobile-phone-brand-row {
@@ -2294,12 +2294,12 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-frame-chart {
-  gap: 0;
+  gap: 0.28rem;
 }
 
 .mobile-phone-card-market {
   gap: 0.54rem;
-  padding-top: 0.08rem;
+  padding-top: 0.14rem;
 }
 
 .mobile-phone-market-toolbar {
@@ -2341,30 +2341,22 @@ body.mobile-terminal-viewport-lock {
 
 .mobile-phone-market-copy {
   display: grid;
-  gap: 0.22rem;
-}
-
-.mobile-phone-market-symbol {
-  color: rgba(247, 251, 246, 0.86);
-  font-size: 0.58rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  gap: 0.16rem;
 }
 
 .mobile-phone-market-copy h2 {
   margin: 0;
   color: #fbfdfb;
-  font-size: clamp(1.6rem, 8.8vw, 2.18rem);
-  line-height: 0.98;
-  letter-spacing: -0.055em;
+  font-size: clamp(1.18rem, 6vw, 1.48rem);
+  line-height: 1;
+  letter-spacing: -0.045em;
 }
 
 .mobile-phone-market-copy strong {
   color: #fbfdfb;
-  font-size: clamp(1.86rem, 10vw, 2.44rem);
-  line-height: 0.96;
-  letter-spacing: -0.06em;
+  font-size: clamp(1.46rem, 7.6vw, 1.84rem);
+  line-height: 0.98;
+  letter-spacing: -0.045em;
   font-weight: 500;
 }
 
@@ -2373,7 +2365,7 @@ body.mobile-terminal-viewport-lock {
   align-items: center;
   flex-wrap: wrap;
   gap: 0.28rem;
-  font-size: 0.72rem;
+  font-size: 0.64rem;
   font-weight: 700;
 }
 
@@ -2383,7 +2375,7 @@ body.mobile-terminal-viewport-lock {
 
 .mobile-phone-market-change strong,
 .mobile-phone-market-change span {
-  font-size: 0.72rem;
+  font-size: 0.64rem;
   font-weight: 800;
   letter-spacing: -0.02em;
 }
@@ -2393,7 +2385,7 @@ body.mobile-terminal-viewport-lock {
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
-  max-height: 410px;
+  max-height: 392px;
   overflow: hidden;
   touch-action: none;
   user-select: none;
@@ -2933,6 +2925,17 @@ body.mobile-terminal-viewport-lock {
   line-height: 1.1;
 }
 
+.mobile-phone-toggle-copy {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.mobile-phone-toggle-copy small {
+  color: rgba(211, 220, 214, 0.62);
+  font-size: 0.7rem;
+  line-height: 1.25;
+}
+
 .mobile-phone-toggle {
   position: relative;
   width: 44px;
@@ -2949,6 +2952,12 @@ body.mobile-terminal-viewport-lock {
   background: rgba(118, 239, 120, 0.9);
 }
 
+.mobile-phone-toggle.disabled {
+  background: rgba(255, 255, 255, 0.08);
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
 .mobile-phone-toggle-knob {
   position: absolute;
   top: 3px;
@@ -2962,6 +2971,10 @@ body.mobile-terminal-viewport-lock {
 
 .mobile-phone-toggle.active .mobile-phone-toggle-knob {
   transform: translateX(18px);
+}
+
+.mobile-phone-toggle.disabled .mobile-phone-toggle-knob {
+  background: rgba(255, 255, 255, 0.82);
 }
 
 .mobile-phone-action-btn {
@@ -3059,6 +3072,10 @@ body.mobile-terminal-viewport-lock {
 
 .mobile-phone-card-social .social-simple-row-head strong {
   font-size: 0.8rem;
+}
+
+.mobile-phone-card-social .social-simple-row-author {
+  font-size: 0.62rem;
 }
 
 .mobile-phone-card-social .social-simple-row-note,
@@ -3508,6 +3525,16 @@ body.mobile-terminal-viewport-lock {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   font-weight: 500;
+}
+
+.settings-io-status {
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #8e9ab3;
+  font-size: 0.56rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.02em;
 }
 
 .settings-io-reset {
@@ -4441,13 +4468,22 @@ body.mobile-terminal-viewport-lock {
 .social-simple-row-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  flex-wrap: wrap;
   gap: 0.75rem;
 }
 
 .social-simple-row-head strong {
   color: rgba(246, 248, 250, 0.96);
   font-size: 0.95rem;
+}
+
+.social-simple-row-author {
+  color: rgba(188, 198, 188, 0.78);
+  font-size: 0.72rem;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, monospace;
+  letter-spacing: 0.02em;
+  text-transform: none;
 }
 
 .social-simple-row-note,
