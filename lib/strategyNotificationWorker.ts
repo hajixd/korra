@@ -6,8 +6,7 @@ import {
   computeActiveStrategyNotificationSignal,
   type StrategyNotificationSettings
 } from "./strategyNotificationEngine";
-
-const MARKET_API_BASE = "https://trading-system-delta.vercel.app/api/public/candles";
+import { fetchTwelveDataCandles } from "./twelveDataMarketData";
 
 const MARKET_TIMEFRAME_BY_UI: Record<StrategyNotificationSettings["timeframe"], string> = {
   "1m": "M1",
@@ -27,15 +26,6 @@ const HISTORY_LIMIT_BY_TIMEFRAME: Record<StrategyNotificationSettings["timeframe
   "4H": 1800,
   "1D": 900,
   "1W": 240
-};
-
-type MarketApiCandle = {
-  time: number | string;
-  open: number | string;
-  high: number | string;
-  low: number | string;
-  close: number | string;
-  volume?: number | string;
 };
 
 export type StrategyNotificationSweepResult = {
@@ -61,23 +51,24 @@ const normalizePair = (symbol: string): string => {
   return "XAU_USD";
 };
 
-const normalizeMarketCandles = (candles: MarketApiCandle[]) => {
+const normalizeMarketCandles = (
+  candles: Array<{
+    time: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume?: number;
+  }>
+) => {
   return candles
     .map((candle) => {
-      const rawTime =
-        typeof candle.time === "number"
-          ? candle.time
-          : Number.isFinite(Number(candle.time))
-            ? Number(candle.time)
-            : Date.parse(String(candle.time));
-      const time = rawTime > 1_000_000_000_000 ? rawTime : rawTime * 1000;
+      const time = Number(candle.time);
       const open = Number(candle.open);
-      const highRaw = Number(candle.high);
-      const lowRaw = Number(candle.low);
+      const high = Number(candle.high);
+      const low = Number(candle.low);
       const close = Number(candle.close);
       const volumeRaw = Number(candle.volume);
-      const high = Math.max(open, highRaw, lowRaw, close);
-      const low = Math.min(open, highRaw, lowRaw, close);
 
       if (
         !Number.isFinite(time) ||
@@ -198,27 +189,12 @@ const buildRuntimeFromSignal = (
 };
 
 const fetchCandlesForSettings = async (settings: StrategyNotificationSettings) => {
-  const apiKey = process.env.MARKET_API_KEY || process.env.NEXT_PUBLIC_MARKET_API_KEY || "";
-  const url = new URL(MARKET_API_BASE);
-  url.searchParams.set("pair", normalizePair(settings.symbol));
-  url.searchParams.set("timeframe", MARKET_TIMEFRAME_BY_UI[settings.timeframe]);
-  url.searchParams.set("limit", String(HISTORY_LIMIT_BY_TIMEFRAME[settings.timeframe] ?? 5000));
-
-  const response = await fetch(url.toString(), {
-    cache: "no-store",
-    headers: {
-      Accept: "application/json",
-      ...(apiKey ? { "X-API-Key": apiKey } : {})
-    }
+  const payload = await fetchTwelveDataCandles({
+    pair: normalizePair(settings.symbol),
+    timeframe: MARKET_TIMEFRAME_BY_UI[settings.timeframe],
+    count: HISTORY_LIMIT_BY_TIMEFRAME[settings.timeframe] ?? 5000
   });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Market candle fetch failed (${response.status}): ${errorText.slice(0, 280)}`);
-  }
-
-  const payload = (await response.json()) as { candles?: MarketApiCandle[] };
-  return normalizeMarketCandles(Array.isArray(payload.candles) ? payload.candles : []);
+  return normalizeMarketCandles(payload.candles);
 };
 
 const updateDeviceRecord = (
