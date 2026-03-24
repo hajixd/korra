@@ -1,4 +1,5 @@
 import type { BacktestHistoryRow } from "../app/backtestHistoryShared";
+import { runCopyTradeSweep } from "./copyTradeWorker";
 import { sendPushNotification } from "./firebaseServerNotifications";
 import { listFirebaseUserDocuments, patchFirebaseUserDocument } from "./firebaseUserDocuments";
 import { normalizeNotificationDevices, type NotificationDeviceRecord, type NotificationDeviceRuntime } from "./notificationDevices";
@@ -36,6 +37,13 @@ export type StrategyNotificationSweepResult = {
   entryNotifications: number;
   exitNotifications: number;
   errorNotifications: number;
+  copyTradeTotalAccounts: number;
+  copyTradeProcessedAccounts: number;
+  copyTradeSkippedAccounts: number;
+  copyTradeEntryActions: number;
+  copyTradeExitActions: number;
+  copyTradeErrorAccounts: number;
+  copyTradeFatalError: string | null;
   marketOpen: boolean;
   skipReason: "market_closed_weekend" | "market_closed_rollover" | null;
   marketTimeLabel: string;
@@ -397,6 +405,13 @@ export const runStrategyNotificationSweep = async (): Promise<StrategyNotificati
     entryNotifications: 0,
     exitNotifications: 0,
     errorNotifications: 0,
+    copyTradeTotalAccounts: 0,
+    copyTradeProcessedAccounts: 0,
+    copyTradeSkippedAccounts: 0,
+    copyTradeEntryActions: 0,
+    copyTradeExitActions: 0,
+    copyTradeErrorAccounts: 0,
+    copyTradeFatalError: null,
     marketOpen: marketWindow.marketOpen,
     skipReason:
       marketWindow.reason === "weekend"
@@ -428,6 +443,19 @@ export const runStrategyNotificationSweep = async (): Promise<StrategyNotificati
     result.entryNotifications += userResult.entryNotifications;
     result.exitNotifications += userResult.exitNotifications;
     result.errorNotifications += userResult.errorNotifications;
+  }
+
+  try {
+    const copyTradeResult = await runCopyTradeSweep();
+    result.copyTradeTotalAccounts = copyTradeResult.totalAccounts;
+    result.copyTradeProcessedAccounts = copyTradeResult.processedAccounts;
+    result.copyTradeSkippedAccounts = copyTradeResult.skippedAccounts;
+    result.copyTradeEntryActions = copyTradeResult.entryActions;
+    result.copyTradeExitActions = copyTradeResult.exitActions;
+    result.copyTradeErrorAccounts = copyTradeResult.errorAccounts;
+  } catch (error) {
+    result.copyTradeFatalError =
+      (error as Error).message || "Copy-trade sweep failed.";
   }
 
   return result;

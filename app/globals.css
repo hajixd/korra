@@ -2056,8 +2056,8 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-header-chart {
-  gap: 0.56rem;
-  padding-bottom: 0.18rem;
+  gap: 0.72rem;
+  padding-bottom: 0.3rem;
 }
 
 .mobile-phone-brand-row {
@@ -2307,12 +2307,12 @@ body.mobile-terminal-viewport-lock {
 }
 
 .mobile-phone-frame-chart {
-  gap: 0.74rem;
+  gap: 1rem;
 }
 
 .mobile-phone-card-market {
-  gap: 0.92rem;
-  padding-top: 0.92rem;
+  gap: 1rem;
+  padding-top: 1.35rem;
 }
 
 .mobile-phone-market-toolbar {

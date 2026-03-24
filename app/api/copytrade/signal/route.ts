@@ -1,24 +1,15 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getAiZipModelNames } from "../../../../lib/aiZipModels";
+import { fetchCopyTradeCandles } from "../../../../lib/copyTradeMarketData";
 import {
   computeActiveReplaySignal,
-  type CopyTradeCandle,
   type CopyTradeSignalSettings,
   type CopyTradeTimeframe
 } from "../../../../lib/copyTradeSignalEngine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-type MarketApiCandle = {
-  time: number | string;
-  open: number | string;
-  high: number | string;
-  low: number | string;
-  close: number | string;
-  volume?: number | string;
-};
 
 type CopyTradeSignalOutput = {
   desiredPosition: "BUY" | "SELL" | "FLAT";
@@ -29,11 +20,6 @@ type CopyTradeSignalOutput = {
   signalEntryTime: number | null;
   signalExitTime: number | null;
 };
-
-const MARKET_API_BASE =
-  process.env.COPYTRADE_MARKET_API_BASE ||
-  process.env.MARKET_API_BASE ||
-  "https://trading-system-delta.vercel.app/api/public/candles";
 
 const timeframeSet = new Set<CopyTradeTimeframe>(["1m", "5m", "15m", "1H", "4H", "1D", "1W"]);
 
@@ -54,26 +40,6 @@ const TIMEFRAME_ALIAS_TO_UI: Record<string, CopyTradeTimeframe> = {
   "1W": "1W",
   W1: "1W",
   W: "1W"
-};
-
-const MARKET_TIMEFRAME_BY_UI: Record<CopyTradeTimeframe, string> = {
-  "1m": "M1",
-  "5m": "M5",
-  "15m": "M15",
-  "1H": "H1",
-  "4H": "H4",
-  "1D": "D",
-  "1W": "W"
-};
-
-const HISTORY_LIMIT_BY_TIMEFRAME: Record<CopyTradeTimeframe, number> = {
-  "1m": 5000,
-  "5m": 5000,
-  "15m": 5000,
-  "1H": 3000,
-  "4H": 1800,
-  "1D": 900,
-  "1W": 240
 };
 
 const DEFAULT_SETTINGS: CopyTradeSignalSettings = {
@@ -154,140 +120,6 @@ const normalizeSignalSymbol = (value: string | null): string => {
     .trim();
 
   return normalized || "XAUUSD";
-};
-
-const normalizeMarketPair = (signalSymbol: string): string => {
-  if (signalSymbol === "XAUUSD") {
-    return "XAU_USD";
-  }
-
-  if (signalSymbol.length === 6) {
-    return `${signalSymbol.slice(0, 3)}_${signalSymbol.slice(3)}`;
-  }
-
-  return "XAU_USD";
-};
-
-const isXauTradingTime = (timestampMs: number): boolean => {
-  const date = new Date(timestampMs);
-  const day = date.getUTCDay();
-  const hour = date.getUTCHours();
-
-  if (day === 6) {
-    return false;
-  }
-
-  if (day === 5 && hour >= 22) {
-    return false;
-  }
-
-  if (day === 0 && hour < 23) {
-    return false;
-  }
-
-  if (day >= 1 && day <= 4 && hour === 22) {
-    return false;
-  }
-
-  return true;
-};
-
-const normalizeMarketCandles = (candles: MarketApiCandle[], signalSymbol: string): CopyTradeCandle[] => {
-  const shouldApplyXauSchedule = signalSymbol === "XAUUSD";
-
-  const normalized = candles
-    .map((candle) => {
-      let timeValue = Number.NaN;
-
-      if (typeof candle.time === "number") {
-        timeValue = candle.time;
-      } else {
-        const numericTime = Number(candle.time);
-        timeValue = Number.isFinite(numericTime) ? numericTime : Date.parse(String(candle.time));
-      }
-
-      const time = timeValue > 1_000_000_000_000 ? timeValue : timeValue * 1000;
-      const open = Number(candle.open);
-      const highRaw = Number(candle.high);
-      const lowRaw = Number(candle.low);
-      const close = Number(candle.close);
-      const volumeRaw = Number(candle.volume);
-      const high = Math.max(open, highRaw, lowRaw, close);
-      const low = Math.min(open, highRaw, lowRaw, close);
-
-      if (
-        !Number.isFinite(time) ||
-        !Number.isFinite(open) ||
-        !Number.isFinite(high) ||
-        !Number.isFinite(low) ||
-        !Number.isFinite(close)
-      ) {
-        return null;
-      }
-
-      if (shouldApplyXauSchedule && !isXauTradingTime(time)) {
-        return null;
-      }
-
-      const output: CopyTradeCandle = {
-        time,
-        open,
-        high,
-        low,
-        close
-      };
-
-      if (Number.isFinite(volumeRaw) && volumeRaw >= 0) {
-        output.volume = volumeRaw;
-      }
-
-      return output;
-    })
-    .filter((value): value is CopyTradeCandle => value !== null)
-    .sort((left, right) => left.time - right.time);
-
-  const deduped: CopyTradeCandle[] = [];
-
-  for (const candle of normalized) {
-    const previous = deduped[deduped.length - 1];
-
-    if (previous && previous.time === candle.time) {
-      deduped[deduped.length - 1] = candle;
-      continue;
-    }
-
-    deduped.push(candle);
-  }
-
-  return deduped;
-};
-
-const fetchMarketCandles = async (signalSymbol: string, timeframe: CopyTradeTimeframe): Promise<CopyTradeCandle[]> => {
-  const pair = normalizeMarketPair(signalSymbol);
-  const marketTimeframe = MARKET_TIMEFRAME_BY_UI[timeframe] || "M15";
-  const limit = HISTORY_LIMIT_BY_TIMEFRAME[timeframe] ?? 5000;
-  const apiKey = process.env.MARKET_API_KEY || process.env.NEXT_PUBLIC_MARKET_API_KEY || "";
-
-  const url = new URL(MARKET_API_BASE);
-  url.searchParams.set("pair", pair);
-  url.searchParams.set("timeframe", marketTimeframe);
-  url.searchParams.set("limit", String(limit));
-
-  const response = await fetch(url.toString(), {
-    cache: "no-store",
-    headers: {
-      Accept: "application/json",
-      ...(apiKey ? { "X-API-Key": apiKey } : {})
-    }
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Market candle fetch failed (${response.status}): ${errorText.slice(0, 280)}`);
-  }
-
-  const payload = (await response.json()) as { candles?: MarketApiCandle[] };
-  return normalizeMarketCandles(Array.isArray(payload.candles) ? payload.candles : [], signalSymbol);
 };
 
 const resolveProvidedToken = (request: Request, searchParams: URLSearchParams): string => {
@@ -448,7 +280,10 @@ export async function GET(request: Request) {
 
   try {
     const [candles, aiZipModelNames] = await Promise.all([
-      fetchMarketCandles(signalSymbol, timeframe),
+      fetchCopyTradeCandles({
+        symbol: signalSymbol,
+        timeframe
+      }),
       getAiZipModelNames()
     ]);
 
