@@ -7403,6 +7403,9 @@ body.mobile-terminal-viewport-lock {
 .stats-refresh-overlay-mobile {
   background: #000;
   pointer-events: auto;
+  align-items: center;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 1rem);
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem);
 }
 
 .stats-refresh-card {
