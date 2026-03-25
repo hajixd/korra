@@ -101,11 +101,10 @@ export type BacktestHistoryWorkerRequest = {
   breakEvenTriggerPct: number;
   trailingStartPct: number;
   trailingDistPct: number;
-};
-
-export type BacktestHistoryComputeRequest = Omit<BacktestHistoryWorkerRequest, "requestId"> & {
   limit: number;
 };
+
+export type BacktestHistoryComputeRequest = Omit<BacktestHistoryWorkerRequest, "requestId">;
 
 export type BacktestHistoryComputeResponse = {
   rows: BacktestHistoryRow[];
@@ -348,7 +347,10 @@ const formatDateTime = (timestampMs: number): string => {
   });
 };
 
-type ComputeBacktestHistoryRowsChunkArgs = Omit<BacktestHistoryWorkerRequest, "requestId"> & {
+type ComputeBacktestHistoryRowsChunkArgs = Omit<
+  BacktestHistoryWorkerRequest,
+  "requestId" | "limit"
+> & {
   onProgress?: (processed: number, total: number, cursorMs: number) => void;
 };
 

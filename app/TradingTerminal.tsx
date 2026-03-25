@@ -64,6 +64,8 @@ import {
   type BacktestEntryNeighbor,
   type BacktestHistoryRow,
   type BacktestHistoryComputeRequest,
+  type BacktestHistoryWorkerRequest,
+  type BacktestHistoryWorkerResponse,
   type BacktestTradeAiEntryMeta
 } from "./backtestHistoryShared";
 import {
@@ -971,36 +973,122 @@ const computeBacktestRowsLocally = (
   return normalizeBacktestHistoryRows(rows);
 };
 
-const computeBacktestRowsOnServer = async (
+let nextBacktestHistoryWorkerRequestId = 0;
+
+const computeBacktestRowsAsync = async (
   payload: BacktestHistoryComputeRequest,
-  signal?: AbortSignal
+  options?: {
+    signal?: AbortSignal;
+    onProgress?: (processed: number, total: number, cursorMs: number) => void;
+  }
 ): Promise<HistoryItem[]> => {
+  const signal = options?.signal;
+
+  if (typeof window === "undefined" || typeof Worker === "undefined") {
+    return computeBacktestRowsLocally(payload);
+  }
+
+  let worker: Worker;
   try {
-    const response = await fetch("/api/backtest/history", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload),
-      cache: "no-store",
-      signal
+    worker = new Worker(new URL("./backtestHistory.worker.ts", import.meta.url), {
+      type: "module"
     });
-
-    if (!response.ok) {
-      throw new Error(`Backtest server compute failed (${response.status}).`);
-    }
-
-    const data = (await response.json()) as { rows?: unknown };
-    const rows = Array.isArray(data.rows) ? (data.rows as BacktestHistoryRow[]) : [];
-    return normalizeBacktestHistoryRows(rows);
   } catch (error) {
     if (signal?.aborted) {
       throw error;
     }
-
-    // Prevent false "0 trades" outcomes when the server compute path fails.
     return computeBacktestRowsLocally(payload);
   }
+
+  const requestId = ++nextBacktestHistoryWorkerRequestId;
+
+  return await new Promise<HistoryItem[]>((resolve, reject) => {
+    let settled = false;
+
+    const cleanup = () => {
+      worker.onmessage = null;
+      worker.onerror = null;
+      worker.terminate();
+      signal?.removeEventListener("abort", abortHandler);
+    };
+
+    const settleResolve = (rows: BacktestHistoryRow[]) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(normalizeBacktestHistoryRows(rows));
+    };
+
+    const settleReject = (error: unknown) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
+    const abortHandler = () => {
+      settleReject(new DOMException("The replay request was aborted.", "AbortError"));
+    };
+
+    worker.onmessage = (event: MessageEvent<BacktestHistoryWorkerResponse>) => {
+      const message = event.data;
+      if (!message || message.requestId !== requestId) {
+        return;
+      }
+
+      if (message.type === "progress") {
+        options?.onProgress?.(message.processed, message.total, message.cursorMs);
+        return;
+      }
+
+      settleResolve(message.rows);
+    };
+
+    worker.onerror = () => {
+      if (signal?.aborted) {
+        settleReject(new DOMException("The replay request was aborted.", "AbortError"));
+        return;
+      }
+
+      try {
+        settleResolve(
+          finalizeBacktestHistoryRows(
+            computeBacktestHistoryRowsChunk({
+              blueprints: payload.blueprints,
+              candleSeriesBySymbol: payload.candleSeriesBySymbol,
+              oneMinuteCandlesBySymbol: payload.oneMinuteCandlesBySymbol,
+              minutePreciseEnabled: payload.minutePreciseEnabled,
+              modelNamesById: payload.modelNamesById,
+              tpDollars: payload.tpDollars,
+              slDollars: payload.slDollars,
+              stopMode: payload.stopMode,
+              breakEvenTriggerPct: payload.breakEvenTriggerPct,
+              trailingStartPct: payload.trailingStartPct,
+              trailingDistPct: payload.trailingDistPct
+            }),
+            payload.limit
+          )
+        );
+      } catch (error) {
+        settleReject(error);
+      }
+    };
+
+    if (signal?.aborted) {
+      abortHandler();
+      return;
+    }
+
+    signal?.addEventListener("abort", abortHandler, { once: true });
+    worker.postMessage({
+      requestId,
+      ...payload
+    } satisfies BacktestHistoryWorkerRequest);
+  });
 };
 
 type PanelAnalyticsServerPayload = {
@@ -13047,6 +13135,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const ghostLearningEnabled = useMemo(() => {
     return selectedAiLibraries.some((libraryId) => isGhostLearningLibraryId(libraryId));
   }, [selectedAiLibraries]);
+  const appliedGhostLearningEnabled = useMemo(() => {
+    return (appliedBacktestSettings.selectedAiLibraries ?? []).some((libraryId) =>
+      isGhostLearningLibraryId(libraryId)
+    );
+  }, [appliedBacktestSettings.selectedAiLibraries]);
   const canRunAiLibrariesForSnapshot = useCallback(
     (
       libraryIds: readonly string[] | null | undefined,
@@ -13087,7 +13180,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     );
   }, [appliedBacktestSettings, appliedRuntimeAiLibraryIds, canRunAiLibrariesForSnapshot]);
   const appendSuppressedLibraryForCluster = useCallback(
-    (libraryIds: readonly string[] | null | undefined) => {
+    (
+      libraryIds: readonly string[] | null | undefined,
+      options?: { includeGhostLearning?: boolean }
+    ) => {
       const next: string[] = [];
       const seen = new Set<string>();
 
@@ -13101,6 +13197,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       }
 
       if (
+        options?.includeGhostLearning &&
         aiLibraryDefById[GHOST_LEARNING_LIBRARY_ID] &&
         !seen.has(GHOST_LEARNING_LIBRARY_ID)
       ) {
@@ -13121,14 +13218,28 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     return getVisibleAizipLibraryIds(appliedRuntimeAiLibraryIds);
   }, [appliedRuntimeAiLibraryIds]);
   const liveClusterLibraryRunIds = useMemo(() => {
-    return appendSuppressedLibraryForCluster(liveRuntimeAiLibraryIds);
-  }, [appendSuppressedLibraryForCluster, liveRuntimeAiLibraryIds]);
+    return appendSuppressedLibraryForCluster(liveRuntimeAiLibraryIds, {
+      includeGhostLearning: ghostLearningEnabled
+    });
+  }, [appendSuppressedLibraryForCluster, ghostLearningEnabled, liveRuntimeAiLibraryIds]);
   const appliedClusterLibraryRunIds = useMemo(() => {
-    return appendSuppressedLibraryForCluster(appliedRuntimeAiLibraryIds);
-  }, [appendSuppressedLibraryForCluster, appliedRuntimeAiLibraryIds]);
+    return appendSuppressedLibraryForCluster(appliedRuntimeAiLibraryIds, {
+      includeGhostLearning: appliedGhostLearningEnabled
+    });
+  }, [
+    appendSuppressedLibraryForCluster,
+    appliedGhostLearningEnabled,
+    appliedRuntimeAiLibraryIds
+  ]);
   const appliedClusterDisplayLibraries = useMemo(() => {
-    return appendSuppressedLibraryForCluster(appliedVisibleAiLibraries);
-  }, [appendSuppressedLibraryForCluster, appliedVisibleAiLibraries]);
+    return appendSuppressedLibraryForCluster(appliedVisibleAiLibraries, {
+      includeGhostLearning: appliedGhostLearningEnabled
+    });
+  }, [
+    appendSuppressedLibraryForCluster,
+    appliedGhostLearningEnabled,
+    appliedVisibleAiLibraries
+  ]);
   const appliedAutoRunAiLibraryIds = useMemo(() => {
     return appliedClusterLibraryRunIds;
   }, [appliedClusterLibraryRunIds]);
@@ -15023,7 +15134,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     const controller = new AbortController();
     let cancelled = false;
 
-    computeBacktestRowsOnServer(
+    computeBacktestRowsAsync(
       {
         blueprints: everyCandleTradeBlueprints,
         candleSeriesBySymbol,
@@ -15039,7 +15150,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         minutePreciseEnabled: appliedBacktestSettings.minutePreciseEnabled,
         limit: everyCandleTradeBlueprints.length
       },
-      controller.signal
+      {
+        signal: controller.signal
+      }
     )
       .then((rows) => {
         if (cancelled || controller.signal.aborted) {
@@ -16120,7 +16233,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     const controller = new AbortController();
     let cancelled = false;
 
-    computeBacktestRowsOnServer(
+    computeBacktestRowsAsync(
       {
         blueprints: chartPanelTradeBlueprints,
         candleSeriesBySymbol: {
@@ -16137,7 +16250,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         trailingDistPct,
         limit: chartPanelTradeBlueprints.length
       },
-      controller.signal
+      {
+        signal: controller.signal
+      }
     )
       .then((rows) => {
         if (cancelled || controller.signal.aborted) {
@@ -16674,8 +16789,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       });
     const hasAiAnalysisPass =
       appliedSettingsSnapshot.antiCheatEnabled || shouldPreloadAiLibraries;
-    const shouldShowPostReplayAiPhase =
-      hasAiAnalysisPass && !shouldPreloadAiLibraries;
+    const shouldShowPostReplayAiPhase = hasAiAnalysisPass;
     const statsDateStartSnapshot = appliedBacktestStatsDateStartRef.current;
     const statsDateEndSnapshot = appliedBacktestStatsDateEndRef.current;
     const aiModelEveryBarMode = usesAizipEveryCandleMode(
@@ -16911,9 +17025,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       queueStatsRefreshStatus("Recovering Replay Locally");
       setLoadingProgressFromRatio(0.82);
       updateStatsRefreshOperation({
-        label: "Switching from server replay to the local engine",
+        label: "Retrying replay on the main thread",
         detail:
-          "The remote replay request exceeded its budget, so the same candidate batch is being resolved locally against the already loaded candle set.",
+          "The background replay worker could not finish this batch, so the same already-loaded candles are being replayed locally as a final fallback.",
         telemetry: `${chronologicalTradeBlueprints.length.toLocaleString()} candidates queued for local replay`,
         progress: 82,
         cursorMs: analysisStartMs,
@@ -16934,7 +17048,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       }, 0);
     };
 
-    const nextAutoRunSignature = `${backtestRunCount}|${serializeBacktestSettingsSnapshot(appliedSettingsSnapshot)}`;
     const startReplay = () => {
       if (cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
         return;
@@ -16976,9 +17089,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         recoverReplayLocally();
       }, 90_000);
 
-      computeBacktestRowsOnServer(
+      computeBacktestRowsAsync(
         replayPayload,
-        requestController.signal
+        {
+          signal: requestController.signal
+        }
       )
         .then((finalizedRows) => {
           if (
@@ -17002,19 +17117,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     };
 
     void (async () => {
-      if (shouldPreloadAiLibraries) {
-        aiLibraryAutoRunSignatureRef.current = nextAutoRunSignature;
-        queueStatsRefreshStatus("Loading AI Libraries");
-        await runAllLibrariesRef.current({
-          libraryIds: activeLibraryIds,
-          settingsSource: appliedSettingsSnapshot.selectedAiLibrarySettings,
-          backtestSettings: appliedSettingsSnapshot
-        });
-        if (cancelled || settled || backtestHistoryJobIdRef.current !== nextJobId) {
-          return;
-        }
-      }
-
       startReplay();
     })();
 
@@ -21395,7 +21497,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           selectedModels,
           usesAizipEveryCandleMode(settings.aiMode, settings.aiFilterEnabled)
         );
-        const rows = await computeBacktestRowsOnServer({
+        const rows = await computeBacktestRowsAsync({
           blueprints,
           candleSeriesBySymbol: {
             [settings.symbol]: candles
@@ -21592,7 +21694,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           selectedModels,
           usesAizipEveryCandleMode(settings.aiMode, settings.aiFilterEnabled)
         );
-        const rows = await computeBacktestRowsOnServer({
+        const rows = await computeBacktestRowsAsync({
           blueprints,
           candleSeriesBySymbol,
           oneMinuteCandlesBySymbol:
@@ -22161,7 +22263,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         options?.libraryIds && options.libraryIds.length > 0
           ? options.libraryIds
           : selectedAiLibraries;
-      const activeIds = appendSuppressedLibraryForCluster(sourceIds);
+      const includeGhostLearning = options?.backtestSettings
+        ? (options.backtestSettings.selectedAiLibraries ?? []).some((libraryId) =>
+            isGhostLearningLibraryId(libraryId)
+          )
+        : ghostLearningEnabled;
+      const activeIds = appendSuppressedLibraryForCluster(sourceIds, {
+        includeGhostLearning
+      });
 
       if (activeIds.length === 0) {
         return;
@@ -22179,6 +22288,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     [
       appendSuppressedLibraryForCluster,
       aiLibraryDefById,
+      ghostLearningEnabled,
       runAiLibrary,
       selectedAiLibraries,
     ]
