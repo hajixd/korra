@@ -22443,7 +22443,7 @@ function ClusterMapInner({
                       }
                       if (isSelectedLib) {
                         return selectedLibraryContribution == null
-                          ? "â€”"
+                          ? "?"
                           : `${Math.round(selectedLibraryContribution * 100)}%`;
                       }
                       if (isSelectedLib && selectedLibraryContribution == null) {
@@ -22451,7 +22451,7 @@ function ClusterMapInner({
                       }
                       if (isSelectedLib) {
                         return selectedLibraryContribution == null
-                          ? "â€”"
+                          ? "?"
                           : `${Math.round(selectedLibraryContribution * 100)}%`;
                       }
                       const v = resolveNonHdbConfidence(

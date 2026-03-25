@@ -8562,7 +8562,7 @@ const BacktestPerTradeMiniChart = ({
   const formatChartPrice = (value: number) =>
     Number.isFinite(value)
       ? value.toLocaleString(undefined, { maximumFractionDigits: 3 })
-      : "â€“";
+      : "?";
   const formatChartPnl = (value: number) => `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(3)}`;
   const toPnl = (price: number) => (price - entryPrice) * direction * usdPerUnit;
   const miniSegments = useMemo(() => {
@@ -9366,7 +9366,7 @@ const buildDimensionStatsSummary = (params: {
           lag,
           name:
             mode === "individual"
-              ? `${feature.label} - ${subName} Â· t-${lag}`
+              ? `${feature.label} - ${subName} ? t-${lag}`
               : `${feature.label} - ${subName}`
         });
       }
@@ -9503,7 +9503,7 @@ const buildDimensionStatsSummary = (params: {
     const winHigh = highTotal > 0 ? highWins / highTotal : null;
     const lift = winLow === null || winHigh === null ? null : winHigh - winLow;
 
-    let optimal = "â€”";
+    let optimal = "?";
 
     if (winLow !== null && winHigh !== null) {
       if (winHigh > winLow) {
@@ -10377,7 +10377,7 @@ const getAiZipTradeDisplayId = (trade: Pick<HistoryItem, "id" | "entryTime">) =>
   ).trim();
 
   if (!rawId) {
-    return "â€”";
+    return "?";
   }
 
   const entryMs = (() => {
@@ -11216,7 +11216,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         password: event.target.value
                       }))
                     }
-                    placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+                    placeholder="????????"
                     autoComplete={authMode === "login" ? "current-password" : "new-password"}
                     disabled={formDisabled}
                   />
@@ -12774,7 +12774,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         label: "Freezing the active backtest snapshot",
         detail:
           "Clearing the prior replay result, locking the current settings, and planning the new 5-step backtest run before data loads begin.",
-        telemetry: `${nextSettings.symbol} Â· ${nextSettings.timeframe} Â· ${nextSettings.minutePreciseEnabled ? `${nextSettings.precisionTimeframe} precision enabled` : "analysis-only replay"}`,
+        telemetry: `${nextSettings.symbol} ? ${nextSettings.timeframe} ? ${nextSettings.minutePreciseEnabled ? `${nextSettings.precisionTimeframe} precision enabled` : "analysis-only replay"}`,
         progress: 8,
         cursorMs: phaseStartMs,
         resetClock: true
@@ -14419,8 +14419,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       telemetry:
         `${appliedBacktestSettings.timeframe} target ${targetBars.toLocaleString()} bars` +
         (shouldLoadPrecisionSupport
-          ? ` Â· ${precisionTimeframe} precision target ${precisionTargetBars.toLocaleString()} bars`
-          : " Â· precision not required"),
+          ? ` ? ${precisionTimeframe} precision target ${precisionTargetBars.toLocaleString()} bars`
+          : " ? precision not required"),
       progress: 8,
       cursorMs: historyRequestWindow?.startIso ? Date.parse(historyRequestWindow.startIso) : undefined,
       resetClock: true
@@ -14434,7 +14434,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         telemetry:
           `${existingCandles.length.toLocaleString()} analysis bars ready` +
           (shouldLoadPrecisionSupport
-            ? ` Â· ${existingPrecisionCandles.length.toLocaleString()} precision bars ready`
+            ? ` ? ${existingPrecisionCandles.length.toLocaleString()} precision bars ready`
             : ""),
         progress: 100,
         cursorMs: historyRequestWindow?.startIso ? Date.parse(historyRequestWindow.startIso) : undefined,
@@ -14478,7 +14478,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               ? `Fetching ${appliedBacktestSettings.timeframe} candles for the requested date window, then checking whether the returned range covers the warmup bars and replay window.`
               : `Fetching the deeper ${appliedBacktestSettings.timeframe} replay seed so candidate generation has enough warmup bars and lookahead coverage.`,
             telemetry:
-              `${appliedBacktestSettings.symbol} Â· ${appliedBacktestSettings.timeframe} Â· target ${targetBars.toLocaleString()} bars`,
+              `${appliedBacktestSettings.symbol} ? ${appliedBacktestSettings.timeframe} ? target ${targetBars.toLocaleString()} bars`,
             progress: 18,
             cursorMs: historyRequestWindow?.startIso ? Date.parse(historyRequestWindow.startIso) : undefined,
             resetClock: true
@@ -14528,7 +14528,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
             detail:
               "Loading the lower timeframe support candles that the replay engine uses to refine entries, exits, and stop handling inside each analysis candle.",
             telemetry:
-              `${appliedBacktestSettings.symbol} Â· ${precisionTimeframe} Â· target ${precisionTargetBars.toLocaleString()} bars`,
+              `${appliedBacktestSettings.symbol} ? ${precisionTimeframe} ? target ${precisionTargetBars.toLocaleString()} bars`,
             progress: 64,
             cursorMs:
               precisionHistoryRequestWindow?.startIso
@@ -14648,7 +14648,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
             telemetry:
               `${resolvedReplaySeedCandles.length.toLocaleString()} analysis bars ready` +
               (shouldLoadPrecisionSupport
-                ? ` Â· ${(backtestOneMinuteSeriesMapRef.current[precisionKey]?.length ?? existingPrecisionCandles.length).toLocaleString()} precision bars available`
+                ? ` ? ${(backtestOneMinuteSeriesMapRef.current[precisionKey]?.length ?? existingPrecisionCandles.length).toLocaleString()} precision bars available`
                 : ""),
             progress: 94
           });
@@ -16854,7 +16854,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       detail:
         "Locking the replay date window, sorting candidate trades into execution order, and preparing the candle maps the replay engine needs before execution begins.",
       telemetry:
-        `${tradeBlueprintsSnapshot.length.toLocaleString()} candidates Â· target ${backtestTargetTradesSnapshot.toLocaleString()} trades Â· ${Object.keys(backtestHistorySeriesBySymbolSnapshot).length.toLocaleString()} symbol candle sets`,
+        `${tradeBlueprintsSnapshot.length.toLocaleString()} candidates ? target ${backtestTargetTradesSnapshot.toLocaleString()} trades ? ${Object.keys(backtestHistorySeriesBySymbolSnapshot).length.toLocaleString()} symbol candle sets`,
       progress: 18,
       cursorMs: analysisStartMs,
       resetClock: true
@@ -16866,7 +16866,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         label: "No trades survived candidate generation",
         detail:
           "The validated candle seed did not produce any replayable trade candidates after model selection, date filters, and replay caps were applied.",
-        telemetry: `0 candidates ready for replay Â· ${Object.keys(backtestHistorySeriesBySymbolSnapshot).length.toLocaleString()} symbol candle sets inspected`,
+        telemetry: `0 candidates ready for replay ? ${Object.keys(backtestHistorySeriesBySymbolSnapshot).length.toLocaleString()} symbol candle sets inspected`,
         progress: 100,
         cursorMs: analysisEndMs,
         resetClock: true
@@ -17061,7 +17061,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           ? "Resolving each candidate against the analysis candles and the precision support candles so entries, exits, TP, SL, break-even, and trailing behavior are replayed consistently."
           : "Resolving each candidate against the analysis candle set so entries, exits, TP, SL, break-even, and trailing behavior are replayed consistently.",
         telemetry:
-          `${chronologicalTradeBlueprints.length.toLocaleString()} candidates Â· ${Object.keys(backtestHistorySeriesBySymbolSnapshot).length.toLocaleString()} symbol candle sets`,
+          `${chronologicalTradeBlueprints.length.toLocaleString()} candidates ? ${Object.keys(backtestHistorySeriesBySymbolSnapshot).length.toLocaleString()} symbol candle sets`,
         progress: 8,
         cursorMs: analysisStartMs,
         resetClock: true
@@ -17077,7 +17077,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
             ? "The replay engine is stepping through analysis candles and precision support candles to resolve the exact order of entries, exits, and stop logic."
             : "The replay engine is stepping through the analysis candle set to resolve the exact order of entries, exits, and stop logic.",
           telemetry:
-            `${chronologicalTradeBlueprints.length.toLocaleString()} candidates Â· ${Object.keys(backtestHistorySeriesBySymbolSnapshot).length.toLocaleString()} symbol candle sets Â· ${formatStatsRefreshElapsedLabel(elapsedMs)}`,
+            `${chronologicalTradeBlueprints.length.toLocaleString()} candidates ? ${Object.keys(backtestHistorySeriesBySymbolSnapshot).length.toLocaleString()} symbol candle sets ? ${formatStatsRefreshElapsedLabel(elapsedMs)}`,
           progress: progressRatio * 100,
           cursorMs: analysisStartMs + analysisSpanMs * Math.min(0.98, progressRatio)
         });
@@ -17794,7 +17794,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
         applySettings(migrated);
       }
-    } catch { /* corrupt data â€“ ignore */ }
+    } catch { /* corrupt data ? ignore */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopedSettingsStorageKey]);
 
@@ -17815,7 +17815,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   useEffect(() => {
     try {
       localStorage.setItem(scopedSettingsStorageKey, JSON.stringify(collectSettings()));
-    } catch { /* storage full â€“ ignore */ }
+    } catch { /* storage full ? ignore */ }
   }, [collectSettings, scopedSettingsStorageKey]);
 
   useEffect(() => {
@@ -19690,7 +19690,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     const onKeyDown = (event: KeyboardEvent) => {
       const isOptionR =
         event.altKey &&
-        (event.code === "KeyR" || event.key.toLowerCase() === "r" || event.key === "Â®");
+        (event.code === "KeyR" || event.key.toLowerCase() === "r" || event.key === "?");
 
       if (!isOptionR) {
         return;
@@ -22676,7 +22676,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               ? "neutral"
               : "down"
         ),
-        meta: `${backtestSummary.wins.toLocaleString("en-US")} wins Â· ${backtestSummary.losses.toLocaleString("en-US")} losses`
+        meta: `${backtestSummary.wins.toLocaleString("en-US")} wins ? ${backtestSummary.losses.toLocaleString("en-US")} losses`
       },
       {
         label: "Profit Factor",
@@ -22718,7 +22718,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         label: "Avg Hold",
         value: formatMinutesCompact(backtestSummary.avgHoldMinutes),
         tone: "neutral",
-        meta: `${formatMinutesCompact(backtestSummary.avgWinDurationMin)} win Â· ${formatMinutesCompact(backtestSummary.avgLossDurationMin)} loss`
+        meta: `${formatMinutesCompact(backtestSummary.avgWinDurationMin)} win ? ${formatMinutesCompact(backtestSummary.avgLossDurationMin)} loss`
       },
       {
         label: "Avg PnL / Trade",
@@ -22782,7 +22782,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       },
       {
         label: "Best Day",
-        value: backtestSummary.bestDay ? formatSignedUsd(backtestSummary.bestDay.pnl) : "â€”",
+        value: backtestSummary.bestDay ? formatSignedUsd(backtestSummary.bestDay.pnl) : "?",
         tone:
           !hasTrades || !backtestSummary.bestDay
             ? "neutral"
@@ -22955,7 +22955,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           disabled={itemCount <= 1}
           aria-label={`${label} previous`}
         >
-          â†
+          ?
         </button>
         <span className="backtest-stat-nav-copy">
           <span className="backtest-stat-nav-title" title={primaryText}>
@@ -22972,7 +22972,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           disabled={itemCount <= 1}
           aria-label={`${label} next`}
         >
-          â†’
+          ?
         </button>
       </>
     );
@@ -22993,11 +22993,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       modelRowsByPnl.length > 0 ? modelRowsByPnl[modelRowsByPnl.length - 1] : null;
     const modelPnlValue = buildPnlNavigator(
       "Model PnL",
-      mainStatsModelPnlFocusRow?.label ?? "â€”",
+      mainStatsModelPnlFocusRow?.label ?? "?",
       mainStatsModelPnlFocusRow
-        ? `${formatSignedUsd(mainStatsModelPnlFocusRow.total)} Â· ${
+        ? `${formatSignedUsd(mainStatsModelPnlFocusRow.total)} ? ${
             mainStatsModelPnlFocusRow.trades
-          } trades Â· avg ${formatSignedUsd(
+          } trades ? avg ${formatSignedUsd(
             mainStatsModelPnlFocusRow.total / Math.max(1, mainStatsModelPnlFocusRow.trades)
           )}`
         : "No model data",
@@ -23025,11 +23025,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       sessionRowsByPnl.length > 0 ? sessionRowsByPnl[sessionRowsByPnl.length - 1] : null;
     const sessionPnlValue = buildPnlNavigator(
       "Session PnL",
-      mainStatsSessionPnlFocusRow?.label ?? "â€”",
+      mainStatsSessionPnlFocusRow?.label ?? "?",
       mainStatsSessionPnlFocusRow
-        ? `${formatSignedUsd(mainStatsSessionPnlFocusRow.total)} Â· ${
+        ? `${formatSignedUsd(mainStatsSessionPnlFocusRow.total)} ? ${
             mainStatsSessionPnlFocusRow.trades
-          } trades Â· avg ${formatSignedUsd(
+          } trades ? avg ${formatSignedUsd(
             mainStatsSessionPnlFocusRow.total / Math.max(1, mainStatsSessionPnlFocusRow.trades)
           )}`
         : "No session data",
@@ -23061,13 +23061,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       monthRowsByPnl.length > 0 ? monthRowsByPnl[monthRowsByPnl.length - 1] : null;
     const monthPnlValue = buildPnlNavigator(
       "Monthly PnL",
-      mainStatsMonthPnlFocusRow ? getMonthLabel(mainStatsMonthPnlFocusRow.key) : "â€”",
+      mainStatsMonthPnlFocusRow ? getMonthLabel(mainStatsMonthPnlFocusRow.key) : "?",
       mainStatsMonthPnlFocusRow
-        ? `${formatSignedUsd(mainStatsMonthPnlFocusRow.total)} / month Â· ${
+        ? `${formatSignedUsd(mainStatsMonthPnlFocusRow.total)} / month ? ${
             mainStatsMonthPnlFocusRow.months
-          } months Â· ${
+          } months ? ${
             mainStatsMonthPnlFocusRow.trades
-          } trades Â· avg ${formatSignedUsd(
+          } trades ? avg ${formatSignedUsd(
             mainStatsMonthPnlFocusRow.avgPerTrade
           )} / trade`
         : "No month data",
@@ -23341,7 +23341,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         {
           label: "AI Efficiency",
           value:
-            mainStatsAiEfficiency === null ? "â€”" : `${Math.round(mainStatsAiEfficiency * 100)}%`,
+            mainStatsAiEfficiency === null ? "?" : `${Math.round(mainStatsAiEfficiency * 100)}%`,
           tone:
             mainStatsAiEfficiency === null
               ? "neutral"
@@ -23356,7 +23356,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           label: "AI Efficacy",
           value:
             mainStatsAiEfficacyPct === null
-              ? "â€”"
+              ? "?"
               : `${mainStatsAiEfficacyPct >= 0 ? "+" : ""}${mainStatsAiEfficacyPct.toFixed(1)}%`,
           tone:
             mainStatsAiEfficacyPct === null
@@ -23370,7 +23370,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           label: "AI Effectiveness",
           value:
             mainStatsAiEffectivenessPct === null
-              ? "â€”"
+              ? "?"
               : `${mainStatsAiEffectivenessPct >= 0 ? "+" : ""}${mainStatsAiEffectivenessPct.toFixed(1)}%`,
           tone:
             mainStatsAiEffectivenessPct === null
@@ -23385,14 +23385,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         {
           label: "Best Model",
           value:
-            bestModelRow ? `${bestModelRow.label} Â· ${formatSignedUsd(bestModelRow.total)}` : "â€”",
+            bestModelRow ? `${bestModelRow.label} ? ${formatSignedUsd(bestModelRow.total)}` : "?",
           tone: bestModelRow === null ? "neutral" : bestModelRow.total >= 0 ? "up" : "down",
           span: 1
         },
         {
           label: "Worst Model",
           value:
-            worstModelRow ? `${worstModelRow.label} Â· ${formatSignedUsd(worstModelRow.total)}` : "â€”",
+            worstModelRow ? `${worstModelRow.label} ? ${formatSignedUsd(worstModelRow.total)}` : "?",
           tone: worstModelRow === null ? "neutral" : worstModelRow.total >= 0 ? "up" : "down",
           span: 1
         }
@@ -23414,7 +23414,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         {
           label: "Best Session",
           value:
-            bestSessionRow ? `${bestSessionRow.label} Â· ${formatSignedUsd(bestSessionRow.total)}` : "â€”",
+            bestSessionRow ? `${bestSessionRow.label} ? ${formatSignedUsd(bestSessionRow.total)}` : "?",
           tone: bestSessionRow === null ? "neutral" : bestSessionRow.total >= 0 ? "up" : "down",
           span: 1
         },
@@ -23422,8 +23422,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           label: "Worst Session",
           value:
             worstSessionRow
-              ? `${worstSessionRow.label} Â· ${formatSignedUsd(worstSessionRow.total)}`
-              : "â€”",
+              ? `${worstSessionRow.label} ? ${formatSignedUsd(worstSessionRow.total)}`
+              : "?",
           tone: worstSessionRow === null ? "neutral" : worstSessionRow.total >= 0 ? "up" : "down",
           span: 1
         }
@@ -23445,7 +23445,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         {
           label: "Best Month",
           value:
-            bestMonthRow ? `${getMonthLabel(bestMonthRow.key)} Â· ${formatSignedUsd(bestMonthRow.total)}` : "â€”",
+            bestMonthRow ? `${getMonthLabel(bestMonthRow.key)} ? ${formatSignedUsd(bestMonthRow.total)}` : "?",
           tone: bestMonthRow === null ? "neutral" : bestMonthRow.total >= 0 ? "up" : "down",
           span: 1
         },
@@ -23453,8 +23453,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           label: "Worst Month",
           value:
             worstMonthRow
-              ? `${getMonthLabel(worstMonthRow.key)} Â· ${formatSignedUsd(worstMonthRow.total)}`
-              : "â€”",
+              ? `${getMonthLabel(worstMonthRow.key)} ? ${formatSignedUsd(worstMonthRow.total)}`
+              : "?",
           tone: worstMonthRow === null ? "neutral" : worstMonthRow.total >= 0 ? "up" : "down",
           span: 1
         }
@@ -25313,7 +25313,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
             lag,
             name:
               mode === "individual"
-                ? `${feature.label} - ${subName} Â· t-${lag}`
+                ? `${feature.label} - ${subName} ? t-${lag}`
                 : `${feature.label} - ${subName}`
           });
         }
@@ -25451,7 +25451,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       const winHigh = highTotal > 0 ? highWins / highTotal : null;
       const lift = winLow === null || winHigh === null ? null : winHigh - winLow;
 
-      let optimal = "â€”";
+      let optimal = "?";
 
       if (winLow !== null && winHigh !== null) {
         if (winHigh > winLow) {
@@ -26371,9 +26371,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     statsRefreshResolvedPhasePlan.indexOf(statsRefreshActivePhaseKey) + 1
   );
   const statsRefreshPhaseName = STATS_REFRESH_PHASE_META[statsRefreshActivePhaseKey].label;
-  const statsRefreshPhaseLabel = `Phase ${statsRefreshPhaseIndex} of ${statsRefreshPhaseCount} Â· ${statsRefreshPhaseName}`;
+  const statsRefreshPhaseLabel = `Phase ${statsRefreshPhaseIndex} of ${statsRefreshPhaseCount} ? ${statsRefreshPhaseName}`;
   const statsRefreshContextLabel =
-    `${appliedBacktestSettings.symbol} Â· ${appliedBacktestSettings.timeframe} Â· ` +
+    `${appliedBacktestSettings.symbol} ? ${appliedBacktestSettings.timeframe} ? ` +
     `${appliedBacktestSettings.aiMode === "off" ? "AI Off" : "AI On"}`;
   const statsRefreshPhaseSummaryLabel =
     `Phase ${statsRefreshPhaseIndex} of ${statsRefreshPhaseCount} - ${statsRefreshPhaseName}`;
@@ -26567,7 +26567,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                   {mobileMarketSparkline ? (
                     <div className={`mobile-phone-market-change ${mobileMarketDisplayTone}`}>
                       <span className="mobile-phone-market-change-arrow" aria-hidden="true">
-                        {mobileMarketSparkline.changeValue >= 0 ? "â†—" : "â†˜"}
+                        {mobileMarketSparkline.changeValue >= 0 ? "?" : "?"}
                       </span>
                       <strong>{formatSignedUsd(mobileMarketDisplayChangeValue)}</strong>
                       <span>{formatSignedPercent(mobileMarketDisplayChangePct)}</span>
@@ -27761,7 +27761,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                     type="button"
                     className="chart-reset-btn"
                     onClick={resetChart}
-                    title="Reset chart view (âŒ¥R)"
+                    title="Reset chart view (?R)"
                   >
                     Reset Chart
                   </button>
@@ -27931,7 +27931,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                               marginBottom: 6
                             }}
                           >
-                            {selectedSymbol} Â· {selectedTimeframe}
+                            {selectedSymbol} ? {selectedTimeframe}
                           </div>
                         </div>
                       );
@@ -28884,7 +28884,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
               <AiSettingsModal
                 title={activeModelRunEntry?.name ?? "Model Run"}
-                subtitle={`${selectedSymbol} Â· JSON replay run`}
+                subtitle={`${selectedSymbol} ? JSON replay run`}
                 size="xwide"
                 cardClassName="model-run-modal-card"
                 bodyClassName="model-run-modal-body"
@@ -29051,8 +29051,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             <strong>Equity Curve</strong>
                             <span>
                               {modelRunResult
-                                ? `${modelRunResult.request.startDate} to ${modelRunResult.request.endDate} Â· ${modelRunResult.trades.length.toLocaleString("en-US")} trades`
-                                : `${TIMEFRAME_DISPLAY_LABELS[modelRunTimeframe]} Â· ${selectedSymbol}`}
+                                ? `${modelRunResult.request.startDate} to ${modelRunResult.request.endDate} ? ${modelRunResult.trades.length.toLocaleString("en-US")} trades`
+                                : `${TIMEFRAME_DISPLAY_LABELS[modelRunTimeframe]} ? ${selectedSymbol}`}
                             </span>
                           </div>
                         </header>
@@ -29077,25 +29077,25 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                           <article className="model-run-stat-card">
                             <span>Win Rate</span>
                             <strong className={modelRunResult && modelRunResult.summary.winRate >= 50 ? "up" : ""}>
-                              {modelRunResult ? `${modelRunResult.summary.winRate.toFixed(1)}%` : "â€”"}
+                              {modelRunResult ? `${modelRunResult.summary.winRate.toFixed(1)}%` : "?"}
                             </strong>
                           </article>
                           <article className="model-run-stat-card">
                             <span>Profit Factor</span>
                             <strong>
-                              {modelRunResult ? modelRunResult.summary.profitFactor.toFixed(2) : "â€”"}
+                              {modelRunResult ? modelRunResult.summary.profitFactor.toFixed(2) : "?"}
                             </strong>
                           </article>
                           <article className="model-run-stat-card">
                             <span>Average Win</span>
                             <strong className={modelRunResult ? "up" : ""}>
-                              {modelRunResult ? formatSignedUsd(modelRunResult.summary.avgWin) : "â€”"}
+                              {modelRunResult ? formatSignedUsd(modelRunResult.summary.avgWin) : "?"}
                             </strong>
                           </article>
                           <article className="model-run-stat-card">
                             <span>Average Loss</span>
                             <strong className={modelRunResult ? "down" : ""}>
-                              {modelRunResult ? formatSignedUsd(modelRunResult.summary.avgLoss) : "â€”"}
+                              {modelRunResult ? formatSignedUsd(modelRunResult.summary.avgLoss) : "?"}
                             </strong>
                           </article>
                           <article className="model-run-stat-card">
@@ -29103,13 +29103,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             <strong>
                               {modelRunResult
                                 ? modelRunResult.summary.tradeCount.toLocaleString("en-US")
-                                : "â€”"}
+                                : "?"}
                             </strong>
                           </article>
                           <article className="model-run-stat-card">
                             <span>Net PnL</span>
                             <strong className={modelRunResult && modelRunResult.summary.netPnl >= 0 ? "up" : modelRunResult ? "down" : ""}>
-                              {modelRunResult ? formatSignedUsd(modelRunResult.summary.netPnl) : "â€”"}
+                              {modelRunResult ? formatSignedUsd(modelRunResult.summary.netPnl) : "?"}
                             </strong>
                           </article>
                         </div>
@@ -29538,7 +29538,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             disabled={aiDisabled}
                             onClick={toggleOnlineLearning}
                           >
-                            Online Learning {onlineLearningEnabled ? "Â· ON" : "Â· OFF"}
+                            Online Learning {onlineLearningEnabled ? "? ON" : "? OFF"}
                           </button>
                           <button
                             type="button"
@@ -29548,7 +29548,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             disabled={aiDisabled}
                             onClick={toggleGhostLearning}
                           >
-                            Ghost Learning {ghostLearningEnabled ? "Â· ON" : "Â· OFF"}
+                            Ghost Learning {ghostLearningEnabled ? "? ON" : "? OFF"}
                           </button>
                         </div>
 
@@ -29800,12 +29800,12 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                           }}
                           style={{ width: "100%", marginBottom: "0.5rem" }}
                         >
-                          {stopMode === 0 ? "Off" : stopMode === 1 ? "Breakâ€‘Even" : "Trailing"}
+                          {stopMode === 0 ? "Off" : stopMode === 1 ? "Break?Even" : "Trailing"}
                         </button>
 
                         <div style={{ opacity: stopMode === 1 ? 1 : 0.38, pointerEvents: stopMode === 1 ? "auto" : "none", marginBottom: "0.35rem" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.78)" }}>
-                            <span>Breakâ€‘Even Trigger</span>
+                            <span>Break?Even Trigger</span>
                             <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>{Math.round(breakEvenTriggerPct)}%</span>
                           </div>
                           <input
@@ -29861,7 +29861,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             setAntiCheatEnabled((current) => !current);
                           }}
                         >
-                          Anti-Cheat {antiCheatEnabled ? "Â· ON" : "Â· OFF"}
+                          Anti-Cheat {antiCheatEnabled ? "? ON" : "? OFF"}
                         </button>
 
                         <div className="ai-zip-section-divider" />
@@ -29904,7 +29904,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                           className={`ai-zip-button ${realismLevel > 0 ? "active" : ""}`}
                           onClick={() => setRealismLevel((current) => (current > 0 ? 0 : 1))}
                         >
-                          Realism {realismLevel > 0 ? "Â· ON" : "Â· OFF"}
+                          Realism {realismLevel > 0 ? "? ON" : "? OFF"}
                         </button>
 
                         <div className="ai-zip-section-divider" />
@@ -30124,8 +30124,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                         <strong>{feature.label}</strong>
                         <span>{feature.note ?? "Feature context for AI.zip embeddings."}</span>
                         <em>
-                          {FEATURE_LEVEL_LABEL[level as AiFeatureLevel]} Â·{" "}
-                          {mode === "ensemble" ? "Ensemble" : "Individualization"} Â· +
+                          {FEATURE_LEVEL_LABEL[level as AiFeatureLevel]} ?{" "}
+                          {mode === "ensemble" ? "Ensemble" : "Individualization"} ? +
                           {dimsAdded.toLocaleString("en-US")} dims
                         </em>
                       </button>
@@ -30207,7 +30207,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                                     }}
                                     title="Move up"
                                   >
-                                    â†‘
+                                    ?
                                   </button>
                                   <button
                                     type="button"
@@ -30219,7 +30219,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                                     }}
                                     title="Move down"
                                   >
-                                    â†“
+                                    ?
                                   </button>
                                   <button
                                     type="button"
@@ -30883,7 +30883,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                                           <span style={{ fontWeight: 700 }}>{trade.entrySource}</span>
                                           <br />
                                           <span style={{ fontSize: 9, opacity: 0.8 }}>
-                                            {trade.symbol} Â· {trade.result}
+                                            {trade.symbol} ? {trade.result}
                                           </span>
                                         </div>
                                       </td>
@@ -31089,7 +31089,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             {selectedBacktestDateKey
                               ? `${getWeekdayLabel(selectedBacktestDateKey)}, ${getCalendarDateLabel(
                                   selectedBacktestDateKey
-                                )} Â· ${selectedBacktestDayTrades.length} trade${
+                                )} ? ${selectedBacktestDayTrades.length} trade${
                                   selectedBacktestDayTrades.length === 1 ? "" : "s"
                                 }`
                               : "Select a day in the grid to inspect the matching trade set."}
@@ -32229,19 +32229,19 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                               : Number.NaN;
                             const corrText = Number.isFinite(corrPct)
                               ? `${corrPct >= 0 ? "+" : ""}${corrPct.toFixed(1)}%`
-                              : "â€”";
+                              : "?";
                             const winLowText =
-                              dimension.winLow === null ? "â€”" : `${(dimension.winLow * 100).toFixed(1)}%`;
+                              dimension.winLow === null ? "?" : `${(dimension.winLow * 100).toFixed(1)}%`;
                             const winHighText =
                               dimension.winHigh === null
-                                ? "â€”"
+                                ? "?"
                                 : `${(dimension.winHigh * 100).toFixed(1)}%`;
                             const liftText =
                               dimension.lift === null
-                                ? "â€”"
+                                ? "?"
                                 : `${dimension.lift >= 0 ? "+" : ""}${(dimension.lift * 100).toFixed(1)}pp`;
-                            const minText = Number.isFinite(dimension.min) ? dimension.min.toFixed(4) : "â€”";
-                            const maxText = Number.isFinite(dimension.max) ? dimension.max.toFixed(4) : "â€”";
+                            const minText = Number.isFinite(dimension.min) ? dimension.min.toFixed(4) : "?";
+                            const maxText = Number.isFinite(dimension.max) ? dimension.max.toFixed(4) : "?";
                             const corrColor =
                               corrPct >= 0 ? "rgba(60,220,120,0.92)" : "rgba(230,80,80,0.92)";
                             const liftColor =
