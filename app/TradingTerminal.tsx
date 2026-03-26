@@ -6588,30 +6588,6 @@ const fetchHybridHistoryCandles = async (
     }
 
     if (coverageWindow?.strictCoverage) {
-      if (
-        coveredMergedCandles.length >= MIN_SEED_CANDLES &&
-        candlesReachDateRangeStart(
-          mergedWithRecentCandles,
-          timeframe,
-          coverageWindow.startYmd,
-          coverageWindow.leadingBars ?? 0
-        )
-      ) {
-        return coveredMergedCandles.slice(-targetBars);
-      }
-
-      if (
-        candlesReachDateRangeStart(
-          historyCandles,
-          timeframe,
-          coverageWindow.startYmd,
-          coverageWindow.leadingBars ?? 0
-        ) &&
-        coveredHistoryCandles.length >= MIN_SEED_CANDLES
-      ) {
-        return coveredHistoryCandles.slice(-targetBars);
-      }
-
       return [];
     }
 
@@ -6717,6 +6693,29 @@ const VOLUME_NOWCAST_CALIBRATION_FULL_SAMPLES = 10;
 const VOLUME_NOWCAST_CALIBRATION_PENDING_LIMIT = 32;
 const VP_THRESHOLD_RATIO = 0.8;
 const PRICE_STREAM_URL = "/api/market/stream";
+const BACKTEST_RANGE_FETCH_TARGET_BARS = 4600;
+const BACKTEST_RANGE_FETCH_TIMEOUT_CAP_MS = 4 * 60_000;
+
+const resolveBacktestSeedFetchTimeoutMs = (
+  targetBars: number,
+  coverageWindow?: HistoryCoverageWindow
+): number => {
+  if (!coverageWindow) {
+    return BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS;
+  }
+
+  const safeTargetBars = Math.max(MIN_SEED_CANDLES, Math.floor(targetBars || 0));
+  const chunkEstimate = Math.max(1, Math.ceil(safeTargetBars / BACKTEST_RANGE_FETCH_TARGET_BARS));
+  const leadingBarLoad = Math.max(0, Math.floor((coverageWindow.leadingBars ?? 0) / 2000));
+
+  return clamp(
+    BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS +
+      chunkEstimate * 12_000 +
+      leadingBarLoad * 4_000,
+    BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
+    BACKTEST_RANGE_FETCH_TIMEOUT_CAP_MS
+  );
+};
 
 const formatPrice = (value: number): string => {
   if (value < 1) {
@@ -14527,9 +14526,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           appliedBacktestFallbackOneMinuteCandlesRef.current
         )
       : EMPTY_CANDLES;
-    const recentOneMinutePromise = shouldLoadPrecisionSupport
-      ? fetchRecentOneMinuteCandles(undefined, BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS)
-      : undefined;
+    let recentOneMinutePromise: Promise<Candle[]> | undefined;
     const minimumReplaySeedBars = getMinimumAizipSeedBars(appliedBacktestSettings.chunkBars);
     const leadingBars = Math.max(
       appliedBacktestSettings.chunkBars * 3,
@@ -14574,6 +14571,39 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
             leadingBars: precisionPaddingBars
           })
         : null;
+    const analysisCoverageWindow = hasDateRange
+      ? {
+          startYmd: appliedBacktestSettings.statsDateStart,
+          endYmd: appliedBacktestSettings.statsDateEnd,
+          leadingBars,
+          strictCoverage: true
+        }
+      : undefined;
+    const precisionCoverageWindow =
+      shouldLoadPrecisionSupport && hasDateRange
+        ? {
+            startYmd: appliedBacktestSettings.statsDateStart,
+            endYmd: appliedBacktestSettings.statsDateEnd,
+            leadingBars: precisionPaddingBars,
+            strictCoverage: false
+          }
+        : undefined;
+    const analysisSeedFetchTimeoutMs = resolveBacktestSeedFetchTimeoutMs(
+      targetBars,
+      analysisCoverageWindow
+    );
+    const precisionSeedFetchTimeoutMs = resolveBacktestSeedFetchTimeoutMs(
+      precisionTargetBars,
+      precisionCoverageWindow
+    );
+    const recentSeedFetchTimeoutMs = Math.max(
+      BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
+      analysisSeedFetchTimeoutMs,
+      precisionSeedFetchTimeoutMs
+    );
+    recentOneMinutePromise = shouldLoadPrecisionSupport
+      ? fetchRecentOneMinuteCandles(undefined, recentSeedFetchTimeoutMs)
+      : undefined;
     // A requested historical date range should not silently degrade to a recent fragment.
     const allowOneMinuteFallback =
       !hasDateRange && (shouldLoadPrecisionSupport || appliedBacktestSettings.timeframe === "1m");
@@ -14680,16 +14710,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               targetBars,
               recentOneMinutePromise,
               allowOneMinuteFallback,
-              BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
+              analysisSeedFetchTimeoutMs,
               hasDateRange
                 ? {
                     requestWindow: historyRequestWindow ?? undefined,
-                    coverageWindow: {
-                      startYmd: appliedBacktestSettings.statsDateStart,
-                      endYmd: appliedBacktestSettings.statsDateEnd,
-                      leadingBars,
-                      strictCoverage: true
-                    }
+                    coverageWindow: analysisCoverageWindow
                   }
               : undefined
             )
@@ -14734,16 +14759,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 precisionTargetBars,
                 recentOneMinutePromise,
                 true,
-                BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
+                precisionSeedFetchTimeoutMs,
                 hasDateRange
                   ? {
                       requestWindow: precisionHistoryRequestWindow ?? undefined,
-                      coverageWindow: {
-                        startYmd: appliedBacktestSettings.statsDateStart,
-                        endYmd: appliedBacktestSettings.statsDateEnd,
-                        leadingBars: precisionPaddingBars,
-                        strictCoverage: false
-                      }
+                      coverageWindow: precisionCoverageWindow
                     }
                   : undefined
               ).catch(() => [])
@@ -14850,41 +14870,20 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               appliedBacktestSettings.statsDateStart,
               leadingBars
             );
+          const hasReplaySeedFullCoverage =
+            !hasDateRange ||
+            candlesCoverDateRange(
+              resolvedReplaySeedCandles,
+              appliedBacktestSettings.timeframe,
+              appliedBacktestSettings.statsDateStart,
+              appliedBacktestSettings.statsDateEnd,
+              leadingBars
+            );
           const hasReplaySeedCandles =
             hasUsableAizipSeedCandles(resolvedReplaySeedCandles, minimumReplaySeedBars) &&
-            hasReplaySeedRangeStart;
+            hasReplaySeedRangeStart &&
+            hasReplaySeedFullCoverage;
           if (hasReplaySeedCandles) {
-            if (
-              hasDateRange &&
-              !candlesCoverDateRange(
-                resolvedReplaySeedCandles,
-                appliedBacktestSettings.timeframe,
-                appliedBacktestSettings.statsDateStart,
-                appliedBacktestSettings.statsDateEnd,
-                leadingBars
-              )
-            ) {
-              const availableLastTime =
-                resolvedReplaySeedCandles[resolvedReplaySeedCandles.length - 1]?.time ?? null;
-              const requestedEndExclusiveMs = getEffectiveUtcDayEndExclusiveMsFromYmd(
-                appliedBacktestSettings.statsDateEnd,
-                appliedBacktestSettings.timeframe
-              );
-              const trailingGapMs =
-                requestedEndExclusiveMs != null && availableLastTime != null
-                  ? requestedEndExclusiveMs - availableLastTime - getTimeframeMs(appliedBacktestSettings.timeframe)
-                  : Number.POSITIVE_INFINITY;
-              const shouldWarnForCoverageGap =
-                !Number.isFinite(trailingGapMs) ||
-                trailingGapMs > Math.max(12 * 60 * 60_000, getTimeframeMs(appliedBacktestSettings.timeframe) * 24);
-              if (shouldWarnForCoverageGap) {
-                console.warn("[BacktestHistory] Requested range exceeds available history coverage.", {
-                  requestedStart: appliedBacktestSettings.statsDateStart,
-                  requestedEnd: appliedBacktestSettings.statsDateEnd,
-                  availableEnd: availableLastTime == null ? null : new Date(availableLastTime).toISOString()
-                });
-              }
-            }
             startStatsRefreshPhaseHold(
               "Building Trade Candidates",
               STATS_REFRESH_PHASE_META.candidates.durationMs
