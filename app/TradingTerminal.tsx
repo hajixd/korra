@@ -6337,6 +6337,109 @@ const applyHistoryCoverageWindow = (
   );
 };
 
+const pickBroaderHistoryCoverage = (current: Candle[], candidate: Candle[]): Candle[] => {
+  if (candidate.length === 0) {
+    return current;
+  }
+  if (current.length === 0) {
+    return candidate;
+  }
+
+  const currentFirst = normalizeTimestampMs(current[0]?.time ?? null) ?? Number.POSITIVE_INFINITY;
+  const candidateFirst = normalizeTimestampMs(candidate[0]?.time ?? null) ?? Number.POSITIVE_INFINITY;
+  const currentLast =
+    normalizeTimestampMs(current[current.length - 1]?.time ?? null) ?? Number.NEGATIVE_INFINITY;
+  const candidateLast =
+    normalizeTimestampMs(candidate[candidate.length - 1]?.time ?? null) ?? Number.NEGATIVE_INFINITY;
+
+  if (candidateFirst < currentFirst) {
+    return candidate;
+  }
+  if (candidateFirst === currentFirst && candidateLast > currentLast) {
+    return candidate;
+  }
+  if (candidateFirst === currentFirst && candidateLast === currentLast && candidate.length > current.length) {
+    return candidate;
+  }
+
+  return current;
+};
+
+const getExpandedHistoryRequestCount = (
+  currentCount: number,
+  timeframe: Timeframe,
+  coverageWindow?: HistoryCoverageWindow
+): number => {
+  const coverageEstimate = coverageWindow
+    ? estimateHistoryBarsForDateRange(
+        coverageWindow.startYmd,
+        coverageWindow.endYmd,
+        timeframe,
+        coverageWindow.leadingBars ?? 0
+      )
+    : currentCount;
+  const growthFloor = Math.max(
+    coverageEstimate,
+    currentCount + Math.max(64, Math.floor(currentCount * 0.35))
+  );
+
+  return clamp(
+    Math.max(growthFloor, Math.ceil(currentCount * 1.8)),
+    MIN_SEED_CANDLES,
+    CLICKHOUSE_MAX_HISTORY_CANDLES
+  );
+};
+
+const fetchHistoryApiCandlesUntilCovered = async (
+  timeframe: Timeframe,
+  targetCount: number,
+  timeoutMs = CLIENT_CANDLE_FETCH_TIMEOUT_MS,
+  options?: {
+    requestWindow?: HistoryApiRequestWindow;
+    coverageWindow?: HistoryCoverageWindow;
+  }
+): Promise<Candle[]> => {
+  const coverageWindow = options?.coverageWindow;
+  let requestCount = clamp(targetCount, MIN_SEED_CANDLES, CLICKHOUSE_MAX_HISTORY_CANDLES);
+  let bestCandles = EMPTY_CANDLES;
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const candles = await fetchHistoryApiCandles(
+      timeframe,
+      requestCount,
+      timeoutMs,
+      options?.requestWindow
+    );
+    bestCandles = pickBroaderHistoryCoverage(bestCandles, candles);
+
+    if (!coverageWindow || candlesSatisfyHistoryCoverage(candles, timeframe, coverageWindow)) {
+      return candles;
+    }
+
+    if (requestCount >= CLICKHOUSE_MAX_HISTORY_CANDLES) {
+      break;
+    }
+
+    if (candles.length > 0 && candles.length < requestCount) {
+      break;
+    }
+
+    const nextRequestCount = getExpandedHistoryRequestCount(
+      requestCount,
+      timeframe,
+      coverageWindow
+    );
+
+    if (nextRequestCount <= requestCount) {
+      break;
+    }
+
+    requestCount = nextRequestCount;
+  }
+
+  return bestCandles;
+};
+
 const fetchHybridHistoryCandles = async (
   timeframe: Timeframe,
   targetBars: number,
@@ -6355,27 +6458,12 @@ const fetchHybridHistoryCandles = async (
     Boolean(coverageWindow);
   try {
     const historyCount = Math.min(targetBars, CLICKHOUSE_MAX_HISTORY_CANDLES);
-    let historyCandles = await fetchHistoryApiCandles(
+    let historyCandles = await fetchHistoryApiCandlesUntilCovered(
       timeframe,
       historyCount,
       timeoutMs,
-      options?.requestWindow
+      options
     );
-
-    if (coverageWindow && !candlesSatisfyHistoryCoverage(historyCandles, timeframe, coverageWindow)) {
-      const deepHistoryCandles = await fetchHistoryApiCandles(
-        timeframe,
-        historyCount,
-        timeoutMs
-      ).catch(() => []);
-
-      if (
-        candlesSatisfyHistoryCoverage(deepHistoryCandles, timeframe, coverageWindow) ||
-        deepHistoryCandles.length > historyCandles.length
-      ) {
-        historyCandles = deepHistoryCandles;
-      }
-    }
 
     const coveredHistoryCandles = applyHistoryCoverageWindow(
       historyCandles,
@@ -32903,4 +32991,3 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     </main>
   );
 }
-

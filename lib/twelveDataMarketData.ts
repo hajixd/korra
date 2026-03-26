@@ -111,6 +111,23 @@ const candlesInFlight = new Map<string, Promise<TwelveDataCandlesPayload>>();
 let quoteCache: { expiresAt: number; value: TwelveDataQuotePayload } | null = null;
 let quoteInFlight: Promise<TwelveDataQuotePayload> | null = null;
 type TwelveDataKeyFailureType = "rate_limit" | "auth" | "other";
+type TwelveDataKeyTelemetry = {
+  creditsUsed: number | null;
+  creditsLeft: number | null;
+  creditCapacity: number | null;
+  recentLatencyMs: number | null;
+  updatedAt: number;
+};
+type TwelveDataRangeChunk = {
+  startMs: number;
+  endMs: number;
+  attempt: number;
+  repairDepth: number;
+};
+type TwelveDataRangeChunkResult = {
+  chunk: TwelveDataRangeChunk;
+  candles: TwelveDataCandleRecord[];
+};
 
 const keyFailureState = new Map<
   string,
@@ -120,6 +137,7 @@ const keyUsageState = new Map<
   string,
   { lastAttemptAt: number; lastSuccessAt: number }
 >();
+const keyTelemetryState = new Map<string, TwelveDataKeyTelemetry>();
 
 class TwelveDataRequestError extends Error {
   failureType: TwelveDataKeyFailureType;
@@ -135,6 +153,13 @@ const RATE_LIMIT_COOLDOWN_MS = 65_000;
 const AUTH_COOLDOWN_MS = 30 * 60_000;
 const TRANSIENT_COOLDOWN_MS = 15_000;
 const KEY_MIN_REQUEST_GAP_MS = 8_000;
+const EXACT_RANGE_TARGET_BARS = 4600;
+const EXACT_RANGE_OVERLAP_BARS = 1;
+const EXACT_RANGE_PADDING_BARS = 2;
+const EXACT_RANGE_MAX_REPAIR_DEPTH = 3;
+const EXACT_RANGE_MAX_REPAIR_WINDOWS = 24;
+const EXACT_RANGE_MAX_WORKERS = 6;
+const DAY_MS = 24 * 60 * 60_000;
 
 const parseConfiguredApiKeys = (): string[] => {
   const raw = [
@@ -162,6 +187,37 @@ const getApiKeys = (): string[] => {
     throw new Error("Missing TWELVE_DATA_API_KEY.");
   }
   return keys;
+};
+
+const parseHeaderNumber = (headers: Headers, name: string): number | null => {
+  const raw = headers.get(name);
+  if (!raw) {
+    return null;
+  }
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const updateApiKeyTelemetry = (apiKey: string, headers: Headers, latencyMs: number) => {
+  const creditsUsed = parseHeaderNumber(headers, "api-credits-used");
+  const creditsLeft = parseHeaderNumber(headers, "api-credits-left");
+  const existing = keyTelemetryState.get(apiKey);
+  const creditCapacity =
+    creditsUsed != null && creditsLeft != null
+      ? creditsUsed + creditsLeft
+      : existing?.creditCapacity ?? null;
+
+  keyTelemetryState.set(apiKey, {
+    creditsUsed: creditsUsed ?? existing?.creditsUsed ?? null,
+    creditsLeft: creditsLeft ?? existing?.creditsLeft ?? null,
+    creditCapacity,
+    recentLatencyMs:
+      Number.isFinite(latencyMs) && latencyMs >= 0
+        ? latencyMs
+        : existing?.recentLatencyMs ?? null,
+    updatedAt: Date.now()
+  });
 };
 
 export const hasConfiguredTwelveDataApiKeys = (): boolean => {
@@ -262,6 +318,16 @@ const getOrderedApiKeys = (): string[] => {
     if (leftReadyAt !== rightReadyAt) {
       return leftReadyAt - rightReadyAt;
     }
+    const leftCredits = keyTelemetryState.get(left)?.creditsLeft ?? Number.POSITIVE_INFINITY;
+    const rightCredits = keyTelemetryState.get(right)?.creditsLeft ?? Number.POSITIVE_INFINITY;
+    if (leftCredits !== rightCredits) {
+      return rightCredits - leftCredits;
+    }
+    const leftLatency = keyTelemetryState.get(left)?.recentLatencyMs ?? Number.POSITIVE_INFINITY;
+    const rightLatency = keyTelemetryState.get(right)?.recentLatencyMs ?? Number.POSITIVE_INFINITY;
+    if (leftLatency !== rightLatency) {
+      return leftLatency - rightLatency;
+    }
     const leftLastSuccessAt = keyUsageState.get(left)?.lastSuccessAt ?? 0;
     const rightLastSuccessAt = keyUsageState.get(right)?.lastSuccessAt ?? 0;
     if (leftLastSuccessAt !== rightLastSuccessAt) {
@@ -350,11 +416,89 @@ const normalizeError = (status: number, payload: TwelveDataJson | null, fallback
   return `Twelve Data ${status}: ${message}`;
 };
 
-const requestJson = async <T extends TwelveDataJson>(
+const requestJsonWithApiKey = async <T extends TwelveDataJson>(
+  apiKey: string,
   pathname: string,
   params: Record<string, string | number | undefined>,
   timeoutMs = DEFAULT_HTTP_TIMEOUT_MS
-): Promise<T> => {
+): Promise<{ payload: T; headers: Headers; apiKey: string }> => {
+  const url = new URL(`${TWELVE_DATA_API_BASE}${pathname}`);
+  url.searchParams.set("apikey", apiKey);
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") {
+      continue;
+    }
+    url.searchParams.set(key, String(value));
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const requestStartedAt = Date.now();
+  markApiKeyAttempt(apiKey);
+
+  try {
+    const response = await fetch(url.toString(), {
+      cache: "no-store",
+      signal: controller.signal
+    });
+    const latencyMs = Date.now() - requestStartedAt;
+    updateApiKeyTelemetry(apiKey, response.headers, latencyMs);
+
+    const text = await response.text();
+    let payload: T | null = null;
+
+    try {
+      payload = JSON.parse(text) as T;
+    } catch {
+      payload = null;
+    }
+
+    const statusValue =
+      payload && typeof payload.status === "string" ? payload.status.toLowerCase() : "";
+
+    if (!response.ok || statusValue === "error") {
+      const message = normalizeError(response.status, payload, text.slice(0, 400));
+      throw new TwelveDataRequestError(message, classifyFailureType(message));
+    }
+
+    if (!payload) {
+      throw new TwelveDataRequestError(
+        `Twelve Data ${response.status}: Empty JSON payload.`,
+        "other"
+      );
+    }
+
+    markApiKeySuccess(apiKey);
+    return {
+      payload,
+      headers: response.headers,
+      apiKey
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error && error.name === "AbortError"
+        ? "Twelve Data request timed out."
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    const requestError =
+      error instanceof TwelveDataRequestError
+        ? error
+        : new TwelveDataRequestError(message, classifyFailureType(message));
+
+    markApiKeyFailure(apiKey, requestError.failureType, requestError.message);
+    throw requestError;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
+const requestJsonDetailed = async <T extends TwelveDataJson>(
+  pathname: string,
+  params: Record<string, string | number | undefined>,
+  timeoutMs = DEFAULT_HTTP_TIMEOUT_MS
+): Promise<{ payload: T; headers: Headers; apiKey: string }> => {
   const requestStartedAt = Date.now();
   let apiKeys = getOrderedApiKeys().filter((apiKey) => getKeyReadyAt(apiKey) <= Date.now());
   let lastError: TwelveDataRequestError | null = null;
@@ -381,67 +525,13 @@ const requestJson = async <T extends TwelveDataJson>(
   }
 
   for (const apiKey of apiKeys) {
-    const url = new URL(`${TWELVE_DATA_API_BASE}${pathname}`);
-    url.searchParams.set("apikey", apiKey);
-
-    for (const [key, value] of Object.entries(params)) {
-      if (value === undefined || value === null || value === "") {
-        continue;
-      }
-      url.searchParams.set(key, String(value));
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    markApiKeyAttempt(apiKey);
-
     try {
-      const response = await fetch(url.toString(), {
-        cache: "no-store",
-        signal: controller.signal
-      });
-      const text = await response.text();
-      let payload: T | null = null;
-
-      try {
-        payload = JSON.parse(text) as T;
-      } catch {
-        payload = null;
-      }
-
-      const statusValue =
-        payload && typeof payload.status === "string" ? payload.status.toLowerCase() : "";
-
-      if (!response.ok || statusValue === "error") {
-        const message = normalizeError(response.status, payload, text.slice(0, 400));
-        throw new TwelveDataRequestError(message, classifyFailureType(message));
-      }
-
-      if (!payload) {
-        throw new TwelveDataRequestError(
-          `Twelve Data ${response.status}: Empty JSON payload.`,
-          "other"
-        );
-      }
-
-      markApiKeySuccess(apiKey);
-      return payload;
+      return await requestJsonWithApiKey<T>(apiKey, pathname, params, timeoutMs);
     } catch (error) {
-      const message =
-        error instanceof Error && error.name === "AbortError"
-          ? "Twelve Data request timed out."
-          : error instanceof Error
-            ? error.message
-            : String(error);
-      const requestError =
+      lastError =
         error instanceof TwelveDataRequestError
           ? error
-          : new TwelveDataRequestError(message, classifyFailureType(message));
-
-      markApiKeyFailure(apiKey, requestError.failureType, requestError.message);
-      lastError = requestError;
-    } finally {
-      clearTimeout(timeoutId);
+          : new TwelveDataRequestError(String(error), "other");
     }
   }
 
@@ -450,6 +540,15 @@ const requestJson = async <T extends TwelveDataJson>(
   }
 
   throw new Error("Missing TWELVE_DATA_API_KEY.");
+};
+
+const requestJson = async <T extends TwelveDataJson>(
+  pathname: string,
+  params: Record<string, string | number | undefined>,
+  timeoutMs = DEFAULT_HTTP_TIMEOUT_MS
+): Promise<T> => {
+  const result = await requestJsonDetailed<T>(pathname, params, timeoutMs);
+  return result.payload;
 };
 
 const normalizeCandleRecord = (
@@ -551,6 +650,351 @@ const getStepMs = (timeframe: string): number => {
   return TIMEFRAME_MS[timeframe] || TIMEFRAME_MS.M1;
 };
 
+const isXauTradingTime = (timestampMs: number): boolean => {
+  const date = new Date(timestampMs);
+  const day = date.getUTCDay();
+  const hour = date.getUTCHours();
+
+  if (day === 6) {
+    return false;
+  }
+
+  if (day === 5 && hour >= 22) {
+    return false;
+  }
+
+  if (day === 0 && hour < 23) {
+    return false;
+  }
+
+  if (day >= 1 && day <= 4 && hour === 22) {
+    return false;
+  }
+
+  return true;
+};
+
+const floorToStep = (timestampMs: number, stepMs: number): number => {
+  return Math.floor(timestampMs / stepMs) * stepMs;
+};
+
+const ceilToStep = (timestampMs: number, stepMs: number): number => {
+  return Math.ceil(timestampMs / stepMs) * stepMs;
+};
+
+const findNextTradingSlotAtOrAfter = (timestampMs: number, timeframe: string): number | null => {
+  if (!Number.isFinite(timestampMs)) {
+    return null;
+  }
+
+  const stepMs = Math.max(60_000, getStepMs(timeframe));
+  let probeMs = ceilToStep(timestampMs, stepMs);
+  const maxProbeMs = probeMs + 14 * DAY_MS;
+
+  while (probeMs <= maxProbeMs) {
+    if (isXauTradingTime(probeMs)) {
+      return probeMs;
+    }
+    probeMs += stepMs;
+  }
+
+  return null;
+};
+
+const findLastTradingSlotAtOrBefore = (timestampMs: number, timeframe: string): number | null => {
+  if (!Number.isFinite(timestampMs)) {
+    return null;
+  }
+
+  const stepMs = Math.max(60_000, getStepMs(timeframe));
+  let probeMs = floorToStep(timestampMs, stepMs);
+
+  while (probeMs >= 0) {
+    if (isXauTradingTime(probeMs)) {
+      return probeMs;
+    }
+    probeMs -= stepMs;
+  }
+
+  return null;
+};
+
+const mergeRangeChunks = (chunks: TwelveDataRangeChunk[]): TwelveDataRangeChunk[] => {
+  if (chunks.length <= 1) {
+    return chunks;
+  }
+
+  const sorted = [...chunks].sort(
+    (left, right) => left.startMs - right.startMs || left.endMs - right.endMs
+  );
+  const merged: TwelveDataRangeChunk[] = [sorted[0]!];
+
+  for (const chunk of sorted.slice(1)) {
+    const previous = merged[merged.length - 1]!;
+    if (chunk.startMs <= previous.endMs + 1) {
+      previous.endMs = Math.max(previous.endMs, chunk.endMs);
+      previous.attempt = Math.max(previous.attempt, chunk.attempt);
+      previous.repairDepth = Math.max(previous.repairDepth, chunk.repairDepth);
+      continue;
+    }
+    merged.push({ ...chunk });
+  }
+
+  return merged;
+};
+
+const buildRangeChunks = (
+  timeframe: string,
+  startMs: number,
+  endMs: number,
+  repairDepth = 0
+): TwelveDataRangeChunk[] => {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
+    return [];
+  }
+
+  const stepMs = Math.max(60_000, getStepMs(timeframe));
+  const chunkSpanMs = EXACT_RANGE_TARGET_BARS * stepMs;
+  const overlapMs = EXACT_RANGE_OVERLAP_BARS * stepMs;
+  const chunks: TwelveDataRangeChunk[] = [];
+  let cursorStartMs = startMs;
+
+  while (cursorStartMs <= endMs) {
+    const chunkEndMs = Math.min(endMs, cursorStartMs + chunkSpanMs - 1);
+    chunks.push({
+      startMs: cursorStartMs,
+      endMs: chunkEndMs,
+      attempt: 0,
+      repairDepth
+    });
+    if (chunkEndMs >= endMs) {
+      break;
+    }
+    cursorStartMs = Math.max(cursorStartMs + stepMs, chunkEndMs - overlapMs + 1);
+  }
+
+  return chunks;
+};
+
+const splitRangeChunk = (
+  timeframe: string,
+  chunk: TwelveDataRangeChunk
+): TwelveDataRangeChunk[] => {
+  const stepMs = Math.max(60_000, getStepMs(timeframe));
+  const spanMs = chunk.endMs - chunk.startMs;
+
+  if (spanMs <= stepMs * 32) {
+    return [
+      {
+        ...chunk,
+        attempt: chunk.attempt + 1
+      }
+    ];
+  }
+
+  const midpointMs = chunk.startMs + Math.floor(spanMs / 2);
+  const splitBoundaryMs = floorToStep(midpointMs, stepMs);
+  const leftEndMs = Math.min(chunk.endMs, Math.max(chunk.startMs, splitBoundaryMs));
+  const rightStartMs = Math.min(
+    chunk.endMs,
+    Math.max(chunk.startMs, leftEndMs - stepMs + 1)
+  );
+
+  return [
+    {
+      startMs: chunk.startMs,
+      endMs: leftEndMs,
+      attempt: chunk.attempt + 1,
+      repairDepth: chunk.repairDepth + 1
+    },
+    {
+      startMs: rightStartMs,
+      endMs: chunk.endMs,
+      attempt: chunk.attempt + 1,
+      repairDepth: chunk.repairDepth + 1
+    }
+  ];
+};
+
+const getAdaptiveWorkerCount = (chunkCount: number): number => {
+  const usableKeys = getOrderedApiKeys().filter((apiKey) => {
+    const failureType = keyFailureState.get(apiKey)?.failureType;
+    return failureType !== "auth";
+  });
+
+  return Math.max(
+    1,
+    Math.min(chunkCount, EXACT_RANGE_MAX_WORKERS, Math.max(1, usableKeys.length))
+  );
+};
+
+const normalizeChunkCandles = (
+  timeframe: string,
+  values: TwelveDataTimeSeriesRecord[],
+  startMs: number,
+  endMs: number
+): TwelveDataCandleRecord[] => {
+  return sortAndDedupeCandles(
+    values
+      .map((entry) => normalizeCandleRecord(entry, timeframe))
+      .filter((entry): entry is TwelveDataCandleRecord => entry !== null)
+  ).filter((candle) => candle.time >= startMs && candle.time <= endMs);
+};
+
+const fetchExactRangeChunk = async (
+  timeframe: string,
+  chunk: TwelveDataRangeChunk
+): Promise<TwelveDataRangeChunkResult> => {
+  const stepMs = Math.max(60_000, getStepMs(timeframe));
+  const response = await requestJsonDetailed<TwelveDataTimeSeriesResponse>(
+    "/time_series",
+    {
+      symbol: TWELVE_DATA_SYMBOL,
+      interval: getIntervalForTimeframe(timeframe),
+      timezone: "UTC",
+      order: "asc",
+      start_date: toTwelveDateTime(Math.max(0, chunk.startMs - stepMs)),
+      end_date: toTwelveDateTime(chunk.endMs)
+    }
+  );
+  const values = Array.isArray(response.payload.values) ? response.payload.values : [];
+
+  return {
+    chunk,
+    candles: normalizeChunkCandles(timeframe, values, chunk.startMs, chunk.endMs)
+  };
+};
+
+const findMissingCoverageChunks = (
+  timeframe: string,
+  candles: TwelveDataCandleRecord[],
+  startMs: number,
+  endMs: number,
+  repairDepth: number
+): TwelveDataRangeChunk[] => {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
+    return [];
+  }
+
+  const sorted = sortAndDedupeCandles(candles).filter(
+    (candle) => candle.time >= startMs && candle.time <= endMs
+  );
+  const stepMs = Math.max(60_000, getStepMs(timeframe));
+  const missing: TwelveDataRangeChunk[] = [];
+  const paddedStart = Math.max(0, startMs - EXACT_RANGE_PADDING_BARS * stepMs);
+  const paddedEnd = endMs + EXACT_RANGE_PADDING_BARS * stepMs;
+  const requiredFirstSlotMs = findNextTradingSlotAtOrAfter(startMs, timeframe);
+  const requiredLastSlotMs = findLastTradingSlotAtOrBefore(endMs, timeframe);
+
+  if (sorted.length === 0) {
+    return buildRangeChunks(timeframe, paddedStart, paddedEnd, repairDepth).slice(
+      0,
+      EXACT_RANGE_MAX_REPAIR_WINDOWS
+    );
+  }
+
+  const firstCandleTime = sorted[0]!.time;
+  if (requiredFirstSlotMs != null && firstCandleTime > requiredFirstSlotMs) {
+    missing.push({
+      startMs: paddedStart,
+      endMs: Math.min(paddedEnd, firstCandleTime),
+      attempt: 0,
+      repairDepth
+    });
+  }
+
+  for (let index = 0; index < sorted.length - 1; index += 1) {
+    const currentTime = sorted[index]!.time;
+    const nextTime = sorted[index + 1]!.time;
+    const expectedNextSlotMs = findNextTradingSlotAtOrAfter(currentTime + stepMs, timeframe);
+
+    if (expectedNextSlotMs == null || expectedNextSlotMs >= nextTime) {
+      continue;
+    }
+
+    missing.push({
+      startMs: Math.max(startMs, expectedNextSlotMs - EXACT_RANGE_PADDING_BARS * stepMs),
+      endMs: Math.min(endMs, nextTime + EXACT_RANGE_PADDING_BARS * stepMs),
+      attempt: 0,
+      repairDepth
+    });
+  }
+
+  const lastCandleTime = sorted[sorted.length - 1]!.time;
+  if (requiredLastSlotMs != null && lastCandleTime < requiredLastSlotMs) {
+    missing.push({
+      startMs: Math.max(startMs, lastCandleTime - EXACT_RANGE_PADDING_BARS * stepMs),
+      endMs: paddedEnd,
+      attempt: 0,
+      repairDepth
+    });
+  }
+
+  return mergeRangeChunks(missing).slice(0, EXACT_RANGE_MAX_REPAIR_WINDOWS);
+};
+
+const fetchExactRangeCandles = async (params: {
+  pair: string;
+  timeframe: string;
+  startMs: number;
+  endMs: number;
+}): Promise<TwelveDataCandleRecord[]> => {
+  const { timeframe, startMs, endMs } = params;
+  let pendingChunks = buildRangeChunks(timeframe, startMs, endMs);
+  const mergedCandles = new Map<number, TwelveDataCandleRecord>();
+
+  const processChunks = async (chunks: TwelveDataRangeChunk[]) => {
+    const queue = [...chunks];
+    const workerCount = getAdaptiveWorkerCount(queue.length);
+
+    const worker = async () => {
+      while (queue.length > 0) {
+        const chunk = queue.shift();
+        if (!chunk) {
+          return;
+        }
+
+        try {
+          const result = await fetchExactRangeChunk(timeframe, chunk);
+          for (const candle of result.candles) {
+            mergedCandles.set(candle.time, candle);
+          }
+        } catch (error) {
+          if (chunk.repairDepth >= EXACT_RANGE_MAX_REPAIR_DEPTH) {
+            throw error;
+          }
+          const splitChunks = splitRangeChunk(timeframe, chunk);
+          queue.unshift(...splitChunks.reverse());
+        }
+      }
+    };
+
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  };
+
+  await processChunks(pendingChunks);
+
+  for (let repairPass = 1; repairPass <= EXACT_RANGE_MAX_REPAIR_DEPTH; repairPass += 1) {
+    pendingChunks = findMissingCoverageChunks(
+      timeframe,
+      [...mergedCandles.values()],
+      startMs,
+      endMs,
+      repairPass
+    );
+
+    if (pendingChunks.length === 0) {
+      break;
+    }
+
+    await processChunks(pendingChunks);
+  }
+
+  return sortAndDedupeCandles([...mergedCandles.values()]).filter(
+    (candle) => candle.time >= startMs && candle.time <= endMs
+  );
+};
+
 export const fetchTwelveDataCandles = async (params: {
   pair: string;
   timeframe: string;
@@ -570,11 +1014,18 @@ export const fetchTwelveDataCandles = async (params: {
 
   const interval = getIntervalForTimeframe(timeframe);
   const requestedCount = Math.max(1, Math.trunc(params.count));
+  const explicitRangeRequested = Boolean(params.start);
   const cacheKey = buildCandleCacheKey(params);
   const cached = candlesCache.get(cacheKey);
   const nowMs = Date.now();
-  if (cached && cached.expiresAt > nowMs && cached.value.candles.length >= requestedCount) {
-    const cachedCandles = cached.value.candles.slice(-requestedCount);
+  if (
+    cached &&
+    cached.expiresAt > nowMs &&
+    (explicitRangeRequested || cached.value.candles.length >= requestedCount)
+  ) {
+    const cachedCandles = explicitRangeRequested
+      ? cached.value.candles
+      : cached.value.candles.slice(-requestedCount);
     return {
       ...cached.value,
       count: cachedCandles.length,
@@ -584,6 +1035,9 @@ export const fetchTwelveDataCandles = async (params: {
   const inFlight = candlesInFlight.get(cacheKey);
   if (inFlight) {
     const payload = await inFlight;
+    if (explicitRangeRequested) {
+      return payload;
+    }
     return payload.count > requestedCount
       ? {
           ...payload,
@@ -600,10 +1054,39 @@ export const fetchTwelveDataCandles = async (params: {
     const stepMs = getStepMs(timeframe);
     const hasExplicitStart = startMs != null;
     const hasExplicitEnd = Number.isFinite(endMs);
+    if (hasExplicitStart && hasExplicitEnd && endMs >= startMs) {
+      const exactRangeCandles = await fetchExactRangeCandles({
+        pair,
+        timeframe,
+        startMs,
+        endMs
+      });
+
+      const payload = {
+        pair,
+        timeframe,
+        start: params.start ?? null,
+        end: params.end ?? null,
+        count: exactRangeCandles.length,
+        candles: exactRangeCandles,
+        source: "twelve-data"
+      };
+
+      candlesCache.set(cacheKey, {
+        expiresAt: Date.now() + CANDLES_CACHE_TTL_MS,
+        value: payload
+      });
+
+      return payload;
+    }
     const boundedRangeBars =
       hasExplicitStart && hasExplicitEnd
         ? Math.ceil((endMs - startMs) / Math.max(60_000, stepMs)) + 2
         : Number.POSITIVE_INFINITY;
+    const desiredRangeBars =
+      hasExplicitStart && Number.isFinite(boundedRangeBars)
+        ? Math.max(requestedCount, boundedRangeBars)
+        : requestedCount;
     const shouldUseSingleBoundedRequest =
       hasExplicitStart &&
       hasExplicitEnd &&
@@ -615,7 +1098,7 @@ export const fetchTwelveDataCandles = async (params: {
     let previousEarliestMs = Number.POSITIVE_INFINITY;
 
     while (pageCount < MAX_PAGE_COUNT) {
-      const remaining = Math.max(64, requestedCount - deduped.size + 32);
+      const remaining = Math.max(64, desiredRangeBars - deduped.size + 32);
       const outputsize = Math.min(MAX_PAGE_SIZE, remaining);
       const response = await requestJson<TwelveDataTimeSeriesResponse>(
         "/time_series",
@@ -688,7 +1171,7 @@ export const fetchTwelveDataCandles = async (params: {
     });
 
     const trimmed =
-      candles.length > requestedCount
+      !hasExplicitStart && candles.length > requestedCount
         ? candles.slice(-requestedCount)
         : candles;
 
