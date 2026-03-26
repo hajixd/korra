@@ -82,6 +82,8 @@ export type BacktestHistoryTradeBlueprint = {
   result: BacktestHistoryTradeResult;
   entryMs: number;
   exitMs: number;
+  entryIndex?: number;
+  exitIndex?: number;
   exitReason?: string;
   riskPct: number;
   rr: number;
@@ -373,6 +375,21 @@ export const computeBacktestHistoryRowsChunk = ({
   const minutePreciseOn = minutePreciseEnabled === true;
   const rows: BacktestHistoryRow[] = [];
   const totalBlueprints = blueprints.length;
+  const candleIndexBySymbol = new Map<string, Map<number, number>>();
+
+  const getCandleIndexLookup = (symbol: string, candles: BacktestHistoryCandle[]) => {
+    const cached = candleIndexBySymbol.get(symbol);
+    if (cached) {
+      return cached;
+    }
+
+    const lookup = new Map<number, number>();
+    for (let candleIndex = 0; candleIndex < candles.length; candleIndex += 1) {
+      lookup.set(candles[candleIndex]!.time, candleIndex);
+    }
+    candleIndexBySymbol.set(symbol, lookup);
+    return lookup;
+  };
 
   for (let index = 0; index < blueprints.length; index += 1) {
     const blueprint = blueprints[index]!;
@@ -385,8 +402,17 @@ export const computeBacktestHistoryRowsChunk = ({
         continue;
       }
 
-      const entryIndex = findCandleIndexAtOrBefore(list, blueprint.entryMs);
-      const rawExitIndex = findCandleIndexAtOrBefore(list, blueprint.exitMs);
+      const candleLookup = getCandleIndexLookup(blueprint.symbol, list);
+      const storedEntryIndex = Math.trunc(blueprint.entryIndex ?? -1);
+      const storedExitIndex = Math.trunc(blueprint.exitIndex ?? -1);
+      const entryIndex =
+        storedEntryIndex >= 0 && storedEntryIndex < list.length
+          ? storedEntryIndex
+          : (candleLookup.get(blueprint.entryMs) ?? findCandleIndexAtOrBefore(list, blueprint.entryMs));
+      const rawExitIndex =
+        storedExitIndex >= 0 && storedExitIndex < list.length
+          ? storedExitIndex
+          : (candleLookup.get(blueprint.exitMs) ?? findCandleIndexAtOrBefore(list, blueprint.exitMs));
 
       if (entryIndex < 0 || rawExitIndex < 0) {
         continue;

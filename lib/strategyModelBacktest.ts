@@ -920,6 +920,8 @@ export const buildStrategyReplayTradeBlueprints = ({
           result: "Win",
           entryMs: entryCandle.time,
           exitMs: candles[exitIndex]!.time,
+          entryIndex,
+          exitIndex,
           exitReason: resolvedExit.reason,
           riskPct,
           rr,

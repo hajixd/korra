@@ -1131,6 +1131,13 @@ const panelAnalyticsClientCache = new Map<
   { expiresAt: number; value: PanelAnalyticsServerResponse }
 >();
 const panelAnalyticsClientInFlight = new Map<string, Promise<PanelAnalyticsServerResponse>>();
+const BACKTEST_ANALYTICS_CLIENT_CACHE_TTL_MS = 15_000;
+const BACKTEST_ANALYTICS_CLIENT_CACHE_MAX = 6;
+const backtestAnalyticsClientCache = new Map<
+  string,
+  { expiresAt: number; value: BacktestAnalyticsServerResponse }
+>();
+const backtestAnalyticsClientInFlight = new Map<string, Promise<BacktestAnalyticsServerResponse>>();
 
 const hashStableText = (value: string) => {
   let hash = 2166136261;
@@ -1151,6 +1158,19 @@ const prunePanelAnalyticsClientCache = (nowMs: number) => {
     const oldestKey = panelAnalyticsClientCache.keys().next().value;
     if (!oldestKey) break;
     panelAnalyticsClientCache.delete(oldestKey);
+  }
+};
+
+const pruneBacktestAnalyticsClientCache = (nowMs: number) => {
+  for (const [key, entry] of backtestAnalyticsClientCache.entries()) {
+    if (entry.expiresAt <= nowMs) {
+      backtestAnalyticsClientCache.delete(key);
+    }
+  }
+  while (backtestAnalyticsClientCache.size > BACKTEST_ANALYTICS_CLIENT_CACHE_MAX) {
+    const oldestKey = backtestAnalyticsClientCache.keys().next().value;
+    if (!oldestKey) break;
+    backtestAnalyticsClientCache.delete(oldestKey);
   }
 };
 
@@ -1265,131 +1285,165 @@ const computeBacktestAnalyticsOnServer = async (
     backtestTrades: payload.backtestTrades.map(toServerTradePayload),
     baselineMainStatsTrades: payload.baselineMainStatsTrades.map(toServerTradePayload)
   };
+  const requestText = JSON.stringify(requestBody);
+  const cacheKey = hashStableText(requestText);
+  const nowMs = Date.now();
+  pruneBacktestAnalyticsClientCache(nowMs);
 
-  const response = await fetch("/api/backtest/analytics", {
+  const cached = backtestAnalyticsClientCache.get(cacheKey);
+  if (cached && cached.expiresAt > nowMs) {
+    return cached.value;
+  }
+
+  const canReuseInFlight = !signal;
+  const inFlight = canReuseInFlight
+    ? backtestAnalyticsClientInFlight.get(cacheKey)
+    : null;
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const requestPromise = fetch("/api/backtest/analytics", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(requestBody),
+    body: requestText,
     cache: "no-store",
     signal
-  });
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`Backtest analytics server compute failed (${response.status}).`);
+      }
 
-  if (!response.ok) {
-    throw new Error(`Backtest analytics server compute failed (${response.status}).`);
+      const data = (await response.json()) as Partial<BacktestAnalyticsServerResponse>;
+      const normalized: BacktestAnalyticsServerResponse = {
+        backtestSummary:
+          data.backtestSummary && typeof data.backtestSummary === "object"
+            ? { ...EMPTY_BACKTEST_SUMMARY_STATS, ...(data.backtestSummary as BacktestSummaryStats) }
+            : { ...EMPTY_BACKTEST_SUMMARY_STATS },
+        baselineMainStatsSummary:
+          data.baselineMainStatsSummary && typeof data.baselineMainStatsSummary === "object"
+            ? {
+                ...EMPTY_BACKTEST_SUMMARY_STATS,
+                ...(data.baselineMainStatsSummary as BacktestSummaryStats)
+              }
+            : { ...EMPTY_BACKTEST_SUMMARY_STATS },
+        mainStatsSummary:
+          data.mainStatsSummary && typeof data.mainStatsSummary === "object"
+            ? { ...EMPTY_BACKTEST_SUMMARY_STATS, ...(data.mainStatsSummary as BacktestSummaryStats) }
+            : { ...EMPTY_BACKTEST_SUMMARY_STATS },
+        mainStatsSessionRows: Array.isArray(data.mainStatsSessionRows)
+          ? (data.mainStatsSessionRows as MainStatsBucketRow[])
+          : [],
+        mainStatsModelRows: Array.isArray(data.mainStatsModelRows)
+          ? (data.mainStatsModelRows as MainStatsBucketRow[])
+          : [],
+        mainStatsMonthRows: Array.isArray(data.mainStatsMonthRows)
+          ? (data.mainStatsMonthRows as MainStatsMonthRow[])
+          : [],
+        mainStatsAiEfficiency:
+          typeof data.mainStatsAiEfficiency === "number" ? data.mainStatsAiEfficiency : null,
+        mainStatsAiEffectivenessPct:
+          typeof data.mainStatsAiEffectivenessPct === "number"
+            ? data.mainStatsAiEffectivenessPct
+            : null,
+        mainStatsAiEfficacyPct:
+          typeof data.mainStatsAiEfficacyPct === "number" ? data.mainStatsAiEfficacyPct : null,
+        availableBacktestMonths: Array.isArray(data.availableBacktestMonths)
+          ? data.availableBacktestMonths.map((value) => String(value))
+          : [],
+        calendarActivityEntries: Array.isArray(data.calendarActivityEntries)
+          ? (data.calendarActivityEntries as Array<[string, { count: number; wins: number; pnl: number }]>)
+          : [],
+        selectedBacktestDayTrades: Array.isArray(data.selectedBacktestDayTrades)
+          ? (data.selectedBacktestDayTrades as HistoryItem[])
+          : [],
+        performanceStatsModelOptions: Array.isArray(data.performanceStatsModelOptions)
+          ? data.performanceStatsModelOptions.map((value) => String(value))
+          : ["All"],
+        performanceStatsTemporalCharts:
+          data.performanceStatsTemporalCharts && typeof data.performanceStatsTemporalCharts === "object"
+            ? (data.performanceStatsTemporalCharts as PerformanceStatsTemporalCharts)
+            : { ...EMPTY_PERFORMANCE_STATS_TEMPORAL_CHARTS },
+        entryExitStats:
+          data.entryExitStats && typeof data.entryExitStats === "object"
+            ? {
+                entry: Array.isArray((data.entryExitStats as any).entry)
+                  ? ((data.entryExitStats as any).entry as Array<[string, number]>)
+                  : [],
+                exit: Array.isArray((data.entryExitStats as any).exit)
+                  ? ((data.entryExitStats as any).exit as Array<[string, number]>)
+                  : []
+              }
+            : { entry: [], exit: [] },
+        entryExitChartData:
+          data.entryExitChartData && typeof data.entryExitChartData === "object"
+            ? {
+                entry: Array.isArray((data.entryExitChartData as any).entry)
+                  ? ((data.entryExitChartData as any).entry as Array<{
+                      bucket: string;
+                      count: number;
+                      share: number;
+                    }>)
+                  : [],
+                exit: Array.isArray((data.entryExitChartData as any).exit)
+                  ? ((data.entryExitChartData as any).exit as Array<{
+                      bucket: string;
+                      count: number;
+                      share: number;
+                    }>)
+                  : []
+              }
+            : { entry: [], exit: [] },
+        backtestClusterData:
+          data.backtestClusterData && typeof data.backtestClusterData === "object"
+            ? {
+                total: Number((data.backtestClusterData as any).total) || 0,
+                nodes: Array.isArray((data.backtestClusterData as any).nodes)
+                  ? ((data.backtestClusterData as any).nodes as BacktestClusterNode[])
+                  : [],
+                groups: Array.isArray((data.backtestClusterData as any).groups)
+                  ? ((data.backtestClusterData as any).groups as BacktestClusterGroup[])
+                  : []
+              }
+            : { total: 0, nodes: [], groups: [] },
+        backtestClusterViewOptions:
+          data.backtestClusterViewOptions && typeof data.backtestClusterViewOptions === "object"
+            ? {
+                sessions: Array.isArray((data.backtestClusterViewOptions as any).sessions)
+                  ? ((data.backtestClusterViewOptions as any).sessions as string[])
+                  : [],
+                months: Array.isArray((data.backtestClusterViewOptions as any).months)
+                  ? ((data.backtestClusterViewOptions as any).months as number[])
+                  : [],
+                weekdays: Array.isArray((data.backtestClusterViewOptions as any).weekdays)
+                  ? ((data.backtestClusterViewOptions as any).weekdays as number[])
+                  : [],
+                hours: Array.isArray((data.backtestClusterViewOptions as any).hours)
+                  ? ((data.backtestClusterViewOptions as any).hours as number[])
+                  : []
+              }
+            : { sessions: [], months: [], weekdays: [], hours: [] }
+      };
+
+      backtestAnalyticsClientCache.set(cacheKey, {
+        expiresAt: Date.now() + BACKTEST_ANALYTICS_CLIENT_CACHE_TTL_MS,
+        value: normalized
+      });
+      pruneBacktestAnalyticsClientCache(Date.now());
+      return normalized;
+    })
+    .finally(() => {
+      backtestAnalyticsClientInFlight.delete(cacheKey);
+    });
+
+  if (canReuseInFlight) {
+    backtestAnalyticsClientInFlight.set(cacheKey, requestPromise);
   }
 
-  const data = (await response.json()) as Partial<BacktestAnalyticsServerResponse>;
-  return {
-    backtestSummary:
-      data.backtestSummary && typeof data.backtestSummary === "object"
-        ? { ...EMPTY_BACKTEST_SUMMARY_STATS, ...(data.backtestSummary as BacktestSummaryStats) }
-        : { ...EMPTY_BACKTEST_SUMMARY_STATS },
-    baselineMainStatsSummary:
-      data.baselineMainStatsSummary && typeof data.baselineMainStatsSummary === "object"
-        ? {
-            ...EMPTY_BACKTEST_SUMMARY_STATS,
-            ...(data.baselineMainStatsSummary as BacktestSummaryStats)
-          }
-        : { ...EMPTY_BACKTEST_SUMMARY_STATS },
-    mainStatsSummary:
-      data.mainStatsSummary && typeof data.mainStatsSummary === "object"
-        ? { ...EMPTY_BACKTEST_SUMMARY_STATS, ...(data.mainStatsSummary as BacktestSummaryStats) }
-        : { ...EMPTY_BACKTEST_SUMMARY_STATS },
-    mainStatsSessionRows: Array.isArray(data.mainStatsSessionRows)
-      ? (data.mainStatsSessionRows as MainStatsBucketRow[])
-      : [],
-    mainStatsModelRows: Array.isArray(data.mainStatsModelRows)
-      ? (data.mainStatsModelRows as MainStatsBucketRow[])
-      : [],
-    mainStatsMonthRows: Array.isArray(data.mainStatsMonthRows)
-      ? (data.mainStatsMonthRows as MainStatsMonthRow[])
-      : [],
-    mainStatsAiEfficiency:
-      typeof data.mainStatsAiEfficiency === "number" ? data.mainStatsAiEfficiency : null,
-    mainStatsAiEffectivenessPct:
-      typeof data.mainStatsAiEffectivenessPct === "number"
-        ? data.mainStatsAiEffectivenessPct
-        : null,
-    mainStatsAiEfficacyPct:
-      typeof data.mainStatsAiEfficacyPct === "number" ? data.mainStatsAiEfficacyPct : null,
-    availableBacktestMonths: Array.isArray(data.availableBacktestMonths)
-      ? data.availableBacktestMonths.map((value) => String(value))
-      : [],
-    calendarActivityEntries: Array.isArray(data.calendarActivityEntries)
-      ? (data.calendarActivityEntries as Array<[string, { count: number; wins: number; pnl: number }]>)
-      : [],
-    selectedBacktestDayTrades: Array.isArray(data.selectedBacktestDayTrades)
-      ? (data.selectedBacktestDayTrades as HistoryItem[])
-      : [],
-    performanceStatsModelOptions: Array.isArray(data.performanceStatsModelOptions)
-      ? data.performanceStatsModelOptions.map((value) => String(value))
-      : ["All"],
-    performanceStatsTemporalCharts:
-      data.performanceStatsTemporalCharts && typeof data.performanceStatsTemporalCharts === "object"
-        ? (data.performanceStatsTemporalCharts as PerformanceStatsTemporalCharts)
-        : { ...EMPTY_PERFORMANCE_STATS_TEMPORAL_CHARTS },
-    entryExitStats:
-      data.entryExitStats && typeof data.entryExitStats === "object"
-        ? {
-            entry: Array.isArray((data.entryExitStats as any).entry)
-              ? ((data.entryExitStats as any).entry as Array<[string, number]>)
-              : [],
-            exit: Array.isArray((data.entryExitStats as any).exit)
-              ? ((data.entryExitStats as any).exit as Array<[string, number]>)
-              : []
-          }
-        : { entry: [], exit: [] },
-    entryExitChartData:
-      data.entryExitChartData && typeof data.entryExitChartData === "object"
-        ? {
-            entry: Array.isArray((data.entryExitChartData as any).entry)
-              ? ((data.entryExitChartData as any).entry as Array<{
-                  bucket: string;
-                  count: number;
-                  share: number;
-                }>)
-              : [],
-            exit: Array.isArray((data.entryExitChartData as any).exit)
-              ? ((data.entryExitChartData as any).exit as Array<{
-                  bucket: string;
-                  count: number;
-                  share: number;
-                }>)
-              : []
-          }
-        : { entry: [], exit: [] },
-    backtestClusterData:
-      data.backtestClusterData && typeof data.backtestClusterData === "object"
-        ? {
-            total: Number((data.backtestClusterData as any).total) || 0,
-            nodes: Array.isArray((data.backtestClusterData as any).nodes)
-              ? ((data.backtestClusterData as any).nodes as BacktestClusterNode[])
-              : [],
-            groups: Array.isArray((data.backtestClusterData as any).groups)
-              ? ((data.backtestClusterData as any).groups as BacktestClusterGroup[])
-              : []
-          }
-        : { total: 0, nodes: [], groups: [] },
-    backtestClusterViewOptions:
-      data.backtestClusterViewOptions && typeof data.backtestClusterViewOptions === "object"
-        ? {
-            sessions: Array.isArray((data.backtestClusterViewOptions as any).sessions)
-              ? ((data.backtestClusterViewOptions as any).sessions as string[])
-              : [],
-            months: Array.isArray((data.backtestClusterViewOptions as any).months)
-              ? ((data.backtestClusterViewOptions as any).months as number[])
-              : [],
-            weekdays: Array.isArray((data.backtestClusterViewOptions as any).weekdays)
-              ? ((data.backtestClusterViewOptions as any).weekdays as number[])
-              : [],
-            hours: Array.isArray((data.backtestClusterViewOptions as any).hours)
-              ? ((data.backtestClusterViewOptions as any).hours as number[])
-              : []
-          }
-        : { sessions: [], months: [], weekdays: [], hours: [] }
-  };
+  return requestPromise;
 };
 
 type BacktestClusterGroupId = "momentum" | "trend" | "trap" | "chop";
@@ -9910,12 +9964,60 @@ const resolveReplayModelKind = (name: string): ReplayModelKind => {
   return "momentum";
 };
 
-const insertSortedExit = (activeExitMs: number[], exitMs: number) => {
-  let insertAt = activeExitMs.length;
-  while (insertAt > 0 && activeExitMs[insertAt - 1]! > exitMs) {
-    insertAt -= 1;
+const minHeapPush = (heap: number[], value: number) => {
+  heap.push(value);
+  let index = heap.length - 1;
+
+  while (index > 0) {
+    const parentIndex = Math.floor((index - 1) / 2);
+    if (heap[parentIndex]! <= heap[index]!) {
+      break;
+    }
+
+    const parentValue = heap[parentIndex]!;
+    heap[parentIndex] = heap[index]!;
+    heap[index] = parentValue;
+    index = parentIndex;
   }
-  activeExitMs.splice(insertAt, 0, exitMs);
+};
+
+const minHeapPop = (heap: number[]): number | undefined => {
+  if (heap.length === 0) {
+    return undefined;
+  }
+
+  const root = heap[0]!;
+  const tail = heap.pop();
+
+  if (heap.length > 0 && tail != null) {
+    heap[0] = tail;
+    let index = 0;
+
+    while (true) {
+      const leftIndex = index * 2 + 1;
+      const rightIndex = leftIndex + 1;
+      let nextIndex = index;
+
+      if (leftIndex < heap.length && heap[leftIndex]! < heap[nextIndex]!) {
+        nextIndex = leftIndex;
+      }
+
+      if (rightIndex < heap.length && heap[rightIndex]! < heap[nextIndex]!) {
+        nextIndex = rightIndex;
+      }
+
+      if (nextIndex === index) {
+        break;
+      }
+
+      const currentValue = heap[index]!;
+      heap[index] = heap[nextIndex]!;
+      heap[nextIndex] = currentValue;
+      index = nextIndex;
+    }
+  }
+
+  return root;
 };
 
 const enforceMaxConcurrentTradeBlueprints = (
@@ -9945,7 +10047,7 @@ const enforceMaxConcurrentTradeBlueprints = (
 
   for (const blueprint of chronological) {
     while (activeExitMs.length > 0 && activeExitMs[0]! <= blueprint.entryMs) {
-      activeExitMs.shift();
+      minHeapPop(activeExitMs);
     }
 
     if (activeExitMs.length >= limit) {
@@ -9953,7 +10055,7 @@ const enforceMaxConcurrentTradeBlueprints = (
     }
 
     selected.push(blueprint);
-    insertSortedExit(activeExitMs, blueprint.exitMs);
+    minHeapPush(activeExitMs, blueprint.exitMs);
   }
 
   return selected.sort((left, right) => right.exitMs - left.exitMs);
@@ -9993,7 +10095,7 @@ const enforceMaxConcurrentHistoryRows = (
     const exitSec = Number(row.exitTime);
 
     while (activeExitSec.length > 0 && activeExitSec[0]! <= entrySec) {
-      activeExitSec.shift();
+      minHeapPop(activeExitSec);
     }
 
     if (activeExitSec.length >= limit) {
@@ -10001,7 +10103,7 @@ const enforceMaxConcurrentHistoryRows = (
     }
 
     selected.push(row);
-    insertSortedExit(activeExitSec, exitSec);
+    minHeapPush(activeExitSec, exitSec);
   }
 
   return selected.sort(
