@@ -107,7 +107,7 @@ test("replay emits one blueprint per matching model on the same signal candle", 
     strategyCatalog: buildAlwaysOnCatalog()
   });
 
-  assert.equal(blueprints.length, 4);
+  assert.equal(blueprints.length, 6);
 
   const modelsByEntryMs = new Map<number, string[]>();
   for (const blueprint of blueprints) {
@@ -120,7 +120,48 @@ test("replay emits one blueprint per matching model on the same signal candle", 
     Array.from(modelsByEntryMs.values()).map((modelIds) => modelIds.sort()),
     [
       ["alpha", "beta"],
+      ["alpha", "beta"],
       ["alpha", "beta"]
     ]
   );
+});
+
+test("same-entry-candle stopouts are preserved as blueprints", () => {
+  const startMs = Date.parse("2025-01-01T00:00:00Z");
+  const candles = [
+    { time: startMs + 0 * 60_000, open: 100, high: 100.2, low: 99.8, close: 100.1 },
+    { time: startMs + 1 * 60_000, open: 100.1, high: 100.3, low: 100.0, close: 100.2 },
+    { time: startMs + 2 * 60_000, open: 100.2, high: 100.4, low: 100.1, close: 100.3 },
+    { time: startMs + 3 * 60_000, open: 100.3, high: 100.7, low: 99.7, close: 100.4 },
+    { time: startMs + 4 * 60_000, open: 100.4, high: 100.5, low: 100.2, close: 100.3 }
+  ];
+  const models: StrategyReplayModelProfile[] = [
+    {
+      id: "alpha",
+      name: "Alpha",
+      riskMin: 0.001,
+      riskMax: 0.002,
+      rrMin: 1,
+      rrMax: 1,
+      longBias: 0.5,
+      state: 2
+    }
+  ];
+
+  const blueprints = buildStrategyReplayTradeBlueprints({
+    candles,
+    models,
+    symbol: "XAUUSD",
+    unitsPerMove: 1,
+    chunkBars: 2,
+    tpDollars: 0.4,
+    slDollars: 0.4,
+    strategyCatalog: buildAlwaysOnCatalog()
+  });
+
+  const sameBarStopout = blueprints.find(
+    (blueprint) => blueprint.entryIndex === 3 && blueprint.exitIndex === 3
+  );
+
+  assert.ok(sameBarStopout);
 });

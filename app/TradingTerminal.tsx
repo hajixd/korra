@@ -10724,17 +10724,7 @@ const getStatsRefreshPhaseProgressWindow = (
   status: string,
   enteringPhase: boolean
 ): { start: number; end: number } => {
-  if (status === "Loading AI Libraries") {
-    return enteringPhase ? { start: 0, end: 100 } : { start: 65, end: 100 };
-  }
-
-  if (status === "Applying AI Analysis") {
-    return enteringPhase ? { start: 0, end: 75 } : { start: 35, end: 75 };
-  }
-
-  if (status === "Finalizing Statistics") {
-    return enteringPhase ? { start: 0, end: 100 } : { start: 75, end: 100 };
-  }
+  void enteringPhase;
 
   if (
     status === "Historical Candle Range Unavailable" ||
@@ -12731,10 +12721,16 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     [setStatsRefreshProgressValue]
   );
   const commitStatsRefreshStatus = useCallback((status: string) => {
+    const nextPhaseKey = getStatsRefreshPhaseKey(status);
+    if (nextPhaseKey !== statsRefreshActivePhaseKeyRef.current) {
+      statsRefreshActivePhaseKeyRef.current = nextPhaseKey;
+      setStatsRefreshProgressValue(0);
+      setStatsRefreshLoadingDisplayProgress(0);
+    }
     statsRefreshStatusRef.current = status;
     setStatsRefreshStatus(status);
     resetStatsRefreshOperation();
-  }, [resetStatsRefreshOperation]);
+  }, [resetStatsRefreshOperation, setStatsRefreshProgressValue]);
   const clearStatsRefreshPhaseHoldTimeout = useCallback(() => {
     if (!statsRefreshPhaseHoldTimeoutRef.current) {
       statsRefreshPhaseHoldRef.current = false;
@@ -13238,7 +13234,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     const progressRatio = 1 - Math.exp(-elapsedMs / 7_000);
     const nextProgress = floorProgress + (capProgress - floorProgress) * progressRatio;
 
-    if (nextProgress <= statsRefreshProgressRef.current + 0.35) {
+    if (nextProgress <= statsRefreshProgressRef.current + 0.05) {
       return;
     }
 
@@ -16243,11 +16239,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     return enforceMaxConcurrentHistoryRows(
       deferredHistoryRows,
       appliedBacktestSettings.maxConcurrentTrades,
-      appliedBacktestSettings.minutePreciseEnabled
+      true
     );
   }, [
     appliedBacktestSettings.maxConcurrentTrades,
-    appliedBacktestSettings.minutePreciseEnabled,
     deferredHistoryRows
   ]);
   const backtestSourceTrades = useMemo(() => {
@@ -16451,7 +16446,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           enforceMaxConcurrentHistoryRows(
             rows,
             maxConcurrentTrades,
-            minutePreciseEnabled
+            true
           )
         );
       })
@@ -26565,7 +26560,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     `${appliedBacktestSettings.symbol} ? ${appliedBacktestSettings.timeframe} ? ` +
     `${appliedBacktestSettings.aiMode === "off" ? "AI Off" : "AI On"}`;
   const statsRefreshPhaseSummaryLabel =
-    `Phase ${statsRefreshPhaseIndex} of ${statsRefreshPhaseCount} - ${statsRefreshPhaseName}`;
+    `Phase ${statsRefreshPhaseIndex} of ${statsRefreshPhaseCount}`;
   const statsRefreshContextSummaryLabel =
     `${appliedBacktestSettings.symbol} - ${appliedBacktestSettings.timeframe} - ` +
     `${appliedBacktestSettings.aiMode === "off" ? "AI Off" : "AI On"}`;
@@ -26577,7 +26572,20 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     statsRefreshOperationElapsedMs
   );
   const statsRefreshOperationLabel =
-    statsRefreshOperation.label.trim() || `Tracking ${statsRefreshPhaseName.toLowerCase()}`;
+    statsRefreshOperation.label.trim() || "Tracking current task";
+  const normalizeStatsRefreshOverlayLabel = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const shouldShowStatsRefreshOperationLabel =
+    Boolean(statsRefreshOperationLabel) &&
+    normalizeStatsRefreshOverlayLabel(statsRefreshOperationLabel) !==
+      normalizeStatsRefreshOverlayLabel(statsRefreshPhaseName) &&
+    !normalizeStatsRefreshOverlayLabel(statsRefreshOperationLabel).includes(
+      normalizeStatsRefreshOverlayLabel(statsRefreshPhaseName)
+    );
   const statsRefreshOperationDetail =
     statsRefreshOperation.detail.trim() || statsRefreshStatusDetail;
   const statsRefreshOperationPulseDetail = getStatsRefreshLivePulseDetail(
@@ -26591,6 +26599,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   ]
     .filter((value) => value.length > 0)
     .join(" - ");
+  const statsRefreshDisplayProgressLabel =
+    statsRefreshDisplayProgress <= 0.04 || statsRefreshDisplayProgress >= 99.96
+      ? `${Math.round(statsRefreshDisplayProgress)}%`
+      : `${statsRefreshDisplayProgress.toFixed(1)}%`;
   void statsRefreshPhaseLabel;
   void statsRefreshContextLabel;
   const statsRefreshLoadingContent = (
@@ -26598,7 +26610,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       <div className="stats-refresh-loading-head">
         <div className="stats-refresh-loading-status">{statsRefreshPhaseName}</div>
         <div className="stats-refresh-loading-pct">
-          {`${Math.round(statsRefreshDisplayProgress)}%`}
+          {statsRefreshDisplayProgressLabel}
         </div>
       </div>
       <div className="stats-refresh-loading-meta">
@@ -26606,7 +26618,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         <span>{statsRefreshContextSummaryLabel}</span>
       </div>
       <div className="stats-refresh-loading-step">
-        <div className="stats-refresh-loading-step-label">{statsRefreshOperationLabel}</div>
+        {shouldShowStatsRefreshOperationLabel ? (
+          <div className="stats-refresh-loading-step-label">{statsRefreshOperationLabel}</div>
+        ) : null}
         <div className="stats-refresh-loading-detail">{statsRefreshOperationDetail}</div>
         <div className="stats-refresh-loading-subdetail">{statsRefreshOperationPulseDetail}</div>
         <div className="stats-refresh-loading-step-meta">
@@ -26621,7 +26635,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         aria-label="Updating backtest statistics"
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={Math.round(statsRefreshDisplayProgress)}
+        aria-valuenow={Math.round(statsRefreshDisplayProgress * 10) / 10}
+        aria-valuetext={statsRefreshDisplayProgressLabel}
       >
         <div
           className="stats-refresh-loading-fill"

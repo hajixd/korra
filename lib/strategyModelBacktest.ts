@@ -727,6 +727,7 @@ const resolveTradeExitIndex = ({
       !forcedStop &&
       !forcedTarget &&
       !forcedMaxBars &&
+      index > entryIndex &&
       exitEnabled &&
       evaluateExitSignal(modelSpec, buildFeatureSnapshot(candles, featureSeries, index, chunkBars), side);
 
@@ -903,7 +904,7 @@ export const buildStrategyReplayTradeBlueprints = ({
         });
 
         const exitIndex = resolvedExit.index;
-        if (exitIndex <= entryIndex || exitIndex >= candles.length) {
+        if (exitIndex < entryIndex || exitIndex >= candles.length) {
           continue;
         }
 
