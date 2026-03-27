@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 export const TWELVE_DATA_DEFAULT_PAIR = "XAU_USD";
 export const TWELVE_DATA_SUPPORTED_PAIRS = new Set([TWELVE_DATA_DEFAULT_PAIR]);
 export const TWELVE_DATA_SUPPORTED_TIMEFRAMES = new Set([
@@ -17,7 +20,7 @@ const TWELVE_DATA_SYMBOL = "XAU/USD";
 const DEFAULT_HTTP_TIMEOUT_MS = 30_000;
 const MAX_PAGE_SIZE = 5000;
 const MAX_PAGE_COUNT = 60;
-const CANDLES_CACHE_TTL_MS = 60_000;
+const CANDLES_CACHE_TTL_MS = 10 * 60_000;
 const QUOTE_CACHE_TTL_MS = 30_000;
 
 const TIMEFRAME_TO_INTERVAL: Record<string, string> = {
@@ -152,20 +155,110 @@ class TwelveDataRequestError extends Error {
 const RATE_LIMIT_COOLDOWN_MS = 65_000;
 const AUTH_COOLDOWN_MS = 30 * 60_000;
 const TRANSIENT_COOLDOWN_MS = 15_000;
-const KEY_MIN_REQUEST_GAP_MS = 8_000;
-const EXACT_RANGE_TARGET_BARS = 4600;
+const KEY_MIN_REQUEST_GAP_MS = 1_500;
+const EXACT_RANGE_TARGET_BARS = 4900;
 const EXACT_RANGE_OVERLAP_BARS = 1;
 const EXACT_RANGE_PADDING_BARS = 2;
 const EXACT_RANGE_MAX_REPAIR_DEPTH = 3;
 const EXACT_RANGE_MAX_REPAIR_WINDOWS = 24;
-const EXACT_RANGE_MAX_WORKERS = 6;
+const EXACT_RANGE_MAX_WORKERS = 4;
 const DAY_MS = 24 * 60 * 60_000;
+let localEnvCache: Map<string, string> | null = null;
+let runtimeApiKeysOverride: string[] | null = null;
+
+const collectEnvSearchRoots = (): string[] => {
+  const roots = new Set<string>();
+  const addLineage = (startDir: string | null | undefined) => {
+    if (!startDir) {
+      return;
+    }
+    let current = path.resolve(startDir);
+    for (let depth = 0; depth < 12; depth += 1) {
+      roots.add(current);
+      const parent = path.dirname(current);
+      if (parent === current) {
+        break;
+      }
+      current = parent;
+    }
+  };
+
+  addLineage(process.cwd());
+  if (typeof __dirname === "string" && __dirname.trim().length > 0) {
+    addLineage(__dirname);
+  }
+
+  return [...roots];
+};
+
+const loadLocalEnvCache = (): Map<string, string> => {
+  if (localEnvCache) {
+    return localEnvCache;
+  }
+
+  const resolved = new Map<string, string>();
+  for (const rootDir of collectEnvSearchRoots()) {
+    for (const candidate of [".env.local", ".env"]) {
+      const filePath = path.join(rootDir, candidate);
+      if (!fs.existsSync(filePath)) {
+        continue;
+      }
+
+      const content = fs.readFileSync(filePath, "utf8");
+      for (const rawLine of content.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith("#")) {
+          continue;
+        }
+        const separatorIndex = line.indexOf("=");
+        if (separatorIndex <= 0) {
+          continue;
+        }
+        const key = line.slice(0, separatorIndex).trim();
+        if (!key || resolved.has(key)) {
+          continue;
+        }
+        const value = line.slice(separatorIndex + 1).trim().replace(/^"(.*)"$/, "$1");
+        resolved.set(key, value);
+      }
+    }
+  }
+
+  localEnvCache = resolved;
+  return resolved;
+};
+
+const getConfigValue = (...names: string[]): string => {
+  const fileCache = loadLocalEnvCache();
+  for (const name of names) {
+    const envValue = process.env[name];
+    if (typeof envValue === "string" && envValue.trim().length > 0) {
+      return envValue.trim();
+    }
+    const fileValue = fileCache.get(name);
+    if (typeof fileValue === "string" && fileValue.trim().length > 0) {
+      return fileValue.trim();
+    }
+  }
+  return "";
+};
+
+export const setTwelveDataRuntimeApiKeys = (keys: string[]): void => {
+  const normalized = keys
+    .map((key) => String(key || "").trim())
+    .filter((key, index, source) => key.length > 0 && source.indexOf(key) === index);
+  runtimeApiKeysOverride = normalized.length > 0 ? normalized : null;
+};
 
 const parseConfiguredApiKeys = (): string[] => {
+  if (runtimeApiKeysOverride && runtimeApiKeysOverride.length > 0) {
+    return [...runtimeApiKeysOverride];
+  }
+
   const raw = [
-    process.env.TWELVE_DATA_API_KEYS,
-    process.env.TWELVE_DATA_API_KEY,
-    process.env.TWELVEDATA_API_KEY
+    getConfigValue("TWELVE_DATA_API_KEYS"),
+    getConfigValue("TWELVE_DATA_API_KEY"),
+    getConfigValue("TWELVEDATA_API_KEY")
   ]
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     .join(",");
@@ -311,8 +404,12 @@ const getKeyReadyAt = (apiKey: string): number => {
   return Math.max(unavailableUntil, lastAttemptAt + KEY_MIN_REQUEST_GAP_MS);
 };
 
-const getOrderedApiKeys = (): string[] => {
-  return getApiKeys().sort((left, right) => {
+const getOrderedApiKeys = (apiKeysOverride?: string[]): string[] => {
+  const candidateKeys =
+    Array.isArray(apiKeysOverride) && apiKeysOverride.length > 0
+      ? [...apiKeysOverride]
+      : getApiKeys();
+  return candidateKeys.sort((left, right) => {
     const leftReadyAt = getKeyReadyAt(left);
     const rightReadyAt = getKeyReadyAt(right);
     if (leftReadyAt !== rightReadyAt) {
@@ -494,60 +591,89 @@ const requestJsonWithApiKey = async <T extends TwelveDataJson>(
   }
 };
 
+const getEarliestApiKeyReadyAt = (apiKeysOverride?: string[]): number => {
+  const orderedKeys = getOrderedApiKeys(apiKeysOverride);
+  if (orderedKeys.length === 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return orderedKeys.reduce(
+    (best, apiKey) => Math.min(best, getKeyReadyAt(apiKey)),
+    Number.POSITIVE_INFINITY
+  );
+};
+
 const requestJsonDetailed = async <T extends TwelveDataJson>(
   pathname: string,
   params: Record<string, string | number | undefined>,
-  timeoutMs = DEFAULT_HTTP_TIMEOUT_MS
+  timeoutMs = DEFAULT_HTTP_TIMEOUT_MS,
+  apiKeysOverride?: string[]
 ): Promise<{ payload: T; headers: Headers; apiKey: string }> => {
   const requestStartedAt = Date.now();
-  let apiKeys = getOrderedApiKeys().filter((apiKey) => getKeyReadyAt(apiKey) <= Date.now());
   let lastError: TwelveDataRequestError | null = null;
 
-  if (apiKeys.length === 0) {
-    while (apiKeys.length === 0) {
-      const orderedKeys = getOrderedApiKeys();
-      const earliestReadyAt = orderedKeys.reduce(
-        (best, apiKey) => Math.min(best, getKeyReadyAt(apiKey)),
-        Number.POSITIVE_INFINITY
-      );
+  while (Date.now() - requestStartedAt < timeoutMs) {
+    let apiKeys = getOrderedApiKeys(apiKeysOverride).filter((apiKey) => getKeyReadyAt(apiKey) <= Date.now());
+
+    if (apiKeys.length === 0) {
+      const earliestReadyAt = getEarliestApiKeyReadyAt(apiKeysOverride);
       const retryInMs = Math.max(0, earliestReadyAt - Date.now());
       const remainingBudgetMs = timeoutMs - (Date.now() - requestStartedAt);
 
       if (!Number.isFinite(earliestReadyAt) || remainingBudgetMs <= 250) {
-        throw new Error(
-          `Twelve Data key pool cooling down. Retry in ${Math.max(1, Math.ceil(retryInMs / 1000))}s.`
+        throw new TwelveDataRequestError(
+          `Twelve Data key pool cooling down. Retry in ${Math.max(1, Math.ceil(retryInMs / 1000))}s.`,
+          "rate_limit"
         );
       }
 
       await sleep(Math.min(Math.max(75, retryInMs), Math.max(75, remainingBudgetMs - 200)));
-      apiKeys = getOrderedApiKeys().filter((apiKey) => getKeyReadyAt(apiKey) <= Date.now());
+      apiKeys = getOrderedApiKeys(apiKeysOverride).filter((apiKey) => getKeyReadyAt(apiKey) <= Date.now());
     }
-  }
 
-  for (const apiKey of apiKeys) {
-    try {
-      return await requestJsonWithApiKey<T>(apiKey, pathname, params, timeoutMs);
-    } catch (error) {
-      lastError =
-        error instanceof TwelveDataRequestError
-          ? error
-          : new TwelveDataRequestError(String(error), "other");
+    for (const apiKey of apiKeys) {
+      try {
+        return await requestJsonWithApiKey<T>(apiKey, pathname, params, timeoutMs);
+      } catch (error) {
+        lastError =
+          error instanceof TwelveDataRequestError
+            ? error
+            : new TwelveDataRequestError(String(error), "other");
+      }
     }
+
+    if (!lastError || lastError.failureType !== "rate_limit") {
+      break;
+    }
+
+    const earliestReadyAt = getEarliestApiKeyReadyAt(apiKeysOverride);
+    const retryInMs = Math.max(0, earliestReadyAt - Date.now());
+    const remainingBudgetMs = timeoutMs - (Date.now() - requestStartedAt);
+
+    if (!Number.isFinite(earliestReadyAt) || remainingBudgetMs <= 250) {
+      break;
+    }
+
+    await sleep(Math.min(Math.max(100, retryInMs), Math.max(100, remainingBudgetMs - 200)));
   }
 
   if (lastError) {
-    throw new Error(`All Twelve Data API keys failed. ${lastError.message}`);
+    throw new TwelveDataRequestError(
+      `All Twelve Data API keys failed. ${lastError.message}`,
+      lastError.failureType
+    );
   }
 
-  throw new Error("Missing TWELVE_DATA_API_KEY.");
+  throw new TwelveDataRequestError("Missing TWELVE_DATA_API_KEY.", "auth");
 };
 
 const requestJson = async <T extends TwelveDataJson>(
   pathname: string,
   params: Record<string, string | number | undefined>,
-  timeoutMs = DEFAULT_HTTP_TIMEOUT_MS
+  timeoutMs = DEFAULT_HTTP_TIMEOUT_MS,
+  apiKeysOverride?: string[]
 ): Promise<T> => {
-  const result = await requestJsonDetailed<T>(pathname, params, timeoutMs);
+  const result = await requestJsonDetailed<T>(pathname, params, timeoutMs, apiKeysOverride);
   return result.payload;
 };
 
@@ -816,15 +942,33 @@ const splitRangeChunk = (
   ];
 };
 
-const getAdaptiveWorkerCount = (chunkCount: number): number => {
-  const usableKeys = getOrderedApiKeys().filter((apiKey) => {
+const getAdaptiveWorkerCount = (chunkCount: number, apiKeysOverride?: string[]): number => {
+  const usableKeys = getOrderedApiKeys(apiKeysOverride).filter((apiKey) => {
     const failureType = keyFailureState.get(apiKey)?.failureType;
     return failureType !== "auth";
   });
+  const telemetry = usableKeys
+    .map((apiKey) => keyTelemetryState.get(apiKey))
+    .filter((value): value is TwelveDataKeyTelemetry => value != null);
+  const inferredParallelBudget =
+    telemetry.length === 0
+      ? Math.min(3, Math.max(1, usableKeys.length))
+      : telemetry.some(
+            (entry) =>
+              (entry.creditCapacity != null && entry.creditCapacity >= 24) ||
+              (entry.creditsLeft != null && entry.creditsLeft >= 18)
+          )
+        ? Math.min(4, Math.max(1, usableKeys.length))
+        : Math.min(2, Math.max(1, usableKeys.length));
 
   return Math.max(
     1,
-    Math.min(chunkCount, EXACT_RANGE_MAX_WORKERS, Math.max(1, usableKeys.length))
+    Math.min(
+      chunkCount,
+      EXACT_RANGE_MAX_WORKERS,
+      inferredParallelBudget,
+      Math.max(1, usableKeys.length)
+    )
   );
 };
 
@@ -843,7 +987,8 @@ const normalizeChunkCandles = (
 
 const fetchExactRangeChunk = async (
   timeframe: string,
-  chunk: TwelveDataRangeChunk
+  chunk: TwelveDataRangeChunk,
+  apiKeysOverride?: string[]
 ): Promise<TwelveDataRangeChunkResult> => {
   const stepMs = Math.max(60_000, getStepMs(timeframe));
   const response = await requestJsonDetailed<TwelveDataTimeSeriesResponse>(
@@ -855,7 +1000,9 @@ const fetchExactRangeChunk = async (
       order: "asc",
       start_date: toTwelveDateTime(Math.max(0, chunk.startMs - stepMs)),
       end_date: toTwelveDateTime(chunk.endMs)
-    }
+    },
+    DEFAULT_HTTP_TIMEOUT_MS,
+    apiKeysOverride
   );
   const values = Array.isArray(response.payload.values) ? response.payload.values : [];
 
@@ -863,6 +1010,33 @@ const fetchExactRangeChunk = async (
     chunk,
     candles: normalizeChunkCandles(timeframe, values, chunk.startMs, chunk.endMs)
   };
+};
+
+const isNoDataForRequestedDatesError = (error: unknown): boolean => {
+  if (!(error instanceof TwelveDataRequestError)) {
+    return false;
+  }
+  return /no data is available on the specified dates/i.test(error.message);
+};
+
+const fetchLatestAvailableCandleTimeMs = async (
+  timeframe: string,
+  apiKeysOverride?: string[]
+): Promise<number | null> => {
+  const response = await requestJsonDetailed<TwelveDataTimeSeriesResponse>("/time_series", {
+    symbol: TWELVE_DATA_SYMBOL,
+    interval: getIntervalForTimeframe(timeframe),
+    timezone: "UTC",
+    outputsize: 1
+  }, DEFAULT_HTTP_TIMEOUT_MS, apiKeysOverride);
+  const values = Array.isArray(response.payload.values) ? response.payload.values : [];
+  const latestCandle = normalizeChunkCandles(
+    timeframe,
+    values,
+    Number.NEGATIVE_INFINITY,
+    Number.POSITIVE_INFINITY
+  ).at(-1);
+  return latestCandle ? latestCandle.time : null;
 };
 
 const findMissingCoverageChunks = (
@@ -938,14 +1112,15 @@ const fetchExactRangeCandles = async (params: {
   timeframe: string;
   startMs: number;
   endMs: number;
+  apiKeys?: string[];
 }): Promise<TwelveDataCandleRecord[]> => {
-  const { timeframe, startMs, endMs } = params;
+  const { timeframe, startMs, endMs, apiKeys } = params;
   let pendingChunks = buildRangeChunks(timeframe, startMs, endMs);
   const mergedCandles = new Map<number, TwelveDataCandleRecord>();
 
   const processChunks = async (chunks: TwelveDataRangeChunk[]) => {
     const queue = [...chunks];
-    const workerCount = getAdaptiveWorkerCount(queue.length);
+    const workerCount = getAdaptiveWorkerCount(queue.length, apiKeys);
 
     const worker = async () => {
       while (queue.length > 0) {
@@ -955,11 +1130,36 @@ const fetchExactRangeCandles = async (params: {
         }
 
         try {
-          const result = await fetchExactRangeChunk(timeframe, chunk);
+          const result = await fetchExactRangeChunk(timeframe, chunk, apiKeys);
           for (const candle of result.candles) {
             mergedCandles.set(candle.time, candle);
           }
         } catch (error) {
+          const failureType =
+            error instanceof TwelveDataRequestError ? error.failureType : "other";
+          if (failureType === "rate_limit") {
+            if (chunk.attempt >= EXACT_RANGE_MAX_REPAIR_DEPTH) {
+              throw error;
+            }
+            const earliestReadyAt = getEarliestApiKeyReadyAt(apiKeys);
+            const retryDelayMs = Number.isFinite(earliestReadyAt)
+              ? Math.max(750, earliestReadyAt - Date.now() + 250)
+              : RATE_LIMIT_COOLDOWN_MS;
+            queue.push({
+              ...chunk,
+              attempt: chunk.attempt + 1
+            });
+            await sleep(retryDelayMs);
+            continue;
+          }
+          if (failureType === "other" && chunk.attempt < 1) {
+            queue.push({
+              ...chunk,
+              attempt: chunk.attempt + 1
+            });
+            await sleep(500);
+            continue;
+          }
           if (chunk.repairDepth >= EXACT_RANGE_MAX_REPAIR_DEPTH) {
             throw error;
           }
@@ -1001,6 +1201,7 @@ export const fetchTwelveDataCandles = async (params: {
   count: number;
   start?: string | null;
   end?: string | null;
+  apiKeys?: string[];
 }): Promise<TwelveDataCandlesPayload> => {
   const pair = params.pair.toUpperCase();
   const timeframe = params.timeframe.toUpperCase();
@@ -1055,12 +1256,38 @@ export const fetchTwelveDataCandles = async (params: {
     const hasExplicitStart = startMs != null;
     const hasExplicitEnd = Number.isFinite(endMs);
     if (hasExplicitStart && hasExplicitEnd && endMs >= startMs) {
-      const exactRangeCandles = await fetchExactRangeCandles({
-        pair,
-        timeframe,
-        startMs,
-        endMs
-      });
+      let exactRangeCandles: TwelveDataCandleRecord[];
+      try {
+        exactRangeCandles = await fetchExactRangeCandles({
+          pair,
+          timeframe,
+          startMs,
+          endMs,
+          apiKeys: params.apiKeys
+        });
+      } catch (error) {
+        if (!isNoDataForRequestedDatesError(error)) {
+          throw error;
+        }
+        const latestAvailableTimeMs = await fetchLatestAvailableCandleTimeMs(
+          timeframe,
+          params.apiKeys
+        );
+        if (
+          latestAvailableTimeMs == null ||
+          !Number.isFinite(latestAvailableTimeMs) ||
+          latestAvailableTimeMs < startMs
+        ) {
+          throw error;
+        }
+        exactRangeCandles = await fetchExactRangeCandles({
+          pair,
+          timeframe,
+          startMs,
+          endMs: latestAvailableTimeMs,
+          apiKeys: params.apiKeys
+        });
+      }
 
       const payload = {
         pair,
@@ -1116,7 +1343,9 @@ export const fetchTwelveDataCandles = async (params: {
               outputsize,
               timezone: "UTC",
               end_date: Number.isFinite(cursorEndMs) ? toTwelveDateTime(cursorEndMs) : undefined
-            }
+            },
+        DEFAULT_HTTP_TIMEOUT_MS,
+        params.apiKeys
       );
       const values = Array.isArray(response.values) ? response.values : [];
 
@@ -1201,7 +1430,9 @@ export const fetchTwelveDataCandles = async (params: {
   }
 };
 
-export const fetchTwelveDataLatestQuote = async (): Promise<TwelveDataQuotePayload> => {
+export const fetchTwelveDataLatestQuote = async (
+  apiKeys?: string[]
+): Promise<TwelveDataQuotePayload> => {
   const nowMs = Date.now();
   if (quoteCache && quoteCache.expiresAt > nowMs) {
     return quoteCache.value;
@@ -1216,10 +1447,10 @@ export const fetchTwelveDataLatestQuote = async (): Promise<TwelveDataQuotePaylo
     try {
       quote = await requestJson<TwelveDataQuoteResponse>("/quote", {
         symbol: TWELVE_DATA_SYMBOL
-      }).catch(async () => {
+      }, DEFAULT_HTTP_TIMEOUT_MS, apiKeys).catch(async () => {
         return requestJson<TwelveDataQuoteResponse>("/price", {
           symbol: TWELVE_DATA_SYMBOL
-        });
+        }, DEFAULT_HTTP_TIMEOUT_MS, apiKeys);
       });
     } catch (error) {
       const fallback = getCachedQuoteFallback();
@@ -1265,6 +1496,6 @@ export const fetchTwelveDataLatestQuote = async (): Promise<TwelveDataQuotePaylo
   }
 };
 
-export const probeTwelveDataAccess = async (): Promise<void> => {
-  await fetchTwelveDataLatestQuote();
+export const probeTwelveDataAccess = async (apiKeys?: string[]): Promise<void> => {
+  await fetchTwelveDataLatestQuote(apiKeys);
 };

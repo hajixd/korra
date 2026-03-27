@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import {
   TWELVE_DATA_DEFAULT_PAIR,
   fetchTwelveDataLatestQuote,
-  hasConfiguredTwelveDataApiKeys
+  hasConfiguredTwelveDataApiKeys,
+  setTwelveDataRuntimeApiKeys
 } from "../../../../lib/twelveDataMarketData";
+import { ensureTwelveDataEnvLoaded, getFallbackEnvValue } from "../../../../lib/serverEnvFallback";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +15,14 @@ const KEEPALIVE_INTERVAL_MS = 15_000;
 const QUOTE_POLL_INTERVAL_MS = 30_000;
 
 export async function GET(request: Request) {
+  ensureTwelveDataEnvLoaded();
+  const runtimeApiKeys =
+    [getFallbackEnvValue("TWELVE_DATA_API_KEYS"), getFallbackEnvValue("TWELVE_DATA_API_KEY"), getFallbackEnvValue("TWELVEDATA_API_KEY")]
+      .join(",")
+      .split(/[,\r\n;]+/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+  setTwelveDataRuntimeApiKeys(runtimeApiKeys);
   const { searchParams } = new URL(request.url);
   const pairs = (searchParams.get("pairs") || TWELVE_DATA_DEFAULT_PAIR).toUpperCase().trim();
 
@@ -65,7 +75,7 @@ export async function GET(request: Request) {
 
       const emitLatestQuote = async () => {
         try {
-          const payload = await fetchTwelveDataLatestQuote();
+          const payload = await fetchTwelveDataLatestQuote(runtimeApiKeys);
           if (!payload || closed) {
             return;
           }

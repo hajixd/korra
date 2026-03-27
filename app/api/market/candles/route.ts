@@ -7,8 +7,10 @@ import {
   getTwelveDataRetryAfterSeconds,
   hasConfiguredTwelveDataApiKeys,
   isTwelveDataAuthFailureMessage,
-  isTwelveDataRetryableMessage
+  isTwelveDataRetryableMessage,
+  setTwelveDataRuntimeApiKeys
 } from "../../../../lib/twelveDataMarketData";
+import { ensureTwelveDataEnvLoaded, getFallbackEnvValue } from "../../../../lib/serverEnvFallback";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -65,6 +67,14 @@ const buildTwelveDataMarketErrorResponse = (
   };
 
 export async function GET(request: Request) {
+  ensureTwelveDataEnvLoaded();
+  const runtimeApiKeys =
+    [getFallbackEnvValue("TWELVE_DATA_API_KEYS"), getFallbackEnvValue("TWELVE_DATA_API_KEY"), getFallbackEnvValue("TWELVEDATA_API_KEY")]
+      .join(",")
+      .split(/[,\r\n;]+/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+  setTwelveDataRuntimeApiKeys(runtimeApiKeys);
   const { searchParams } = new URL(request.url);
   const pair = (searchParams.get("pair") || TWELVE_DATA_DEFAULT_PAIR).toUpperCase();
   const timeframe = (searchParams.get("timeframe") || "M15").toUpperCase();
@@ -90,7 +100,8 @@ export async function GET(request: Request) {
       timeframe,
       count: limit,
       start,
-      end
+      end,
+      apiKeys: runtimeApiKeys
     });
     return NextResponse.json(payload, {
       headers: {

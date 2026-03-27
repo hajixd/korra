@@ -45,7 +45,7 @@ export const registerNotificationServiceWorker = async (): Promise<ServiceWorker
     return null;
   }
 
-  return navigator.serviceWorker.register("/api/notifications/service-worker", {
+  return navigator.serviceWorker.register("/firebase-messaging-sw.js", {
     scope: "/"
   });
 };
