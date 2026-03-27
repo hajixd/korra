@@ -6201,7 +6201,10 @@ const fetchHistoryApiCandles = async (
   if (options?.endIso) {
     params.set("end", options.endIso);
   }
-  const requestKey = `history|${params.toString()}`;
+  const requestKey =
+    options?.startIso && options?.endIso
+      ? `history-range|${marketTimeframeMap[timeframe]}|${options.startIso}|${options.endIso}`
+      : `history|${params.toString()}`;
   const cached = clientCandleCache.get(requestKey);
   const nowMs = Date.now();
   if (cached && cached.expiresAt > nowMs) {
@@ -6454,10 +6457,13 @@ const fetchHistoryApiCandlesUntilCovered = async (
   }
 ): Promise<Candle[]> => {
   const coverageWindow = options?.coverageWindow;
+  const hasExactRequestWindow = Boolean(
+    options?.requestWindow?.startIso && options?.requestWindow?.endIso
+  );
   let requestCount = clamp(targetCount, MIN_SEED_CANDLES, CLICKHOUSE_MAX_HISTORY_CANDLES);
   let bestCandles = EMPTY_CANDLES;
 
-  for (let attempt = 0; attempt < 6; attempt += 1) {
+  for (let attempt = 0; attempt < (hasExactRequestWindow ? 1 : 6); attempt += 1) {
     const candles = await fetchHistoryApiCandles(
       timeframe,
       requestCount,
@@ -6468,6 +6474,10 @@ const fetchHistoryApiCandlesUntilCovered = async (
 
     if (!coverageWindow || candlesSatisfyHistoryCoverage(candles, timeframe, coverageWindow)) {
       return candles;
+    }
+
+    if (hasExactRequestWindow) {
+      break;
     }
 
     if (requestCount >= CLICKHOUSE_MAX_HISTORY_CANDLES) {
@@ -14734,6 +14744,37 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
     void (async () => {
       let resolvedReplaySeedCandles = existingCandles;
+      const deepHistoryPromise = needsHistory
+        ? fetchBacktestHistoryCandles(
+            appliedBacktestSettings.timeframe,
+            targetBars,
+            recentOneMinutePromise,
+            allowOneMinuteFallback,
+            analysisSeedFetchTimeoutMs,
+            hasDateRange
+              ? {
+                  requestWindow: historyRequestWindow ?? undefined,
+                  coverageWindow: analysisCoverageWindow
+                }
+              : undefined
+          )
+        : Promise.resolve(existingCandles);
+      const precisionHistoryPromise =
+        shouldLoadPrecisionSupport && needsPrecisionSupport
+          ? fetchBacktestHistoryCandles(
+              precisionTimeframe,
+              precisionTargetBars,
+              recentOneMinutePromise,
+              true,
+              precisionSeedFetchTimeoutMs,
+              hasDateRange
+                ? {
+                    requestWindow: precisionHistoryRequestWindow ?? undefined,
+                    coverageWindow: precisionCoverageWindow
+                  }
+                : undefined
+            ).catch(() => [])
+          : Promise.resolve(shouldLoadPrecisionSupport ? existingPrecisionCandles : []);
 
       try {
         if (needsHistory) {
@@ -14748,22 +14789,22 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
             cursorMs: historyRequestWindow?.startIso ? Date.parse(historyRequestWindow.startIso) : undefined,
             resetClock: true
           });
+        } else if (shouldLoadPrecisionSupport && needsPrecisionSupport) {
+          updateStatsRefreshOperation({
+            label: "Requesting precision support candles",
+            detail:
+              "Loading the lower timeframe support candles that the replay engine uses to refine entries, exits, and stop handling inside each analysis candle.",
+            telemetry:
+              `${appliedBacktestSettings.symbol} - ${precisionTimeframe} - target ${precisionTargetBars.toLocaleString()} bars`,
+            progress: 18,
+            cursorMs:
+              precisionHistoryRequestWindow?.startIso
+                ? Date.parse(precisionHistoryRequestWindow.startIso)
+                : undefined,
+            resetClock: true
+          });
         }
-        const deepHistoryCandles = needsHistory
-          ? await fetchBacktestHistoryCandles(
-              appliedBacktestSettings.timeframe,
-              targetBars,
-              recentOneMinutePromise,
-              allowOneMinuteFallback,
-              analysisSeedFetchTimeoutMs,
-              hasDateRange
-                ? {
-                    requestWindow: historyRequestWindow ?? undefined,
-                    coverageWindow: analysisCoverageWindow
-                  }
-              : undefined
-            )
-          : existingCandles;
+        const deepHistoryCandles = await deepHistoryPromise;
         if (needsHistory) {
           updateStatsRefreshOperation({
             label: "Analysis candle request finished",
@@ -14786,7 +14827,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           updateStatsRefreshOperation({
             label: "Requesting precision support candles",
             detail:
-              "Loading the lower timeframe support candles that the replay engine uses to refine entries, exits, and stop handling inside each analysis candle.",
+              needsHistory
+                ? "The precision history request was already started in parallel; the loader is now waiting for the lower timeframe support candles to finish so replay can refine intrabar handling."
+                : "Loading the lower timeframe support candles that the replay engine uses to refine entries, exits, and stop handling inside each analysis candle.",
             telemetry:
               `${appliedBacktestSettings.symbol} - ${precisionTimeframe} - target ${precisionTargetBars.toLocaleString()} bars`,
             progress: 64,
@@ -14794,27 +14837,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               precisionHistoryRequestWindow?.startIso
                 ? Date.parse(precisionHistoryRequestWindow.startIso)
                 : undefined,
-            resetClock: true
+            resetClock: !needsHistory
           });
         }
-        const precisionCandles =
-          shouldLoadPrecisionSupport && needsPrecisionSupport
-            ? await fetchBacktestHistoryCandles(
-                precisionTimeframe,
-                precisionTargetBars,
-                recentOneMinutePromise,
-                true,
-                precisionSeedFetchTimeoutMs,
-                hasDateRange
-                  ? {
-                      requestWindow: precisionHistoryRequestWindow ?? undefined,
-                      coverageWindow: precisionCoverageWindow
-                    }
-                  : undefined
-              ).catch(() => [])
-            : shouldLoadPrecisionSupport
-              ? existingPrecisionCandles
-              : [];
+        const precisionCandles = await precisionHistoryPromise;
         if (shouldLoadPrecisionSupport && needsPrecisionSupport) {
           updateStatsRefreshOperation({
             label: "Precision candle support finished",
@@ -21387,51 +21413,51 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         const recentOneMinutePromise = shouldLoadPrecisionSupport
           ? fetchRecentOneMinuteCandles(undefined, BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS)
           : undefined;
-
-        if (needsHistory || needsOneMinute) {
-          const deepHistoryCandles = needsHistory
-            ? await fetchBacktestHistoryCandles(
-                timeframe,
-                targetBars,
+        const deepHistoryPromise = needsHistory
+          ? fetchBacktestHistoryCandles(
+              timeframe,
+              targetBars,
+              recentOneMinutePromise,
+              allowOneMinuteFallback,
+              BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
+              hasDateRange
+                ? {
+                    requestWindow: historyRequestWindow ?? undefined,
+                    coverageWindow: {
+                      startYmd: settings.statsDateStart,
+                      endYmd: settings.statsDateEnd,
+                      leadingBars,
+                      strictCoverage: true
+                    }
+                  }
+                : undefined
+            )
+          : Promise.resolve(existingCandles);
+        const oneMinuteHistoryPromise =
+          shouldLoadPrecisionSupport && needsOneMinute
+            ? fetchBacktestHistoryCandles(
+                precisionTimeframe,
+                precisionTargetBars,
                 recentOneMinutePromise,
-                allowOneMinuteFallback,
+                true,
                 BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
                 hasDateRange
                   ? {
-                      requestWindow: historyRequestWindow ?? undefined,
+                      requestWindow: oneMinuteHistoryRequestWindow ?? undefined,
                       coverageWindow: {
                         startYmd: settings.statsDateStart,
                         endYmd: settings.statsDateEnd,
-                        leadingBars,
-                        strictCoverage: true
+                        leadingBars: precisionPaddingBars,
+                        strictCoverage: false
                       }
                     }
                   : undefined
-              )
-            : existingCandles;
-          const oneMinuteCandles =
-            shouldLoadPrecisionSupport && needsOneMinute
-              ? await fetchBacktestHistoryCandles(
-                  precisionTimeframe,
-                  precisionTargetBars,
-                  recentOneMinutePromise,
-                  true,
-                  BACKTEST_SEED_CANDLE_FETCH_TIMEOUT_MS,
-                  hasDateRange
-                    ? {
-                        requestWindow: oneMinuteHistoryRequestWindow ?? undefined,
-                        coverageWindow: {
-                          startYmd: settings.statsDateStart,
-                          endYmd: settings.statsDateEnd,
-                          leadingBars: precisionPaddingBars,
-                          strictCoverage: false
-                        }
-                      }
-                    : undefined
-                ).catch(() => [])
-              : shouldLoadPrecisionSupport
-                ? existingOneMinute
-                : [];
+              ).catch(() => [])
+            : Promise.resolve(shouldLoadPrecisionSupport ? existingOneMinute : []);
+
+        if (needsHistory || needsOneMinute) {
+          const deepHistoryCandles = await deepHistoryPromise;
+          const oneMinuteCandles = await oneMinuteHistoryPromise;
           let seedCandles = pickLongestCandleSeries(
             deepHistoryCandles,
             existingCandles

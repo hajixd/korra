@@ -155,13 +155,13 @@ class TwelveDataRequestError extends Error {
 const RATE_LIMIT_COOLDOWN_MS = 65_000;
 const AUTH_COOLDOWN_MS = 30 * 60_000;
 const TRANSIENT_COOLDOWN_MS = 15_000;
-const KEY_MIN_REQUEST_GAP_MS = 1_500;
-const EXACT_RANGE_TARGET_BARS = 4900;
+const KEY_MIN_REQUEST_GAP_MS = 500;
+const EXACT_RANGE_TARGET_BARS = 4990;
 const EXACT_RANGE_OVERLAP_BARS = 1;
 const EXACT_RANGE_PADDING_BARS = 2;
 const EXACT_RANGE_MAX_REPAIR_DEPTH = 3;
 const EXACT_RANGE_MAX_REPAIR_WINDOWS = 24;
-const EXACT_RANGE_MAX_WORKERS = 4;
+const EXACT_RANGE_MAX_WORKERS = 6;
 const DAY_MS = 24 * 60 * 60_000;
 let localEnvCache: Map<string, string> | null = null;
 let runtimeApiKeysOverride: string[] | null = null;
@@ -947,19 +947,24 @@ const getAdaptiveWorkerCount = (chunkCount: number, apiKeysOverride?: string[]):
     const failureType = keyFailureState.get(apiKey)?.failureType;
     return failureType !== "auth";
   });
+  const maxKeyPoolWorkers = Math.max(
+    1,
+    Math.min(EXACT_RANGE_MAX_WORKERS, usableKeys.length)
+  );
   const telemetry = usableKeys
     .map((apiKey) => keyTelemetryState.get(apiKey))
     .filter((value): value is TwelveDataKeyTelemetry => value != null);
+  const hasHighCreditBudget = telemetry.some(
+    (entry) =>
+      (entry.creditCapacity != null && entry.creditCapacity >= 24) ||
+      (entry.creditsLeft != null && entry.creditsLeft >= 18)
+  );
   const inferredParallelBudget =
     telemetry.length === 0
-      ? Math.min(3, Math.max(1, usableKeys.length))
-      : telemetry.some(
-            (entry) =>
-              (entry.creditCapacity != null && entry.creditCapacity >= 24) ||
-              (entry.creditsLeft != null && entry.creditsLeft >= 18)
-          )
-        ? Math.min(4, Math.max(1, usableKeys.length))
-        : Math.min(2, Math.max(1, usableKeys.length));
+      ? maxKeyPoolWorkers
+      : hasHighCreditBudget
+        ? maxKeyPoolWorkers
+        : Math.max(1, Math.min(maxKeyPoolWorkers, Math.ceil(usableKeys.length / 2)));
 
   return Math.max(
     1,
@@ -967,7 +972,7 @@ const getAdaptiveWorkerCount = (chunkCount: number, apiKeysOverride?: string[]):
       chunkCount,
       EXACT_RANGE_MAX_WORKERS,
       inferredParallelBudget,
-      Math.max(1, usableKeys.length)
+      maxKeyPoolWorkers
     )
   );
 };
