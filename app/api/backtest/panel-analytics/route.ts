@@ -1704,15 +1704,6 @@ const computeAntiCheatBacktestContext = (params: {
   let splitEvaluationTrades = usesSplitValidation
     ? chronologicalTrades.filter((trade) => Number(trade.entryTime) * 1000 >= (splitTimestampMs ?? 0))
     : chronologicalTrades;
-  if (
-    usesSplitValidation &&
-    splitTimestampMs !== null &&
-    (splitTrainingTrades.length === 0 || splitEvaluationTrades.length === 0)
-  ) {
-    const fallbackIndex = Math.floor(chronologicalTrades.length * 0.5);
-    splitTrainingTrades = chronologicalTrades.slice(0, fallbackIndex);
-    splitEvaluationTrades = chronologicalTrades.slice(fallbackIndex);
-  }
 
   if (
     panelBacktestFilterSettings.aiMode === "off" ||

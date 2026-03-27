@@ -122,7 +122,7 @@ const buildModelProfilesFromStates = (aiModelStates: Record<string, number>): Mo
 };
 
 const usesEveryBarMode = (aiMode: StrategyNotificationSettings["aiMode"], aiFilterEnabled: boolean) => {
-  return aiMode !== "off" && !aiFilterEnabled;
+  return false;
 };
 
 const toStrategyReplayModels = (models: readonly ModelProfile[], aiModelStates: Record<string, number>) => {

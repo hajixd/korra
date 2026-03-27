@@ -13,7 +13,8 @@ export type StrategyModelKind =
   | "timeOfDay"
   | "fibonacci"
   | "fairValueGap"
-  | "supportResistance";
+  | "supportResistance"
+  | "aiModel";
 
 export type StrategyEntrySpec = {
   context: string[];
@@ -79,6 +80,7 @@ export type StrategyModelCatalogEntry = {
   name: string;
   aliases: string[];
   description: string;
+  hidden?: boolean;
   entry: StrategyEntrySpec;
   exit: StrategyExitSpec;
   backtest?: StrategyBacktestSpec;
@@ -118,7 +120,8 @@ const MODEL_KIND_BY_ID: Record<string, StrategyModelKind> = {
   "time-of-day": "timeOfDay",
   fibonacci: "fibonacci",
   "fair-value-gap": "fairValueGap",
-  "support-resistance": "supportResistance"
+  "support-resistance": "supportResistance",
+  "ai-model": "aiModel"
 };
 
 const MODEL_RUNTIME_DEFAULTS: Record<
@@ -180,6 +183,14 @@ const MODEL_RUNTIME_DEFAULTS: Record<
     rrMax: 2.7,
     longBias: 0.52,
     winRate: 0.59
+  },
+  aiModel: {
+    riskMin: 0.0012,
+    riskMax: 0.0038,
+    rrMin: 1.25,
+    rrMax: 2.4,
+    longBias: 0.5,
+    winRate: 0.5
   }
 };
 
@@ -214,7 +225,62 @@ const MODEL_CLARIFYING_QUESTIONS: Record<StrategyModelKind, string[]> = {
     "Which level type matters here: daily, weekly, session, or intraday structure?",
     "Are you trading the rejection, the reclaim, or the breakout hold?",
     "What acceptance through the zone forces an immediate exit?"
+  ],
+  aiModel: [
+    "Which candle decides the next bar's direction?",
+    "What risk wrapper should sit around the AI-only entry stream?",
+    "Which non-model rule should close the trade if it never reaches stop or target?"
   ]
+};
+
+export const AI_MODEL_MODEL_ID = "ai-model";
+export const AI_MODEL_MODEL_NAME = "AI Model";
+
+const AI_MODEL_CATALOG_ENTRY: StrategyModelCatalogEntry = {
+  id: AI_MODEL_MODEL_ID,
+  name: AI_MODEL_MODEL_NAME,
+  aliases: ["ai model"],
+  hidden: true,
+  description: "Internal model that emits one entry on every candle for AI Model mode.",
+  entry: {
+    context: ["Runs through the standard model replay path without special AI-only entry logic."],
+    setup: ["Uses the previous candle body direction to pick long or short."],
+    trigger: ["Green candle -> long next bar.", "Red candle -> short next bar."],
+    confirmation: [],
+    invalidation: [],
+    noTrade: []
+  },
+  exit: {
+    stopLoss: [],
+    takeProfit: [],
+    timeExit: [],
+    earlyExit: []
+  },
+  backtest: {
+    source: "internal-ai-model",
+    entry: {
+      long: {
+        checks: [
+          {
+            label: "Previous candle closed green",
+            when: {
+              feature: "greenCandle"
+            }
+          }
+        ]
+      },
+      short: {
+        checks: [
+          {
+            label: "Previous candle closed red",
+            when: {
+              feature: "redCandle"
+            }
+          }
+        ]
+      }
+    }
+  }
 };
 
 export const STRATEGY_BACKTEST_FEATURE_GUIDE: readonly StrategyBacktestFeatureGuide[] = [
@@ -259,6 +325,14 @@ export const STRATEGY_BACKTEST_FEATURE_GUIDE: readonly StrategyBacktestFeatureGu
     description: "Latest close shows a bearish reversal versus the prior close."
   },
   {
+    feature: "greenCandle",
+    description: "Latest candle closed at or above its open."
+  },
+  {
+    feature: "redCandle",
+    description: "Latest candle closed below its open."
+  },
+  {
     feature: "sufficientRange",
     description: "Recent chunk range is large enough to avoid compressed conditions."
   },
@@ -272,8 +346,13 @@ export const STRATEGY_BACKTEST_FEATURE_GUIDE: readonly StrategyBacktestFeatureGu
   }
 ] as const;
 
-export const STRATEGY_MODEL_CATALOG = MODEL_SOURCES as readonly StrategyModelCatalogEntry[];
-export const DEFAULT_STRATEGY_MODEL_NAMES = STRATEGY_MODEL_CATALOG.map((entry) => entry.name);
+export const STRATEGY_MODEL_CATALOG: readonly StrategyModelCatalogEntry[] = [
+  ...(MODEL_SOURCES as readonly StrategyModelCatalogEntry[]),
+  AI_MODEL_CATALOG_ENTRY
+];
+export const DEFAULT_STRATEGY_MODEL_NAMES = STRATEGY_MODEL_CATALOG
+  .filter((entry) => entry.hidden !== true)
+  .map((entry) => entry.name);
 
 const normalizeLookupKey = (value: string): string => {
   return value
@@ -573,6 +652,7 @@ export const parseStrategyModelCatalogEntry = (
     name,
     aliases: sanitizeStrategyTextList(record.aliases),
     description,
+    hidden: record.hidden === true,
     entry,
     exit,
     ...(backtest ? { backtest } : {})

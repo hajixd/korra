@@ -73,6 +73,8 @@ type FeatureSnapshot = {
   nearResistance: boolean;
   bullishReversal: boolean;
   bearishReversal: boolean;
+  greenCandle: boolean;
+  redCandle: boolean;
   sufficientRange: boolean;
 };
 
@@ -470,7 +472,13 @@ const buildWindowSnapshot = (
   bars: number
 ): Pick<
   FeatureSnapshot,
-  "nearSupport" | "nearResistance" | "bullishReversal" | "bearishReversal" | "sufficientRange"
+  | "nearSupport"
+  | "nearResistance"
+  | "bullishReversal"
+  | "bearishReversal"
+  | "greenCandle"
+  | "redCandle"
+  | "sufficientRange"
 > => {
   const length = candles.length;
   const safeEnd = Math.min(length - 1, Math.max(0, Math.trunc(index)));
@@ -495,16 +503,21 @@ const buildWindowSnapshot = (
   const previousClose = closes[Math.max(0, closes.length - 2)] ?? closes[closes.length - 1]!;
   const rangeNorm = (maxHigh - minLow) / denom;
   const band = 0.08;
+  const currentCandle = candles[safeEnd] ?? candles[length - 1]!;
+  const currentOpen = currentCandle?.open ?? closes[closes.length - 1]!;
+  const currentClose = closes[closes.length - 1]!;
 
   return {
     nearSupport: position <= band,
     nearResistance: position >= 1 - band,
     bullishReversal:
-      closes[closes.length - 1]! > previousClose &&
-      (closes[closes.length - 1]! - previousClose) / denom > 0.002,
+      currentClose > previousClose &&
+      (currentClose - previousClose) / denom > 0.002,
     bearishReversal:
-      closes[closes.length - 1]! < previousClose &&
-      (previousClose - closes[closes.length - 1]!) / denom > 0.002,
+      currentClose < previousClose &&
+      (previousClose - currentClose) / denom > 0.002,
+    greenCandle: currentClose >= currentOpen,
+    redCandle: currentClose < currentOpen,
     sufficientRange: rangeNorm > 0.008
   };
 };

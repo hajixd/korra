@@ -1167,6 +1167,47 @@ test("synthetic validation uses the full trade history as its training pool", as
   assert.equal(syntheticNeighborUid, "live-3");
 });
 
+test("split validation does not silently midpoint-fallback when timestamps collapse to one side", async () => {
+  const trades = [
+    makeTrade({
+      id: "live-1",
+      entryIso: "2025-03-01T00:00:00Z",
+      exitIso: "2025-03-01T01:00:00Z",
+      neighborVector: [0, 0, 0, 0, 0, 0]
+    }),
+    makeTrade({
+      id: "live-2",
+      entryIso: "2025-03-01T00:00:00Z",
+      exitIso: "2025-03-01T02:00:00Z",
+      result: "Loss",
+      pnlUsd: -100,
+      pnlPct: -0.2,
+      outcomePrice: 99,
+      neighborVector: [1, 1, 1, 1, 1, 1]
+    })
+  ];
+
+  const payload = await postPanelAnalytics({
+    panelSourceTrades: trades,
+    panelLibraryPoints: [],
+    panelBacktestFilterSettings: baseFilterSettings({
+      antiCheatEnabled: true,
+      validationMode: "split",
+      statsDateStart: null,
+      statsDateEnd: null,
+      selectedAiLibraries: ["core"]
+    }),
+    panelConfidenceGateDisabled: true,
+    panelEffectiveConfidenceThreshold: 0,
+    aiLibraryDefaultsById: {
+      core: { weight: 100, maxSamples: 1000 }
+    }
+  });
+
+  assert.equal(payload.libraryCandidateTrades.length, 0);
+  assert.equal(payload.timeFilteredTrades.length, 2);
+});
+
 test("synthetic worker libraries are stamped in 1999 while live trades stay on real-market time", async () => {
   const candles = buildComputeCandles(320);
 
@@ -1228,6 +1269,49 @@ test("synthetic worker libraries are stamped in 1999 while live trades stay on r
     assert.equal(new Date(entryTime).getUTCFullYear() >= 2025, true);
     assert.equal(new Date(exitTime).getUTCFullYear() >= 2025, true);
   }
+});
+
+test("compute worker does not silently inject the base library when none is selected", async () => {
+  const payload = await postAizipCompute({
+    candles: buildComputeCandles(240),
+    settings: {
+      antiCheatEnabled: false,
+      validationMode: "off",
+      parseMode: "utc",
+      chunkBars: 8,
+      dollarsPerMove: 100,
+      tpDollars: 100,
+      slDollars: 100,
+      enabledSessions: {
+        Tokyo: true,
+        Sydney: true,
+        London: true,
+        "New York": true
+      },
+      modelStates: {
+        Momentum: 1
+      },
+      aiLibrariesActive: [],
+      aiLibrariesSettings: {}
+    },
+    timeoutMs: 60_000
+  });
+
+  const result =
+    payload.res && typeof payload.res === "object" && !Array.isArray(payload.res)
+      ? (payload.res as {
+          libraryCounts?: Record<string, number>;
+          libraryPoints?: Array<{ libId?: string }>;
+        })
+      : null;
+  assert.ok(result, "expected a compute result payload");
+  assert.equal(result?.libraryCounts?.base ?? 0, 0);
+  assert.equal(
+    (Array.isArray(result?.libraryPoints) ? result.libraryPoints : []).some(
+      (point) => point?.libId === "base"
+    ),
+    false
+  );
 });
 
 test("artificial library balancing keeps the generated sample count at maxSamples", async () => {

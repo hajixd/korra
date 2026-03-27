@@ -130,7 +130,7 @@ export const usesAizipEveryCandleMode = (
   aiMode: AIZipMode,
   aiFilterEnabled: boolean
 ): boolean => {
-  return aiMode !== "off" && !aiFilterEnabled;
+  return false;
 };
 
 export const doesAizipReplayEntryModeChange = (

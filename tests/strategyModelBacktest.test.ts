@@ -4,7 +4,12 @@ import {
   buildStrategyReplayTradeBlueprints,
   type StrategyReplayModelProfile
 } from "../lib/strategyModelBacktest";
-import type { StrategyModelCatalogEntry } from "../lib/strategyCatalog";
+import {
+  AI_MODEL_MODEL_ID,
+  AI_MODEL_MODEL_NAME,
+  STRATEGY_MODEL_CATALOG,
+  type StrategyModelCatalogEntry
+} from "../lib/strategyCatalog";
 
 const buildStableCandles = () => {
   const startMs = Date.parse("2025-01-01T00:00:00Z");
@@ -164,4 +169,47 @@ test("same-entry-candle stopouts are preserved as blueprints", () => {
   );
 
   assert.ok(sameBarStopout);
+});
+
+test("hidden AI Model enters on each signal candle and never uses model exits", () => {
+  const startMs = Date.parse("2025-01-01T00:00:00Z");
+  const candles = [
+    { time: startMs + 0 * 60_000, open: 100, high: 100.2, low: 99.9, close: 100.1 },
+    { time: startMs + 1 * 60_000, open: 100.1, high: 100.2, low: 99.8, close: 99.9 },
+    { time: startMs + 2 * 60_000, open: 99.9, high: 100.4, low: 99.9, close: 100.3 },
+    { time: startMs + 3 * 60_000, open: 100.3, high: 100.35, low: 99.7, close: 99.8 },
+    { time: startMs + 4 * 60_000, open: 99.8, high: 100.25, low: 99.8, close: 100.2 },
+    { time: startMs + 5 * 60_000, open: 100.2, high: 100.22, low: 99.75, close: 99.9 }
+  ];
+  const models: StrategyReplayModelProfile[] = [
+    {
+      id: AI_MODEL_MODEL_ID,
+      name: AI_MODEL_MODEL_NAME,
+      riskMin: 0.001,
+      riskMax: 0.002,
+      rrMin: 1,
+      rrMax: 2,
+      longBias: 0.5,
+      state: 1
+    }
+  ];
+
+  const blueprints = buildStrategyReplayTradeBlueprints({
+    candles,
+    models,
+    symbol: "XAUUSD",
+    unitsPerMove: 1,
+    chunkBars: 2,
+    tpDollars: 1000,
+    slDollars: 1000,
+    strategyCatalog: STRATEGY_MODEL_CATALOG
+  });
+
+  assert.equal(blueprints.length, 3);
+  assert.deepEqual(
+    blueprints.map((blueprint) => blueprint.side).sort(),
+    ["Long", "Long", "Short"].sort()
+  );
+  assert.equal(blueprints.every((blueprint) => blueprint.modelId === AI_MODEL_MODEL_ID), true);
+  assert.equal(blueprints.some((blueprint) => blueprint.exitReason === "Model Exit"), false);
 });

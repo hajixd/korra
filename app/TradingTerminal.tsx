@@ -84,6 +84,7 @@ import {
 } from "./tools/chartActions";
 import { normalizeChartActions } from "../lib/assistant-tools";
 import {
+  AI_MODEL_MODEL_NAME,
   parseStrategyModelCatalogEntry,
   STRATEGY_MODEL_CATALOG,
   resolveStrategyRuntimeModelProfile,
@@ -106,6 +107,7 @@ import {
   resolveExplicitAiConfidenceScore
 } from "../lib/aiConfidence";
 import {
+  ENTRY_ONLY_NEIGHBOR_DIMENSIONS,
   buildEntryOnlyNeighborVector,
   getEntryOnlyTradeConfidenceScore
 } from "../lib/aiEntryScoring";
@@ -2896,7 +2898,7 @@ const resolveStrategyReplayEntryMode = (
   aiMode: BacktestSettingsSnapshot["aiMode"],
   aiFilterEnabled: boolean
 ): "signals" | "every-bar" => {
-  return usesAizipEveryCandleMode(aiMode, aiFilterEnabled) ? "every-bar" : "signals";
+  return "signals";
 };
 
 const buildReplayModelNamesById = <
@@ -2905,11 +2907,10 @@ const buildReplayModelNamesById = <
     name?: string | null;
   }
 >(
-  models: readonly TModel[],
-  aiModelEveryBarMode: boolean
+  models: readonly TModel[]
 ): Record<string, string> => {
   return models.reduce<Record<string, string>>((accumulator, model) => {
-    accumulator[model.id] = aiModelEveryBarMode ? "AI Model" : model.name ?? "Settings";
+    accumulator[model.id] = model.name ?? "Settings";
     return accumulator;
   }, {});
 };
@@ -3524,9 +3525,16 @@ const getAiFeatureWindowBars = (windowBars: number): number => {
 
 const buildInitialAiModelStates = (modelNames: readonly string[]): Record<string, AiModelState> => {
   const next: Record<string, AiModelState> = {};
+  let visibleIndex = 0;
 
-  modelNames.forEach((modelName, index) => {
-    next[modelName] = index < 3 ? 1 : 0;
+  modelNames.forEach((modelName) => {
+    if (modelName === AI_MODEL_MODEL_NAME) {
+      next[modelName] = 0;
+      return;
+    }
+
+    next[modelName] = visibleIndex < 3 ? 1 : 0;
+    visibleIndex += 1;
   });
 
   return next;
@@ -9548,13 +9556,43 @@ const buildDimensionProfileSegments = (
   });
 };
 
+const getTradeDimensionDecisionVector = (
+  trade: (Pick<HistoryItem, "side" | "entryPrice" | "targetPrice" | "stopPrice" | "entryTime"> &
+    Partial<{ neighborVector: number[] | null }>) |
+    Record<string, unknown>
+): number[] | null => {
+  const row = trade as Record<string, unknown>;
+  const raw =
+    Array.isArray(row.neighborVector) && row.neighborVector.length > 0
+      ? row.neighborVector
+      : buildEntryOnlyNeighborVector({
+          side: row.side === "Short" ? "Short" : "Long",
+          entryPrice: Math.max(0.000001, Number(row.entryPrice) || 0.000001),
+          targetPrice: Math.max(0.000001, Number(row.targetPrice) || 0.000001),
+          stopPrice: Math.max(0.000001, Number(row.stopPrice) || 0.000001),
+          entryTime: Number(row.entryTime) || 0
+        });
+  const vector = raw
+    .slice(0, ENTRY_ONLY_NEIGHBOR_DIMENSIONS.length)
+    .map((value: number) => Number(value));
+
+  if (
+    vector.length !== ENTRY_ONLY_NEIGHBOR_DIMENSIONS.length ||
+    vector.some((value: number) => !Number.isFinite(value))
+  ) {
+    return null;
+  }
+
+  return vector;
+};
+
 const buildDimensionStatsSummary = (params: {
   sourceTrades: HistoryItem[];
   settings: BacktestSettingsSnapshot;
   backtestSeriesMap: Record<string, Candle[]>;
   seriesMap: Record<string, Candle[]>;
 }): DimensionStatsSummary => {
-  const { sourceTrades, settings, backtestSeriesMap, seriesMap } = params;
+  const { sourceTrades, settings } = params;
   const sortedTrades = [...sourceTrades].sort(
     (left, right) => Number(left.entryTime) - Number(right.entryTime)
   );
@@ -9563,44 +9601,19 @@ const buildDimensionStatsSummary = (params: {
     settings.validationMode === "split";
   const splitIndex = Math.floor(sortedTrades.length * (DIMENSION_STATS_SPLIT_PCT / 100));
   const evaluationTrades = splitAllowed ? sortedTrades.slice(splitIndex) : sortedTrades;
-  const effectiveBars = getAiFeatureWindowBars(settings.chunkBars);
   const dimensionDefs: Array<{
     key: string;
     featureId: string;
     featureIndex: number;
     lag: number;
     name: string;
-  }> = [];
-
-  for (const feature of AI_FEATURE_OPTIONS) {
-    const level = settings.aiFeatureLevels[feature.id] ?? 0;
-    const take = featureTakeCount(feature.id, level);
-
-    if (take <= 0) {
-      continue;
-    }
-
-    const names = DIMENSION_FEATURE_NAME_BANK[feature.id] ?? [];
-    const mode = settings.aiFeatureModes[feature.id] ?? "individual";
-    const parts = mode === "individual" ? effectiveBars : 1;
-
-    for (let featureIndex = 0; featureIndex < take; featureIndex += 1) {
-      const subName = names[featureIndex] ?? `Dim ${featureIndex + 1}`;
-
-      for (let lag = 0; lag < parts; lag += 1) {
-        dimensionDefs.push({
-          key: `${feature.id}__${featureIndex}__t${lag}`,
-          featureId: feature.id,
-          featureIndex,
-          lag,
-          name:
-            mode === "individual"
-              ? `${feature.label} - ${subName} ? t-${lag}`
-              : `${feature.label} - ${subName}`
-        });
-      }
-    }
-  }
+  }> = ENTRY_ONLY_NEIGHBOR_DIMENSIONS.map((dimension, featureIndex) => ({
+    key: dimension.key,
+    featureId: "entry_only_neighbor_vector",
+    featureIndex,
+    lag: 0,
+    name: dimension.name
+  }));
 
   if (dimensionDefs.length === 0 || evaluationTrades.length === 0) {
     return {
@@ -9625,37 +9638,15 @@ const buildDimensionStatsSummary = (params: {
   const outcomes: number[] = [];
 
   for (const trade of evaluationTrades) {
-    const candles = pickLongestCandleSeries(
-      backtestSeriesMap[symbolTimeframeKey(trade.symbol, settings.timeframe)],
-      seriesMap[symbolTimeframeKey(trade.symbol, settings.timeframe)]
-    );
-
-    if (candles.length === 0) {
-      continue;
-    }
-
-    const entryIndex = findCandleIndexAtOrBefore(candles, Number(trade.entryTime) * 1000);
-
-    if (entryIndex < 0) {
-      continue;
-    }
-
-    const featureBuckets = buildDimensionFeatureLagBuckets(
-      candles,
-      entryIndex,
-      settings.chunkBars
-    );
-
-    if (!featureBuckets) {
+    const vector = getTradeDimensionDecisionVector(trade);
+    if (!vector) {
       continue;
     }
 
     outcomes.push(trade.result === "Win" ? 1 : 0);
 
     for (const dimension of dimensionDefs) {
-      const perLagValues = featureBuckets[dimension.featureId] ?? [];
-      const values = perLagValues[dimension.lag] ?? perLagValues[0] ?? [];
-      const value = Number(values[dimension.featureIndex] ?? 0);
+      const value = Number(vector[dimension.featureIndex] ?? 0);
       const list = valuesByDimension.get(dimension.key);
 
       if (list) {
@@ -10011,7 +10002,8 @@ type ReplayModelKind =
   | "timeOfDay"
   | "fibonacci"
   | "fairValueGap"
-  | "supportResistance";
+  | "supportResistance"
+  | "aiModel";
 
 const resolveReplayModelKind = (name: string): ReplayModelKind => {
   const normalized = name.trim().toLowerCase();
@@ -10046,6 +10038,10 @@ const resolveReplayModelKind = (name: string): ReplayModelKind => {
     normalized.includes("s/r")
   ) {
     return "supportResistance";
+  }
+
+  if (normalized === "ai model" || normalized === "ai-model" || normalized === "aimodel") {
+    return "aiModel";
   }
 
   return "momentum";
@@ -11801,6 +11797,9 @@ function TradingTerminalWorkspace({
 
     return names;
   }, [availableAiModelNames, uploadedStrategyModels]);
+  const visibleSettingsModelNames = useMemo(() => {
+    return settingsModelNames.filter((modelName) => modelName !== AI_MODEL_MODEL_NAME);
+  }, [settingsModelNames]);
   const [modelsSurfaceNotice, setModelsSurfaceNotice] = useState("");
   const [modelsSurfaceNoticeTone, setModelsSurfaceNoticeTone] = useState<
     "neutral" | "success" | "error"
@@ -12155,6 +12154,31 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   useEffect(() => {
     setAiModelStates((current) => syncAiModelStates(current, settingsModelNames));
   }, [settingsModelNames]);
+
+  useEffect(() => {
+    const aiModelModeActive = aiMode !== "off" && !aiFilterEnabled;
+
+    setAiModelStates((current) => {
+      const synced = syncAiModelStates(current, settingsModelNames);
+      const next = { ...synced };
+
+      if (aiModelModeActive) {
+        for (const modelName of settingsModelNames) {
+          next[modelName] = modelName === AI_MODEL_MODEL_NAME ? 1 : 0;
+        }
+      } else if ((next[AI_MODEL_MODEL_NAME] ?? 0) !== 0) {
+        next[AI_MODEL_MODEL_NAME] = 0;
+      }
+
+      for (const modelName of settingsModelNames) {
+        if ((next[modelName] ?? 0) !== (current[modelName] ?? 0)) {
+          return next;
+        }
+      }
+
+      return current;
+    });
+  }, [aiFilterEnabled, aiMode, settingsModelNames]);
 
   useEffect(() => {
     if (
@@ -13622,7 +13646,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     return new Set(uploadedStrategyModels.map((model) => model.id));
   }, [uploadedStrategyModels]);
   const modelsSurfaceEntries = useMemo(() => {
-    return modelsSurfaceCatalog.map((model) => {
+    return modelsSurfaceCatalog
+      .filter((model) => model.hidden !== true)
+      .map((model) => {
       const backtestSummary =
         buildStrategyBacktestSurfaceSummary(model) ?? buildFallbackModelSurfaceSummary(model);
 
@@ -15407,9 +15433,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     for (const blueprint of everyCandleTradeBlueprints) {
       if (!modelNamesById[blueprint.modelId]) {
         modelNamesById[blueprint.modelId] =
-          appliedAiModelEveryCandleMode
-            ? "AI Model"
-            : modelProfileById[blueprint.modelId]?.name ?? "Settings";
+          modelProfileById[blueprint.modelId]?.name ?? "Settings";
       }
     }
 
@@ -16517,20 +16541,17 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     shouldBuildChartPanelReplayRows
   ]);
   const chartPanelModelNamesById = useMemo(() => {
-    const aiModelEveryBarMode = usesAizipEveryCandleMode(aiMode, aiFilterEnabled);
     const modelNamesById: Record<string, string> = {};
 
     for (const blueprint of chartPanelTradeBlueprints) {
       if (!modelNamesById[blueprint.modelId]) {
         modelNamesById[blueprint.modelId] =
-          aiModelEveryBarMode
-            ? "AI Model"
-            : modelProfileById[blueprint.modelId]?.name ?? "Settings";
+          modelProfileById[blueprint.modelId]?.name ?? "Settings";
       }
     }
 
     return modelNamesById;
-  }, [aiFilterEnabled, aiMode, chartPanelTradeBlueprints, modelProfileById]);
+  }, [chartPanelTradeBlueprints, modelProfileById]);
   const [chartPanelReplayRows, setChartPanelReplayRows] = useState<HistoryItem[]>([]);
   useEffect(() => {
     if (!shouldBuildChartPanelReplayRows) {
@@ -17105,19 +17126,12 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     const shouldShowPostReplayAiPhase = hasAiAnalysisPass;
     const statsDateStartSnapshot = appliedBacktestStatsDateStartRef.current;
     const statsDateEndSnapshot = appliedBacktestStatsDateEndRef.current;
-    const aiModelEveryBarMode = usesAizipEveryCandleMode(
-      appliedSettingsSnapshot.aiMode,
-      appliedSettingsSnapshot.aiFilterEnabled
-    );
-
     const modelNamesById: Record<string, string> = {};
 
     for (const blueprint of tradeBlueprintsSnapshot) {
       if (!modelNamesById[blueprint.modelId]) {
         modelNamesById[blueprint.modelId] =
-          aiModelEveryBarMode
-            ? "AI Model"
-            : modelProfileByIdSnapshot[blueprint.modelId]?.name ?? "Settings";
+          modelProfileByIdSnapshot[blueprint.modelId]?.name ?? "Settings";
       }
     }
 
@@ -21806,10 +21820,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           return [];
         }
 
-        const modelNamesById = buildReplayModelNamesById(
-          selectedModels,
-          usesAizipEveryCandleMode(settings.aiMode, settings.aiFilterEnabled)
-        );
+        const modelNamesById = buildReplayModelNamesById(selectedModels);
         const rows = await computeBacktestRowsAsync({
           blueprints,
           candleSeriesBySymbol: {
@@ -22003,10 +22014,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           return [];
         }
 
-        const modelNamesById = buildReplayModelNamesById(
-          selectedModels,
-          usesAizipEveryCandleMode(settings.aiMode, settings.aiFilterEnabled)
-        );
+        const modelNamesById = buildReplayModelNamesById(selectedModels);
         const rows = await computeBacktestRowsAsync({
           blueprints,
           candleSeriesBySymbol,
@@ -25572,294 +25580,20 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     if (!shouldBuildDimensionStats) {
       return null;
     }
-
-    const sortedTrades = [...deferredDimensionStatsSourceTrades].sort(
-      (left, right) => Number(left.entryTime) - Number(right.entryTime)
-    );
-    const splitAllowed =
-      appliedBacktestSettings.antiCheatEnabled &&
-      appliedBacktestSettings.validationMode === "split";
-    const splitIndex = Math.floor(sortedTrades.length * (DIMENSION_STATS_SPLIT_PCT / 100));
-    const evaluationTrades = splitAllowed ? sortedTrades.slice(splitIndex) : sortedTrades;
-    const effectiveBars = getAiFeatureWindowBars(appliedBacktestSettings.chunkBars);
-    const dimensionDefs: Array<{
-      key: string;
-      featureId: string;
-      featureIndex: number;
-      lag: number;
-      name: string;
-    }> = [];
-
-    for (const feature of AI_FEATURE_OPTIONS) {
-      const level = appliedBacktestSettings.aiFeatureLevels[feature.id] ?? 0;
-      const take = featureTakeCount(feature.id, level);
-
-      if (take <= 0) {
-        continue;
-      }
-
-      const names = DIMENSION_FEATURE_NAME_BANK[feature.id] ?? [];
-      const mode = appliedBacktestSettings.aiFeatureModes[feature.id] ?? "individual";
-      const parts = mode === "individual" ? effectiveBars : 1;
-
-      for (let featureIndex = 0; featureIndex < take; featureIndex += 1) {
-        const subName = names[featureIndex] ?? `Dim ${featureIndex + 1}`;
-
-        for (let lag = 0; lag < parts; lag += 1) {
-          dimensionDefs.push({
-            key: `${feature.id}__${featureIndex}__t${lag}`,
-            featureId: feature.id,
-            featureIndex,
-            lag,
-            name:
-              mode === "individual"
-                ? `${feature.label} - ${subName} ? t-${lag}`
-                : `${feature.label} - ${subName}`
-          });
-        }
-      }
-    }
-
-    if (dimensionDefs.length === 0 || evaluationTrades.length === 0) {
-      return {
-        mode: splitAllowed ? "split" : "all",
-        split: DIMENSION_STATS_SPLIT_PCT,
-        count: 0,
-        baselineWin: null,
-        dimKeyOrder: [],
-        dims: [],
-        keptKeys: [],
-        inDim: 0,
-        outDim: 0
-      };
-    }
-
-    const valuesByDimension = new Map<string, number[]>();
-
-    for (const dimension of dimensionDefs) {
-      valuesByDimension.set(dimension.key, []);
-    }
-
-    const outcomes: number[] = [];
-
-    for (const trade of evaluationTrades) {
-      const candles =
-        pickLongestCandleSeries(
-          backtestSeriesMap[symbolTimeframeKey(trade.symbol, appliedBacktestSettings.timeframe)],
-          seriesMap[symbolTimeframeKey(trade.symbol, appliedBacktestSettings.timeframe)]
-        );
-
-      if (candles.length === 0) {
-        continue;
-      }
-
-      const entryIndex = findCandleIndexAtOrBefore(candles, Number(trade.entryTime) * 1000);
-
-      if (entryIndex < 0) {
-        continue;
-      }
-
-      const featureBuckets = buildDimensionFeatureLagBuckets(
-        candles,
-        entryIndex,
-        appliedBacktestSettings.chunkBars
-      );
-
-      if (!featureBuckets) {
-        continue;
-      }
-
-      outcomes.push(trade.result === "Win" ? 1 : 0);
-
-      for (const dimension of dimensionDefs) {
-        const perLagValues = featureBuckets[dimension.featureId] ?? [];
-        const values = perLagValues[dimension.lag] ?? perLagValues[0] ?? [];
-        const value = Number(values[dimension.featureIndex] ?? 0);
-        const list = valuesByDimension.get(dimension.key);
-
-        if (list) {
-          list.push(Number.isFinite(value) ? value : 0);
-        }
-      }
-    }
-
-    if (outcomes.length === 0) {
-      return {
-        mode: splitAllowed ? "split" : "all",
-        split: DIMENSION_STATS_SPLIT_PCT,
-        count: 0,
-        baselineWin: null,
-        dimKeyOrder: [],
-        dims: [],
-        keptKeys: [],
-        inDim: 0,
-        outDim: 0
-      };
-    }
-
-    const epsilon = 0.000000001;
-    const dimensions: DimensionStatRow[] = [];
-    const varianceByKey = new Map<string, number>();
-
-    for (const dimension of dimensionDefs) {
-      const values = valuesByDimension.get(dimension.key) ?? [];
-
-      if (values.length !== outcomes.length || values.length === 0) {
-        continue;
-      }
-
-      const mean = meanOf(values);
-      let sumSquared = 0;
-
-      for (const value of values) {
-        const delta = value - mean;
-        sumSquared += delta * delta;
-      }
-
-      const variance = sumSquared / Math.max(1, values.length - 1);
-      varianceByKey.set(dimension.key, variance);
-      const std = Math.sqrt(Math.max(epsilon, variance));
-      const normalized = values.map((value) => ((value - mean) / std) * 50);
-      const correlation = getBinaryCorrelation(normalized, outcomes);
-      const rawMin = Math.min(...values);
-      const rawMax = Math.max(...values);
-      const rawLowThreshold = quantileOf(values, 0.1);
-      const rawHighThreshold = quantileOf(values, 0.9);
-      const lowThreshold = quantileOf(normalized, 0.1);
-      const highThreshold = quantileOf(normalized, 0.9);
-      let lowTotal = 0;
-      let lowWins = 0;
-      let highTotal = 0;
-      let highWins = 0;
-
-      for (let index = 0; index < normalized.length; index += 1) {
-        const value = normalized[index];
-        const isWin = outcomes[index] === 1;
-
-        if (value <= lowThreshold) {
-          lowTotal += 1;
-          lowWins += isWin ? 1 : 0;
-        }
-
-        if (value >= highThreshold) {
-          highTotal += 1;
-          highWins += isWin ? 1 : 0;
-        }
-      }
-
-      const winLow = lowTotal > 0 ? lowWins / lowTotal : null;
-      const winHigh = highTotal > 0 ? highWins / highTotal : null;
-      const lift = winLow === null || winHigh === null ? null : winHigh - winLow;
-
-      let optimal = "?";
-
-      if (winLow !== null && winHigh !== null) {
-        if (winHigh > winLow) {
-          optimal = `>= ${highThreshold.toFixed(2)}`;
-        } else if (winLow > winHigh) {
-          optimal = `<= ${lowThreshold.toFixed(2)}`;
-        } else {
-          optimal = `<= ${lowThreshold.toFixed(2)} or >= ${highThreshold.toFixed(2)}`;
-        }
-      } else if (winHigh !== null) {
-        optimal = `>= ${highThreshold.toFixed(2)}`;
-      } else if (winLow !== null) {
-        optimal = `<= ${lowThreshold.toFixed(2)}`;
-      }
-
-      dimensions.push({
-        key: dimension.key,
-        featureId: dimension.featureId,
-        featureIndex: dimension.featureIndex,
-        lag: dimension.lag,
-        name: dimension.name,
-        corr: correlation,
-        absCorr: Math.abs(correlation),
-        rawMin,
-        rawMax,
-        rawQLow: rawLowThreshold,
-        rawQHigh: rawHighThreshold,
-        min: Math.min(...normalized),
-        max: Math.max(...normalized),
-        qLow: lowThreshold,
-        qHigh: highThreshold,
-        mean,
-        std,
-        winLow,
-        winHigh,
-        lift,
-        optimal,
-        n: normalized.length
-      });
-    }
-
-    dimensions.sort((left, right) => right.absCorr - left.absCorr);
-
-    const inDim = dimensions.length;
-    const outDim =
-      inDim <= 0
-        ? 0
-        : appliedBacktestSettings.knnNeighborSpace === "high"
-          ? inDim
-          : appliedBacktestSettings.knnNeighborSpace === "3d"
-            ? Math.min(3, inDim)
-            : appliedBacktestSettings.knnNeighborSpace === "2d"
-              ? Math.min(2, inDim)
-              : clamp(Math.round(appliedBacktestSettings.dimensionAmount), 2, inDim);
-    const dimKeyOrder = dimensions.map((dimension) => dimension.key);
-    let keptKeys = dimKeyOrder;
-
-    if (outDim < inDim) {
-      if (appliedBacktestSettings.compressionMethod === "subsample") {
-        if (outDim <= 1) {
-          keptKeys = [dimKeyOrder[0]!];
-        } else {
-          keptKeys = Array.from({ length: outDim }, (_, index) => {
-            const keyIndex = Math.round((index * (inDim - 1)) / Math.max(1, outDim - 1));
-            return dimKeyOrder[keyIndex]!;
-          });
-        }
-      } else if (appliedBacktestSettings.compressionMethod === "variance") {
-        keptKeys = [...dimensions]
-          .sort(
-            (left, right) =>
-              (varianceByKey.get(right.key) ?? Number.NEGATIVE_INFINITY) -
-              (varianceByKey.get(left.key) ?? Number.NEGATIVE_INFINITY)
-          )
-          .slice(0, outDim)
-          .map((dimension) => dimension.key);
-      } else {
-        keptKeys = dimensions.slice(0, outDim).map((dimension) => dimension.key);
-      }
-    }
-
-    return {
-      mode: splitAllowed ? "split" : "all",
-      split: DIMENSION_STATS_SPLIT_PCT,
-      count: outcomes.length,
-      baselineWin: outcomes.length > 0 ? meanOf(outcomes) : null,
-      dimKeyOrder,
-      dims: dimensions,
-      keptKeys: Array.from(new Set(keptKeys)),
-      inDim,
-      outDim
-    };
+    return buildDimensionStatsSummary({
+      sourceTrades: deferredDimensionStatsSourceTrades,
+      settings: appliedBacktestSettings,
+      backtestSeriesMap,
+      seriesMap
+    });
   }, [
-    appliedBacktestSettings.aiFeatureLevels,
-    appliedBacktestSettings.aiFeatureModes,
-    appliedBacktestSettings.antiCheatEnabled,
-    appliedBacktestSettings.chunkBars,
-    appliedBacktestSettings.compressionMethod,
-    appliedBacktestSettings.dimensionAmount,
-    appliedBacktestSettings.knnNeighborSpace,
-    appliedBacktestSettings.timeframe,
-    appliedBacktestSettings.validationMode,
+    appliedBacktestSettings,
     backtestSeriesMap,
     deferredBacktestTab,
     deferredDimensionStatsSourceTrades,
     activeBacktestTradeDetails,
     isBacktestAnalyticsVisible,
-    seriesMap,
+    seriesMap
   ]);
 
   const toggleDimSort = (column: DimensionSortColumn) => {
@@ -25975,11 +25709,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, [
     activeBacktestTradeDetails,
     appliedBacktestSettings,
-    backtestSeriesMap,
     backtestSourceTrades,
     backtestTimeFilteredTrades,
     boundedHistoryRows,
-    seriesMap
   ]);
   const activeBacktestTradeDimensionRows = useMemo(() => {
     const preferredStats =
@@ -25998,25 +25730,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       return [];
     }
 
-    const candles = activeBacktestTradeCandles;
-    const entryTimeMs = Number(activeBacktestTradeDetails.entryTime) * 1000;
-    const entryIndex =
-      candles.length > 0 && Number.isFinite(entryTimeMs)
-        ? findCandleIndexAtOrBefore(candles, entryTimeMs)
-        : -1;
-    const featureBuckets =
-      entryIndex >= 0
-        ? buildDimensionFeatureLagBuckets(
-            candles,
-            entryIndex,
-            appliedBacktestSettings.chunkBars
-          )
-        : null;
+    const vector = getTradeDimensionDecisionVector(activeBacktestTradeDetails);
 
     return baseDimensions.map((dimension) => {
-      const perLagValues = featureBuckets?.[dimension.featureId] ?? [];
-      const values = perLagValues[dimension.lag] ?? perLagValues[0] ?? [];
-      const rawValue = Number(values[dimension.featureIndex] ?? Number.NaN);
+      const rawValue = Number(vector?.[dimension.featureIndex] ?? Number.NaN);
       const entryValue =
         Number.isFinite(rawValue) &&
         Number.isFinite(dimension.std) &&
@@ -26040,10 +25757,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       };
     });
   }, [
-    activeBacktestTradeCandles,
     activeBacktestTradeDetails,
     activeBacktestTradeDimensionStats,
-    appliedBacktestSettings.chunkBars,
     dimensionStats
   ]);
   useEffect(() => {
@@ -30365,7 +30080,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 onClose={() => setModelsModalOpen(false)}
               >
                 <div className="ai-zip-model-grid">
-                  {settingsModelNames.map((modelName) => {
+                  {visibleSettingsModelNames.map((modelName) => {
                     const state = aiModelStates[modelName] ?? 0;
 
                     return (

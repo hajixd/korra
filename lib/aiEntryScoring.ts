@@ -1,5 +1,14 @@
 const ENTRY_SCORING_EPS = 1e-8;
 
+export const ENTRY_ONLY_NEIGHBOR_DIMENSIONS = [
+  { key: "side", name: "Direction" },
+  { key: "riskPct", name: "Risk %" },
+  { key: "rewardPct", name: "Reward %" },
+  { key: "riskReward", name: "Risk / Reward" },
+  { key: "timeOfDayFraction", name: "Time Of Day" },
+  { key: "weekdayFraction", name: "Weekday" }
+] as const;
+
 const clamp = (value: number, min: number, max: number): number => {
   return Math.min(max, Math.max(min, value));
 };

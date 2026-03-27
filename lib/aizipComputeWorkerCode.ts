@@ -3065,12 +3065,7 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
           .map((x) => String(x || "").trim().toLowerCase())
           .filter((id) => id && id !== "recent")
       : [];
-    // Nearest-neighbor metadata (entryNeighbors / MIT) should always be available.
-    // When no explicit library is selected, fall back to the base seeding pool so
-    // a plain backtest still stamps nearest neighbors and the MIT ID.
-    const effectiveAiLibraries = aiLibrariesActive.length
-      ? aiLibrariesActive
-      : ["base"];
+    const effectiveAiLibraries = aiLibrariesActive;
     const aiLibrariesSettings = (settings && settings.aiLibrariesSettings) ? settings.aiLibrariesSettings : {};
     const libSetting = (id) => (aiLibrariesSettings && aiLibrariesSettings[id]) ? (aiLibrariesSettings[id] || {}) : {};
     const libEnabled = (_id) => true; // Active libraries are always enabled.

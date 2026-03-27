@@ -99,17 +99,17 @@ test("backtest history is not skipped when base libraries need candle history", 
   );
 });
 
-test("every-candle mode only applies when AI mode is on and filter-only mode is off", () => {
-  assert.equal(usesAizipEveryCandleMode("knn", false), true);
+test("every-candle mode stays off because AI Model now uses a hidden standard model", () => {
+  assert.equal(usesAizipEveryCandleMode("knn", false), false);
   assert.equal(usesAizipEveryCandleMode("knn", true), false);
   assert.equal(usesAizipEveryCandleMode("off", false), false);
 });
 
-test("replay entry mode change only triggers when switching in or out of every-bar mode", () => {
+test("replay entry mode no longer changes when switching AI Filter and AI Model", () => {
   assert.equal(doesAizipReplayEntryModeChange("off", false, "knn", true), false);
   assert.equal(doesAizipReplayEntryModeChange("knn", true, "hdbscan", true), false);
-  assert.equal(doesAizipReplayEntryModeChange("knn", true, "knn", false), true);
-  assert.equal(doesAizipReplayEntryModeChange("knn", false, "off", false), true);
+  assert.equal(doesAizipReplayEntryModeChange("knn", true, "knn", false), false);
+  assert.equal(doesAizipReplayEntryModeChange("knn", false, "off", false), false);
 });
 
 test("seeded library trades are stamped in seconds, not milliseconds", () => {
