@@ -13,6 +13,10 @@ import {
   normalizeAiProbabilityScore as normalizeSharedAiProbabilityScore,
   resolveExplicitAiConfidenceScore
 } from "../../../../lib/aiConfidence";
+import {
+  buildEntryOnlyNeighborVector,
+  getEntryOnlyTradeConfidenceScore
+} from "../../../../lib/aiEntryScoring";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -443,19 +447,7 @@ const getSyntheticWinProb = (trade: HistoryItem) => {
 };
 
 const buildTradeNeighborVector = (trade: HistoryItem): number[] => {
-  const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
-  const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
-  const holdMinutes = Math.max(1, Number(trade.exitTime) - Number(trade.entryTime));
-  const entryTime = Number(trade.entryTime);
-
-  return [
-    trade.side === "Long" ? 1 : -1,
-    clamp(Number(trade.pnlPct) / 100, -8, 8),
-    clamp(Number(trade.pnlUsd) / 1000, -8, 8),
-    clamp(rewardDistance / riskDistance, 0, 12),
-    clamp(holdMinutes / 60, 0, 96),
-    (((entryTime % 86_400) + 86_400) % 86_400) / 86_400
-  ];
+  return buildEntryOnlyNeighborVector(trade);
 };
 
 const getTradeDirection = (trade: HistoryItem): number => {
@@ -1003,16 +995,7 @@ const prepareCandidateVectorSpace = (
 };
 
 const getTradeConfidenceScore = (trade: HistoryItem): number => {
-  const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
-  const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
-  const rrScore = clamp(rewardDistance / riskDistance / 3, 0, 1) * 0.2;
-  const pnlScore = clamp(Math.abs(trade.pnlPct) / 0.45, 0, 1) * 0.18;
-  const durationMinutes = Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
-  const durationScore = clamp(1 - durationMinutes / 720, 0, 1) * 0.08;
-  const base = trade.result === "Win" ? 0.44 : 0.26;
-  const sideBias = trade.side === "Long" ? 0.04 : 0.02;
-
-  return clamp(base + rrScore + pnlScore + durationScore + sideBias, 0.05, 0.96);
+  return getEntryOnlyTradeConfidenceScore(trade);
 };
 
 const toNumeric = (value: unknown, fallback = 0) => {

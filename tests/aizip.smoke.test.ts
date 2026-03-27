@@ -706,6 +706,79 @@ test("panel analytics confidence honors kEntry instead of scoring every candidat
   assertApprox(Number(stampedTrade.entryConfidence), 1);
 });
 
+test("panel analytics nearest-neighbor ranking ignores the query trade outcome", async () => {
+  const buildPayload = async (currentTradeOverrides: {
+    result: "Win" | "Loss";
+    pnlUsd: number;
+    pnlPct: number;
+    outcomePrice: number;
+  }) =>
+    postPanelAnalytics({
+      panelSourceTrades: [
+        makeTrade({
+          id: "live-1",
+          entryIso: "2025-03-01T00:00:00Z",
+          exitIso: "2025-03-01T01:00:00Z",
+          result: "Win",
+          pnlUsd: 120,
+          pnlPct: 0.2,
+          outcomePrice: 101
+        }),
+        makeTrade({
+          id: "live-2",
+          entryIso: "2025-03-02T00:00:00Z",
+          exitIso: "2025-03-02T01:00:00Z",
+          result: "Loss",
+          pnlUsd: -120,
+          pnlPct: -0.2,
+          outcomePrice: 99
+        }),
+        makeTrade({
+          id: "live-3",
+          entryIso: "2025-03-03T00:00:00Z",
+          exitIso: "2025-03-03T01:00:00Z",
+          ...currentTradeOverrides
+        })
+      ],
+      panelLibraryPoints: [],
+      panelBacktestFilterSettings: baseFilterSettings({
+        antiCheatEnabled: true,
+        validationMode: "off",
+        selectedAiLibraries: ["core"],
+        kEntry: 1
+      }),
+      panelConfidenceGateDisabled: true,
+      panelEffectiveConfidenceThreshold: 0,
+      aiLibraryDefaultsById: {
+        core: { weight: 100, maxSamples: 1000 }
+      }
+    });
+
+  const winPayload = await buildPayload({
+    result: "Win",
+    pnlUsd: 140,
+    pnlPct: 0.25,
+    outcomePrice: 101
+  });
+  const lossPayload = await buildPayload({
+    result: "Loss",
+    pnlUsd: -140,
+    pnlPct: -0.25,
+    outcomePrice: 99
+  });
+
+  const stampedWinTrade = winPayload.timeFilteredTrades.find(
+    (trade: { id: string }) => trade.id === "live-3"
+  );
+  const stampedLossTrade = lossPayload.timeFilteredTrades.find(
+    (trade: { id: string }) => trade.id === "live-3"
+  );
+
+  assert.ok(stampedWinTrade, "expected the win-query trade");
+  assert.ok(stampedLossTrade, "expected the loss-query trade");
+  assert.equal(stampedWinTrade.closestClusterUid, stampedLossTrade.closestClusterUid);
+});
+
 test("panel analytics coerces legacy distance vote mode to majority confidence", async () => {
   const trades = [
     makeTrade({
