@@ -31,6 +31,18 @@ const toSafeHeaderValue = (value: unknown) =>
     .replace(/\n/g, " ")
     .trim();
 
+const compactCandlePayload = (payload: Awaited<ReturnType<typeof fetchTwelveDataCandles>>) => ({
+  ...payload,
+  candles: payload.candles.map((candle) => [
+    candle.time,
+    candle.open,
+    candle.high,
+    candle.low,
+    candle.close,
+    candle.volume
+  ])
+});
+
 const buildTwelveDataHistoryErrorResponse = (params: {
   pair: string;
   timeframe: string;
@@ -116,7 +128,7 @@ export async function GET(request: Request) {
       end,
       apiKeys: runtimeApiKeys
     });
-    return NextResponse.json(payload, {
+    return NextResponse.json(compactCandlePayload(payload), {
       headers: {
         "Cache-Control": "no-store",
         "X-Korra-History-Source": "twelve-data"

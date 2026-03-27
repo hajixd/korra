@@ -3090,6 +3090,15 @@ type MarketApiCandle = {
   volume?: number | string;
 };
 
+type PackedMarketApiCandle = [
+  number | string,
+  number | string,
+  number | string,
+  number | string,
+  number | string,
+  number | string | undefined
+];
+
 type PropFirmResult = {
   probability: number;
   data: number[];
@@ -6037,7 +6046,20 @@ const extractMarketDataFailure = (
 
 const extractPayloadCandles = (payload: Record<string, unknown> | null): MarketApiCandle[] => {
   const candles = payload?.candles;
-  return Array.isArray(candles) ? (candles as MarketApiCandle[]) : [];
+  if (!Array.isArray(candles)) {
+    return [];
+  }
+
+  return candles.flatMap((entry) => {
+    if (Array.isArray(entry)) {
+      const [time, open, high, low, close, volume] = entry as PackedMarketApiCandle;
+      return [{ time, open, high, low, close, volume }];
+    }
+    if (entry && typeof entry === "object") {
+      return [entry as MarketApiCandle];
+    }
+    return [];
+  });
 };
 
 const getMarketDataErrorMessage = (error: unknown): string => {

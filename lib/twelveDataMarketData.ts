@@ -162,6 +162,7 @@ const EXACT_RANGE_PADDING_BARS = 2;
 const EXACT_RANGE_MAX_REPAIR_DEPTH = 3;
 const EXACT_RANGE_MAX_REPAIR_WINDOWS = 24;
 const EXACT_RANGE_MAX_WORKERS = 6;
+const EXACT_RANGE_REPAIR_GAP_TOLERANCE_MS = 3 * 60 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
 let localEnvCache: Map<string, string> | null = null;
 let runtimeApiKeysOverride: string[] | null = null;
@@ -610,10 +611,14 @@ const requestJsonDetailed = async <T extends TwelveDataJson>(
   apiKeysOverride?: string[]
 ): Promise<{ payload: T; headers: Headers; apiKey: string }> => {
   const requestStartedAt = Date.now();
+  const candidateKeys = getOrderedApiKeys(apiKeysOverride);
+  if (candidateKeys.length === 0) {
+    throw new TwelveDataRequestError("Missing TWELVE_DATA_API_KEY.", "auth");
+  }
   let lastError: TwelveDataRequestError | null = null;
 
   while (Date.now() - requestStartedAt < timeoutMs) {
-    let apiKeys = getOrderedApiKeys(apiKeysOverride).filter((apiKey) => getKeyReadyAt(apiKey) <= Date.now());
+    let apiKeys = candidateKeys.filter((apiKey) => getKeyReadyAt(apiKey) <= Date.now());
 
     if (apiKeys.length === 0) {
       const earliestReadyAt = getEarliestApiKeyReadyAt(apiKeysOverride);
@@ -628,7 +633,7 @@ const requestJsonDetailed = async <T extends TwelveDataJson>(
       }
 
       await sleep(Math.min(Math.max(75, retryInMs), Math.max(75, remainingBudgetMs - 200)));
-      apiKeys = getOrderedApiKeys(apiKeysOverride).filter((apiKey) => getKeyReadyAt(apiKey) <= Date.now());
+      apiKeys = candidateKeys.filter((apiKey) => getKeyReadyAt(apiKey) <= Date.now());
     }
 
     for (const apiKey of apiKeys) {
@@ -664,7 +669,19 @@ const requestJsonDetailed = async <T extends TwelveDataJson>(
     );
   }
 
-  throw new TwelveDataRequestError("Missing TWELVE_DATA_API_KEY.", "auth");
+  const earliestReadyAt = getEarliestApiKeyReadyAt(apiKeysOverride);
+  if (Number.isFinite(earliestReadyAt) && earliestReadyAt > Date.now()) {
+    const retryInSeconds = Math.max(1, Math.ceil((earliestReadyAt - Date.now()) / 1000));
+    throw new TwelveDataRequestError(
+      `Twelve Data key pool cooling down. Retry in ${retryInSeconds}s.`,
+      "rate_limit"
+    );
+  }
+
+  throw new TwelveDataRequestError(
+    "Twelve Data request window expired before any key became available.",
+    "other"
+  );
 };
 
 const requestJson = async <T extends TwelveDataJson>(
@@ -1059,6 +1076,10 @@ const findMissingCoverageChunks = (
     (candle) => candle.time >= startMs && candle.time <= endMs
   );
   const stepMs = Math.max(60_000, getStepMs(timeframe));
+  const repairGapToleranceMs = Math.max(
+    EXACT_RANGE_REPAIR_GAP_TOLERANCE_MS,
+    12 * stepMs
+  );
   const missing: TwelveDataRangeChunk[] = [];
   const paddedStart = Math.max(0, startMs - EXACT_RANGE_PADDING_BARS * stepMs);
   const paddedEnd = endMs + EXACT_RANGE_PADDING_BARS * stepMs;
@@ -1073,7 +1094,11 @@ const findMissingCoverageChunks = (
   }
 
   const firstCandleTime = sorted[0]!.time;
-  if (requiredFirstSlotMs != null && firstCandleTime > requiredFirstSlotMs) {
+  if (
+    requiredFirstSlotMs != null &&
+    firstCandleTime > requiredFirstSlotMs &&
+    firstCandleTime - requiredFirstSlotMs > repairGapToleranceMs
+  ) {
     missing.push({
       startMs: paddedStart,
       endMs: Math.min(paddedEnd, firstCandleTime),
@@ -1087,7 +1112,11 @@ const findMissingCoverageChunks = (
     const nextTime = sorted[index + 1]!.time;
     const expectedNextSlotMs = findNextTradingSlotAtOrAfter(currentTime + stepMs, timeframe);
 
-    if (expectedNextSlotMs == null || expectedNextSlotMs >= nextTime) {
+    if (
+      expectedNextSlotMs == null ||
+      expectedNextSlotMs >= nextTime ||
+      nextTime - expectedNextSlotMs <= repairGapToleranceMs
+    ) {
       continue;
     }
 
@@ -1100,7 +1129,11 @@ const findMissingCoverageChunks = (
   }
 
   const lastCandleTime = sorted[sorted.length - 1]!.time;
-  if (requiredLastSlotMs != null && lastCandleTime < requiredLastSlotMs) {
+  if (
+    requiredLastSlotMs != null &&
+    lastCandleTime < requiredLastSlotMs &&
+    requiredLastSlotMs - lastCandleTime > repairGapToleranceMs
+  ) {
     missing.push({
       startMs: Math.max(startMs, lastCandleTime - EXACT_RANGE_PADDING_BARS * stepMs),
       endMs: paddedEnd,
