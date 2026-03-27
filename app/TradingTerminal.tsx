@@ -640,6 +640,27 @@ type ServerTradePayload = {
   units: number;
 } & BacktestTradeAiEntryMeta;
 
+type PackedBacktestAnalyticsTradePayload = [
+  string,
+  string,
+  TradeSide,
+  TradeResult,
+  string,
+  string,
+  number,
+  number,
+  string,
+  string,
+  string,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number
+];
+
 type ServerLibraryPointPayload = {
   id?: string;
   uid?: string;
@@ -871,6 +892,29 @@ const toServerTradePayload = (trade: HistoryItem): ServerTradePayload => ({
     trade.closestClusterUid == null ? null : String(trade.closestClusterUid),
   entryNeighbors: cloneTradeEntryNeighbors(trade.entryNeighbors)
 });
+
+const toBacktestAnalyticsTradePayload = (
+  trade: HistoryItem
+): PackedBacktestAnalyticsTradePayload => [
+  trade.id,
+  trade.symbol,
+  trade.side,
+  trade.result,
+  trade.entrySource,
+  trade.exitReason,
+  trade.pnlPct,
+  trade.pnlUsd,
+  trade.time,
+  trade.entryAt,
+  trade.exitAt,
+  Number(trade.entryTime),
+  Number(trade.exitTime),
+  trade.entryPrice,
+  trade.targetPrice,
+  trade.stopPrice,
+  trade.outcomePrice,
+  trade.units
+];
 
 const toServerLibraryPointPayload = (point: any): ServerLibraryPointPayload => ({
   id: point?.id != null ? String(point.id) : undefined,
@@ -1133,6 +1177,7 @@ const panelAnalyticsClientCache = new Map<
 const panelAnalyticsClientInFlight = new Map<string, Promise<PanelAnalyticsServerResponse>>();
 const BACKTEST_ANALYTICS_CLIENT_CACHE_TTL_MS = 15_000;
 const BACKTEST_ANALYTICS_CLIENT_CACHE_MAX = 6;
+const BACKTEST_ANALYTICS_SERVER_MAX_REQUEST_CHARS = 1_500_000;
 const backtestAnalyticsClientCache = new Map<
   string,
   { expiresAt: number; value: BacktestAnalyticsServerResponse }
@@ -1282,10 +1327,15 @@ const computeBacktestAnalyticsOnServer = async (
 ): Promise<BacktestAnalyticsServerResponse> => {
   const requestBody = {
     ...payload,
-    backtestTrades: payload.backtestTrades.map(toServerTradePayload),
-    baselineMainStatsTrades: payload.baselineMainStatsTrades.map(toServerTradePayload)
+    backtestTrades: payload.backtestTrades.map(toBacktestAnalyticsTradePayload),
+    baselineMainStatsTrades: payload.baselineMainStatsTrades.map(
+      toBacktestAnalyticsTradePayload
+    )
   };
   const requestText = JSON.stringify(requestBody);
+  if (requestText.length > BACKTEST_ANALYTICS_SERVER_MAX_REQUEST_CHARS) {
+    throw new Error("Backtest analytics payload too large for server transport.");
+  }
   const cacheKey = hashStableText(requestText);
   const nowMs = Date.now();
   pruneBacktestAnalyticsClientCache(nowMs);

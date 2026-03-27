@@ -331,7 +331,60 @@ const getTradeConfidenceScore = (trade: HistoryItem): number => {
 };
 
 const normalizeTrade = (value: unknown): HistoryItem | null => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (Array.isArray(value)) {
+    if (value.length < 18) {
+      return null;
+    }
+
+    const [
+      rawId,
+      rawSymbol,
+      rawSide,
+      rawResult,
+      rawEntrySource,
+      rawExitReason,
+      rawPnlPct,
+      rawPnlUsd,
+      rawTime,
+      rawEntryAt,
+      rawExitAt,
+      rawEntryTime,
+      rawExitTime,
+      rawEntryPrice,
+      rawTargetPrice,
+      rawStopPrice,
+      rawOutcomePrice,
+      rawUnits
+    ] = value;
+    const id = String(rawId ?? "").trim();
+
+    if (!id) {
+      return null;
+    }
+
+    return {
+      id,
+      symbol: String(rawSymbol ?? ""),
+      side: rawSide === "Short" ? "Short" : "Long",
+      result: rawResult === "Loss" ? "Loss" : "Win",
+      entrySource: String(rawEntrySource ?? "Settings"),
+      exitReason: String(rawExitReason ?? ""),
+      pnlPct: toNumeric(rawPnlPct),
+      pnlUsd: toNumeric(rawPnlUsd),
+      time: String(rawTime ?? ""),
+      entryAt: String(rawEntryAt ?? ""),
+      exitAt: String(rawExitAt ?? ""),
+      entryTime: toNumeric(rawEntryTime),
+      exitTime: toNumeric(rawExitTime),
+      entryPrice: Math.max(0.000001, toNumeric(rawEntryPrice)),
+      targetPrice: Math.max(0.000001, toNumeric(rawTargetPrice)),
+      stopPrice: Math.max(0.000001, toNumeric(rawStopPrice)),
+      outcomePrice: Math.max(0.000001, toNumeric(rawOutcomePrice)),
+      units: Math.max(0.000001, Math.abs(toNumeric(rawUnits, 1)) || 1)
+    };
+  }
+
+  if (!value || typeof value !== "object") {
     return null;
   }
 
