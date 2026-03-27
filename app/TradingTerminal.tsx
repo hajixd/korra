@@ -4279,27 +4279,14 @@ const findTargetBalancedCounts = (
   }
 
   const target = clamp(targetPositivePercent, 0, 100) / 100;
-  let bestPositiveCount = 0;
-  let bestTotal = 0;
-  let bestDiff = Number.POSITIVE_INFINITY;
-
-  for (let total = totalCap; total >= 1; total -= 1) {
-    const minPositive = Math.max(0, total - availableNegatives);
-    const maxPositive = Math.min(availablePositives, total);
-    let candidatePositiveCount = Math.round(target * total);
-    candidatePositiveCount = clamp(candidatePositiveCount, minPositive, maxPositive);
-    const diff = Math.abs(candidatePositiveCount / total - target);
-
-    if (diff < bestDiff - 1e-9) {
-      bestDiff = diff;
-      bestPositiveCount = candidatePositiveCount;
-      bestTotal = total;
-    }
-  }
+  const minPositive = Math.max(0, totalCap - availableNegatives);
+  const maxPositive = Math.min(availablePositives, totalCap);
+  let bestPositiveCount = Math.round(target * totalCap);
+  bestPositiveCount = clamp(bestPositiveCount, minPositive, maxPositive);
 
   return {
     positiveCount: bestPositiveCount,
-    negativeCount: Math.max(0, bestTotal - bestPositiveCount)
+    negativeCount: Math.max(0, totalCap - bestPositiveCount)
   };
 };
 
@@ -4637,7 +4624,7 @@ const normalizeAiCompressionMethod = (value: unknown): AiCompressionMethod => {
   ) {
     return method;
   }
-  return "jl";
+  return "umap";
 };
 
 const normalizeAiValidationMode = (value: unknown): AiValidationMode => {
@@ -11872,7 +11859,7 @@ function TradingTerminalWorkspace({
   ]);
   const [remapOppositeOutcomes, setRemapOppositeOutcomes] = useState(true);
   const [dimensionAmount, setDimensionAmount] = useState(32);
-const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>("jl");
+const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>("umap");
   const [kEntry, setKEntry] = useState(12);
   const [kExit, setKExit] = useState(9);
   const [knnVoteMode, setKnnVoteMode] = useState<KnnVoteMode>("majority");
@@ -18488,7 +18475,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     setSelectedAiDomains(["Direction", "Model"]);
     setRemapOppositeOutcomes(true);
     setDimensionAmount(32);
-    setCompressionMethod("jl");
+    setCompressionMethod("umap");
     setKEntry(12);
     setKExit(9);
     setKnnVoteMode("majority");

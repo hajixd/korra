@@ -4371,7 +4371,7 @@ function normalizeClusterCompressionMethod(value) {
   ) {
     return method;
   }
-  return "link";
+  return "umap";
 }
 function padClusterProjectionVector(vec, targetDim) {
   const out = new Array(targetDim).fill(0);
@@ -11944,7 +11944,6 @@ const areClusterMapPropsEqual = (prev: any, next: any) => {
 };
 
 const DEFAULT_CLUSTER_MAP_COMPRESSION_OPTIONS = [
-  { value: "link", label: "Link Strength" },
   { value: "umap", label: "UMAP" },
   { value: "pca", label: "PCA" },
   { value: "jl", label: "Random Projection" },
@@ -12159,7 +12158,7 @@ function ClusterMapInner({
   kEntry,
   knnNeighborSpace = "post",
   distanceMetric = "euclidean",
-  compressionMethod = "jl",
+  compressionMethod = "umap",
   compressionOptions = DEFAULT_CLUSTER_MAP_COMPRESSION_OPTIONS,
   hdbDomainDistinction,
   hdbMinClusterSize,
@@ -12192,7 +12191,9 @@ function ClusterMapInner({
     null
   );
   const deferredSliderValue = useDeferredValue(sliderValue);
-  const [viewCompressionMethod, setViewCompressionMethod] = useState("link");
+  const [viewCompressionMethod, setViewCompressionMethod] = useState(() =>
+    normalizeClusterCompressionMethod(compressionMethod)
+  );
   const clusterCompressionOptions = useMemo(() => {
     const source =
       Array.isArray(compressionOptions) && compressionOptions.length > 0
@@ -12209,7 +12210,6 @@ function ClusterMapInner({
         label: String(rawLabel ?? rawValue ?? "").trim() || "Unknown",
       });
     };
-    pushOption("link", "Link Strength");
     for (const option of source as any[]) {
       pushOption(option?.value, option?.label);
     }
@@ -12223,8 +12223,11 @@ function ClusterMapInner({
     if (clusterCompressionOptions.some((option) => option.value === viewCompressionMethod)) {
       return;
     }
-    setViewCompressionMethod("link");
-  }, [clusterCompressionOptions, viewCompressionMethod]);
+    const fallbackValue =
+      clusterCompressionOptions[0]?.value ??
+      normalizeClusterCompressionMethod(compressionMethod);
+    setViewCompressionMethod(fallbackValue);
+  }, [clusterCompressionOptions, compressionMethod, viewCompressionMethod]);
   // Box selection (2D only)
   // - Toggle selection mode with Option+T (and a clickable UI toggle; Option+T is less likely to be blocked by the browser)
   // - In selection mode: click (left or right) to set corner A, move mouse to preview, click again to set corner B.
@@ -12316,6 +12319,129 @@ function ClusterMapInner({
     ).trim();
   }, []);
 
+  const nodeMatchesHdbActiveDomains = React.useCallback(
+    (member: any, queryNode: any): boolean => {
+      if (!member || !queryNode || !activeModSet || activeModSet.size === 0) {
+        return true;
+      }
+
+      if (activeModSet.has("Direction")) {
+        const queryDir = Number(
+          (queryNode as any)?.dir ?? (queryNode as any)?.direction ?? 0
+        );
+        const memberDir = Number(
+          (member as any)?.dir ?? (member as any)?.direction ?? 0
+        );
+        if (
+          !Number.isFinite(queryDir) ||
+          !Number.isFinite(memberDir) ||
+          queryDir !== memberDir
+        ) {
+          return false;
+        }
+      }
+
+      if (activeModSet.has("Model")) {
+        const queryModel = normalizeClusterMapToken(
+          (queryNode as any)?.entryModel ??
+            (queryNode as any)?.chunkType ??
+            (queryNode as any)?.model ??
+            (queryNode as any)?.origModel ??
+            ""
+        );
+        const memberModel = normalizeClusterMapToken(
+          (member as any)?.entryModel ??
+            (member as any)?.chunkType ??
+            (member as any)?.model ??
+            (member as any)?.origModel ??
+            ""
+        );
+        if (!queryModel || !memberModel || queryModel !== memberModel) {
+          return false;
+        }
+      }
+
+      const queryTime =
+        (queryNode as any)?.entryTime ??
+        (queryNode as any)?.metaTime ??
+        (queryNode as any)?.time ??
+        (queryNode as any)?.exitTime ??
+        "";
+      const memberTime =
+        (member as any)?.entryTime ??
+        (member as any)?.metaTime ??
+        (member as any)?.time ??
+        (member as any)?.exitTime ??
+        "";
+
+      if (activeModSet.has("Session")) {
+        const querySession = sessionFromTime(queryTime, parseMode);
+        const memberSession = sessionFromTime(memberTime, parseMode);
+        if (!querySession || !memberSession || querySession !== memberSession) {
+          return false;
+        }
+      }
+
+      const queryDate = queryTime
+        ? parseDateFromString(String(queryTime), parseMode)
+        : null;
+      const memberDate = memberTime
+        ? parseDateFromString(String(memberTime), parseMode)
+        : null;
+
+      if (activeModSet.has("Month")) {
+        const queryMonth = queryDate
+          ? (parseMode === "utc"
+              ? queryDate.getUTCMonth()
+              : queryDate.getMonth()) + 1
+          : null;
+        const memberMonth = memberDate
+          ? (parseMode === "utc"
+              ? memberDate.getUTCMonth()
+              : memberDate.getMonth()) + 1
+          : null;
+        if (queryMonth == null || memberMonth == null || queryMonth !== memberMonth) {
+          return false;
+        }
+      }
+
+      if (activeModSet.has("Weekday")) {
+        const queryDow = queryDate
+          ? parseMode === "utc"
+            ? queryDate.getUTCDay()
+            : queryDate.getDay()
+          : null;
+        const memberDow = memberDate
+          ? parseMode === "utc"
+            ? memberDate.getUTCDay()
+            : memberDate.getDay()
+          : null;
+        if (queryDow == null || memberDow == null || queryDow !== memberDow) {
+          return false;
+        }
+      }
+
+      if (activeModSet.has("Hour")) {
+        const queryHour = queryDate
+          ? parseMode === "utc"
+            ? queryDate.getUTCHours()
+            : queryDate.getHours()
+          : null;
+        const memberHour = memberDate
+          ? parseMode === "utc"
+            ? memberDate.getUTCHours()
+            : memberDate.getHours()
+          : null;
+        if (queryHour == null || memberHour == null || queryHour !== memberHour) {
+          return false;
+        }
+      }
+
+      return true;
+    },
+    [activeModSet, parseMode]
+  );
+
   const effectiveValidationMode = React.useMemo<
     "off" | "split" | "synthetic"
   >(() => {
@@ -12338,14 +12464,18 @@ function ClusterMapInner({
       const dir = Number((node as any)?.dir ?? (node as any)?.direction ?? 0);
       const useChronologicalClusterStats =
         antiCheatEnabled && effectiveValidationMode === "off";
+      const shouldRecomputeFilteredStats =
+        useChronologicalClusterStats || !!(activeModSet && activeModSet.size);
 
-      if (useChronologicalClusterStats) {
-        const cutoff = nodeChronologyValue(node);
+      if (shouldRecomputeFilteredStats) {
+        const cutoff = useChronologicalClusterStats
+          ? nodeChronologyValue(node)
+          : null;
         const members = Array.isArray((cluster as any)?.memberNodes)
           ? ((cluster as any).memberNodes as any[])
           : [];
 
-        if (cutoff !== null && members.length > 0) {
+        if (members.length > 0) {
           const selfKey = nodeStableKey(node);
           let total = 0;
           let wins = 0;
@@ -12360,8 +12490,12 @@ function ClusterMapInner({
             const memberKey = nodeStableKey(member);
             if (selfKey && memberKey && memberKey === selfKey) continue;
 
-            const memberOrder = nodeChronologyValue(member);
-            if (memberOrder === null || memberOrder >= cutoff) continue;
+            if (cutoff !== null) {
+              const memberOrder = nodeChronologyValue(member);
+              if (memberOrder === null || memberOrder >= cutoff) continue;
+            }
+
+            if (!nodeMatchesHdbActiveDomains(member, node)) continue;
 
             const memberDir = Number(
               (member as any).dir ?? (member as any).direction ?? 0
@@ -12398,9 +12532,9 @@ function ClusterMapInner({
           if (total > 0) {
             return clamp(wins / total, 0, 1);
           }
-
-          return 0.01;
         }
+
+        return 0.01;
       }
 
       let wr = Number(st?.winRate);
@@ -12432,6 +12566,7 @@ function ClusterMapInner({
       activeModSet,
       antiCheatEnabled,
       effectiveValidationMode,
+      nodeMatchesHdbActiveDomains,
       nodeChronologyValue,
       nodeStableKey,
     ]
@@ -17389,13 +17524,6 @@ function ClusterMapInner({
   const buildNeighborListForNode = React.useCallback(
     (node: any) => {
       if (!node) return [];
-      const kind = String((node as any)?.kind || "").toLowerCase();
-      const isLib =
-        kind === "library" ||
-        (node as any)?.libId != null ||
-        (node as any)?.metaLib != null ||
-        String((node as any)?.id || "").startsWith("lib|");
-      if (isLib) return [];
       const kLimit = Math.max(
         0,
         Math.min(36, Math.floor(Number(effectiveNeighborK) || 0))
@@ -17713,108 +17841,127 @@ function ClusterMapInner({
     selectedTradeCheated,
   ]);
 
-  const libraryInfluencedRowsByNodeId = useMemo(() => {
-    const out = new Map<string, any[]>();
-    if (aiMethod === "hdbscan") return out;
-
-    const effectiveK = Math.max(
-      0,
-      Math.min(36, Math.floor(Number(knnLinkK) || 0))
-    );
-    if (!effectiveK) return out;
-
-    const edges = getKnnEdgesForClusterMap(
-      neighborNodes as any[],
-      effectiveK,
-      clusterMapView,
-      { allowLegacyFallback: !entryNeighborsOnly }
-    );
-    if (!Array.isArray(edges) || edges.length === 0) return out;
-
-    const seenByLibrary = new Map<string, Set<string>>();
-
-    const addInfluencedTrade = (libraryNodeId: string, otherId: string, otherNode: any) => {
-      let seen = seenByLibrary.get(libraryNodeId);
-      if (!seen) {
-        seen = new Set<string>();
-        seenByLibrary.set(libraryNodeId, seen);
-      }
-      if (seen.has(otherId)) return;
-      seen.add(otherId);
-
-      let rows = out.get(libraryNodeId);
-      if (!rows) {
-        rows = [];
-        out.set(libraryNodeId, rows);
-      }
-
-      const dir = Number((otherNode as any)?.dir ?? (otherNode as any)?.direction ?? 0);
+  const buildInfluencedRowForNode = React.useCallback(
+    (sourceNode: any, sourceNodeId: string) => {
+      if (!sourceNode || !sourceNodeId) return null;
+      const kind = String((sourceNode as any)?.kind || "").toLowerCase();
+      const isSuppressed =
+        kind === "library" &&
+        (!!(sourceNode as any)?.suppressed ||
+          !!(sourceNode as any)?.metaSuppressed ||
+          String(
+            (sourceNode as any)?.libId ??
+              (sourceNode as any)?.metaLib ??
+              (sourceNode as any)?.library ??
+              (sourceNode as any)?.metaLibrary ??
+              ""
+          )
+            .toLowerCase()
+            .trim() === "suppressed");
+      const dir = Number(
+        (sourceNode as any)?.dir ?? (sourceNode as any)?.direction ?? 0
+      );
       const pnlRaw =
-        typeof (otherNode as any)?.unrealizedPnl === "number" &&
-        Number.isFinite((otherNode as any)?.unrealizedPnl)
-          ? Number((otherNode as any).unrealizedPnl)
-          : typeof (otherNode as any)?.pnl === "number" &&
-            Number.isFinite((otherNode as any)?.pnl)
-          ? Number((otherNode as any).pnl)
-          : typeof (otherNode as any)?.closePnl === "number" &&
-            Number.isFinite((otherNode as any).closePnl)
-          ? Number((otherNode as any).closePnl)
+        typeof (sourceNode as any)?.unrealizedPnl === "number" &&
+        Number.isFinite((sourceNode as any)?.unrealizedPnl)
+          ? Number((sourceNode as any).unrealizedPnl)
+          : typeof (sourceNode as any)?.pnl === "number" &&
+            Number.isFinite((sourceNode as any)?.pnl)
+          ? Number((sourceNode as any).pnl)
+          : typeof (sourceNode as any)?.closePnl === "number" &&
+            Number.isFinite((sourceNode as any)?.closePnl)
+          ? Number((sourceNode as any).closePnl)
           : null;
       const isWin =
-        typeof (otherNode as any)?.win === "boolean"
-          ? !!(otherNode as any).win
+        typeof (sourceNode as any)?.win === "boolean"
+          ? !!(sourceNode as any).win
           : pnlRaw != null
           ? pnlRaw >= 0
           : false;
       const sortIndex = Number(
-        (otherNode as any)?.entryIndex ??
-          (otherNode as any)?.signalIndex ??
-          (otherNode as any)?.exitIndex ??
+        (sourceNode as any)?.entryIndex ??
+          (sourceNode as any)?.signalIndex ??
+          (sourceNode as any)?.exitIndex ??
           NaN
       );
       const entryTimeRaw =
-        (otherNode as any)?.entryTime ??
-        (otherNode as any)?.metaTime ??
-        (otherNode as any)?.time ??
+        (sourceNode as any)?.entryTime ??
+        (sourceNode as any)?.metaTime ??
+        (sourceNode as any)?.time ??
         null;
 
-      rows.push({
-        key: otherId,
-        id: otherId,
-        rawId: otherId,
-        targetNode: otherNode,
-        displayId: displayIdForNode(otherNode),
+      return {
+        key: sourceNodeId,
+        id: sourceNodeId,
+        rawId: sourceNodeId,
+        targetNode: sourceNode,
+        displayId: displayIdForNode(sourceNode),
         dirLabel: dir === 1 ? "LONG" : dir === -1 ? "SHORT" : "",
-        kindLabel: (otherNode as any)?.isOpen ? "Open Trade" : "Trade",
+        kindLabel:
+          kind === "trade"
+            ? (sourceNode as any)?.isOpen
+              ? "Open Trade"
+              : "Trade"
+            : isSuppressed
+            ? "Suppressed"
+            : kind === "library"
+            ? "Library"
+            : kind
+            ? `${kind.slice(0, 1).toUpperCase()}${kind.slice(1)}`
+            : "Node",
         entryTimeRaw,
         timeLabel: entryTimeRaw ? formatDateTime(entryTimeRaw, parseMode) : "",
         sessionLabel: normalizeLabel(
-          (otherNode as any)?.session ?? (otherNode as any)?.metaSession
+          (sourceNode as any)?.session ?? (sourceNode as any)?.metaSession
         ),
         pnlLabel:
           pnlRaw == null ? "" : pnlRaw > 0 ? `+${fmtUSD(pnlRaw)}` : fmtUSD(pnlRaw),
         tone: pnlRaw == null ? "neutral" : isWin ? "green" : "red",
         sortIndex,
         isWin,
-      });
-    };
+      };
+    },
+    [parseMode]
+  );
 
-    for (const edge of edges as any[]) {
-      const aId = normalizeClusterMapToken((edge as any)?.a);
-      const bId = normalizeClusterMapToken((edge as any)?.b);
-      if (!aId || !bId) continue;
+  const libraryInfluencedRowsByNodeId = useMemo(() => {
+    const out = new Map<string, any[]>();
+    if (aiMethod === "hdbscan") return out;
 
-      const aNode = (nodeById as any).get(aId) ?? null;
-      const bNode = (nodeById as any).get(bId) ?? null;
-      if (!aNode || !bNode) continue;
+    const seenByNode = new Map<string, Set<string>>();
+    for (const sourceNode of neighborNodes as any[]) {
+      if (!sourceNode) continue;
+      const sourceNodeId = normalizeClusterMapToken((sourceNode as any)?.id);
+      if (!sourceNodeId) continue;
+      const sourceRow = buildInfluencedRowForNode(sourceNode, sourceNodeId);
+      if (!sourceRow) continue;
 
-      const aKind = String((aNode as any)?.kind || "").toLowerCase();
-      const bKind = String((bNode as any)?.kind || "").toLowerCase();
-      if (aKind === "library" && bKind === "trade") {
-        addInfluencedTrade(aId, bId, bNode);
-      }
-      if (bKind === "library" && aKind === "trade") {
-        addInfluencedTrade(bId, aId, aNode);
+      const resolvedNeighbors = buildNeighborListForNode(sourceNode);
+      if (!resolvedNeighbors.length) continue;
+
+      for (const neighborRow of resolvedNeighbors) {
+        const targetNodeId = normalizeClusterMapToken(
+          (neighborRow as any)?.id ??
+            (neighborRow as any)?.rawId ??
+            (neighborRow as any)?.key ??
+            ""
+        );
+        if (!targetNodeId || targetNodeId === sourceNodeId) continue;
+
+        let seen = seenByNode.get(targetNodeId);
+        if (!seen) {
+          seen = new Set<string>();
+          seenByNode.set(targetNodeId, seen);
+        }
+        if (seen.has(sourceNodeId)) continue;
+        seen.add(sourceNodeId);
+
+        let rows = out.get(targetNodeId);
+        if (!rows) {
+          rows = [];
+          out.set(targetNodeId, rows);
+        }
+        rows.push(sourceRow);
       }
     }
 
@@ -17832,32 +17979,51 @@ function ClusterMapInner({
     return out;
   }, [
     aiMethod,
-    clusterMapView,
-    entryNeighborsOnly,
-    knnLinkK,
+    buildInfluencedRowForNode,
+    buildNeighborListForNode,
     neighborNodes,
-    nodeById,
-    parseMode,
   ]);
 
   const selectedLibraryInfluencedRows = useMemo(() => {
     if (!selectedNode) return [];
-    if (!isLibraryLikeNode(selectedNode)) return [];
 
     const selectedNodeId = normalizeClusterMapToken((selectedNode as any)?.id);
     if (!selectedNodeId) return [];
 
     return libraryInfluencedRowsByNodeId.get(selectedNodeId) ?? [];
-  }, [isLibraryLikeNode, libraryInfluencedRowsByNodeId, selectedNode]);
+  }, [libraryInfluencedRowsByNodeId, selectedNode]);
 
   const selectedLibraryContribution = useMemo(() => {
-    if (!selectedLibraryInfluencedRows.length) return 0;
+      if (!selectedLibraryInfluencedRows.length) return null;
     let wins = 0;
     for (const row of selectedLibraryInfluencedRows) {
       if ((row as any)?.isWin) wins += 1;
     }
     return wins / selectedLibraryInfluencedRows.length;
   }, [selectedLibraryInfluencedRows]);
+
+  const selectedNodeIsLibraryLike = useMemo(
+    () => isLibraryLikeNode(selectedNode),
+    [isLibraryLikeNode, selectedNode]
+  );
+
+  const [selectedRelationshipView, setSelectedRelationshipView] = useState<
+    "neighbors" | "influenced"
+  >("neighbors");
+
+  useEffect(() => {
+    if (aiMethod === "hdbscan") return;
+    const nextView =
+      selectedNodeIsLibraryLike && selectedLibraryInfluencedRows.length > 0
+        ? "influenced"
+        : "neighbors";
+    setSelectedRelationshipView(nextView);
+  }, [
+    aiMethod,
+    selectedNodeIsLibraryLike,
+    selectedLibraryInfluencedRows.length,
+    selectedNode?.id,
+  ]);
 
   const libraryContributionByNodeId = useMemo(() => {
     const out = new Map<string, number>();
@@ -18079,11 +18245,13 @@ function ClusterMapInner({
 
       const targetNode = (row as any)?.targetNode ?? row;
       const isLibraryNode = isLibraryLikeNode(targetNode, row);
+      const nodeId = normalizeClusterMapToken(
+        (targetNode as any)?.id ?? (row as any)?.id ?? ""
+      );
+      const hasContribution =
+        nodeId != null && libraryContributionByNodeId.has(nodeId);
 
-      if (isLibraryNode) {
-        const nodeId = normalizeClusterMapToken(
-          (targetNode as any)?.id ?? (row as any)?.id ?? ""
-        );
+      if (isLibraryNode || hasContribution) {
         const contribution =
           nodeId != null ? libraryContributionByNodeId.get(nodeId) ?? null : null;
         return {
@@ -18127,12 +18295,14 @@ function ClusterMapInner({
 
     for (const row of selectedNeighborList as any[]) {
       const targetNode = (row as any)?.targetNode ?? row;
-      if (!isLibraryLikeNode(targetNode, row)) continue;
-      if (!rowWithinSelectedReferenceTime(row)) continue;
-
       const nodeId = normalizeClusterMapToken(
         (targetNode as any)?.id ?? (row as any)?.id ?? ""
       );
+      const hasContribution =
+        nodeId != null && libraryContributionByNodeId.has(nodeId);
+      if (!isLibraryLikeNode(targetNode, row) && !hasContribution) continue;
+      if (!rowWithinSelectedReferenceTime(row)) continue;
+
       const value = resolveLibraryContributionAtTime(
         nodeId,
         selectedMetricReferenceTimeSec
@@ -18145,6 +18315,7 @@ function ClusterMapInner({
     return values.reduce((sum, value) => sum + value, 0) / values.length;
   }, [
     isLibraryLikeNode,
+    libraryContributionByNodeId,
     resolveLibraryContributionAtTime,
     rowWithinSelectedReferenceTime,
     selectedMetricReferenceTimeSec,
@@ -18185,6 +18356,31 @@ function ClusterMapInner({
     rowWithinSelectedReferenceTime,
     selectedLibraryInfluencedRows,
   ]);
+
+  const selectedConfidenceValue = useMemo(() => {
+    if (aiMethod === "hdbscan") return null;
+    return resolveNonHdbConfidence((selectedAiSnapshotSource as any) ?? (selectedNode as any));
+  }, [aiMethod, resolveNonHdbConfidence, selectedAiSnapshotSource, selectedNode]);
+
+  const selectedCanShowContribution =
+    aiMethod !== "hdbscan" && selectedLibraryInfluencedRows.length > 0;
+  const selectedCanShowConfidence =
+    aiMethod !== "hdbscan" &&
+    (selectedConfidenceValue != null || !selectedCanShowContribution);
+  const activeSelectedRelationshipView =
+    aiMethod !== "hdbscan" &&
+    selectedRelationshipView === "influenced" &&
+    selectedLibraryInfluencedRows.length > 0
+      ? "influenced"
+      : "neighbors";
+  const selectedAncEntryValue =
+    activeSelectedRelationshipView === "influenced"
+      ? selectedAverageNeighborConfidenceAtEntry
+      : selectedAverageNeighborContributionAtEntry;
+  const selectedAncCurrentValue =
+    activeSelectedRelationshipView === "influenced"
+      ? selectedAverageNeighborConfidence
+      : selectedAverageNeighborContribution;
 
   const renderHdbGroupMemberList = (
     rows: any[],
@@ -22420,13 +22616,31 @@ function ClusterMapInner({
                     })()}
                   </div>
 
-                  <div style={{ opacity: 0.65 }}>
-                    {aiMethod === "hdbscan"
-                      ? "Cluster Win Rate"
-                      : isSelectedLib
-                      ? "Contribution"
-                      : "Confidence"}
-                  </div>
+                  {selectedCanShowConfidence && selectedCanShowContribution ? (
+                    <>
+                      <div style={{ opacity: 0.65 }}>Confidence</div>
+                      <div
+                        style={{
+                          fontWeight: 900,
+                          color: "rgba(120,190,255,0.92)",
+                        }}
+                      >
+                        {selectedConfidenceValue == null
+                          ? "-"
+                          : `${Math.round(selectedConfidenceValue * 100)}%`}
+                      </div>
+                    </>
+                  ) : null}
+
+                  {aiMethod === "hdbscan" ? (
+                    <div style={{ opacity: 0.65 }}>Cluster Win Rate</div>
+                  ) : null}
+                  {selectedCanShowConfidence && !selectedCanShowContribution ? (
+                    <div style={{ opacity: 0.65 }}>Confidence</div>
+                  ) : null}
+                  {selectedCanShowContribution ? (
+                    <div style={{ opacity: 0.65 }}>Contribution</div>
+                  ) : null}
                   <div
                     style={{ fontWeight: 900, color: "rgba(120,190,255,0.92)" }}
                   >
@@ -22441,23 +22655,14 @@ function ClusterMapInner({
                           ? `${pct}% (HD #${cid})`
                           : `${pct}%`;
                       }
-                      if (isSelectedLib) {
+                      if (selectedCanShowContribution) {
                         return selectedLibraryContribution == null
-                          ? "?"
+                          ? "-"
                           : `${Math.round(selectedLibraryContribution * 100)}%`;
                       }
-                      if (isSelectedLib && selectedLibraryContribution == null) {
-                        return "-";
-                      }
-                      if (isSelectedLib) {
-                        return selectedLibraryContribution == null
-                          ? "?"
-                          : `${Math.round(selectedLibraryContribution * 100)}%`;
-                      }
-                      const v = resolveNonHdbConfidence(
-                        selectedAiSnapshotSource ?? selectedNode
-                      );
-                      return v == null ? "—" : `${Math.round(v * 100)}%`;
+                      return selectedConfidenceValue == null
+                        ? "-"
+                        : `${Math.round(selectedConfidenceValue * 100)}%`;
                     })()}
                   </div>
 
@@ -22468,18 +22673,12 @@ function ClusterMapInner({
                         style={{ fontWeight: 900, color: "rgba(120,190,255,0.92)" }}
                       >
                         {(() => {
-                          const entryValue = isSelectedLib
-                            ? selectedAverageNeighborConfidenceAtEntry
-                            : selectedAverageNeighborContributionAtEntry;
-                          const currentValue = isSelectedLib
-                            ? selectedAverageNeighborConfidence
-                            : selectedAverageNeighborContribution;
                           const formatAncValue = (value: number | null | undefined) =>
                             value == null || !Number.isFinite(Number(value))
                               ? "-"
                               : `${Math.round(Number(value) * 100)}%`;
-                          return `${formatAncValue(entryValue)} | ${formatAncValue(
-                            currentValue
+                          return `${formatAncValue(selectedAncEntryValue)} | ${formatAncValue(
+                            selectedAncCurrentValue
                           )}`;
                         })()}
                       </div>
@@ -22585,19 +22784,69 @@ function ClusterMapInner({
                       <div>
                         {aiMethod === "hdbscan"
                           ? "Cluster Group Members"
-                          : isSelectedLib
+                          : activeSelectedRelationshipView === "influenced"
                           ? "Neighbors Influenced"
                           : "Nearest Neighbors"}
                       </div>
                       <div style={{ ...mono(), opacity: 0.7 }}>
-                        {aiMethod === "hdbscan" || isSelectedLib ? "n=" : "k="}
+                        {aiMethod === "hdbscan" ||
+                        activeSelectedRelationshipView === "influenced"
+                          ? "n="
+                          : "k="}
                         {aiMethod === "hdbscan"
                           ? selectedHdbGroupMembers.length
-                          : isSelectedLib
+                          : activeSelectedRelationshipView === "influenced"
                           ? selectedLibraryInfluencedRows.length
                           : selectedNeighborCap || selectedNeighborList.length || 0}
                       </div>
                     </div>
+                  {aiMethod !== "hdbscan" && selectedCanShowContribution ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        marginTop: 8,
+                        marginBottom: 8,
+                      }}
+                    >
+                      {[
+                        { value: "neighbors", label: "Nearest Neighbors" },
+                        { value: "influenced", label: "Neighbors Influenced" },
+                      ].map((option) => {
+                        const active = selectedRelationshipView === option.value;
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() =>
+                              setSelectedRelationshipView(
+                                option.value as "neighbors" | "influenced"
+                              )
+                            }
+                            style={{
+                              ...mono(),
+                              fontSize: 10,
+                              fontWeight: 900,
+                              padding: "6px 10px",
+                              borderRadius: 10,
+                              border: active
+                                ? "1px solid rgba(55,220,180,0.85)"
+                                : "1px solid rgba(255,255,255,0.14)",
+                              background: active
+                                ? "rgba(55,220,180,0.12)"
+                                : "rgba(255,255,255,0.04)",
+                              color: active
+                                ? "rgba(145,255,220,0.98)"
+                                : "rgba(255,255,255,0.78)",
+                              cursor: "pointer",
+                            }}
+                          >
+                            {option.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                   {aiMethod === "hdbscan"
                     ? renderHdbGroupMemberList(
                         selectedHdbGroupMembers,
@@ -22605,7 +22854,7 @@ function ClusterMapInner({
                         160,
                         { onRowClick: handleSelectionListRowClick }
                       )
-                    : isSelectedLib
+                    : activeSelectedRelationshipView === "influenced"
                     ? renderHdbGroupMemberList(
                         selectedLibraryInfluencedRows,
                         "No influenced live trades available.",
@@ -23291,9 +23540,7 @@ function ClusterMapInner({
           space; similar setups cluster together. Dot size scales with the
           magnitude of the trade’s profit or loss. The selected layout
           view controls how positions are learned
-          {viewCompressionMethod === "link"
-            ? "; Link Strength prioritizes the stored nearest-neighbor links so trades that truly neighbor each other stay visually close."
-            : "."}{" "}
+          .{" "}
           Pan by dragging, zoom with the mouse wheel and hover to inspect
           details.
         </div>
@@ -24710,12 +24957,12 @@ export default function App() {
     if (typeof data.compressionMethod === "string") {
       const v = String(data.compressionMethod || "");
       const ok = ["umap", "pca", "jl", "hash", "variance", "subsample"];
-      setCompressionMethod(ok.includes(v) ? v : "jl");
+      setCompressionMethod(ok.includes(v) ? v : "umap");
     }
     if (typeof data.compressionMethod === "string") {
       const v = String(data.compressionMethod || "");
       const ok = ["umap", "pca", "jl", "hash", "variance", "subsample"];
-      setCompressionMethod(ok.includes(v) ? v : "jl");
+      setCompressionMethod(ok.includes(v) ? v : "umap");
     }
     if (typeof data.distanceMetric === "string") {
       const v = String(data.distanceMetric || "").toLowerCase();
@@ -24971,7 +25218,7 @@ export default function App() {
     setKnnNeighborSpace("post");
     setDimStyle("recommended");
     setDimManualAmount(24);
-    setCompressionMethod("jl");
+    setCompressionMethod("umap");
 
     setEnabledDows({ ...DEFAULT_DOWS });
     setEnabledHours({ ...DEFAULT_HOURS });
@@ -25816,7 +26063,7 @@ export default function App() {
   >("post");
   const [dimStyle, setDimStyle] = useState("recommended"); // "manual" | "recommended" | "all"
   const [dimManualAmount, setDimManualAmount] = useState(24);
-  const [compressionMethod, setCompressionMethod] = useState("jl"); // "umap" | "pca" | "jl" | "hash" | "variance" | "subsample"
+  const [compressionMethod, setCompressionMethod] = useState("umap"); // "umap" | "pca" | "jl" | "hash" | "variance" | "subsample"
   const [distanceMetric, setDistanceMetric] = useState("euclidean"); // "euclidean" | "cosine" | "manhattan" | "chebyshev" | "mahalanobis"
   const [dimWeightMode, setDimWeightMode] = useState("uniform"); // "uniform" | "proportional"
   const [dimWeightsBump, setDimWeightsBump] = useState(0);

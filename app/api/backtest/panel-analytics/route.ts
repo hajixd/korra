@@ -731,27 +731,14 @@ const findTargetBalancedCounts = (
   }
 
   const target = clamp(targetPositivePercent, 0, 100) / 100;
-  let bestPositiveCount = 0;
-  let bestTotal = 0;
-  let bestDiff = Number.POSITIVE_INFINITY;
-
-  for (let total = totalCap; total >= 1; total -= 1) {
-    const minPositive = Math.max(0, total - availableNegatives);
-    const maxPositive = Math.min(availablePositives, total);
-    let candidatePositiveCount = Math.round(target * total);
-    candidatePositiveCount = clamp(candidatePositiveCount, minPositive, maxPositive);
-    const diff = Math.abs(candidatePositiveCount / total - target);
-
-    if (diff < bestDiff - 1e-9) {
-      bestDiff = diff;
-      bestPositiveCount = candidatePositiveCount;
-      bestTotal = total;
-    }
-  }
+  const minPositive = Math.max(0, totalCap - availableNegatives);
+  const maxPositive = Math.min(availablePositives, totalCap);
+  let bestPositiveCount = Math.round(target * totalCap);
+  bestPositiveCount = clamp(bestPositiveCount, minPositive, maxPositive);
 
   return {
     positiveCount: bestPositiveCount,
-    negativeCount: Math.max(0, bestTotal - bestPositiveCount)
+    negativeCount: Math.max(0, totalCap - bestPositiveCount)
   };
 };
 

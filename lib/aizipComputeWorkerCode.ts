@@ -172,9 +172,9 @@ let HDB_EPS_QUANTILE = 0.5;
 let HDB_SAMPLE_CAP = 3000;
 
 // HDBSCAN domain distinction
-// - conceptual: keep the same clusters, but when "Direction" domain is enabled, evaluate BUY vs SELL by using
-//   direction-specific win-rates within the same cluster (no cluster rebuild)
-// - real: when "Direction" domain is enabled, rebuild clusters per direction (BUY ignores SELL nodes, and vice-versa)
+// - conceptual: keep the same clusters, but read confidence using only the enabled domain slice
+//   inside the assigned cluster
+// - real: rebuild the clustering dataset from the same enabled domain slice KNN would use
 let HDB_DOMAIN_DISTINCTION = "real"; // "conceptual" | "real"
 // Probability calibration (turn raw neighbor-based scores into calibrated probabilities)
   let CALIBRATION_MODE = "none"; // "none" | "platt" | "isotonic"
@@ -1219,6 +1219,30 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
     return true;
   }
 
+  function resolvePointModelKey(point){
+    if(!point) return "";
+    const direct =
+      point.metaModel ??
+      point.metaModelKey ??
+      point.metaModelName ??
+      point.modelKey ??
+      point.model;
+    if(direct != null){
+      const normalized = String(direct).trim();
+      if(normalized) return normalized;
+    }
+    const uid =
+      point.uid ??
+      point.tradeUid ??
+      point.metaUid ??
+      point.metaTradeUid ??
+      point.id ??
+      point.metaId ??
+      "";
+    const parts = String(uid || "").split("|");
+    return parts.length >= 3 ? String(parts[2] || "").trim() : "";
+  }
+
   function queryMetaFromTime(rawTime, parseMode){
     const t = rawTime || "";
     const d = parseDateFromString(t, parseMode);
@@ -1227,6 +1251,16 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
     const hour = d ? (parseMode === "utc" ? d.getUTCHours() : d.getHours()) : null;
     const session = sessionFromTime(t, parseMode);
     return { session, month, dow, hour };
+  }
+
+  function buildHdbQueryMeta(qMeta, modelKey){
+    const next = qMeta ? { ...qMeta } : {};
+    const mk = String(modelKey || "").trim();
+    if(mk){
+      if(next.modelKey == null || next.modelKey === "") next.modelKey = mk;
+      if(next.model == null || next.model === "") next.model = mk;
+    }
+    return next;
   }
 
   function resolveNeighborReadyIndex(point){
@@ -1275,6 +1309,39 @@ function clampInt(v, lo, hi){ return Math.min(hi, Math.max(lo, (v|0))); }
       const readyIndex = resolveNeighborReadyIndex(p);
       return readyIndex == null || readyIndex < cutoffIndex;
     });
+  }
+
+  function filterAiDomainUsablePoints(points, dirFilter, modelKey, qMeta){
+    let usable = points || [];
+    if(DOMAIN_SET && qMeta) usable = usable.filter(p=>passesDomains(p, qMeta));
+    if(DOMAIN_SET && DOMAIN_SET.has("Direction") && dirFilter){
+      const df = Number(dirFilter);
+      usable = usable.filter((p) => {
+        const pd = Number(p.dir);
+        return Number.isFinite(pd) && Number.isFinite(df) && pd === df;
+      });
+    }
+    if(DOMAIN_SET && DOMAIN_SET.has("Model") && modelKey){
+      const mk = String(modelKey || "").trim();
+      usable = usable.filter((p) => resolvePointModelKey(p) === mk);
+    }
+    return usable;
+  }
+
+  function buildHdbDatasetKey(excludeTime, dirFilter, modelKey, qMeta){
+    const cutoffKey = CHRONOLOGICAL_NEIGHBOR_FILTER
+      ? String(resolveChronologyCutoffIndex(excludeTime) ?? "na")
+      : "na";
+    const parts = [cutoffKey, "dist=" + String(HDB_DOMAIN_DISTINCTION || "real")];
+    if(HDB_DOMAIN_DISTINCTION === "real" && DOMAIN_SET && DOMAIN_SET.size){
+      if(DOMAIN_SET.has("Direction")) parts.push("dir=" + String(Number(dirFilter) || 0));
+      if(DOMAIN_SET.has("Model")) parts.push("model=" + String(modelKey || ""));
+      if(DOMAIN_SET.has("Session")) parts.push("session=" + String(qMeta?.session ?? "na"));
+      if(DOMAIN_SET.has("Month")) parts.push("month=" + String(qMeta?.month ?? "na"));
+      if(DOMAIN_SET.has("Weekday")) parts.push("dow=" + String(qMeta?.dow ?? "na"));
+      if(DOMAIN_SET.has("Hour")) parts.push("hour=" + String(qMeta?.hour ?? "na"));
+    }
+    return parts.join("|");
   }
 
   function pointVoteBaseWeight(point){
@@ -1433,8 +1500,8 @@ function dbscan(pointsZ, eps, minSamples){
 }
 
 function buildHdbCache(usable, phase, modelKey, datasetKey){
-  // One cache per (phase, modelKey, hyperparams). Domains never rebuild clusters;
-  // domains only affect how we read win-rates from a chosen cluster.
+  // One cache per (phase, modelKey, hyperparams, dataset signature).
+  // When distinction is "real", the dataset signature includes the active domain slice.
   const key =
     "hdb|" + String(phase||"") + "|" + String(modelKey||"") + "|" +
     String(HDB_MIN_CLUSTER_SIZE) + "|" + String(HDB_MIN_SAMPLES) + "|" +
@@ -1445,15 +1512,6 @@ function buildHdbCache(usable, phase, modelKey, datasetKey){
   if(cached) return cached;
 
   let pts = usable || [];
-
-  // If "Model" domain is enabled, restrict the clustering dataset to the active modelKey.
-  if(DOMAIN_SET && DOMAIN_SET.has("Model") && modelKey){
-    const mk = String(modelKey || "");
-    pts = pts.filter(p => {
-      const pm = String(p?.metaModel ?? p?.metaModelKey ?? p?.metaModelName ?? p?.modelKey ?? p?.model ?? "");
-      return pm === mk;
-    });
-  }
 
   if(pts.length > HDB_SAMPLE_CAP){
     const step = Math.max(1, Math.floor(pts.length / HDB_SAMPLE_CAP));
@@ -1651,7 +1709,7 @@ function assignHdbCluster(cache, qz){
 }
 
 
-function hdbMetaMatches(meta, qMeta, queryDir){
+function hdbMetaMatches(meta, qMeta, queryDir, modelKey){
   if(!DOMAIN_SET) return true;
 
   // Direction
@@ -1662,7 +1720,7 @@ function hdbMetaMatches(meta, qMeta, queryDir){
 
   // Model
   if(DOMAIN_SET.has("Model")){
-    const mk = String(qMeta?.modelKey ?? qMeta?.model ?? "");
+    const mk = String(qMeta?.modelKey ?? qMeta?.model ?? modelKey ?? "");
     if(mk && String(meta?.model || "") !== mk) return false;
   }
 
@@ -1697,7 +1755,7 @@ function hdbMetaMatches(meta, qMeta, queryDir){
   return true;
 }
 
-function hdbFilteredWinRate(cache, idxs, qMeta, queryDir, cutoffIndex){
+function hdbFilteredWinRate(cache, idxs, qMeta, queryDir, cutoffIndex, modelKey){
   if(!cache || !cache.ptMeta || !idxs || !idxs.length) return { n:0, wins:0, winRate: NaN };
   let n=0, wins=0;
   for(let ii=0; ii<idxs.length; ii++){
@@ -1705,21 +1763,21 @@ function hdbFilteredWinRate(cache, idxs, qMeta, queryDir, cutoffIndex){
     const m = cache.ptMeta[i];
     if(!m) continue;
     if(cutoffIndex != null && Number.isFinite(Number(m.readyIndex)) && Number(m.readyIndex) >= cutoffIndex) continue;
-    if(!hdbMetaMatches(m, qMeta, queryDir)) continue;
+    if(!hdbMetaMatches(m, qMeta, queryDir, modelKey)) continue;
     n++;
     wins += (Number(m.win) ? 1 : 0);
   }
   return { n, wins, winRate: n ? (wins/n) : NaN };
 }
 
-function hdbFilteredGlobalWinRate(cache, qMeta, queryDir, cutoffIndex){
+function hdbFilteredGlobalWinRate(cache, qMeta, queryDir, cutoffIndex, modelKey){
   if(!cache || !cache.ptMeta || !cache.ptMeta.length) return { n:0, wins:0, winRate: NaN };
   let n=0, wins=0;
   for(let i=0;i<cache.ptMeta.length;i++){
     const m = cache.ptMeta[i];
     if(!m) continue;
     if(cutoffIndex != null && Number.isFinite(Number(m.readyIndex)) && Number(m.readyIndex) >= cutoffIndex) continue;
-    if(!hdbMetaMatches(m, qMeta, queryDir)) continue;
+    if(!hdbMetaMatches(m, qMeta, queryDir, modelKey)) continue;
     n++;
     wins += (Number(m.win) ? 1 : 0);
   }
@@ -1728,26 +1786,16 @@ function hdbFilteredGlobalWinRate(cache, qMeta, queryDir, cutoffIndex){
 function hdbscanMargin(points, q, phase, dirFilter, excludeTime, modelKey, qMeta, queryDir){
   let usable = filterUsableNeighbors(points, excludeTime);
   if(!COUNT_SUPPRESSED_NEIGHBORS) usable = usable.filter(p=>!p.metaSuppressed);
-
   const modSet = DOMAIN_SET || null;
+  const queryMeta = buildHdbQueryMeta(qMeta, modelKey);
+  const clusteringUsable =
+    HDB_DOMAIN_DISTINCTION === "real"
+      ? filterAiDomainUsablePoints(usable, dirFilter, modelKey, queryMeta)
+      : usable;
+  if(!clusteringUsable.length) return NaN;
 
-  // If Model domain is active, restrict the clustering dataset to the active model.
-  const cacheModelKey = (modSet && modSet.has("Model")) ? String(modelKey || "") : "";
-  if(cacheModelKey){
-    usable = usable.filter(p=>{
-      const pm = String(p?.metaModel ?? p?.metaModelKey ?? p?.metaModelName ?? p?.modelKey ?? p?.model ?? "");
-      return pm === cacheModelKey;
-    });
-  }
-
-  if(!usable.length) return NaN;
-
-  // Build one cluster cache (no domain-based rebuilds)
-  const datasetKey =
-    CHRONOLOGICAL_NEIGHBOR_FILTER
-      ? String(resolveChronologyCutoffIndex(excludeTime) ?? "na")
-      : "";
-  const cache = buildHdbCache(usable, phase, cacheModelKey, datasetKey);
+  const datasetKey = buildHdbDatasetKey(excludeTime, dirFilter, modelKey, queryMeta);
+  const cache = buildHdbCache(clusteringUsable, phase, String(modelKey || ""), datasetKey);
   if(!cache || !cache.ok) return NaN;
 
   // Standardize query in the model space, then z-score in the HDB cache space
@@ -1775,12 +1823,15 @@ function hdbscanMargin(points, q, phase, dirFilter, excludeTime, modelKey, qMeta
     return st.winRate;
   }
 
-  const clusterRate = hdbFilteredWinRate(cache, idxs, qMeta, queryDir, cutoffIndex);
+  const clusterRate = hdbFilteredWinRate(cache, idxs, queryMeta, queryDir, cutoffIndex, modelKey);
   if(Number.isFinite(clusterRate.winRate)){
     return clusterRate.winRate;
   }
 
-  const globalRate = hdbFilteredGlobalWinRate(cache, qMeta, queryDir, cutoffIndex);
+  const globalRate = hdbFilteredGlobalWinRate(cache, queryMeta, queryDir, cutoffIndex, modelKey);
+  if((modSet && modSet.size > 0) || cutoffIndex != null){
+    return NaN;
+  }
   return Number.isFinite(globalRate.winRate) ? globalRate.winRate : NaN;
 }
 
@@ -3122,26 +3173,14 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
       if (totalCap <= 0) return { wins: 0, losses: 0 };
 
       const target = clamp(Number(targetPct) || 0, 0, 100) / 100;
-      let bestWins = 0;
-      let bestTotal = 0;
-      let bestDiff = Infinity;
-
-      for (let total = totalCap; total >= 1; total -= 1) {
-        const minWins = Math.max(0, total - lossCount);
-        const maxWins = Math.min(winCount, total);
-        let wins = Math.round(target * total);
-        wins = clamp(wins, minWins, maxWins);
-        const diff = Math.abs(wins / total - target);
-        if (diff < bestDiff - 1e-9) {
-          bestDiff = diff;
-          bestWins = wins;
-          bestTotal = total;
-        }
-      }
+      const minWins = Math.max(0, totalCap - lossCount);
+      const maxWins = Math.min(winCount, totalCap);
+      let bestWins = Math.round(target * totalCap);
+      bestWins = clamp(bestWins, minWins, maxWins);
 
       return {
         wins: bestWins,
-        losses: Math.max(0, bestTotal - bestWins),
+        losses: Math.max(0, totalCap - bestWins),
       };
     };
     const rebalancePointsToTargetPercent = (points, cap, targetPct, predicate, preferFront) => {
@@ -4360,7 +4399,7 @@ function flushSuppressedNeighbors(uptoIndex){
       }
 
       const q = buildChunkVector(candles, i, chunkBars, modelKeyUsed, parseMode);
-      const qMeta = queryMetaFromTime(excludeTime || "", parseMode);
+      const qMeta = buildHdbQueryMeta(queryMetaFromTime(excludeTime || "", parseMode), modelKeyUsed);
       const lib = libs[modelKeyUsed];
       if(!lib || !lib.length){
         return {
@@ -4385,12 +4424,29 @@ function flushSuppressedNeighbors(uptoIndex){
         qMeta,
         dirUsed
       );
+      const rawConfidence =
+        AI_METHOD === "hdbscan"
+          ? aiMargin(
+              lib,
+              q,
+              kEntryEff,
+              "entry",
+              enforceDir ? dirUsed : 0,
+              excludeTime,
+              modelKeyUsed,
+              qMeta,
+              dirUsed
+            )
+          : neighborConfidenceFromList(neighbors);
       const bestNeighbor = neighbors.length ? neighbors[0] : null;
       return {
         q,
         qMeta,
         neighbors,
-        confidence: neighborConfidenceFromList(neighbors),
+        confidence:
+          rawConfidence != null && Number.isFinite(Number(rawConfidence))
+            ? clamp(Number(rawConfidence), 0, 1)
+            : null,
         label: entryLabelFromNeighbor(modelKeyUsed, dirUsed, bestNeighbor),
         labelPnl: entryPnlFromNeighbor(bestNeighbor),
         labelUid: entryUidFromNeighbor(bestNeighbor),
@@ -4401,7 +4457,7 @@ function flushSuppressedNeighbors(uptoIndex){
       const entryIdx = i + 1;
       const excludeTime = (candles[entryIdx] && candles[entryIdx].time) || null;
 
-      // AI Model (checkEveryBar): evaluate every bar and use kNN only (no checklist).
+      // AI Model (checkEveryBar): evaluate every bar and use the selected AI scorer only (no checklist).
       if (checkEveryBar) {
         const candidatesAll = entryModels.length ? entryModels : MODELS;
         const maxModels = Math.max(1, Math.round(candidatesAll.length * modelEvalCap));
@@ -4499,7 +4555,7 @@ function flushSuppressedNeighbors(uptoIndex){
       const entrySnapshot = buildEntrySnapshot(i, best.model, best.dir, excludeTime);
       const entryConfidenceValue = entrySnapshot.confidence;
 
-      // AI Filter (useAI): kNN is ONLY a confidence gate (accept/reject).
+      // AI Filter (useAI): the selected AI scorer is ONLY a confidence gate (accept/reject).
       // It never changes the chosen model or direction (no flipping).
       if (useAI) {
         if (entryConfidenceValue == null || entryConfidenceValue * 100 <= confidenceThreshold) {

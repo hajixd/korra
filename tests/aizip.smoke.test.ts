@@ -73,6 +73,21 @@ const makeTrade = (params: {
   };
 };
 
+const buildComputeCandles = (count = 320) => {
+  const candleStartMs = Date.parse("2025-03-01T00:00:00Z");
+  return Array.from({ length: count }, (_, index) => {
+    const drift = index * 0.18;
+    const base = 100 + drift + Math.sin(index / 9) * 0.7;
+    return {
+      time: candleStartMs + index * 15 * 60 * 1000,
+      open: base,
+      high: base + 0.6,
+      low: base - 0.4,
+      close: base + 0.2
+    };
+  });
+};
+
 const postPanelAnalytics = async (payload: Record<string, unknown>) => {
   const response = await panelAnalyticsPost(
     new Request("http://localhost/api/backtest/panel-analytics", {
@@ -178,6 +193,58 @@ test("core library uses live trades and keeps MIT aligned to neighbor #1", async
     stampedTrade.entryNeighbors[0]?.metaUid ?? stampedTrade.entryNeighbors[0]?.uid ?? null;
   assert.equal(stampedTrade.closestClusterUid, firstNeighborUid);
   assert.equal(String(firstNeighborUid).startsWith("lib|"), false);
+});
+
+test("suppressed library points stay selectable as ghost-learning neighbors", async () => {
+  const trades = [
+    makeTrade({
+      id: "live-1",
+      entryIso: "2025-03-01T00:00:00Z",
+      exitIso: "2025-03-01T01:00:00Z"
+    }),
+    makeTrade({
+      id: "live-2",
+      entryIso: "2025-03-01T02:00:00Z",
+      exitIso: "2025-03-01T03:00:00Z",
+      neighborVector: [0, 0, 0, 0, 0, 0]
+    })
+  ];
+
+  const payload = await postPanelAnalytics({
+    panelSourceTrades: trades,
+    panelLibraryPoints: [
+      {
+        uid: "lib|suppressed|loss|0",
+        libId: "suppressed",
+        metaTime: Math.floor(Date.parse("2025-02-27T00:00:00Z") / 1000),
+        metaPnl: -160,
+        metaOutcome: "Loss",
+        metaSession: "London",
+        dir: 1,
+        label: -1,
+        v: [0, 0, 0, 0, 0, 0]
+      }
+    ],
+    panelBacktestFilterSettings: baseFilterSettings({
+      selectedAiLibraries: ["suppressed"],
+      selectedAiLibrarySettings: {
+        suppressed: { weight: 100, maxSamples: 1000 }
+      }
+    }),
+    panelConfidenceGateDisabled: true,
+    panelEffectiveConfidenceThreshold: 0,
+    aiLibraryDefaultsById: {
+      suppressed: { weight: 100, maxSamples: 1000 }
+    }
+  });
+
+  const stampedTrade = payload.timeFilteredTrades[1];
+  assert.ok(stampedTrade, "expected a second stamped trade");
+  assert.equal(stampedTrade.closestClusterUid, "lib|suppressed|loss|0");
+  assert.ok(Array.isArray(stampedTrade.entryNeighbors) && stampedTrade.entryNeighbors.length > 0);
+  assert.equal(stampedTrade.entryNeighbors[0]?.metaUid, "lib|suppressed|loss|0");
+  assert.equal(stampedTrade.entryNeighbors[0]?.metaLib, "suppressed");
+  assert.equal(stampedTrade.entryNeighbors[0]?.metaSuppressed, true);
 });
 
 test("core library excludes the selected live trade from its own neighbor list", async () => {
@@ -1028,18 +1095,7 @@ test("synthetic validation uses the full trade history as its training pool", as
 });
 
 test("synthetic worker libraries are stamped in 1999 while live trades stay on real-market time", async () => {
-  const candleStartMs = Date.parse("2025-03-01T00:00:00Z");
-  const candles = Array.from({ length: 320 }, (_, index) => {
-    const drift = index * 0.18;
-    const base = 100 + drift + Math.sin(index / 9) * 0.7;
-    return {
-      time: candleStartMs + index * 15 * 60 * 1000,
-      open: base,
-      high: base + 0.6,
-      low: base - 0.4,
-      close: base + 0.2
-    };
-  });
+  const candles = buildComputeCandles(320);
 
   const payload = await postAizipCompute({
     candles,
@@ -1099,4 +1155,52 @@ test("synthetic worker libraries are stamped in 1999 while live trades stay on r
     assert.equal(new Date(entryTime).getUTCFullYear() >= 2025, true);
     assert.equal(new Date(exitTime).getUTCFullYear() >= 2025, true);
   }
+});
+
+test("artificial library balancing keeps the generated sample count at maxSamples", async () => {
+  const payload = await postAizipCompute({
+    candles: buildComputeCandles(360),
+    settings: {
+      antiCheatEnabled: false,
+      validationMode: "off",
+      parseMode: "utc",
+      chunkBars: 8,
+      dollarsPerMove: 100,
+      tpDollars: 100,
+      slDollars: 100,
+      enabledSessions: {
+        Tokyo: true,
+        Sydney: true,
+        London: true,
+        "New York": true
+      },
+      modelStates: {
+        Momentum: 1
+      },
+      aiLibrariesActive: ["base"],
+      aiLibrariesSettings: {
+        base: {
+          weight: 100,
+          maxSamples: 7,
+          targetWinRateMode: "artificial",
+          targetWinRate: 73
+        }
+      }
+    },
+    timeoutMs: 60_000
+  });
+
+  const result =
+    payload.res && typeof payload.res === "object" && !Array.isArray(payload.res)
+      ? (payload.res as {
+          libraryCounts?: Record<string, number>;
+          libraryPoints?: Array<{ libId?: string }>;
+        })
+      : null;
+  assert.ok(result, "expected a compute result payload");
+  assert.equal(result?.libraryCounts?.base ?? 0, 7);
+  const basePoints = (Array.isArray(result?.libraryPoints) ? result.libraryPoints : []).filter(
+    (point) => point?.libId === "base"
+  );
+  assert.equal(basePoints.length, 7);
 });
