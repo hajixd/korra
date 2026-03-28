@@ -107,8 +107,8 @@ import {
   resolveExplicitAiConfidenceScore
 } from "../lib/aiConfidence";
 import {
-  buildEntryOnlyNeighborVector,
-  getEntryOnlyTradeConfidenceScore
+  buildTradeNeighborVector,
+  getTradeConfidenceScore as getSharedTradeConfidenceScore
 } from "../lib/aiEntryScoring";
 import {
   firebaseClientConfigReady,
@@ -1622,6 +1622,7 @@ type BacktestAnalyticsServerPayload = {
   baselineMainStatsTrades: HistoryItem[];
   confidenceByIdEntries: Array<[string, number]>;
   aiMode: "off" | "knn" | "hdbscan";
+  inPreciseEnabled: boolean;
   confidenceGateDisabled: boolean;
   selectedBacktestDateKey: string;
   statsDateStart: string;
@@ -3294,6 +3295,7 @@ type BacktestSettingsSnapshot = {
   timeframe: Timeframe;
   precisionTimeframe: Timeframe;
   minutePreciseEnabled: boolean;
+  inPreciseEnabled: boolean;
   statsDateStart: string;
   statsDateEnd: string;
   enabledBacktestWeekdays: string[];
@@ -3339,6 +3341,7 @@ type BacktestFilterSettings = Pick<
   BacktestSettingsSnapshot,
   | "statsDateStart"
   | "statsDateEnd"
+  | "inPreciseEnabled"
   | "enabledBacktestWeekdays"
   | "enabledBacktestSessions"
   | "enabledBacktestMonths"
@@ -7630,8 +7633,13 @@ const getPerformanceStatsBarFill = (pnl: number, opacity = 0.88): string => {
     : `rgba(239,68,68,${opacity})`;
 };
 
-const getTradeConfidenceScore = (trade: HistoryItem): number => {
-  return getEntryOnlyTradeConfidenceScore(trade);
+const getTradeConfidenceScore = (
+  trade: HistoryItem,
+  options?: { inPreciseEnabled?: boolean }
+): number => {
+  return getSharedTradeConfidenceScore(trade, {
+    inPreciseEnabled: options?.inPreciseEnabled === true
+  });
 };
 
 const buildBacktestClusterGroups = (nodes: BacktestClusterNode[]): BacktestClusterGroup[] => {
@@ -11716,6 +11724,7 @@ function TradingTerminalWorkspace({
   const [selectedBacktestPrecisionTimeframe, setSelectedBacktestPrecisionTimeframe] =
     useState<Timeframe>("15m");
   const [minutePreciseEnabled, setMinutePreciseEnabled] = useState(false);
+  const [inPreciseEnabled, setInPreciseEnabled] = useState(false);
   const [selectedSurfaceTab, setSelectedSurfaceTab] = useState<SurfaceTab>("chart");
   const [selectedBacktestTab, setSelectedBacktestTab] = useState<BacktestTab>("mainStats");
   const [terminalViewStateReady, setTerminalViewStateReady] = useState(false);
@@ -12046,6 +12055,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       timeframe: selectedBacktestTimeframe,
       precisionTimeframe: effectiveSelectedBacktestPrecisionTimeframe,
       minutePreciseEnabled: backtestPrecisionEnabled,
+      inPreciseEnabled,
       statsDateStart,
       statsDateEnd,
       enabledBacktestWeekdays: [...enabledBacktestWeekdays],
@@ -12092,6 +12102,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       selectedBacktestTimeframe,
       effectiveSelectedBacktestPrecisionTimeframe,
       backtestPrecisionEnabled,
+      inPreciseEnabled,
       statsDateStart,
       statsDateEnd,
       enabledBacktestWeekdays,
@@ -16480,6 +16491,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     () => ({
       statsDateStart,
       statsDateEnd,
+      inPreciseEnabled,
       enabledBacktestWeekdays: [...enabledBacktestWeekdays],
       enabledBacktestSessions: [...enabledBacktestSessions],
       enabledBacktestMonths: [...enabledBacktestMonths],
@@ -16509,6 +16521,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       kEntry,
       knnVoteMode,
       knnNeighborSpace,
+      inPreciseEnabled,
       remapOppositeOutcomes,
       selectedAiDomains,
       selectedAiLibraries,
@@ -16954,9 +16967,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         return explicitConfidence;
       }
 
-      return getTradeConfidenceScore(trade);
+      return getTradeConfidenceScore(trade, {
+        inPreciseEnabled: appliedBacktestSettings.inPreciseEnabled
+      });
     },
-    [antiCheatBacktestContext]
+    [antiCheatBacktestContext, appliedBacktestSettings.inPreciseEnabled]
   );
   const chartPanelHistoryRows =
     shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus === "ready"
@@ -17968,6 +17983,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     chartPanelLiveSimulationEnabled,
     activePanelLiveSimulationEnabled,
     minutePreciseEnabled: backtestPrecisionEnabled,
+    inPreciseEnabled,
     enabledBacktestWeekdays,
     enabledBacktestSessions,
     enabledBacktestMonths,
@@ -18024,7 +18040,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     statsDateStart,
     statsDateEnd,
   }), [
-    selectedSymbol, selectedTimeframe, selectedBacktestTimeframe, effectiveSelectedBacktestPrecisionTimeframe, chartPanelLiveSimulationEnabled, activePanelLiveSimulationEnabled, backtestPrecisionEnabled,
+    selectedSymbol, selectedTimeframe, selectedBacktestTimeframe, effectiveSelectedBacktestPrecisionTimeframe, chartPanelLiveSimulationEnabled, activePanelLiveSimulationEnabled, backtestPrecisionEnabled, inPreciseEnabled,
     enabledBacktestWeekdays, enabledBacktestSessions,
     enabledBacktestMonths, enabledBacktestHours, aiMode, aiModelEnabled, aiFilterEnabled,
     staticLibrariesClusters, confidenceThreshold, ancThreshold, aiExitStrictness, aiExitLossTolerance,
@@ -18078,6 +18094,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       setActivePanelLiveSimulationEnabled(Boolean(s.chartPanelLiveSimulationEnabled));
     }
     setMinutePreciseEnabled(nextBacktestPrecisionTimeframe !== nextBacktestTimeframe);
+    if (s.inPreciseEnabled != null) setInPreciseEnabled(Boolean(s.inPreciseEnabled));
     if (s.enabledBacktestWeekdays != null) setEnabledBacktestWeekdays(s.enabledBacktestWeekdays);
     if (s.enabledBacktestSessions != null) setEnabledBacktestSessions(s.enabledBacktestSessions);
     if (s.enabledBacktestMonths != null) setEnabledBacktestMonths(s.enabledBacktestMonths);
@@ -21100,6 +21117,28 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       return;
     }
 
+    if (!isStatsRefreshAutoFinishPhase(statsRefreshStatus)) {
+      return;
+    }
+
+    if (!statsRefreshCompletionReady) {
+      return;
+    }
+
+    finishStatsRefreshLoading(formatStatsRefreshDateLabel(statsRefreshTimelineRange.endMs));
+  }, [
+    finishStatsRefreshLoading,
+    statsRefreshCompletionReady,
+    statsRefreshOverlayMode,
+    statsRefreshStatus,
+    statsRefreshTimelineRange.endMs
+  ]);
+
+  useEffect(() => {
+    if (statsRefreshOverlayMode !== "loading") {
+      return;
+    }
+
     if (statsRefreshStatus !== "Finalizing Statistics") {
       return;
     }
@@ -21245,6 +21284,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         baselineMainStatsTrades,
         confidenceByIdEntries: backtestAnalyticsConfidenceEntries,
         aiMode: appliedBacktestSettings.aiMode,
+        inPreciseEnabled: appliedBacktestSettings.inPreciseEnabled,
         confidenceGateDisabled: appliedConfidenceGateDisabled,
         selectedBacktestDateKey,
         statsDateStart: appliedBacktestSettings.statsDateStart,
@@ -21289,6 +21329,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     };
   }, [
     appliedBacktestSettings.aiMode,
+    appliedBacktestSettings.inPreciseEnabled,
     appliedBacktestSettings.statsDateEnd,
     appliedBacktestSettings.statsDateStart,
     appliedConfidenceGateDisabled,
@@ -22397,7 +22438,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           Number.isFinite(exitTimeRaw) && exitTimeRaw > 0
             ? exitTimeRaw
             : getHistoryTradeExitLabel(trade) || getHistoryTradeTimeLabel(trade);
-        const shapeVector = buildEntryOnlyNeighborVector(trade);
+        const shapeVector = buildTradeNeighborVector(trade, {
+          inPreciseEnabled: appliedBacktestSettings.inPreciseEnabled
+        });
 
         points.push({
           id: `lib|${definition.id}|${trade.id}|${sourceIndex}`,
@@ -22432,7 +22475,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         points
       };
     },
-    [applyLibraryJumpToResolution, resolveLibrarySignalIndex]
+    [applyLibraryJumpToResolution, appliedBacktestSettings.inPreciseEnabled, resolveLibrarySignalIndex]
   );
 
   const runAiLibrary = useCallback(
@@ -28895,6 +28938,19 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             </div>
                           )}
                         </div>
+                      </div>
+                    </div>
+                    <div className="backtest-setting-row">
+                      <span className="backtest-setting-row-label">In Precise</span>
+                      <div className="backtest-date-preset-row">
+                        <button
+                          type="button"
+                          className={`ai-zip-button ${inPreciseEnabled ? "active" : ""}`}
+                          onClick={() => setInPreciseEnabled((value) => !value)}
+                          title="Toggle the current entry-only AI scoring mode"
+                        >
+                          In Precise - {inPreciseEnabled ? "ON" : "OFF"}
+                        </button>
                       </div>
                     </div>
                   </div>

@@ -125,6 +125,7 @@ const normalizeSettings = (raw: unknown): StrategyNotificationSettings | null =>
     timeframe,
     aiMode,
     aiFilterEnabled: Boolean(value.aiFilterEnabled),
+    inPreciseEnabled: value.inPreciseEnabled === true,
     confidenceThreshold: Number(value.confidenceThreshold ?? 0) || 0,
     ancThreshold: Number(value.ancThreshold ?? 0) || 0,
     dollarsPerMove: Number(value.dollarsPerMove ?? 25) || 25,

@@ -14,8 +14,8 @@ import {
   resolveExplicitAiConfidenceScore
 } from "../../../../lib/aiConfidence";
 import {
-  buildEntryOnlyNeighborVector,
-  getEntryOnlyTradeConfidenceScore
+  buildTradeNeighborVector as buildSharedTradeNeighborVector,
+  getTradeConfidenceScore as getSharedTradeConfidenceScore
 } from "../../../../lib/aiEntryScoring";
 
 export const runtime = "nodejs";
@@ -110,6 +110,7 @@ type LibraryNeighborAggregateEntry = {
 type BacktestFilterSettings = {
   statsDateStart: string;
   statsDateEnd: string;
+  inPreciseEnabled: boolean;
   enabledBacktestWeekdays: string[];
   enabledBacktestSessions: string[];
   enabledBacktestMonths: number[];
@@ -446,8 +447,13 @@ const getSyntheticWinProb = (trade: HistoryItem) => {
   return clamp(score, 0.08, 0.92);
 };
 
-const buildTradeNeighborVector = (trade: HistoryItem): number[] => {
-  return buildEntryOnlyNeighborVector(trade);
+const buildTradeNeighborVector = (
+  trade: HistoryItem,
+  settings?: Pick<BacktestFilterSettings, "inPreciseEnabled">
+): number[] => {
+  return buildSharedTradeNeighborVector(trade, {
+    inPreciseEnabled: settings?.inPreciseEnabled === true
+  });
 };
 
 const getTradeDirection = (trade: HistoryItem): number => {
@@ -984,7 +990,9 @@ const prepareCandidateVectorSpace = (
   settings: BacktestFilterSettings
 ): PreparedCandidateVectorSpace => {
   const space = normalizeKnnNeighborSpace(settings.knnNeighborSpace);
-  const rawQueryVector = currentTrade.neighborVector ?? buildTradeNeighborVector(currentTrade);
+  const rawQueryVector =
+    currentTrade.neighborVector ??
+    buildTradeNeighborVector(currentTrade, settings);
   const staticSpace = buildStaticCandidateVectorSpace(source, settings);
 
   return {
@@ -994,8 +1002,13 @@ const prepareCandidateVectorSpace = (
   };
 };
 
-const getTradeConfidenceScore = (trade: HistoryItem): number => {
-  return getEntryOnlyTradeConfidenceScore(trade);
+const getTradeConfidenceScore = (
+  trade: HistoryItem,
+  settings?: Pick<BacktestFilterSettings, "inPreciseEnabled">
+): number => {
+  return getSharedTradeConfidenceScore(trade, {
+    inPreciseEnabled: settings?.inPreciseEnabled === true
+  });
 };
 
 const toNumeric = (value: unknown, fallback = 0) => {
@@ -1007,7 +1020,10 @@ const normalizeProbabilityScore = (value: unknown): number | null => {
   return normalizeSharedAiProbabilityScore(value);
 };
 
-const resolveTradeAiConfidenceScore = (trade: HistoryItem): number => {
+const resolveTradeAiConfidenceScore = (
+  trade: HistoryItem,
+  settings?: Pick<BacktestFilterSettings, "inPreciseEnabled">
+): number => {
   const neighborConfidence = computeNeighborConfidenceScore(
     Array.isArray(trade.entryNeighbors) ? trade.entryNeighbors : []
   );
@@ -1020,7 +1036,7 @@ const resolveTradeAiConfidenceScore = (trade: HistoryItem): number => {
     return explicitConfidence;
   }
 
-  return getTradeConfidenceScore(trade);
+  return getTradeConfidenceScore(trade, settings);
 };
 
 const normalizeTradeAiMode = (value: unknown): BacktestTradeAiMode | null => {
@@ -1177,7 +1193,8 @@ const normalizeOutcomeLabel = (value: unknown): "Win" | "Loss" | null => {
 const buildTradeSourceCandidate = (
   libraryId: string,
   trade: HistoryItem,
-  sourceIndex: number
+  sourceIndex: number,
+  settings: Pick<BacktestFilterSettings, "inPreciseEnabled">
 ): LibrarySourceCandidate | null => {
   const uid = buildLibraryNeighborUid(libraryId, trade, sourceIndex);
   if (!uid) {
@@ -1196,7 +1213,7 @@ const buildTradeSourceCandidate = (
     entryModel: trade.entrySource || null,
     label: trade.result === "Win" ? 1 : trade.result === "Loss" ? -1 : null,
     trade,
-    vector: trade.neighborVector ?? buildTradeNeighborVector(trade)
+    vector: trade.neighborVector ?? buildTradeNeighborVector(trade, settings)
   };
 };
 
@@ -1332,7 +1349,8 @@ const isSelfNeighborCandidate = (
 const applyTradeAiEntrySnapshot = (
   trade: HistoryItem,
   snapshot: TradeAiEntrySnapshot | undefined,
-  fallbackAiMode: BacktestTradeAiMode | null
+  fallbackAiMode: BacktestTradeAiMode | null,
+  settings: Pick<BacktestFilterSettings, "inPreciseEnabled">
 ): HistoryItem => {
   const preservedNeighbors = cloneEntryNeighbors(trade.entryNeighbors);
   const effectiveAiMode =
@@ -1347,14 +1365,14 @@ const applyTradeAiEntrySnapshot = (
           ...trade,
           closestClusterUid: trade.closestClusterUid ?? null,
           entryNeighbors: preservedNeighbors,
-          neighborVector: trade.neighborVector ?? buildTradeNeighborVector(trade)
+          neighborVector: trade.neighborVector ?? buildTradeNeighborVector(trade, settings)
         }
       : {
           ...trade,
           aiMode: effectiveAiMode,
           closestClusterUid: trade.closestClusterUid ?? null,
           entryNeighbors: preservedNeighbors,
-          neighborVector: trade.neighborVector ?? buildTradeNeighborVector(trade)
+          neighborVector: trade.neighborVector ?? buildTradeNeighborVector(trade, settings)
         };
   }
 
@@ -1371,7 +1389,7 @@ const applyTradeAiEntrySnapshot = (
     aiMode: snapshot.aiMode,
     closestClusterUid: snapshot.closestClusterUid,
     entryNeighbors,
-    neighborVector: trade.neighborVector ?? buildTradeNeighborVector(trade)
+    neighborVector: trade.neighborVector ?? buildTradeNeighborVector(trade, settings)
   };
 };
 
@@ -1563,6 +1581,7 @@ const normalizeFilterSettings = (value: unknown): BacktestFilterSettings => {
   return {
     statsDateStart: String(row.statsDateStart ?? ""),
     statsDateEnd: String(row.statsDateEnd ?? ""),
+    inPreciseEnabled: row.inPreciseEnabled === true,
     enabledBacktestWeekdays: Array.isArray(row.enabledBacktestWeekdays)
       ? row.enabledBacktestWeekdays.map((entry) => String(entry))
       : [],
@@ -1861,7 +1880,12 @@ const computeAntiCheatBacktestContext = (params: {
 
     return balanced
       .map((trade, sourceIndex) => ({
-        candidate: buildTradeSourceCandidate(libraryId, trade, sourceIndex),
+        candidate: buildTradeSourceCandidate(
+          libraryId,
+          trade,
+          sourceIndex,
+          panelBacktestFilterSettings
+        ),
         libraryId,
         sourceIndex
       }))
@@ -2030,7 +2054,8 @@ const computeAntiCheatBacktestContext = (params: {
       applyTradeAiEntrySnapshot(
         trade,
         aiEntrySnapshotById.get(trade.id),
-        activeAiMode
+        activeAiMode,
+        panelBacktestFilterSettings
       )
     );
   };
@@ -2090,7 +2115,8 @@ const computeAntiCheatBacktestContext = (params: {
 
   for (let index = 0; index < chronologicalTrades.length; index += 1) {
     const trade = chronologicalTrades[index]!;
-    const tradeQueryVector = trade.neighborVector ?? buildTradeNeighborVector(trade);
+    const tradeQueryVector =
+      trade.neighborVector ?? buildTradeNeighborVector(trade, panelBacktestFilterSettings);
     const preservedNeighbors = preserveExistingLibraryState
       ? cloneEntryNeighbors(trade.entryNeighbors)
       : [];
@@ -2349,7 +2375,10 @@ const filterHistoryRows = (params: {
       }
 
       const confidence =
-        (confidenceById.get(trade.id) ?? resolveTradeAiConfidenceScore(trade)) * 100;
+        (
+          confidenceById.get(trade.id) ??
+          resolveTradeAiConfidenceScore(trade, settings)
+        ) * 100;
       if (confidence < effectiveConfidenceThreshold) {
         return false;
       }
@@ -2367,7 +2396,8 @@ const filterHistoryRows = (params: {
       applyTradeAiEntrySnapshot(
         trade,
         aiEntrySnapshotById.get(trade.id),
-        settings.aiMode === "off" ? null : settings.aiMode
+        settings.aiMode === "off" ? null : settings.aiMode,
+        settings
       )
     )
     .sort((a, b) => Number(b.exitTime) - Number(a.exitTime) || b.id.localeCompare(a.id));

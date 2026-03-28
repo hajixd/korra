@@ -3,7 +3,7 @@ import {
   computeNeighborConfidenceScore,
   resolveExplicitAiConfidenceScore
 } from "./aiConfidence";
-import { getEntryOnlyTradeConfidenceScore } from "./aiEntryScoring";
+import { getTradeConfidenceScore as getSharedTradeConfidenceScore } from "./aiEntryScoring";
 import {
   computeBacktestHistoryRowsChunk,
   finalizeBacktestHistoryRows,
@@ -21,6 +21,7 @@ export type StrategyNotificationSettings = {
   timeframe: "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
   aiMode: "off" | "knn" | "hdbscan";
   aiFilterEnabled: boolean;
+  inPreciseEnabled?: boolean;
   confidenceThreshold: number;
   ancThreshold: number;
   dollarsPerMove: number;
@@ -203,8 +204,13 @@ const toBacktestCandles = (candles: StrategyNotificationCandle[]): BacktestHisto
   }));
 };
 
-const getTradeConfidenceScore = (trade: BacktestHistoryRow): number => {
-  return getEntryOnlyTradeConfidenceScore(trade);
+const getTradeConfidenceScore = (
+  trade: BacktestHistoryRow,
+  settings?: Pick<StrategyNotificationSettings, "inPreciseEnabled">
+): number => {
+  return getSharedTradeConfidenceScore(trade, {
+    inPreciseEnabled: settings?.inPreciseEnabled === true
+  });
 };
 
 const getTradeAverageNeighborContributionAtEntryScore = (trade: BacktestHistoryRow): number | null => {
@@ -231,7 +237,8 @@ const tradePassesAiEntryThresholds = (trade: BacktestHistoryRow, settings: Strat
       Array.isArray(trade.entryNeighbors) ? trade.entryNeighbors : []
     );
     const explicitConfidence = resolveExplicitAiConfidenceScore(trade);
-    const confidence = (explicitConfidence ?? neighborConfidence ?? getTradeConfidenceScore(trade)) * 100;
+    const confidence =
+      (explicitConfidence ?? neighborConfidence ?? getTradeConfidenceScore(trade, settings)) * 100;
 
     if (!Number.isFinite(confidence) || confidence < settings.confidenceThreshold) {
       return false;

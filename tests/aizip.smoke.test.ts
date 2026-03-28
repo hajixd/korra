@@ -706,7 +706,7 @@ test("panel analytics confidence honors kEntry instead of scoring every candidat
   assertApprox(Number(stampedTrade.entryConfidence), 1);
 });
 
-test("panel analytics nearest-neighbor ranking ignores the query trade outcome", async () => {
+test("panel analytics nearest-neighbor ranking ignores the query trade outcome when In Precise is on", async () => {
   const buildPayload = async (currentTradeOverrides: {
     result: "Win" | "Loss";
     pnlUsd: number;
@@ -745,7 +745,8 @@ test("panel analytics nearest-neighbor ranking ignores the query trade outcome",
         antiCheatEnabled: true,
         validationMode: "off",
         selectedAiLibraries: ["core"],
-        kEntry: 1
+        kEntry: 1,
+        inPreciseEnabled: true
       }),
       panelConfidenceGateDisabled: true,
       panelEffectiveConfidenceThreshold: 0,

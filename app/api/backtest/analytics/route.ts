@@ -5,7 +5,7 @@ import {
   getTradeWeekKey,
   summarizeBacktestTrades
 } from "../../../../lib/backtestStats";
-import { getEntryOnlyTradeConfidenceScore } from "../../../../lib/aiEntryScoring";
+import { getTradeConfidenceScore as getSharedTradeConfidenceScore } from "../../../../lib/aiEntryScoring";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -318,8 +318,8 @@ const getSessionLabel = (timestampSeconds: number): string => {
   return "London";
 };
 
-const getTradeConfidenceScore = (trade: HistoryItem): number => {
-  return getEntryOnlyTradeConfidenceScore(trade);
+const getTradeConfidenceScore = (trade: HistoryItem, inPreciseEnabled = false): number => {
+  return getSharedTradeConfidenceScore(trade, { inPreciseEnabled });
 };
 
 const normalizeTrade = (value: unknown): HistoryItem | null => {
@@ -1106,6 +1106,7 @@ export async function POST(request: Request) {
     body.aiMode === "knn" || body.aiMode === "hdbscan"
       ? body.aiMode
       : "off";
+  const inPreciseEnabled = body.inPreciseEnabled === true;
   const confidenceGateDisabled = body.confidenceGateDisabled === true;
   const selectedBacktestDateKey = String(body.selectedBacktestDateKey ?? "");
   const statsDateStart = typeof body.statsDateStart === "string" ? body.statsDateStart : "";
@@ -1117,7 +1118,7 @@ export async function POST(request: Request) {
   const isClusterBacktestTabActive = body.isClusterBacktestTabActive === true;
 
   const resolveConfidenceScore = (trade: HistoryItem) => {
-    return confidenceById.get(trade.id) ?? getTradeConfidenceScore(trade);
+    return confidenceById.get(trade.id) ?? getTradeConfidenceScore(trade, inPreciseEnabled);
   };
 
   const summaryRange = {
