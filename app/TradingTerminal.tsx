@@ -85,7 +85,8 @@ import {
 import { normalizeChartActions } from "../lib/assistant-tools";
 import {
   AI_MODEL_MODEL_NAME,
-  parseStrategyModelCatalogEntry,
+  buildStrategyModelFilePayload,
+  extractStrategyModelCatalogEntry,
   STRATEGY_MODEL_CATALOG,
   resolveStrategyRuntimeModelProfile,
   type StrategyModelCatalogEntry
@@ -3085,7 +3086,7 @@ const parseUploadedStrategyModelList = (
   }
 
   const models = value
-    .map((entry) => parseStrategyModelCatalogEntry(entry))
+    .map((entry) => extractStrategyModelCatalogEntry(entry))
     .filter((entry): entry is StrategyModelCatalogEntry => entry !== null);
 
   return {
@@ -3546,7 +3547,12 @@ const syncAiModelStates = (
   const next: Record<string, AiModelState> = {};
 
   for (const modelName of modelNames) {
-    next[modelName] = current[modelName] ?? defaults[modelName] ?? 0;
+    const normalizedId = modelName
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    next[modelName] = current[modelName] ?? current[normalizedId] ?? defaults[modelName] ?? 0;
   }
 
   const currentKeys = Object.keys(current);
@@ -3562,6 +3568,44 @@ const syncAiModelStates = (
   }
 
   return current;
+};
+
+const getAiModelStateValue = (
+  aiModelStates: Record<string, AiModelState> | null | undefined,
+  modelName: string
+): AiModelState => {
+  if (!aiModelStates || typeof aiModelStates !== "object") {
+    return 0;
+  }
+
+  const normalizedId = modelName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return (aiModelStates[modelName] ?? aiModelStates[normalizedId] ?? 0) as AiModelState;
+};
+
+const forceSingleAiModelSelection = (
+  current: Record<string, AiModelState>,
+  modelNames: readonly string[],
+  selectedModelName: string
+): Record<string, AiModelState> => {
+  const synced = syncAiModelStates(current, modelNames);
+  const next: Record<string, AiModelState> = {};
+
+  for (const modelName of modelNames) {
+    next[modelName] = modelName === selectedModelName ? 1 : 0;
+  }
+
+  for (const modelName of modelNames) {
+    if ((synced[modelName] ?? 0) !== next[modelName]) {
+      return next;
+    }
+  }
+
+  return synced;
 };
 
 const buildInitialAiFeatureLevels = (): Record<string, AiFeatureLevel> => {
@@ -12240,23 +12284,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
   useEffect(() => {
     setAiModelStates((current) => {
-      const synced = syncAiModelStates(current, settingsModelNames);
       if (!aiModelModeActive) {
-        return synced;
+        return syncAiModelStates(current, settingsModelNames);
       }
-
-      const next = { ...synced };
-      for (const modelName of settingsModelNames) {
-        next[modelName] = modelName === AI_MODEL_MODEL_NAME ? 1 : 0;
-      }
-
-      for (const modelName of settingsModelNames) {
-        if ((next[modelName] ?? 0) !== (current[modelName] ?? 0)) {
-          return next;
-        }
-      }
-
-      return current;
+      return forceSingleAiModelSelection(current, settingsModelNames, AI_MODEL_MODEL_NAME);
     });
   }, [aiModelModeActive, settingsModelNames]);
 
@@ -13757,7 +13788,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     return selectedAiLibraryId ? aiLibraryDefById[selectedAiLibraryId] ?? null : null;
   }, [aiLibraryDefById, selectedAiLibraryId]);
   const selectedBacktestModelNames = useMemo(() => {
-    return settingsModelNames.filter((modelName) => (aiModelStates[modelName] ?? 0) > 0);
+    return settingsModelNames.filter((modelName) => getAiModelStateValue(aiModelStates, modelName) > 0);
   }, [aiModelStates, settingsModelNames]);
   const backtestModelProfiles = useMemo(() => {
     return selectedBacktestModelNames
@@ -13863,7 +13894,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   appliedBacktestFallbackOneMinuteCandlesRef.current = appliedBacktestFallbackOneMinuteCandles;
   const appliedBacktestModelNames = useMemo(() => {
     return settingsModelNames.filter(
-      (modelName) => (appliedBacktestSettings.aiModelStates[modelName] ?? 0) > 0
+      (modelName) => getAiModelStateValue(appliedBacktestSettings.aiModelStates, modelName) > 0
     );
   }, [appliedBacktestSettings.aiModelStates, settingsModelNames]);
   const appliedBacktestModelProfiles = useMemo(() => {
@@ -18759,7 +18790,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           throw new Error(`${file.name} is not valid JSON.`);
         }
 
-        const parsedModel = parseStrategyModelCatalogEntry(parsedJson);
+        const parsedModel = extractStrategyModelCatalogEntry(parsedJson);
 
         if (!parsedModel) {
           throw new Error(`${file.name} is missing required Korra model fields.`);
@@ -18792,7 +18823,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, []);
 
   const handleImportAssistantStrategyModel = useCallback((draftJson: Record<string, unknown>) => {
-    const parsedModel = parseStrategyModelCatalogEntry(draftJson);
+    const parsedModel = extractStrategyModelCatalogEntry(draftJson);
 
     if (!parsedModel) {
       setModelsSurfaceNotice("Gideon returned an invalid model JSON.");
@@ -18812,12 +18843,17 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, []);
 
   const handleDownloadStrategyModel = useCallback((model: StrategyModelCatalogEntry) => {
-    const blob = new Blob([JSON.stringify(model, null, 2)], { type: "application/json" });
+    const parsedModel = extractStrategyModelCatalogEntry(model);
+    if (!parsedModel) {
+      return;
+    }
+    const payload = buildStrategyModelFilePayload(parsedModel);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
 
     link.href = url;
-    link.download = `${model.id}.json`;
+    link.download = `${model.id}.korra-model.json`;
     link.click();
     URL.revokeObjectURL(url);
   }, []);
@@ -18862,6 +18898,121 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     [closeModelRunModal, modelRunModalModelId]
   );
 
+  const ensureModelRunHistoryCandles = useCallback(
+    async (params: {
+      symbol: string;
+      timeframe: Timeframe;
+      startDate: string;
+      endDate: string;
+      leadingBars: number;
+      targetBars: number;
+    }): Promise<Candle[]> => {
+      const { symbol, timeframe, startDate, endDate, leadingBars, targetBars } = params;
+      const candleKey = symbolTimeframeKey(symbol, timeframe);
+      const existingCandles = pickLongestCandleSeries(
+        backtestSeriesMapRef.current[candleKey],
+        seriesMapRef.current[candleKey],
+        backtestSeriesMap[candleKey],
+        seriesMap[candleKey]
+      );
+      const latestKnownMarketTimeMs = getLatestCandleSeriesTimeMs(existingCandles);
+      const effectiveEndDate = clampBacktestDateEndYmdToLatestKnownMarket(
+        endDate,
+        latestKnownMarketTimeMs
+      );
+      const hasDateRange = Boolean(startDate && effectiveEndDate);
+      const historyRequestWindow = hasDateRange
+        ? buildHistoryApiRequestWindow({
+            timeframe,
+            startYmd: startDate,
+            endYmd: effectiveEndDate,
+            leadingBars
+          })
+        : null;
+      const coverageWindow = hasDateRange
+        ? {
+            startYmd: startDate,
+            endYmd: effectiveEndDate,
+            leadingBars,
+            strictCoverage: true
+          }
+        : undefined;
+
+      if (
+        existingCandles.length >= MIN_SEED_CANDLES &&
+        (!hasDateRange ||
+          candlesCoverDateRange(
+            existingCandles,
+            timeframe,
+            startDate,
+            effectiveEndDate,
+            leadingBars
+          ))
+      ) {
+        return filterCandlesToDateRange(
+          existingCandles,
+          timeframe,
+          startDate,
+          effectiveEndDate,
+          leadingBars
+        );
+      }
+
+      let resolvedCandles = existingCandles;
+
+      try {
+        const fetchedCandles = await fetchBacktestHistoryCandles(
+          timeframe,
+          targetBars,
+          undefined,
+          !hasDateRange && timeframe === "1m",
+          resolveBacktestSeedFetchTimeoutMs(targetBars, coverageWindow),
+          hasDateRange
+            ? {
+                requestWindow: historyRequestWindow ?? undefined,
+                coverageWindow
+              }
+            : undefined
+        );
+        resolvedCandles = pickLongestCandleSeries(fetchedCandles, existingCandles);
+      } catch {
+        resolvedCandles = existingCandles;
+      }
+
+      if (
+        resolvedCandles.length >= MIN_SEED_CANDLES &&
+        resolvedCandles.length > (backtestSeriesMapRef.current[candleKey]?.length ?? 0)
+      ) {
+        setBacktestSeriesMap((current) => ({
+          ...current,
+          [candleKey]: resolvedCandles
+        }));
+      }
+
+      if (
+        hasDateRange &&
+        !candlesCoverDateRange(
+          resolvedCandles,
+          timeframe,
+          startDate,
+          effectiveEndDate,
+          leadingBars
+        )
+      ) {
+        return [];
+      }
+
+      return filterCandlesToDateRange(
+        resolvedCandles,
+        timeframe,
+        startDate,
+        effectiveEndDate,
+        leadingBars
+      );
+    },
+    [backtestSeriesMap, seriesMap, setBacktestSeriesMap]
+  );
+
   const handleRunModelBacktest = useCallback(async () => {
     if (!activeModelRunEntry) {
       return;
@@ -18894,7 +19045,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     setModelRunError("");
 
     try {
-      const candleKey = symbolTimeframeKey(selectedSymbol, modelRunTimeframe);
       const leadingBars = Math.max(chunkBars * 3, maxBarsInTrade + 24);
       const targetBars = estimateHistoryBarsForDateRange(
         startDate,
@@ -18902,59 +19052,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         modelRunTimeframe,
         leadingBars
       );
-      const historyRequestWindow =
-        startDate && endDate
-          ? buildHistoryApiRequestWindow({
-              timeframe: modelRunTimeframe,
-              startYmd: startDate,
-              endYmd: endDate,
-              leadingBars
-            })
-          : null;
-      let candles = pickLongestCandleSeries(
-        backtestSeriesMap[candleKey],
-        seriesMap[candleKey]
-      );
-
-      if (
-        candles.length < MIN_SEED_CANDLES ||
-        !candlesCoverDateRange(candles, modelRunTimeframe, startDate, endDate, leadingBars)
-      ) {
-        candles = await fetchHybridHistoryCandles(
-          modelRunTimeframe,
-          targetBars,
-          undefined,
-          !historyRequestWindow,
-          CLIENT_CANDLE_FETCH_TIMEOUT_MS,
-          {
-            requestWindow: historyRequestWindow ?? undefined,
-            coverageWindow:
-              startDate && endDate
-                ? {
-                    startYmd: startDate,
-                    endYmd: endDate,
-                    leadingBars,
-                    strictCoverage: true
-                  }
-                : undefined
-          }
-        );
-
-        if (candles.length >= MIN_SEED_CANDLES && candles.length > (seriesMap[candleKey]?.length ?? 0)) {
-          setSeriesMap((current) => ({
-            ...current,
-            [candleKey]: candles
-          }));
-        }
-      }
-
-      candles = filterCandlesToDateRange(
-        candles,
-        modelRunTimeframe,
+      const candles = await ensureModelRunHistoryCandles({
+        symbol: selectedSymbol,
+        timeframe: modelRunTimeframe,
         startDate,
         endDate,
-        leadingBars
-      );
+        leadingBars,
+        targetBars
+      });
 
       if (candles.length < 3) {
         throw new Error("Not enough history was available to run this model.");
@@ -19045,10 +19150,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     modelRunUnits,
     modelsSurfaceCatalog,
     selectedSymbol,
-    seriesMap,
     stopMode,
     trailingDistPct,
-    trailingStartPct
+    trailingStartPct,
+    ensureModelRunHistoryCandles
   ]);
 
   useEffect(() => {
@@ -21456,7 +21561,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       const parts: string[] = [];
 
       for (const modelName of settingsModelNames) {
-        const state = settings.aiModelStates[modelName] ?? 0;
+        const state = getAiModelStateValue(settings.aiModelStates, modelName);
         if (state <= 0) {
           continue;
         }
@@ -21471,7 +21576,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const resolveLibraryModelProfiles = useCallback(
     (settings: BacktestSettingsSnapshot) => {
       return settingsModelNames
-        .filter((modelName) => (settings.aiModelStates[modelName] ?? 0) > 0)
+        .filter((modelName) => getAiModelStateValue(settings.aiModelStates, modelName) > 0)
         .map((modelName) => modelProfileById[createModelId(modelName)] ?? null)
         .filter((model): model is ModelProfile => model !== null);
     },
@@ -29611,6 +29716,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                               setAiFilterEnabled(true);
                             } else if (aiFilterEnabled) {
                               setAiFilterEnabled(false);
+                              setAiModelStates((current) =>
+                                forceSingleAiModelSelection(
+                                  current,
+                                  settingsModelNames,
+                                  AI_MODEL_MODEL_NAME
+                                )
+                              );
                             } else {
                               setAiMode("off");
                               setAiFilterEnabled(false);
@@ -30240,7 +30352,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               >
                 <div className="ai-zip-model-grid">
                   {settingsModelNames.map((modelName) => {
-                    const state = aiModelStates[modelName] ?? 0;
+                    const state = getAiModelStateValue(aiModelStates, modelName);
 
                     return (
                       <button
@@ -30251,7 +30363,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                           event.preventDefault();
                           setAiModelStates((current) => ({
                             ...current,
-                            [modelName]: getNextAiModelState(current[modelName] ?? 0, event.button)
+                            [modelName]: getNextAiModelState(
+                              getAiModelStateValue(current, modelName),
+                              event.button
+                            )
                           }));
                         }}
                         onContextMenu={(event) => {

@@ -35,6 +35,10 @@ import {
   type AssistantChartAnimation,
   resolveGraphTemplate
 } from "../lib/assistant-tools";
+import {
+  buildStrategyModelFilePayload,
+  extractStrategyModelCatalogEntry
+} from "../lib/strategyCatalog";
 
 export type AssistantPanelCandle = {
   time: number;
@@ -995,14 +999,21 @@ export default function AssistantPanel(props: AssistantPanelProps) {
   );
 
   const downloadStrategyDraft = useCallback((draft: AssistantStrategyDraft) => {
-    const blob = new Blob([JSON.stringify(draft.draftJson, null, 2)], {
+    const parsedModel = extractStrategyModelCatalogEntry(draft.draftJson);
+    if (!parsedModel) {
+      return;
+    }
+    const payload = buildStrategyModelFilePayload(parsedModel);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
       type: "application/json"
     });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
 
     link.href = url;
-    link.download = `${String(draft.draftJson.id || draft.matchedModelId || "strategy-draft")}.json`;
+    link.download = `${String(
+      draft.draftJson.id || draft.matchedModelId || "strategy-draft"
+    )}.korra-model.json`;
     link.click();
     URL.revokeObjectURL(url);
   }, []);

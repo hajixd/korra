@@ -86,6 +86,13 @@ export type StrategyModelCatalogEntry = {
   backtest?: StrategyBacktestSpec;
 };
 
+export type StrategyModelFilePayload = {
+  kind: "korra-strategy-model";
+  version: 1;
+  exportedAt: string;
+  model: StrategyModelCatalogEntry;
+};
+
 export type StrategyRuntimeModelProfile = {
   id: string;
   name: string;
@@ -655,6 +662,36 @@ export const parseStrategyModelCatalogEntry = (
     entry,
     exit,
     ...(backtest ? { backtest } : {})
+  };
+};
+
+export const extractStrategyModelCatalogEntry = (
+  value: unknown
+): StrategyModelCatalogEntry | null => {
+  const direct = parseStrategyModelCatalogEntry(value);
+  if (direct) {
+    return direct;
+  }
+
+  if (!isPlainRecord(value)) {
+    return null;
+  }
+
+  const wrapped =
+    parseStrategyModelCatalogEntry(value.model) ??
+    parseStrategyModelCatalogEntry(value.draftJson);
+
+  return wrapped ?? null;
+};
+
+export const buildStrategyModelFilePayload = (
+  model: StrategyModelCatalogEntry
+): StrategyModelFilePayload => {
+  return {
+    kind: "korra-strategy-model",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    model
   };
 };
 
