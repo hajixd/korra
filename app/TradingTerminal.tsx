@@ -9614,14 +9614,20 @@ const buildDimensionFeatureBlueprintFromSettings = (
 
 const buildTradeDimensionValueLookup = (
   trade: (Pick<HistoryItem, "symbol" | "entryTime"> & Partial<Record<string, unknown>>) | Record<string, unknown>,
-  settings: Pick<BacktestSettingsSnapshot, "chunkBars">,
+  settings: Pick<BacktestSettingsSnapshot, "chunkBars" | "timeframe">,
   backtestSeriesMap: Record<string, Candle[]>,
   seriesMap: Record<string, Candle[]>,
   blueprint: DimensionFeatureBlueprint
 ): Map<string, number> | null => {
   const row = trade as Record<string, unknown>;
   const symbol = typeof row.symbol === "string" ? row.symbol : "";
-  const candles = backtestSeriesMap[symbol] ?? seriesMap[symbol] ?? EMPTY_CANDLES;
+  const timeframeKey = symbol ? symbolTimeframeKey(symbol, settings.timeframe) : "";
+  const candles = pickLongestCandleSeries(
+    timeframeKey ? backtestSeriesMap[timeframeKey] : undefined,
+    timeframeKey ? seriesMap[timeframeKey] : undefined,
+    symbol ? backtestSeriesMap[symbol] : undefined,
+    symbol ? seriesMap[symbol] : undefined
+  );
   const entryTimeMs = toHistoryLabelTimestampMs(row.entryTime);
 
   if (!symbol || candles.length === 0 || entryTimeMs == null) {
