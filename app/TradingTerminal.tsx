@@ -9562,19 +9562,29 @@ const getTradeDimensionDecisionVector = (
     Record<string, unknown>
 ): number[] | null => {
   const row = trade as Record<string, unknown>;
-  const raw =
-    Array.isArray(row.neighborVector) && row.neighborVector.length > 0
-      ? row.neighborVector
-      : buildEntryOnlyNeighborVector({
-          side: row.side === "Short" ? "Short" : "Long",
-          entryPrice: Math.max(0.000001, Number(row.entryPrice) || 0.000001),
-          targetPrice: Math.max(0.000001, Number(row.targetPrice) || 0.000001),
-          stopPrice: Math.max(0.000001, Number(row.stopPrice) || 0.000001),
-          entryTime: Number(row.entryTime) || 0
-        });
-  const vector = raw
-    .slice(0, ENTRY_ONLY_NEIGHBOR_DIMENSIONS.length)
-    .map((value: number) => Number(value));
+  const side = row.side === "Short" ? "Short" : row.side === "Long" ? "Long" : null;
+  const entryPrice = Number(row.entryPrice);
+  const targetPrice = Number(row.targetPrice);
+  const stopPrice = Number(row.stopPrice);
+  const entryTime = Number(row.entryTime);
+
+  if (
+    side === null ||
+    !Number.isFinite(entryPrice) ||
+    !Number.isFinite(targetPrice) ||
+    !Number.isFinite(stopPrice) ||
+    !Number.isFinite(entryTime)
+  ) {
+    return null;
+  }
+
+  const vector = buildEntryOnlyNeighborVector({
+    side,
+    entryPrice: Math.max(0.000001, entryPrice),
+    targetPrice: Math.max(0.000001, targetPrice),
+    stopPrice: Math.max(0.000001, stopPrice),
+    entryTime
+  });
 
   if (
     vector.length !== ENTRY_ONLY_NEIGHBOR_DIMENSIONS.length ||
@@ -25688,6 +25698,41 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
     return new Set(dimensionStats.keptKeys);
   }, [dimensionStats]);
+  const dimensionStatsDisplayRows = useMemo(() => {
+    return dimensionStatsRows.map((dimension, index) => {
+      const corrPct = Number.isFinite(dimension.corr) ? dimension.corr * 100 : Number.NaN;
+      const winLowPct = dimension.winLow === null ? null : dimension.winLow * 100;
+      const winHighPct = dimension.winHigh === null ? null : dimension.winHigh * 100;
+      const liftPp = dimension.lift === null ? null : dimension.lift * 100;
+      const corrText = Number.isFinite(corrPct)
+        ? `${corrPct >= 0 ? "+" : ""}${corrPct.toFixed(1)}%`
+        : "n/a";
+      const winLowText = winLowPct === null ? "n/a" : `${winLowPct.toFixed(1)}%`;
+      const winHighText = winHighPct === null ? "n/a" : `${winHighPct.toFixed(1)}%`;
+      const liftText =
+        liftPp === null ? "n/a" : `${liftPp >= 0 ? "+" : ""}${liftPp.toFixed(1)}pp`;
+      const minText = Number.isFinite(dimension.min) ? dimension.min.toFixed(4) : "n/a";
+      const maxText = Number.isFinite(dimension.max) ? dimension.max.toFixed(4) : "n/a";
+      const corrTone = Number.isFinite(corrPct) && corrPct < 0 ? "down" : "up";
+      const liftTone =
+        liftPp === null ? "neutral" : liftPp < 0 ? "down" : "up";
+
+      return {
+        dimension,
+        kept: keptDimKeySet ? keptDimKeySet.has(dimension.key) : false,
+        rank: index + 1,
+        corrText,
+        corrTone,
+        winLowText,
+        winHighText,
+        liftText,
+        liftTone,
+        minText,
+        maxText,
+        rangeText: `${minText} to ${maxText}`
+      };
+    });
+  }, [dimensionStatsRows, keptDimKeySet]);
   const activeBacktestTradeDimensionStats = useMemo<DimensionStatsSummary | null>(() => {
     if (!activeBacktestTradeDetails) {
       return null;
@@ -31986,115 +32031,60 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                         : "No dimension statistics available yet."}
                     </div>
                   ) : (
-                    <div style={{ marginTop: 8, display: "grid", gap: 14 }}>
-                      <div
-                        style={{
-                          borderRadius: 16,
-                          border: "1px solid rgba(255,255,255,0.10)",
-                          background: "rgba(255,255,255,0.05)",
-                          padding: "10px 12px"
-                        }}
-                      >
-                        <div
-                          style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.55)" }}
-                        >
-                          Sample
+                    <div className="dimension-stats-shell">
+                      <section className="dimension-stats-summary-card">
+                        <div className="dimension-stats-summary-copy">
+                          <span className="dimension-stats-kicker">AI Decision Space</span>
+                          <strong>
+                            {dimensionStats.count.toLocaleString("en-US")} trades and{" "}
+                            {dimensionStats.outDim.toLocaleString("en-US")} live dimensions
+                          </strong>
+                          <p>
+                            Baseline win{" "}
+                            {dimensionStats.baselineWin === null
+                              ? "n/a"
+                              : `${(dimensionStats.baselineWin * 100).toFixed(1)}%`}
+                            . Using the same entry-time dimensions the AI uses for similarity.
+                          </p>
                         </div>
-                        <div
-                          style={{ fontSize: 14, fontWeight: 900, color: "rgba(255,255,255,0.92)" }}
-                        >
-                          {dimensionStats.count.toLocaleString("en-US")} trades - Baseline win:{" "}
-                          {dimensionStats.baselineWin === null
-                            ? "-"
-                            : `${(dimensionStats.baselineWin * 100).toFixed(1)}%`}{" "}
-                          - Dims: {dimensionStats.outDim.toLocaleString("en-US")} active /{" "}
-                          {dimensionStats.inDim.toLocaleString("en-US")} total
+                        <div className="dimension-stats-summary-pills">
+                          <span className="dimension-stats-summary-pill">
+                            {dimensionStats.outDim.toLocaleString("en-US")} active /{" "}
+                            {dimensionStats.inDim.toLocaleString("en-US")} total
+                          </span>
+                          <span className="dimension-stats-summary-pill muted">
+                            {dimensionStats.mode === "split"
+                              ? `TEST set after ${dimensionStats.split}% train split`
+                              : "All filtered trades before confidence gating"}
+                          </span>
                         </div>
-                        {dimensionStats.mode === "split" ? (
-                          <div
-                            style={{
-                              marginTop: 4,
-                              fontSize: 11,
-                              fontWeight: 700,
-                              color: "rgba(255,255,255,0.55)"
-                            }}
-                          >
-                            Using TEST set from all filtered trades (Split: {dimensionStats.split}% train)
-                          </div>
-                        ) : (
-                          <div
-                            style={{
-                              marginTop: 4,
-                              fontSize: 11,
-                              fontWeight: 700,
-                              color: "rgba(255,255,255,0.55)"
-                            }}
-                          >
-                            Using all filtered trades before confidence gating
-                          </div>
-                        )}
-                      </div>
+                      </section>
 
-                      <div
-                        style={{
-                          borderRadius: 16,
-                          border: "1px solid rgba(255,255,255,0.10)",
-                          background: "rgba(255,255,255,0.05)",
-                          padding: 12
-                        }}
-                      >
-                        <div
-                          style={{
-                            marginBottom: 8,
-                            fontSize: 11,
-                            fontWeight: 700,
-                            color: "rgba(255,255,255,0.55)"
-                          }}
-                        >
-                          Dimensions
+                      <section className="dimension-stats-panel">
+                        <div className="dimension-stats-panel-head">
+                          <div>
+                            <span className="dimension-stats-kicker">Dimensions</span>
+                            <strong>Rank the six real AI decision dimensions.</strong>
+                          </div>
+                          <span className="dimension-stats-summary-pill muted" title="Shown / Total">
+                            {dimensionStatsDisplayRows.length}/{dimensionStats.dims.length}
+                          </span>
                         </div>
 
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: 8,
-                            alignItems: "center",
-                            marginBottom: 10
-                          }}
-                        >
-                          <input
-                            value={dimSearch}
-                            onChange={(event) => setDimSearch(event.target.value)}
-                            placeholder="Search dimensions..."
-                            style={{
-                              flex: 1,
-                              background: "rgba(255,255,255,0.06)",
-                              border: "1px solid rgba(255,255,255,0.12)",
-                              color: "rgba(255,255,255,0.88)",
-                              borderRadius: 12,
-                              padding: "8px 10px",
-                              fontSize: 11,
-                              outline: "none"
-                            }}
-                          />
-                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <div className="dimension-stats-controls">
+                          <label className="dimension-stats-search">
+                            <input
+                              value={dimSearch}
+                              onChange={(event) => setDimSearch(event.target.value)}
+                              placeholder="Search dimensions..."
+                              className="dimension-stats-search-input"
+                            />
+                          </label>
+                          <div className="dimension-stats-scope">
                             <button
                               type="button"
                               onClick={() => setDimScope("active")}
-                              style={{
-                                padding: "7px 10px",
-                                borderRadius: 10,
-                                border: "1px solid rgba(255,255,255,0.12)",
-                                background:
-                                  dimScope === "active"
-                                    ? "linear-gradient(135deg, rgba(80,180,255,0.32), rgba(60,140,255,0.18))"
-                                    : "rgba(255,255,255,0.06)",
-                                color: "rgba(255,255,255,0.92)",
-                                fontSize: 11,
-                                fontWeight: 850,
-                                cursor: "pointer",
-                                whiteSpace: "nowrap"
-                              }}
+                              className={`dimension-stats-toggle${dimScope === "active" ? " active" : ""}`}
                               title="Show only active dimensions (post-compression)"
                             >
                               Active
@@ -32102,20 +32092,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             <button
                               type="button"
                               onClick={() => setDimScope("all")}
-                              style={{
-                                padding: "7px 10px",
-                                borderRadius: 10,
-                                border: "1px solid rgba(255,255,255,0.12)",
-                                background:
-                                  dimScope === "all"
-                                    ? "linear-gradient(135deg, rgba(255,180,80,0.30), rgba(255,140,60,0.18))"
-                                    : "rgba(255,255,255,0.06)",
-                                color: "rgba(255,255,255,0.92)",
-                                fontSize: 11,
-                                fontWeight: 850,
-                                cursor: "pointer",
-                                whiteSpace: "nowrap"
-                              }}
+                              className={`dimension-stats-toggle${dimScope === "all" ? " active" : ""}`}
                               title="Show all dimensions (pre-compression)"
                             >
                               All
@@ -32125,216 +32102,205 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             <button
                               type="button"
                               onClick={() => setDimSearch("")}
-                              style={{
-                                background: "rgba(255,255,255,0.06)",
-                                border: "1px solid rgba(255,255,255,0.12)",
-                                color: "rgba(255,255,255,0.80)",
-                                borderRadius: 12,
-                                padding: "8px 10px",
-                                fontSize: 11,
-                                fontWeight: 900,
-                                cursor: "pointer",
-                                userSelect: "none"
-                              }}
+                              className="dimension-stats-clear"
                               title="Clear search"
                             >
                               Clear
                             </button>
                           ) : null}
-                          <div
-                            style={{
-                              fontSize: 10,
-                              fontWeight: 900,
-                              color: "rgba(255,255,255,0.55)",
-                              whiteSpace: "nowrap"
-                            }}
-                            title="Shown / Total"
-                          >
-                            {dimensionStatsRows.length}/{dimensionStats.dims.length}
-                          </div>
                         </div>
 
-                        <div style={{ maxHeight: 320, overflowY: "auto", paddingRight: 6 }}>
-                          <div
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns:
-                                "1.35fr 0.65fr 0.65fr 0.65fr 0.65fr 0.85fr 0.55fr 0.55fr",
-                              gap: 10,
-                              fontSize: 10,
-                              fontWeight: 900,
-                              color: "rgba(255,255,255,0.55)",
-                              padding: "0 2px 8px 2px",
-                              borderBottom: "1px solid rgba(255,255,255,0.10)"
-                            }}
-                          >
-                            <div
+                        <div className="dimension-stats-desktop-table">
+                          <div className="dimension-stats-table-head">
+                            <button
+                              type="button"
                               onClick={() => toggleDimSort("name")}
-                              style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                              className="dimension-stats-head-button"
                               title="Sort by dimension name"
                             >
                               <span>Dimension</span>
                               {dimSortCol === "name" ? (
-                                <span style={{ opacity: 0.75 }}>{dimSortDir === 1 ? "^" : "v"}</span>
+                                <span className="dimension-stats-head-sort">
+                                  {dimSortDir === 1 ? "^" : "v"}
+                                </span>
                               ) : null}
-                            </div>
-                            <div
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => toggleDimSort("corr")}
-                              style={{
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 6,
-                                justifyContent: "flex-start"
-                              }}
+                              className="dimension-stats-head-button"
                               title="Sort by correlation vs wins"
                             >
                               <span>Corr</span>
                               {dimSortCol === "corr" ? (
-                                <span style={{ opacity: 0.75 }}>{dimSortDir === 1 ? "^" : "v"}</span>
+                                <span className="dimension-stats-head-sort">
+                                  {dimSortDir === 1 ? "^" : "v"}
+                                </span>
                               ) : null}
-                            </div>
-                            <div
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => toggleDimSort("winLow")}
-                              style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                              className="dimension-stats-head-button"
                               title="Sort by win rate at low values"
                             >
                               <span>Win@Low</span>
                               {dimSortCol === "winLow" ? (
-                                <span style={{ opacity: 0.75 }}>{dimSortDir === 1 ? "^" : "v"}</span>
+                                <span className="dimension-stats-head-sort">
+                                  {dimSortDir === 1 ? "^" : "v"}
+                                </span>
                               ) : null}
-                            </div>
-                            <div
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => toggleDimSort("winHigh")}
-                              style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                              className="dimension-stats-head-button"
                               title="Sort by win rate at high values"
                             >
                               <span>Win@High</span>
                               {dimSortCol === "winHigh" ? (
-                                <span style={{ opacity: 0.75 }}>{dimSortDir === 1 ? "^" : "v"}</span>
+                                <span className="dimension-stats-head-sort">
+                                  {dimSortDir === 1 ? "^" : "v"}
+                                </span>
                               ) : null}
-                            </div>
-                            <div
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => toggleDimSort("lift")}
-                              style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                              className="dimension-stats-head-button"
                               title="Sort by Win@High - Win@Low"
                             >
                               <span>Low to High</span>
                               {dimSortCol === "lift" ? (
-                                <span style={{ fontSize: 11, opacity: 0.9 }}>
+                                <span className="dimension-stats-head-sort">
                                   {dimSortDir === 1 ? "^" : "v"}
                                 </span>
                               ) : null}
-                            </div>
-                            <div
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => toggleDimSort("optimal")}
-                              style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                              className="dimension-stats-head-button"
                               title="Sort by optimal range (standardized thresholds; 50 = 1 stdev)"
                             >
                               <span>Optimal</span>
                               {dimSortCol === "optimal" ? (
-                                <span style={{ opacity: 0.75 }}>{dimSortDir === 1 ? "^" : "v"}</span>
+                                <span className="dimension-stats-head-sort">
+                                  {dimSortDir === 1 ? "^" : "v"}
+                                </span>
                               ) : null}
-                            </div>
-                            <div
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => toggleDimSort("min")}
-                              style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                              className="dimension-stats-head-button"
                               title="Sort by minimum value"
                             >
                               <span>Min</span>
                               {dimSortCol === "min" ? (
-                                <span style={{ opacity: 0.75 }}>{dimSortDir === 1 ? "^" : "v"}</span>
+                                <span className="dimension-stats-head-sort">
+                                  {dimSortDir === 1 ? "^" : "v"}
+                                </span>
                               ) : null}
-                            </div>
-                            <div
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => toggleDimSort("max")}
-                              style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                              className="dimension-stats-head-button"
                               title="Sort by maximum value"
                             >
                               <span>Max</span>
                               {dimSortCol === "max" ? (
-                                <span style={{ opacity: 0.75 }}>{dimSortDir === 1 ? "^" : "v"}</span>
+                                <span className="dimension-stats-head-sort">
+                                  {dimSortDir === 1 ? "^" : "v"}
+                                </span>
                               ) : null}
-                            </div>
+                            </button>
                           </div>
 
-                          {dimensionStatsRows.map((dimension) => {
-                            const corrPct = Number.isFinite(dimension.corr)
-                              ? dimension.corr * 100
-                              : Number.NaN;
-                            const corrText = Number.isFinite(corrPct)
-                              ? `${corrPct >= 0 ? "+" : ""}${corrPct.toFixed(1)}%`
-                              : "?";
-                            const winLowText =
-                              dimension.winLow === null ? "?" : `${(dimension.winLow * 100).toFixed(1)}%`;
-                            const winHighText =
-                              dimension.winHigh === null
-                                ? "?"
-                                : `${(dimension.winHigh * 100).toFixed(1)}%`;
-                            const liftText =
-                              dimension.lift === null
-                                ? "?"
-                                : `${dimension.lift >= 0 ? "+" : ""}${(dimension.lift * 100).toFixed(1)}pp`;
-                            const minText = Number.isFinite(dimension.min) ? dimension.min.toFixed(4) : "?";
-                            const maxText = Number.isFinite(dimension.max) ? dimension.max.toFixed(4) : "?";
-                            const corrColor =
-                              corrPct >= 0 ? "rgba(60,220,120,0.92)" : "rgba(230,80,80,0.92)";
-                            const liftColor =
-                              dimension.lift === null
-                                ? "rgba(255,255,255,0.72)"
-                                : dimension.lift >= 0
-                                  ? "rgba(60,220,120,0.92)"
-                                  : "rgba(230,80,80,0.92)";
-                            const kept = keptDimKeySet ? keptDimKeySet.has(dimension.key) : false;
-
-                            return (
+                          <div className="dimension-stats-table-body">
+                            {dimensionStatsDisplayRows.map((row) => (
                               <div
-                                key={dimension.key}
-                                style={{
-                                  display: "grid",
-                                  gridTemplateColumns:
-                                    "1.35fr 0.65fr 0.65fr 0.65fr 0.65fr 0.85fr 0.55fr 0.55fr",
-                                  gap: 10,
-                                  padding: "8px 2px",
-                                  borderBottom: "1px solid rgba(255,255,255,0.06)",
-                                  alignItems: "center",
-                                  fontSize: 11,
-                                  color: "rgba(255,255,255,0.86)",
-                                  background: kept ? "rgba(255, 215, 0, 0.06)" : "transparent"
-                                }}
+                                key={row.dimension.key}
+                                className={`dimension-stats-table-row${row.kept ? " is-active" : ""}`}
                               >
-                                <div style={{ fontWeight: 900 }}>{dimension.name}</div>
-                                <div style={{ fontWeight: 900, color: corrColor }}>{corrText}</div>
-                                <div style={{ color: "rgba(255,255,255,0.72)" }}>{winLowText}</div>
-                                <div style={{ color: "rgba(255,255,255,0.72)" }}>{winHighText}</div>
-                                <div style={{ fontWeight: 900, color: liftColor }}>{liftText}</div>
+                                <div className="dimension-stats-table-name">{row.dimension.name}</div>
+                                <div className={`dimension-stats-table-value tone-${row.corrTone}`}>
+                                  {row.corrText}
+                                </div>
+                                <div className="dimension-stats-table-muted">{row.winLowText}</div>
+                                <div className="dimension-stats-table-muted">{row.winHighText}</div>
+                                <div className={`dimension-stats-table-value tone-${row.liftTone}`}>
+                                  {row.liftText}
+                                </div>
                                 <div
-                                  style={{
-                                    fontSize: 10,
-                                    fontWeight: 900,
-                                    color: "rgba(255,255,255,0.72)"
-                                  }}
+                                  className="dimension-stats-table-optimal"
                                   title="Optimal range shown in standardized units (50 = 1 stdev; bottom/top 10% cutoffs)"
                                 >
-                                  {dimension.optimal}
+                                  {row.dimension.optimal}
                                 </div>
-                                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)" }}>
-                                  {minText}
-                                </div>
-                                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)" }}>
-                                  {maxText}
-                                </div>
+                                <div className="dimension-stats-table-range">{row.minText}</div>
+                                <div className="dimension-stats-table-range">{row.maxText}</div>
                               </div>
-                            );
-                          })}
+                            ))}
+                          </div>
                         </div>
 
-                        <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.55)" }}>
-                          Correlation is computed on the selected dataset (TEST set when split).
-                          Win@Low/High uses the bottom/top 10% of values (50 standardized
-                          units = 1 stdev). Optimal shows which side performs better.
+                        <div className="dimension-stats-mobile-list">
+                          {dimensionStatsDisplayRows.map((row) => (
+                            <article
+                              key={row.dimension.key}
+                              className={`dimension-stats-mobile-card${row.kept ? " is-active" : ""}`}
+                            >
+                              <div className="dimension-stats-mobile-card-head">
+                                <div className="dimension-stats-mobile-card-copy">
+                                  <span className="dimension-stats-mobile-rank">#{row.rank}</span>
+                                  <strong>{row.dimension.name}</strong>
+                                  <small>
+                                    {row.kept
+                                      ? "Active in the compressed AI space"
+                                      : "Available in the full AI space"}
+                                  </small>
+                                </div>
+                                <div className={`dimension-stats-mobile-score tone-${row.corrTone}`}>
+                                  {row.corrText}
+                                </div>
+                              </div>
+
+                              <div className="dimension-stats-mobile-metrics">
+                                <div className="dimension-stats-mobile-metric">
+                                  <span>Win@Low</span>
+                                  <strong>{row.winLowText}</strong>
+                                </div>
+                                <div className="dimension-stats-mobile-metric">
+                                  <span>Win@High</span>
+                                  <strong>{row.winHighText}</strong>
+                                </div>
+                                <div className="dimension-stats-mobile-metric">
+                                  <span>Range</span>
+                                  <strong>{row.rangeText}</strong>
+                                </div>
+                              </div>
+
+                              <div className="dimension-stats-mobile-footer">
+                                <span className={`dimension-stats-mobile-badge tone-${row.liftTone}`}>
+                                  {row.liftText}
+                                </span>
+                                <span className="dimension-stats-mobile-optimal">
+                                  {row.dimension.optimal}
+                                </span>
+                              </div>
+                            </article>
+                          ))}
                         </div>
-                      </div>
+
+                        <div className="dimension-stats-footnote">
+                          Correlation is computed on the selected dataset, using the real entry-time
+                          AI decision vector: Direction, Risk %, Reward %, Risk / Reward, Time Of
+                          Day, and Weekday. Win@Low/High uses the bottom/top 10% of values. Optimal
+                          shows which side performs better.
+                        </div>
+                      </section>
                     </div>
                   )}
                 </div>
