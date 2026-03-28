@@ -3530,11 +3530,6 @@ const buildInitialAiModelStates = (modelNames: readonly string[]): Record<string
   let visibleIndex = 0;
 
   modelNames.forEach((modelName) => {
-    if (modelName === AI_MODEL_MODEL_NAME) {
-      next[modelName] = 0;
-      return;
-    }
-
     next[modelName] = visibleIndex < 3 ? 1 : 0;
     visibleIndex += 1;
   });
@@ -12231,14 +12226,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   useEffect(() => {
     setAiModelStates((current) => {
       const synced = syncAiModelStates(current, settingsModelNames);
-      const next = { ...synced };
+      if (!aiModelModeActive) {
+        return synced;
+      }
 
-      if (aiModelModeActive) {
-        for (const modelName of settingsModelNames) {
-          next[modelName] = modelName === AI_MODEL_MODEL_NAME ? 1 : 0;
-        }
-      } else if ((next[AI_MODEL_MODEL_NAME] ?? 0) !== 0) {
-        next[AI_MODEL_MODEL_NAME] = 0;
+      const next = { ...synced };
+      for (const modelName of settingsModelNames) {
+        next[modelName] = modelName === AI_MODEL_MODEL_NAME ? 1 : 0;
       }
 
       for (const modelName of settingsModelNames) {
@@ -30223,11 +30217,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
               <AiSettingsModal
                 title="MODELS"
-                subtitle={
-                  aiModelModeActive
-                    ? "AI Model mode auto-locks model selection to the hidden AI Model."
-                    : "Left click: toggle ENTRY. Right click: toggle BOTH."
-                }
+                subtitle="Left click: toggle ENTRY. Right click: toggle BOTH."
                 size="wide"
                 bodyClassName="ai-zip-models-modal-body"
                 open={modelsModalOpen}
@@ -30236,33 +30226,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 <div className="ai-zip-model-grid">
                   {settingsModelNames.map((modelName) => {
                     const state = aiModelStates[modelName] ?? 0;
-                    const isAiModelTile = modelName === AI_MODEL_MODEL_NAME;
-                    const tileDisabled = isAiModelTile || aiModelModeActive;
-                    const tileTitle = isAiModelTile
-                      ? "AI Model is auto-managed by the Artificial Intelligence - Model toggle."
-                      : aiModelModeActive
-                        ? "Switch Artificial Intelligence back to Filter or OFF to edit model selection."
-                        : `Left click: toggle ENTRY for ${modelName}. Right click: toggle BOTH for ${modelName}.`;
 
                     return (
                       <button
                         key={modelName}
                         type="button"
                         className={`ai-zip-select-tile model ${state > 0 ? "active" : ""}`}
-                        disabled={tileDisabled}
-                        style={
-                          tileDisabled
-                            ? {
-                                opacity: isAiModelTile && state > 0 ? 0.82 : 0.45,
-                                cursor: "not-allowed",
-                                filter: isAiModelTile ? "grayscale(0.18)" : "grayscale(0.28)"
-                              }
-                            : undefined
-                        }
                         onMouseDown={(event) => {
-                          if (tileDisabled) {
-                            return;
-                          }
                           event.preventDefault();
                           setAiModelStates((current) => ({
                             ...current,
@@ -30272,24 +30242,12 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                         onContextMenu={(event) => {
                           event.preventDefault();
                         }}
-                        title={tileTitle}
+                        title={`Left click: toggle ENTRY for ${modelName}. Right click: toggle BOTH for ${modelName}.`}
                       >
                         <strong>{modelName}</strong>
-                        <span>
-                          {isAiModelTile
-                            ? aiModelModeActive
-                              ? "Auto-selected"
-                              : "Locked"
-                            : getAiModelStateLabel(state)}
-                        </span>
+                        <span>{getAiModelStateLabel(state)}</span>
                         <em>
-                          {isAiModelTile
-                            ? "Auto-managed hidden model"
-                            : state === 2
-                              ? "Entry + Exit"
-                              : state === 1
-                                ? "Entry only"
-                                : "Disabled"}
+                          {state === 2 ? "Entry + Exit" : state === 1 ? "Entry only" : "Disabled"}
                         </em>
                       </button>
                     );

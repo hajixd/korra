@@ -240,8 +240,7 @@ const AI_MODEL_CATALOG_ENTRY: StrategyModelCatalogEntry = {
   id: AI_MODEL_MODEL_ID,
   name: AI_MODEL_MODEL_NAME,
   aliases: ["ai model"],
-  hidden: true,
-  description: "Internal model that emits one entry on every candle for AI Model mode.",
+  description: "Enters on every non-doji candle using the prior candle body direction.",
   entry: {
     context: ["Runs through the standard model replay path without special AI-only entry logic."],
     setup: ["Uses the previous candle body direction to pick long or short."],
