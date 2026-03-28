@@ -5833,7 +5833,7 @@ type AiLibraryDef = {
 const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
   {
     id: "core",
-    name: "Online Learning",
+    name: "Online Library",
     description: "",
     defaults: { weight: 100, maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES, stride: 0 },
     fields: [
@@ -5867,9 +5867,9 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
   },
   {
     id: "suppressed",
-    name: "Suppressed",
+    name: "Ghost Library",
     description:
-      "Trades rejected because AI confidence is below the entry threshold (training-only neighbors).",
+      "Ghost-learning outcomes kept as training-only neighbors.",
     defaults: { weight: 100, maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES, stride: 0 },
     fields: [
       {
@@ -6272,6 +6272,15 @@ const AI_LIBRARY_DEF_BY_ID: Record<string, AiLibraryDef> =
     acc[d.id] = d;
     return acc;
   }, {} as Record<string, AiLibraryDef>);
+
+const resolveAiLibraryDisplayName = (libraryId: unknown): string | null => {
+  const key = String(libraryId ?? "").trim();
+  if (!key) return null;
+  const def = AI_LIBRARY_DEF_BY_ID[key];
+  const raw = def ? def.name || def.label || def.id : key;
+  const text = String(raw ?? "").trim();
+  return text || null;
+};
 
 const DEFAULT_AI_LIBRARY_SETTINGS: Record<string, any> = AI_LIBRARY_DEFS.reduce(
   (acc, d) => {
@@ -11926,6 +11935,7 @@ const areClusterMapPropsEqual = (prev: any, next: any) => {
     prev.remapOppositeOutcomes === next.remapOppositeOutcomes &&
     prev.knnVoteMode === next.knnVoteMode &&
     prev.kEntry === next.kEntry &&
+    prev.kExit === next.kExit &&
     prev.knnNeighborSpace === next.knnNeighborSpace &&
     prev.distanceMetric === next.distanceMetric &&
     prev.compressionMethod === next.compressionMethod &&
@@ -11935,6 +11945,13 @@ const areClusterMapPropsEqual = (prev: any, next: any) => {
     prev.hdbEpsQuantile === next.hdbEpsQuantile &&
     prev.validationMode === next.validationMode &&
     prev.confidenceThreshold === next.confidenceThreshold &&
+    prev.aiExitStrict === next.aiExitStrict &&
+    prev.aiExitLossTol === next.aiExitLossTol &&
+    prev.aiExitWinTol === next.aiExitWinTol &&
+    prev.useMimExit === next.useMimExit &&
+    prev.modelStates === next.modelStates &&
+    prev.featureLevels === next.featureLevels &&
+    prev.featureModes === next.featureModes &&
     prev.statsDateStart === next.statsDateStart &&
     prev.statsDateEnd === next.statsDateEnd &&
     prev.antiCheatEnabled === next.antiCheatEnabled &&
@@ -12138,7 +12155,7 @@ function ClusterMapInner({
   libraryPoints,
   activeLibraries,
   libraryCounts,
-  chunkBars,
+  chunkBars: chunkBarsProp,
   potential,
   parseMode,
   showPotential,
@@ -12151,24 +12168,32 @@ function ClusterMapInner({
   onPostHocTrades,
   onPostHocProgress,
   onMitMap,
-  aiMethod,
-  aiDomains,
+  aiMethod: aiMethodProp,
+  aiDomains: aiDomainsProp,
   remapOppositeOutcomes: remapOppositeOutcomesProp,
-  knnVoteMode = "majority",
-  kEntry,
-  knnNeighborSpace = "post",
-  distanceMetric = "euclidean",
-  compressionMethod = "umap",
+  knnVoteMode: knnVoteModeProp = "majority",
+  kEntry: kEntryProp,
+  kExit: kExitProp,
+  knnNeighborSpace: knnNeighborSpaceProp = "post",
+  distanceMetric: distanceMetricProp = "euclidean",
+  compressionMethod: compressionMethodProp = "umap",
   compressionOptions = DEFAULT_CLUSTER_MAP_COMPRESSION_OPTIONS,
-  hdbDomainDistinction,
-  hdbMinClusterSize,
-  hdbMinSamples,
-  hdbEpsQuantile,
-  validationMode = "off",
-  confidenceThreshold,
-  statsDateStart,
-  statsDateEnd,
-  antiCheatEnabled = false,
+  hdbDomainDistinction: hdbDomainDistinctionProp,
+  hdbMinClusterSize: hdbMinClusterSizeProp,
+  hdbMinSamples: hdbMinSamplesProp,
+  hdbEpsQuantile: hdbEpsQuantileProp,
+  validationMode: validationModeProp = "off",
+  confidenceThreshold: confidenceThresholdProp,
+  aiExitStrict: aiExitStrictProp,
+  aiExitLossTol: aiExitLossTolProp,
+  aiExitWinTol: aiExitWinTolProp,
+  useMimExit: useMimExitProp,
+  modelStates: modelStatesProp,
+  featureLevels: featureLevelsProp,
+  featureModes: featureModesProp,
+  statsDateStart: statsDateStartProp,
+  statsDateEnd: statsDateEndProp,
+  antiCheatEnabled: antiCheatEnabledProp = false,
   useEntryNeighborsOnly = false,
   headless = false,
 }) {
@@ -12192,7 +12217,7 @@ function ClusterMapInner({
   );
   const deferredSliderValue = useDeferredValue(sliderValue);
   const [viewCompressionMethod, setViewCompressionMethod] = useState(() =>
-    normalizeClusterCompressionMethod(compressionMethod)
+    normalizeClusterCompressionMethod(compressionMethodProp)
   );
   const clusterCompressionOptions = useMemo(() => {
     const source =
@@ -12991,10 +13016,12 @@ function ClusterMapInner({
   }, [libraryPoints]);
   const libraryPointDiagnosticsRef = useRef<any>({
     inputCount: 0,
-    usedSyntheticFallback: false,
+    usedLegacyVectorFallback: false,
     skippedMissingVectorOrDescriptor: 0,
     skippedSuppressedInactive: 0,
     createdCount: 0,
+    createdFromCandleDescriptor: 0,
+    createdFromLegacyVector: 0,
     createdByLibrary: {},
   });
 
@@ -13376,10 +13403,12 @@ function ClusterMapInner({
 
     const libraryNodeDiagnostics: any = {
       inputCount: Array.isArray(libraryPoints) ? libraryPoints.length : 0,
-      usedSyntheticFallback: false,
+      usedLegacyVectorFallback: false,
       skippedMissingVectorOrDescriptor: 0,
       skippedSuppressedInactive: 0,
       createdCount: 0,
+      createdFromCandleDescriptor: 0,
+      createdFromLegacyVector: 0,
       createdByLibrary: {},
     };
 
@@ -13443,8 +13472,9 @@ function ClusterMapInner({
         : entryIdxClamped;
       const vectorIdx = sIdxClamped ?? entryIdxClamped;
 
-      // Require either a usable candle-based descriptor (signal index + model)
-      // or a direct vector payload from the neighbor store.
+      // Prefer the same candle-based descriptor path used by trade, ghost, and
+      // potential nodes. Only fall back to a stored vector for legacy library
+      // points that cannot be reconstructed from candle history.
       const hasDirectVector = Array.isArray(rawVec) && rawVec.length >= 2;
       const canBuildFromCandle = vectorIdx != null && !!modelKey && modelKey !== "-";
       if (!hasDirectVector && !canBuildFromCandle) {
@@ -13532,11 +13562,7 @@ function ClusterMapInner({
 
       let chunk: number[] = [];
       let meta: number[] = [];
-      if (hasDirectVector) {
-        // Accept vector-backed library points even when candle/model metadata is partial.
-        chunk = (rawVec as number[]).slice();
-        meta = [0, 0, 0, 0, 0, 0];
-      } else {
+      if (canBuildFromCandle) {
         const baseV = buildMapVector(
           candles,
           vectorIdx!,
@@ -13548,6 +13574,12 @@ function ClusterMapInner({
         );
         meta = baseV.slice(-6);
         chunk = baseV.slice(0, Math.max(0, baseV.length - 6));
+        libraryNodeDiagnostics.createdFromCandleDescriptor += 1;
+      } else {
+        chunk = (rawVec as number[]).slice();
+        meta = [0, 0, 0, 0, 0, 0];
+        libraryNodeDiagnostics.usedLegacyVectorFallback = true;
+        libraryNodeDiagnostics.createdFromLegacyVector += 1;
       }
       const baseR = 6.4;
 
@@ -17149,7 +17181,7 @@ function ClusterMapInner({
       timelineLibraryCount,
       displayLibraryCount,
       createdCount: Number(diagnostics.createdCount || 0),
-      usedSyntheticFallback: Boolean(diagnostics.usedSyntheticFallback),
+      usedLegacyVectorFallback: Boolean(diagnostics.usedLegacyVectorFallback),
     });
     if (libraryPointDiagnosticKeyRef.current === signature) return;
     libraryPointDiagnosticKeyRef.current = signature;
@@ -17537,8 +17569,19 @@ function ClusterMapInner({
         nodeCoordsForClusterMapKnn(node, dim);
 
       const sourceTrade = resolveSourceTradeForNode(node);
-      const snapshotSource = sourceTrade ?? node;
-      const nbsRaw = pickNeighborPayload(snapshotSource);
+      const snapshotCandidates = [sourceTrade, node, sourceId ? (nodeByIdAll as any).get(sourceId) : null];
+      let nbsRaw: any[] | null = null;
+      for (const candidate of snapshotCandidates) {
+        if (!candidate) continue;
+        const payload = pickNeighborPayload(candidate);
+        if (Array.isArray(payload) && payload.length > 0) {
+          nbsRaw = payload;
+          break;
+        }
+      }
+      if (!nbsRaw) {
+        nbsRaw = pickNeighborPayload(sourceTrade ?? node);
+      }
 
       const pickFromAlias = (token: string): string | null => {
         const ids = aliasToIds.get(token);
@@ -17663,16 +17706,10 @@ function ClusterMapInner({
               (nb as any)?.metaTime ??
               (nb as any)?.time ??
               null;
-            const kindLabel =
-              hitKind === "trade"
-                ? (hitNode as any)?.isOpen
-                  ? "Open Trade"
-                  : "Trade"
-                : hitKind === "library"
-                ? "Library"
-                : hitKind
-                ? `${hitKind.slice(0, 1).toUpperCase()}${hitKind.slice(1)}`
-                : "Trade";
+            const kindLabel = resolveNodeKindLabel(
+              hitNode ?? nb,
+              hitKind || (nb as any)?.kind
+            );
 
             const d0 = Number((nb as any)?.d);
             const dist = Number.isFinite(d0) ? d0 : Infinity;
@@ -17732,6 +17769,7 @@ function ClusterMapInner({
       neighborAlias,
       nodeByIdAll,
       pickNeighborPayload,
+      resolveNodeKindLabel,
       resolveSourceTradeForNode,
     ]
   );
@@ -17741,10 +17779,17 @@ function ClusterMapInner({
     [resolveSourceTradeForNode, selectedNode]
   );
 
-  const selectedAiSnapshotSource = useMemo(
-    () => selectedSourceTrade ?? selectedNode,
-    [selectedNode, selectedSourceTrade]
-  );
+  const selectedAiSnapshotSource = useMemo(() => {
+    const selectedPayload = pickNeighborPayload(selectedNode);
+    if (Array.isArray(selectedPayload) && selectedPayload.length > 0) {
+      return selectedNode;
+    }
+    const sourcePayload = pickNeighborPayload(selectedSourceTrade);
+    if (Array.isArray(sourcePayload) && sourcePayload.length > 0) {
+      return selectedSourceTrade;
+    }
+    return selectedSourceTrade ?? selectedNode;
+  }, [pickNeighborPayload, selectedNode, selectedSourceTrade]);
 
   const selectedNodeCheated = useMemo(() => {
     if (!selectedNode) return false;
@@ -17777,6 +17822,37 @@ function ClusterMapInner({
       String((targetNode as any)?.id || (row as any)?.id || "").startsWith("lib|")
     );
   }, []);
+
+  const resolveLibraryIdForNode = React.useCallback((node: any): string | null => {
+    if (!node) return null;
+    const candidates = [
+      (node as any)?.libId,
+      (node as any)?.metaLib,
+      (node as any)?.library,
+      (node as any)?.metaLibrary,
+    ];
+    for (const candidate of candidates) {
+      const value = String(candidate ?? "").trim();
+      if (value) return value;
+    }
+    return null;
+  }, []);
+
+  const resolveNodeKindLabel = React.useCallback(
+    (node: any, fallbackKind?: string) => {
+      const kind = String(fallbackKind ?? (node as any)?.kind ?? "").toLowerCase();
+      if (kind === "trade") {
+        return (node as any)?.isOpen ? "Open Trade" : "Trade";
+      }
+      const libraryId = resolveLibraryIdForNode(node);
+      if (kind === "library" || libraryId) {
+        return resolveAiLibraryDisplayName(libraryId) ?? "Library";
+      }
+      if (!kind) return "Node";
+      return `${kind.slice(0, 1).toUpperCase()}${kind.slice(1)}`;
+    },
+    [resolveLibraryIdForNode]
+  );
 
   const getRowEntryTimeSeconds = React.useCallback((row: any) => {
     const targetNode = (row as any)?.targetNode ?? row;
@@ -17845,19 +17921,6 @@ function ClusterMapInner({
     (sourceNode: any, sourceNodeId: string) => {
       if (!sourceNode || !sourceNodeId) return null;
       const kind = String((sourceNode as any)?.kind || "").toLowerCase();
-      const isSuppressed =
-        kind === "library" &&
-        (!!(sourceNode as any)?.suppressed ||
-          !!(sourceNode as any)?.metaSuppressed ||
-          String(
-            (sourceNode as any)?.libId ??
-              (sourceNode as any)?.metaLib ??
-              (sourceNode as any)?.library ??
-              (sourceNode as any)?.metaLibrary ??
-              ""
-          )
-            .toLowerCase()
-            .trim() === "suppressed");
       const dir = Number(
         (sourceNode as any)?.dir ?? (sourceNode as any)?.direction ?? 0
       );
@@ -17897,18 +17960,7 @@ function ClusterMapInner({
         targetNode: sourceNode,
         displayId: displayIdForNode(sourceNode),
         dirLabel: dir === 1 ? "LONG" : dir === -1 ? "SHORT" : "",
-        kindLabel:
-          kind === "trade"
-            ? (sourceNode as any)?.isOpen
-              ? "Open Trade"
-              : "Trade"
-            : isSuppressed
-            ? "Suppressed"
-            : kind === "library"
-            ? "Library"
-            : kind
-            ? `${kind.slice(0, 1).toUpperCase()}${kind.slice(1)}`
-            : "Node",
+        kindLabel: resolveNodeKindLabel(sourceNode, kind),
         entryTimeRaw,
         timeLabel: entryTimeRaw ? formatDateTime(entryTimeRaw, parseMode) : "",
         sessionLabel: normalizeLabel(
@@ -17921,7 +17973,7 @@ function ClusterMapInner({
         isWin,
       };
     },
-    [parseMode]
+    [parseMode, resolveNodeKindLabel]
   );
 
   const libraryInfluencedRowsByNodeId = useMemo(() => {
@@ -18002,26 +18054,15 @@ function ClusterMapInner({
     return wins / selectedLibraryInfluencedRows.length;
   }, [selectedLibraryInfluencedRows]);
 
-  const selectedNodeIsLibraryLike = useMemo(
-    () => isLibraryLikeNode(selectedNode),
-    [isLibraryLikeNode, selectedNode]
-  );
-
   const [selectedRelationshipView, setSelectedRelationshipView] = useState<
     "neighbors" | "influenced"
   >("neighbors");
 
   useEffect(() => {
     if (aiMethod === "hdbscan") return;
-    const nextView =
-      selectedNodeIsLibraryLike && selectedLibraryInfluencedRows.length > 0
-        ? "influenced"
-        : "neighbors";
-    setSelectedRelationshipView(nextView);
+    setSelectedRelationshipView("neighbors");
   }, [
     aiMethod,
-    selectedNodeIsLibraryLike,
-    selectedLibraryInfluencedRows.length,
     selectedNode?.id,
   ]);
 
@@ -18122,19 +18163,6 @@ function ClusterMapInner({
         seen.add(stableKey);
 
         const kind = String((node as any)?.kind || "").toLowerCase();
-        const isSuppressed =
-          kind === "library" &&
-          (!!(node as any)?.suppressed ||
-            !!(node as any)?.metaSuppressed ||
-            String(
-              (node as any)?.libId ??
-                (node as any)?.metaLib ??
-                (node as any)?.library ??
-                (node as any)?.metaLibrary ??
-                ""
-            )
-              .toLowerCase()
-              .trim() === "suppressed");
         const dir = Number((node as any)?.dir ?? (node as any)?.direction ?? 0);
         const pnlRaw =
           typeof (node as any)?.unrealizedPnl === "number" &&
@@ -18161,16 +18189,7 @@ function ClusterMapInner({
           targetNode: node,
           displayId: displayIdForNode(node),
           dirLabel: dir === 1 ? "LONG" : dir === -1 ? "SHORT" : "",
-          kindLabel:
-            kind === "trade"
-              ? "Trade"
-              : isSuppressed
-              ? "Suppressed"
-              : kind === "library"
-              ? "Library"
-              : kind
-              ? `${kind.slice(0, 1).toUpperCase()}${kind.slice(1)}`
-              : "Node",
+          kindLabel: resolveNodeKindLabel(node, kind),
           timeLabel: (() => {
             const raw =
               (node as any)?.entryTime ??
@@ -18210,7 +18229,7 @@ function ClusterMapInner({
 
       return rows;
     },
-    [parseMode]
+    [parseMode, resolveNodeKindLabel]
   );
 
   const selectedHdbGroupMembers = useMemo(
@@ -18378,9 +18397,7 @@ function ClusterMapInner({
     aiMethod !== "hdbscan" &&
     (selectedConfidenceValue != null || !selectedCanShowContribution);
   const activeSelectedRelationshipView =
-    aiMethod !== "hdbscan" &&
-    selectedRelationshipView === "influenced" &&
-    selectedLibraryInfluencedRows.length > 0
+    aiMethod !== "hdbscan" && selectedRelationshipView === "influenced"
       ? "influenced"
       : "neighbors";
   const selectedAncEntryValue =
@@ -19957,7 +19974,7 @@ function ClusterMapInner({
               "-"
             );
             lines.push(
-              `Suppressed Trade · ${n.dir === 1 ? "Buy" : "Sell"} · ${sess} · ${
+              `Ghost Trade · ${n.dir === 1 ? "Buy" : "Sell"} · ${sess} · ${
                 n.chunkType
               }`
             );
@@ -22810,7 +22827,7 @@ function ClusterMapInner({
                           : selectedNeighborCap || selectedNeighborList.length || 0}
                       </div>
                     </div>
-                  {aiMethod !== "hdbscan" && selectedCanShowContribution ? (
+                  {aiMethod !== "hdbscan" ? (
                     <div
                       style={{
                         display: "flex",
@@ -22867,7 +22884,7 @@ function ClusterMapInner({
                     : activeSelectedRelationshipView === "influenced"
                     ? renderHdbGroupMemberList(
                         selectedLibraryInfluencedRows,
-                        "No influenced live trades available.",
+                        "No influenced nodes available.",
                         160,
                         {
                           onRowClick: handleSelectionListRowClick,
@@ -26409,6 +26426,97 @@ export default function App() {
   const [allTrades, setAllTrades] = useState([]);
   const [statsDateStart, setStatsDateStart] = useState("");
   const [statsDateEnd, setStatsDateEnd] = useState("");
+  useEffect(() => {
+    setChunkBars(Math.max(2, Number(chunkBarsProp) || 2));
+  }, [chunkBarsProp]);
+  useEffect(() => {
+    setAiMethod(
+      aiMethodProp === "knn" || aiMethodProp === "hdbscan" ? aiMethodProp : "off"
+    );
+  }, [aiMethodProp]);
+  useEffect(() => {
+    setConfidenceThreshold(clamp(Number(confidenceThresholdProp) || 0, 0, 100));
+  }, [confidenceThresholdProp]);
+  useEffect(() => {
+    setAiExitStrict(clamp(Number(aiExitStrictProp) || 0, 0, 100));
+  }, [aiExitStrictProp]);
+  useEffect(() => {
+    setAiExitLossTol(clamp(Number(aiExitLossTolProp) || 0, -100, 100));
+  }, [aiExitLossTolProp]);
+  useEffect(() => {
+    setAiExitWinTol(clamp(Number(aiExitWinTolProp) || 0, -100, 100));
+  }, [aiExitWinTolProp]);
+  useEffect(() => {
+    setUseMimExit(Boolean(useMimExitProp));
+  }, [useMimExitProp]);
+  useEffect(() => {
+    setKEntry(Math.max(3, Math.floor(Number(kEntryProp) || 3)));
+  }, [kEntryProp]);
+  useEffect(() => {
+    setKExit(Math.max(3, Math.floor(Number(kExitProp) || 3)));
+  }, [kExitProp]);
+  useEffect(() => {
+    setKnnVoteMode(String(knnVoteModeProp || "majority"));
+  }, [knnVoteModeProp]);
+  useEffect(() => {
+    setKnnNeighborSpace(normalizeKnnNeighborSpace(knnNeighborSpaceProp));
+  }, [knnNeighborSpaceProp]);
+  useEffect(() => {
+    setDistanceMetric(String(distanceMetricProp || "euclidean"));
+  }, [distanceMetricProp]);
+  useEffect(() => {
+    const nextCompressionMethod = normalizeClusterCompressionMethod(compressionMethodProp);
+    setCompressionMethod(nextCompressionMethod);
+    setViewCompressionMethod(nextCompressionMethod);
+  }, [compressionMethodProp]);
+  useEffect(() => {
+    setHdbDomainDistinction(
+      hdbDomainDistinctionProp === "conceptual" ? "conceptual" : "real"
+    );
+  }, [hdbDomainDistinctionProp]);
+  useEffect(() => {
+    setHdbMinClusterSize(clampInt(Number(hdbMinClusterSizeProp) || 5, 5, 5000));
+  }, [hdbMinClusterSizeProp]);
+  useEffect(() => {
+    setHdbMinSamples(clampInt(Number(hdbMinSamplesProp) || 5, 2, 200));
+  }, [hdbMinSamplesProp]);
+  useEffect(() => {
+    setHdbEpsQuantile(
+      Math.max(0.5, Math.min(0.99, Number(hdbEpsQuantileProp) || 0.5))
+    );
+  }, [hdbEpsQuantileProp]);
+  useEffect(() => {
+    if (Array.isArray(aiDomainsProp) && aiDomainsProp.length > 0) {
+      setAiDomains(aiDomainsProp.map((value) => String(value)));
+    }
+  }, [aiDomainsProp]);
+  useEffect(() => {
+    setValidationMode(normalizeValidationMode(validationModeProp || "off"));
+  }, [validationModeProp]);
+  useEffect(() => {
+    setAntiCheatEnabled(Boolean(antiCheatEnabledProp));
+  }, [antiCheatEnabledProp]);
+  useEffect(() => {
+    setStatsDateStart(typeof statsDateStartProp === "string" ? statsDateStartProp : "");
+  }, [statsDateStartProp]);
+  useEffect(() => {
+    setStatsDateEnd(typeof statsDateEndProp === "string" ? statsDateEndProp : "");
+  }, [statsDateEndProp]);
+  useEffect(() => {
+    if (modelStatesProp && typeof modelStatesProp === "object") {
+      setModelStates((prev) => ({ ...prev, ...modelStatesProp }));
+    }
+  }, [modelStatesProp]);
+  useEffect(() => {
+    if (featureLevelsProp && typeof featureLevelsProp === "object") {
+      setFeatureLevels((prev) => ({ ...prev, ...featureLevelsProp }));
+    }
+  }, [featureLevelsProp]);
+  useEffect(() => {
+    if (featureModesProp && typeof featureModesProp === "object") {
+      setFeatureModes((prev) => ({ ...prev, ...featureModesProp }));
+    }
+  }, [featureModesProp]);
   const [monthPnlIndex, setMonthPnlIndex] = useState(new Date().getMonth());
   const [sessionPnlIndex, setSessionPnlIndex] = useState(0);
   const [modelPnlIndex, setModelPnlIndex] = useState(0);
@@ -33047,7 +33155,7 @@ export default function App() {
 
                                       {suppressed ? (
                                         <Pill tone="yellow" size="sm">
-                                          Suppressed
+                                          Ghost Library
                                         </Pill>
                                       ) : null}
                                     </div>
@@ -35436,7 +35544,7 @@ export default function App() {
                 }}
               >
                 <div>
-                  <div style={ui.label}>AI Exit Strictness</div>
+                  <div style={ui.label}>AI Confidence Exit Threshold</div>
                   <input
                     type="range"
                     min={0}
@@ -35454,7 +35562,7 @@ export default function App() {
                   <div style={{ ...ui.tiny, marginTop: 4 }}>
                     {aiExitStrict === 0
                       ? "0 (OFF)"
-                      : `${aiExitStrict} (1 = lenient · 100 = strict)`}
+                      : `${aiExitStrict}%`}
                   </div>
                 </div>
 

@@ -178,6 +178,7 @@ const BarChart = dynamic<any>(() => loadRecharts().then((mod) => mod.BarChart), 
   ssr: false
 });
 const Bar = dynamic<any>(() => loadRecharts().then((mod) => mod.Bar), { ssr: false });
+const Cell = dynamic<any>(() => loadRecharts().then((mod) => mod.Cell), { ssr: false });
 const CartesianGrid = dynamic<any>(() => loadRecharts().then((mod) => mod.CartesianGrid), {
   ssr: false
 });
@@ -3283,6 +3284,14 @@ type ModelRunChartPoint = {
   tradeCount: number;
 };
 
+type ModelRunDistributionPoint = {
+  label: string;
+  midpoint: number;
+  count: number;
+  wins: number;
+  losses: number;
+};
+
 type ModelRunResult = {
   request: ModelRunRequest;
   trades: HistoryItem[];
@@ -3306,6 +3315,10 @@ type BacktestSettingsSnapshot = {
   aiMode: "off" | "knn" | "hdbscan";
   aiFilterEnabled: boolean;
   confidenceThreshold: number;
+  aiExitStrictness: number;
+  aiExitLossTolerance: number;
+  aiExitWinTolerance: number;
+  useMitExit: boolean;
   ancThreshold: number;
   tpDollars: number;
   slDollars: number;
@@ -3522,6 +3535,7 @@ const FEATURE_LEVEL_TAKES: Record<string, number[]> = {
   mf__fibonacci__core: [0, 4, 8, 12, 16],
   mf__support_resistance__core: [0, 4, 8, 12, 16]
 };
+const AI_LIBRARY_LEGACY_MAX_SAMPLE_VALUES = new Set([8_000, 10_000]);
 
 const getAiFeatureWindowBars = (windowBars: number): number => {
   return Math.max(1, clamp(Math.round(windowBars), 2, 120));
@@ -3700,8 +3714,8 @@ const buildFallbackModelSurfaceSummary = (
 const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
   {
     id: "core",
-    name: "Online Learning",
-    description: "Primary rolling trade memory.",
+    name: "Online Library",
+    description: "Primary rolling online-learning trade memory.",
     defaults: { weight: 100, maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES, stride: 0 },
     fields: [
       {
@@ -3734,9 +3748,9 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
   },
   {
     id: "suppressed",
-    name: "Suppressed",
+    name: "Ghost Library",
     description:
-      "Trades rejected because AI confidence is below the entry threshold (training-only neighbors).",
+      "Ghost-learning outcomes kept as training-only neighbors.",
     defaults: { weight: 100, maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES, stride: 0 },
     fields: [
       { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
@@ -3970,6 +3984,14 @@ const slugAiLibraryId = (value: string): string => {
     .replace(/^_+|_+$/g, "");
 };
 
+const normalizeAiLibraryLookupKey = (value: string): string => {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+};
+
 const buildModelAiLibraryDefs = (modelNames: readonly string[]): AiLibraryDef[] => {
   return modelNames.map((model) => ({
     id: slugAiLibraryId(model),
@@ -4186,11 +4208,13 @@ const normalizeStoredAiLibrarySettings = (
     } as Record<string, AiLibrarySettingValue>;
 
     const rawMaxSamples = Number(merged.maxSamples);
-    const normalizedMaxSamples = clamp(
-      Math.floor(Number.isFinite(rawMaxSamples) ? rawMaxSamples : AI_LIBRARY_DEFAULT_MAX_SAMPLES),
-      0,
-      AI_LIBRARY_MAX_SAMPLES
-    );
+    const normalizedMaxSamples = AI_LIBRARY_LEGACY_MAX_SAMPLE_VALUES.has(rawMaxSamples)
+      ? AI_LIBRARY_DEFAULT_MAX_SAMPLES
+      : clamp(
+          Math.floor(Number.isFinite(rawMaxSamples) ? rawMaxSamples : AI_LIBRARY_DEFAULT_MAX_SAMPLES),
+          0,
+          AI_LIBRARY_MAX_SAMPLES
+        );
     if (merged.maxSamples !== normalizedMaxSamples) {
       merged.maxSamples = normalizedMaxSamples;
     }
@@ -10397,6 +10421,147 @@ const ModelRunEquityChart = ({
   );
 };
 
+const buildModelRunPnlDistributionData = (
+  trades: readonly HistoryItem[]
+): ModelRunDistributionPoint[] => {
+  if (!Array.isArray(trades) || trades.length === 0) {
+    return [];
+  }
+
+  const pnls = trades
+    .map((trade) => Number(trade.pnlUsd))
+    .filter((value) => Number.isFinite(value));
+  if (pnls.length === 0) {
+    return [];
+  }
+
+  const minPnl = Math.min(...pnls);
+  const maxPnl = Math.max(...pnls);
+  if (minPnl === maxPnl) {
+    const wins = trades.filter((trade) => Number(trade.pnlUsd) >= 0).length;
+    const losses = Math.max(0, trades.length - wins);
+    return [
+      {
+        label: formatSignedUsd(minPnl),
+        midpoint: minPnl,
+        count: trades.length,
+        wins,
+        losses
+      }
+    ];
+  }
+
+  const binCount = clamp(Math.round(Math.sqrt(trades.length)), 8, 24);
+  const span = maxPnl - minPnl;
+  const binSize = span / binCount;
+  const bins = Array.from({ length: binCount }, (_, index) => {
+    const start = minPnl + index * binSize;
+    const end = index === binCount - 1 ? maxPnl : start + binSize;
+    return {
+      start,
+      end,
+      midpoint: start + (end - start) / 2,
+      count: 0,
+      wins: 0,
+      losses: 0
+    };
+  });
+
+  for (const trade of trades) {
+    const pnl = Number(trade.pnlUsd);
+    if (!Number.isFinite(pnl)) {
+      continue;
+    }
+    const rawIndex = Math.floor(((pnl - minPnl) / Math.max(span, Number.EPSILON)) * binCount);
+    const safeIndex = clamp(rawIndex, 0, binCount - 1);
+    const bucket = bins[safeIndex]!;
+    bucket.count += 1;
+    if (pnl >= 0) {
+      bucket.wins += 1;
+    } else {
+      bucket.losses += 1;
+    }
+  }
+
+  return bins
+    .filter((bucket) => bucket.count > 0)
+    .map((bucket) => ({
+      label: `${formatSignedUsd(bucket.start)} to ${formatSignedUsd(bucket.end)}`,
+      midpoint: bucket.midpoint,
+      count: bucket.count,
+      wins: bucket.wins,
+      losses: bucket.losses
+    }));
+};
+
+const ModelRunDistributionChart = ({
+  data,
+  emptyLabel
+}: {
+  data: ModelRunDistributionPoint[];
+  emptyLabel: string;
+}) => {
+  if (data.length === 0) {
+    return <div className="model-run-empty">{emptyLabel}</div>;
+  }
+
+  return (
+    <div className="model-run-chart-wrap">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ top: 8, right: 14, bottom: 4, left: 0 }}>
+          <CartesianGrid stroke="rgba(255,255,255,0.08)" strokeDasharray="3 3" vertical={false} />
+          <XAxis
+            dataKey="midpoint"
+            stroke="rgba(205, 220, 239, 0.5)"
+            tick={{ fontSize: 11 }}
+            tickFormatter={formatChartUsd}
+            tickLine={false}
+            axisLine={false}
+            minTickGap={28}
+          />
+          <YAxis
+            stroke="rgba(205, 220, 239, 0.5)"
+            tick={{ fontSize: 11 }}
+            tickLine={false}
+            axisLine={false}
+            width={54}
+          />
+          <Tooltip
+            cursor={{ fill: "rgba(255,255,255,0.05)" }}
+            content={({ active, payload }: RechartsTooltipRenderProps) => {
+              if (!active || !payload || payload.length === 0) {
+                return null;
+              }
+
+              const point = payload[0]?.payload as ModelRunDistributionPoint | undefined;
+              if (!point) {
+                return null;
+              }
+
+              return (
+                <div className="model-run-tooltip">
+                  <strong>{point.label}</strong>
+                  <span>Trades: {point.count.toLocaleString("en-US")}</span>
+                  <span>Wins: {point.wins.toLocaleString("en-US")}</span>
+                  <span>Losses: {point.losses.toLocaleString("en-US")}</span>
+                </div>
+              );
+            }}
+          />
+          <Bar dataKey="count" radius={[6, 6, 0, 0]} isAnimationActive={false}>
+            {data.map((point) => (
+              <Cell
+                key={point.label}
+                fill={point.midpoint >= 0 ? "rgba(65, 225, 168, 0.82)" : "rgba(255, 107, 107, 0.82)"}
+              />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
+
 const TabIcon = ({ tab }: { tab: PanelTab }) => {
   if (tab === "active") {
     return (
@@ -11745,6 +11910,38 @@ function TradingTerminalWorkspace({
       return accumulator;
     }, {});
   }, [aiLibraryDefs]);
+  const aiLibraryCanonicalIdByLookupKey = useMemo(() => {
+    const next: Record<string, string> = {};
+    const register = (rawValue: string, canonicalId: string) => {
+      const key = normalizeAiLibraryLookupKey(rawValue);
+      if (!key || next[key]) {
+        return;
+      }
+      next[key] = canonicalId;
+    };
+
+    for (const definition of aiLibraryDefs) {
+      register(definition.id, definition.id);
+      register(definition.name, definition.id);
+      register(definition.id.replace(/_/g, "-"), definition.id);
+      register(definition.name.replace(/\s+/g, ""), definition.id);
+    }
+
+    return next;
+  }, [aiLibraryDefs]);
+  const resolveAiLibraryId = useCallback((value: unknown): string | null => {
+    const rawId = String(value ?? "").trim();
+    if (!rawId) {
+      return null;
+    }
+
+    if (aiLibraryDefById[rawId]) {
+      return rawId;
+    }
+
+    const normalizedId = normalizeAiLibraryLookupKey(rawId);
+    return aiLibraryCanonicalIdByLookupKey[normalizedId] ?? null;
+  }, [aiLibraryCanonicalIdByLookupKey, aiLibraryDefById]);
   const normalizeSelectedAiLibraries = useCallback((value: unknown): string[] => {
     if (!Array.isArray(value)) {
       return [];
@@ -11754,9 +11951,9 @@ function TradingTerminalWorkspace({
     const cleaned: string[] = [];
 
     for (const libraryId of value) {
-      const id = String(libraryId ?? "").trim();
+      const id = resolveAiLibraryId(libraryId);
 
-      if (id.length === 0 || !aiLibraryDefById[id] || seen.has(id)) {
+      if (!id || seen.has(id)) {
         continue;
       }
 
@@ -11771,7 +11968,7 @@ function TradingTerminalWorkspace({
     const isLegacyCoreOnly = cleaned.length === 1 && cleaned[0] === "core";
 
     return isLegacyDefault || isLegacyCoreOnly ? [] : cleaned;
-  }, [aiLibraryDefById]);
+  }, [resolveAiLibraryId]);
   const [selectedSymbol, setSelectedSymbol] = useState(futuresAssets[0].symbol);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
   const [selectedBacktestTimeframe, setSelectedBacktestTimeframe] = useState<Timeframe>("15m");
@@ -11837,6 +12034,7 @@ function TradingTerminalWorkspace({
   const [modelRunUnits, setModelRunUnits] = useState(25);
   const [modelRunPresetDdOpen, setModelRunPresetDdOpen] = useState(false);
   const [modelRunTimeframeDdOpen, setModelRunTimeframeDdOpen] = useState(false);
+  const [modelRunViewTab, setModelRunViewTab] = useState<"equity" | "distribution">("equity");
   const [modelRunRunning, setModelRunRunning] = useState(false);
   const [modelRunError, setModelRunError] = useState("");
   const [modelRunResult, setModelRunResult] = useState<ModelRunResult | null>(null);
@@ -12098,6 +12296,12 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const backtestPrecisionEnabled =
     effectiveSelectedBacktestPrecisionTimeframe !== selectedBacktestTimeframe;
   const aiModelModeActive = aiMode !== "off" && !aiFilterEnabled;
+  const effectiveAiModelStates = useMemo(() => {
+    const synced = syncAiModelStates(aiModelStates, settingsModelNames);
+    return aiModelModeActive
+      ? forceSingleAiModelSelection(synced, settingsModelNames, AI_MODEL_MODEL_NAME)
+      : synced;
+  }, [aiModelModeActive, aiModelStates, settingsModelNames]);
 
   const buildCurrentBacktestSettingsSnapshot = useCallback(
     (): BacktestSettingsSnapshot => ({
@@ -12115,6 +12319,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       aiMode,
       aiFilterEnabled,
       confidenceThreshold,
+      aiExitStrictness,
+      aiExitLossTolerance,
+      aiExitWinTolerance,
+      useMitExit,
       ancThreshold,
       tpDollars,
       slDollars,
@@ -12125,7 +12333,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       trailingDistPct,
       maxBarsInTrade,
       maxConcurrentTrades,
-      aiModelStates: { ...aiModelStates },
+      aiModelStates: { ...effectiveAiModelStates },
       aiFeatureLevels: { ...aiFeatureLevels },
       aiFeatureModes: { ...aiFeatureModes },
       selectedAiLibraries: [...selectedAiLibraries],
@@ -12162,6 +12370,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       aiMode,
       aiFilterEnabled,
       confidenceThreshold,
+      aiExitStrictness,
+      aiExitLossTolerance,
+      aiExitWinTolerance,
+      useMitExit,
       ancThreshold,
       tpDollars,
       slDollars,
@@ -12172,7 +12384,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       trailingDistPct,
       maxBarsInTrade,
       maxConcurrentTrades,
-      aiModelStates,
+      effectiveAiModelStates,
       aiFeatureLevels,
       aiFeatureModes,
       selectedAiLibraries,
@@ -13121,8 +13333,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     setAppliedBacktestSettings(nextSettings);
     if (needsHistoryRecompute) {
       const runtimeLibraryIds = (nextSettings.selectedAiLibraries ?? [])
-        .map((libraryId) => String(libraryId).trim())
-        .filter((libraryId) => libraryId.length > 0 && Boolean(aiLibraryDefById[libraryId]));
+        .map((libraryId) => resolveAiLibraryId(libraryId))
+        .filter((libraryId): libraryId is string => Boolean(libraryId));
       const effectiveRuntimeLibraryIds = runtimeLibraryIds;
       const hasLibraryPreloadPhase =
         effectiveRuntimeLibraryIds.length > 0 &&
@@ -13212,10 +13424,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     setPropStats(null);
   }, [
     appliedBacktestSettings,
-    aiLibraryDefById,
     backtestRunCount,
     clearStatsRefreshResetTimeout,
     commitStatsRefreshStatus,
+    resolveAiLibraryId,
     resetAiLibraryRunState,
     setStatsRefreshPhasePlanValue,
     setStatsRefreshTimelineRangeValue,
@@ -13536,10 +13748,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const aiDisabled = aiMode === "off";
   const confidenceGateDisabled = aiMode === "off";
   const effectiveConfidenceThreshold = confidenceGateDisabled ? 0 : confidenceThreshold;
+  const effectiveAiExitConfidenceThreshold = confidenceGateDisabled ? 0 : aiExitStrictness;
   const effectiveAncThreshold = confidenceGateDisabled ? 0 : ancThreshold;
   const selectedAiModelCount = useMemo(() => {
-    return countEnabledAizipModels(aiModelStates);
-  }, [aiModelStates]);
+    return countEnabledAizipModels(effectiveAiModelStates);
+  }, [effectiveAiModelStates]);
   const appliedSelectedAiModelCount = useMemo(() => {
     return countEnabledAizipModels(appliedBacktestSettings.aiModelStates);
   }, [appliedBacktestSettings.aiModelStates]);
@@ -13567,32 +13780,32 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     ) => {
       return canRunAizipLibrariesForSettings({
         libraryIds,
-        aiModelStates: settingsSnapshot?.aiModelStates ?? aiModelStates
+        aiModelStates: settingsSnapshot?.aiModelStates ?? effectiveAiModelStates
       });
     },
-    [aiModelStates]
+    [effectiveAiModelStates]
   );
   const liveRuntimeAiLibraryIds = useMemo(() => {
     const explicitLibraryIds = selectedAiLibraries
-      .map((libraryId) => String(libraryId).trim())
-      .filter((libraryId) => libraryId.length > 0 && Boolean(aiLibraryDefById[libraryId]));
+      .map((libraryId) => resolveAiLibraryId(libraryId))
+      .filter((libraryId): libraryId is string => Boolean(libraryId));
     if (explicitLibraryIds.length > 0) {
       return explicitLibraryIds;
     }
     return aiLibraryDefById.base ? ["base"] : [];
-  }, [aiLibraryDefById, selectedAiLibraries]);
+  }, [aiLibraryDefById, resolveAiLibraryId, selectedAiLibraries]);
   const aiLibraryReadyToRun = useMemo(() => {
     return canRunAiLibrariesForSnapshot(liveRuntimeAiLibraryIds);
   }, [canRunAiLibrariesForSnapshot, liveRuntimeAiLibraryIds]);
   const appliedRuntimeAiLibraryIds = useMemo(() => {
     const explicitLibraryIds = (appliedBacktestSettings.selectedAiLibraries ?? [])
-      .map((libraryId) => String(libraryId).trim())
-      .filter((libraryId) => libraryId.length > 0 && Boolean(aiLibraryDefById[libraryId]));
+      .map((libraryId) => resolveAiLibraryId(libraryId))
+      .filter((libraryId): libraryId is string => Boolean(libraryId));
     if (explicitLibraryIds.length > 0) {
       return explicitLibraryIds;
     }
     return aiLibraryDefById.base ? ["base"] : [];
-  }, [aiLibraryDefById, appliedBacktestSettings.selectedAiLibraries]);
+  }, [aiLibraryDefById, appliedBacktestSettings.selectedAiLibraries, resolveAiLibraryId]);
   const appliedAiLibraryReadyToRun = useMemo(() => {
     return canRunAiLibrariesForSnapshot(
       appliedRuntimeAiLibraryIds,
@@ -13775,6 +13988,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
     return modelsSurfaceEntries.find((model) => model.id === modelRunModalModelId) ?? null;
   }, [modelRunModalModelId, modelsSurfaceEntries]);
+  const modelRunDistributionData = useMemo(() => {
+    return buildModelRunPnlDistributionData(modelRunResult?.trades ?? []);
+  }, [modelRunResult]);
 
   useEffect(() => {
     if (confidenceGateDisabled && confidenceThreshold !== 0) {
@@ -13788,8 +14004,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     return selectedAiLibraryId ? aiLibraryDefById[selectedAiLibraryId] ?? null : null;
   }, [aiLibraryDefById, selectedAiLibraryId]);
   const selectedBacktestModelNames = useMemo(() => {
-    return settingsModelNames.filter((modelName) => getAiModelStateValue(aiModelStates, modelName) > 0);
-  }, [aiModelStates, settingsModelNames]);
+    return settingsModelNames.filter(
+      (modelName) => getAiModelStateValue(effectiveAiModelStates, modelName) > 0
+    );
+  }, [effectiveAiModelStates, settingsModelNames]);
   const backtestModelProfiles = useMemo(() => {
     return selectedBacktestModelNames
       .map((modelName) => modelProfileById[createModelId(modelName)] ?? null)
@@ -13921,6 +14139,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const appliedEffectiveConfidenceThreshold = appliedConfidenceGateDisabled
     ? 0
     : appliedBacktestSettings.confidenceThreshold;
+  const appliedEffectiveAiExitConfidenceThreshold = appliedConfidenceGateDisabled
+    ? 0
+    : appliedBacktestSettings.aiExitStrictness;
   const appliedEffectiveAncThreshold = appliedConfidenceGateDisabled
     ? 0
     : appliedBacktestSettings.ancThreshold;
@@ -14137,18 +14358,29 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
   useEffect(() => {
     setSelectedAiLibraries((current) => {
-      const filtered = current.filter((libraryId) => Boolean(aiLibraryDefById[libraryId]));
+      const filtered = current
+        .map((libraryId) => resolveAiLibraryId(libraryId))
+        .filter((libraryId): libraryId is string => Boolean(libraryId));
+      const deduped: string[] = [];
+      const seen = new Set<string>();
+      for (const libraryId of filtered) {
+        if (seen.has(libraryId)) {
+          continue;
+        }
+        seen.add(libraryId);
+        deduped.push(libraryId);
+      }
 
       if (
-        filtered.length === current.length &&
-        filtered.every((libraryId, index) => libraryId === current[index])
+        deduped.length === current.length &&
+        deduped.every((libraryId, index) => libraryId === current[index])
       ) {
         return current;
       }
 
-      return filtered;
+      return deduped;
     });
-  }, [aiLibraryDefById]);
+  }, [resolveAiLibraryId]);
 
   useEffect(() => {
     setSelectedAiLibrarySettings((current) =>
@@ -17234,8 +17466,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     const minutePreciseEnabledSnapshot = appliedBacktestMinutePreciseEnabledRef.current;
     const appliedSettingsSnapshot = appliedBacktestSettingsRef.current;
     const explicitLibraryIds = (appliedSettingsSnapshot.selectedAiLibraries ?? [])
-      .map((libraryId) => String(libraryId).trim())
-      .filter((libraryId) => libraryId.length > 0 && Boolean(aiLibraryDefById[libraryId]));
+      .map((libraryId) => resolveAiLibraryId(libraryId))
+      .filter((libraryId): libraryId is string => Boolean(libraryId));
     const activeLibraryIds = explicitLibraryIds;
     const shouldPreloadAiLibraries =
       activeLibraryIds.length > 0 &&
@@ -17582,8 +17814,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     backtestHistorySeedReady,
     backtestRunCount,
     backtestRefreshNowMs,
-    aiLibraryDefById,
     queueStatsRefreshStatus,
+    resolveAiLibraryId,
     setStatsRefreshProgressValue,
     setStatsRefreshTimelineRangeValue,
     updateStatsRefreshOperation
@@ -18868,6 +19100,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       setModelRunTpDollars(Math.max(0, Number.isFinite(tpDollars) ? tpDollars : 0));
       setModelRunSlDollars(Math.max(0, Number.isFinite(slDollars) ? slDollars : 0));
       setModelRunUnits(Math.max(1, Number.isFinite(dollarsPerMove) ? dollarsPerMove : 1));
+      setModelRunViewTab("equity");
       setModelRunPresetDdOpen(false);
       setModelRunTimeframeDdOpen(false);
       setModelRunRunning(false);
@@ -18879,6 +19112,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
   const closeModelRunModal = useCallback(() => {
     setModelRunModalModelId(null);
+    setModelRunViewTab("equity");
     setModelRunPresetDdOpen(false);
     setModelRunTimeframeDdOpen(false);
     setModelRunRunning(false);
@@ -19095,9 +19329,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         trailingDistPct,
         maxBarsInTrade
       });
-      const trades = filterTradesByDateRange(
+      const constrainedBlueprints = enforceMaxConcurrentTradeBlueprints(
+        blueprints,
+        maxConcurrentTrades
+      );
+      const datedTrades = filterTradesByDateRange(
         computeBacktestRowsLocally({
-          blueprints,
+          blueprints: constrainedBlueprints,
           candleSeriesBySymbol: {
             [selectedSymbol]: candles
           },
@@ -19111,11 +19349,17 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           breakEvenTriggerPct,
           trailingStartPct,
           trailingDistPct,
-          limit: Math.max(1, blueprints.length)
+          limit: Math.max(1, constrainedBlueprints.length)
         }),
         startDate,
         endDate
       );
+      const trades = filterTradesBySessionBuckets(datedTrades, {
+        enabledBacktestWeekdays,
+        enabledBacktestSessions,
+        enabledBacktestMonths,
+        enabledBacktestHours
+      });
       const summary = summarizeBacktestTradesFallback(trades, () => 0.5, {
         startYmd: startDate,
         endYmd: endDate
@@ -19148,6 +19392,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     modelRunTimeframe,
     modelRunTpDollars,
     modelRunUnits,
+    enabledBacktestHours,
+    enabledBacktestMonths,
+    enabledBacktestSessions,
+    enabledBacktestWeekdays,
+    maxConcurrentTrades,
     modelsSurfaceCatalog,
     selectedSymbol,
     stopMode,
@@ -21022,7 +21271,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     shouldComputePanelAnalyticsOnServer
   ]);
 
-  const backtestTrades = useMemo(() => {
+  const [aiExitPostHocTrades, setAiExitPostHocTrades] = useState<HistoryItem[] | null>(null);
+  const shouldRunAiExitPostHoc =
+    appliedBacktestSettings.aiMode !== "off" &&
+    appliedEffectiveAiExitConfidenceThreshold > 0 &&
+    backtestHasRun &&
+    backtestHistorySeedReady;
+  const entryFilteredBacktestTrades = useMemo(() => {
     return backtestTimeFilteredTrades.filter((trade) => {
       if (appliedConfidenceGateDisabled) {
         return true;
@@ -21042,6 +21297,12 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     backtestTimeFilteredTrades,
     getEffectiveTradeConfidenceScore
   ]);
+  const backtestTrades = useMemo(() => {
+    if (!shouldRunAiExitPostHoc) {
+      return entryFilteredBacktestTrades;
+    }
+    return aiExitPostHocTrades ?? entryFilteredBacktestTrades;
+  }, [aiExitPostHocTrades, entryFilteredBacktestTrades, shouldRunAiExitPostHoc]);
   const deferredDimensionStatsSourceTrades = useDeferredValue(backtestTimeFilteredTrades);
   const deferredBacktestTab = useDeferredValue(selectedBacktestTab);
   const deferredBacktestAnalyticsTrades = useDeferredValue(backtestTrades);
@@ -22034,13 +22295,18 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           maxBarsInTrade: settings.maxBarsInTrade
         });
 
-        if (blueprints.length === 0) {
+        const constrainedBlueprints = enforceMaxConcurrentTradeBlueprints(
+          blueprints,
+          settings.maxConcurrentTrades
+        );
+
+        if (constrainedBlueprints.length === 0) {
           return [];
         }
 
         const modelNamesById = buildReplayModelNamesById(selectedModels);
         const rows = await computeBacktestRowsAsync({
-          blueprints,
+          blueprints: constrainedBlueprints,
           candleSeriesBySymbol: {
             [settings.symbol]: candles
           },
@@ -22052,7 +22318,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           breakEvenTriggerPct: settings.breakEvenTriggerPct,
           trailingStartPct: settings.trailingStartPct,
           trailingDistPct: settings.trailingDistPct,
-          limit: blueprints.length
+          limit: constrainedBlueprints.length
         });
 
         const ordered = [...rows].sort(
@@ -22228,13 +22494,18 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           maxBarsInTrade: settings.maxBarsInTrade
         });
 
-        if (blueprints.length === 0) {
+        const constrainedBlueprints = enforceMaxConcurrentTradeBlueprints(
+          blueprints,
+          settings.maxConcurrentTrades
+        );
+
+        if (constrainedBlueprints.length === 0) {
           return [];
         }
 
         const modelNamesById = buildReplayModelNamesById(selectedModels);
         const rows = await computeBacktestRowsAsync({
-          blueprints,
+          blueprints: constrainedBlueprints,
           candleSeriesBySymbol,
           oneMinuteCandlesBySymbol:
             settings.minutePreciseEnabled ? oneMinuteCandlesBySymbol : undefined,
@@ -22246,7 +22517,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           breakEvenTriggerPct: settings.breakEvenTriggerPct,
           trailingStartPct: settings.trailingStartPct,
           trailingDistPct: settings.trailingDistPct,
-          limit: blueprints.length
+          limit: constrainedBlueprints.length
         });
 
         const ordered = [...rows].sort(
@@ -22458,10 +22729,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         );
       } else if (settings.kind === "model_sim") {
         const targetModel = String(settings.model ?? "");
+        const targetModelId = createModelId(targetModel);
         source = collectCappedItems(libraryCandidatePool, {
           cap: maxSamples,
           stride,
-          predicate: (trade) => trade.entrySource === targetModel
+          predicate: (trade) => createModelId(trade.entrySource || "") === targetModelId
         });
       } else if (isBaseSeedingLibraryId(normalizedId)) {
         const sessionFilter =
@@ -22533,7 +22805,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
       for (let sourceIndex = 0; sourceIndex < balanced.length; sourceIndex += 1) {
         const trade = balanced[sourceIndex]!;
-        const modelName = trade.entrySource.trim() || "Momentum";
+        const resolvedModelName =
+          settings.kind === "model_sim" && String(settings.model ?? "").trim().length > 0
+            ? String(settings.model ?? "").trim()
+            : trade.entrySource.trim() || "Momentum";
         const signalIndex = resolveLibrarySignalIndex(
           trade,
           sourceIndex,
@@ -22558,8 +22833,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           uid: `lib|${definition.id}|${trade.id}|${sourceIndex}`,
           libId: definition.id,
           metaLib: definition.id,
-          model: modelName,
-          metaModel: modelName,
+          model: resolvedModelName,
+          metaModel: resolvedModelName,
           signalIndex,
           metaSignalIndex: signalIndex,
           entryTime,
@@ -25200,8 +25475,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     [currentUser.uid, persistPresets, savedPresets]
   );
 
+  const shouldPrepareAiZipClusterData =
+    isClusterBacktestTabActive || shouldRunAiExitPostHoc;
   const aiZipClusterSourceCandles = useMemo(() => {
-    if (!isClusterBacktestTabActive) {
+    if (!shouldPrepareAiZipClusterData) {
       return [] as Candle[];
     }
 
@@ -25213,7 +25490,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     }
 
     const visitedSymbols = new Set<string>();
-    for (const trade of backtestTrades) {
+    for (const trade of entryFilteredBacktestTrades) {
       const symbol = String(trade.symbol ?? "").trim();
       if (!symbol || visitedSymbols.has(symbol)) {
         continue;
@@ -25228,9 +25505,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
     return bestCandles;
   }, [
-    backtestTrades,
+    entryFilteredBacktestTrades,
     getHistoryCandlesForSymbol,
-    isClusterBacktestTabActive,
+    shouldPrepareAiZipClusterData,
     selectedChartCandles,
     selectedSymbol
   ]);
@@ -25244,7 +25521,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       ? Number(aiZipClusterSourceCandles[aiZipClusterCandleCount - 1]?.time ?? NaN)
       : NaN;
   const aiZipClusterCandleWindowKey = useMemo(() => {
-    if (!isClusterBacktestTabActive) {
+    if (!shouldPrepareAiZipClusterData) {
       return "inactive";
     }
     return `${aiZipClusterCandleCount}|${
@@ -25256,7 +25533,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     aiZipClusterCandleCount,
     aiZipClusterFirstCandleTime,
     aiZipClusterLastCandleTime,
-    isClusterBacktestTabActive
+    shouldPrepareAiZipClusterData
   ]);
   const aiZipClusterCandlesCacheRef = useRef<{
     key: string;
@@ -25266,7 +25543,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     value: []
   });
   const aiZipClusterCandles = useMemo(() => {
-    if (!isClusterBacktestTabActive) {
+    if (!shouldPrepareAiZipClusterData) {
       aiZipClusterCandlesCacheRef.current = {
         key: "inactive",
         value: []
@@ -25287,7 +25564,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       value: nextCandles
     };
     return nextCandles;
-  }, [aiZipClusterCandleWindowKey, aiZipClusterSourceCandles, isClusterBacktestTabActive]);
+  }, [aiZipClusterCandleWindowKey, aiZipClusterSourceCandles, shouldPrepareAiZipClusterData]);
   const aiZipClusterCandleIndexByUnix = useMemo(() => {
     const map = new Map<number, number>();
 
@@ -25298,20 +25575,27 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     return map;
   }, [aiZipClusterCandles]);
   const aiZipClusterTradeSource = useMemo(() => {
-    if (!isClusterBacktestTabActive) {
+    if (!shouldPrepareAiZipClusterData) {
       return [] as HistoryItem[];
     }
 
-    if (shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus !== "ready") {
+    if (
+      isClusterBacktestTabActive &&
+      !shouldRunAiExitPostHoc &&
+      shouldComputePanelAnalyticsOnServer &&
+      panelAnalyticsStatus !== "ready"
+    ) {
       return [] as HistoryItem[];
     }
 
-    return backtestTrades;
+    return entryFilteredBacktestTrades;
   }, [
-    backtestTrades,
+    entryFilteredBacktestTrades,
     isClusterBacktestTabActive,
     panelAnalyticsStatus,
-    shouldComputePanelAnalyticsOnServer
+    shouldComputePanelAnalyticsOnServer,
+    shouldPrepareAiZipClusterData,
+    shouldRunAiExitPostHoc
   ]);
   const aiZipClusterSnapshotSignature = useMemo(() => {
     if (!isClusterBacktestTabActive) {
@@ -25373,7 +25657,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   ]);
 
   const aiZipClusterTrades = useMemo(() => {
-    if (!isClusterBacktestTabActive) {
+    if (!shouldPrepareAiZipClusterData) {
       return [];
     }
 
@@ -25452,7 +25736,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     aiZipClusterCandles.length,
     aiZipClusterTradeSource,
     getEffectiveTradeConfidenceScore,
-    isClusterBacktestTabActive
+    shouldPrepareAiZipClusterData
   ]);
   const aiZipClusterMapDataKey = useMemo(() => {
     if (!isClusterBacktestTabActive) {
@@ -25483,6 +25767,52 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     backtestRunCount,
     isClusterBacktestTabActive
   ]);
+  const aiExitPostHocSignature = useMemo(() => {
+    if (!shouldRunAiExitPostHoc) {
+      return "inactive";
+    }
+
+    const firstTradeId = aiZipClusterTradeSource[0]?.id ?? "na";
+    const lastTradeId =
+      aiZipClusterTradeSource[aiZipClusterTradeSource.length - 1]?.id ?? "na";
+    return [
+      backtestRunCount,
+      aiZipClusterCandleWindowKey,
+      aiZipClusterTradeSource.length,
+      firstTradeId,
+      lastTradeId,
+      appliedBacktestSettings.aiMode,
+      appliedBacktestSettings.kExit,
+      appliedEffectiveAiExitConfidenceThreshold,
+      appliedBacktestSettings.aiExitLossTolerance,
+      appliedBacktestSettings.aiExitWinTolerance,
+      appliedBacktestSettings.useMitExit ? "mit1" : "mit0",
+      appliedBacktestSettings.validationMode,
+      appliedBacktestSettings.antiCheatEnabled ? "ac1" : "ac0"
+    ].join("|");
+  }, [
+    aiZipClusterCandleWindowKey,
+    aiZipClusterTradeSource,
+    appliedBacktestSettings.aiExitLossTolerance,
+    appliedBacktestSettings.aiExitWinTolerance,
+    appliedBacktestSettings.aiMode,
+    appliedBacktestSettings.antiCheatEnabled,
+    appliedBacktestSettings.kExit,
+    appliedBacktestSettings.useMitExit,
+    appliedBacktestSettings.validationMode,
+    appliedEffectiveAiExitConfidenceThreshold,
+    backtestRunCount,
+    shouldRunAiExitPostHoc
+  ]);
+
+  useEffect(() => {
+    if (!shouldRunAiExitPostHoc) {
+      setAiExitPostHocTrades(null);
+      return;
+    }
+
+    setAiExitPostHocTrades(null);
+  }, [aiExitPostHocSignature, shouldRunAiExitPostHoc]);
 
   useEffect(() => {
     if (!isClusterBacktestTabActive) {
@@ -29350,22 +29680,60 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       <section className="model-run-chart-panel">
                         <header className="model-run-panel-head">
                           <div className="model-run-panel-copy">
-                            <strong>Equity Curve</strong>
+                            <strong>
+                              {modelRunViewTab === "equity" ? "Equity Curve" : "PnL Distribution"}
+                            </strong>
                             <span>
                               {modelRunResult
                                 ? `${modelRunResult.request.startDate} to ${modelRunResult.request.endDate} ? ${modelRunResult.trades.length.toLocaleString("en-US")} trades`
                                 : `${TIMEFRAME_DISPLAY_LABELS[modelRunTimeframe]} ? ${selectedSymbol}`}
                             </span>
                           </div>
+                          <div
+                            style={{
+                              display: "inline-flex",
+                              gap: "0.45rem",
+                              flexWrap: "wrap",
+                              justifyContent: "flex-end"
+                            }}
+                          >
+                            <button
+                              type="button"
+                              className="panel-action-btn"
+                              onClick={() => setModelRunViewTab("equity")}
+                              aria-pressed={modelRunViewTab === "equity"}
+                            >
+                              Equity
+                            </button>
+                            <button
+                              type="button"
+                              className="panel-action-btn"
+                              onClick={() => setModelRunViewTab("distribution")}
+                              aria-pressed={modelRunViewTab === "distribution"}
+                            >
+                              Distribution
+                            </button>
+                          </div>
                         </header>
-                        <ModelRunEquityChart
-                          data={modelRunResult?.chartData ?? []}
-                          emptyLabel={
-                            modelRunResult
-                              ? "No trades matched this model setup."
-                              : "Run the model to load an equity curve."
-                          }
-                        />
+                        {modelRunViewTab === "equity" ? (
+                          <ModelRunEquityChart
+                            data={modelRunResult?.chartData ?? []}
+                            emptyLabel={
+                              modelRunResult
+                                ? "No trades matched this model setup."
+                                : "Run the model to load an equity curve."
+                            }
+                          />
+                        ) : (
+                          <ModelRunDistributionChart
+                            data={modelRunDistributionData}
+                            emptyLabel={
+                              modelRunResult
+                                ? "No closed trades are available to build a PnL distribution."
+                                : "Run the model to load a PnL distribution."
+                            }
+                          />
+                        )}
                       </section>
 
                       <section className="model-run-stats-panel">
@@ -29784,6 +30152,30 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             style={{ "--p": `${effectiveConfidenceThreshold}%` } as React.CSSProperties}
                           />
                           <div className="ai-zip-note">{effectiveConfidenceThreshold}</div>
+                        </div>
+
+                        <div className={`ai-zip-control ${confidenceGateDisabled ? "disabled" : ""}`}>
+                          <div className="ai-zip-label">AI Confidence Exit Threshold</div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={effectiveAiExitConfidenceThreshold}
+                            disabled={confidenceGateDisabled}
+                            onChange={(event) => {
+                              setAiExitStrictness(
+                                clamp(Number(event.target.value) || 0, 0, 100)
+                              );
+                            }}
+                            className="backtest-slider"
+                            style={{ "--p": `${effectiveAiExitConfidenceThreshold}%` } as React.CSSProperties}
+                          />
+                          <div className="ai-zip-note">
+                            {effectiveAiExitConfidenceThreshold === 0
+                              ? "0 (OFF)"
+                              : `${effectiveAiExitConfidenceThreshold}%`}
+                          </div>
                         </div>
 
                         <div className={`ai-zip-control ${confidenceGateDisabled ? "disabled" : ""}`}>
@@ -31595,13 +31987,21 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                         compressionMethod={appliedBacktestSettings.compressionMethod}
                         compressionOptions={AI_COMPRESSION_METHOD_OPTIONS}
                         kEntry={appliedBacktestSettings.kEntry}
+                        kExit={appliedBacktestSettings.kExit}
                         knnVoteMode={appliedBacktestSettings.knnVoteMode}
+                        modelStates={appliedBacktestSettings.aiModelStates}
+                        featureLevels={appliedBacktestSettings.aiFeatureLevels}
+                        featureModes={appliedBacktestSettings.aiFeatureModes}
                         useEntryNeighborsOnly
                         hdbDomainDistinction="conceptual"
                         hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}
                         hdbMinSamples={appliedBacktestSettings.hdbMinSamples}
                         hdbEpsQuantile={appliedBacktestSettings.hdbEpsQuantile}
                         confidenceThreshold={appliedEffectiveConfidenceThreshold}
+                        aiExitStrict={appliedEffectiveAiExitConfidenceThreshold}
+                        aiExitLossTol={appliedBacktestSettings.aiExitLossTolerance}
+                        aiExitWinTol={appliedBacktestSettings.aiExitWinTolerance}
+                        useMimExit={appliedBacktestSettings.useMitExit}
                         statsDateStart={appliedBacktestSettings.statsDateStart}
                         statsDateEnd={appliedBacktestSettings.statsDateEnd}
                         antiCheatEnabled={appliedBacktestSettings.antiCheatEnabled}
@@ -31609,6 +32009,64 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                     )}
                   </div>
                 </div>
+              ) : null}
+
+              {selectedSurfaceTab === "backtest" &&
+              shouldRunAiExitPostHoc &&
+              aiClusterLibraryPoints.length > 0 &&
+              aiZipClusterCandles.length > 0 &&
+              aiZipClusterTrades.length > 0 ? (
+                <AIZipClusterMap
+                  key={`headless-${aiExitPostHocSignature}`}
+                  candles={aiZipClusterCandles}
+                  trades={aiZipClusterTrades}
+                  ghostEntries={[]}
+                  libraryPoints={aiClusterLibraryPoints}
+                  activeLibraries={aiClusterActiveLibraries}
+                  libraryCounts={aiClusterLibraryCounts}
+                  chunkBars={appliedBacktestSettings.chunkBars}
+                  potential={null}
+                  parseMode="utc"
+                  showPotential={false}
+                  resetKey={0}
+                  sliderValue={Math.max(0, aiZipClusterCandles.length - 1)}
+                  setSliderValue={() => {}}
+                  onResetClusterMap={() => {}}
+                  clusterMapView={aiZipClusterMapView}
+                  onToggleClusterMapView={() => {}}
+                  onPostHocTrades={(nextTrades: HistoryItem[]) => {
+                    setAiExitPostHocTrades(Array.isArray(nextTrades) ? nextTrades : []);
+                  }}
+                  onPostHocProgress={() => {}}
+                  onMitMap={() => {}}
+                  aiMethod={appliedBacktestSettings.aiMode}
+                  validationMode={appliedBacktestSettings.validationMode}
+                  aiDomains={appliedBacktestSettings.selectedAiDomains}
+                  remapOppositeOutcomes={appliedBacktestSettings.remapOppositeOutcomes}
+                  knnNeighborSpace={appliedBacktestSettings.knnNeighborSpace}
+                  distanceMetric={appliedBacktestSettings.distanceMetric}
+                  compressionMethod={appliedBacktestSettings.compressionMethod}
+                  compressionOptions={AI_COMPRESSION_METHOD_OPTIONS}
+                  kEntry={appliedBacktestSettings.kEntry}
+                  kExit={appliedBacktestSettings.kExit}
+                  knnVoteMode={appliedBacktestSettings.knnVoteMode}
+                  modelStates={appliedBacktestSettings.aiModelStates}
+                  featureLevels={appliedBacktestSettings.aiFeatureLevels}
+                  featureModes={appliedBacktestSettings.aiFeatureModes}
+                  hdbDomainDistinction="conceptual"
+                  hdbMinClusterSize={appliedBacktestSettings.hdbMinClusterSize}
+                  hdbMinSamples={appliedBacktestSettings.hdbMinSamples}
+                  hdbEpsQuantile={appliedBacktestSettings.hdbEpsQuantile}
+                  confidenceThreshold={appliedEffectiveConfidenceThreshold}
+                  aiExitStrict={appliedEffectiveAiExitConfidenceThreshold}
+                  aiExitLossTol={appliedBacktestSettings.aiExitLossTolerance}
+                  aiExitWinTol={appliedBacktestSettings.aiExitWinTolerance}
+                  useMimExit={appliedBacktestSettings.useMitExit}
+                  statsDateStart={appliedBacktestSettings.statsDateStart}
+                  statsDateEnd={appliedBacktestSettings.statsDateEnd}
+                  antiCheatEnabled={appliedBacktestSettings.antiCheatEnabled}
+                  headless
+                />
               ) : null}
                 </>
               )}

@@ -3004,7 +3004,7 @@ const _nA = candles.length;
       return clamp(s, 0, 1);
     };
 
-    const aiExitThresh = aiExitOn ? clamp(1 - (aiExitStrict/100), 0, 0.99) : 0;
+    const aiExitThresh = aiExitOn ? clamp(aiExitStrict / 100, 0, 1) : 0;
 
     const adjustedAiExitThresh = (unrealPnl) => {
       if(!aiExitOn) return 0;
@@ -3012,7 +3012,12 @@ const _nA = candles.length;
       const tol = unrealPnl < 0 ? aiExitLossTol : (unrealPnl > 0 ? aiExitWinTol : 0);
       if(!tol) return aiExitThresh;
       const factor = 1 + (tol/100) * 0.75; // -100 => 0.25x, +100 => 1.75x
-      return clamp(aiExitThresh * factor, 0, 0.99);
+      return clamp(aiExitThresh * factor, 0, 1);
+    };
+    const shouldAiExitNow = (margin, unrealPnl) => {
+      const pNow = marginToProb(margin);
+      const thresh = adjustedAiExitThresh(unrealPnl);
+      return pNow != null && pNow <= thresh;
     };
 
     const dollarsPerMove = Math.max(1e-6, Number(settings.dollarsPerMove||1));
@@ -4713,9 +4718,7 @@ function flushSuppressedNeighbors(uptoIndex){
           tradeDir
         );
         const unrealPnl = (candles[i].close - entryPrice) * tradeDir * dollarsPerMove;
-        const thresh = adjustedAiExitThresh(unrealPnl); // probability in [0,1)
-        const pNow = marginToProb(m);
-        const aiExit = (pNow != null && pNow <= thresh);
+        const aiExit = shouldAiExitNow(m, unrealPnl);
         if(aiExit) return {kind:"AI", model: entryModelUsed || null, strength: 1};
       }
       if(entryModelUsed){
@@ -4778,8 +4781,7 @@ function flushSuppressedNeighbors(uptoIndex){
         tradeDir
       );
       const unrealPnl = (candles[i].close - entryPrice) * tradeDir * dollarsPerMove;
-      const thresh = adjustedAiExitThresh(unrealPnl);
-      if(m <= -thresh){
+      if(shouldAiExitNow(m, unrealPnl)){
         return {kind:"AI", model: entryModelUsed, strength: 1};
       }
       return null;
@@ -4806,8 +4808,7 @@ function flushSuppressedNeighbors(uptoIndex){
           tradeDir
         );
         const unrealPnl = (candles[i].close - entryPrice) * tradeDir * dollarsPerMove;
-        const thresh = adjustedAiExitThresh(unrealPnl);
-        const aiExit = (m <= -thresh);
+        const aiExit = shouldAiExitNow(m, unrealPnl);
         if(aiExit) return {kind:"AI", model: entryModelUsed || null, strength: 1};
       }
 
