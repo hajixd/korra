@@ -18239,6 +18239,11 @@ function ClusterMapInner({
     [effectiveNeighborK, pickNeighborPayload]
   );
 
+  const resolveExplicitAncAtEntry = React.useCallback((node: any) => {
+    if (!node) return null;
+    return resolveExplicitAiConfidenceScore(node, ["averageNeighborContributionAtEntry"]);
+  }, []);
+
   const resolveSelectedNeighborMetric = React.useCallback(
     (row: any) => {
       if (!row) return null;
@@ -18357,6 +18362,11 @@ function ClusterMapInner({
     selectedLibraryInfluencedRows,
   ]);
 
+  const selectedStoredAncEntryValue = useMemo(
+    () => resolveExplicitAncAtEntry((selectedAiSnapshotSource as any) ?? (selectedNode as any)),
+    [resolveExplicitAncAtEntry, selectedAiSnapshotSource, selectedNode]
+  );
+
   const selectedConfidenceValue = useMemo(() => {
     if (aiMethod === "hdbscan") return null;
     return resolveNonHdbConfidence((selectedAiSnapshotSource as any) ?? (selectedNode as any));
@@ -18376,7 +18386,7 @@ function ClusterMapInner({
   const selectedAncEntryValue =
     activeSelectedRelationshipView === "influenced"
       ? selectedAverageNeighborConfidenceAtEntry
-      : selectedAverageNeighborContributionAtEntry;
+      : selectedStoredAncEntryValue ?? selectedAverageNeighborContributionAtEntry;
   const selectedAncCurrentValue =
     activeSelectedRelationshipView === "influenced"
       ? selectedAverageNeighborConfidence

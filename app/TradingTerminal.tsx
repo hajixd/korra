@@ -3426,7 +3426,8 @@ const AI_MODEL_FALLBACK_NAMES = [
   "Seasons",
   "Time of Day",
   "Fibonacci",
-  "Support / Resistance"
+  "Support / Resistance",
+  AI_MODEL_MODEL_NAME
 ] as const;
 
 const BASE_AI_FEATURE_OPTIONS: AiFeatureDef[] = [
@@ -11630,11 +11631,25 @@ function TradingTerminalWorkspace({
     return floorToTimeframe(Date.now(), "1m");
   }, []);
   const availableAiModelNames = useMemo(() => {
-    const names = aiZipModelNames
-      .map((name) => name.trim())
-      .filter((name) => name.length > 0);
+    const names: string[] = [];
+    const seen = new Set<string>();
+    const pushName = (value: string) => {
+      const trimmed = value.trim();
+      if (!trimmed || seen.has(trimmed)) {
+        return;
+      }
+      seen.add(trimmed);
+      names.push(trimmed);
+    };
 
-    return names.length > 0 ? names : [...AI_MODEL_FALLBACK_NAMES];
+    aiZipModelNames.forEach(pushName);
+    STRATEGY_MODEL_CATALOG.forEach((model) => pushName(model.name));
+
+    if (names.length === 0) {
+      AI_MODEL_FALLBACK_NAMES.forEach(pushName);
+    }
+
+    return names;
   }, [aiZipModelNames]);
   const scopedTerminalViewStateStorageKey = useMemo(
     () => scopeStorageKey(TERMINAL_VIEW_STATE_STORAGE_KEY, currentUser.uid),
