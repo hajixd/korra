@@ -11825,7 +11825,6 @@ function TradingTerminalWorkspace({
     Array.from({ length: 24 }, (_, index) => index)
   );
   const [aiMode, setAiMode] = useState<"off" | "knn" | "hdbscan">("off");
-  const [aiModelEnabled, setAiModelEnabled] = useState(false);
   const [aiFilterEnabled, setAiFilterEnabled] = useState(false);
   const [staticLibrariesClusters, setStaticLibrariesClusters] = useState(false);
   const [confidenceThreshold, setConfidenceThreshold] = useState(0);
@@ -11872,9 +11871,6 @@ function TradingTerminalWorkspace({
 
     return names;
   }, [availableAiModelNames, uploadedStrategyModels]);
-  const visibleSettingsModelNames = useMemo(() => {
-    return settingsModelNames.filter((modelName) => modelName !== AI_MODEL_MODEL_NAME);
-  }, [settingsModelNames]);
   const [modelsSurfaceNotice, setModelsSurfaceNotice] = useState("");
   const [modelsSurfaceNoticeTone, setModelsSurfaceNoticeTone] = useState<
     "neutral" | "success" | "error"
@@ -11987,7 +11983,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [presetNameInput, setPresetNameInput] = useState("");
   const [loadedPresetSession, setLoadedPresetSession] = useState<{
     name: string;
-    signature: string;
   } | null>(null);
   const [socialPresets, setSocialPresets] = useState<SocialPresetFeedItem[]>([]);
   const [socialPresetsLoading, setSocialPresetsLoading] = useState(false);
@@ -12048,6 +12043,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   );
   const backtestPrecisionEnabled =
     effectiveSelectedBacktestPrecisionTimeframe !== selectedBacktestTimeframe;
+  const aiModelModeActive = aiMode !== "off" && !aiFilterEnabled;
 
   const buildCurrentBacktestSettingsSnapshot = useCallback(
     (): BacktestSettingsSnapshot => ({
@@ -12233,8 +12229,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, [settingsModelNames]);
 
   useEffect(() => {
-    const aiModelModeActive = aiMode !== "off" && !aiFilterEnabled;
-
     setAiModelStates((current) => {
       const synced = syncAiModelStates(current, settingsModelNames);
       const next = { ...synced };
@@ -12255,7 +12249,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
       return current;
     });
-  }, [aiFilterEnabled, aiMode, settingsModelNames]);
+  }, [aiModelModeActive, settingsModelNames]);
 
   useEffect(() => {
     if (
@@ -13427,10 +13421,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     } else if (normalizedLabel.includes("validating replay candle coverage")) {
       floorProgress = 94;
       capProgress = 98;
-    }
-
-    if (!Number.isFinite(floorProgress) || !Number.isFinite(capProgress)) {
-      return;
+    } else {
+      floorProgress = 4;
+      capProgress = 14;
     }
 
     const progressRatio = 1 - Math.exp(-elapsedMs / 7_000);
@@ -14713,6 +14706,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       return;
     }
 
+    if (
+      statsRefreshStatus === "Resetting Backtest Run" &&
+      statsRefreshPhaseHoldRef.current
+    ) {
+      return;
+    }
+
     let cancelled = false;
     const precisionTimeframe = appliedBacktestSettings.precisionTimeframe;
     const shouldLoadPrecisionSupport = appliedBacktestSettings.minutePreciseEnabled;
@@ -15163,6 +15163,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     backtestHistorySeedReady,
     backtestRefreshNowMs,
     backtestRunCount,
+    statsRefreshStatus,
     appliedBacktestPrecisionKey,
     appliedBacktestSeedCandles.length,
     appliedBacktestSeedOneMinuteCandles.length,
@@ -17989,7 +17990,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     enabledBacktestMonths,
     enabledBacktestHours,
     aiMode,
-    aiModelEnabled,
     aiFilterEnabled,
     staticLibrariesClusters,
     confidenceThreshold,
@@ -18042,7 +18042,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }), [
     selectedSymbol, selectedTimeframe, selectedBacktestTimeframe, effectiveSelectedBacktestPrecisionTimeframe, chartPanelLiveSimulationEnabled, activePanelLiveSimulationEnabled, backtestPrecisionEnabled, inPreciseEnabled,
     enabledBacktestWeekdays, enabledBacktestSessions,
-    enabledBacktestMonths, enabledBacktestHours, aiMode, aiModelEnabled, aiFilterEnabled,
+    enabledBacktestMonths, enabledBacktestHours, aiMode, aiFilterEnabled,
     staticLibrariesClusters, confidenceThreshold, ancThreshold, aiExitStrictness, aiExitLossTolerance,
     aiExitWinTolerance, useMitExit, complexity, volatilityPercentile, tpDollars, slDollars,
     dollarsPerMove, maxBarsInTrade, maxConcurrentTrades, stopMode, breakEvenTriggerPct, trailingStartPct,
@@ -18055,10 +18055,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     propDailyMaxLoss, propTotalMaxLoss, propProfitTarget, propProjectionMethod,
     statsDatePreset, statsDateStart, statsDateEnd,
   ]);
-  const currentPresetSettingsSignature = useMemo(
-    () => JSON.stringify(collectSettings()),
-    [collectSettings]
-  );
   const currentLoadedPresetLabel = loadedPresetSession?.name ?? "No Preset Loaded";
 
   const applySettings = useCallback((s: Record<string, any>) => {
@@ -18100,8 +18096,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     if (s.enabledBacktestMonths != null) setEnabledBacktestMonths(s.enabledBacktestMonths);
     if (s.enabledBacktestHours != null) setEnabledBacktestHours(s.enabledBacktestHours);
     if (s.aiMode != null) setAiMode(s.aiMode);
-    if (s.aiModelEnabled != null) setAiModelEnabled(s.aiModelEnabled);
-    if (s.aiFilterEnabled != null) setAiFilterEnabled(s.aiFilterEnabled);
+    if (s.aiFilterEnabled != null) {
+      setAiFilterEnabled(Boolean(s.aiFilterEnabled));
+    } else if (s.aiModelEnabled === true) {
+      setAiFilterEnabled(false);
+    }
     if (s.staticLibrariesClusters != null) setStaticLibrariesClusters(s.staticLibrariesClusters);
     if (s.confidenceThreshold != null) setConfidenceThreshold(s.confidenceThreshold);
     if (s.ancThreshold != null) setAncThreshold(s.ancThreshold);
@@ -18535,7 +18534,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     setEnabledBacktestMonths(Array.from({ length: 12 }, (_, i) => i));
     setEnabledBacktestHours(Array.from({ length: 24 }, (_, i) => i));
     setAiMode("off");
-    setAiModelEnabled(false);
     setAiFilterEnabled(false);
     setStaticLibrariesClusters(false);
     setConfidenceThreshold(0);
@@ -18629,8 +18627,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
   const handleLoadPreset = useCallback((preset: SavedPreset) => {
     setLoadedPresetSession({
-      name: preset.name,
-      signature: JSON.stringify(preset.settings)
+      name: preset.name
     });
     applySettings(preset.settings);
     setPresetMenuOpen(null);
@@ -24880,16 +24877,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       return;
     }
 
-    if (loadedPresetSession.signature !== currentPresetSettingsSignature) {
-      setLoadedPresetSession(null);
-    }
-  }, [currentPresetSettingsSignature, loadedPresetSession]);
-
-  useEffect(() => {
-    if (!loadedPresetSession) {
-      return;
-    }
-
     if (!savedPresets.some((preset) => preset.name === loadedPresetSession.name)) {
       setLoadedPresetSession(null);
     }
@@ -29613,13 +29600,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             if (aiMode === "off") {
                               setAiMode("knn");
                               setAiFilterEnabled(true);
-                              setAiModelEnabled(false);
-                            } else if (aiFilterEnabled && !aiModelEnabled) {
-                              setAiModelEnabled(true);
+                            } else if (aiFilterEnabled) {
                               setAiFilterEnabled(false);
                             } else {
                               setAiMode("off");
-                              setAiModelEnabled(false);
                               setAiFilterEnabled(false);
                               setConfidenceThreshold(0);
                               setAncThreshold(0);
@@ -29629,7 +29613,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                           Artificial Intelligence -{" "}
                           {aiMode === "off"
                             ? "OFF"
-                            : aiFilterEnabled && !aiModelEnabled
+                            : aiFilterEnabled
                             ? "Filter"
                             : "Model"}
                         </button>
@@ -30239,22 +30223,46 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
               <AiSettingsModal
                 title="MODELS"
-                subtitle="Left click: toggle ENTRY. Right click: toggle BOTH."
+                subtitle={
+                  aiModelModeActive
+                    ? "AI Model mode auto-locks model selection to the hidden AI Model."
+                    : "Left click: toggle ENTRY. Right click: toggle BOTH."
+                }
                 size="wide"
                 bodyClassName="ai-zip-models-modal-body"
                 open={modelsModalOpen}
                 onClose={() => setModelsModalOpen(false)}
               >
                 <div className="ai-zip-model-grid">
-                  {visibleSettingsModelNames.map((modelName) => {
+                  {settingsModelNames.map((modelName) => {
                     const state = aiModelStates[modelName] ?? 0;
+                    const isAiModelTile = modelName === AI_MODEL_MODEL_NAME;
+                    const tileDisabled = isAiModelTile || aiModelModeActive;
+                    const tileTitle = isAiModelTile
+                      ? "AI Model is auto-managed by the Artificial Intelligence - Model toggle."
+                      : aiModelModeActive
+                        ? "Switch Artificial Intelligence back to Filter or OFF to edit model selection."
+                        : `Left click: toggle ENTRY for ${modelName}. Right click: toggle BOTH for ${modelName}.`;
 
                     return (
                       <button
                         key={modelName}
                         type="button"
                         className={`ai-zip-select-tile model ${state > 0 ? "active" : ""}`}
+                        disabled={tileDisabled}
+                        style={
+                          tileDisabled
+                            ? {
+                                opacity: isAiModelTile && state > 0 ? 0.82 : 0.45,
+                                cursor: "not-allowed",
+                                filter: isAiModelTile ? "grayscale(0.18)" : "grayscale(0.28)"
+                              }
+                            : undefined
+                        }
                         onMouseDown={(event) => {
+                          if (tileDisabled) {
+                            return;
+                          }
                           event.preventDefault();
                           setAiModelStates((current) => ({
                             ...current,
@@ -30264,12 +30272,24 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                         onContextMenu={(event) => {
                           event.preventDefault();
                         }}
-                        title={`Left click: toggle ENTRY for ${modelName}. Right click: toggle BOTH for ${modelName}.`}
+                        title={tileTitle}
                       >
                         <strong>{modelName}</strong>
-                        <span>{getAiModelStateLabel(state)}</span>
+                        <span>
+                          {isAiModelTile
+                            ? aiModelModeActive
+                              ? "Auto-selected"
+                              : "Locked"
+                            : getAiModelStateLabel(state)}
+                        </span>
                         <em>
-                          {state === 2 ? "Entry + Exit" : state === 1 ? "Entry only" : "Disabled"}
+                          {isAiModelTile
+                            ? "Auto-managed hidden model"
+                            : state === 2
+                              ? "Entry + Exit"
+                              : state === 1
+                                ? "Entry only"
+                                : "Disabled"}
                         </em>
                       </button>
                     );
@@ -32147,7 +32167,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
                   {!dimensionStats || dimensionStats.dims.length === 0 ? (
                     <div className="backtest-empty-inline">
-                      {!aiModelEnabled && !aiFilterEnabled
+                      {aiMode === "off"
                         ? "Turn on AI Model or AI Filter to view dimension statistics."
                         : "No dimension statistics available yet."}
                     </div>
