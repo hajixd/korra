@@ -107,7 +107,6 @@ import {
   resolveExplicitAiConfidenceScore
 } from "../lib/aiConfidence";
 import {
-  ENTRY_ONLY_NEIGHBOR_DIMENSIONS,
   buildEntryOnlyNeighborVector,
   getEntryOnlyTradeConfidenceScore
 } from "../lib/aiEntryScoring";
@@ -9556,44 +9555,99 @@ const buildDimensionProfileSegments = (
   });
 };
 
-const getTradeDimensionDecisionVector = (
-  trade: (Pick<HistoryItem, "side" | "entryPrice" | "targetPrice" | "stopPrice" | "entryTime"> &
-    Partial<{ neighborVector: number[] | null }>) |
-    Record<string, unknown>
-): number[] | null => {
+type DimensionFeatureBlueprintItem = {
+  key: string;
+  featureId: string;
+  featureIndex: number;
+  lag: number;
+  name: string;
+};
+
+type DimensionFeatureBlueprint = {
+  defs: DimensionFeatureBlueprintItem[];
+  perFeatureDims: Record<string, Array<{ key: string; idx: number; lag: number }>>;
+};
+
+const buildDimensionFeatureBlueprintFromSettings = (
+  settings: Pick<BacktestSettingsSnapshot, "aiFeatureLevels" | "aiFeatureModes" | "chunkBars">
+): DimensionFeatureBlueprint => {
+  const defs: DimensionFeatureBlueprintItem[] = [];
+  const perFeatureDims: Record<string, Array<{ key: string; idx: number; lag: number }>> = {};
+  const partsGlobal = getAiFeatureWindowBars(settings.chunkBars);
+
+  for (const feature of AI_FEATURE_OPTIONS) {
+    const take = featureTakeCount(feature.id, settings.aiFeatureLevels[feature.id] ?? 0);
+
+    if (take <= 0) {
+      continue;
+    }
+
+    const mode = settings.aiFeatureModes[feature.id] ?? "individual";
+    const parts = mode === "individual" ? partsGlobal : 1;
+    const showLag = mode === "individual";
+    const bank = DIMENSION_FEATURE_NAME_BANK[feature.id] ?? [];
+    const list: Array<{ key: string; idx: number; lag: number }> = [];
+
+    for (let featureIndex = 0; featureIndex < take; featureIndex += 1) {
+      const subName = bank[featureIndex] ?? `Dim ${featureIndex + 1}`;
+
+      for (let lag = 0; lag < parts; lag += 1) {
+        const key = `${feature.id}__${featureIndex}__t${lag}`;
+        defs.push({
+          key,
+          featureId: feature.id,
+          featureIndex,
+          lag,
+          name: showLag ? `${feature.label} - ${subName} t-${lag}` : `${feature.label} - ${subName}`
+        });
+        list.push({ key, idx: featureIndex, lag });
+      }
+    }
+
+    if (list.length > 0) {
+      perFeatureDims[feature.id] = list;
+    }
+  }
+
+  return { defs, perFeatureDims };
+};
+
+const buildTradeDimensionValueLookup = (
+  trade: (Pick<HistoryItem, "symbol" | "entryTime"> & Partial<Record<string, unknown>>) | Record<string, unknown>,
+  settings: Pick<BacktestSettingsSnapshot, "chunkBars">,
+  backtestSeriesMap: Record<string, Candle[]>,
+  seriesMap: Record<string, Candle[]>,
+  blueprint: DimensionFeatureBlueprint
+): Map<string, number> | null => {
   const row = trade as Record<string, unknown>;
-  const side = row.side === "Short" ? "Short" : row.side === "Long" ? "Long" : null;
-  const entryPrice = Number(row.entryPrice);
-  const targetPrice = Number(row.targetPrice);
-  const stopPrice = Number(row.stopPrice);
-  const entryTime = Number(row.entryTime);
+  const symbol = typeof row.symbol === "string" ? row.symbol : "";
+  const candles = backtestSeriesMap[symbol] ?? seriesMap[symbol] ?? EMPTY_CANDLES;
+  const entryTimeMs = toHistoryLabelTimestampMs(row.entryTime);
 
-  if (
-    side === null ||
-    !Number.isFinite(entryPrice) ||
-    !Number.isFinite(targetPrice) ||
-    !Number.isFinite(stopPrice) ||
-    !Number.isFinite(entryTime)
-  ) {
+  if (!symbol || candles.length === 0 || entryTimeMs == null) {
     return null;
   }
 
-  const vector = buildEntryOnlyNeighborVector({
-    side,
-    entryPrice: Math.max(0.000001, entryPrice),
-    targetPrice: Math.max(0.000001, targetPrice),
-    stopPrice: Math.max(0.000001, stopPrice),
-    entryTime
-  });
+  const entryIndex = findCandleIndexAtOrBefore(candles, entryTimeMs);
+  const buckets =
+    entryIndex >= 0 ? buildDimensionFeatureLagBuckets(candles, entryIndex, settings.chunkBars) : null;
 
-  if (
-    vector.length !== ENTRY_ONLY_NEIGHBOR_DIMENSIONS.length ||
-    vector.some((value: number) => !Number.isFinite(value))
-  ) {
+  if (!buckets) {
     return null;
   }
 
-  return vector;
+  const values = new Map<string, number>();
+
+  for (const [featureId, list] of Object.entries(blueprint.perFeatureDims)) {
+    const byLag = buckets[featureId] ?? [];
+
+    for (const item of list) {
+      const value = Number(byLag[item.lag]?.[item.idx] ?? 0);
+      values.set(item.key, Number.isFinite(value) ? value : 0);
+    }
+  }
+
+  return values;
 };
 
 const buildDimensionStatsSummary = (params: {
@@ -9602,7 +9656,7 @@ const buildDimensionStatsSummary = (params: {
   backtestSeriesMap: Record<string, Candle[]>;
   seriesMap: Record<string, Candle[]>;
 }): DimensionStatsSummary => {
-  const { sourceTrades, settings } = params;
+  const { sourceTrades, settings, backtestSeriesMap, seriesMap } = params;
   const sortedTrades = [...sourceTrades].sort(
     (left, right) => Number(left.entryTime) - Number(right.entryTime)
   );
@@ -9611,19 +9665,8 @@ const buildDimensionStatsSummary = (params: {
     settings.validationMode === "split";
   const splitIndex = Math.floor(sortedTrades.length * (DIMENSION_STATS_SPLIT_PCT / 100));
   const evaluationTrades = splitAllowed ? sortedTrades.slice(splitIndex) : sortedTrades;
-  const dimensionDefs: Array<{
-    key: string;
-    featureId: string;
-    featureIndex: number;
-    lag: number;
-    name: string;
-  }> = ENTRY_ONLY_NEIGHBOR_DIMENSIONS.map((dimension, featureIndex) => ({
-    key: dimension.key,
-    featureId: "entry_only_neighbor_vector",
-    featureIndex,
-    lag: 0,
-    name: dimension.name
-  }));
+  const blueprint = buildDimensionFeatureBlueprintFromSettings(settings);
+  const dimensionDefs = blueprint.defs;
 
   if (dimensionDefs.length === 0 || evaluationTrades.length === 0) {
     return {
@@ -9648,15 +9691,22 @@ const buildDimensionStatsSummary = (params: {
   const outcomes: number[] = [];
 
   for (const trade of evaluationTrades) {
-    const vector = getTradeDimensionDecisionVector(trade);
-    if (!vector) {
+    const values = buildTradeDimensionValueLookup(
+      trade,
+      settings,
+      backtestSeriesMap,
+      seriesMap,
+      blueprint
+    );
+
+    if (!values) {
       continue;
     }
 
     outcomes.push(trade.result === "Win" ? 1 : 0);
 
     for (const dimension of dimensionDefs) {
-      const value = Number(vector[dimension.featureIndex] ?? 0);
+      const value = Number(values.get(dimension.key) ?? 0);
       const list = valuesByDimension.get(dimension.key);
 
       if (list) {
@@ -25775,10 +25825,16 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       return [];
     }
 
-    const vector = getTradeDimensionDecisionVector(activeBacktestTradeDetails);
+    const valueLookup = buildTradeDimensionValueLookup(
+      activeBacktestTradeDetails,
+      appliedBacktestSettings,
+      backtestSeriesMap,
+      seriesMap,
+      buildDimensionFeatureBlueprintFromSettings(appliedBacktestSettings)
+    );
 
     return baseDimensions.map((dimension) => {
-      const rawValue = Number(vector?.[dimension.featureIndex] ?? Number.NaN);
+      const rawValue = Number(valueLookup?.get(dimension.key) ?? Number.NaN);
       const entryValue =
         Number.isFinite(rawValue) &&
         Number.isFinite(dimension.std) &&
@@ -25804,7 +25860,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, [
     activeBacktestTradeDetails,
     activeBacktestTradeDimensionStats,
-    dimensionStats
+    appliedBacktestSettings,
+    backtestSeriesMap,
+    dimensionStats,
+    seriesMap
   ]);
   useEffect(() => {
     if (!activeBacktestTradeDetails) {
@@ -32044,7 +32103,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             {dimensionStats.baselineWin === null
                               ? "n/a"
                               : `${(dimensionStats.baselineWin * 100).toFixed(1)}%`}
-                            . Using the same entry-time dimensions the AI uses for similarity.
+                            . Using the configured AI feature dimensions from your settings.
                           </p>
                         </div>
                         <div className="dimension-stats-summary-pills">
@@ -32064,7 +32123,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                         <div className="dimension-stats-panel-head">
                           <div>
                             <span className="dimension-stats-kicker">Dimensions</span>
-                            <strong>Rank the six real AI decision dimensions.</strong>
+                            <strong>Rank the configured AI feature dimensions.</strong>
                           </div>
                           <span className="dimension-stats-summary-pill muted" title="Shown / Total">
                             {dimensionStatsDisplayRows.length}/{dimensionStats.dims.length}
@@ -32295,10 +32354,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                         </div>
 
                         <div className="dimension-stats-footnote">
-                          Correlation is computed on the selected dataset, using the real entry-time
-                          AI decision vector: Direction, Risk %, Reward %, Risk / Reward, Time Of
-                          Day, and Weekday. Win@Low/High uses the bottom/top 10% of values. Optimal
-                          shows which side performs better.
+                          Correlation is computed on the selected dataset using the configured AI
+                          feature space from your settings. Win@Low/High uses the bottom/top 10% of
+                          values. Optimal shows which side performs better.
                         </div>
                       </section>
                     </div>
