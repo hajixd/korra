@@ -324,11 +324,10 @@ const getTradeConfidenceScore = (trade: HistoryItem, inPreciseEnabled = false): 
 
 const normalizeTrade = (value: unknown): HistoryItem | null => {
   if (Array.isArray(value)) {
-    if (value.length < 15) {
+    if (value.length < 18) {
       return null;
     }
 
-    const hasLegacyTimestamps = value.length >= 18;
     const [
       rawId,
       rawSymbol,
@@ -338,39 +337,22 @@ const normalizeTrade = (value: unknown): HistoryItem | null => {
       rawExitReason,
       rawPnlPct,
       rawPnlUsd,
-      rawTimeOrEntryTime,
-      rawEntryAtOrExitTime,
-      rawExitAtOrEntryPrice,
-      rawEntryTimeOrTargetPrice,
-      rawExitTimeOrStopPrice,
-      rawEntryPriceOrOutcomePrice,
-      rawTargetPriceOrUnits,
-      rawStopPriceLegacy,
-      rawOutcomePriceLegacy,
-      rawUnitsLegacy
+      rawTime,
+      rawEntryAt,
+      rawExitAt,
+      rawEntryTime,
+      rawExitTime,
+      rawEntryPrice,
+      rawTargetPrice,
+      rawStopPrice,
+      rawOutcomePrice,
+      rawUnits
     ] = value;
     const id = String(rawId ?? "").trim();
 
     if (!id) {
       return null;
     }
-
-    const rawTime = hasLegacyTimestamps ? rawTimeOrEntryTime : "";
-    const rawEntryAt = hasLegacyTimestamps ? rawEntryAtOrExitTime : "";
-    const rawExitAt = hasLegacyTimestamps ? rawExitAtOrEntryPrice : "";
-    const rawEntryTime = hasLegacyTimestamps ? rawEntryTimeOrTargetPrice : rawTimeOrEntryTime;
-    const rawExitTime = hasLegacyTimestamps ? rawExitTimeOrStopPrice : rawEntryAtOrExitTime;
-    const rawEntryPrice = hasLegacyTimestamps
-      ? rawEntryPriceOrOutcomePrice
-      : rawExitAtOrEntryPrice;
-    const rawTargetPrice = hasLegacyTimestamps
-      ? rawTargetPriceOrUnits
-      : rawEntryTimeOrTargetPrice;
-    const rawStopPrice = hasLegacyTimestamps ? rawStopPriceLegacy : rawExitTimeOrStopPrice;
-    const rawOutcomePrice = hasLegacyTimestamps
-      ? rawOutcomePriceLegacy
-      : rawEntryPriceOrOutcomePrice;
-    const rawUnits = hasLegacyTimestamps ? rawUnitsLegacy : rawTargetPriceOrUnits;
 
     return {
       id,
