@@ -629,23 +629,25 @@ type HistoryItem = {
   units: number;
 } & BacktestTradeAiEntryMeta;
 
-type ServerTradePayload = {
-  id: string;
-  symbol: string;
-  side: TradeSide;
-  result: TradeResult;
-  entrySource: string;
-  exitReason: string;
-  pnlPct: number;
-  pnlUsd: number;
-  entryTime: number;
-  exitTime: number;
-  entryPrice: number;
-  targetPrice: number;
-  stopPrice: number;
-  outcomePrice: number;
-  units: number;
-} & BacktestTradeAiEntryMeta;
+type PackedPanelAnalyticsTradePayload = [
+  string,
+  string,
+  TradeSide,
+  TradeResult,
+  string,
+  string,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number
+];
+
+type ServerTradePayload = PackedPanelAnalyticsTradePayload;
 
 type PackedBacktestAnalyticsTradePayload = [
   string,
@@ -668,23 +670,20 @@ type PackedBacktestAnalyticsTradePayload = [
   number
 ];
 
-type ServerLibraryPointPayload = {
-  id?: string;
-  uid?: string;
-  libId?: string;
-  model?: string | null;
-  metaModel?: string | null;
-  entryTime?: number | null;
-  metaTime?: number | null;
-  pnl?: number | null;
-  metaPnl?: number | null;
-  result?: string | null;
-  metaOutcome?: string | null;
-  metaSession?: string | null;
-  dir?: number | null;
-  label?: number | null;
-  v?: number[] | null;
-};
+type PackedPanelLibraryPointPayload = [
+  string,
+  string,
+  string | null,
+  number | null,
+  number | null,
+  string | null,
+  string | null,
+  number | null,
+  number | null,
+  number[] | null
+];
+
+type ServerLibraryPointPayload = PackedPanelLibraryPointPayload;
 
 const toHistoryLabelTimestampMs = (value: unknown): number | null => {
   const numeric = Number(value);
@@ -859,46 +858,23 @@ const cloneTradeEntryNeighbors = (value: unknown): BacktestEntryNeighbor[] => {
   return out;
 };
 
-const toServerTradePayload = (trade: HistoryItem): ServerTradePayload => ({
-  id: trade.id,
-  symbol: trade.symbol,
-  side: trade.side,
-  result: trade.result,
-  entrySource: trade.entrySource,
-  exitReason: trade.exitReason,
-  pnlPct: trade.pnlPct,
-  pnlUsd: trade.pnlUsd,
-  entryTime: Number(trade.entryTime),
-  exitTime: Number(trade.exitTime),
-  entryPrice: trade.entryPrice,
-  targetPrice: trade.targetPrice,
-  stopPrice: trade.stopPrice,
-  outcomePrice: trade.outcomePrice,
-  units: trade.units,
-  entryConfidence: trade.entryConfidence ?? null,
-  confidence: trade.confidence ?? trade.entryConfidence ?? null,
-  entryMargin:
-    trade.entryMargin ??
-    trade.entryConfidence ??
-    trade.confidence ??
-    null,
-  margin:
-    trade.margin ??
-    trade.entryMargin ??
-    trade.entryConfidence ??
-    trade.confidence ??
-    null,
-  aiConfidence: trade.aiConfidence ?? null,
-  averageNeighborContributionAtEntry:
-    trade.averageNeighborContributionAtEntry ?? null,
-  aiMode:
-    trade.aiMode === "knn" || trade.aiMode === "hdbscan" || trade.aiMode === "off"
-      ? trade.aiMode
-      : null,
-  closestClusterUid:
-    trade.closestClusterUid == null ? null : String(trade.closestClusterUid),
-  entryNeighbors: cloneTradeEntryNeighbors(trade.entryNeighbors)
-});
+const toServerTradePayload = (trade: HistoryItem): ServerTradePayload => [
+  trade.id,
+  trade.symbol,
+  trade.side,
+  trade.result,
+  trade.entrySource,
+  trade.exitReason,
+  trade.pnlPct,
+  trade.pnlUsd,
+  Number(trade.entryTime),
+  Number(trade.exitTime),
+  trade.entryPrice,
+  trade.targetPrice,
+  trade.stopPrice,
+  trade.outcomePrice,
+  trade.units
+];
 
 const toBacktestAnalyticsTradePayload = (
   trade: HistoryItem
@@ -923,37 +899,46 @@ const toBacktestAnalyticsTradePayload = (
   trade.units
 ];
 
-const toServerLibraryPointPayload = (point: any): ServerLibraryPointPayload => ({
-  id: point?.id != null ? String(point.id) : undefined,
-  uid:
-    point?.uid != null
-      ? String(point.uid)
-      : point?.id != null
-        ? String(point.id)
-        : undefined,
-  libId:
-    point?.libId != null
-      ? String(point.libId)
-      : point?.metaLib != null
-        ? String(point.metaLib)
-        : undefined,
-  model: point?.model != null ? String(point.model) : null,
-  metaModel: point?.metaModel != null ? String(point.metaModel) : null,
-  entryTime: point?.entryTime == null ? null : Number(point.entryTime),
-  metaTime: point?.metaTime == null ? null : Number(point.metaTime),
-  pnl: point?.pnl == null ? null : Number(point.pnl),
-  metaPnl: point?.metaPnl == null ? null : Number(point.metaPnl),
-  result: point?.result != null ? String(point.result) : null,
-  metaOutcome: point?.metaOutcome != null ? String(point.metaOutcome) : null,
-  metaSession: point?.metaSession != null ? String(point.metaSession) : null,
-  dir: point?.dir == null ? null : Number(point.dir),
-  label: point?.label == null ? null : Number(point.label),
-  v: Array.isArray(point?.v)
+const toServerLibraryPointPayload = (point: any): ServerLibraryPointPayload => [
+  point?.uid != null
+    ? String(point.uid)
+    : point?.id != null
+      ? String(point.id)
+      : "",
+  point?.libId != null
+    ? String(point.libId)
+    : point?.metaLib != null
+      ? String(point.metaLib)
+      : "",
+  point?.model != null
+    ? String(point.model)
+    : point?.metaModel != null
+      ? String(point.metaModel)
+      : null,
+  point?.entryTime == null
+    ? point?.metaTime == null
+      ? null
+      : Number(point.metaTime)
+    : Number(point.entryTime),
+  point?.pnl == null
+    ? point?.metaPnl == null
+      ? null
+      : Number(point.metaPnl)
+    : Number(point.pnl),
+  point?.result != null
+    ? String(point.result)
+    : point?.metaOutcome != null
+      ? String(point.metaOutcome)
+      : null,
+  point?.metaSession != null ? String(point.metaSession) : null,
+  point?.dir == null ? null : Number(point.dir),
+  point?.label == null ? null : Number(point.label),
+  Array.isArray(point?.v)
     ? point.v
         .map((value: unknown) => Number(value))
         .filter((value: number) => Number.isFinite(value))
     : null
-});
+];
 
 const getTradeAverageNeighborContributionAtEntryScore = (
   trade: HistoryItem
@@ -969,6 +954,62 @@ const getTradeAverageNeighborContributionAtEntryScore = (
   return computeAverageNeighborContributionAtEntryScore(
     Array.isArray(trade.entryNeighbors) ? trade.entryNeighbors : []
   );
+};
+
+const resolveTradePanelConfidenceScore = (
+  trade: HistoryItem,
+  options?: { inPreciseEnabled?: boolean }
+): number => {
+  const neighborConfidence = computeNeighborConfidenceScore(
+    Array.isArray(trade.entryNeighbors) ? trade.entryNeighbors : []
+  );
+  if (neighborConfidence != null) {
+    return neighborConfidence;
+  }
+
+  const explicitConfidence = resolveExplicitAiConfidenceScore(trade);
+  if (explicitConfidence != null) {
+    return explicitConfidence;
+  }
+
+  return getTradeConfidenceScore(trade, options);
+};
+
+const hydrateFallbackPanelTrade = (
+  trade: HistoryItem,
+  options?: { inPreciseEnabled?: boolean }
+): HistoryItem => {
+  const entryNeighbors = cloneTradeEntryNeighbors(trade.entryNeighbors);
+  const entryConfidence = resolveTradePanelConfidenceScore(
+    { ...trade, entryNeighbors },
+    options
+  );
+  const averageNeighborContributionAtEntry =
+    resolveExplicitAiConfidenceScore(
+      { averageNeighborContributionAtEntry: trade.averageNeighborContributionAtEntry },
+      ["averageNeighborContributionAtEntry"]
+    ) ??
+    computeAverageNeighborContributionAtEntryScore(entryNeighbors);
+  const closestClusterUid =
+    String(
+      trade.closestClusterUid ??
+        entryNeighbors[0]?.metaUid ??
+        entryNeighbors[0]?.uid ??
+        ""
+    ).trim() || null;
+
+  return {
+    ...trade,
+    entryNeighbors,
+    closestClusterUid,
+    averageNeighborContributionAtEntry,
+    entryConfidence:
+      trade.entryConfidence == null ? entryConfidence : trade.entryConfidence,
+    confidence: trade.confidence == null ? entryConfidence : trade.confidence,
+    aiConfidence: trade.aiConfidence == null ? entryConfidence : trade.aiConfidence,
+    entryMargin: trade.entryMargin == null ? entryConfidence : trade.entryMargin,
+    margin: trade.margin == null ? entryConfidence : trade.margin
+  };
 };
 
 const tradePassesAiEntryThresholds = (params: {
@@ -17048,7 +17089,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       confidenceGateDisabled: panelConfidenceGateDisabled,
       effectiveConfidenceThreshold: panelEffectiveConfidenceThreshold,
       effectiveAncThreshold: panelEffectiveAncThreshold,
-      confidenceResolver: getTradeConfidenceScore
+      confidenceResolver: resolveTradePanelConfidenceScore
     });
   }, [
     panelSourceTrades,
@@ -17064,7 +17105,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       confidenceGateDisabled: activePanelConfidenceGateDisabled,
       effectiveConfidenceThreshold: activePanelEffectiveConfidenceThreshold,
       effectiveAncThreshold: activePanelEffectiveAncThreshold,
-      confidenceResolver: getTradeConfidenceScore
+      confidenceResolver: resolveTradePanelConfidenceScore
     });
   }, [
     activePanelSourceTrades,
@@ -17078,18 +17119,26 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       panelSourceTrades,
       panelBacktestFilterSettings.statsDateStart,
       panelBacktestFilterSettings.statsDateEnd
+    ).map((trade) =>
+      hydrateFallbackPanelTrade(trade, {
+        inPreciseEnabled: panelBacktestFilterSettings.inPreciseEnabled
+      })
     );
     const timeFilteredTrades = filterTradesBySessionBuckets(dateFilteredTrades, {
       enabledBacktestWeekdays: panelBacktestFilterSettings.enabledBacktestWeekdays,
       enabledBacktestSessions: panelBacktestFilterSettings.enabledBacktestSessions,
       enabledBacktestMonths: panelBacktestFilterSettings.enabledBacktestMonths,
       enabledBacktestHours: panelBacktestFilterSettings.enabledBacktestHours
-    });
+    }).map((trade) =>
+      hydrateFallbackPanelTrade(trade, {
+        inPreciseEnabled: panelBacktestFilterSettings.inPreciseEnabled
+      })
+    );
     const confidenceByIdEntries = timeFilteredTrades.map(
       (trade) =>
         [
           trade.id,
-          getTradeConfidenceScore(trade, {
+          resolveTradePanelConfidenceScore(trade, {
             inPreciseEnabled: panelBacktestFilterSettings.inPreciseEnabled
           })
         ] as [string, number]

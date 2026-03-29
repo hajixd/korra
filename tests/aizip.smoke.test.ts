@@ -247,6 +247,74 @@ test("suppressed library points stay selectable as ghost-learning neighbors", as
   assert.equal(stampedTrade.entryNeighbors[0]?.metaSuppressed, true);
 });
 
+test("panel analytics accepts compact transport payloads and still stamps neighbors", async () => {
+  const trades = [
+    makeTrade({
+      id: "live-1",
+      entryIso: "2025-03-01T00:00:00Z",
+      exitIso: "2025-03-01T01:00:00Z"
+    }),
+    makeTrade({
+      id: "live-2",
+      entryIso: "2025-03-01T02:00:00Z",
+      exitIso: "2025-03-01T03:00:00Z",
+      neighborVector: [0, 0, 0, 0, 0, 0]
+    })
+  ];
+
+  const packedTrades = trades.map((trade) => [
+    trade.id,
+    trade.symbol,
+    trade.side,
+    trade.result,
+    trade.entrySource,
+    "",
+    trade.pnlPct,
+    trade.pnlUsd,
+    trade.entryTime,
+    trade.exitTime,
+    trade.entryPrice,
+    trade.targetPrice,
+    trade.stopPrice,
+    trade.outcomePrice,
+    trade.units
+  ]);
+
+  const packedLibraryPoints = [
+    [
+      "lib|base|alpha|0",
+      "base",
+      "Momentum",
+      Math.floor(Date.parse("2025-02-28T00:00:00Z") / 1000),
+      100,
+      "Win",
+      "London",
+      1,
+      1,
+      [0, 0, 0, 0, 0, 0]
+    ]
+  ];
+
+  const payload = await postPanelAnalytics({
+    panelSourceTrades: packedTrades,
+    panelLibraryPoints: packedLibraryPoints,
+    panelBacktestFilterSettings: baseFilterSettings({
+      selectedAiLibraries: ["base"]
+    }),
+    panelConfidenceGateDisabled: true,
+    panelEffectiveConfidenceThreshold: 0,
+    aiLibraryDefaultsById: {
+      base: { weight: 100, maxSamples: 1000 }
+    }
+  });
+
+  const stampedTrade = payload.timeFilteredTrades[1];
+  assert.ok(stampedTrade, "expected a second stamped trade");
+  assert.ok(Array.isArray(stampedTrade.entryNeighbors) && stampedTrade.entryNeighbors.length > 0);
+  assert.equal(stampedTrade.entryNeighbors[0]?.metaUid, "lib|base|alpha|0");
+  assert.equal(stampedTrade.closestClusterUid, "lib|base|alpha|0");
+});
+
 test("core library excludes the selected live trade from its own neighbor list", async () => {
   const trades = Array.from({ length: 6 }, (_, index) =>
     makeTrade({

@@ -13665,6 +13665,9 @@ function ClusterMapInner({
         exitReason: "Library",
         entryPrice: (p as any).entryPrice ?? null,
         suppressed: false,
+        entryNeighbors: Array.isArray((p as any).entryNeighbors)
+          ? ((p as any).entryNeighbors as any[])
+          : [],
       });
       libraryNodeDiagnostics.createdCount += 1;
       libraryNodeDiagnostics.createdByLibrary[libId] =

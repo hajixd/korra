@@ -1431,7 +1431,50 @@ const resolveTradeTimeLabel = (label: unknown, timestamp: unknown): string => {
 };
 
 const normalizeTrade = (value: unknown): HistoryItem | null => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (Array.isArray(value)) {
+    const id = String(value[0] ?? "").trim();
+    if (!id) {
+      return null;
+    }
+
+    const entryTime = toNumeric(value[8]);
+    const exitTime = toNumeric(value[9]);
+    const entryAt = resolveTradeTimeLabel("", entryTime);
+    const exitAt = resolveTradeTimeLabel("", exitTime);
+
+    return {
+      id,
+      symbol: String(value[1] ?? ""),
+      side: value[2] === "Short" ? "Short" : "Long",
+      result: value[3] === "Loss" ? "Loss" : "Win",
+      entrySource: String(value[4] ?? "Settings"),
+      exitReason: String(value[5] ?? ""),
+      pnlPct: toNumeric(value[6]),
+      pnlUsd: toNumeric(value[7]),
+      time: exitAt,
+      entryAt,
+      exitAt,
+      entryTime,
+      exitTime,
+      entryPrice: Math.max(0.000001, toNumeric(value[10])),
+      targetPrice: Math.max(0.000001, toNumeric(value[11])),
+      stopPrice: Math.max(0.000001, toNumeric(value[12])),
+      outcomePrice: Math.max(0.000001, toNumeric(value[13])),
+      units: Math.max(0.000001, Math.abs(toNumeric(value[14], 1)) || 1),
+      entryConfidence: null,
+      confidence: null,
+      entryMargin: null,
+      margin: null,
+      aiConfidence: null,
+      averageNeighborContributionAtEntry: null,
+      aiMode: null,
+      closestClusterUid: null,
+      entryNeighbors: [],
+      neighborVector: null
+    };
+  }
+
+  if (!value || typeof value !== "object") {
     return null;
   }
 
@@ -1530,6 +1573,33 @@ const normalizeLibraryPoints = (value: unknown): LibraryPointPayload[] => {
   const rows: LibraryPointPayload[] = [];
 
   for (const item of value) {
+    if (Array.isArray(item)) {
+      const uid = String(item[0] ?? "").trim();
+      const libId = String(item[1] ?? "").trim().toLowerCase();
+      if (!uid || !libId) {
+        continue;
+      }
+
+      rows.push({
+        id: uid,
+        uid,
+        libId,
+        model: item[2] == null ? null : String(item[2]),
+        metaModel: item[2] == null ? null : String(item[2]),
+        entryTime: item[3] == null ? null : Number(item[3]),
+        metaTime: item[3] == null ? null : Number(item[3]),
+        pnl: item[4] == null ? null : Number(item[4]),
+        metaPnl: item[4] == null ? null : Number(item[4]),
+        result: item[5] == null ? null : String(item[5]),
+        metaOutcome: item[5] == null ? null : String(item[5]),
+        metaSession: item[6] == null ? null : String(item[6]),
+        dir: item[7] == null ? null : Number(item[7]),
+        label: item[8] == null ? null : Number(item[8]),
+        v: toFiniteVector(item[9])
+      });
+      continue;
+    }
+
     if (!item || typeof item !== "object" || Array.isArray(item)) {
       continue;
     }
