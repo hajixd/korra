@@ -12250,9 +12250,9 @@ function ClusterMapInner({
     }
     const fallbackValue =
       clusterCompressionOptions[0]?.value ??
-      normalizeClusterCompressionMethod(compressionMethod);
+      normalizeClusterCompressionMethod(compressionMethodProp);
     setViewCompressionMethod(fallbackValue);
-  }, [clusterCompressionOptions, compressionMethod, viewCompressionMethod]);
+  }, [clusterCompressionOptions, compressionMethodProp, viewCompressionMethod]);
   // Box selection (2D only)
   // - Toggle selection mode with Option+T (and a clickable UI toggle; Option+T is less likely to be blocked by the browser)
   // - In selection mode: click (left or right) to set corner A, move mouse to preview, click again to set corner B.
@@ -12308,8 +12308,8 @@ function ClusterMapInner({
   // Active AI domains selected by the user (UI-side).
   // NOTE: The backtest/runtime engine also has its own domain set, but that one is not in scope here.
   const activeModSet = useMemo(
-    () => new Set<string>((aiDomains as any) || []),
-    [aiDomains]
+    () => new Set<string>((aiDomainsProp as any) || []),
+    [aiDomainsProp]
   );
 
   const nodeChronologyValue = React.useCallback(
@@ -12470,11 +12470,11 @@ function ClusterMapInner({
   const effectiveValidationMode = React.useMemo<
     "off" | "split" | "synthetic"
   >(() => {
-    if (!antiCheatEnabled) return "off";
-    return validationMode === "split" || validationMode === "synthetic"
-      ? validationMode
+    if (!antiCheatEnabledProp) return "off";
+    return validationModeProp === "split" || validationModeProp === "synthetic"
+      ? validationModeProp
       : "off";
-  }, [antiCheatEnabled, validationMode]);
+  }, [antiCheatEnabledProp, validationModeProp]);
 
   const hdbSplitCutoffIndex = React.useMemo(() => {
     const totalCandles = Array.isArray(candles) ? candles.length : 0;
@@ -12488,7 +12488,7 @@ function ClusterMapInner({
       const st: any = (cluster as any)?.stats || {};
       const dir = Number((node as any)?.dir ?? (node as any)?.direction ?? 0);
       const useChronologicalClusterStats =
-        antiCheatEnabled && effectiveValidationMode === "off";
+        antiCheatEnabledProp && effectiveValidationMode === "off";
       const shouldRecomputeFilteredStats =
         useChronologicalClusterStats || !!(activeModSet && activeModSet.size);
 
@@ -12589,7 +12589,7 @@ function ClusterMapInner({
     },
     [
       activeModSet,
-      antiCheatEnabled,
+      antiCheatEnabledProp,
       effectiveValidationMode,
       nodeMatchesHdbActiveDomains,
       nodeChronologyValue,
@@ -12909,11 +12909,11 @@ function ClusterMapInner({
   };
 
   // Debounce chunk size so dragging the slider doesn't re-embed on every tick
-  const [chunkBarsDeb, setChunkBarsDeb] = useState(chunkBars);
+  const [chunkBarsDeb, setChunkBarsDeb] = useState(chunkBarsProp);
   useEffect(() => {
-    const t = setTimeout(() => setChunkBarsDeb(chunkBars), 240);
+    const t = setTimeout(() => setChunkBarsDeb(chunkBarsProp), 240);
     return () => clearTimeout(t);
-  }, [chunkBars]);
+  }, [chunkBarsProp]);
 
   // View filters (for Cluster Map only)
   const [viewDir, setViewDir] = useState("All"); // All | Buy | Sell
@@ -13088,9 +13088,12 @@ function ClusterMapInner({
   }, [trades]);
   const nodes = useMemo(() => {
     if (candles.length === 0) return [];
-    const knnSpaceKey = normalizeKnnNeighborSpace(knnNeighborSpace);
-    const knnActive = aiMethod === "knn";
-    const neighborK = Math.max(0, Math.min(36, Math.floor(Number(kEntry) || 0)));
+    const knnSpaceKey = normalizeKnnNeighborSpace(knnNeighborSpaceProp);
+    const knnActive = aiMethodProp === "knn";
+    const neighborK = Math.max(
+      0,
+      Math.min(36, Math.floor(Number(kEntryProp) || 0))
+    );
 
     const matchesDomains = (src: any, cand: any) => {
       if (!activeModSet || activeModSet.size === 0) return true;
@@ -13818,7 +13821,7 @@ function ClusterMapInner({
     } else if (viewCompressionMethod === "link") {
       const linkNeighborCount = Math.max(
         6,
-        Math.min(24, Math.floor(Number(kEntry) || 10))
+        Math.min(24, Math.floor(Number(kEntryProp) || 10))
       );
       const projection2d = createClusterMapLinkStrengthProjection({
         entries: goodEntries,
@@ -14077,23 +14080,23 @@ function ClusterMapInner({
     ghostEntries,
     activeLibraries,
     libraryCounts,
-    chunkBars,
+    chunkBarsDeb,
     pnlScale,
     potential,
     parseMode,
     showPotential,
     libraryPoints,
-    antiCheatEnabled,
+    antiCheatEnabledProp,
     nodeChronologyValue,
     nodeStableKey,
     clusterMapView,
     lowPowerMode,
     entryNeighborsOnly,
-    kEntry,
-    aiMethod,
+    kEntryProp,
+    aiMethodProp,
     activeModSet,
-    distanceMetric,
-    knnNeighborSpace,
+    distanceMetricProp,
+    knnNeighborSpaceProp,
     viewCompressionMethod,
     legendToggles,
   ]);
@@ -14266,15 +14269,17 @@ function ClusterMapInner({
   );
   const [knnLinkOpacity, setKnnLinkOpacity] = React.useState(0.36);
   React.useEffect(() => {
-    const next = Math.max(0, Math.min(36, Math.floor(Number(kEntry) || 0)));
-    if (Number.isFinite(Number(kEntry))) {
+    const next = Math.max(0, Math.min(36, Math.floor(Number(kEntryProp) || 0)));
+    if (Number.isFinite(Number(kEntryProp))) {
       setKnnLinkK(next);
     }
-  }, [kEntry]);
+  }, [kEntryProp]);
   const effectiveNeighborK = React.useMemo(() => {
-    const base = Number.isFinite(Number(kEntry)) ? Number(kEntry) : knnLinkK;
+    const base = Number.isFinite(Number(kEntryProp))
+      ? Number(kEntryProp)
+      : knnLinkK;
     return Math.max(0, Math.min(36, Math.floor(Number(base) || 0)));
-  }, [kEntry, knnLinkK]);
+  }, [kEntryProp, knnLinkK]);
   const showGroupOverlays = (Number(groupOverlayOpacity) || 0) > 0;
   const effectiveGroupOverlayOpacity = groupOverlayOpacity;
   const suppressedLibraryActive =
@@ -14610,14 +14615,14 @@ function ClusterMapInner({
   );
 
   const hdbClusterBasisNodes = useMemo(() => {
-    if (aiMethod !== "hdbscan") return [] as any[];
-    if (!antiCheatEnabled) return fullHistoryHdbBasisNodes;
+    if (aiMethodProp !== "hdbscan") return [] as any[];
+    if (!antiCheatEnabledProp) return fullHistoryHdbBasisNodes;
     if (effectiveValidationMode === "split") return splitHdbBasisNodes;
     if (effectiveValidationMode === "synthetic") return syntheticHdbBasisNodes;
     return onlineHdbBasisNodes;
   }, [
-    aiMethod,
-    antiCheatEnabled,
+    aiMethodProp,
+    antiCheatEnabledProp,
     effectiveValidationMode,
     fullHistoryHdbBasisNodes,
     onlineHdbBasisNodes,
@@ -14626,7 +14631,7 @@ function ClusterMapInner({
   ]);
 
   const hdbOverlay = useMemo(() => {
-    if (aiMethod !== "hdbscan") return null;
+    if (aiMethodProp !== "hdbscan") return null;
     const basisNodes: any[] = hdbClusterBasisNodes;
     const pts: [number, number][] = [];
     const nodeRefs: any[] = [];
@@ -14641,7 +14646,10 @@ function ClusterMapInner({
     const N = pts.length;
     if (N < 10) return null;
 
-    const minSamples = Math.max(2, Math.min(200, Number(hdbMinSamples || 5)));
+    const minSamples = Math.max(
+      2,
+      Math.min(200, Number(hdbMinSamplesProp || 5))
+    );
     const coreCap = 1400;
     let sampleIndices: number[] = [];
     if (N > coreCap) {
@@ -14679,7 +14687,7 @@ function ClusterMapInner({
 
     let eps = quantile1D(
       coreD,
-      Math.max(0.5, Math.min(0.99, Number(hdbEpsQuantile || 0.5)))
+      Math.max(0.5, Math.min(0.99, Number(hdbEpsQuantileProp || 0.5)))
     );
     if (!Number.isFinite(eps) || eps <= 0) eps = quantile1D(coreD, 0.75) || 1;
 
@@ -14782,7 +14790,7 @@ function ClusterMapInner({
     for (const cid of labels) if (cid >= 0) counts0[cid] += 1;
     const minClusterSize = Math.max(
       5,
-      Math.min(5000, Number(hdbMinClusterSize || 5))
+      Math.min(5000, Number(hdbMinClusterSizeProp || 5))
     );
     for (let i = 0; i < labels.length; i++) {
       const cid = labels[i]!;
@@ -14992,16 +15000,16 @@ function ClusterMapInner({
 
     return { eps, clusters };
   }, [
-    aiMethod,
+    aiMethodProp,
     hdbClusterBasisNodes,
-    hdbMinSamples,
-    hdbEpsQuantile,
-    hdbMinClusterSize,
+    hdbMinSamplesProp,
+    hdbEpsQuantileProp,
+    hdbMinClusterSizeProp,
   ]);
 
   const timelineNodesCheat = useMemo(() => {
-    if (aiMethod !== "hdbscan") return timelineNodes as any[];
-    const thrPct = clamp(Number(confidenceThreshold || 0), 0, 100);
+    if (aiMethodProp !== "hdbscan") return timelineNodes as any[];
+    const thrPct = clamp(Number(confidenceThresholdProp || 0), 0, 100);
 
     // --- Helpers: stable identity + "Library" exit detection (Library is not a real exit) ---
     const tradeKeyLocal = (n: any): string =>
@@ -15052,7 +15060,7 @@ function ClusterMapInner({
     const hdbInfoLocal = (
       node: any
     ): { wr: number; clusterId: number | null } | null => {
-      if (!node || aiMethod !== "hdbscan") return null;
+      if (!node || aiMethodProp !== "hdbscan") return null;
 
       const x = Number((node as any).x);
       const y = Number((node as any).y);
@@ -15484,8 +15492,8 @@ function ClusterMapInner({
     return out;
   }, [
     timelineNodes,
-    aiMethod,
-    confidenceThreshold,
+    aiMethodProp,
+    confidenceThresholdProp,
     hdbOverlay,
     resolveHdbClusterWinRate,
     suppressedLibraryActive,
@@ -15495,7 +15503,7 @@ function ClusterMapInner({
   // Uses stamped fields when available, otherwise falls back to hull membership.
   const hdbInfo = useCallback(
     (node: any): { wr: number; clusterId: number | null } | null => {
-      if (!node || aiMethod !== "hdbscan") return null;
+      if (!node || aiMethodProp !== "hdbscan") return null;
 
       let wr: any = (node as any).hdbWinRate;
       if (wr == null) wr = (node as any).aiMargin;
@@ -15594,7 +15602,7 @@ function ClusterMapInner({
 
       return { wr: 0.01, clusterId: null };
     },
-    [aiMethod, hdbOverlay]
+    [aiMethodProp, hdbOverlay]
   );
 
   // Stable identity key for de-duping / mapping nodes across post-hoc and raw streams.
@@ -16890,7 +16898,7 @@ function ClusterMapInner({
   }, [displayNodesRaw, hdbOverlay, showGroupOverlays]);
 
   const currentHdbClusterStats = useMemo(() => {
-    if (aiMethod !== "hdbscan") return null;
+    if (aiMethodProp !== "hdbscan") return null;
     if (!currentGroupHit || (currentGroupHit as any).type !== "hdb")
       return null;
     const clArr: any[] = ((hdbOverlay as any)?.clusters as any[]) || [];
@@ -16899,7 +16907,7 @@ function ClusterMapInner({
       if (Number((c as any).id) === cid) return (c as any)?.stats || null;
     }
     return null;
-  }, [aiMethod, currentGroupHit, hdbOverlay]);
+  }, [aiMethodProp, currentGroupHit, hdbOverlay]);
 
   const pointInPolyWorld = React.useCallback(
     (px: number, py: number, poly: [number, number][]) => {
@@ -16921,7 +16929,7 @@ function ClusterMapInner({
 
   const hdbConfidenceClusters = useMemo(() => {
     const out: any[] = [];
-    if (aiMethod !== "hdbscan") return out;
+    if (aiMethodProp !== "hdbscan") return out;
     const clArr: any[] = ((hdbOverlay as any)?.clusters as any[]) || [];
     for (const c of clArr) {
       const hull =
@@ -16969,7 +16977,7 @@ function ClusterMapInner({
       });
     }
     return out;
-  }, [aiMethod, hdbOverlay]);
+  }, [aiMethodProp, hdbOverlay]);
 
   const hdbConfidenceForNode = React.useCallback(
     (n: any) => {
@@ -16982,7 +16990,7 @@ function ClusterMapInner({
       }
 
       // Non-HDBSCAN modes: keep the existing confidence signal.
-      if (aiMethod !== "hdbscan") {
+      if (aiMethodProp !== "hdbscan") {
         const neighborConfidence = computeNeighborConfidenceScore(
           Array.isArray((n as any)?.entryNeighbors)
             ? ((n as any).entryNeighbors as any[])
@@ -17013,7 +17021,7 @@ function ClusterMapInner({
       return 0.01;
     },
     [
-      aiMethod,
+      aiMethodProp,
       effectiveNeighborK,
       hdbConfidenceClusters,
       pointInPolyWorld,
@@ -17039,7 +17047,7 @@ function ClusterMapInner({
 
   const hdbClusterInfoForNode = React.useCallback(
     (n: any): { wr: number; clusterId: number | null } | null => {
-      if (!n || aiMethod !== "hdbscan") return null;
+      if (!n || aiMethodProp !== "hdbscan") return null;
 
       // Noise (not in any hull) => 1% with unknown cluster id.
       const x = Number((n as any).x);
@@ -17059,7 +17067,12 @@ function ClusterMapInner({
 
       return { wr: 0.01, clusterId: null };
     },
-    [aiMethod, hdbConfidenceClusters, pointInPolyWorld, resolveHdbClusterWinRate]
+    [
+      aiMethodProp,
+      hdbConfidenceClusters,
+      pointInPolyWorld,
+      resolveHdbClusterWinRate,
+    ]
   );
 
   // --- HDBSCAN post-hoc entry pass: determine entries purely from cluster win-rate (no gate)
@@ -17251,7 +17264,7 @@ function ClusterMapInner({
   // IMPORTANT: De-duped by stable trade identity so we don't double-count the same trade.
   const postHocTrades = useMemo(() => {
     const src: any[] =
-      aiMethod === "hdbscan"
+      aiMethodProp === "hdbscan"
         ? (timelineNodesCheat as any[]) || []
         : (timelineNodes as any[]) || [];
 
@@ -17317,10 +17330,12 @@ function ClusterMapInner({
     }
 
     return Array.from(bestByKey.values());
-  }, [aiMethod, timelineNodesCheat, timelineNodes]);
+  }, [aiMethodProp, timelineNodesCheat, timelineNodes]);
   const postHocTradesRanged = useMemo(() => {
-    const start = statsDateStart ? new Date(statsDateStart).getTime() : null;
-    const end = statsDateEnd ? new Date(statsDateEnd).getTime() : null;
+    const start = statsDateStartProp
+      ? new Date(statsDateStartProp).getTime()
+      : null;
+    const end = statsDateEndProp ? new Date(statsDateEndProp).getTime() : null;
     if (!start && !end) return postHocTrades;
 
     const out: any[] = [];
@@ -17337,7 +17352,7 @@ function ClusterMapInner({
       out.push(t);
     }
     return out;
-  }, [postHocTrades, statsDateStart, statsDateEnd]);
+  }, [postHocTrades, statsDateStartProp, statsDateEndProp]);
 
   const countsStats = useMemo(() => {
     let wins = 0;
@@ -17378,14 +17393,19 @@ function ClusterMapInner({
 
   // Report post-hoc processing progress to the top progress bar (App)
   useEffect(() => {
-    if (aiMethod !== "hdbscan") return;
+    if (aiMethodProp !== "hdbscan") return;
     if (typeof onPostHocProgress !== "function") return;
     onPostHocProgress("Post-hoc processing", 0);
     const t = setTimeout(() => {
       onPostHocProgress("Post-hoc processing", 1, true);
     }, 0);
     return () => clearTimeout(t);
-  }, [aiMethod, confidenceThreshold, timelineNodesCheat, timelineNodes]);
+  }, [
+    aiMethodProp,
+    confidenceThresholdProp,
+    timelineNodesCheat,
+    timelineNodes,
+  ]);
 
   useEffect(() => {
     if (typeof onPostHocTrades !== "function") return;
@@ -17482,7 +17502,7 @@ function ClusterMapInner({
       lowPowerMode,
       knnLinkK,
       knnLinkOpacity,
-      aiMethod,
+      aiMethod: aiMethodProp,
       selectedId,
       selectedLink,
       knnEdgeNodes: neighborNodes,
@@ -17492,7 +17512,7 @@ function ClusterMapInner({
       lowPowerMode,
       knnLinkK,
       knnLinkOpacity,
-      aiMethod,
+      aiMethodProp,
       selectedId,
       selectedLink,
       neighborNodes,
@@ -17548,9 +17568,40 @@ function ClusterMapInner({
     return { aliasToIds, nodeCoordById, dim };
   }, [neighborNodes, clusterMapView]);
 
+  const resolveLibraryIdForNode = React.useCallback((node: any): string | null => {
+    if (!node) return null;
+    const candidates = [
+      (node as any)?.libId,
+      (node as any)?.metaLib,
+      (node as any)?.library,
+      (node as any)?.metaLibrary,
+    ];
+    for (const candidate of candidates) {
+      const value = String(candidate ?? "").trim();
+      if (value) return value;
+    }
+    return null;
+  }, []);
+
+  const resolveNodeKindLabel = React.useCallback(
+    (node: any, fallbackKind?: string) => {
+      const kind = String(fallbackKind ?? (node as any)?.kind ?? "").toLowerCase();
+      if (kind === "trade") {
+        return (node as any)?.isOpen ? "Open Trade" : "Trade";
+      }
+      const libraryId = resolveLibraryIdForNode(node);
+      if (kind === "library" || libraryId) {
+        return resolveAiLibraryDisplayName(libraryId) ?? "Library";
+      }
+      if (!kind) return "Node";
+      return `${kind.slice(0, 1).toUpperCase()}${kind.slice(1)}`;
+    },
+    [resolveLibraryIdForNode]
+  );
+
   const selectedNeighborCap = Math.max(
     0,
-    Math.min(36, Math.floor(Number(kEntry) || 0))
+    Math.min(36, Math.floor(Number(kEntryProp) || 0))
   );
 
   const buildNeighborListForNode = React.useCallback(
@@ -17823,37 +17874,6 @@ function ClusterMapInner({
     );
   }, []);
 
-  const resolveLibraryIdForNode = React.useCallback((node: any): string | null => {
-    if (!node) return null;
-    const candidates = [
-      (node as any)?.libId,
-      (node as any)?.metaLib,
-      (node as any)?.library,
-      (node as any)?.metaLibrary,
-    ];
-    for (const candidate of candidates) {
-      const value = String(candidate ?? "").trim();
-      if (value) return value;
-    }
-    return null;
-  }, []);
-
-  const resolveNodeKindLabel = React.useCallback(
-    (node: any, fallbackKind?: string) => {
-      const kind = String(fallbackKind ?? (node as any)?.kind ?? "").toLowerCase();
-      if (kind === "trade") {
-        return (node as any)?.isOpen ? "Open Trade" : "Trade";
-      }
-      const libraryId = resolveLibraryIdForNode(node);
-      if (kind === "library" || libraryId) {
-        return resolveAiLibraryDisplayName(libraryId) ?? "Library";
-      }
-      if (!kind) return "Node";
-      return `${kind.slice(0, 1).toUpperCase()}${kind.slice(1)}`;
-    },
-    [resolveLibraryIdForNode]
-  );
-
   const getRowEntryTimeSeconds = React.useCallback((row: any) => {
     const targetNode = (row as any)?.targetNode ?? row;
     return normalizeTradeTimestampSeconds(
@@ -17978,7 +17998,7 @@ function ClusterMapInner({
 
   const libraryInfluencedRowsByNodeId = useMemo(() => {
     const out = new Map<string, any[]>();
-    if (aiMethod === "hdbscan") return out;
+    if (aiMethodProp === "hdbscan") return out;
 
     const seenByNode = new Map<string, Set<string>>();
     for (const sourceNode of neighborNodes as any[]) {
@@ -18030,7 +18050,7 @@ function ClusterMapInner({
 
     return out;
   }, [
-    aiMethod,
+    aiMethodProp,
     buildInfluencedRowForNode,
     buildNeighborListForNode,
     neighborNodes,
@@ -18059,10 +18079,10 @@ function ClusterMapInner({
   >("neighbors");
 
   useEffect(() => {
-    if (aiMethod === "hdbscan") return;
+    if (aiMethodProp === "hdbscan") return;
     setSelectedRelationshipView("neighbors");
   }, [
-    aiMethod,
+    aiMethodProp,
     selectedNode?.id,
   ]);
 
@@ -18127,8 +18147,9 @@ function ClusterMapInner({
   }, [hdbOverlay]);
 
   const selectedHdbClusterInfo = useMemo(
-    () => (aiMethod === "hdbscan" ? hdbClusterInfoForNode(selectedNode) : null),
-    [aiMethod, hdbClusterInfoForNode, selectedNode]
+    () =>
+      aiMethodProp === "hdbscan" ? hdbClusterInfoForNode(selectedNode) : null,
+    [aiMethodProp, hdbClusterInfoForNode, selectedNode]
   );
 
   const selectedHdbCluster = useMemo(() => {
@@ -18137,10 +18158,10 @@ function ClusterMapInner({
   }, [hdbClustersById, selectedHdbClusterInfo]);
 
   const currentHdbCluster = useMemo(() => {
-    if (aiMethod !== "hdbscan") return null;
+    if (aiMethodProp !== "hdbscan") return null;
     const cid = Number((currentGroupHit as any)?.id);
     return Number.isFinite(cid) ? hdbClustersById.get(cid) ?? null : null;
-  }, [aiMethod, currentGroupHit, hdbClustersById]);
+  }, [aiMethodProp, currentGroupHit, hdbClustersById]);
 
   const buildHdbGroupMemberList = React.useCallback(
     (cluster: any, focusNode?: any) => {
@@ -18387,17 +18408,22 @@ function ClusterMapInner({
   );
 
   const selectedConfidenceValue = useMemo(() => {
-    if (aiMethod === "hdbscan") return null;
+    if (aiMethodProp === "hdbscan") return null;
     return resolveNonHdbConfidence((selectedAiSnapshotSource as any) ?? (selectedNode as any));
-  }, [aiMethod, resolveNonHdbConfidence, selectedAiSnapshotSource, selectedNode]);
+  }, [
+    aiMethodProp,
+    resolveNonHdbConfidence,
+    selectedAiSnapshotSource,
+    selectedNode,
+  ]);
 
   const selectedCanShowContribution =
-    aiMethod !== "hdbscan" && selectedLibraryInfluencedRows.length > 0;
+    aiMethodProp !== "hdbscan" && selectedLibraryInfluencedRows.length > 0;
   const selectedCanShowConfidence =
-    aiMethod !== "hdbscan" &&
+    aiMethodProp !== "hdbscan" &&
     (selectedConfidenceValue != null || !selectedCanShowContribution);
   const activeSelectedRelationshipView =
-    aiMethod !== "hdbscan" && selectedRelationshipView === "influenced"
+    aiMethodProp !== "hdbscan" && selectedRelationshipView === "influenced"
       ? "influenced"
       : "neighbors";
   const selectedAncEntryValue =
@@ -18642,10 +18668,10 @@ function ClusterMapInner({
   );
 
   useEffect(() => {
-    if (aiMethod !== "hdbscan") return;
+    if (aiMethodProp !== "hdbscan") return;
     if (String((selectedLink as any)?.type ?? "").toLowerCase() !== "knn") return;
     setSelectedLink(null);
-  }, [aiMethod, selectedLink]);
+  }, [aiMethodProp, selectedLink]);
 
   const selectionDiagnosticKeyRef = useRef("");
 
@@ -19019,7 +19045,7 @@ function ClusterMapInner({
 
   const hdbDomainsForNode = React.useCallback(
     (n: any) => {
-      if (!n || aiMethod !== "hdbscan") return "";
+      if (!n || aiMethodProp !== "hdbscan") return "";
       const parts: string[] = [];
 
       // Show whether we're in REAL vs CONCEPTUAL (how domains affect clustering).
@@ -19071,7 +19097,7 @@ function ClusterMapInner({
 
       return parts.join(" · ");
     },
-    [aiMethod, parseMode, activeModSet]
+    [aiMethodProp, parseMode, activeModSet]
   );
 
   const effectiveTradeConfidence = React.useCallback(
@@ -19082,7 +19108,7 @@ function ClusterMapInner({
         return resolveExplicitAiConfidenceScore(t);
       };
 
-      if (aiMethod !== "hdbscan") {
+      if (aiMethodProp !== "hdbscan") {
         const neighborConfidence = computeNeighborConfidenceScore(
           pickNeighborPayload(t),
           { maxNeighbors: effectiveNeighborK, sortByDistance: true }
@@ -19110,7 +19136,7 @@ function ClusterMapInner({
       return hdbConfidenceForNode(t as any);
     },
     [
-      aiMethod,
+      aiMethodProp,
       effectiveNeighborK,
       hdbConfidenceForNode,
       pickNeighborPayload,
@@ -19141,7 +19167,7 @@ function ClusterMapInner({
     // - never include "close" projection nodes
     // - never include "potential" nodes
     // - never include OPEN trades
-    if (aiMethod === "hdbscan") return hdbClusterBasisNodes as any[];
+    if (aiMethodProp === "hdbscan") return hdbClusterBasisNodes as any[];
 
     const src = (timelineNodes as any[]) || [];
 
@@ -19154,7 +19180,7 @@ function ClusterMapInner({
         n.kind !== "ghost"
     );
     return base;
-  }, [aiMethod, hdbClusterBasisNodes, timelineNodes]);
+  }, [aiMethodProp, hdbClusterBasisNodes, timelineNodes]);
 
   // Keep a stable redraw function for ResizeObserver/visibility changes.
   useEffect(() => {
@@ -19941,7 +19967,7 @@ function ClusterMapInner({
           const kind = String((n as any).kind ?? "").toLowerCase();
           const isLibraryNode = kind === "library";
           const wantsNeighborConfidence =
-            aiMethod !== "hdbscan" &&
+            aiMethodProp !== "hdbscan" &&
             kind !== "potential" &&
             kind !== "library";
           const libraryContribution = isLibraryNode
@@ -19979,7 +20005,7 @@ function ClusterMapInner({
               }`
             );
             lines.push(`ID: ${displayIdForNode(n)}`);
-            if (aiMethod === "hdbscan") {
+            if (aiMethodProp === "hdbscan") {
               const info = hdbInfo(n);
               const wr = info?.wr ?? 0.01;
               const cid = info?.clusterId;
@@ -20034,7 +20060,7 @@ function ClusterMapInner({
               lines.push(`Entry via: ${aLab}`);
             }
             {
-              if (aiMethod === "hdbscan") {
+              if (aiMethodProp === "hdbscan") {
                 const info = hdbInfo(n);
                 const baseConf = hdbConfidenceForNode(n);
                 const wr = info?.wr ?? baseConf;
@@ -20057,7 +20083,7 @@ function ClusterMapInner({
                 }
               }
             }
-            if (isLibraryNode && aiMethod !== "hdbscan") {
+            if (isLibraryNode && aiMethodProp !== "hdbscan") {
               lines.push(
                 `Contribution: ${Math.round((libraryContribution ?? 0) * 100)}%`
               );
@@ -20407,7 +20433,7 @@ function ClusterMapInner({
     };
 
     // In HDBSCAN post-hoc mode, include the *post-hoc* pool so promoted trades are searchable.
-    if (aiMethod === "hdbscan") pushAll(timelineNodesCheat as any[]);
+    if (aiMethodProp === "hdbscan") pushAll(timelineNodesCheat as any[]);
 
     // Always include the raw embedded pool so legacy/raw IDs remain searchable.
     pushAll(nodes as any[]);
@@ -20425,7 +20451,7 @@ function ClusterMapInner({
       out.push(n);
     }
     return out;
-  }, [aiMethod, timelineNodesCheat, nodes]);
+  }, [aiMethodProp, timelineNodesCheat, nodes]);
 
   const searchSuggestions = useMemo(() => {
     const q = String(searchUid || "").trim();
@@ -21493,7 +21519,7 @@ function ClusterMapInner({
         ) : (
           <ClusterMapViewport3D
             nodes={displayNodes}
-            aiMethod={aiMethod}
+            aiMethod={aiMethodProp}
             knnEdgeNodes={neighborNodes}
             knnAllowLegacyFallback={!entryNeighborsOnly}
             selectedId={selectedId}
@@ -22659,7 +22685,7 @@ function ClusterMapInner({
                     </>
                   ) : null}
 
-                  {aiMethod === "hdbscan" ? (
+                  {aiMethodProp === "hdbscan" ? (
                     <div style={{ opacity: 0.65 }}>Cluster Win Rate</div>
                   ) : null}
                   {selectedCanShowConfidence && !selectedCanShowContribution ? (
@@ -22672,7 +22698,7 @@ function ClusterMapInner({
                     style={{ fontWeight: 900, color: "rgba(120,190,255,0.92)" }}
                   >
                     {(() => {
-                      if (aiMethod === "hdbscan") {
+                      if (aiMethodProp === "hdbscan") {
                         const info = hdbClusterInfoForNode(selectedNode);
                         const v = info?.wr;
                         const cid = info?.clusterId;
@@ -22693,7 +22719,7 @@ function ClusterMapInner({
                     })()}
                   </div>
 
-                  {aiMethod !== "hdbscan" ? (
+                  {aiMethodProp !== "hdbscan" ? (
                     <>
                       <div style={{ opacity: 0.65 }}>ANC</div>
                       <div
@@ -22712,10 +22738,10 @@ function ClusterMapInner({
                     </>
                   ) : null}
 
-                  {!(isSelectedLib && aiMethod !== "hdbscan") ? (
+                  {!(isSelectedLib && aiMethodProp !== "hdbscan") ? (
                     <>
                       <div style={{ opacity: 0.65 }}>
-                    {aiMethod === "hdbscan" ? "Cluster Group" : "MIT ID"}
+                    {aiMethodProp === "hdbscan" ? "Cluster Group" : "MIT ID"}
                       </div>
                   <div
                     style={{
@@ -22726,7 +22752,7 @@ function ClusterMapInner({
                     }}
                   >
                     {(() => {
-                      if (aiMethod === "hdbscan") {
+                      if (aiMethodProp === "hdbscan") {
                         const cid = Number(
                           (selectedHdbClusterInfo as any)?.clusterId
                         );
@@ -22809,25 +22835,25 @@ function ClusterMapInner({
                     }}
                     >
                       <div>
-                        {aiMethod === "hdbscan"
+                        {aiMethodProp === "hdbscan"
                           ? "Cluster Group Members"
                           : activeSelectedRelationshipView === "influenced"
                           ? "Neighbors Influenced"
                           : "Nearest Neighbors"}
                       </div>
                       <div style={{ ...mono(), opacity: 0.7 }}>
-                        {aiMethod === "hdbscan" ||
+                        {aiMethodProp === "hdbscan" ||
                         activeSelectedRelationshipView === "influenced"
                           ? "n="
                           : "k="}
-                        {aiMethod === "hdbscan"
+                        {aiMethodProp === "hdbscan"
                           ? selectedHdbGroupMembers.length
                           : activeSelectedRelationshipView === "influenced"
                           ? selectedLibraryInfluencedRows.length
                           : selectedNeighborCap || selectedNeighborList.length || 0}
                       </div>
                     </div>
-                  {aiMethod !== "hdbscan" ? (
+                  {aiMethodProp !== "hdbscan" ? (
                     <div
                       style={{
                         display: "flex",
@@ -22874,7 +22900,7 @@ function ClusterMapInner({
                       })}
                     </div>
                   ) : null}
-                  {aiMethod === "hdbscan"
+                  {aiMethodProp === "hdbscan"
                     ? renderHdbGroupMemberList(
                         selectedHdbGroupMembers,
                         "This point is not inside any HDBSCAN group.",
@@ -22907,7 +22933,7 @@ function ClusterMapInner({
           })()}
 
         {selectedLink &&
-          (aiMethod !== "hdbscan" ||
+          (aiMethodProp !== "hdbscan" ||
             String((selectedLink as any)?.type ?? "").toLowerCase() !== "knn") &&
           !selectedNode &&
           (() => {
@@ -22937,7 +22963,8 @@ function ClusterMapInner({
             const hitVal = Number.isFinite(hitRaw) ? hitRaw : null;
             const confA = aNode ? hdbConfidenceForNode(aNode) : null;
             const confB = bNode ? hdbConfidenceForNode(bNode) : null;
-            const confLabel = aiMethod === "hdbscan" ? "Cluster WR" : "Confidence";
+            const confLabel =
+              aiMethodProp === "hdbscan" ? "Cluster WR" : "Confidence";
 
             return (
               <div
@@ -23288,7 +23315,7 @@ function ClusterMapInner({
                   {title}
                 </div>
 
-                {aiMethod === "hdbscan" && (
+                {aiMethodProp === "hdbscan" && (
                   <div
                     style={{
                       marginTop: 4,
@@ -23717,7 +23744,7 @@ function ClusterMapInner({
             />
           </div>
 
-          {aiMethod !== "hdbscan" ? (
+          {aiMethodProp !== "hdbscan" ? (
             <div
               className="rounded-xl border border-neutral-800"
               style={{
@@ -36713,13 +36740,13 @@ export default function App() {
                         ? "0 10px 24px rgba(0,0,0,0.45)"
                         : "0 14px 34px rgba(0,0,0,0.58)",
                   }}
-                  title="Cycle stop logic (Off → Break‑Even → Trailing)"
+                  title="Cycle stop logic (Off -> Break-Even -> Trailing)"
                 >
                   Stop Mode ·{" "}
                   {stopMode === 0
                     ? "Off"
                     : stopMode === 1
-                    ? "Break‑Even"
+                    ? "Break-Even"
                     : "Trailing"}
                 </button>
               </div>
@@ -36727,7 +36754,7 @@ export default function App() {
               <div
                 style={{ display: "flex", flexDirection: "column", gap: 10 }}
               >
-                {/* Break‑Even Trigger */}
+                {/* Break-Even Trigger */}
                 <div
                   style={{
                     opacity: stopMode === 1 ? 1 : 0.38,
@@ -36743,7 +36770,7 @@ export default function App() {
                       color: "rgba(255,255,255,0.78)",
                     }}
                   >
-                    <span>Break‑Even Trigger</span>
+                    <span>Break-Even Trigger</span>
                     <span
                       style={{
                         color: "rgba(255,255,255,0.92)",

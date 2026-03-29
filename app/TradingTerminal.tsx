@@ -11758,7 +11758,7 @@ export default function TradingTerminal({ aiZipModelNames }: TradingTerminalProp
                         password: event.target.value
                       }))
                     }
-                    placeholder="????????"
+                    placeholder="Choose a password"
                     autoComplete={authMode === "login" ? "current-password" : "new-password"}
                     disabled={formDisabled}
                   />
@@ -30498,12 +30498,12 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                           }}
                           style={{ width: "100%", marginBottom: "0.5rem" }}
                         >
-                          {stopMode === 0 ? "Off" : stopMode === 1 ? "Break?Even" : "Trailing"}
+                          {stopMode === 0 ? "Off" : stopMode === 1 ? "Break-Even" : "Trailing"}
                         </button>
 
                         <div style={{ opacity: stopMode === 1 ? 1 : 0.38, pointerEvents: stopMode === 1 ? "auto" : "none", marginBottom: "0.35rem" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.78)" }}>
-                            <span>Break?Even Trigger</span>
+                            <span>Break-Even Trigger</span>
                             <span style={{ color: "rgba(255,255,255,0.92)", fontWeight: 800 }}>{Math.round(breakEvenTriggerPct)}%</span>
                           </div>
                           <input
