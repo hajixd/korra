@@ -658,9 +658,6 @@ type PackedBacktestAnalyticsTradePayload = [
   string,
   number,
   number,
-  string,
-  string,
-  string,
   number,
   number,
   number,
@@ -887,9 +884,6 @@ const toBacktestAnalyticsTradePayload = (
   trade.exitReason,
   trade.pnlPct,
   trade.pnlUsd,
-  trade.time,
-  trade.entryAt,
-  trade.exitAt,
   Number(trade.entryTime),
   Number(trade.exitTime),
   trade.entryPrice,
@@ -1224,9 +1218,10 @@ const panelAnalyticsClientCache = new Map<
   { expiresAt: number; value: PanelAnalyticsServerResponse }
 >();
 const panelAnalyticsClientInFlight = new Map<string, Promise<PanelAnalyticsServerResponse>>();
-const BACKTEST_ANALYTICS_CLIENT_CACHE_TTL_MS = 15_000;
-const BACKTEST_ANALYTICS_CLIENT_CACHE_MAX = 6;
+const BACKTEST_ANALYTICS_CLIENT_CACHE_TTL_MS = 300_000;
+const BACKTEST_ANALYTICS_CLIENT_CACHE_MAX = 12;
 const BACKTEST_ANALYTICS_SERVER_MAX_REQUEST_CHARS = 900_000;
+const BACKTEST_ANALYTICS_PREFETCH_DELAY_MS = 180;
 const backtestAnalyticsClientCache = new Map<
   string,
   { expiresAt: number; value: BacktestAnalyticsServerResponse }
@@ -22015,13 +22010,32 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     isBacktestAnalyticsVisible && deferredBacktestTab === "entryExit";
   const isPropFirmBacktestTabActive =
     isBacktestAnalyticsVisible && deferredBacktestTab === "propFirm";
-  const shouldComputeBacktestAnalyticsOnServer =
+  const shouldRequestBacktestAnalyticsBundle =
     isBacktestAnalyticsVisible &&
     (
       isCalendarBacktestTabActive ||
       isPerformanceStatsBacktestTabActive ||
       isEntryExitBacktestTabActive ||
-      isClusterBacktestTabActive ||
+      isClusterBacktestTabActive
+    );
+  const shouldIncludeCalendarBacktestAnalytics =
+    shouldRequestBacktestAnalyticsBundle || isCalendarBacktestTabActive;
+  const shouldIncludePerformanceStatsBacktestAnalytics =
+    shouldRequestBacktestAnalyticsBundle || isPerformanceStatsBacktestTabActive;
+  const shouldIncludeEntryExitBacktestAnalytics =
+    shouldRequestBacktestAnalyticsBundle || isEntryExitBacktestTabActive;
+  const shouldIncludeClusterBacktestAnalytics =
+    shouldRequestBacktestAnalyticsBundle || isClusterBacktestTabActive;
+  const effectiveBacktestAnalyticsSelectedDateKey = isCalendarBacktestTabActive
+    ? selectedBacktestDateKey
+    : "";
+  const effectiveBacktestAnalyticsPerformanceStatsModel = isPerformanceStatsBacktestTabActive
+    ? performanceStatsModel
+    : "All";
+  const shouldComputeBacktestAnalyticsOnServer =
+    isBacktestAnalyticsVisible &&
+    (
+      shouldRequestBacktestAnalyticsBundle ||
       (deferredBacktestTab === "mainStats" && appliedBacktestSettings.aiMode !== "off")
     );
   const isBacktestTabDataPending = selectedBacktestTab !== deferredBacktestTab;
@@ -22315,6 +22329,56 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [backtestAnalyticsData, setBacktestAnalyticsData] =
     useState<BacktestAnalyticsServerResponse>(EMPTY_BACKTEST_ANALYTICS_RESPONSE);
   useEffect(() => {
+    if (
+      !isBacktestAnalyticsVisible ||
+      shouldRequestBacktestAnalyticsBundle ||
+      !backtestHasRun ||
+      !backtestHistorySeedReady ||
+      (backtestTrades.length === 0 && baselineMainStatsTrades.length === 0)
+    ) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void computeBacktestAnalyticsOnServer({
+        backtestTrades,
+        baselineMainStatsTrades,
+        confidenceByIdEntries: backtestAnalyticsConfidenceEntries,
+        aiMode: appliedBacktestSettings.aiMode,
+        inPreciseEnabled: appliedBacktestSettings.inPreciseEnabled,
+        confidenceGateDisabled: appliedConfidenceGateDisabled,
+        selectedBacktestDateKey: "",
+        statsDateStart: appliedBacktestSettings.statsDateStart,
+        statsDateEnd: appliedBacktestSettings.statsDateEnd,
+        performanceStatsModel,
+        isCalendarBacktestTabActive: true,
+        isPerformanceStatsBacktestTabActive: true,
+        isEntryExitBacktestTabActive: true,
+        isClusterBacktestTabActive: true
+      }).catch(() => {
+        // Warm-cache request is additive only.
+      });
+    }, BACKTEST_ANALYTICS_PREFETCH_DELAY_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    appliedBacktestSettings.aiMode,
+    appliedBacktestSettings.inPreciseEnabled,
+    appliedBacktestSettings.statsDateEnd,
+    appliedBacktestSettings.statsDateStart,
+    appliedConfidenceGateDisabled,
+    baselineMainStatsTrades,
+    backtestHasRun,
+    backtestHistorySeedReady,
+    backtestTrades,
+    isBacktestAnalyticsVisible,
+    shouldRequestBacktestAnalyticsBundle,
+    backtestAnalyticsConfidenceEntries,
+    performanceStatsModel
+  ]);
+  useEffect(() => {
     if (!isBacktestAnalyticsVisible || !backtestHasRun || !backtestHistorySeedReady) {
       return;
     }
@@ -22328,7 +22392,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         buildBacktestAnalyticsFallbackResponse({
           backtestTrades,
           baselineMainStatsTrades,
-          selectedBacktestDateKey,
+          selectedBacktestDateKey: effectiveBacktestAnalyticsSelectedDateKey,
           statsDateStart: appliedBacktestSettings.statsDateStart,
           statsDateEnd: appliedBacktestSettings.statsDateEnd,
           aiMode: appliedBacktestSettings.aiMode,
@@ -22351,14 +22415,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         aiMode: appliedBacktestSettings.aiMode,
         inPreciseEnabled: appliedBacktestSettings.inPreciseEnabled,
         confidenceGateDisabled: appliedConfidenceGateDisabled,
-        selectedBacktestDateKey,
+        selectedBacktestDateKey: effectiveBacktestAnalyticsSelectedDateKey,
         statsDateStart: appliedBacktestSettings.statsDateStart,
         statsDateEnd: appliedBacktestSettings.statsDateEnd,
-        performanceStatsModel,
-        isCalendarBacktestTabActive,
-        isPerformanceStatsBacktestTabActive,
-        isEntryExitBacktestTabActive,
-        isClusterBacktestTabActive
+        performanceStatsModel: effectiveBacktestAnalyticsPerformanceStatsModel,
+        isCalendarBacktestTabActive: shouldIncludeCalendarBacktestAnalytics,
+        isPerformanceStatsBacktestTabActive: shouldIncludePerformanceStatsBacktestAnalytics,
+        isEntryExitBacktestTabActive: shouldIncludeEntryExitBacktestAnalytics,
+        isClusterBacktestTabActive: shouldIncludeClusterBacktestAnalytics
       },
       controller.signal
     )
@@ -22378,7 +22442,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           buildBacktestAnalyticsFallbackResponse({
             backtestTrades,
             baselineMainStatsTrades,
-            selectedBacktestDateKey,
+            selectedBacktestDateKey: effectiveBacktestAnalyticsSelectedDateKey,
             statsDateStart: appliedBacktestSettings.statsDateStart,
             statsDateEnd: appliedBacktestSettings.statsDateEnd,
             aiMode: appliedBacktestSettings.aiMode,
@@ -22404,13 +22468,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     backtestTrades,
     getEffectiveTradeConfidenceScore,
     isBacktestAnalyticsVisible,
-    isCalendarBacktestTabActive,
-    isClusterBacktestTabActive,
-    isEntryExitBacktestTabActive,
-    isPerformanceStatsBacktestTabActive,
+    shouldIncludeCalendarBacktestAnalytics,
+    shouldIncludeClusterBacktestAnalytics,
+    shouldIncludeEntryExitBacktestAnalytics,
+    shouldIncludePerformanceStatsBacktestAnalytics,
     backtestAnalyticsConfidenceEntries,
-    performanceStatsModel,
-    selectedBacktestDateKey,
+    effectiveBacktestAnalyticsPerformanceStatsModel,
+    effectiveBacktestAnalyticsSelectedDateKey,
     shouldComputeBacktestAnalyticsOnServer
   ]);
 
@@ -22425,13 +22489,19 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const mainStatsAiEfficacyPct = backtestAnalyticsData.mainStatsAiEfficacyPct;
   const entryExitStats = backtestAnalyticsData.entryExitStats;
   const entryExitChartData = backtestAnalyticsData.entryExitChartData;
+  const shouldHydrateCopytradeBacktestState = selectedSurfaceTab === "copytrade";
   const copytradeDashboardSeed = useMemo(() => {
-    if (!backtestHasRun || !backtestHistorySeedReady) {
+    if (
+      !shouldHydrateCopytradeBacktestState ||
+      !backtestHasRun ||
+      !backtestHistorySeedReady
+    ) {
       return null;
     }
 
     return buildCopytradeDashboardSeed(backtestTrades, getEffectiveTradeConfidenceScore);
   }, [
+    shouldHydrateCopytradeBacktestState,
     backtestHasRun,
     backtestHistorySeedReady,
     backtestTrades,
