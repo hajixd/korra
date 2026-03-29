@@ -1177,6 +1177,7 @@ const EMPTY_PANEL_ANALYTICS_DATA: PanelAnalyticsServerResponse = {
 
 const PANEL_ANALYTICS_CLIENT_CACHE_TTL_MS = 15_000;
 const PANEL_ANALYTICS_CLIENT_CACHE_MAX = 6;
+const PANEL_ANALYTICS_SERVER_MAX_REQUEST_CHARS = 1_500_000;
 const panelAnalyticsClientCache = new Map<
   string,
   { expiresAt: number; value: PanelAnalyticsServerResponse }
@@ -1262,6 +1263,9 @@ const computePanelAnalyticsOnServer = async (
   }
 
   const requestText = JSON.stringify(requestBody);
+  if (requestText.length > PANEL_ANALYTICS_SERVER_MAX_REQUEST_CHARS) {
+    throw new Error("Panel analytics payload too large for server transport.");
+  }
   const cacheKey = hashStableText(requestText);
   const nowMs = Date.now();
   prunePanelAnalyticsClientCache(nowMs);
@@ -17069,6 +17073,42 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     activePanelEffectiveConfidenceThreshold,
     activePanelEffectiveAncThreshold
   ]);
+  const fallbackPanelAnalyticsData = useMemo<PanelAnalyticsServerResponse>(() => {
+    const dateFilteredTrades = filterTradesByDateRange(
+      panelSourceTrades,
+      panelBacktestFilterSettings.statsDateStart,
+      panelBacktestFilterSettings.statsDateEnd
+    );
+    const timeFilteredTrades = filterTradesBySessionBuckets(dateFilteredTrades, {
+      enabledBacktestWeekdays: panelBacktestFilterSettings.enabledBacktestWeekdays,
+      enabledBacktestSessions: panelBacktestFilterSettings.enabledBacktestSessions,
+      enabledBacktestMonths: panelBacktestFilterSettings.enabledBacktestMonths,
+      enabledBacktestHours: panelBacktestFilterSettings.enabledBacktestHours
+    });
+    const confidenceByIdEntries = timeFilteredTrades.map(
+      (trade) =>
+        [
+          trade.id,
+          getTradeConfidenceScore(trade, {
+            inPreciseEnabled: panelBacktestFilterSettings.inPreciseEnabled
+          })
+        ] as [string, number]
+    );
+
+    return {
+      dateFilteredTrades,
+      libraryCandidateTrades: timeFilteredTrades,
+      timeFilteredTrades,
+      confidenceByIdEntries,
+      chartPanelHistoryRows: fallbackChartPanelHistoryRows,
+      activePanelHistoryRows: fallbackActivePanelHistoryRows
+    };
+  }, [
+    fallbackActivePanelHistoryRows,
+    fallbackChartPanelHistoryRows,
+    panelBacktestFilterSettings,
+    panelSourceTrades
+  ]);
   const panelAnalyticsLibraryIdSet = useMemo(() => {
     return new Set(
       appliedRuntimeAiLibraryIds.map((libraryId) => String(libraryId).trim())
@@ -17139,7 +17179,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     }
 
     if (panelAnalyticsCanonicalLibrariesMissingPoints) {
-      setPanelAnalyticsStatus("error");
+      setPanelAnalyticsData(fallbackPanelAnalyticsData);
+      setPanelAnalyticsStatus("ready");
       return;
     }
 
@@ -17179,7 +17220,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         if (cancelled || controller.signal.aborted) {
           return;
         }
-        setPanelAnalyticsStatus("error");
+        setPanelAnalyticsData(fallbackPanelAnalyticsData);
+        setPanelAnalyticsStatus("ready");
       });
 
     return () => {
@@ -17198,6 +17240,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     panelEffectiveConfidenceThreshold,
     panelEffectiveAncThreshold,
     panelAnalyticsCanonicalLibrariesMissingPoints,
+    fallbackPanelAnalyticsData,
     panelAnalyticsLibraryPoints,
     panelAnalyticsLibrarySourcesSettled,
     panelSourceTrades,
