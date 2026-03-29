@@ -27,13 +27,13 @@
       "trailingStartPct": 50,
       "trailingDistPct": 30,
       "lastError": null,
-      "lastHeartbeatAt": 1774745009139,
+      "lastHeartbeatAt": 1774745021944,
       "lastSignalId": null,
       "lastSignalSide": null,
       "lastActionAt": null,
       "openPosition": null,
       "createdAt": 1773278255893,
-      "updatedAt": 1774745009140
+      "updatedAt": 1774745021944
     },
     {
       "id": "cta-metaapi-2f292998-1377-4add-8ed9-72135f8a2465",
@@ -61,13 +61,13 @@
       "trailingStartPct": 50,
       "trailingDistPct": 30,
       "lastError": null,
-      "lastHeartbeatAt": 1774745009142,
+      "lastHeartbeatAt": 1774745021949,
       "lastSignalId": null,
       "lastSignalSide": null,
       "lastActionAt": null,
       "openPosition": null,
       "createdAt": 1773010113858,
-      "updatedAt": 1774745009142
+      "updatedAt": 1774745021949
     }
   ]
 }
