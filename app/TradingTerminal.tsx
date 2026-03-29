@@ -1218,7 +1218,7 @@ const EMPTY_PANEL_ANALYTICS_DATA: PanelAnalyticsServerResponse = {
 
 const PANEL_ANALYTICS_CLIENT_CACHE_TTL_MS = 15_000;
 const PANEL_ANALYTICS_CLIENT_CACHE_MAX = 6;
-const PANEL_ANALYTICS_SERVER_MAX_REQUEST_CHARS = 1_500_000;
+const PANEL_ANALYTICS_SERVER_MAX_REQUEST_CHARS = 900_000;
 const panelAnalyticsClientCache = new Map<
   string,
   { expiresAt: number; value: PanelAnalyticsServerResponse }
@@ -1226,7 +1226,7 @@ const panelAnalyticsClientCache = new Map<
 const panelAnalyticsClientInFlight = new Map<string, Promise<PanelAnalyticsServerResponse>>();
 const BACKTEST_ANALYTICS_CLIENT_CACHE_TTL_MS = 15_000;
 const BACKTEST_ANALYTICS_CLIENT_CACHE_MAX = 6;
-const BACKTEST_ANALYTICS_SERVER_MAX_REQUEST_CHARS = 1_500_000;
+const BACKTEST_ANALYTICS_SERVER_MAX_REQUEST_CHARS = 900_000;
 const backtestAnalyticsClientCache = new Map<
   string,
   { expiresAt: number; value: BacktestAnalyticsServerResponse }
@@ -7565,6 +7565,546 @@ const filterHistoryRowsLocally = (params: {
   );
 };
 
+type LocalPanelLibraryPoint = {
+  uid: string;
+  libraryId: string;
+  entryTime: number | null;
+  vector: number[] | null;
+  direction: number | null;
+  label: number | null;
+  outcome: "Win" | "Loss" | null;
+  pnlUsd: number | null;
+  session: string | null;
+  model: string | null;
+};
+
+type LocalPanelQueryMeta = {
+  session: string | null;
+  month: number | null;
+  dow: number | null;
+  hour: number | null;
+};
+
+const LOCAL_PANEL_ANALYTICS_EPS = 1e-8;
+
+const toFiniteLocalVector = (value: unknown): number[] | null => {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const vector = value
+    .map((entry) => Number(entry))
+    .filter((entry) => Number.isFinite(entry));
+
+  return vector.length > 0 ? vector : null;
+};
+
+const dotLocalVector = (left: number[], right: number[]) => {
+  const dim = Math.min(left.length, right.length);
+  let total = 0;
+  for (let index = 0; index < dim; index += 1) {
+    total += left[index]! * right[index]!;
+  }
+  return total;
+};
+
+const normLocalVector = (value: number[]) => {
+  return Math.sqrt(Math.max(LOCAL_PANEL_ANALYTICS_EPS, dotLocalVector(value, value)));
+};
+
+const normalizeLocalOutcome = (params: {
+  label: unknown;
+  outcome: unknown;
+  pnlUsd: unknown;
+}): { label: number | null; outcome: "Win" | "Loss" | null } => {
+  const explicitLabel = Number(params.label);
+  if (Number.isFinite(explicitLabel)) {
+    if (explicitLabel > 0) {
+      return { label: 1, outcome: "Win" };
+    }
+    if (explicitLabel < 0) {
+      return { label: -1, outcome: "Loss" };
+    }
+  }
+
+  const rawOutcome = String(params.outcome ?? "").trim().toUpperCase();
+  if (
+    rawOutcome === "WIN" ||
+    rawOutcome === "TP" ||
+    rawOutcome.includes("WIN") ||
+    rawOutcome.includes("TAKE PROFIT")
+  ) {
+    return { label: 1, outcome: "Win" };
+  }
+  if (
+    rawOutcome === "LOSS" ||
+    rawOutcome === "SL" ||
+    rawOutcome.includes("LOSS") ||
+    rawOutcome.includes("STOP LOSS")
+  ) {
+    return { label: -1, outcome: "Loss" };
+  }
+
+  const pnlUsd = Number(params.pnlUsd);
+  if (Number.isFinite(pnlUsd)) {
+    return {
+      label: pnlUsd >= 0 ? 1 : -1,
+      outcome: pnlUsd >= 0 ? "Win" : "Loss"
+    };
+  }
+
+  return { label: null, outcome: null };
+};
+
+const getLocalPanelTradeDirection = (trade: HistoryItem) =>
+  trade.side === "Short" ? -1 : 1;
+
+const getLocalPanelQueryMeta = (entryTimeSeconds: number): LocalPanelQueryMeta => {
+  const timestampMs = Number(entryTimeSeconds) * 1000;
+  const date = new Date(timestampMs);
+
+  if (Number.isNaN(date.getTime())) {
+    return {
+      session: null,
+      month: null,
+      dow: null,
+      hour: null
+    };
+  }
+
+  return {
+    session: getSessionLabel(entryTimeSeconds as UTCTimestamp),
+    month: date.getUTCMonth() + 1,
+    dow: date.getUTCDay(),
+    hour: date.getUTCHours()
+  };
+};
+
+const pointPassesLocalPanelDomains = (
+  point: LocalPanelLibraryPoint,
+  trade: HistoryItem,
+  selectedDomains: Set<string>,
+  queryMeta: LocalPanelQueryMeta
+) => {
+  if (selectedDomains.size === 0) {
+    return true;
+  }
+
+  if (selectedDomains.has("Direction")) {
+    if (point.direction == null || point.direction !== getLocalPanelTradeDirection(trade)) {
+      return false;
+    }
+  }
+
+  if (selectedDomains.has("Model")) {
+    const queryModel = String(trade.entrySource ?? "").trim();
+    const pointModel = String(point.model ?? "").trim();
+    const pointUsesGenericBaseModel =
+      (point.libraryId === "base" ||
+        point.libraryId === "tokyo" ||
+        point.libraryId === "sydney" ||
+        point.libraryId === "london" ||
+        point.libraryId === "newyork") &&
+      (!pointModel || pointModel.toLowerCase() === "base seeding");
+    if (!pointUsesGenericBaseModel && (!queryModel || pointModel !== queryModel)) {
+      return false;
+    }
+  }
+
+  const pointMeta =
+    point.entryTime == null
+      ? {
+          session: point.session ?? null,
+          month: null,
+          dow: null,
+          hour: null
+        }
+      : {
+          ...getLocalPanelQueryMeta(point.entryTime),
+          session: point.session ?? getLocalPanelQueryMeta(point.entryTime).session
+        };
+
+  if (selectedDomains.has("Session") && queryMeta.session != null) {
+    if (pointMeta.session !== queryMeta.session) {
+      return false;
+    }
+  }
+  if (selectedDomains.has("Month") && queryMeta.month != null) {
+    if (pointMeta.month !== queryMeta.month) {
+      return false;
+    }
+  }
+  if (selectedDomains.has("Weekday") && queryMeta.dow != null) {
+    if (pointMeta.dow !== queryMeta.dow) {
+      return false;
+    }
+  }
+  if (selectedDomains.has("Hour") && queryMeta.hour != null) {
+    if (pointMeta.hour !== queryMeta.hour) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const getLocalPanelVectorDistance = (
+  left: number[],
+  right: number[],
+  metric: AiDistanceMetric
+) => {
+  const dim = Math.min(left.length, right.length);
+  if (dim <= 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  if (metric === "cosine") {
+    const dot = dotLocalVector(left, right);
+    const denom = normLocalVector(left) * normLocalVector(right);
+    if (!Number.isFinite(denom) || denom <= 0) {
+      return Number.POSITIVE_INFINITY;
+    }
+    return 1 - dot / denom;
+  }
+
+  if (metric === "manhattan") {
+    let total = 0;
+    for (let index = 0; index < dim; index += 1) {
+      total += Math.abs(left[index]! - right[index]!);
+    }
+    return total;
+  }
+
+  if (metric === "chebyshev") {
+    let maxDistance = 0;
+    for (let index = 0; index < dim; index += 1) {
+      maxDistance = Math.max(maxDistance, Math.abs(left[index]! - right[index]!));
+    }
+    return maxDistance;
+  }
+
+  let total = 0;
+  for (let index = 0; index < dim; index += 1) {
+    const delta = left[index]! - right[index]!;
+    total += delta * delta;
+  }
+  return Math.sqrt(total);
+};
+
+const buildLocalPanelEntryNeighbor = (
+  point: LocalPanelLibraryPoint,
+  distance: number,
+  weight: number,
+  trade: HistoryItem | null = null
+): BacktestEntryNeighbor => {
+  const fallbackSide =
+    point.direction === -1 ? "Short" : point.direction === 1 ? "Long" : undefined;
+
+  return {
+    uid: point.uid,
+    metaUid: point.uid,
+    metaTime: point.entryTime,
+    metaPnl: point.pnlUsd,
+    metaOutcome: point.outcome,
+    metaSession: point.session,
+    metaLib: point.libraryId,
+    metaSuppressed: point.libraryId === "suppressed",
+    dir: point.direction,
+    label: point.label,
+    d: Number.isFinite(distance) ? distance : Number.MAX_SAFE_INTEGER,
+    w: Number.isFinite(weight) && weight > 0 ? weight : 1,
+    t: {
+      id: trade?.id ?? point.uid,
+      uid: trade?.id ?? point.uid,
+      tradeUid: trade?.id ?? point.uid,
+      direction: point.direction ?? undefined,
+      entryTime: point.entryTime ?? undefined,
+      pnl: point.pnlUsd ?? undefined,
+      result: point.outcome ?? undefined,
+      session: point.session ?? undefined,
+      entryModel: point.model ?? undefined,
+      chunkType: point.model ?? undefined,
+      model: point.model ?? undefined,
+      side: trade?.side ?? fallbackSide
+    }
+  };
+};
+
+const computeLocalPanelAiSnapshots = (params: {
+  sourceTrades: HistoryItem[];
+  settings: BacktestFilterSettings;
+  libraryPoints: any[];
+  aiLibraryDefaultsById: Record<string, Record<string, AiLibrarySettingValue>>;
+}) => {
+  const {
+    sourceTrades,
+    settings,
+    libraryPoints,
+    aiLibraryDefaultsById
+  } = params;
+  const dateFilteredTrades = filterTradesByDateRange(
+    sourceTrades,
+    settings.statsDateStart,
+    settings.statsDateEnd
+  );
+  const activeLibraryIds = (settings.selectedAiLibraries ?? [])
+    .map((libraryId) => String(libraryId ?? "").trim())
+    .filter((libraryId) => libraryId.length > 0);
+  const selectedDomains = new Set(
+    (settings.selectedAiDomains ?? [])
+      .map((domain) => String(domain ?? "").trim())
+      .filter((domain) => domain.length > 0)
+  );
+  const libraryWeights = new Map<string, number>();
+  for (const libraryId of activeLibraryIds) {
+    const rawWeight = Number(
+      settings.selectedAiLibrarySettings?.[libraryId]?.weight ??
+        aiLibraryDefaultsById[libraryId]?.weight ??
+        1
+    );
+    libraryWeights.set(
+      libraryId,
+      Number.isFinite(rawWeight) && rawWeight > 0 ? rawWeight : 1
+    );
+  }
+
+  const pointsByLibrary = new Map<string, LocalPanelLibraryPoint[]>();
+  for (const point of libraryPoints as any[]) {
+    const libraryId = String(point?.libId ?? point?.metaLib ?? "").trim();
+    if (!libraryId || !libraryWeights.has(libraryId)) {
+      continue;
+    }
+    const uid = String(point?.uid ?? point?.id ?? "").trim();
+    if (!uid) {
+      continue;
+    }
+    const vector = toFiniteLocalVector(point?.v);
+    if (!vector || vector.length === 0) {
+      continue;
+    }
+    const entryTimeRaw =
+      point?.entryTime == null ? point?.metaTime : point?.entryTime;
+    const entryTime = Number(entryTimeRaw);
+    const pnlUsdRaw = Number(point?.metaPnl ?? point?.pnl ?? NaN);
+    const directionRaw = Number(point?.dir ?? NaN);
+    const normalizedOutcome = normalizeLocalOutcome({
+      label: point?.label,
+      outcome: point?.metaOutcome ?? point?.result,
+      pnlUsd: pnlUsdRaw
+    });
+
+    const normalizedPoint: LocalPanelLibraryPoint = {
+      uid,
+      libraryId,
+      entryTime: Number.isFinite(entryTime) ? entryTime : null,
+      vector,
+      direction: Number.isFinite(directionRaw) ? directionRaw : null,
+      label: normalizedOutcome.label,
+      outcome: normalizedOutcome.outcome,
+      pnlUsd: Number.isFinite(pnlUsdRaw) ? pnlUsdRaw : null,
+      session:
+        point?.metaSession != null && String(point.metaSession).trim()
+          ? String(point.metaSession)
+          : Number.isFinite(entryTime)
+            ? getSessionLabel(entryTime as UTCTimestamp)
+            : null,
+      model:
+        point?.metaModel != null && String(point.metaModel).trim()
+          ? String(point.metaModel)
+          : point?.model != null && String(point.model).trim()
+            ? String(point.model)
+            : null
+    };
+
+    const libraryBucket = pointsByLibrary.get(libraryId) ?? [];
+    libraryBucket.push(normalizedPoint);
+    pointsByLibrary.set(libraryId, libraryBucket);
+  }
+
+  const hydratedDateFilteredTrades = dateFilteredTrades.map((trade) =>
+    hydrateFallbackPanelTrade(trade, {
+      inPreciseEnabled: settings.inPreciseEnabled
+    })
+  );
+
+  const hydratedTimeFilteredTrades = filterTradesBySessionBuckets(hydratedDateFilteredTrades, {
+    enabledBacktestWeekdays: settings.enabledBacktestWeekdays,
+    enabledBacktestSessions: settings.enabledBacktestSessions,
+    enabledBacktestMonths: settings.enabledBacktestMonths,
+    enabledBacktestHours: settings.enabledBacktestHours
+  }).map((trade) =>
+    hydrateFallbackPanelTrade(trade, {
+      inPreciseEnabled: settings.inPreciseEnabled
+    })
+  );
+
+  if (
+    settings.aiMode === "off" ||
+    activeLibraryIds.length === 0 ||
+    pointsByLibrary.size === 0
+  ) {
+    return {
+      dateFilteredTrades: hydratedDateFilteredTrades,
+      timeFilteredTrades: hydratedTimeFilteredTrades,
+      libraryCandidateTrades: hydratedTimeFilteredTrades,
+      confidenceByIdEntries: hydratedTimeFilteredTrades.map(
+        (trade) =>
+          [
+            trade.id,
+            resolveTradePanelConfidenceScore(trade, {
+              inPreciseEnabled: settings.inPreciseEnabled
+            })
+          ] as [string, number]
+      )
+    };
+  }
+
+  const enrichedTradeById = new Map<string, HistoryItem>();
+  const confidenceByIdEntries: Array<[string, number]> = [];
+  const neighborCap = Math.max(1, Math.floor(Number(settings.kEntry) || 0) || 1);
+
+  for (const trade of hydratedTimeFilteredTrades) {
+    const preservedTrade = hydrateFallbackPanelTrade(trade, {
+      inPreciseEnabled: settings.inPreciseEnabled
+    });
+    const queryVector =
+      ((preservedTrade as any).neighborVector as number[] | null | undefined) ??
+      buildTradeNeighborVector(preservedTrade, {
+        inPreciseEnabled: settings.inPreciseEnabled
+      });
+    const preservedNeighbors = cloneTradeEntryNeighbors(preservedTrade.entryNeighbors);
+    const queryMeta = getLocalPanelQueryMeta(Number(preservedTrade.entryTime));
+    const tradeIds = new Set(
+      [
+        preservedTrade.id,
+        (preservedTrade as any).tradeUid
+      ]
+        .map((value) => String(value ?? "").trim())
+        .filter((value) => value.length > 0)
+    );
+    const rankedCandidates: Array<{
+      point: LocalPanelLibraryPoint;
+      distance: number;
+      weight: number;
+    }> = [];
+
+    for (const libraryId of activeLibraryIds) {
+      const libraryPointsForId = pointsByLibrary.get(libraryId) ?? [];
+      if (libraryPointsForId.length === 0) {
+        continue;
+      }
+
+      const libraryWeight = libraryWeights.get(libraryId) ?? 1;
+
+      for (const point of libraryPointsForId) {
+        if (tradeIds.has(point.uid)) {
+          continue;
+        }
+        if (
+          settings.antiCheatEnabled &&
+          point.entryTime != null &&
+          Number.isFinite(Number(preservedTrade.entryTime)) &&
+          point.entryTime >= Number(preservedTrade.entryTime)
+        ) {
+          continue;
+        }
+        if (!pointPassesLocalPanelDomains(point, preservedTrade, selectedDomains, queryMeta)) {
+          continue;
+        }
+
+        const distance = getLocalPanelVectorDistance(
+          queryVector,
+          point.vector ?? [],
+          settings.distanceMetric
+        );
+        if (!Number.isFinite(distance)) {
+          continue;
+        }
+
+        rankedCandidates.push({
+          point,
+          distance,
+          weight: libraryWeight
+        });
+      }
+    }
+
+    rankedCandidates.sort(
+      (left, right) =>
+        left.distance - right.distance ||
+        right.weight - left.weight ||
+        Number(right.point.entryTime ?? 0) - Number(left.point.entryTime ?? 0) ||
+        left.point.uid.localeCompare(right.point.uid)
+    );
+
+    const rankedNeighbors = rankedCandidates
+      .slice(0, neighborCap)
+      .map(({ point, distance, weight }) =>
+        buildLocalPanelEntryNeighbor(point, distance, weight)
+      );
+
+    const resolvedConfidence =
+      computeNeighborConfidenceScore(rankedNeighbors, {
+        maxNeighbors: neighborCap,
+        sortByDistance: true
+      }) ??
+      resolveTradePanelConfidenceScore(preservedTrade, {
+        inPreciseEnabled: settings.inPreciseEnabled
+      });
+    const resolvedAnc =
+      resolveExplicitAiConfidenceScore(
+        {
+          averageNeighborContributionAtEntry:
+            preservedTrade.averageNeighborContributionAtEntry
+        },
+        ["averageNeighborContributionAtEntry"]
+      ) ??
+      computeAverageNeighborContributionAtEntryScore(
+        rankedNeighbors.length > 0 ? rankedNeighbors : preservedNeighbors
+      );
+    const enrichedTrade = hydrateFallbackPanelTrade(
+      {
+        ...preservedTrade,
+        entryNeighbors: rankedNeighbors.length > 0 ? rankedNeighbors : preservedNeighbors,
+        closestClusterUid:
+          rankedNeighbors.length > 0
+            ? String(rankedNeighbors[0]?.metaUid ?? rankedNeighbors[0]?.uid ?? "").trim() ||
+              preservedTrade.closestClusterUid ||
+              null
+            : preservedTrade.closestClusterUid ?? null,
+        averageNeighborContributionAtEntry: resolvedAnc,
+        aiMode: settings.aiMode,
+        entryConfidence: resolvedConfidence,
+        confidence: resolvedConfidence,
+        aiConfidence: resolvedConfidence,
+        entryMargin: resolvedConfidence,
+        margin: resolvedConfidence
+      },
+      {
+        inPreciseEnabled: settings.inPreciseEnabled
+      }
+    );
+
+    enrichedTradeById.set(enrichedTrade.id, enrichedTrade);
+    confidenceByIdEntries.push([enrichedTrade.id, resolveTradePanelConfidenceScore(enrichedTrade, {
+      inPreciseEnabled: settings.inPreciseEnabled
+    })]);
+  }
+
+  const applyLocalTradeEnrichment = (trade: HistoryItem) =>
+    enrichedTradeById.get(trade.id) ??
+    hydrateFallbackPanelTrade(trade, {
+      inPreciseEnabled: settings.inPreciseEnabled
+    });
+
+  return {
+    dateFilteredTrades: hydratedDateFilteredTrades.map(applyLocalTradeEnrichment),
+    timeFilteredTrades: hydratedTimeFilteredTrades.map(applyLocalTradeEnrichment),
+    libraryCandidateTrades: hydratedTimeFilteredTrades.map(applyLocalTradeEnrichment),
+    confidenceByIdEntries
+  };
+};
+
 const formatMinutesCompact = (minutes: number): string => {
   if (!Number.isFinite(minutes) || minutes <= 0) {
     return "0m";
@@ -10539,6 +11079,53 @@ const buildModelRunPnlDistributionData = (
     }));
 };
 
+const getModelRunDistributionFill = (midpoint: number) =>
+  midpoint >= 0 ? "rgba(65, 225, 168, 0.82)" : "rgba(255, 107, 107, 0.82)";
+
+const getModelRunDistributionStroke = (midpoint: number) =>
+  midpoint >= 0 ? "rgba(113, 255, 204, 0.96)" : "rgba(255, 154, 154, 0.96)";
+
+const ModelRunDistributionBarShape = (props: any) => {
+  const x = Number(props?.x);
+  const y = Number(props?.y);
+  const width = Number(props?.width);
+  const height = Number(props?.height);
+  const midpoint = Number(props?.payload?.midpoint);
+
+  if (
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return null;
+  }
+
+  const radius = Math.min(6, width / 2, height / 2);
+  const right = x + width;
+  const bottom = y + height;
+  const path = [
+    `M ${x} ${bottom}`,
+    `L ${x} ${y + radius}`,
+    `Q ${x} ${y} ${x + radius} ${y}`,
+    `L ${right - radius} ${y}`,
+    `Q ${right} ${y} ${right} ${y + radius}`,
+    `L ${right} ${bottom}`,
+    "Z"
+  ].join(" ");
+
+  return (
+    <path
+      d={path}
+      fill={getModelRunDistributionFill(midpoint)}
+      stroke={getModelRunDistributionStroke(midpoint)}
+      strokeWidth={1}
+    />
+  );
+};
+
 const ModelRunDistributionChart = ({
   data,
   emptyLabel
@@ -10593,14 +11180,13 @@ const ModelRunDistributionChart = ({
               );
             }}
           />
-          <Bar dataKey="count" radius={[6, 6, 0, 0]} isAnimationActive={false}>
-            {data.map((point) => (
-              <Cell
-                key={point.label}
-                fill={point.midpoint >= 0 ? "rgba(65, 225, 168, 0.82)" : "rgba(255, 107, 107, 0.82)"}
-              />
-            ))}
-          </Bar>
+          <Bar
+            dataKey="count"
+            radius={[6, 6, 0, 0]}
+            isAnimationActive={false}
+            fill="rgba(65, 225, 168, 0.82)"
+            shape={ModelRunDistributionBarShape}
+          />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -17076,88 +17662,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     }
     return next;
   }, [aiLibraryDefById]);
-  const [panelAnalyticsData, setPanelAnalyticsData] = useState<PanelAnalyticsServerResponse>(
-    EMPTY_PANEL_ANALYTICS_DATA
-  );
-  const [panelAnalyticsStatus, setPanelAnalyticsStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [backtestAnalyticsStatus, setBacktestAnalyticsStatus] =
-    useState<"idle" | "loading" | "ready" | "error">("idle");
-  const fallbackChartPanelHistoryRows = useMemo(() => {
-    return filterHistoryRowsLocally({
-      sourceTrades: panelSourceTrades,
-      settings: panelBacktestFilterSettings,
-      confidenceGateDisabled: panelConfidenceGateDisabled,
-      effectiveConfidenceThreshold: panelEffectiveConfidenceThreshold,
-      effectiveAncThreshold: panelEffectiveAncThreshold,
-      confidenceResolver: resolveTradePanelConfidenceScore
-    });
-  }, [
-    panelSourceTrades,
-    panelBacktestFilterSettings,
-    panelConfidenceGateDisabled,
-    panelEffectiveConfidenceThreshold,
-    panelEffectiveAncThreshold
-  ]);
-  const fallbackActivePanelHistoryRows = useMemo(() => {
-    return filterHistoryRowsLocally({
-      sourceTrades: activePanelSourceTrades,
-      settings: activePanelBacktestFilterSettings,
-      confidenceGateDisabled: activePanelConfidenceGateDisabled,
-      effectiveConfidenceThreshold: activePanelEffectiveConfidenceThreshold,
-      effectiveAncThreshold: activePanelEffectiveAncThreshold,
-      confidenceResolver: resolveTradePanelConfidenceScore
-    });
-  }, [
-    activePanelSourceTrades,
-    activePanelBacktestFilterSettings,
-    activePanelConfidenceGateDisabled,
-    activePanelEffectiveConfidenceThreshold,
-    activePanelEffectiveAncThreshold
-  ]);
-  const fallbackPanelAnalyticsData = useMemo<PanelAnalyticsServerResponse>(() => {
-    const dateFilteredTrades = filterTradesByDateRange(
-      panelSourceTrades,
-      panelBacktestFilterSettings.statsDateStart,
-      panelBacktestFilterSettings.statsDateEnd
-    ).map((trade) =>
-      hydrateFallbackPanelTrade(trade, {
-        inPreciseEnabled: panelBacktestFilterSettings.inPreciseEnabled
-      })
-    );
-    const timeFilteredTrades = filterTradesBySessionBuckets(dateFilteredTrades, {
-      enabledBacktestWeekdays: panelBacktestFilterSettings.enabledBacktestWeekdays,
-      enabledBacktestSessions: panelBacktestFilterSettings.enabledBacktestSessions,
-      enabledBacktestMonths: panelBacktestFilterSettings.enabledBacktestMonths,
-      enabledBacktestHours: panelBacktestFilterSettings.enabledBacktestHours
-    }).map((trade) =>
-      hydrateFallbackPanelTrade(trade, {
-        inPreciseEnabled: panelBacktestFilterSettings.inPreciseEnabled
-      })
-    );
-    const confidenceByIdEntries = timeFilteredTrades.map(
-      (trade) =>
-        [
-          trade.id,
-          resolveTradePanelConfidenceScore(trade, {
-            inPreciseEnabled: panelBacktestFilterSettings.inPreciseEnabled
-          })
-        ] as [string, number]
-    );
-
-    return {
-      dateFilteredTrades,
-      libraryCandidateTrades: timeFilteredTrades,
-      timeFilteredTrades,
-      confidenceByIdEntries,
-      chartPanelHistoryRows: fallbackChartPanelHistoryRows,
-      activePanelHistoryRows: fallbackActivePanelHistoryRows
-    };
-  }, [
-    fallbackActivePanelHistoryRows,
-    fallbackChartPanelHistoryRows,
-    panelBacktestFilterSettings,
-    panelSourceTrades
-  ]);
   const panelAnalyticsLibraryIdSet = useMemo(() => {
     return new Set(
       appliedRuntimeAiLibraryIds.map((libraryId) => String(libraryId).trim())
@@ -17214,6 +17718,105 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     panelAnalyticsCanonicalLibraryIds,
     panelAnalyticsCanonicalLibraryPointIdSet,
     panelAnalyticsLibrarySourcesSettled
+  ]);
+  const [panelAnalyticsData, setPanelAnalyticsData] = useState<PanelAnalyticsServerResponse>(
+    EMPTY_PANEL_ANALYTICS_DATA
+  );
+  const [panelAnalyticsStatus, setPanelAnalyticsStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [backtestAnalyticsStatus, setBacktestAnalyticsStatus] =
+    useState<"idle" | "loading" | "ready" | "error">("idle");
+  const fallbackChartPanelHistoryRows = useMemo(() => {
+    return filterHistoryRowsLocally({
+      sourceTrades: panelSourceTrades,
+      settings: panelBacktestFilterSettings,
+      confidenceGateDisabled: panelConfidenceGateDisabled,
+      effectiveConfidenceThreshold: panelEffectiveConfidenceThreshold,
+      effectiveAncThreshold: panelEffectiveAncThreshold,
+      confidenceResolver: resolveTradePanelConfidenceScore
+    });
+  }, [
+    panelSourceTrades,
+    panelBacktestFilterSettings,
+    panelConfidenceGateDisabled,
+    panelEffectiveConfidenceThreshold,
+    panelEffectiveAncThreshold
+  ]);
+  const fallbackActivePanelHistoryRows = useMemo(() => {
+    return filterHistoryRowsLocally({
+      sourceTrades: activePanelSourceTrades,
+      settings: activePanelBacktestFilterSettings,
+      confidenceGateDisabled: activePanelConfidenceGateDisabled,
+      effectiveConfidenceThreshold: activePanelEffectiveConfidenceThreshold,
+      effectiveAncThreshold: activePanelEffectiveAncThreshold,
+      confidenceResolver: resolveTradePanelConfidenceScore
+    });
+  }, [
+    activePanelSourceTrades,
+    activePanelBacktestFilterSettings,
+    activePanelConfidenceGateDisabled,
+    activePanelEffectiveConfidenceThreshold,
+    activePanelEffectiveAncThreshold
+  ]);
+  const fallbackPanelAnalyticsData = useMemo<PanelAnalyticsServerResponse>(() => {
+    const panelLocalAnalytics = computeLocalPanelAiSnapshots({
+      sourceTrades: panelSourceTrades,
+      settings: panelBacktestFilterSettings,
+      libraryPoints: panelAnalyticsLibraryPoints,
+      aiLibraryDefaultsById
+    });
+    const activeLocalAnalytics = shouldSendActivePanelOverrides
+      ? computeLocalPanelAiSnapshots({
+          sourceTrades: activePanelSourceTrades,
+          settings: activePanelBacktestFilterSettings,
+          libraryPoints: panelAnalyticsLibraryPoints,
+          aiLibraryDefaultsById
+        })
+      : panelLocalAnalytics;
+    const chartPanelHistoryRows = filterHistoryRowsLocally({
+      sourceTrades: panelLocalAnalytics.timeFilteredTrades,
+      settings: panelBacktestFilterSettings,
+      confidenceGateDisabled: panelConfidenceGateDisabled,
+      effectiveConfidenceThreshold: panelEffectiveConfidenceThreshold,
+      effectiveAncThreshold: panelEffectiveAncThreshold,
+      confidenceResolver: (trade) =>
+        resolveTradePanelConfidenceScore(trade, {
+          inPreciseEnabled: panelBacktestFilterSettings.inPreciseEnabled
+        })
+    });
+    const activePanelHistoryRows = filterHistoryRowsLocally({
+      sourceTrades: activeLocalAnalytics.timeFilteredTrades,
+      settings: activePanelBacktestFilterSettings,
+      confidenceGateDisabled: activePanelConfidenceGateDisabled,
+      effectiveConfidenceThreshold: activePanelEffectiveConfidenceThreshold,
+      effectiveAncThreshold: activePanelEffectiveAncThreshold,
+      confidenceResolver: (trade) =>
+        resolveTradePanelConfidenceScore(trade, {
+          inPreciseEnabled: activePanelBacktestFilterSettings.inPreciseEnabled
+        })
+    });
+
+    return {
+      dateFilteredTrades: panelLocalAnalytics.dateFilteredTrades,
+      libraryCandidateTrades: panelLocalAnalytics.libraryCandidateTrades,
+      timeFilteredTrades: panelLocalAnalytics.timeFilteredTrades,
+      confidenceByIdEntries: panelLocalAnalytics.confidenceByIdEntries,
+      chartPanelHistoryRows,
+      activePanelHistoryRows
+    };
+  }, [
+    activePanelBacktestFilterSettings,
+    activePanelConfidenceGateDisabled,
+    activePanelEffectiveAncThreshold,
+    activePanelEffectiveConfidenceThreshold,
+    activePanelSourceTrades,
+    aiLibraryDefaultsById,
+    panelAnalyticsLibraryPoints,
+    panelBacktestFilterSettings,
+    panelConfidenceGateDisabled,
+    panelEffectiveAncThreshold,
+    panelEffectiveConfidenceThreshold,
+    panelSourceTrades,
+    shouldSendActivePanelOverrides
   ]);
   useEffect(() => {
     if (!shouldComputePanelAnalyticsOnServer) {
@@ -17297,22 +17900,23 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     shouldSendActivePanelOverrides
   ]);
   const antiCheatBacktestContext = useMemo(() => {
-    if (!shouldComputePanelAnalyticsOnServer || panelAnalyticsStatus !== "ready") {
-      return {
-        dateFilteredTrades: [] as HistoryItem[],
-        libraryCandidateTrades: [] as HistoryItem[],
-        timeFilteredTrades: [] as HistoryItem[],
-        confidenceById: new Map<string, number>()
-      };
-    }
+    const source =
+      shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus === "ready"
+        ? panelAnalyticsData
+        : fallbackPanelAnalyticsData;
 
     return {
-      dateFilteredTrades: panelAnalyticsData.dateFilteredTrades,
-      libraryCandidateTrades: panelAnalyticsData.libraryCandidateTrades,
-      timeFilteredTrades: panelAnalyticsData.timeFilteredTrades,
-      confidenceById: new Map<string, number>(panelAnalyticsData.confidenceByIdEntries)
+      dateFilteredTrades: source.dateFilteredTrades,
+      libraryCandidateTrades: source.libraryCandidateTrades,
+      timeFilteredTrades: source.timeFilteredTrades,
+      confidenceById: new Map<string, number>(source.confidenceByIdEntries)
     };
-  }, [panelAnalyticsData, panelAnalyticsStatus, shouldComputePanelAnalyticsOnServer]);
+  }, [
+    fallbackPanelAnalyticsData,
+    panelAnalyticsData,
+    panelAnalyticsStatus,
+    shouldComputePanelAnalyticsOnServer
+  ]);
   const getEffectiveTradeConfidenceScore = useCallback(
     (trade: HistoryItem) => {
       const computed = antiCheatBacktestContext.confidenceById.get(trade.id);
@@ -21331,36 +21935,36 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   ]);
 
   const backtestDateFilteredTrades = useMemo(() => {
-    return shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus === "ready"
-      ? antiCheatBacktestContext.dateFilteredTrades
-      : fallbackBacktestDateFilteredTrades;
+    if (appliedBacktestSettings.aiMode === "off") {
+      return fallbackBacktestDateFilteredTrades;
+    }
+    return antiCheatBacktestContext.dateFilteredTrades;
   }, [
     antiCheatBacktestContext.dateFilteredTrades,
-    fallbackBacktestDateFilteredTrades,
-    panelAnalyticsStatus,
-    shouldComputePanelAnalyticsOnServer
+    appliedBacktestSettings.aiMode,
+    fallbackBacktestDateFilteredTrades
   ]);
 
   const backtestTimeFilteredTrades = useMemo(() => {
-    return shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus === "ready"
-      ? antiCheatBacktestContext.timeFilteredTrades
-      : fallbackBacktestTimeFilteredTrades;
+    if (appliedBacktestSettings.aiMode === "off") {
+      return fallbackBacktestTimeFilteredTrades;
+    }
+    return antiCheatBacktestContext.timeFilteredTrades;
   }, [
     antiCheatBacktestContext.timeFilteredTrades,
+    appliedBacktestSettings.aiMode,
     fallbackBacktestTimeFilteredTrades,
-    panelAnalyticsStatus,
-    shouldComputePanelAnalyticsOnServer
   ]);
 
   const backtestLibraryCandidateTrades = useMemo(() => {
-    return shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus === "ready"
-      ? antiCheatBacktestContext.libraryCandidateTrades
-      : fallbackBacktestTimeFilteredTrades;
+    if (appliedBacktestSettings.aiMode === "off") {
+      return fallbackBacktestTimeFilteredTrades;
+    }
+    return antiCheatBacktestContext.libraryCandidateTrades;
   }, [
     antiCheatBacktestContext.libraryCandidateTrades,
+    appliedBacktestSettings.aiMode,
     fallbackBacktestTimeFilteredTrades,
-    panelAnalyticsStatus,
-    shouldComputePanelAnalyticsOnServer
   ]);
 
   const [aiExitPostHocTrades, setAiExitPostHocTrades] = useState<HistoryItem[] | null>(null);
@@ -21705,11 +22309,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     shouldComputePanelAnalyticsOnServer
   ]);
   const backtestAnalyticsConfidenceEntries = useMemo(
-    () =>
-      shouldComputePanelAnalyticsOnServer && panelAnalyticsStatus === "ready"
-        ? panelAnalyticsData.confidenceByIdEntries
-        : [],
-    [panelAnalyticsData.confidenceByIdEntries, panelAnalyticsStatus, shouldComputePanelAnalyticsOnServer]
+    () => Array.from(antiCheatBacktestContext.confidenceById.entries()),
+    [antiCheatBacktestContext]
   );
   const [backtestAnalyticsData, setBacktestAnalyticsData] =
     useState<BacktestAnalyticsServerResponse>(EMPTY_BACKTEST_ANALYTICS_RESPONSE);

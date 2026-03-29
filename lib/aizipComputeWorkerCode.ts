@@ -5,6 +5,7 @@ import {
   AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW,
   AI_LIBRARY_MAX_SAMPLES
 } from "./aiLibrarySettings";
+import { AI_MODEL_MODEL_NAME } from "./strategyCatalog";
 
 export const AIZIP_COMPUTE_WORKER_CODE = String.raw`
   const AI_EPS = 1e-8;
@@ -18,7 +19,8 @@ export const AIZIP_COMPUTE_WORKER_CODE = String.raw`
   const K_EXIT = 11;
   const SEED_LOOKAHEAD_BARS = 96;
   const SEED_STRIDE = 0;
-  const MODELS = ["Momentum","Mean Reversion","Seasons","Time of Day","Fibonacci","Support / Resistance"];
+  const AI_MODEL_MODEL_NAME = ${JSON.stringify(AI_MODEL_MODEL_NAME)};
+  const MODELS = ["Momentum","Mean Reversion","Seasons","Time of Day","Fibonacci","Support / Resistance", AI_MODEL_MODEL_NAME];
   const SYNTHETIC_LIBRARY_START_MS = Date.UTC(1999, 0, 1, 0, 0, 0, 0);
   const SYNTHETIC_LIBRARY_BAR_INTERVAL_MS = 15 * 60 * 1000;
   const SYNTHETIC_LIBRARY_MIN_BARS = 2048;
@@ -2481,6 +2483,18 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
 
     const out = { buyChecks: [], sellChecks: [], buyScore: 0, sellScore: 0 };
 
+    if(model === AI_MODEL_MODEL_NAME){
+      const lastOpen = Number(candles[i] && candles[i].open);
+      const lastClose = Number(candles[i] && candles[i].close);
+      const green = Number.isFinite(lastOpen) && Number.isFinite(lastClose) && lastClose > lastOpen;
+      const red = Number.isFinite(lastOpen) && Number.isFinite(lastClose) && lastClose < lastOpen;
+      out.buyChecks = [{ label: "Previous candle closed green", ok: green }];
+      out.sellChecks = [{ label: "Previous candle closed red", ok: red }];
+      out.buyScore = green ? 1 : 0;
+      out.sellScore = red ? 1 : 0;
+      return out;
+    }
+
     if(model === "Momentum"){
       const buy = [
         {label:"Strong uptrend", ok: trendNorm > thrTrend},
@@ -3349,6 +3363,9 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
     };
 
     const modelExitSignal = (i, tradeDir, modelKey) => {
+      if (modelKey === AI_MODEL_MODEL_NAME) {
+        return false;
+      }
       if (modelKey === "Momentum") {
         const exitLong = gUpTrendBase[i] && gUpPrice[i];
         const exitShort = gDownTrendBase[i] && gDownPrice[i];
@@ -3385,6 +3402,20 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
     const modelEntryGate = (candles, i, chunkBars, modelKey, parseMode) => {
       // Default shape matches entryChecklist: { buyChecks, sellChecks, buyScore, sellScore }
       const out = { buyChecks: [], sellChecks: [], buyScore: 0, sellScore: 0 };
+
+      if (modelKey === AI_MODEL_MODEL_NAME) {
+        const lastOpen = Number(candles[i] && candles[i].open);
+        const lastClose = Number(candles[i] && candles[i].close);
+        const buyCond =
+          Number.isFinite(lastOpen) && Number.isFinite(lastClose) && lastClose > lastOpen;
+        const sellCond =
+          Number.isFinite(lastOpen) && Number.isFinite(lastClose) && lastClose < lastOpen;
+        out.buyChecks = [{ label: "Previous candle closed green", ok: buyCond }];
+        out.sellChecks = [{ label: "Previous candle closed red", ok: sellCond }];
+        out.buyScore = buyCond ? 1 : 0;
+        out.sellScore = sellCond ? 1 : 0;
+        return out;
+      }
 
       if (modelKey === "Momentum") {
         const buyCond = gUpTrendBase[i] && gDownPrice[i] && !gRecentDown[i];
@@ -4644,6 +4675,10 @@ function flushSuppressedNeighbors(uptoIndex){
       const downTrendE = trendNorm < -thrTrendE;
       const upImpulseE = lastRet > thrImpE;
       const downImpulseE = lastRet < -thrImpE;
+
+      if(model === AI_MODEL_MODEL_NAME){
+        return { met: 0, total: 0 };
+      }
 
       if(model === "Momentum"){
         const p1 = (tradeDir === 1 ? upTrendE : downTrendE) ? 1 : 0;

@@ -27,6 +27,7 @@ import {
   computeNeighborConfidenceScore,
   resolveExplicitAiConfidenceScore,
 } from "../lib/aiConfidence";
+import { getTradeConfidenceScore as getSharedTradeConfidenceScore } from "../lib/aiEntryScoring";
 import {
   isTradeCheatedByFutureDependency,
   normalizeTradeTimestampSeconds,
@@ -18266,6 +18267,47 @@ function ClusterMapInner({
     [buildHdbGroupMemberList, currentHdbCluster]
   );
 
+  const resolveTradeLikeFallbackConfidence = React.useCallback((value: any) => {
+    if (!value) return null;
+
+    const side =
+      value.side === "Short"
+        ? "Short"
+        : value.side === "Long"
+          ? "Long"
+          : null;
+    const entryPrice = Number(value.entryPrice);
+    const targetPrice = Number(value.targetPrice);
+    const stopPrice = Number(value.stopPrice);
+    const entryTime = Number(value.entryTime ?? value.metaTime);
+
+    if (
+      side == null ||
+      !Number.isFinite(entryPrice) ||
+      !Number.isFinite(targetPrice) ||
+      !Number.isFinite(stopPrice) ||
+      !Number.isFinite(entryTime)
+    ) {
+      return null;
+    }
+
+    return getSharedTradeConfidenceScore(
+      {
+        side,
+        entryPrice,
+        targetPrice,
+        stopPrice,
+        entryTime,
+        exitTime: Number.isFinite(Number(value.exitTime)) ? Number(value.exitTime) : entryTime,
+        pnlPct: Number.isFinite(Number(value.pnlPct)) ? Number(value.pnlPct) : undefined,
+        pnlUsd: Number.isFinite(Number(value.pnlUsd)) ? Number(value.pnlUsd) : undefined,
+        result:
+          value.result === "Win" || value.result === "Loss" ? value.result : undefined,
+      },
+      { inPreciseEnabled: false }
+    );
+  }, []);
+
   const resolveNonHdbConfidence = React.useCallback(
     (node: any) => {
       if (!node) return null;
@@ -18277,9 +18319,35 @@ function ClusterMapInner({
         return neighborConfidence;
       }
 
-      return resolveExplicitAiConfidenceScore(node);
+      const explicitConfidence = resolveExplicitAiConfidenceScore(node);
+      if (explicitConfidence != null) {
+        return explicitConfidence;
+      }
+
+      const sourceTrade = resolveSourceTradeForNode(node);
+      if (sourceTrade && sourceTrade !== node) {
+        const sourceNeighborConfidence = computeNeighborConfidenceScore(
+          pickNeighborPayload(sourceTrade),
+          { maxNeighbors: effectiveNeighborK, sortByDistance: true }
+        );
+        if (sourceNeighborConfidence != null) {
+          return sourceNeighborConfidence;
+        }
+
+        const sourceExplicitConfidence = resolveExplicitAiConfidenceScore(sourceTrade);
+        if (sourceExplicitConfidence != null) {
+          return sourceExplicitConfidence;
+        }
+      }
+
+      return resolveTradeLikeFallbackConfidence(sourceTrade ?? node);
     },
-    [effectiveNeighborK, pickNeighborPayload]
+    [
+      effectiveNeighborK,
+      pickNeighborPayload,
+      resolveSourceTradeForNode,
+      resolveTradeLikeFallbackConfidence,
+    ]
   );
 
   const resolveExplicitAncAtEntry = React.useCallback((node: any) => {
@@ -19121,7 +19189,27 @@ function ClusterMapInner({
         }
 
         const explicit = resolveExplicitConfidence();
-        return explicit ?? 0;
+        if (explicit != null) {
+          return explicit;
+        }
+
+        const sourceTrade = resolveSourceTradeForNode(t);
+        if (sourceTrade && sourceTrade !== t) {
+          const sourceNeighborConfidence = computeNeighborConfidenceScore(
+            pickNeighborPayload(sourceTrade),
+            { maxNeighbors: effectiveNeighborK, sortByDistance: true }
+          );
+          if (sourceNeighborConfidence != null) {
+            return sourceNeighborConfidence;
+          }
+
+          const sourceExplicit = resolveExplicitAiConfidenceScore(sourceTrade);
+          if (sourceExplicit != null) {
+            return sourceExplicit;
+          }
+        }
+
+        return resolveTradeLikeFallbackConfidence(sourceTrade ?? t) ?? 0;
       }
 
       const explicit = resolveExplicitConfidence();
@@ -19143,6 +19231,8 @@ function ClusterMapInner({
       effectiveNeighborK,
       hdbConfidenceForNode,
       pickNeighborPayload,
+      resolveSourceTradeForNode,
+      resolveTradeLikeFallbackConfidence,
       tradeNodeByUidAll,
     ]
   );
