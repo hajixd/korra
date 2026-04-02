@@ -14812,9 +14812,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     }
 
     const frame = window.requestAnimationFrame(() => {
-      startTransition(() => {
-        setIsBacktestSurfaceSettled(true);
-      });
+      // This gate drives the visible surface swap, so avoid scheduling it as
+      // low-priority work; otherwise live chart updates can leave the panel
+      // stranded behind the artificial loader when revisiting the tab.
+      setIsBacktestSurfaceSettled(true);
     });
 
     return () => {
@@ -22315,7 +22316,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [backtestAnalyticsData, setBacktestAnalyticsData] =
     useState<BacktestAnalyticsServerResponse>(EMPTY_BACKTEST_ANALYTICS_RESPONSE);
   useEffect(() => {
-    if (!isBacktestAnalyticsVisible || !backtestHasRun || !backtestHistorySeedReady) {
+    if (!backtestHasRun || !backtestHistorySeedReady) {
       return;
     }
 
