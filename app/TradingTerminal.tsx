@@ -18597,7 +18597,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       exitReason: getBacktestExitLabel(trade),
       confidence: getEffectiveTradeConfidenceScore(trade),
     };
-  }, []);
+  }, [getEffectiveTradeConfidenceScore]);
 
   const closeBacktestTradeDetails = useCallback(() => {
     activeBacktestTradeDetailsRequestRef.current += 1;
@@ -18649,14 +18649,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         return;
       }
 
-      startTransition(() => {
-        if (activeBacktestTradeDetailsRequestRef.current !== requestId) {
-          return;
-        }
-        setActiveBacktestTradeDetails(resolvedDetails);
-        setActiveBacktestTradeDetailsPreview(resolvedDetails);
-        setActiveBacktestTradeDetailsLoading(false);
-      });
+      setActiveBacktestTradeDetails(resolvedDetails);
+      setActiveBacktestTradeDetailsPreview(resolvedDetails);
+      setActiveBacktestTradeDetailsLoading(false);
     };
 
     if (typeof window === "undefined") {
@@ -18664,14 +18659,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       return;
     }
 
-    window.requestAnimationFrame(() => {
-      window.setTimeout(() => {
-        if (activeBacktestTradeDetailsRequestRef.current !== requestId) {
-          return;
-        }
-        void loadDetails();
-      }, 24);
-    });
+    void loadDetails();
   }, [buildBacktestTradeDetailsPreview, getHistoryCandlesForSymbol]);
 
   const activeBacktestTradeCandles = useMemo(() => {
@@ -22001,21 +21989,20 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     return aiExitPostHocTrades ?? entryFilteredBacktestTrades;
   }, [aiExitPostHocTrades, entryFilteredBacktestTrades, shouldRunAiExitPostHoc]);
   const deferredDimensionStatsSourceTrades = useDeferredValue(backtestTimeFilteredTrades);
-  const deferredBacktestTab = useDeferredValue(selectedBacktestTab);
   const deferredBacktestAnalyticsTrades = useDeferredValue(backtestTrades);
   const isBacktestAnalyticsVisible = selectedSurfaceTab === "backtest";
   const isHistoryBacktestTabActive =
-    isBacktestAnalyticsVisible && deferredBacktestTab === "history";
+    isBacktestAnalyticsVisible && selectedBacktestTab === "history";
   const isCalendarBacktestTabActive =
-    isBacktestAnalyticsVisible && deferredBacktestTab === "calendar";
+    isBacktestAnalyticsVisible && selectedBacktestTab === "calendar";
   const isClusterBacktestTabActive =
-    isBacktestAnalyticsVisible && deferredBacktestTab === "cluster";
+    isBacktestAnalyticsVisible && selectedBacktestTab === "cluster";
   const isPerformanceStatsBacktestTabActive =
-    isBacktestAnalyticsVisible && deferredBacktestTab === "performanceStats";
+    isBacktestAnalyticsVisible && selectedBacktestTab === "performanceStats";
   const isEntryExitBacktestTabActive =
-    isBacktestAnalyticsVisible && deferredBacktestTab === "entryExit";
+    isBacktestAnalyticsVisible && selectedBacktestTab === "entryExit";
   const isPropFirmBacktestTabActive =
-    isBacktestAnalyticsVisible && deferredBacktestTab === "propFirm";
+    isBacktestAnalyticsVisible && selectedBacktestTab === "propFirm";
   const shouldComputeBacktestAnalyticsOnServer =
     isBacktestAnalyticsVisible &&
     (
@@ -22023,9 +22010,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       isPerformanceStatsBacktestTabActive ||
       isEntryExitBacktestTabActive ||
       isClusterBacktestTabActive ||
-      (deferredBacktestTab === "mainStats" && appliedBacktestSettings.aiMode !== "off")
+      (selectedBacktestTab === "mainStats" && appliedBacktestSettings.aiMode !== "off")
     );
-  const isBacktestTabDataPending = selectedBacktestTab !== deferredBacktestTab;
   const isBacktestHistorySeedBlocked =
     statsRefreshStatus === "Historical Candle Range Unavailable";
   const isBacktestTabHistoryPending = backtestHasRun && !backtestHistorySeedReady;
@@ -22039,7 +22025,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     isBacktestSurfaceSettled &&
     backtestInlineLoaderTabs.has(selectedBacktestTab) &&
     (
-      isBacktestTabDataPending ||
       (isBacktestTabHistoryPending && !isBacktestHistorySeedBlocked) ||
       aiZipClusterSnapshotPending
     );
@@ -26808,7 +26793,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
   const dimensionStats = useMemo<DimensionStatsSummary | null>(() => {
     const shouldBuildDimensionStats =
-      (isBacktestAnalyticsVisible && deferredBacktestTab === "dimensions") ||
+      (isBacktestAnalyticsVisible && selectedBacktestTab === "dimensions") ||
       activeBacktestTradeDetails !== null;
 
     if (!shouldBuildDimensionStats) {
@@ -26823,10 +26808,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, [
     appliedBacktestSettings,
     backtestSeriesMap,
-    deferredBacktestTab,
     deferredDimensionStatsSourceTrades,
     activeBacktestTradeDetails,
     isBacktestAnalyticsVisible,
+    selectedBacktestTab,
     seriesMap
   ]);
 
