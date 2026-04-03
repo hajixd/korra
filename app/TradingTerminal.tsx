@@ -159,7 +159,6 @@ import {
   countEnabledAizipModels,
   doesAizipHistorySeedSettingsChange,
   getSyntheticLibraryBarCount,
-  getVisibleAizipLibraryIds,
   getMinimumAizipSeedBars,
   hasUsableAizipSeedCandles,
   isBaseSeedingLibraryId,
@@ -14999,11 +14998,17 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     return serializeBacktestSettingsSnapshot(appliedBacktestSettings);
   }, [appliedBacktestSettings]);
   const visibleAiLibraries = useMemo(() => {
-    return getVisibleAizipLibraryIds(selectedAiLibraries);
-  }, [selectedAiLibraries]);
+    return selectedAiLibraries.filter((libraryId) => {
+      const normalizedLibraryId = String(libraryId ?? "").trim();
+      return normalizedLibraryId.length > 0 && !!aiLibraryDefById[normalizedLibraryId];
+    });
+  }, [aiLibraryDefById, selectedAiLibraries]);
   const appliedVisibleAiLibraries = useMemo(() => {
-    return getVisibleAizipLibraryIds(appliedRuntimeAiLibraryIds);
-  }, [appliedRuntimeAiLibraryIds]);
+    return appliedRuntimeAiLibraryIds.filter((libraryId) => {
+      const normalizedLibraryId = String(libraryId ?? "").trim();
+      return normalizedLibraryId.length > 0 && !!aiLibraryDefById[normalizedLibraryId];
+    });
+  }, [aiLibraryDefById, appliedRuntimeAiLibraryIds]);
   const liveClusterLibraryRunIds = useMemo(() => {
     return appendSuppressedLibraryForCluster(liveRuntimeAiLibraryIds, {
       includeGhostLearning: ghostLearningEnabled
@@ -15409,7 +15414,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const removeAiLibrary = (libraryId: string) => {
     setSelectedAiLibraries((current) => {
       const next = current.filter((id) => id !== libraryId);
-      const nextVisible = getVisibleAizipLibraryIds(next);
+      const nextVisible = next.filter((id) => {
+        const normalizedLibraryId = String(id ?? "").trim();
+        return normalizedLibraryId.length > 0 && !!aiLibraryDefById[normalizedLibraryId];
+      });
       setSelectedAiLibraryId((selectedId) =>
         selectedId !== libraryId ? selectedId : nextVisible[0] ?? ""
       );
