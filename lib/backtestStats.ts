@@ -169,60 +169,74 @@ export const summarizeBacktestTrades = <TTrade extends BacktestStatsTrade>(
   const pnlSeries: number[] = [];
 
   for (const trade of trades) {
-    const holdMinutes = Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
+    const normalizedEntryTime = Number(trade.entryTime);
+    const normalizedExitTime = Number(trade.exitTime);
+    const entryPrice = Number(trade.entryPrice);
+    const targetPrice = Number(trade.targetPrice);
+    const stopPrice = Number(trade.stopPrice);
+    const units = Number(trade.units);
+    const normalizedPnl = Number(trade.pnlUsd);
+    const normalizedConfidence = Number(confidenceResolver(trade));
+    const safeEntryTime = Number.isFinite(normalizedEntryTime) ? normalizedEntryTime : 0;
+    const safeExitTime = Number.isFinite(normalizedExitTime) ? normalizedExitTime : safeEntryTime;
+    const safeEntryPrice = Number.isFinite(entryPrice) ? entryPrice : 0;
+    const safeTargetPrice = Number.isFinite(targetPrice) ? targetPrice : safeEntryPrice;
+    const safeStopPrice = Number.isFinite(stopPrice) ? stopPrice : safeEntryPrice;
+    const safeUnits = Number.isFinite(units) && Math.abs(units) > 0 ? Math.abs(units) : 1;
+    const safePnl = Number.isFinite(normalizedPnl) ? normalizedPnl : 0;
+    const holdMinutes = Math.max(1, (safeExitTime - safeEntryTime) / 60);
     const targetPotentialUsd =
-      Math.abs(trade.targetPrice - trade.entryPrice) * Math.max(1, trade.units);
+      Math.abs(safeTargetPrice - safeEntryPrice) * Math.max(1, safeUnits);
     const stopPotentialUsd =
-      Math.abs(trade.entryPrice - trade.stopPrice) * Math.max(1, trade.units);
+      Math.abs(safeEntryPrice - safeStopPrice) * Math.max(1, safeUnits);
     const favorableShare = trade.result === "Win" ? 0.68 : 0.32;
-    const normalizedPnl = Number.isFinite(trade.pnlUsd) ? trade.pnlUsd : 0;
-    const isWinningTrade = normalizedPnl > 0 || (normalizedPnl === 0 && trade.result === "Win");
-    const isLosingTrade = normalizedPnl < 0 || (normalizedPnl === 0 && trade.result === "Loss");
+    const isWinningTrade = safePnl > 0 || (safePnl === 0 && trade.result === "Win");
+    const isLosingTrade = safePnl < 0 || (safePnl === 0 && trade.result === "Loss");
 
-    netPnl += normalizedPnl;
-    runningPnl += normalizedPnl;
+    netPnl += safePnl;
+    runningPnl += safePnl;
     peakPnl = Math.max(peakPnl, runningPnl);
     maxDrawdown = Math.min(maxDrawdown, runningPnl - peakPnl);
-    maxWin = Math.max(maxWin, normalizedPnl);
-    maxLoss = Math.min(maxLoss, normalizedPnl);
+    maxWin = Math.max(maxWin, safePnl);
+    maxLoss = Math.min(maxLoss, safePnl);
     totalHoldMinutes += holdMinutes;
-    totalConfidence += confidenceResolver(trade) * 100;
-    estimatedPeakTotal += Math.max(Math.max(normalizedPnl, 0), targetPotentialUsd);
-    estimatedDrawdownTotal += Math.max(Math.abs(Math.min(normalizedPnl, 0)), stopPotentialUsd);
+    totalConfidence += Number.isFinite(normalizedConfidence) ? normalizedConfidence * 100 : 0;
+    estimatedPeakTotal += Math.max(Math.max(safePnl, 0), targetPotentialUsd);
+    estimatedDrawdownTotal += Math.max(Math.abs(Math.min(safePnl, 0)), stopPotentialUsd);
     estimatedProfitMinutes += holdMinutes * favorableShare;
     estimatedDeficitMinutes += holdMinutes * (1 - favorableShare);
-    pnlSeries.push(normalizedPnl);
+    pnlSeries.push(safePnl);
 
     if (isWinningTrade) {
-      grossWins += normalizedPnl;
+      grossWins += safePnl;
       wins += 1;
       totalWinHoldMinutes += holdMinutes;
     } else if (isLosingTrade) {
-      grossLosses += normalizedPnl;
+      grossLosses += safePnl;
       losses += 1;
       totalLossHoldMinutes += holdMinutes;
     }
 
-    const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
-    const rewardDistance = Math.abs(trade.targetPrice - trade.entryPrice);
+    const riskDistance = Math.max(0.000001, Math.abs(safeEntryPrice - safeStopPrice));
+    const rewardDistance = Math.abs(safeTargetPrice - safeEntryPrice);
     totalR += rewardDistance / riskDistance;
 
-    const dayKey = getTradeDayKey(trade.exitTime);
+    const dayKey = getTradeDayKey(safeExitTime);
     const currentDay = dayMap.get(dayKey) ?? { key: dayKey, count: 0, pnl: 0 };
     currentDay.count += 1;
-    currentDay.pnl += normalizedPnl;
+    currentDay.pnl += safePnl;
     dayMap.set(dayKey, currentDay);
 
-    const weekKey = getTradeWeekKey(trade.exitTime);
+    const weekKey = getTradeWeekKey(safeExitTime);
     const currentWeek = weekMap.get(weekKey) ?? { key: weekKey, count: 0, pnl: 0 };
     currentWeek.count += 1;
-    currentWeek.pnl += normalizedPnl;
+    currentWeek.pnl += safePnl;
     weekMap.set(weekKey, currentWeek);
 
-    const monthKey = getTradeMonthKey(trade.exitTime);
+    const monthKey = getTradeMonthKey(safeExitTime);
     const currentMonth = monthMap.get(monthKey) ?? { key: monthKey, count: 0, pnl: 0 };
     currentMonth.count += 1;
-    currentMonth.pnl += normalizedPnl;
+    currentMonth.pnl += safePnl;
     monthMap.set(monthKey, currentMonth);
   }
 

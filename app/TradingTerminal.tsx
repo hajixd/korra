@@ -747,6 +747,341 @@ const normalizeBacktestHistoryRows = (rows: BacktestHistoryRow[]): HistoryItem[]
   });
 };
 
+const resolveTradeLikeKeys = (value: unknown): string[] => {
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+
+  const row = value as Record<string, unknown>;
+  const keys = [
+    row.id,
+    row.uid,
+    row.tradeId,
+    row.tradeUid,
+    row.metaOrigUid,
+    row.metaOrigId
+  ]
+    .map((candidate) => String(candidate ?? "").trim())
+    .filter((candidate) => candidate.length > 0);
+
+  return Array.from(new Set(keys));
+};
+
+const resolveTradeLikeNumber = (...values: unknown[]): number | null => {
+  for (const value of values) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return numeric;
+    }
+  }
+
+  return null;
+};
+
+const resolveTradeLikeTimestamp = (...values: unknown[]): UTCTimestamp | null => {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return Math.floor(value > 1_000_000_000_000 ? value / 1000 : value) as UTCTimestamp;
+    }
+
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      const numeric = Number(trimmed);
+      if (Number.isFinite(numeric)) {
+        return Math.floor(
+          numeric > 1_000_000_000_000 ? numeric / 1000 : numeric
+        ) as UTCTimestamp;
+      }
+
+      const parsed = Date.parse(trimmed);
+      if (Number.isFinite(parsed)) {
+        return Math.floor(parsed / 1000) as UTCTimestamp;
+      }
+    }
+  }
+
+  return null;
+};
+
+const resolveTradeLikeString = (...values: unknown[]): string => {
+  for (const value of values) {
+    const normalized =
+      typeof value === "string"
+        ? value.trim()
+        : value == null
+          ? ""
+          : String(value).trim();
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return "";
+};
+
+const normalizeAiExitPostHocTrades = (
+  trades: unknown[],
+  sourceTrades: HistoryItem[],
+  options?: { inPreciseEnabled?: boolean }
+): HistoryItem[] => {
+  if (!Array.isArray(trades) || trades.length === 0) {
+    return [];
+  }
+
+  const sourceTradeByKey = new Map<string, HistoryItem>();
+  for (const trade of sourceTrades) {
+    for (const key of resolveTradeLikeKeys(trade)) {
+      if (!sourceTradeByKey.has(key)) {
+        sourceTradeByKey.set(key, trade);
+      }
+    }
+  }
+
+  const normalizedTrades: HistoryItem[] = [];
+  const seenIds = new Set<string>();
+
+  for (const item of trades) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+
+    const rawTrade = item as Record<string, unknown>;
+    const rawKeys = resolveTradeLikeKeys(rawTrade);
+    const sourceTrade =
+      rawKeys.map((key) => sourceTradeByKey.get(key)).find((candidate) => candidate != null) ?? null;
+    const tradeId = rawKeys[0] ?? sourceTrade?.id ?? "";
+
+    if (!tradeId || seenIds.has(tradeId)) {
+      continue;
+    }
+
+    const rawDirection = resolveTradeLikeNumber(rawTrade.dir, rawTrade.direction);
+    const rawSide = resolveTradeLikeString(rawTrade.side).toLowerCase();
+    const side: TradeSide =
+      rawSide === "short" || rawSide === "sell" || rawDirection === -1
+        ? "Short"
+        : rawSide === "long" || rawSide === "buy" || rawDirection === 1
+          ? "Long"
+          : sourceTrade?.side ?? "Long";
+    const entryTime =
+      resolveTradeLikeTimestamp(
+        rawTrade.entryTime,
+        rawTrade.entry,
+        rawTrade.metaTime,
+        sourceTrade?.entryTime
+      ) ??
+      sourceTrade?.entryTime ??
+      (0 as UTCTimestamp);
+    const exitTime =
+      resolveTradeLikeTimestamp(
+        rawTrade.exitTime,
+        rawTrade.exit,
+        rawTrade.time,
+        sourceTrade?.exitTime
+      ) ??
+      sourceTrade?.exitTime ??
+      entryTime;
+    const symbol = resolveTradeLikeString(rawTrade.symbol, sourceTrade?.symbol);
+
+    if (!symbol) {
+      continue;
+    }
+
+    const entrySource = resolveTradeLikeString(
+      rawTrade.entrySource,
+      rawTrade.entryModel,
+      rawTrade.model,
+      rawTrade.chunkType,
+      sourceTrade?.entrySource,
+      "Settings"
+    );
+    const exitReason = resolveTradeLikeString(
+      rawTrade.exitReason,
+      rawTrade.exitBy,
+      rawTrade.exitMethod,
+      sourceTrade?.exitReason
+    );
+    const pnlUsd =
+      resolveTradeLikeNumber(
+        rawTrade.pnlUsd,
+        rawTrade.pnl,
+        rawTrade.realizedPnl,
+        rawTrade.netPnl,
+        sourceTrade?.pnlUsd
+      ) ?? 0;
+    const entryPrice = Math.max(
+      0.000001,
+      resolveTradeLikeNumber(
+        rawTrade.entryPrice,
+        rawTrade.entry,
+        rawTrade.priceStart,
+        sourceTrade?.entryPrice
+      ) ?? 0.000001
+    );
+    const units = Math.max(
+      0.000001,
+      Math.abs(
+        resolveTradeLikeNumber(
+          rawTrade.units,
+          rawTrade.quantity,
+          rawTrade.qty,
+          rawTrade.size,
+          sourceTrade?.units
+        ) ?? 1
+      )
+    );
+    const fallbackOutcomePrice = getTradeOutcomePriceFromPnl(side, entryPrice, pnlUsd, units);
+    const targetPrice = Math.max(
+      0.000001,
+      resolveTradeLikeNumber(
+        rawTrade.targetPrice,
+        rawTrade.tpPrice,
+        rawTrade.takeProfitPrice,
+        rawTrade.tp,
+        sourceTrade?.targetPrice,
+        entryPrice
+      ) ?? entryPrice
+    );
+    const stopPrice = Math.max(
+      0.000001,
+      resolveTradeLikeNumber(
+        rawTrade.stopPrice,
+        rawTrade.slPrice,
+        rawTrade.stopLossPrice,
+        rawTrade.sl,
+        sourceTrade?.stopPrice,
+        entryPrice
+      ) ?? entryPrice
+    );
+    const outcomePrice = Math.max(
+      0.000001,
+      resolveTradeLikeNumber(
+        rawTrade.outcomePrice,
+        rawTrade.exitPrice,
+        rawTrade.closePrice,
+        rawTrade.exit,
+        rawTrade.priceEnd,
+        sourceTrade?.outcomePrice,
+        fallbackOutcomePrice
+      ) ?? fallbackOutcomePrice
+    );
+    const pnlPct =
+      resolveTradeLikeNumber(
+        rawTrade.pnlPct,
+        rawTrade.profitPct,
+        rawTrade.returnPct,
+        sourceTrade?.pnlPct
+      ) ?? getTradePnlPctFromUsd(entryPrice, units, pnlUsd);
+    const resultToken = resolveTradeLikeString(
+      rawTrade.historyResult,
+      rawTrade.result,
+      sourceTrade?.result
+    ).toLowerCase();
+    const explicitWin = typeof rawTrade.win === "boolean" ? rawTrade.win : null;
+    const result: TradeResult =
+      resultToken === "loss" ||
+      resultToken === "sl" ||
+      resultToken.includes("stop") ||
+      explicitWin === false
+        ? "Loss"
+        : resultToken === "win" ||
+            resultToken === "tp" ||
+            resultToken.includes("profit") ||
+            explicitWin === true
+          ? "Win"
+          : pnlUsd >= 0
+            ? "Win"
+            : "Loss";
+
+    normalizedTrades.push(
+      hydrateFallbackPanelTrade(
+        {
+          ...(sourceTrade ?? {}),
+          id: tradeId,
+          symbol,
+          side,
+          result,
+          entrySource,
+          exitReason,
+          pnlPct,
+          pnlUsd,
+          time:
+            resolveHistoryTradeTimeLabel(
+              rawTrade.time ?? rawTrade.exitAt ?? rawTrade.exitTime,
+              exitTime
+            ) ||
+            sourceTrade?.time ||
+            resolveHistoryTradeTimeLabel("", exitTime),
+          entryAt:
+            resolveHistoryTradeTimeLabel(
+              rawTrade.entryAt ?? rawTrade.entryTime,
+              entryTime
+            ) ||
+            sourceTrade?.entryAt ||
+            resolveHistoryTradeTimeLabel("", entryTime),
+          exitAt:
+            resolveHistoryTradeTimeLabel(
+              rawTrade.exitAt ?? rawTrade.time ?? rawTrade.exitTime,
+              exitTime
+            ) ||
+            sourceTrade?.exitAt ||
+            resolveHistoryTradeTimeLabel("", exitTime),
+          entryTime,
+          exitTime,
+          entryPrice,
+          targetPrice,
+          stopPrice,
+          outcomePrice,
+          units,
+          entryConfidence:
+            resolveTradeLikeNumber(rawTrade.entryConfidence, sourceTrade?.entryConfidence) ??
+            sourceTrade?.entryConfidence ??
+            null,
+          confidence:
+            resolveTradeLikeNumber(rawTrade.confidence, sourceTrade?.confidence) ??
+            sourceTrade?.confidence ??
+            null,
+          entryMargin:
+            resolveTradeLikeNumber(rawTrade.entryMargin, sourceTrade?.entryMargin) ??
+            sourceTrade?.entryMargin ??
+            null,
+          margin:
+            resolveTradeLikeNumber(rawTrade.margin, sourceTrade?.margin) ??
+            sourceTrade?.margin ??
+            null,
+          aiConfidence:
+            resolveTradeLikeNumber(rawTrade.aiConfidence, sourceTrade?.aiConfidence) ??
+            sourceTrade?.aiConfidence ??
+            null,
+          averageNeighborContributionAtEntry:
+            resolveTradeLikeNumber(
+              rawTrade.averageNeighborContributionAtEntry,
+              sourceTrade?.averageNeighborContributionAtEntry
+            ) ?? sourceTrade?.averageNeighborContributionAtEntry ?? null,
+          aiMode:
+            rawTrade.aiMode === "knn" || rawTrade.aiMode === "hdbscan"
+              ? rawTrade.aiMode
+              : sourceTrade?.aiMode ?? null,
+          closestClusterUid:
+            resolveTradeLikeString(rawTrade.closestClusterUid, sourceTrade?.closestClusterUid) ||
+            null,
+          entryNeighbors: Array.isArray(rawTrade.entryNeighbors)
+            ? cloneTradeEntryNeighbors(rawTrade.entryNeighbors)
+            : cloneTradeEntryNeighbors(sourceTrade?.entryNeighbors)
+        },
+        options
+      )
+    );
+    seenIds.add(tradeId);
+  }
+
+  return normalizedTrades;
+};
+
 const cloneTradeEntryNeighbors = (value: unknown): BacktestEntryNeighbor[] => {
   if (!Array.isArray(value)) {
     return [];
@@ -26364,10 +26699,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         uid: trade.id,
         tradeUid: trade.id,
         kind: "trade",
+        symbol: trade.symbol,
         dir: trade.side === "Long" ? 1 : -1,
         direction: trade.side === "Long" ? 1 : -1,
         result: trade.result === "Win" ? "TP" : "SL",
+        historyResult: trade.result,
         pnl: trade.pnlUsd,
+        pnlUsd: trade.pnlUsd,
+        pnlPct: trade.pnlPct,
         unrealizedPnl: null,
         isOpen: false,
         win: trade.result === "Win",
@@ -26377,11 +26716,19 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         entryIndex,
         exitIndex,
         entryModel: trade.entrySource,
+        entrySource: trade.entrySource,
         chunkType: trade.entrySource,
         model: trade.entrySource,
         exitReason: getBacktestExitLabel(trade),
         entryPrice: trade.entryPrice,
+        targetPrice: trade.targetPrice,
+        stopPrice: trade.stopPrice,
         exitPrice: trade.outcomePrice,
+        outcomePrice: trade.outcomePrice,
+        units: trade.units,
+        time: trade.time,
+        entryAt: trade.entryAt,
+        exitAt: trade.exitAt,
         entryConfidence:
           (trade as any).entryConfidence ??
           (trade as any).confidence ??
@@ -32714,7 +33061,18 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                   clusterMapView={aiZipClusterMapView}
                   onToggleClusterMapView={() => {}}
                   onPostHocTrades={(nextTrades: HistoryItem[]) => {
-                    setAiExitPostHocTrades(Array.isArray(nextTrades) ? nextTrades : []);
+                    const normalizedTrades = normalizeAiExitPostHocTrades(
+                      Array.isArray(nextTrades) ? nextTrades : [],
+                      entryFilteredBacktestTrades,
+                      {
+                        inPreciseEnabled: appliedBacktestSettings.inPreciseEnabled
+                      }
+                    );
+                    setAiExitPostHocTrades(
+                      normalizedTrades.length > 0 || entryFilteredBacktestTrades.length === 0
+                        ? normalizedTrades
+                        : null
+                    );
                   }}
                   onPostHocProgress={() => {}}
                   onMitMap={() => {}}
