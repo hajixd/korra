@@ -12,6 +12,7 @@ import {
   doesAizipHistorySeedSettingsChange,
   getSyntheticLibraryBarCount,
   getVisibleAizipLibraryIds,
+  partitionAizipLibraryTradePool,
   shouldSkipAizipBacktestHistoryFetch,
   usesAizipEveryCandleMode
 } from "../app/aizipRuntime";
@@ -77,6 +78,27 @@ test("visible libraries exclude online and ghost learning toggles", () => {
       Breakout: null
     }),
     1
+  );
+});
+
+test("online and ghost library pools partition accepted and rejected trades cleanly", () => {
+  const pool = [
+    { id: "t-1", tag: "first" },
+    { id: "t-2", tag: "second" },
+    { id: "t-3", tag: "third" },
+    { id: "t-4", tag: "fourth" }
+  ];
+  const executedTradeIds = new Set(["t-2", "t-4"]);
+
+  const { accepted, rejected } = partitionAizipLibraryTradePool(pool, executedTradeIds);
+
+  assert.deepEqual(
+    accepted.map((trade) => trade.id),
+    ["t-2", "t-4"]
+  );
+  assert.deepEqual(
+    rejected.map((trade) => trade.id),
+    ["t-1", "t-3"]
   );
 });
 

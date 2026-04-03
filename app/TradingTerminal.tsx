@@ -152,6 +152,7 @@ import {
   AIZIP_BACKTEST_HISTORY_FETCH_TIMEOUT_MS,
   BASE_SEEDING_LIBRARY_IDS,
   GHOST_LEARNING_LIBRARY_ID,
+  ONLINE_LEARNING_LIBRARY_ID,
   buildSyntheticLibraryCandles,
   buildSeededLibraryTradePoolFromCandles,
   canRunAizipLibrariesForSettings,
@@ -165,6 +166,7 @@ import {
   isGhostLearningLibraryId,
   isOnlineLearningLibraryId,
   isVisibleAizipLibraryId,
+  partitionAizipLibraryTradePool,
   doesAizipReplayEntryModeChange,
   shouldSkipAizipBacktestHistoryFetch,
   usesAizipEveryCandleMode
@@ -4133,7 +4135,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
   {
     id: "core",
     name: "Online Library",
-    description: "Primary rolling online-learning trade memory.",
+    description: "Every AI-accepted trade kept in rolling online-learning memory.",
     defaults: { weight: 100, maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES, stride: 0 },
     fields: [
       {
@@ -4168,7 +4170,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     id: "suppressed",
     name: "Ghost Library",
     description:
-      "Ghost-learning outcomes kept as training-only neighbors.",
+      "Every AI-rejected trade kept as ghost-learning training-only memory.",
     defaults: { weight: 100, maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES, stride: 0 },
     fields: [
       { key: "weight", label: "Weight (%)", type: "number", min: 0, max: 500, step: 5 },
@@ -24013,13 +24015,12 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         0,
         AI_LIBRARY_MAX_SAMPLES
       );
-      const suppressedTradePool = libraryCandidatePool.filter(
-        (trade) => !executedTradeIds.has(trade.id)
-      );
+      const { accepted: executedTradePool, rejected: suppressedTradePool } =
+        partitionAizipLibraryTradePool(libraryCandidatePool, executedTradeIds);
       let source: HistoryItem[] = [];
 
       if (normalizedId === "core") {
-        source = collectCappedItems(libraryCandidatePool, {
+        source = collectCappedItems(executedTradePool, {
           cap: maxSamples,
           stride
         });
@@ -24503,6 +24504,28 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       aiClusterActiveLibraries.map((libraryId) => String(libraryId).trim())
     );
   }, [aiClusterActiveLibraries]);
+  const acceptedLiveTrades = backtestTrades.length;
+  const rejectedLiveTrades = Math.max(0, backtestTimeFilteredTrades.length - acceptedLiveTrades);
+  const semanticAiLibraryCounts = useMemo(() => {
+    const next: Record<string, number> = {
+      ...(aiLibraryCounts ?? {})
+    };
+
+    if (aiLibraryDefById[ONLINE_LEARNING_LIBRARY_ID]) {
+      next[ONLINE_LEARNING_LIBRARY_ID] = acceptedLiveTrades;
+    }
+
+    if (aiLibraryDefById[GHOST_LEARNING_LIBRARY_ID]) {
+      next[GHOST_LEARNING_LIBRARY_ID] = rejectedLiveTrades;
+    }
+
+    return next;
+  }, [
+    acceptedLiveTrades,
+    aiLibraryCounts,
+    aiLibraryDefById,
+    rejectedLiveTrades
+  ]);
   const aiClusterLibraryPoints = useMemo(() => {
     if (aiClusterActiveLibraryIdSet.size === 0) {
       return [] as any[];
@@ -24519,7 +24542,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     }
 
     const filtered: Record<string, number> = {};
-    for (const [libraryId, rawCount] of Object.entries(aiLibraryCounts ?? {})) {
+    for (const [libraryId, rawCount] of Object.entries(semanticAiLibraryCounts ?? {})) {
       const normalizedLibraryId = String(libraryId).trim();
       if (!normalizedLibraryId || !aiClusterActiveLibraryIdSet.has(normalizedLibraryId)) {
         continue;
@@ -24530,7 +24553,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       }
     }
     return filtered;
-  }, [aiClusterActiveLibraryIdSet, aiLibraryCounts]);
+  }, [aiClusterActiveLibraryIdSet, semanticAiLibraryCounts]);
   const aiLibraryDiagnosticsKeyRef = useRef<string>("");
   useEffect(() => {
     const appliedLibraryIds = appliedClusterDisplayLibraries.map((libraryId) =>
@@ -24546,7 +24569,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     }
 
     const totalAppliedCount = appliedLibraryIds.reduce((sum, libraryId) => {
-      return sum + Math.max(0, Number(aiLibraryCounts[libraryId] ?? 0));
+      return sum + Math.max(0, Number(semanticAiLibraryCounts[libraryId] ?? 0));
     }, 0);
     const pointCount = Array.isArray(aiClusterLibraryPoints)
       ? aiClusterLibraryPoints.length
@@ -24611,7 +24634,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     );
   }, [
     aiClusterLibraryPoints,
-    aiLibraryCounts,
     aiLibraryRunStatus,
     appliedAiLibraryReadyToRun,
     appliedClusterDisplayLibrariesSettled,
@@ -24619,6 +24641,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     backtestHasRun,
     backtestHistorySeedReady,
     appliedSelectedAiModelCount,
+    semanticAiLibraryCounts,
   ]);
   const selectedAiLibraryConfig: Record<string, AiLibrarySettingValue> | null = selectedAiLibrary
     ? ({
@@ -24643,7 +24666,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const selectedAiLibraryRunStatus: AiLibraryRunStatus = selectedAiLibrary
     ? aiLibraryRunStatus[selectedAiLibrary.id] ?? "idle"
     : "idle";
-  const selectedAiLibraryLoadedCount = selectedAiLibrary ? aiLibraryCounts[selectedAiLibrary.id] ?? 0 : 0;
+  const selectedAiLibraryLoadedCount = selectedAiLibrary
+    ? semanticAiLibraryCounts[selectedAiLibrary.id] ?? 0
+    : 0;
   const selectedAiLibraryStatusLabel =
     selectedAiLibraryRunStatus === "loading"
       ? "Loading"
@@ -24693,10 +24718,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
     let total = 0;
     for (const libraryId of activeIds) {
-      total += Math.max(0, Number(aiLibraryCounts[libraryId] ?? 0));
+      total += Math.max(0, Number(semanticAiLibraryCounts[libraryId] ?? 0));
     }
     return total;
-  }, [aiLibraryCounts, appliedVisibleAiLibraries]);
+  }, [appliedVisibleAiLibraries, semanticAiLibraryCounts]);
   const backtestLibraryTradeBreakdown = useMemo(() => {
     return appliedVisibleAiLibraries
       .map((libraryId) => {
@@ -24709,7 +24734,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         return {
           id: normalizedLibraryId,
           name: library?.name ?? normalizedLibraryId,
-          count: Math.max(0, Number(aiLibraryCounts[normalizedLibraryId] ?? 0)),
+          count: Math.max(0, Number(semanticAiLibraryCounts[normalizedLibraryId] ?? 0)),
           color: colorForAiLibraryLegend(normalizedLibraryId)
         };
       })
@@ -24718,9 +24743,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           entry
         ): entry is { id: string; name: string; count: number; color: string } => entry != null
       );
-  }, [aiLibraryCounts, aiLibraryDefById, appliedVisibleAiLibraries]);
+  }, [aiLibraryDefById, appliedVisibleAiLibraries, semanticAiLibraryCounts]);
   const totalPreAiLiveTrades = backtestTimeFilteredTrades.length;
-  const acceptedLiveTrades = backtestTrades.length;
   const cheatedAcceptedLiveTrades = useMemo(() => {
     let count = 0;
 

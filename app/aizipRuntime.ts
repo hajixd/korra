@@ -73,6 +73,29 @@ export const isGhostLearningLibraryId = (libraryId: string): boolean => {
   return String(libraryId || "").trim().toLowerCase() === GHOST_LEARNING_LIBRARY_ID;
 };
 
+export const partitionAizipLibraryTradePool = <T extends { id: string }>(
+  pool: readonly T[] | null | undefined,
+  executedTradeIds: ReadonlySet<string>
+): { accepted: T[]; rejected: T[] } => {
+  const accepted: T[] = [];
+  const rejected: T[] = [];
+
+  for (const trade of Array.isArray(pool) ? pool : []) {
+    if (!trade) {
+      continue;
+    }
+
+    if (executedTradeIds.has(String(trade.id))) {
+      accepted.push(trade);
+      continue;
+    }
+
+    rejected.push(trade);
+  }
+
+  return { accepted, rejected };
+};
+
 export const isRemovedAizipLibraryId = (libraryId: string): boolean => {
   return REMOVED_AIZIP_LIBRARY_IDS.has(String(libraryId || "").trim().toLowerCase());
 };

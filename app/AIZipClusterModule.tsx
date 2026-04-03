@@ -5991,7 +5991,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
   {
     id: "core",
     name: "Online Library",
-    description: "",
+    description: "Every AI-accepted trade kept in rolling online-learning memory.",
     defaults: { weight: 100, maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES, stride: 0 },
     fields: [
       {
@@ -6026,7 +6026,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     id: "suppressed",
     name: "Ghost Library",
     description:
-      "Ghost-learning outcomes kept as training-only neighbors.",
+      "Every AI-rejected trade kept as ghost-learning training-only memory.",
     defaults: { weight: 100, maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES, stride: 0 },
     fields: [
       {
@@ -13161,16 +13161,93 @@ function ClusterMapInner({
     return { sessions, months, dows, hours, models };
   }, [trades, ghostEntries, libraryPoints, potential, candles, parseMode]);
 
-  // Suppressed library count should be stable regardless of Cluster Map view filters (All/Buy/Sell, time, etc.).
-  const suppressedLibraryTotalAll = useMemo(() => {
-    let c = 0;
+  const onlineLibraryTotalAll = useMemo(() => {
+    const acceptedTradeCount = Array.isArray(trades) ? trades.length : 0;
+    if (acceptedTradeCount > 0) {
+      return acceptedTradeCount;
+    }
+
+    let fallbackCount = 0;
     for (const lp of (libraryPoints as any[]) || []) {
       if (!lp) continue;
-      const lid = String((lp as any).libId ?? (lp as any).metaLib ?? "");
-      if (lid.toLowerCase() === "suppressed") c++;
+      const lid = String((lp as any).libId ?? (lp as any).metaLib ?? "").trim();
+      if (lid.toLowerCase() === "core") {
+        fallbackCount += 1;
+      }
     }
-    return c;
-  }, [libraryPoints]);
+    return fallbackCount;
+  }, [libraryPoints, trades]);
+  // Ghost / suppressed library count should be stable regardless of Cluster Map view filters.
+  const suppressedLibraryTotalAll = useMemo(() => {
+    const explicitGhostCount = Array.isArray(ghostEntries) ? ghostEntries.length : 0;
+    if (explicitGhostCount > 0) {
+      return explicitGhostCount;
+    }
+
+    let fallbackCount = 0;
+    for (const lp of (libraryPoints as any[]) || []) {
+      if (!lp) continue;
+      const lid = String((lp as any).libId ?? (lp as any).metaLib ?? "").trim();
+      if (lid.toLowerCase() === "suppressed") {
+        fallbackCount += 1;
+      }
+    }
+    return fallbackCount;
+  }, [ghostEntries, libraryPoints]);
+  const stableLibraryCountsById = useMemo(() => {
+    const next: Record<string, number> = {};
+    const activeLibraryIds = new Set(
+      ((activeLibraries as any[]) || [])
+        .map((libraryId) => String(libraryId ?? "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+
+    for (const [libraryId, rawCount] of Object.entries((libraryCounts as any) || {})) {
+      const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
+      if (!normalizedLibraryId) continue;
+      next[normalizedLibraryId] = Math.max(0, Number(rawCount) || 0);
+    }
+
+    if (activeLibraryIds.has("core") || next.core != null) {
+      next.core = onlineLibraryTotalAll;
+    }
+
+    if (activeLibraryIds.has("suppressed") || next.suppressed != null) {
+      next.suppressed = suppressedLibraryTotalAll;
+    }
+
+    return next;
+  }, [activeLibraries, libraryCounts, onlineLibraryTotalAll, suppressedLibraryTotalAll]);
+  const stableLibraryTotalAll = useMemo(() => {
+    let total = 0;
+    for (const count of Object.values(stableLibraryCountsById)) {
+      total += Math.max(0, Number(count) || 0);
+    }
+    return total;
+  }, [stableLibraryCountsById]);
+  const resolveStableLibraryCount = React.useCallback(
+    (libraryId: string, fallbackCount = 0) => {
+      const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
+      if (
+        normalizedLibraryId &&
+        Object.prototype.hasOwnProperty.call(stableLibraryCountsById, normalizedLibraryId)
+      ) {
+        return Math.max(0, Number(stableLibraryCountsById[normalizedLibraryId]) || 0);
+      }
+      return Math.max(0, Number(fallbackCount) || 0);
+    },
+    [stableLibraryCountsById]
+  );
+  const formatLibraryDisplayName = React.useCallback((libraryId: string, fallbackName: string) => {
+    const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
+    if (normalizedLibraryId === "core") {
+      return `${fallbackName} (AI Accepted)`;
+    }
+    if (normalizedLibraryId === "suppressed") {
+      return `${fallbackName} (AI Rejected)`;
+    }
+    return fallbackName;
+  }, []);
   const libraryPointDiagnosticsRef = useRef<any>({
     inputCount: 0,
     usedLegacyVectorFallback: false,
@@ -13300,6 +13377,12 @@ function ClusterMapInner({
       return true;
     };
     const entries = [];
+    const activeLibraryIdSet = new Set(
+      ((activeLibraries as any[]) || [])
+        .map((libraryId) => String(libraryId ?? "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+    const onlineLibraryActive = activeLibraryIdSet.has("core");
     const suppressedLibActive =
       (legendToggles as any)["lib:suppressed"] === true;
     for (let i = 0; i < trades.length; i++) {
@@ -13395,6 +13478,84 @@ function ClusterMapInner({
         suppressed: !!(t as any).suppressed,
         entryNeighbors: (t as any).entryNeighbors ?? [],
       });
+
+      if (onlineLibraryActive) {
+        const entryDtStr = (t.entryTime || "") as any;
+        const entryDt = entryDtStr ? parseDateFromString(entryDtStr, parseMode) : null;
+        const entryMonthIdx =
+          entryDt != null
+            ? parseMode === "utc"
+              ? entryDt.getUTCMonth()
+              : entryDt.getMonth()
+            : null;
+        const entryMonthKey = entryMonthIdx != null ? MONTH_SHORT[entryMonthIdx] : null;
+        const entryDow =
+          entryDt != null
+            ? parseMode === "utc"
+              ? entryDt.getUTCDay()
+              : entryDt.getDay()
+            : null;
+        const entryDowKey = typeof entryDow === "number" ? DOW_SHORT[entryDow] : null;
+        const entryHour =
+          entryDt != null
+            ? parseMode === "utc"
+              ? entryDt.getUTCHours()
+              : entryDt.getHours()
+            : null;
+        const entrySession = sessionFromTime(t.entryTime, parseMode);
+
+        entries.push({
+          id: `lib-core-${t.uid ?? t.id ?? i}-${t.entryIndex}`,
+          libId: "core",
+          metaLib: "core",
+          uid: `LC-${t.uid ?? t.id ?? i}`,
+          chunk,
+          meta,
+          timeFeature,
+          baseR: 6.4,
+          kind: "library",
+          signalIndex: t.signalIndex,
+          entryIndex: t.entryIndex,
+          exitIndex: t.exitIndex ?? null,
+          pnl,
+          win: pnl >= 0,
+          isOpen: false,
+          dir: t.direction,
+          entryTime: t.entryTime,
+          exitTime: t.exitTime,
+          session: entrySession,
+          entryModel,
+          exitModel: (t as any).exitModel ?? null,
+          monthKey: entryMonthKey,
+          dow: entryDow,
+          dowKey: entryDowKey,
+          hour: entryHour,
+          metaTime: t.entryTime,
+          metaSession: entrySession,
+          metaSuppressed: false,
+          label: pnl >= 0 ? 1 : -1,
+          closestCluster: t.closestCluster,
+          closestClusterUid: (t as any).closestClusterUid ?? null,
+          entryMargin:
+            (t as any).entryMargin ??
+            (t as any).entryConfidence ??
+            (t as any).aiConfidence ??
+            (t as any).confidence ??
+            (t as any).margin ??
+            null,
+          entryConfidence: (t as any).entryConfidence ?? null,
+          aiConfidence: (t as any).aiConfidence ?? null,
+          confidence: (t as any).confidence ?? null,
+          aiMargin: (t as any).aiMargin ?? null,
+          margin: (t as any).margin ?? null,
+          aiMode: (t as any).aiMode ?? null,
+          chunkType: t.chunkType,
+          exitReason: t.exitReason,
+          entryPrice: t.entryPrice,
+          suppressed: false,
+          entryNeighbors: (t as any).entryNeighbors ?? [],
+        });
+      }
     }
     const hasLiveOpenTrade = trades.some((t) => !!t.isOpen);
     if (
@@ -13643,8 +13804,19 @@ function ClusterMapInner({
       }
 
       const libId = String((p as any).libId ?? (p as any).metaLib ?? "unknown");
+      const normalizedLibId = libId.toLowerCase();
+      const hasExplicitGhostEntries = Array.isArray(ghostEntries) && ghostEntries.length > 0;
 
-      const isSuppLib = libId.toLowerCase() === "suppressed";
+      // Online / Ghost libraries are synthesized directly from accepted trades and
+      // rejected ghost trades so they always reflect the true AI decision split.
+      if (normalizedLibId === "core") {
+        continue;
+      }
+      if (normalizedLibId === "suppressed" && hasExplicitGhostEntries) {
+        continue;
+      }
+
+      const isSuppLib = normalizedLibId === "suppressed";
       if (isSuppLib && !suppressedLibActive) {
         libraryNodeDiagnostics.skippedSuppressedInactive += 1;
         continue;
@@ -21167,9 +21339,7 @@ function ClusterMapInner({
                       <span style={{ opacity: 0.78 }}>Total Nodes:</span>
                       <b style={{ color: "rgba(255,255,255,0.92)" }}>
                         Library{" "}
-                        {Number(
-                          (counts as any).libraryPts || 0
-                        ).toLocaleString()}
+                        {stableLibraryTotalAll.toLocaleString()}
                       </b>
                       <span style={{ opacity: 0.6 }}>+</span>
                       <b style={{ color: "rgba(255,255,255,0.92)" }}>
@@ -21216,7 +21386,7 @@ function ClusterMapInner({
                     </>
                   )}
 
-                  {counts.libraryPts
+                  {stableLibraryTotalAll > 0
                     ? pill(
                         <>
                           <span style={{ opacity: 0.78 }}>Library Nodes:</span>
@@ -21251,7 +21421,7 @@ function ClusterMapInner({
                       )
                     : null}
 
-                  {counts.libraryPts
+                  {stableLibraryTotalAll > 0
                     ? pill(
                         <>
                           <span style={{ opacity: 0.78 }}>Libraries:</span>
@@ -21268,15 +21438,18 @@ function ClusterMapInner({
                               const def = (AI_LIBRARY_DEF_BY_ID as any)[
                                 String(lid)
                               ];
-                              const name = def
+                              const baseName = def
                                 ? def.name || def.label || def.id
                                 : String(lid);
+                              const name = formatLibraryDisplayName(
+                                String(lid),
+                                String(baseName)
+                              );
                               const col = colorForLibrary(String(lid));
-                              const isSupp =
-                                String(lid).toLowerCase() === "suppressed";
-                              const showCnt = isSupp
-                                ? suppressedLibraryTotalAll
-                                : Number(cnt || 0);
+                              const showCnt = resolveStableLibraryCount(
+                                String(lid),
+                                Number(cnt || 0)
+                              );
                               return (
                                 <span
                                   key={String(lid)}
@@ -21303,7 +21476,7 @@ function ClusterMapInner({
                       )
                     : null}
 
-                  {counts.libraryPts ? (
+                  {stableLibraryTotalAll > 0 ? (
                     <div
                       style={{
                         display: "flex",
@@ -22852,9 +23025,10 @@ function ClusterMapInner({
                       if (!lid)
                         return (base as any).kind === "trade" ? "Trades" : "—";
                       const def = (AI_LIBRARY_DEF_BY_ID as any)[String(lid)];
-                      return def
+                      const baseName = def
                         ? def.name || def.label || def.id || String(lid)
                         : String(lid);
+                      return formatLibraryDisplayName(String(lid), String(baseName));
                     })()}
                   </div>
 
@@ -24205,17 +24379,17 @@ function ClusterMapInner({
 
             ...libraryLegendIds.map((lid) => {
                 const def = (AI_LIBRARY_DEF_BY_ID as any)[String(lid)];
-                const name = def
+                const baseName = def
                   ? def.name || def.label || def.id
                   : String(lid);
-                const isSupp = String(lid).toLowerCase() === "suppressed";
+                const name = formatLibraryDisplayName(String(lid), String(baseName));
                 const c0 = colorForLibrary(String(lid));
                 const bg0 = cssColorWithAlpha(c0, 0.18);
                 const br0 = cssColorWithAlpha(c0, 0.55);
                 const cntRaw = Number(
                   (counts as any)?.libraryById?.[String(lid)] ?? 0
                 );
-                const cnt = isSupp ? suppressedLibraryTotalAll : cntRaw;
+                const cnt = resolveStableLibraryCount(String(lid), cntRaw);
                 return {
                   key: `lib:${String(lid)}`,
                   label: `Library · ${name}`,
