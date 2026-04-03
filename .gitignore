@@ -3,6 +3,10 @@
 
 # next.js
 /.next/
+/.next_build_cache_2/
+/.next_build_cache_3/
+/.next_failed_build_cache/
+/.next_stale_build/
 /out/
 
 # production
@@ -35,3 +39,6 @@ next-env.d.ts
 .next-dev.log
 tmp-next-dev.err.log
 tmp-next-dev.log
+/tmp-*
+/Export
+/loading.zip

@@ -29,6 +29,11 @@ import {
 } from "../lib/aiConfidence";
 import { getTradeConfidenceScore as getSharedTradeConfidenceScore } from "../lib/aiEntryScoring";
 import {
+  formatDimensionRawValue,
+  isCyclicalDimensionRawDisplay,
+  type DimensionRawDisplayDescriptor,
+} from "../lib/dimensionValueFormatting";
+import {
   isTradeCheatedByFutureDependency,
   normalizeTradeTimestampSeconds,
 } from "../lib/aiTradeCheating";
@@ -774,7 +779,7 @@ function TradeDetailsModalImpl({
   const fmtPct = (v, d = 1) =>
     Number.isFinite(v) ? `${(Number(v) * 100).toFixed(d)}%` : "—";
   const titleId = displayIdForNode(trade as any);
-  const normalizedDimensionRows = useMemo(
+  const baseDimensionRows = useMemo(
     () =>
       Array.isArray(dimensionRows)
         ? dimensionRows.filter(
@@ -807,13 +812,33 @@ function TradeDetailsModalImpl({
       return explicit;
     }
 
-    const rankedDimension = normalizedDimensionRows.find((row) =>
+    const rankedDimension = baseDimensionRows.find((row) =>
       String((row as any)?.name ?? "").trim().length > 0
     );
     return rankedDimension ? String((rankedDimension as any).name) : "—";
-  }, [normalizedDimensionRows, trade]);
+  }, [baseDimensionRows, trade]);
   const [dimensionProfileScaleMode, setDimensionProfileScaleMode] =
     React.useState<DimensionProfileScaleMode>("raw");
+  const displayDimensionRows = useMemo(() => {
+    if (dimensionProfileScaleMode !== "raw") {
+      return baseDimensionRows;
+    }
+
+    const keySet = new Set(
+      baseDimensionRows.map((row) => String((row as any)?.key ?? ""))
+    );
+
+    return baseDimensionRows.filter((row) => {
+      const groupKey = String((row as any)?.rawDisplayGroupKey ?? "").trim();
+      const pairKey = String((row as any)?.rawDisplayPairKey ?? "").trim();
+
+      if (!groupKey || !pairKey || !keySet.has(pairKey)) {
+        return true;
+      }
+
+      return Boolean((row as any)?.rawDisplayGroupLeader);
+    });
+  }, [baseDimensionRows, dimensionProfileScaleMode]);
   const getDimensionScaleData = (
     dimension,
     scaleMode: DimensionProfileScaleMode = dimensionProfileScaleMode
@@ -832,6 +857,8 @@ function TradeDetailsModalImpl({
         isRaw ? (dimension as any)?.rawEntryValue : (dimension as any)?.entryValue
       ),
       segments: Array.isArray(segmentSource) ? segmentSource : [],
+      winLow: Number(isRaw ? (dimension as any)?.rawWinLow : (dimension as any)?.winLow),
+      winHigh: Number(isRaw ? (dimension as any)?.rawWinHigh : (dimension as any)?.winHigh),
     };
   };
   const getPaddedDimensionTrackRange = (
@@ -899,22 +926,79 @@ function TradeDetailsModalImpl({
     if (hi <= lo) return 50;
     return clamp(((v - lo) / (hi - lo)) * 100, 0, 100);
   };
-  const formatDimensionValue = (
-    value,
+  const getDimensionRawDisplayDescriptor = (dimension): DimensionRawDisplayDescriptor => ({
+    format: ((dimension as any)?.rawValueFormat ?? "number") as any,
+    pairFeatureIndex: (dimension as any)?.rawDisplayPairKey ? 0 : null,
+    phaseRole: ((dimension as any)?.rawDisplayPhaseRole ?? null) as any,
+    cycle: Number((dimension as any)?.rawDisplayCycle ?? NaN),
+    offset: Number((dimension as any)?.rawDisplayOffset ?? 0),
+  });
+  const getDimensionLabel = (
+    dimension,
     scaleMode: DimensionProfileScaleMode = dimensionProfileScaleMode
+  ) => {
+    if (scaleMode === "raw") {
+      const rawLabel = String((dimension as any)?.rawDisplayGroupLabel ?? "").trim();
+      if (rawLabel) {
+        return rawLabel;
+      }
+    }
+    return String((dimension as any)?.name ?? "Dimension");
+  };
+  const isRawCyclicalDimension = (
+    dimension,
+    scaleMode: DimensionProfileScaleMode = dimensionProfileScaleMode
+  ) =>
+    scaleMode === "raw" &&
+    isCyclicalDimensionRawDisplay(getDimensionRawDisplayDescriptor(dimension));
+  const formatDimensionRangeEdgeLabel = (
+    edge: "min" | "max",
+    dimension,
+    value,
+    scaleMode: DimensionProfileScaleMode = dimensionProfileScaleMode,
+    compact = false
+  ) => {
+    const cyclical = isRawCyclicalDimension(dimension, scaleMode);
+    const prefix =
+      edge === "min"
+        ? cyclical
+          ? compact
+            ? "Start"
+            : "Range Start"
+          : "Minimum"
+        : cyclical
+          ? compact
+            ? "End"
+            : "Range End"
+          : "Maximum";
+
+    return Number.isFinite(Number(value))
+      ? `${prefix} ${formatDimensionValue(dimension, value, scaleMode, compact)}`
+      : prefix;
+  };
+  const formatDimensionValue = (
+    dimension,
+    value,
+    scaleMode: DimensionProfileScaleMode = dimensionProfileScaleMode,
+    compact = false
   ) => {
     const numericValue = Number(value);
     if (!Number.isFinite(numericValue)) {
       return "—";
     }
+    if (scaleMode === "raw") {
+      return formatDimensionRawValue(
+        numericValue,
+        getDimensionRawDisplayDescriptor(dimension),
+        { compact }
+      );
+    }
     const digits =
-      scaleMode === "raw"
-        ? Math.abs(numericValue) >= 100
-          ? 2
-          : Math.abs(numericValue) >= 10
-            ? 3
-            : 4
-        : 2;
+      Math.abs(numericValue) >= 100
+        ? 2
+        : Math.abs(numericValue) >= 10
+          ? 3
+          : 4;
     return numericValue.toLocaleString(undefined, {
       minimumFractionDigits: 0,
       maximumFractionDigits: digits,
@@ -922,10 +1006,14 @@ function TradeDetailsModalImpl({
   };
   const formatTrackLabel = (
     prefix,
+    dimension,
     value,
-    scaleMode: DimensionProfileScaleMode = dimensionProfileScaleMode
+    scaleMode: DimensionProfileScaleMode = dimensionProfileScaleMode,
+    compact = true
   ) =>
-    Number.isFinite(Number(value)) ? `${prefix} ${formatDimensionValue(value, scaleMode)}` : prefix;
+    Number.isFinite(Number(value))
+      ? `${prefix} ${formatDimensionValue(dimension, value, scaleMode, compact)}`
+      : prefix;
   const formatPrecisePct = (value, digits = 3) =>
     Number.isFinite(Number(value)) ? `${(Number(value) * 100).toFixed(digits)}%` : "—";
   const resolveDimensionHoverProfile = (
@@ -934,9 +1022,10 @@ function TradeDetailsModalImpl({
     pct,
     scaleMode: DimensionProfileScaleMode = dimensionProfileScaleMode
   ) => {
-    const { qLow, qHigh } = getDimensionScaleData(dimension, scaleMode);
-    const winLow = Number((dimension as any)?.winLow);
-    const winHigh = Number((dimension as any)?.winHigh);
+    const { qLow, qHigh, winLow, winHigh } = getDimensionScaleData(
+      dimension,
+      scaleMode
+    );
     const key = String((dimension as any)?.key ?? "");
     const finiteLow = Number.isFinite(winLow);
     const finiteHigh = Number.isFinite(winHigh);
@@ -966,10 +1055,10 @@ function TradeDetailsModalImpl({
       );
       const label =
         value <= qLow
-          ? formatTrackLabel("<=", qLow, scaleMode)
+          ? formatTrackLabel("<=", dimension, qLow, scaleMode)
           : value >= qHigh
-          ? formatTrackLabel(">=", qHigh, scaleMode)
-          : formatDimensionValue(value, scaleMode);
+          ? formatTrackLabel(">=", dimension, qHigh, scaleMode)
+          : formatDimensionValue(dimension, value, scaleMode);
       return {
         key,
         scaleMode,
@@ -987,7 +1076,7 @@ function TradeDetailsModalImpl({
         scaleMode,
         pct,
         value,
-        label: formatTrackLabel("<=", qLow, scaleMode),
+        label: formatTrackLabel("<=", dimension, qLow, scaleMode),
         winRate: finiteLow ? winLow : defaultRate,
         confidence: clamp(0.32 + separation * 0.58, 0.05, 0.995),
       };
@@ -998,7 +1087,7 @@ function TradeDetailsModalImpl({
         scaleMode,
         pct,
         value,
-        label: formatTrackLabel(">=", qHigh, scaleMode),
+        label: formatTrackLabel(">=", dimension, qHigh, scaleMode),
         winRate: finiteHigh ? winHigh : defaultRate,
         confidence: clamp(0.32 + separation * 0.58, 0.05, 0.995),
       };
@@ -1008,7 +1097,9 @@ function TradeDetailsModalImpl({
       scaleMode,
       pct,
       value,
-      label: Number.isFinite(value) ? formatDimensionValue(value, scaleMode) : "mid range",
+      label: Number.isFinite(value)
+        ? formatDimensionValue(dimension, value, scaleMode)
+        : "mid range",
       winRate: defaultRate,
       confidence: clamp(0.18 + separation * 0.34, 0.05, 0.995),
     };
@@ -1019,9 +1110,10 @@ function TradeDetailsModalImpl({
     max,
     scaleMode: DimensionProfileScaleMode = dimensionProfileScaleMode
   ) => {
-    const { qLow, qHigh } = getDimensionScaleData(dimension, scaleMode);
-    const winLow = Number((dimension as any)?.winLow);
-    const winHigh = Number((dimension as any)?.winHigh);
+    const { qLow, qHigh, winLow, winHigh } = getDimensionScaleData(
+      dimension,
+      scaleMode
+    );
     const lowPct = toTrackPct(qLow, min, max);
     const highPct = toTrackPct(qHigh, min, max);
     const preferLow =
@@ -1479,7 +1571,7 @@ function TradeDetailsModalImpl({
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {normalizedDimensionRows.length} active dims
+                    {displayDimensionRows.length} active dims
                   </div>
                 </div>
 
@@ -1524,7 +1616,7 @@ function TradeDetailsModalImpl({
                   })}
                 </div>
 
-                {normalizedDimensionRows.length ? (
+                {displayDimensionRows.length ? (
                   <div
                     style={{
                       maxHeight: compactViewport ? 260 : 320,
@@ -1534,8 +1626,12 @@ function TradeDetailsModalImpl({
                       gap: 24,
                     }}
                   >
-                    {normalizedDimensionRows.map((dimension) => {
+                    {displayDimensionRows.map((dimension) => {
                   const rowKey = String((dimension as any).key ?? "");
+                  const dimensionLabel = getDimensionLabel(
+                    dimension,
+                    dimensionProfileScaleMode
+                  );
                   const scaleData = getDimensionScaleData(
                     dimension,
                     dimensionProfileScaleMode
@@ -1550,6 +1646,8 @@ function TradeDetailsModalImpl({
                   const max = Number.isFinite(paddedTrackRange.max)
                     ? paddedTrackRange.max
                     : scaleData.max;
+                  const actualMin = scaleData.min;
+                  const actualMax = scaleData.max;
                   const qLow = scaleData.qLow;
                   const qHigh = scaleData.qHigh;
                   const entryValue = scaleData.entryValue;
@@ -1560,25 +1658,69 @@ function TradeDetailsModalImpl({
                       segments
                         .flatMap((segment, segmentIndex) => {
                           const startLabel =
-                            Math.abs(Number(segment.start) - min) <= 0.000001
-                              ? "Minimum"
+                            Number.isFinite(actualMin) &&
+                            Math.abs(Number(segment.start) - actualMin) <= 0.000001
+                              ? formatDimensionRangeEdgeLabel(
+                                  "min",
+                                  dimension,
+                                  actualMin,
+                                  dimensionProfileScaleMode,
+                                  true
+                                )
                               : Number.isFinite(qLow) &&
                                 Math.abs(Number(segment.start) - qLow) <= 0.000001
-                              ? formatTrackLabel("<=", qLow, dimensionProfileScaleMode)
+                              ? formatTrackLabel(
+                                  "<=",
+                                  dimension,
+                                  qLow,
+                                  dimensionProfileScaleMode
+                                )
                               : Number.isFinite(qHigh) &&
                                 Math.abs(Number(segment.start) - qHigh) <= 0.000001
-                              ? formatTrackLabel(">=", qHigh, dimensionProfileScaleMode)
-                              : formatDimensionValue(segment.start, dimensionProfileScaleMode);
+                              ? formatTrackLabel(
+                                  ">=",
+                                  dimension,
+                                  qHigh,
+                                  dimensionProfileScaleMode
+                                )
+                              : formatDimensionValue(
+                                  dimension,
+                                  segment.start,
+                                  dimensionProfileScaleMode,
+                                  true
+                                );
                           const endLabel =
-                            Math.abs(Number(segment.end) - max) <= 0.000001
-                              ? "Maximum"
+                            Number.isFinite(actualMax) &&
+                            Math.abs(Number(segment.end) - actualMax) <= 0.000001
+                              ? formatDimensionRangeEdgeLabel(
+                                  "max",
+                                  dimension,
+                                  actualMax,
+                                  dimensionProfileScaleMode,
+                                  true
+                                )
                               : Number.isFinite(qLow) &&
                                 Math.abs(Number(segment.end) - qLow) <= 0.000001
-                              ? formatTrackLabel("<=", qLow, dimensionProfileScaleMode)
+                              ? formatTrackLabel(
+                                  "<=",
+                                  dimension,
+                                  qLow,
+                                  dimensionProfileScaleMode
+                                )
                               : Number.isFinite(qHigh) &&
                                 Math.abs(Number(segment.end) - qHigh) <= 0.000001
-                              ? formatTrackLabel(">=", qHigh, dimensionProfileScaleMode)
-                              : formatDimensionValue(segment.end, dimensionProfileScaleMode);
+                              ? formatTrackLabel(
+                                  ">=",
+                                  dimension,
+                                  qHigh,
+                                  dimensionProfileScaleMode
+                                )
+                              : formatDimensionValue(
+                                  dimension,
+                                  segment.end,
+                                  dimensionProfileScaleMode,
+                                  true
+                                );
                           return [
                             {
                               key: `${segmentIndex}-start`,
@@ -1650,7 +1792,11 @@ function TradeDetailsModalImpl({
                   const entryText =
                     entryPct == null || !Number.isFinite(entryValue)
                       ? "N/A"
-                      : formatDimensionValue(entryValue, dimensionProfileScaleMode);
+                      : formatDimensionValue(
+                          dimension,
+                          entryValue,
+                          dimensionProfileScaleMode
+                        );
                   return (
                     <div
                       key={rowKey}
@@ -1683,9 +1829,9 @@ function TradeDetailsModalImpl({
                             fontWeight: 800,
                             color: "rgba(255,255,255,0.86)",
                           }}
-                          title={String((dimension as any).name ?? "")}
+                          title={dimensionLabel}
                         >
-                          {String((dimension as any).name ?? "Dimension")}
+                          {dimensionLabel}
                         </div>
                         <div
                           style={{
@@ -1868,8 +2014,13 @@ function TradeDetailsModalImpl({
                         }}
                       >
                         <span>
-                          {Number.isFinite(min)
-                            ? `Minimum ${formatDimensionValue(min, dimensionProfileScaleMode)}`
+                          {Number.isFinite(actualMin)
+                            ? formatDimensionRangeEdgeLabel(
+                                "min",
+                                dimension,
+                                actualMin,
+                                dimensionProfileScaleMode
+                              )
                             : "Minimum —"}
                         </span>
                         <span
@@ -1891,8 +2042,13 @@ function TradeDetailsModalImpl({
                             : "Hover anywhere on the bar for a precise win-rate estimate"}
                         </span>
                         <span>
-                          {Number.isFinite(max)
-                            ? `Maximum ${formatDimensionValue(max, dimensionProfileScaleMode)}`
+                          {Number.isFinite(actualMax)
+                            ? formatDimensionRangeEdgeLabel(
+                                "max",
+                                dimension,
+                                actualMax,
+                                dimensionProfileScaleMode
+                              )
                             : "Maximum —"}
                         </span>
                       </div>

@@ -6,6 +6,7 @@ import {
   summarizeBacktestTrades
 } from "../../../../lib/backtestStats";
 import { getTradeConfidenceScore as getSharedTradeConfidenceScore } from "../../../../lib/aiEntryScoring";
+import { getBacktestEntryExitStatsExitBucket } from "../../../../lib/backtestExitReason";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -955,7 +956,7 @@ const computeEntryExitStats = (
 
   for (const trade of trades) {
     const entryKey = trade.entrySource || "Unknown";
-    const exitKey = trade.exitReason || "None";
+    const exitKey = getBacktestEntryExitStatsExitBucket(trade);
     entryCounts[entryKey] = (entryCounts[entryKey] ?? 0) + 1;
     exitCounts[exitKey] = (exitCounts[exitKey] ?? 0) + 1;
   }

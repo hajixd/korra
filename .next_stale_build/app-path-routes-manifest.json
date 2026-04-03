@@ -1,7 +1,0 @@
-{
-  "/api/history/candles/route": "/api/history/candles",
-  "/api/market/candles/route": "/api/market/candles",
-  "/_not-found/page": "/_not-found",
-  "/icon.svg/route": "/icon.svg",
-  "/page": "/"
-}

@@ -101,6 +101,18 @@ import {
   getTradeWeekKey as getBacktestStatsTradeWeekKey,
   summarizeBacktestTrades as summarizeBacktestTradesShared
 } from "../lib/backtestStats";
+import {
+  getBacktestEntryExitStatsExitBucket,
+  getBacktestExitLabel
+} from "../lib/backtestExitReason";
+import {
+  decodeCyclicalDimensionDisplayValue,
+  getDimensionRawDisplayDescriptor,
+  type DimensionRawDisplayDescriptor,
+  type DimensionRawValueFormat,
+  isCyclicalDimensionRawDisplay,
+  unwrapWrappedDimensionValue
+} from "../lib/dimensionValueFormatting";
 import { isTradeCheatedByFutureDependency } from "../lib/aiTradeCheating";
 import {
   computeAverageNeighborContributionAtEntryScore,
@@ -543,10 +555,25 @@ const EMPTY_CANDLES: Candle[] = [];
 const STATS_REFRESH_HOLD_MS = 3000;
 const STATS_REFRESH_COMPLETE_DELAY_MS = 1000;
 const STATS_REFRESH_VISUAL_FULL_THRESHOLD = 99.95;
+const LIVE_STREAM_UI_COMMIT_THROTTLE_MS = 96;
 const WORKSPACE_PANEL_MIN_WIDTH = 350;
 const WORKSPACE_PANEL_DEFAULT_WIDTH = 430;
 const WORKSPACE_PANEL_MAX_WIDTH = 980;
 const WORKSPACE_CHART_MIN_WIDTH = 360;
+
+const areLiveQuoteSnapshotsEqual = (
+  left: LiveQuoteSnapshot,
+  right: LiveQuoteSnapshot
+): boolean => {
+  return (
+    left.bid === right.bid &&
+    left.ask === right.ask &&
+    left.spread === right.spread &&
+    left.bidTone === right.bidTone &&
+    left.askTone === right.askTone &&
+    left.updatedAtMs === right.updatedAtMs
+  );
+};
 
 const resolveWorkspacePanelWidth = (value: unknown): number => {
   const numeric = Number(value);
@@ -2323,7 +2350,7 @@ const buildBacktestAnalyticsFallbackResponse = (params: {
   const exitCounts: Record<string, number> = {};
   for (const trade of backtestTrades) {
     const entryKey = trade.entrySource || "Unknown";
-    const exitKey = trade.exitReason || "None";
+    const exitKey = getBacktestEntryExitStatsExitBucket(trade);
     entryCounts[entryKey] = (entryCounts[entryKey] ?? 0) + 1;
     exitCounts[exitKey] = (exitCounts[exitKey] ?? 0) + 1;
   }
@@ -3783,12 +3810,23 @@ type DimensionStatRow = {
   featureIndex: number;
   lag: number;
   name: string;
+  rawValueFormat: DimensionRawValueFormat;
+  rawDisplayGroupKey: string | null;
+  rawDisplayGroupLabel: string | null;
+  rawDisplayGroupLeader: boolean;
+  rawDisplayPairKey: string | null;
+  rawDisplayPhaseRole: DimensionRawDisplayDescriptor["phaseRole"];
+  rawDisplayCycle: number | null;
+  rawDisplayOffset: number;
+  rawDisplayAnchor: number | null;
   corr: number;
   absCorr: number;
   rawMin: number;
   rawMax: number;
   rawQLow: number;
   rawQHigh: number;
+  rawWinLow: number | null;
+  rawWinHigh: number | null;
   min: number;
   max: number;
   qLow: number;
@@ -5145,7 +5183,8 @@ const DIMENSION_FEATURE_NAME_BANK: Record<string, string[]> = {
     "Hour cos",
     "Day-of-year sin",
     "Day-of-year cos",
-    "Week-of-year (normalized)"
+    "Week-of-year sin",
+    "Week-of-year cos"
   ],
   position: [
     "Close position in range",
@@ -5203,12 +5242,12 @@ const DIMENSION_FEATURE_NAME_BANK: Record<string, string[]> = {
     "Trend"
   ],
   mf__seasons__core: [
-    "sin(TOD)",
-    "cos(TOD)",
+    "sin(Month)",
+    "cos(Month)",
     "sin(DOY)",
     "cos(DOY)",
-    "DOY",
-    "TOD",
+    "sin(WOY)",
+    "cos(WOY)",
     "Range",
     "Trend",
     "Abs return mean",
@@ -5221,9 +5260,10 @@ const DIMENSION_FEATURE_NAME_BANK: Record<string, string[]> = {
     "Position"
   ],
   mf__time_of_day__core: [
-    "sin(TOD)",
-    "cos(TOD)",
-    "TOD",
+    "sin(Hour)",
+    "cos(Hour)",
+    "sin(Minute)",
+    "cos(Minute)",
     "Range",
     "Trend",
     "Abs return mean",
@@ -5235,8 +5275,7 @@ const DIMENSION_FEATURE_NAME_BANK: Record<string, string[]> = {
     "Reversal rate",
     "Position",
     "Last return",
-    "Accel",
-    "Vol burst"
+    "Accel"
   ],
   mf__fibonacci__core: [
     "p0-0.236",
@@ -6253,10 +6292,17 @@ const mergeLivePriceIntoCandles = (
   }
 
   if (bucketTime === last.time) {
+    const nextHigh = Math.max(last.high, price);
+    const nextLow = Math.min(last.low, price);
+
+    if (nextHigh === last.high && nextLow === last.low && price === last.close) {
+      return candles;
+    }
+
     next[next.length - 1] = {
       ...last,
-      high: Math.max(last.high, price),
-      low: Math.min(last.low, price),
+      high: nextHigh,
+      low: nextLow,
       close: price
     };
   } else {
@@ -8466,77 +8512,6 @@ const getHistoryTradeDurationMinutes = (trade: HistoryItem): number => {
   return Math.max(1, (Number(trade.exitTime) - Number(trade.entryTime)) / 60);
 };
 
-const normalizeBacktestExitReason = (reason?: string | null): string => {
-  if (!reason) {
-    return "";
-  }
-
-  const raw = String(reason).trim();
-
-  if (!raw || raw === "-") {
-    return "";
-  }
-
-  const upper = raw.toUpperCase();
-
-  if (upper === "TP" || upper.includes("TAKE")) {
-    return "Take Profit";
-  }
-
-  if (
-    upper === "BE" ||
-    upper === "BREAKEVEN" ||
-    upper === "BREAK-EVEN" ||
-    upper.includes("BREAK EVEN")
-  ) {
-    return "Break Even";
-  }
-
-  if (upper === "TSL" || upper.includes("TRAIL")) {
-    return "Trailing Stop";
-  }
-
-  if (upper === "SL" || upper.includes("STOP")) {
-    return "Stop Loss";
-  }
-
-  if (upper.includes("MIM") || upper.includes("MIT")) {
-    return "MIT";
-  }
-
-  if (upper.includes("AI")) {
-    return "AI";
-  }
-
-  if (upper.includes("MODEL")) {
-    return "Model Exit";
-  }
-
-  return raw;
-};
-
-const getBacktestExitLabel = (trade: HistoryItem): string => {
-  const normalized = normalizeBacktestExitReason(trade.exitReason);
-
-  if (normalized) {
-    return normalized;
-  }
-
-  const targetGap = Math.abs(trade.targetPrice - trade.entryPrice);
-  const stopGap = Math.abs(trade.entryPrice - trade.stopPrice);
-  const realizedGap = Math.abs(trade.outcomePrice - trade.entryPrice);
-
-  if (trade.result === "Win" && realizedGap >= targetGap * 0.84) {
-    return "Take Profit";
-  }
-
-  if (trade.result === "Loss" && realizedGap >= stopGap * 0.84) {
-    return "Stop Loss";
-  }
-
-  return "Model Exit";
-};
-
 const getMobileHistoryRailTone = (
   trade: HistoryItem
 ): "tp" | "sl" | "model-win" | "model-loss" => {
@@ -8570,6 +8545,14 @@ const getEntryExitBarFill = (bucket: string): string => {
 
   if (normalized.includes("trail")) {
     return "rgba(251,146,60,0.88)";
+  }
+
+  if (normalized.includes("model exit") && normalized.includes("win")) {
+    return "rgba(34,197,94,0.88)";
+  }
+
+  if (normalized.includes("model exit") && normalized.includes("loss")) {
+    return "rgba(239,68,68,0.88)";
   }
 
   if (normalized.includes("mim") || normalized.includes("model exit")) {
@@ -10227,7 +10210,7 @@ const buildAiFeatureVector = (
   const minutes = finalDate.getUTCMinutes();
   const startOfYear = Date.UTC(year, 0, 0);
   const dayOfYear = Math.max(1, Math.floor((finalTime - startOfYear) / 86_400_000));
-  const weekNorm = clamp(Math.ceil(dayOfYear / 7) / 53, 0, 1);
+  const weekOfYear = clamp(Math.ceil(dayOfYear / 7), 1, 53);
   const dayOfYearUnit = clamp(dayOfYear / 366, 0, 1);
   const hourUnit = clamp((hours + minutes / 60) / 24, 0, 1);
   const minuteUnit = clamp(minutes / 60, 0, 1);
@@ -10237,6 +10220,7 @@ const buildAiFeatureVector = (
   const monthAngle = Math.PI * 2 * (month / 12);
   const dayAngle = Math.PI * 2 * (dayOfWeek / 7);
   const dayOfYearAngle = Math.PI * 2 * dayOfYearUnit;
+  const weekOfYearAngle = Math.PI * 2 * ((weekOfYear - 1) / 53);
   const closeMean = meanOf(closes);
   const closeStd = stdDevOf(closes);
   const zScores = closes.map((close) => (close - closeMean) / Math.max(epsilon, closeStd));
@@ -10341,7 +10325,8 @@ const buildAiFeatureVector = (
       Math.cos(hourAngle),
       Math.sin(dayOfYearAngle),
       Math.cos(dayOfYearAngle),
-      weekNorm
+      Math.sin(weekOfYearAngle),
+      Math.cos(weekOfYearAngle)
     ],
     position: [
       closePosition,
@@ -10399,12 +10384,12 @@ const buildAiFeatureVector = (
       netReturn
     ],
     mf__seasons__core: [
-      Math.sin(hourAngle),
-      Math.cos(hourAngle),
+      Math.sin(monthAngle),
+      Math.cos(monthAngle),
       Math.sin(dayOfYearAngle),
       Math.cos(dayOfYearAngle),
-      dayOfYearUnit,
-      hourUnit,
+      Math.sin(weekOfYearAngle),
+      Math.cos(weekOfYearAngle),
       range,
       netReturn,
       absoluteMeanReturn,
@@ -10419,7 +10404,8 @@ const buildAiFeatureVector = (
     mf__time_of_day__core: [
       Math.sin(hourAngle),
       Math.cos(hourAngle),
-      hourUnit,
+      Math.sin(minuteAngle),
+      Math.cos(minuteAngle),
       range,
       netReturn,
       absoluteMeanReturn,
@@ -10431,8 +10417,7 @@ const buildAiFeatureVector = (
       reversalRate,
       closePosition,
       lastReturn,
-      accel,
-      volBurst
+      accel
     ],
     mf__fibonacci__core: [
       fibDeltas[0] ?? 0,
@@ -10553,11 +10538,24 @@ type DimensionFeatureBlueprintItem = {
   featureIndex: number;
   lag: number;
   name: string;
+  rawDisplay: DimensionRawDisplayDescriptor;
+  rawDisplayGroupKey: string | null;
+  rawDisplayPairKey: string | null;
 };
 
 type DimensionFeatureBlueprint = {
   defs: DimensionFeatureBlueprintItem[];
   perFeatureDims: Record<string, Array<{ key: string; idx: number; lag: number }>>;
+};
+
+type DimensionRawDisplaySummary = {
+  min: number;
+  max: number;
+  qLow: number;
+  qHigh: number;
+  winLow: number | null;
+  winHigh: number | null;
+  anchor: number;
 };
 
 const buildDimensionFeatureBlueprintFromSettings = (
@@ -10582,15 +10580,26 @@ const buildDimensionFeatureBlueprintFromSettings = (
 
     for (let featureIndex = 0; featureIndex < take; featureIndex += 1) {
       const subName = bank[featureIndex] ?? `Dim ${featureIndex + 1}`;
+      const rawDisplay = getDimensionRawDisplayDescriptor(feature.id, featureIndex);
 
       for (let lag = 0; lag < parts; lag += 1) {
         const key = `${feature.id}__${featureIndex}__t${lag}`;
+        const rawDisplayGroupKey = rawDisplay.groupId
+          ? `${feature.id}::${rawDisplay.groupId}::t${lag}`
+          : null;
+        const rawDisplayPairKey =
+          rawDisplay.pairFeatureIndex != null
+            ? `${feature.id}__${rawDisplay.pairFeatureIndex}__t${lag}`
+            : null;
         defs.push({
           key,
           featureId: feature.id,
           featureIndex,
           lag,
-          name: showLag ? `${feature.label} - ${subName} t-${lag}` : `${feature.label} - ${subName}`
+          name: showLag ? `${feature.label} - ${subName} t-${lag}` : `${feature.label} - ${subName}`,
+          rawDisplay,
+          rawDisplayGroupKey,
+          rawDisplayPairKey
         });
         list.push({ key, idx: featureIndex, lag });
       }
@@ -10602,6 +10611,46 @@ const buildDimensionFeatureBlueprintFromSettings = (
   }
 
   return { defs, perFeatureDims };
+};
+
+const buildRawDisplayGroupLabel = (
+  name: string,
+  rawDisplay: Pick<
+    DimensionRawDisplayDescriptor,
+    "groupLabel" | "pairFeatureIndex" | "phaseRole" | "cycle"
+  >
+): string | null => {
+  const explicitGroupLabel = String(rawDisplay.groupLabel ?? "").trim();
+  if (!isCyclicalDimensionRawDisplay(rawDisplay)) {
+    return explicitGroupLabel || null;
+  }
+
+  const normalizedName = String(name ?? "").trim();
+  if (!normalizedName) {
+    return explicitGroupLabel || null;
+  }
+
+  const lagMatch = normalizedName.match(/\s+t-\d+\s*$/i);
+  const lagSuffix = lagMatch ? ` ${lagMatch[0].trim()}` : "";
+  const nameWithoutLag = lagMatch
+    ? normalizedName.slice(0, lagMatch.index).trim()
+    : normalizedName;
+  const parts = nameWithoutLag.split(" - ");
+  const prefix = parts.length > 1 ? parts.slice(0, -1).join(" - ").trim() : "";
+  const suffix = parts[parts.length - 1] ?? nameWithoutLag;
+  const fallbackLeaf = suffix
+    .replace(/\bsin\s*\(([^)]+)\)/i, "$1")
+    .replace(/\bcos\s*\(([^)]+)\)/i, "$1")
+    .replace(/\b(.+?)\s+sin\b/i, "$1")
+    .replace(/\b(.+?)\s+cos\b/i, "$1")
+    .replace(/\bDOY\b/g, "Day Of Year")
+    .replace(/\bWOY\b/g, "Week Of Year")
+    .replace(/Day-of-week/gi, "Weekday")
+    .replace(/\s+/g, " ")
+    .trim();
+  const leaf = explicitGroupLabel || fallbackLeaf || "Cycle";
+
+  return prefix ? `${prefix} - ${leaf}${lagSuffix}` : `${leaf}${lagSuffix}`;
 };
 
 const buildTradeDimensionValueLookup = (
@@ -10646,6 +10695,120 @@ const buildTradeDimensionValueLookup = (
   }
 
   return values;
+};
+
+const buildDimensionRawDisplaySummaries = (params: {
+  dimensionDefs: DimensionFeatureBlueprintItem[];
+  valuesByDimension: Map<string, number[]>;
+  outcomes: number[];
+}): Map<string, DimensionRawDisplaySummary> => {
+  const { dimensionDefs, valuesByDimension, outcomes } = params;
+  const summaries = new Map<string, DimensionRawDisplaySummary>();
+  const processedGroupKeys = new Set<string>();
+
+  for (const dimension of dimensionDefs) {
+    const descriptor = dimension.rawDisplay;
+    const groupKey = dimension.rawDisplayGroupKey;
+    const pairKey = dimension.rawDisplayPairKey;
+
+    if (
+      !groupKey ||
+      !pairKey ||
+      processedGroupKeys.has(groupKey) ||
+      !isCyclicalDimensionRawDisplay(descriptor)
+    ) {
+      continue;
+    }
+
+    const primaryValues = valuesByDimension.get(dimension.key) ?? [];
+    const companionValues = valuesByDimension.get(pairKey) ?? [];
+
+    if (
+      primaryValues.length === 0 ||
+      primaryValues.length !== companionValues.length ||
+      primaryValues.length !== outcomes.length
+    ) {
+      continue;
+    }
+
+    const phaseValues: number[] = [];
+    const phaseOutcomes: number[] = [];
+    let sumSin = 0;
+    let sumCos = 0;
+
+    for (let index = 0; index < primaryValues.length; index += 1) {
+      const primaryValue = Number(primaryValues[index]);
+      const companionValue = Number(companionValues[index]);
+      if (!Number.isFinite(primaryValue) || !Number.isFinite(companionValue)) {
+        continue;
+      }
+
+      const sinValue = descriptor.phaseRole === "sin" ? primaryValue : companionValue;
+      const cosValue = descriptor.phaseRole === "cos" ? primaryValue : companionValue;
+      sumSin += sinValue;
+      sumCos += cosValue;
+
+      const decoded = decodeCyclicalDimensionDisplayValue(
+        descriptor,
+        primaryValue,
+        companionValue
+      );
+      if (decoded == null || !Number.isFinite(decoded)) {
+        continue;
+      }
+
+      phaseValues.push(decoded);
+      phaseOutcomes.push(outcomes[index] === 1 ? 1 : 0);
+    }
+
+    if (phaseValues.length === 0 || phaseValues.length !== phaseOutcomes.length) {
+      continue;
+    }
+
+    const anchor =
+      decodeCyclicalDimensionDisplayValue(descriptor, sumSin, sumCos) ??
+      Number(descriptor.offset ?? 0);
+    const cycle = Number(descriptor.cycle ?? 0);
+    const unwrapped = phaseValues.map((value) =>
+      unwrapWrappedDimensionValue(value, anchor, cycle)
+    );
+    const min = Math.min(...unwrapped);
+    const max = Math.max(...unwrapped);
+    const qLow = quantileOf(unwrapped, 0.1);
+    const qHigh = quantileOf(unwrapped, 0.9);
+    let lowTotal = 0;
+    let lowWins = 0;
+    let highTotal = 0;
+    let highWins = 0;
+
+    for (let index = 0; index < unwrapped.length; index += 1) {
+      const value = unwrapped[index];
+      const isWin = phaseOutcomes[index] === 1;
+
+      if (value <= qLow) {
+        lowTotal += 1;
+        lowWins += isWin ? 1 : 0;
+      }
+
+      if (value >= qHigh) {
+        highTotal += 1;
+        highWins += isWin ? 1 : 0;
+      }
+    }
+
+    summaries.set(groupKey, {
+      min,
+      max,
+      qLow,
+      qHigh,
+      winLow: lowTotal > 0 ? lowWins / lowTotal : null,
+      winHigh: highTotal > 0 ? highWins / highTotal : null,
+      anchor
+    });
+    processedGroupKeys.add(groupKey);
+  }
+
+  return summaries;
 };
 
 const buildDimensionStatsSummary = (params: {
@@ -10730,6 +10893,11 @@ const buildDimensionStatsSummary = (params: {
   const epsilon = 0.000000001;
   const dimensions: DimensionStatRow[] = [];
   const varianceByKey = new Map<string, number>();
+  const rawDisplaySummaries = buildDimensionRawDisplaySummaries({
+    dimensionDefs,
+    valuesByDimension,
+    outcomes
+  });
 
   for (const dimension of dimensionDefs) {
     const values = valuesByDimension.get(dimension.key) ?? [];
@@ -10780,6 +10948,9 @@ const buildDimensionStatsSummary = (params: {
     const winLow = lowTotal > 0 ? lowWins / lowTotal : null;
     const winHigh = highTotal > 0 ? highWins / highTotal : null;
     const lift = winLow === null || winHigh === null ? null : winHigh - winLow;
+    const rawDisplaySummary = dimension.rawDisplayGroupKey
+      ? rawDisplaySummaries.get(dimension.rawDisplayGroupKey) ?? null
+      : null;
 
     let optimal = "?";
 
@@ -10803,12 +10974,26 @@ const buildDimensionStatsSummary = (params: {
       featureIndex: dimension.featureIndex,
       lag: dimension.lag,
       name: dimension.name,
+      rawValueFormat: dimension.rawDisplay.format,
+      rawDisplayGroupKey: dimension.rawDisplayGroupKey,
+      rawDisplayGroupLabel: buildRawDisplayGroupLabel(dimension.name, dimension.rawDisplay),
+      rawDisplayGroupLeader: Boolean(dimension.rawDisplay.groupLeader),
+      rawDisplayPairKey: dimension.rawDisplayPairKey,
+      rawDisplayPhaseRole: dimension.rawDisplay.phaseRole ?? null,
+      rawDisplayCycle:
+        Number.isFinite(Number(dimension.rawDisplay.cycle ?? NaN))
+          ? Number(dimension.rawDisplay.cycle)
+          : null,
+      rawDisplayOffset: Number(dimension.rawDisplay.offset ?? 0),
+      rawDisplayAnchor: rawDisplaySummary?.anchor ?? null,
       corr: correlation,
       absCorr: Math.abs(correlation),
-      rawMin,
-      rawMax,
-      rawQLow: rawLowThreshold,
-      rawQHigh: rawHighThreshold,
+      rawMin: rawDisplaySummary?.min ?? rawMin,
+      rawMax: rawDisplaySummary?.max ?? rawMax,
+      rawQLow: rawDisplaySummary?.qLow ?? rawLowThreshold,
+      rawQHigh: rawDisplaySummary?.qHigh ?? rawHighThreshold,
+      rawWinLow: rawDisplaySummary?.winLow ?? winLow,
+      rawWinHigh: rawDisplaySummary?.winHigh ?? winHigh,
       min: Math.min(...normalized),
       max: Math.max(...normalized),
       qLow: lowThreshold,
@@ -12986,6 +13171,7 @@ function TradingTerminalWorkspace({
   const [activeBacktestTradeDetailsLoading, setActiveBacktestTradeDetailsLoading] =
     useState(false);
   const activeBacktestTradeDetailsRequestRef = useRef(0);
+  const hoveredTimeRef = useRef<number | null>(null);
   const [statsDateStart, setStatsDateStart] = useState(BACKTEST_DEFAULT_DATE_RANGE.startDate);
   const [statsDateEnd, setStatsDateEnd] = useState(BACKTEST_DEFAULT_DATE_RANGE.endDate);
   const [statsDatePreset, setStatsDatePreset] = useState<BacktestDatePreset>("pastYear");
@@ -15370,7 +15556,12 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, [selectedAiLibraryId, visibleAiLibraries]);
 
   useEffect(() => {
+    hoveredTimeRef.current = hoveredTime;
+  }, [hoveredTime]);
+
+  useEffect(() => {
     setHoveredTime(null);
+    hoveredTimeRef.current = null;
   }, [selectedTimeframe]);
 
   useEffect(() => {
@@ -15393,6 +15584,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     let stream: EventSource | null = null;
     let liveSyncInterval = 0;
     let streamReadyTimeoutId = 0;
+    let liveUiFlushTimeoutId = 0;
+    let liveUiFlushRafId = 0;
+    let lastLiveUiFlushAtMs = 0;
+    let pendingLiveQuote: LiveQuoteSnapshot | null = null;
+    let hasPendingSeriesCommit = false;
     const key = selectedKey;
     const historyLimit = chartHistoryCountByTimeframe[selectedTimeframe];
     const candleDurationMs = Math.max(60_000, timeframeMinutes[selectedTimeframe] * 60_000);
@@ -15460,6 +15656,85 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     });
     overlayCatchupSeedKeyRef.current = "";
 
+    // Live ticks can arrive much faster than the terminal can usefully rerender,
+    // so batch UI commits while keeping the underlying quote math responsive.
+    const clearPendingLiveUiFlush = () => {
+      if (liveUiFlushTimeoutId) {
+        window.clearTimeout(liveUiFlushTimeoutId);
+        liveUiFlushTimeoutId = 0;
+      }
+
+      if (liveUiFlushRafId) {
+        window.cancelAnimationFrame(liveUiFlushRafId);
+        liveUiFlushRafId = 0;
+      }
+    };
+
+    const flushPendingLiveUi = () => {
+      clearPendingLiveUiFlush();
+      lastLiveUiFlushAtMs = typeof performance !== "undefined" ? performance.now() : Date.now();
+
+      const nextQuote = pendingLiveQuote;
+      pendingLiveQuote = null;
+      const shouldCommitSeries = hasPendingSeriesCommit;
+      hasPendingSeriesCommit = false;
+
+      startTransition(() => {
+        if (nextQuote) {
+          setLiveQuote((current) =>
+            areLiveQuoteSnapshotsEqual(current, nextQuote) ? current : nextQuote
+          );
+        }
+
+        if (shouldCommitSeries) {
+          setSeriesMap((current) =>
+            current === seriesMapRef.current ? current : seriesMapRef.current
+          );
+        }
+      });
+    };
+
+    const schedulePendingLiveUiFlush = (force = false) => {
+      if (cancelled) {
+        return;
+      }
+
+      if (force) {
+        clearPendingLiveUiFlush();
+        liveUiFlushRafId = window.requestAnimationFrame(() => {
+          liveUiFlushRafId = 0;
+          flushPendingLiveUi();
+        });
+        return;
+      }
+
+      if (liveUiFlushTimeoutId || liveUiFlushRafId) {
+        return;
+      }
+
+      const nowMs = typeof performance !== "undefined" ? performance.now() : Date.now();
+      const remainingMs = Math.max(
+        0,
+        LIVE_STREAM_UI_COMMIT_THROTTLE_MS - (nowMs - lastLiveUiFlushAtMs)
+      );
+
+      if (remainingMs <= 0) {
+        liveUiFlushRafId = window.requestAnimationFrame(() => {
+          liveUiFlushRafId = 0;
+          flushPendingLiveUi();
+        });
+        return;
+      }
+
+      liveUiFlushTimeoutId = window.setTimeout(() => {
+        liveUiFlushTimeoutId = 0;
+        liveUiFlushRafId = window.requestAnimationFrame(() => {
+          liveUiFlushRafId = 0;
+          flushPendingLiveUi();
+        });
+      }, remainingMs);
+    };
+
     const connect = async () => {
       let hasInitialSeed = false;
       let historyResolved = false;
@@ -15492,10 +15767,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         if (!cancelled && historicalCandles.length > 0) {
           hasInitialSeed = true;
           setMarketDataStatusMessage("");
-          setSeriesMap((prev) => ({
-            ...prev,
-            [key]: historicalCandles
-          }));
+          setSeriesMap((prev) => {
+            const next = {
+              ...prev,
+              [key]: historicalCandles
+            };
+            seriesMapRef.current = next;
+            return next;
+          });
         }
       } catch (error) {
         if (!cancelled) {
@@ -15516,27 +15795,34 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
           hasInitialSeed = true;
           setMarketDataStatusMessage("");
-          setSeriesMap((prev) => ({
-            ...prev,
-            [key]: (() => {
-              const current = prev[key] ?? [];
-              const currentLastTime = current[current.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
-              const firstLiveTime = liveCandles[0]?.time ?? Number.POSITIVE_INFINITY;
+          setSeriesMap((prev) => {
+            const current = prev[key] ?? [];
+            const currentLastTime = current[current.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
+            const firstLiveTime = liveCandles[0]?.time ?? Number.POSITIVE_INFINITY;
 
-              if (
-                Number.isFinite(currentLastTime) &&
-                Number.isFinite(firstLiveTime) &&
-                firstLiveTime > currentLastTime &&
-                hasExcessiveTradingGap(currentLastTime, firstLiveTime, selectedTimeframe)
-              ) {
-                return current;
-              }
+            if (
+              Number.isFinite(currentLastTime) &&
+              Number.isFinite(firstLiveTime) &&
+              firstLiveTime > currentLastTime &&
+              hasExcessiveTradingGap(currentLastTime, firstLiveTime, selectedTimeframe)
+            ) {
+              return prev;
+            }
 
-              const merged = mergeRecentCandles(current, liveCandles, historyLimit, selectedTimeframe);
-              const mergedLastTime = merged[merged.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
-              return mergedLastTime < currentLastTime ? current : merged;
-            })()
-          }));
+            const merged = mergeRecentCandles(current, liveCandles, historyLimit, selectedTimeframe);
+            const mergedLastTime = merged[merged.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
+
+            if (mergedLastTime < currentLastTime) {
+              return prev;
+            }
+
+            const next = {
+              ...prev,
+              [key]: merged
+            };
+            seriesMapRef.current = next;
+            return next;
+          });
         } catch (error) {
           if (!cancelled && (seriesMapRef.current[key]?.length ?? 0) === 0) {
             setMarketDataStatusMessage(getMarketDataErrorMessage(error));
@@ -15635,14 +15921,15 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
             quoteState.bid = bid;
           }
 
-          setLiveQuote({
+          pendingLiveQuote = {
             bid: hasBid ? bid : null,
             ask: hasAsk ? ask : null,
             spread,
             bidTone,
             askTone,
             updatedAtMs: eventTime
-          });
+          };
+          schedulePendingLiveUiFlush();
 
           const nowcastState = volumeNowcastStateRef.current;
           if (eventTime >= nowcastState.lastEventMs) {
@@ -15894,10 +16181,26 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
             }
           }
 
-          setSeriesMap((prev) => ({
-            ...prev,
-            [key]: mergeLivePriceIntoCandles(prev[key] ?? [], price, eventTime, selectedTimeframe)
-          }));
+          const currentSeriesMap = seriesMapRef.current;
+          const currentCandles = currentSeriesMap[key] ?? [];
+          const mergedCandles = mergeLivePriceIntoCandles(
+            currentCandles,
+            price,
+            eventTime,
+            selectedTimeframe
+          );
+
+          if (mergedCandles !== currentCandles) {
+            const previousLastTime = currentCandles[currentCandles.length - 1]?.time ?? null;
+            const mergedLastTime = mergedCandles[mergedCandles.length - 1]?.time ?? null;
+
+            seriesMapRef.current = {
+              ...currentSeriesMap,
+              [key]: mergedCandles
+            };
+            hasPendingSeriesCommit = true;
+            schedulePendingLiveUiFlush(mergedLastTime !== previousLastTime);
+          }
         } catch {
           // Ignore malformed stream events and keep the feed alive.
         }
@@ -15922,6 +16225,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         window.clearTimeout(streamReadyTimeoutId);
       }
 
+      clearPendingLiveUiFlush();
       stream?.close();
     };
   }, [minutePreciseEnabled, selectedKey, selectedTimeframe]);
@@ -17025,10 +17329,21 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     usesDeepChartHistory
   ]);
 
-  seriesMapRef.current = seriesMap;
-  backtestSeriesMapRef.current = backtestSeriesMap;
-  backtestOneMinuteSeriesMapRef.current = backtestOneMinuteSeriesMap;
-  selectedChartCandlesRef.current = selectedChartCandles;
+  useEffect(() => {
+    seriesMapRef.current = seriesMap;
+  }, [seriesMap]);
+
+  useEffect(() => {
+    backtestSeriesMapRef.current = backtestSeriesMap;
+  }, [backtestSeriesMap]);
+
+  useEffect(() => {
+    backtestOneMinuteSeriesMapRef.current = backtestOneMinuteSeriesMap;
+  }, [backtestOneMinuteSeriesMap]);
+
+  useEffect(() => {
+    selectedChartCandlesRef.current = selectedChartCandles;
+  }, [selectedChartCandles]);
 
   const gaplessTimeMap = useMemo(() => {
     const realToGapless = new Map<number, number>();
@@ -20985,13 +21300,19 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
         const onCrosshairMove = (param: MouseEventParams<Time>) => {
         if (!param.point || !param.time) {
-          setHoveredTime(null);
+          if (hoveredTimeRef.current !== null) {
+            hoveredTimeRef.current = null;
+            setHoveredTime(null);
+          }
           chartHoverCandleRef.current = null;
           return;
         }
 
         const crosshairTime = parseTimeFromCrosshair(param.time);
-        setHoveredTime(crosshairTime);
+        if (crosshairTime !== hoveredTimeRef.current) {
+          hoveredTimeRef.current = crosshairTime;
+          setHoveredTime(crosshairTime);
+        }
 
         const hoveredBar = param.seriesData?.get(candleSeries) as
           | { open?: number; high?: number; low?: number; close?: number }
@@ -27341,6 +27662,36 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
     return baseDimensions.map((dimension) => {
       const rawValue = Number(valueLookup?.get(dimension.key) ?? Number.NaN);
+      const rawCompanionValue = Number(
+        dimension.rawDisplayPairKey ? valueLookup?.get(dimension.rawDisplayPairKey) ?? Number.NaN : Number.NaN
+      );
+      const rawDisplayDescriptor: DimensionRawDisplayDescriptor = {
+        format: dimension.rawValueFormat,
+        pairFeatureIndex: dimension.rawDisplayPairKey ? 0 : null,
+        phaseRole: dimension.rawDisplayPhaseRole,
+        cycle: dimension.rawDisplayCycle,
+        offset: dimension.rawDisplayOffset
+      };
+      const rawEntryValueDecoded = isCyclicalDimensionRawDisplay(rawDisplayDescriptor)
+        ? decodeCyclicalDimensionDisplayValue(
+            rawDisplayDescriptor,
+            rawValue,
+            rawCompanionValue
+          )
+        : null;
+      const rawEntryValue =
+        rawEntryValueDecoded != null &&
+        Number.isFinite(rawEntryValueDecoded) &&
+        Number.isFinite(Number(dimension.rawDisplayAnchor ?? Number.NaN)) &&
+        Number.isFinite(Number(dimension.rawDisplayCycle ?? Number.NaN))
+          ? unwrapWrappedDimensionValue(
+              rawEntryValueDecoded,
+              Number(dimension.rawDisplayAnchor),
+              Number(dimension.rawDisplayCycle)
+            )
+          : Number.isFinite(rawValue)
+            ? rawValue
+            : null;
       const entryValue =
         Number.isFinite(rawValue) &&
         Number.isFinite(dimension.std) &&
@@ -27350,7 +27701,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
       return {
         ...dimension,
-        rawEntryValue: Number.isFinite(rawValue) ? rawValue : null,
+        rawEntryValue,
         entryValue,
         segments: buildDimensionProfileSegments(dimension),
         rawSegments: buildDimensionProfileSegments({
@@ -27358,8 +27709,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           max: dimension.rawMax,
           qLow: dimension.rawQLow,
           qHigh: dimension.rawQHigh,
-          winLow: dimension.winLow,
-          winHigh: dimension.winHigh
+          winLow: dimension.rawWinLow,
+          winHigh: dimension.rawWinHigh
         })
       };
     });
