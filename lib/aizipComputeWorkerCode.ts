@@ -5,6 +5,10 @@ import {
   AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW,
   AI_LIBRARY_MAX_SAMPLES
 } from "./aiLibrarySettings";
+import {
+  GHOST_LEARNING_LIBRARY_ID,
+  ONLINE_LEARNING_LIBRARY_ID
+} from "../app/aizipRuntime";
 import { AI_MODEL_MODEL_NAME } from "./strategyCatalog";
 
 export const AIZIP_COMPUTE_WORKER_CODE = String.raw`
@@ -25,8 +29,18 @@ export const AIZIP_COMPUTE_WORKER_CODE = String.raw`
   const SYNTHETIC_LIBRARY_BAR_INTERVAL_MS = 15 * 60 * 1000;
   const SYNTHETIC_LIBRARY_MIN_BARS = 2048;
   const SYNTHETIC_LIBRARY_MAX_BARS = 8192;
+  const ONLINE_LEARNING_LIBRARY_ID = ${JSON.stringify(ONLINE_LEARNING_LIBRARY_ID)};
+  const GHOST_LEARNING_LIBRARY_ID = ${JSON.stringify(GHOST_LEARNING_LIBRARY_ID)};
 
   let CANDLES = [];
+
+  function normalizeAizipLibraryId(libraryId){
+    const normalized = String(libraryId || "").trim().toLowerCase();
+    if(!normalized) return "";
+    if(normalized === "core") return ONLINE_LEARNING_LIBRARY_ID;
+    if(normalized === "suppressed") return GHOST_LEARNING_LIBRARY_ID;
+    return normalized;
+  }
 
   function hashStrToInt(str){
     str = String(str||'');
@@ -1896,6 +1910,17 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
       const nb = nbs[i];
       const wt = voteWeightForNeighbor(nb.p, nb.d);
       if(!(wt > 0)) continue;
+      const libId = normalizeAizipLibraryId((nb.p && nb.p.metaLib) || "");
+      const linkedTradeUid =
+        libId === ONLINE_LEARNING_LIBRARY_ID
+          ? (
+              nb.p.metaTradeUid ??
+              (nb.p.metaTime != null ? ("live|" + String(nb.p.metaTime)) : null)
+            )
+          : null;
+      const neighborUid =
+        linkedTradeUid ??
+        (nb.p.uid ?? nb.p.tradeUid ?? nb.p.metaUid ?? nb.p.metaTradeUid ?? nb.p.metaId ?? nb.p.id ?? nb.p.metaTime ?? ("NB"+(i+1)));
       const baseLabel = (nb.p && nb.p.label) || -1;
       const effLabel =
         (DOMAIN_SET && DOMAIN_SET.has("Direction") && dirFilter)
@@ -1907,7 +1932,11 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
         d: nb.d,
         w: wt,
         label: effLabel,
-        uid: (nb.p.uid ?? nb.p.tradeUid ?? nb.p.metaUid ?? nb.p.metaTradeUid ?? nb.p.metaId ?? nb.p.id ?? nb.p.metaTime ?? ("NB"+(i+1))),
+        uid: neighborUid,
+        metaUid: neighborUid,
+        metaTradeUid: linkedTradeUid || nb.p.metaTradeUid || null,
+        metaLibraryUid:
+          libId === ONLINE_LEARNING_LIBRARY_ID ? (nb.p.uid || null) : null,
         metaTime: nb.p.metaTime,
         dir: nb.p.dir,
         metaSession: nb.p.metaSession || sessionFromTime(nb.p.metaTime, PARSE_MODE),
@@ -1958,7 +1987,7 @@ function aiMargin(points, q, k, phase, dirFilter, excludeTime, modelKey, qMeta, 
     }
 
     const dirStr = qd === 1 ? "Buy" : "Sell";
-    const sup = best.p.metaSuppressed ? " · Suppressed" : "";
+    const sup = best.p.metaSuppressed ? " · AI Rejected" : "";
     return String(modelKey || "") + " · " + sess + " · " + dirStr + " · " + out + sup;
   }
 
@@ -3081,11 +3110,20 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
 
     const aiLibrariesActive = Array.isArray(settings.aiLibrariesActive)
       ? settings.aiLibrariesActive
-          .map((x) => String(x || "").trim().toLowerCase())
+          .map((x) => normalizeAizipLibraryId(x))
           .filter((id) => id && id !== "recent")
       : [];
     const effectiveAiLibraries = aiLibrariesActive;
-    const aiLibrariesSettings = (settings && settings.aiLibrariesSettings) ? settings.aiLibrariesSettings : {};
+    const aiLibrariesSettings = (() => {
+      const raw = (settings && settings.aiLibrariesSettings) ? settings.aiLibrariesSettings : {};
+      const out = {};
+      for (const [rawId, value] of Object.entries(raw || {})) {
+        const normalizedId = normalizeAizipLibraryId(rawId);
+        if(!normalizedId) continue;
+        out[normalizedId] = { ...(out[normalizedId] || {}), ...(value || {}) };
+      }
+      return out;
+    })();
     const libSetting = (id) => (aiLibrariesSettings && aiLibrariesSettings[id]) ? (aiLibrariesSettings[id] || {}) : {};
     const libEnabled = (_id) => true; // Active libraries are always enabled.
     const libWeight = (id, defW = 100) => {
@@ -3096,13 +3134,13 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
     };
     const libMaxSamples = (id, defN = AI_LIBRARY_MAX_SAMPLES) => clamp(Math.floor(Number(libSetting(id).maxSamples ?? defN) || defN), 0, AI_LIBRARY_MAX_SAMPLES);
 
-    const coreEnabled = effectiveAiLibraries.includes("core");
-    const coreWeight = libWeight("core", 100);
-    const coreStride = clamp(Math.floor(Number(libSetting("core").stride ?? 0) || 0), 0, 5000);
+    const coreEnabled = effectiveAiLibraries.includes(ONLINE_LEARNING_LIBRARY_ID);
+    const coreWeight = libWeight(ONLINE_LEARNING_LIBRARY_ID, 100);
+    const coreStride = clamp(Math.floor(Number(libSetting(ONLINE_LEARNING_LIBRARY_ID).stride ?? 0) || 0), 0, 5000);
 
-    const suppressedEnabled = effectiveAiLibraries.includes("suppressed");
-    const suppressedWeight = libWeight("suppressed", 100);
-    const suppressedStride = clamp(Math.floor(Number(libSetting("suppressed").stride ?? 0) || 0), 0, 5000);
+    const suppressedEnabled = effectiveAiLibraries.includes(GHOST_LEARNING_LIBRARY_ID);
+    const suppressedWeight = libWeight(GHOST_LEARNING_LIBRARY_ID, 100);
+    const suppressedStride = clamp(Math.floor(Number(libSetting(GHOST_LEARNING_LIBRARY_ID).stride ?? 0) || 0), 0, 5000);
 
     // Library-driven suppression behavior:
     // Suppressed outcomes become neighbors only when the Suppressed library is active.
@@ -4011,7 +4049,9 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
 
         const baseWeight = 1;
         const basePoint = {
-          uid: (suppressed ? "suppressed|" : "core|") + (String(entryTime) + "|" + mk + "|" + String(signalIdx) + "|" + String(dir)),
+          uid: (
+            suppressed ? (GHOST_LEARNING_LIBRARY_ID + "|") : (ONLINE_LEARNING_LIBRARY_ID + "|")
+          ) + (String(entryTime) + "|" + mk + "|" + String(signalIdx) + "|" + String(dir)),
           v: vecStd,
           label: label,
           weight: baseWeight,
@@ -4026,8 +4066,9 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
           metaOutcome: label === 1 ? "Win" : "Loss",
           metaDir: dir === 1 ? "Buy" : "Sell",
           metaPnl: pnl,
+          metaTradeUid: suppressed ? null : ("live|" + String(entryTime)),
           metaSuppressed: !!suppressed,
-          metaLib: suppressed ? "suppressed" : "core",
+          metaLib: suppressed ? GHOST_LEARNING_LIBRARY_ID : ONLINE_LEARNING_LIBRARY_ID,
           metaTrainingOnly: true,
         };
 
@@ -4035,14 +4076,25 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
 
         if (coreEnabled && coreWeight > 0 && !suppressed) {
           if (coreStrideEff <= 1 || (signalIdx % coreStrideEff === 0)) {
-            onlineCore[mk].push({ ...basePoint, weight: baseWeight * coreWeight, metaLib: "core", metaTrainingOnly: true });
+            onlineCore[mk].push({
+              ...basePoint,
+              weight: baseWeight * coreWeight,
+              metaLib: ONLINE_LEARNING_LIBRARY_ID,
+              metaTrainingOnly: true
+            });
           }
         }
 
         const suppressedStrideEff = suppressedStride > 0 ? suppressedStride : 1;
         if (suppressedEnabled && suppressedWeight > 0 && suppressed) {
           if (suppressedStrideEff <= 1 || (signalIdx % suppressedStrideEff === 0)) {
-            onlineSuppressed[mk].push({ ...basePoint, weight: baseWeight * suppressedWeight, metaLib: "suppressed", metaTrainingOnly: true, metaSuppressed: true });
+            onlineSuppressed[mk].push({
+              ...basePoint,
+              weight: baseWeight * suppressedWeight,
+              metaLib: GHOST_LEARNING_LIBRARY_ID,
+              metaTrainingOnly: true,
+              metaSuppressed: true
+            });
           }
         }
       }
@@ -4062,14 +4114,14 @@ const entryModels = MODELS.filter(m => (modelStates[m]===1 || modelStates[m]===2
             for (const p of stat) out.push(p);
 
             if (coreEnabled && onlineCore[m] && onlineCore[m].length) {
-              const capCore = libMaxSamples("core", AI_LIBRARY_DEFAULT_MAX_SAMPLES);
-              const arrCore = getBalancedDynamicPoints("core", m, onlineCore[m], capCore, false);
+              const capCore = libMaxSamples(ONLINE_LEARNING_LIBRARY_ID, AI_LIBRARY_DEFAULT_MAX_SAMPLES);
+              const arrCore = getBalancedDynamicPoints(ONLINE_LEARNING_LIBRARY_ID, m, onlineCore[m], capCore, false);
               for (const p of arrCore) out.push(p);
             }
 
             if (suppressedEnabled && onlineSuppressed[m] && onlineSuppressed[m].length) {
-              const capSup = libMaxSamples("suppressed", AI_LIBRARY_DEFAULT_MAX_SAMPLES);
-              const arrSup = getBalancedDynamicPoints("suppressed", m, onlineSuppressed[m], capSup, false);
+              const capSup = libMaxSamples(GHOST_LEARNING_LIBRARY_ID, AI_LIBRARY_DEFAULT_MAX_SAMPLES);
+              const arrSup = getBalancedDynamicPoints(GHOST_LEARNING_LIBRARY_ID, m, onlineSuppressed[m], capSup, false);
               for (const p of arrSup) out.push(p);
             }
 
@@ -4392,7 +4444,7 @@ function flushSuppressedNeighbors(uptoIndex){
         nb.metaOutcome || (Number(nb.label) >= 0 ? "Win" : "Loss")
       );
       const dirStr = Number(dir) === -1 ? "Sell" : "Buy";
-      const sup = nb.metaSuppressed ? " · Suppressed" : "";
+      const sup = nb.metaSuppressed ? " · AI Rejected" : "";
       return String(modelKey || nb.metaModel || "") + " · " + sess + " · " + dirStr + " · " + outcome + sup;
     }
 
@@ -5597,22 +5649,23 @@ function flushSuppressedNeighbors(uptoIndex){
     try {
       for (const mk of usedModels) {
         if (coreEnabled && onlineCore[mk] && onlineCore[mk].length) {
-          const capCore = libMaxSamples("core", AI_LIBRARY_DEFAULT_MAX_SAMPLES);
-          const arrCore = getBalancedDynamicPoints("core", mk, onlineCore[mk], capCore, false);
+          const capCore = libMaxSamples(ONLINE_LEARNING_LIBRARY_ID, AI_LIBRARY_DEFAULT_MAX_SAMPLES);
+          const arrCore = getBalancedDynamicPoints(ONLINE_LEARNING_LIBRARY_ID, mk, onlineCore[mk], capCore, false);
           if (arrCore.length) {
-            libraryCounts.core = (libraryCounts.core || 0) + arrCore.length;
+            libraryCounts[ONLINE_LEARNING_LIBRARY_ID] =
+              (libraryCounts[ONLINE_LEARNING_LIBRARY_ID] || 0) + arrCore.length;
           }
-          addNaturalLibraryWinSamples("core", onlineCore[mk]);
+          addNaturalLibraryWinSamples(ONLINE_LEARNING_LIBRARY_ID, onlineCore[mk]);
         }
 
         if (suppressedEnabled && onlineSuppressed[mk] && onlineSuppressed[mk].length) {
-          const capSup = libMaxSamples("suppressed", AI_LIBRARY_DEFAULT_MAX_SAMPLES);
-          const arrSup = getBalancedDynamicPoints("suppressed", mk, onlineSuppressed[mk], capSup, false);
+          const capSup = libMaxSamples(GHOST_LEARNING_LIBRARY_ID, AI_LIBRARY_DEFAULT_MAX_SAMPLES);
+          const arrSup = getBalancedDynamicPoints(GHOST_LEARNING_LIBRARY_ID, mk, onlineSuppressed[mk], capSup, false);
           if (arrSup.length) {
-            libraryCounts.suppressed =
-              (libraryCounts.suppressed || 0) + arrSup.length;
+            libraryCounts[GHOST_LEARNING_LIBRARY_ID] =
+              (libraryCounts[GHOST_LEARNING_LIBRARY_ID] || 0) + arrSup.length;
           }
-          addNaturalLibraryWinSamples("suppressed", onlineSuppressed[mk]);
+          addNaturalLibraryWinSamples(GHOST_LEARNING_LIBRARY_ID, onlineSuppressed[mk]);
         }
       }
     } catch(_e) {}

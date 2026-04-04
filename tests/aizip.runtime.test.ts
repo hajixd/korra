@@ -10,8 +10,10 @@ import {
   countEnabledAizipModels,
   doesAizipReplayEntryModeChange,
   doesAizipHistorySeedSettingsChange,
+  getAizipLibraryIdAliases,
   getSyntheticLibraryBarCount,
   getVisibleAizipLibraryIds,
+  normalizeAizipLibraryId,
   partitionAizipLibraryTradePool,
   shouldSkipAizipBacktestHistoryFetch,
   usesAizipEveryCandleMode
@@ -68,7 +70,7 @@ test("library readiness follows the selected library set", () => {
 
 test("visible libraries exclude online and ghost learning toggles", () => {
   assert.deepEqual(
-    getVisibleAizipLibraryIds(["core", "suppressed", "base", "recent"]),
+    getVisibleAizipLibraryIds(["online", "ghost", "base", "recent"]),
     ["base"]
   );
   assert.equal(
@@ -79,6 +81,14 @@ test("visible libraries exclude online and ghost learning toggles", () => {
     }),
     1
   );
+});
+
+test("legacy library aliases normalize to online and ghost", () => {
+  assert.equal(normalizeAizipLibraryId("core"), "online");
+  assert.equal(normalizeAizipLibraryId("suppressed"), "ghost");
+  assert.deepEqual(getAizipLibraryIdAliases("online"), ["online", "core"]);
+  assert.deepEqual(getAizipLibraryIdAliases("ghost"), ["ghost", "suppressed"]);
+  assert.deepEqual(getVisibleAizipLibraryIds(["core", "suppressed", "base"]), ["base"]);
 });
 
 test("online and ghost library pools partition accepted and rejected trades cleanly", () => {

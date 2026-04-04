@@ -43,8 +43,8 @@ export type AIZipHistorySeedSettings = {
   maxBarsInTrade: number;
 };
 
-export const ONLINE_LEARNING_LIBRARY_ID = "core";
-export const GHOST_LEARNING_LIBRARY_ID = "suppressed";
+export const ONLINE_LEARNING_LIBRARY_ID = "online";
+export const GHOST_LEARNING_LIBRARY_ID = "ghost";
 export const REMOVED_AIZIP_LIBRARY_IDS = new Set(["recent"]);
 export const BASE_SEEDING_LIBRARY_IDS = new Set([
   "base",
@@ -61,16 +61,45 @@ export const SYNTHETIC_LIBRARY_BAR_INTERVAL_MS = 15 * 60 * 1000;
 export const SYNTHETIC_LIBRARY_MIN_BARS = 2048;
 export const SYNTHETIC_LIBRARY_MAX_BARS = 8192;
 
+const LEGACY_AIZIP_LIBRARY_ID_ALIASES: Record<string, string> = {
+  core: ONLINE_LEARNING_LIBRARY_ID,
+  suppressed: GHOST_LEARNING_LIBRARY_ID
+};
+
+export const normalizeAizipLibraryId = (libraryId: string): string => {
+  const normalized = String(libraryId || "").trim().toLowerCase();
+  if (!normalized) {
+    return "";
+  }
+
+  return LEGACY_AIZIP_LIBRARY_ID_ALIASES[normalized] ?? normalized;
+};
+
+export const getAizipLibraryIdAliases = (libraryId: string): string[] => {
+  const canonicalId = normalizeAizipLibraryId(libraryId);
+  if (!canonicalId) {
+    return [];
+  }
+
+  const aliases = new Set<string>([canonicalId]);
+  for (const [legacyId, mappedId] of Object.entries(LEGACY_AIZIP_LIBRARY_ID_ALIASES)) {
+    if (mappedId === canonicalId) {
+      aliases.add(legacyId);
+    }
+  }
+  return Array.from(aliases);
+};
+
 export const isBaseSeedingLibraryId = (libraryId: string): boolean => {
-  return BASE_SEEDING_LIBRARY_IDS.has(String(libraryId || "").trim().toLowerCase());
+  return BASE_SEEDING_LIBRARY_IDS.has(normalizeAizipLibraryId(libraryId));
 };
 
 export const isOnlineLearningLibraryId = (libraryId: string): boolean => {
-  return String(libraryId || "").trim().toLowerCase() === ONLINE_LEARNING_LIBRARY_ID;
+  return normalizeAizipLibraryId(libraryId) === ONLINE_LEARNING_LIBRARY_ID;
 };
 
 export const isGhostLearningLibraryId = (libraryId: string): boolean => {
-  return String(libraryId || "").trim().toLowerCase() === GHOST_LEARNING_LIBRARY_ID;
+  return normalizeAizipLibraryId(libraryId) === GHOST_LEARNING_LIBRARY_ID;
 };
 
 export const partitionAizipLibraryTradePool = <T extends { id: string }>(
@@ -97,7 +126,7 @@ export const partitionAizipLibraryTradePool = <T extends { id: string }>(
 };
 
 export const isRemovedAizipLibraryId = (libraryId: string): boolean => {
-  return REMOVED_AIZIP_LIBRARY_IDS.has(String(libraryId || "").trim().toLowerCase());
+  return REMOVED_AIZIP_LIBRARY_IDS.has(normalizeAizipLibraryId(libraryId));
 };
 
 export const isVisibleAizipLibraryId = (libraryId: string): boolean => {
@@ -134,7 +163,7 @@ export const canRunAizipLibraries = (params: {
   const ids = Array.isArray(params.libraryIds) ? params.libraryIds : [];
   // Any active library should be attempted during backtests; individual loaders can still resolve to 0 results.
   return ids.some((libraryId) => {
-    const normalized = String(libraryId ?? "").trim();
+    const normalized = normalizeAizipLibraryId(String(libraryId ?? ""));
     return normalized.length > 0 && !isRemovedAizipLibraryId(normalized);
   });
 };

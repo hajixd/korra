@@ -158,6 +158,7 @@ import {
   canRunAizipLibrariesForSettings,
   countEnabledAizipModels,
   doesAizipHistorySeedSettingsChange,
+  getAizipLibraryIdAliases,
   getSyntheticLibraryBarCount,
   getMinimumAizipSeedBars,
   hasUsableAizipSeedCandles,
@@ -165,6 +166,7 @@ import {
   isGhostLearningLibraryId,
   isOnlineLearningLibraryId,
   isVisibleAizipLibraryId,
+  normalizeAizipLibraryId,
   partitionAizipLibraryTradePool,
   doesAizipReplayEntryModeChange,
   shouldSkipAizipBacktestHistoryFetch,
@@ -4132,7 +4134,7 @@ const buildFallbackModelSurfaceSummary = (
 
 const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
   {
-    id: "core",
+    id: ONLINE_LEARNING_LIBRARY_ID,
     name: "Online Library",
     description: "Every AI-accepted trade kept in rolling online-learning memory.",
     defaults: { weight: 100, maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES, stride: 0 },
@@ -4166,7 +4168,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     ]
   },
   {
-    id: "suppressed",
+    id: GHOST_LEARNING_LIBRARY_ID,
     name: "Ghost Library",
     description:
       "Every AI-rejected trade kept as ghost-learning training-only memory.",
@@ -4620,7 +4622,23 @@ const normalizeStoredAiLibrarySettings = (
   const next: AiLibrarySettings = {};
 
   for (const definition of Object.values(libraryDefsById)) {
-    const current = settings[definition.id] ?? {};
+    const settingLookupIds = [
+      ...getAizipLibraryIdAliases(definition.id).filter((libraryId) => libraryId !== definition.id),
+      definition.id
+    ];
+    const current = settingLookupIds.reduce<Record<string, AiLibrarySettingValue>>(
+      (accumulator, libraryId) => {
+        const existing = settings[libraryId];
+        if (!existing) {
+          return accumulator;
+        }
+        return {
+          ...accumulator,
+          ...existing
+        };
+      },
+      {}
+    );
     const merged = {
       ...definition.defaults,
       ...current
@@ -8190,7 +8208,7 @@ const buildLocalPanelEntryNeighbor = (
     metaOutcome: point.outcome,
     metaSession: point.session,
     metaLib: point.libraryId,
-    metaSuppressed: point.libraryId === "suppressed",
+    metaSuppressed: isGhostLearningLibraryId(point.libraryId),
     dir: point.direction,
     label: point.label,
     d: Number.isFinite(distance) ? distance : Number.MAX_SAFE_INTEGER,
@@ -12060,8 +12078,8 @@ const stableHashToUnit = (str: string): number => {
 };
 
 const colorForAiLibraryLegend = (libraryId: string): string => {
-  const normalizedLibraryId = String(libraryId ?? "").trim();
-  if (normalizedLibraryId.toLowerCase() === "suppressed") {
+  const normalizedLibraryId = normalizeAizipLibraryId(libraryId);
+  if (isGhostLearningLibraryId(normalizedLibraryId)) {
     return "rgba(140, 140, 140, 1)";
   }
 
@@ -13077,6 +13095,10 @@ function TradingTerminalWorkspace({
       register(definition.name, definition.id);
       register(definition.id.replace(/_/g, "-"), definition.id);
       register(definition.name.replace(/\s+/g, ""), definition.id);
+      for (const aliasId of getAizipLibraryIdAliases(definition.id)) {
+        register(aliasId, definition.id);
+        register(aliasId.replace(/_/g, "-"), definition.id);
+      }
     }
 
     return next;
@@ -13087,8 +13109,9 @@ function TradingTerminalWorkspace({
       return null;
     }
 
-    if (aiLibraryDefById[rawId]) {
-      return rawId;
+    const canonicalRawId = normalizeAizipLibraryId(rawId);
+    if (aiLibraryDefById[canonicalRawId]) {
+      return canonicalRawId;
     }
 
     const normalizedId = normalizeAiLibraryLookupKey(rawId);
@@ -13115,9 +13138,10 @@ function TradingTerminalWorkspace({
 
     const isLegacyDefault =
       cleaned.length === 2 &&
-      cleaned[0] === "core" &&
+      cleaned[0] === ONLINE_LEARNING_LIBRARY_ID &&
       cleaned[1] === "base";
-    const isLegacyCoreOnly = cleaned.length === 1 && cleaned[0] === "core";
+    const isLegacyCoreOnly =
+      cleaned.length === 1 && cleaned[0] === ONLINE_LEARNING_LIBRARY_ID;
 
     return isLegacyDefault || isLegacyCoreOnly ? [] : cleaned;
   }, [resolveAiLibraryId]);
@@ -14974,7 +14998,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       const seen = new Set<string>();
 
       for (const rawLibraryId of Array.isArray(libraryIds) ? libraryIds : []) {
-        const libraryId = String(rawLibraryId ?? "").trim();
+        const libraryId = resolveAiLibraryId(rawLibraryId);
         if (!libraryId || seen.has(libraryId) || !aiLibraryDefById[libraryId]) {
           continue;
         }
@@ -14992,7 +15016,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
       return next;
     },
-    [aiLibraryDefById]
+    [aiLibraryDefById, resolveAiLibraryId]
   );
   const appliedAiLibraryRunInputsSignature = useMemo(() => {
     return serializeBacktestSettingsSnapshot(appliedBacktestSettings);
@@ -15432,7 +15456,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         return current.filter((id) => !isOnlineLearningLibraryId(id));
       }
       const filtered = current.filter((id) => !isOnlineLearningLibraryId(id));
-      return ["core", ...filtered];
+      return [ONLINE_LEARNING_LIBRARY_ID, ...filtered];
     });
   }, []);
 
@@ -15448,11 +15472,11 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
       if (coreIndex >= 0) {
         const next = [...withoutGhost];
-        next.splice(coreIndex + 1, 0, "suppressed");
+        next.splice(coreIndex + 1, 0, GHOST_LEARNING_LIBRARY_ID);
         return next;
       }
 
-      return ["suppressed", ...withoutGhost];
+      return [GHOST_LEARNING_LIBRARY_ID, ...withoutGhost];
     });
   }, []);
 
@@ -15469,7 +15493,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       if (nextIndex < 0 || nextIndex >= current.length) {
         return current;
       }
-      if (current[nextIndex] === "core") {
+      if (isOnlineLearningLibraryId(current[nextIndex] ?? "")) {
         return current;
       }
 
@@ -24027,12 +24051,12 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         partitionAizipLibraryTradePool(libraryCandidatePool, executedTradeIds);
       let source: HistoryItem[] = [];
 
-      if (normalizedId === "core") {
+      if (isOnlineLearningLibraryId(normalizedId)) {
         source = collectCappedItems(executedTradePool, {
           cap: maxSamples,
           stride
         });
-      } else if (normalizedId === "suppressed") {
+      } else if (isGhostLearningLibraryId(normalizedId)) {
         source = collectCappedItems(suppressedTradePool, {
           cap: maxSamples,
           stride
@@ -31601,7 +31625,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
                     <div className="backtest-card" style={{ padding: "0.85rem" }}>
                       <div className="ai-zip-section main-settings-panel">
-                        <div className="ai-zip-section-title">Core AI Controls</div>
+                        <div className="ai-zip-section-title">AI Library Controls</div>
 
                         <button
                           type="button"

@@ -17,6 +17,12 @@ import {
   buildTradeNeighborVector as buildSharedTradeNeighborVector,
   getTradeConfidenceScore as getSharedTradeConfidenceScore
 } from "../../../../lib/aiEntryScoring";
+import {
+  getAizipLibraryIdAliases,
+  isGhostLearningLibraryId,
+  isOnlineLearningLibraryId,
+  normalizeAizipLibraryId
+} from "../../../aizipRuntime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1164,11 +1170,13 @@ const buildLibraryNeighborUid = (
     return null;
   }
 
-  const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
+  const normalizedLibraryId = normalizeAizipLibraryId(
+    String(libraryId ?? "").trim().toLowerCase()
+  );
   if (
     !normalizedLibraryId ||
     normalizedLibraryId === "trades" ||
-    normalizedLibraryId === "core"
+    isOnlineLearningLibraryId(normalizedLibraryId)
   ) {
     return candidateId;
   }
@@ -1222,7 +1230,9 @@ const buildLibraryPointSourceCandidate = (
   sourceIndex: number
 ): LibrarySourceCandidate | null => {
   const uid = String(point.uid ?? point.id ?? "").trim();
-  const libraryId = String(point.libId ?? "").trim().toLowerCase();
+  const libraryId = normalizeAizipLibraryId(
+    String(point.libId ?? "").trim().toLowerCase()
+  );
   if (!uid || !libraryId) {
     return null;
   }
@@ -1288,7 +1298,7 @@ const buildEntryNeighbor = (
     metaOutcome: label === 1 ? "Win" : label === -1 ? "Loss" : candidate.result,
     metaSession: candidate.session,
     metaLib: candidate.libraryId,
-    metaSuppressed: candidate.libraryId === "suppressed",
+    metaSuppressed: isGhostLearningLibraryId(candidate.libraryId),
     dir,
     label,
     d: Number.isFinite(distance) ? distance : Number.MAX_SAFE_INTEGER,
@@ -1809,9 +1819,11 @@ const computeAntiCheatBacktestContext = (params: {
 
   const activeAiMode = panelBacktestFilterSettings.aiMode;
   const explicitActiveLibraryIds = panelBacktestFilterSettings.selectedAiLibraries
-    .map((libraryId) => String(libraryId ?? "").trim().toLowerCase())
+    .map((libraryId) =>
+      normalizeAizipLibraryId(String(libraryId ?? "").trim().toLowerCase())
+    )
     .filter((libraryId) => libraryId.length > 0 && libraryId !== "recent");
-  const activeLibraryIds = explicitActiveLibraryIds;
+  const activeLibraryIds = Array.from(new Set(explicitActiveLibraryIds));
   const preserveExistingLibraryState = activeLibraryIds.length > 0;
   const timeFilteredTrades = splitEvaluationTrades;
   const libraryPointsById = panelLibraryPoints.reduce<Map<string, LibrarySourceCandidate[]>>(
@@ -1832,8 +1844,8 @@ const computeAntiCheatBacktestContext = (params: {
     new Map<string, LibrarySourceCandidate[]>()
   );
   const hasCanonicalLibraryCandidates = activeLibraryIds.some((libraryId) => {
-    const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
-    if (!normalizedLibraryId || normalizedLibraryId === "core") {
+    const normalizedLibraryId = normalizeAizipLibraryId(String(libraryId ?? ""));
+    if (!normalizedLibraryId || isOnlineLearningLibraryId(normalizedLibraryId)) {
       return false;
     }
 
@@ -1841,10 +1853,30 @@ const computeAntiCheatBacktestContext = (params: {
   });
 
   const getLibrarySettings = (libraryId: string) => {
-    const defaults = aiLibraryDefaultsById[libraryId] ?? {};
+    const lookupIds = [
+      ...getAizipLibraryIdAliases(libraryId).filter((id) => id !== libraryId),
+      libraryId
+    ];
+    const defaults = lookupIds.reduce<Record<string, AiLibrarySettingValue>>(
+      (accumulator, id) => ({
+        ...accumulator,
+        ...((aiLibraryDefaultsById[id] as Record<string, AiLibrarySettingValue> | undefined) ?? {})
+      }),
+      {}
+    );
     return {
       ...defaults,
-      ...(panelBacktestFilterSettings.selectedAiLibrarySettings[libraryId] ?? {})
+      ...lookupIds.reduce<Record<string, AiLibrarySettingValue>>(
+        (accumulator, id) => ({
+          ...accumulator,
+          ...(
+            (panelBacktestFilterSettings.selectedAiLibrarySettings[id] as
+              | Record<string, AiLibrarySettingValue>
+              | undefined) ?? {}
+          )
+        }),
+        {}
+      )
     } as Record<string, AiLibrarySettingValue>;
   };
 
@@ -1890,7 +1922,7 @@ const computeAntiCheatBacktestContext = (params: {
     currentTrade: HistoryItem
   ) => {
     const settings = getLibrarySettings(libraryId);
-    const normalizedId = libraryId.toLowerCase();
+    const normalizedId = normalizeAizipLibraryId(libraryId);
     const canonicalPoints = libraryPointsById.get(normalizedId);
     if (canonicalPoints && canonicalPoints.length > 0) {
       return canonicalPoints.map((candidate, sourceIndex) => ({
@@ -1903,7 +1935,7 @@ const computeAntiCheatBacktestContext = (params: {
       }));
     }
 
-    if (normalizedId !== "core") {
+    if (!isOnlineLearningLibraryId(normalizedId)) {
       return [];
     }
 
@@ -1992,8 +2024,8 @@ const computeAntiCheatBacktestContext = (params: {
   const resolveCandidateOutcomeScore = (candidate: LibrarySourceCandidate) => {
     return effectiveValidationMode === "synthetic" &&
       candidate.trade &&
-      candidate.libraryId !== "core" &&
-      candidate.libraryId !== "suppressed"
+      !isOnlineLearningLibraryId(candidate.libraryId) &&
+      !isGhostLearningLibraryId(candidate.libraryId)
       ? getSyntheticWinProb(candidate.trade)
       : getCandidateOutcomeScore(candidate);
   };
@@ -2157,8 +2189,8 @@ const computeAntiCheatBacktestContext = (params: {
   };
 
   for (const libraryId of activeLibraryIds) {
-    const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
-    if (!normalizedLibraryId || normalizedLibraryId === "core") {
+    const normalizedLibraryId = normalizeAizipLibraryId(String(libraryId ?? ""));
+    if (!normalizedLibraryId || isOnlineLearningLibraryId(normalizedLibraryId)) {
       continue;
     }
 

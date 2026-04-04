@@ -29,6 +29,13 @@ import {
 } from "../lib/aiConfidence";
 import { getTradeConfidenceScore as getSharedTradeConfidenceScore } from "../lib/aiEntryScoring";
 import {
+  GHOST_LEARNING_LIBRARY_ID,
+  ONLINE_LEARNING_LIBRARY_ID,
+  isGhostLearningLibraryId,
+  isOnlineLearningLibraryId,
+  normalizeAizipLibraryId,
+} from "./aizipRuntime";
+import {
   formatDimensionRawValue,
   isCyclicalDimensionRawDisplay,
   type DimensionRawDisplayDescriptor,
@@ -5989,7 +5996,7 @@ type AiLibraryDef = {
 
 const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
   {
-    id: "core",
+    id: ONLINE_LEARNING_LIBRARY_ID,
     name: "Online Library",
     description: "Every AI-accepted trade kept in rolling online-learning memory.",
     defaults: { weight: 100, maxSamples: AI_LIBRARY_DEFAULT_MAX_SAMPLES, stride: 0 },
@@ -6023,7 +6030,7 @@ const BASE_AI_LIBRARY_DEFS: AiLibraryDef[] = [
     ],
   },
   {
-    id: "suppressed",
+    id: GHOST_LEARNING_LIBRARY_ID,
     name: "Ghost Library",
     description:
       "Every AI-rejected trade kept as ghost-learning training-only memory.",
@@ -6431,7 +6438,7 @@ const AI_LIBRARY_DEF_BY_ID: Record<string, AiLibraryDef> =
   }, {} as Record<string, AiLibraryDef>);
 
 const resolveAiLibraryDisplayName = (libraryId: unknown): string | null => {
-  const key = String(libraryId ?? "").trim();
+  const key = normalizeAizipLibraryId(String(libraryId ?? "").trim());
   if (!key) return null;
   const def = AI_LIBRARY_DEF_BY_ID[key];
   const raw = def ? def.name || def.label || def.id : key;
@@ -8352,7 +8359,7 @@ function resolvePrimaryNeighborRawId(src: any): string | null {
 // The legend is the source of truth for library hues, so map nodes reuse the same swatch.
 function colorForLibrary(key: string) {
   const k = String(key ?? "");
-  if (k.toLowerCase() === "suppressed") return "rgba(140,140,140,1)";
+  if (isGhostLearningLibraryId(k)) return "rgba(140,140,140,1)";
   const hue = Math.floor(stableHashToUnit("libLegend:" + String(key)) * 360);
   // Slightly translucent so it layers nicely over the map.
   return `hsla(${hue}, 92%, 64%, 0.98)`;
@@ -9833,7 +9840,7 @@ function drawClusterMapCanvas(
         fill = "rgba(200,140,255,0.95)";
         outline = n.dir === 1 ? "rgba(30,180,80,1.0)" : "rgba(180,50,50,1.0)";
       } else if (isLib) {
-        const isSupp = libKey.toLowerCase() === "suppressed";
+        const isSupp = isGhostLearningLibraryId(libKey);
         fill = cssColorWithAlpha(libraryOutcomeColor, isSupp ? 0.82 : 0.96);
         outline = cssColorWithAlpha(libColor, isSupp ? 0.84 : 1);
       } else if (kind === "ghost") {
@@ -13084,7 +13091,7 @@ function ClusterMapInner({
     active: true,
     potential: true,
     close: true,
-    "lib:suppressed": false,
+    [`lib:${GHOST_LEARNING_LIBRARY_ID}`]: false,
   });
 
   // Cluster Groups stats view mode for the table + selected group panel
@@ -13163,19 +13170,25 @@ function ClusterMapInner({
 
   const resolveProvidedLibraryCount = React.useCallback(
     (libraryId: string): number | null => {
-      const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
+      const normalizedLibraryId = normalizeAizipLibraryId(String(libraryId ?? "").trim());
       if (!normalizedLibraryId) {
         return null;
       }
 
-      const rawCount = (libraryCounts as any)?.[normalizedLibraryId];
+      const rawCount =
+        (libraryCounts as any)?.[normalizedLibraryId] ??
+        (isOnlineLearningLibraryId(normalizedLibraryId)
+          ? (libraryCounts as any)?.core
+          : isGhostLearningLibraryId(normalizedLibraryId)
+          ? (libraryCounts as any)?.suppressed
+          : undefined);
       const numericCount = Number(rawCount);
       return Number.isFinite(numericCount) ? Math.max(0, numericCount) : null;
     },
     [libraryCounts]
   );
   const onlineLibraryTotalAll = useMemo(() => {
-    const providedCount = resolveProvidedLibraryCount("core");
+    const providedCount = resolveProvidedLibraryCount(ONLINE_LEARNING_LIBRARY_ID);
     if (providedCount != null) {
       return providedCount;
     }
@@ -13188,8 +13201,10 @@ function ClusterMapInner({
     let fallbackCount = 0;
     for (const lp of (libraryPoints as any[]) || []) {
       if (!lp) continue;
-      const lid = String((lp as any).libId ?? (lp as any).metaLib ?? "").trim();
-      if (lid.toLowerCase() === "core") {
+      const lid = normalizeAizipLibraryId(
+        String((lp as any).libId ?? (lp as any).metaLib ?? "").trim()
+      );
+      if (isOnlineLearningLibraryId(lid)) {
         fallbackCount += 1;
       }
     }
@@ -13197,7 +13212,7 @@ function ClusterMapInner({
   }, [libraryPoints, resolveProvidedLibraryCount, trades]);
   // Ghost / suppressed library count should be stable regardless of Cluster Map view filters.
   const suppressedLibraryTotalAll = useMemo(() => {
-    const providedCount = resolveProvidedLibraryCount("suppressed");
+    const providedCount = resolveProvidedLibraryCount(GHOST_LEARNING_LIBRARY_ID);
     if (providedCount != null) {
       return providedCount;
     }
@@ -13210,8 +13225,10 @@ function ClusterMapInner({
     let fallbackCount = 0;
     for (const lp of (libraryPoints as any[]) || []) {
       if (!lp) continue;
-      const lid = String((lp as any).libId ?? (lp as any).metaLib ?? "").trim();
-      if (lid.toLowerCase() === "suppressed") {
+      const lid = normalizeAizipLibraryId(
+        String((lp as any).libId ?? (lp as any).metaLib ?? "").trim()
+      );
+      if (isGhostLearningLibraryId(lid)) {
         fallbackCount += 1;
       }
     }
@@ -13221,22 +13238,28 @@ function ClusterMapInner({
     const next: Record<string, number> = {};
     const activeLibraryIds = new Set(
       ((activeLibraries as any[]) || [])
-        .map((libraryId) => String(libraryId ?? "").trim().toLowerCase())
+        .map((libraryId) => normalizeAizipLibraryId(String(libraryId ?? "").trim()))
         .filter(Boolean)
     );
 
     for (const [libraryId, rawCount] of Object.entries((libraryCounts as any) || {})) {
-      const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
+      const normalizedLibraryId = normalizeAizipLibraryId(String(libraryId ?? "").trim());
       if (!normalizedLibraryId) continue;
       next[normalizedLibraryId] = Math.max(0, Number(rawCount) || 0);
     }
 
-    if (activeLibraryIds.has("core") || next.core != null) {
-      next.core = onlineLibraryTotalAll;
+    if (
+      activeLibraryIds.has(ONLINE_LEARNING_LIBRARY_ID) ||
+      next[ONLINE_LEARNING_LIBRARY_ID] != null
+    ) {
+      next[ONLINE_LEARNING_LIBRARY_ID] = onlineLibraryTotalAll;
     }
 
-    if (activeLibraryIds.has("suppressed") || next.suppressed != null) {
-      next.suppressed = suppressedLibraryTotalAll;
+    if (
+      activeLibraryIds.has(GHOST_LEARNING_LIBRARY_ID) ||
+      next[GHOST_LEARNING_LIBRARY_ID] != null
+    ) {
+      next[GHOST_LEARNING_LIBRARY_ID] = suppressedLibraryTotalAll;
     }
 
     return next;
@@ -13250,7 +13273,7 @@ function ClusterMapInner({
   }, [stableLibraryCountsById]);
   const resolveStableLibraryCount = React.useCallback(
     (libraryId: string, fallbackCount = 0) => {
-      const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
+      const normalizedLibraryId = normalizeAizipLibraryId(String(libraryId ?? "").trim());
       if (
         normalizedLibraryId &&
         Object.prototype.hasOwnProperty.call(stableLibraryCountsById, normalizedLibraryId)
@@ -13262,11 +13285,11 @@ function ClusterMapInner({
     [stableLibraryCountsById]
   );
   const formatLibraryDisplayName = React.useCallback((libraryId: string, fallbackName: string) => {
-    const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
-    if (normalizedLibraryId === "core") {
+    const normalizedLibraryId = normalizeAizipLibraryId(String(libraryId ?? "").trim());
+    if (isOnlineLearningLibraryId(normalizedLibraryId)) {
       return `${fallbackName} (AI Accepted)`;
     }
-    if (normalizedLibraryId === "suppressed") {
+    if (isGhostLearningLibraryId(normalizedLibraryId)) {
       return `${fallbackName} (AI Rejected)`;
     }
     return fallbackName;
@@ -13401,7 +13424,7 @@ function ClusterMapInner({
     };
     const entries = [];
     const suppressedLibActive =
-      (legendToggles as any)["lib:suppressed"] === true;
+      (legendToggles as any)[`lib:${GHOST_LEARNING_LIBRARY_ID}`] === true;
     for (let i = 0; i < trades.length; i++) {
       const t = trades[i];
       const fi = t.signalIndex;
@@ -13610,9 +13633,9 @@ function ClusterMapInner({
           .toUpperCase()}`;
 
         entries.push({
-          id: `lib-suppressed-${g.signalIndex}-${g.entryIndex}-${gi}`,
-          libId: "suppressed",
-          metaLib: "suppressed",
+          id: `lib-${GHOST_LEARNING_LIBRARY_ID}-${g.signalIndex}-${g.entryIndex}-${gi}`,
+          libId: GHOST_LEARNING_LIBRARY_ID,
+          metaLib: GHOST_LEARNING_LIBRARY_ID,
           uid,
           entryMargin:
             (g as any).entryMargin ??
@@ -13744,19 +13767,19 @@ function ClusterMapInner({
       }
 
       const libId = String((p as any).libId ?? (p as any).metaLib ?? "unknown");
-      const normalizedLibId = libId.toLowerCase();
+      const normalizedLibId = normalizeAizipLibraryId(libId);
       const hasExplicitGhostEntries = Array.isArray(ghostEntries) && ghostEntries.length > 0;
 
       // Online / Ghost libraries are synthesized directly from accepted trades and
       // rejected ghost trades so they always reflect the true AI decision split.
-      if (normalizedLibId === "core") {
+      if (isOnlineLearningLibraryId(normalizedLibId)) {
         continue;
       }
-      if (normalizedLibId === "suppressed" && hasExplicitGhostEntries) {
+      if (isGhostLearningLibraryId(normalizedLibId) && hasExplicitGhostEntries) {
         continue;
       }
 
-      const isSuppLib = normalizedLibId === "suppressed";
+      const isSuppLib = isGhostLearningLibraryId(normalizedLibId);
       if (isSuppLib && !suppressedLibActive) {
         libraryNodeDiagnostics.skippedSuppressedInactive += 1;
         continue;
@@ -14555,18 +14578,18 @@ function ClusterMapInner({
   const showGroupOverlays = (Number(groupOverlayOpacity) || 0) > 0;
   const effectiveGroupOverlayOpacity = groupOverlayOpacity;
   const suppressedLibraryActive =
-    (legendToggles as any)["lib:suppressed"] === true;
+    (legendToggles as any)[`lib:${GHOST_LEARNING_LIBRARY_ID}`] === true;
   const libraryLegendIds = React.useMemo(() => {
     const ids: string[] = [];
     const seen = new Set<string>();
     for (const lid of Array.isArray(activeLibraries) ? activeLibraries : []) {
-      const id = String(lid ?? "").trim();
+      const id = normalizeAizipLibraryId(String(lid ?? "").trim());
       if (!id || seen.has(id)) continue;
       seen.add(id);
       ids.push(id);
     }
-    if (!seen.has("suppressed")) {
-      ids.push("suppressed");
+    if (!seen.has(GHOST_LEARNING_LIBRARY_ID)) {
+      ids.push(GHOST_LEARNING_LIBRARY_ID);
     }
     return ids;
   }, [activeLibraries]);
@@ -14620,7 +14643,7 @@ function ClusterMapInner({
       for (const lid of libraryLegendIds) {
         const key = `lib:${String(lid)}`;
         if (!(key in next)) {
-          next[key] = String(lid).toLowerCase() === "suppressed" ? false : true;
+          next[key] = isGhostLearningLibraryId(String(lid)) ? false : true;
           changed = true;
         }
       }
@@ -14634,8 +14657,10 @@ function ClusterMapInner({
     const ids = new Set<string>();
     for (const lp of (libraryPoints as any[]) || []) {
       if (!lp) continue;
-      const lid = String((lp as any).libId ?? (lp as any).metaLib ?? "").trim();
-      if (!lid || lid.toLowerCase() === "suppressed") continue;
+      const lid = normalizeAizipLibraryId(
+        String((lp as any).libId ?? (lp as any).metaLib ?? "").trim()
+      );
+      if (!lid || isGhostLearningLibraryId(lid)) continue;
       if (lid) ids.add(lid);
     }
     if (!ids.size) return;
@@ -14669,16 +14694,16 @@ function ClusterMapInner({
     const isSuppressedNode = (node: any) => {
       if (!node) return false;
       if ((node as any).suppressed || (node as any).metaSuppressed) return true;
-      const lid = String(
-        (node as any).libId ??
-          (node as any).metaLib ??
-          (node as any).library ??
-          (node as any).metaLibrary ??
-          ""
-      )
-        .toLowerCase()
-        .trim();
-      return lid === "suppressed";
+      const lid = normalizeAizipLibraryId(
+        String(
+          (node as any).libId ??
+            (node as any).metaLib ??
+            (node as any).library ??
+            (node as any).metaLibrary ??
+            ""
+        ).trim()
+      );
+      return isGhostLearningLibraryId(lid);
     };
 
     for (const n of sortedNodes as any[]) {
@@ -15470,10 +15495,10 @@ function ClusterMapInner({
         const isSuppressedLibrary =
           !!(n as any).suppressed ||
           !!(n as any).metaSuppressed ||
-          String((n as any).libId ?? "").toLowerCase() === "suppressed" ||
-          String((n as any).metaLib ?? "").toLowerCase() === "suppressed" ||
-          String((n as any).library ?? "").toLowerCase() === "suppressed" ||
-          String((n as any).metaLibrary ?? "").toLowerCase() === "suppressed";
+          isGhostLearningLibraryId(String((n as any).libId ?? "")) ||
+          isGhostLearningLibraryId(String((n as any).metaLib ?? "")) ||
+          isGhostLearningLibraryId(String((n as any).library ?? "")) ||
+          isGhostLearningLibraryId(String((n as any).metaLibrary ?? ""));
 
         // Non-suppressed libraries remain libraries forever (but still carry win-rate for tooltips/selection).
         if (!isSuppressedLibrary) {
@@ -15695,10 +15720,10 @@ function ClusterMapInner({
             exitTime: (n as any).exitTime ?? null,
             session: (n as any).session ?? (n as any).metaSession ?? null,
             // library / suppression identity (fresh)
-            libId: "suppressed",
-            metaLib: "suppressed",
-            library: "suppressed",
-            metaLibrary: "suppressed",
+            libId: GHOST_LEARNING_LIBRARY_ID,
+            metaLib: GHOST_LEARNING_LIBRARY_ID,
+            library: GHOST_LEARNING_LIBRARY_ID,
+            metaLibrary: GHOST_LEARNING_LIBRARY_ID,
             suppressed: true,
             metaSuppressed: true,
             // keep some semantics for tooltips/stats
@@ -15758,7 +15783,7 @@ function ClusterMapInner({
         )
           .toLowerCase()
           .trim();
-        return lid !== "suppressed";
+        return !isGhostLearningLibraryId(lid);
       });
     }
     return out;
@@ -16567,9 +16592,9 @@ function ClusterMapInner({
               (n as any)?.metaSuppressedTrade === true ||
               (n as any)?.metaIsSuppressedTrade === true ||
               (n as any)?.suppressed === true ||
-              String((n as any)?.libId || (n as any)?.library || "")
-                .toLowerCase()
-                .includes("suppressed"));
+              isGhostLearningLibraryId(
+                String((n as any)?.libId || (n as any)?.library || "")
+              ));
           return isTrade || isSuppressedTrade;
         }
       );
@@ -17849,7 +17874,7 @@ function ClusterMapInner({
       (node as any)?.metaLibrary,
     ];
     for (const candidate of candidates) {
-      const value = String(candidate ?? "").trim();
+      const value = normalizeAizipLibraryId(String(candidate ?? "").trim());
       if (value) return value;
     }
     return null;
@@ -19022,15 +19047,15 @@ function ClusterMapInner({
       kind === "library" &&
       (!!(selectedNode as any)?.suppressed ||
         !!(selectedNode as any)?.metaSuppressed ||
-        String(
-          (selectedNode as any)?.libId ??
-            (selectedNode as any)?.metaLib ??
-            (selectedNode as any)?.library ??
-            (selectedNode as any)?.metaLibrary ??
-            ""
-        )
-          .toLowerCase()
-          .trim() === "suppressed");
+        isGhostLearningLibraryId(
+          String(
+            (selectedNode as any)?.libId ??
+              (selectedNode as any)?.metaLib ??
+              (selectedNode as any)?.library ??
+              (selectedNode as any)?.metaLibrary ??
+              ""
+          )
+        ));
     if (kind !== "trade" && !isSuppressedLibrary) return;
 
     const sourceTrade = selectedSourceTrade;
@@ -23130,15 +23155,15 @@ function ClusterMapInner({
                         k === "library" &&
                         (!!(selectedNode as any).suppressed ||
                           !!(selectedNode as any).metaSuppressed ||
-                          String(
-                            (selectedNode as any).libId ??
-                              (selectedNode as any).metaLib ??
-                              (selectedNode as any).library ??
-                              (selectedNode as any).metaLibrary ??
-                              ""
-                          )
-                            .toLowerCase()
-                            .trim() === "suppressed");
+                          isGhostLearningLibraryId(
+                            String(
+                              (selectedNode as any).libId ??
+                                (selectedNode as any).metaLib ??
+                                (selectedNode as any).library ??
+                                (selectedNode as any).metaLibrary ??
+                                ""
+                            )
+                          ));
                       if (k !== "trade" && !isSuppressed) return "—";
                       const topNeighbor = selectedNeighborList?.[0] ?? null;
                       if (topNeighbor && String(topNeighbor.displayId || "").trim()) {
@@ -23576,7 +23601,7 @@ function ClusterMapInner({
                   }}
                 >
                   <div
-                    title="Choose whether group stats are based on Library clusters, Live trades (incl. suppressed), or both"
+                    title="Choose whether group stats are based on Library clusters, Live trades (incl. AI-rejected trades), or both"
                     style={{
                       display: "inline-flex",
                       borderRadius: 10,
@@ -23618,7 +23643,7 @@ function ClusterMapInner({
                               u === "Library"
                                 ? "Library stats per cluster"
                                 : u === "Live"
-                                ? "Live trade stats per cluster (includes suppressed)"
+                                ? "Live trade stats per cluster (includes AI-rejected trades)"
                                 : "Combined Library + Live stats per cluster"
                             }
                           >
@@ -25462,7 +25487,7 @@ export default function App() {
       const seen = new Set<string>();
       const cleaned: string[] = [];
       for (const v of arr || []) {
-        const id = String(v || "");
+        const id = normalizeAizipLibraryId(String(v || ""));
         if (!id) continue;
         if (!AI_LIBRARY_DEF_BY_ID[id]) continue;
         if (seen.has(id)) continue;
@@ -25470,15 +25495,19 @@ export default function App() {
         cleaned.push(id);
       }
       const normalized =
-        cleaned.length === 1 && cleaned[0] === "core" ? [] : cleaned;
+        cleaned.length === 1 && cleaned[0] === ONLINE_LEARNING_LIBRARY_ID
+          ? []
+          : cleaned;
       setAiActiveLibraries(normalized);
       const selRaw = (data as any).aiSelectedLibrary;
       if (typeof selRaw === "string") {
-        const sel = String(selRaw);
+        const sel = normalizeAizipLibraryId(String(selRaw));
         setAiSelectedLibrary(normalized.includes(sel) ? sel : normalized[0] || "");
       } else {
         setAiSelectedLibrary((prev: any) =>
-          normalized.includes(String(prev || "")) ? prev : normalized[0] || ""
+          normalized.includes(normalizeAizipLibraryId(String(prev || "")))
+            ? normalizeAizipLibraryId(String(prev || ""))
+            : normalized[0] || ""
         );
       }
     } else if (typeof (data as any).aiSelectedLibrary === "string") {
@@ -34146,7 +34175,7 @@ export default function App() {
                                 {d.name}{" "}
                                 {locked ? (
                                   <span style={{ fontSize: 10, opacity: 0.65 }}>
-                                    · core
+                                    | online
                                   </span>
                                 ) : null}
                               </div>

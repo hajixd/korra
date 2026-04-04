@@ -22,7 +22,7 @@ const baseFilterSettings = (overrides?: Record<string, unknown>) => ({
   selectedAiLibraries: ["base"],
   selectedAiLibrarySettings: {
     base: { weight: 100, maxSamples: 1000 },
-    core: { weight: 100, maxSamples: 1000 }
+    online: { weight: 100, maxSamples: 1000 }
   },
   distanceMetric: "euclidean",
   knnNeighborSpace: "high",
@@ -118,7 +118,7 @@ const postAizipCompute = async (payload: Record<string, unknown>) => {
   return response.json();
 };
 
-test("non-core libraries do not fall back to live trades", async () => {
+test("non-online libraries do not fall back to live trades", async () => {
   const trades = [
     makeTrade({
       id: "live-1",
@@ -155,7 +155,7 @@ test("non-core libraries do not fall back to live trades", async () => {
   assert.equal(stampedTrade.closestClusterUid, null);
 });
 
-test("core library uses live trades and keeps MIT aligned to neighbor #1", async () => {
+test("online library uses live trades and keeps MIT aligned to neighbor #1", async () => {
   const trades = [
     makeTrade({
       id: "live-1",
@@ -177,12 +177,12 @@ test("core library uses live trades and keeps MIT aligned to neighbor #1", async
     panelSourceTrades: trades,
     panelLibraryPoints: [],
     panelBacktestFilterSettings: baseFilterSettings({
-      selectedAiLibraries: ["core"]
+      selectedAiLibraries: ["online"]
     }),
     panelConfidenceGateDisabled: true,
     panelEffectiveConfidenceThreshold: 0,
     aiLibraryDefaultsById: {
-      core: { weight: 100, maxSamples: 1000 }
+      online: { weight: 100, maxSamples: 1000 }
     }
   });
 
@@ -195,7 +195,7 @@ test("core library uses live trades and keeps MIT aligned to neighbor #1", async
   assert.equal(String(firstNeighborUid).startsWith("lib|"), false);
 });
 
-test("suppressed library points stay selectable as ghost-learning neighbors", async () => {
+test("ghost library points stay selectable as ghost-learning neighbors", async () => {
   const trades = [
     makeTrade({
       id: "live-1",
@@ -214,8 +214,8 @@ test("suppressed library points stay selectable as ghost-learning neighbors", as
     panelSourceTrades: trades,
     panelLibraryPoints: [
       {
-        uid: "lib|suppressed|loss|0",
-        libId: "suppressed",
+        uid: "lib|ghost|loss|0",
+        libId: "ghost",
         metaTime: Math.floor(Date.parse("2025-02-27T00:00:00Z") / 1000),
         metaPnl: -160,
         metaOutcome: "Loss",
@@ -226,24 +226,24 @@ test("suppressed library points stay selectable as ghost-learning neighbors", as
       }
     ],
     panelBacktestFilterSettings: baseFilterSettings({
-      selectedAiLibraries: ["suppressed"],
+      selectedAiLibraries: ["ghost"],
       selectedAiLibrarySettings: {
-        suppressed: { weight: 100, maxSamples: 1000 }
+        ghost: { weight: 100, maxSamples: 1000 }
       }
     }),
     panelConfidenceGateDisabled: true,
     panelEffectiveConfidenceThreshold: 0,
     aiLibraryDefaultsById: {
-      suppressed: { weight: 100, maxSamples: 1000 }
+      ghost: { weight: 100, maxSamples: 1000 }
     }
   });
 
   const stampedTrade = payload.timeFilteredTrades[1];
   assert.ok(stampedTrade, "expected a second stamped trade");
-  assert.equal(stampedTrade.closestClusterUid, "lib|suppressed|loss|0");
+  assert.equal(stampedTrade.closestClusterUid, "lib|ghost|loss|0");
   assert.ok(Array.isArray(stampedTrade.entryNeighbors) && stampedTrade.entryNeighbors.length > 0);
-  assert.equal(stampedTrade.entryNeighbors[0]?.metaUid, "lib|suppressed|loss|0");
-  assert.equal(stampedTrade.entryNeighbors[0]?.metaLib, "suppressed");
+  assert.equal(stampedTrade.entryNeighbors[0]?.metaUid, "lib|ghost|loss|0");
+  assert.equal(stampedTrade.entryNeighbors[0]?.metaLib, "ghost");
   assert.equal(stampedTrade.entryNeighbors[0]?.metaSuppressed, true);
 });
 
@@ -315,7 +315,7 @@ test("panel analytics accepts compact transport payloads and still stamps neighb
   assert.equal(stampedTrade.closestClusterUid, "lib|base|alpha|0");
 });
 
-test("core library excludes the selected live trade from its own neighbor list", async () => {
+test("online library excludes the selected live trade from its own neighbor list", async () => {
   const trades = Array.from({ length: 6 }, (_, index) =>
     makeTrade({
       id: `live-${index + 1}`,
@@ -335,12 +335,12 @@ test("core library excludes the selected live trade from its own neighbor list",
     panelBacktestFilterSettings: baseFilterSettings({
       antiCheatEnabled: true,
       validationMode: "off",
-      selectedAiLibraries: ["core"]
+      selectedAiLibraries: ["online"]
     }),
     panelConfidenceGateDisabled: true,
     panelEffectiveConfidenceThreshold: 0,
     aiLibraryDefaultsById: {
-      core: { weight: 100, maxSamples: 1000 }
+      online: { weight: 100, maxSamples: 1000 }
     }
   });
 
@@ -385,12 +385,12 @@ test("anti-cheat off keeps the full live neighbor pool available", async () => {
     panelBacktestFilterSettings: baseFilterSettings({
       antiCheatEnabled: false,
       validationMode: "synthetic",
-      selectedAiLibraries: ["core"]
+      selectedAiLibraries: ["online"]
     }),
     panelConfidenceGateDisabled: true,
     panelEffectiveConfidenceThreshold: 0,
     aiLibraryDefaultsById: {
-      core: { weight: 100, maxSamples: 1000 }
+      online: { weight: 100, maxSamples: 1000 }
     }
   });
 
@@ -812,14 +812,14 @@ test("panel analytics nearest-neighbor ranking ignores the query trade outcome w
       panelBacktestFilterSettings: baseFilterSettings({
         antiCheatEnabled: true,
         validationMode: "off",
-        selectedAiLibraries: ["core"],
+        selectedAiLibraries: ["online"],
         kEntry: 1,
         inPreciseEnabled: true
       }),
       panelConfidenceGateDisabled: true,
       panelEffectiveConfidenceThreshold: 0,
       aiLibraryDefaultsById: {
-        core: { weight: 100, maxSamples: 1000 }
+        online: { weight: 100, maxSamples: 1000 }
       }
     });
 
@@ -1201,12 +1201,12 @@ test("synthetic validation uses the full trade history as its training pool", as
     panelBacktestFilterSettings: baseFilterSettings({
       antiCheatEnabled: true,
       validationMode: "off",
-      selectedAiLibraries: ["core"]
+      selectedAiLibraries: ["online"]
     }),
     panelConfidenceGateDisabled: true,
     panelEffectiveConfidenceThreshold: 0,
     aiLibraryDefaultsById: {
-      core: { weight: 100, maxSamples: 1000 }
+      online: { weight: 100, maxSamples: 1000 }
     }
   });
 
@@ -1216,12 +1216,12 @@ test("synthetic validation uses the full trade history as its training pool", as
     panelBacktestFilterSettings: baseFilterSettings({
       antiCheatEnabled: true,
       validationMode: "synthetic",
-      selectedAiLibraries: ["core"]
+      selectedAiLibraries: ["online"]
     }),
     panelConfidenceGateDisabled: true,
     panelEffectiveConfidenceThreshold: 0,
     aiLibraryDefaultsById: {
-      core: { weight: 100, maxSamples: 1000 }
+      online: { weight: 100, maxSamples: 1000 }
     }
   });
 
@@ -1264,12 +1264,12 @@ test("split validation does not silently midpoint-fallback when timestamps colla
       validationMode: "split",
       statsDateStart: null,
       statsDateEnd: null,
-      selectedAiLibraries: ["core"]
+      selectedAiLibraries: ["online"]
     }),
     panelConfidenceGateDisabled: true,
     panelEffectiveConfidenceThreshold: 0,
     aiLibraryDefaultsById: {
-      core: { weight: 100, maxSamples: 1000 }
+      online: { weight: 100, maxSamples: 1000 }
     }
   });
 
@@ -1338,6 +1338,71 @@ test("synthetic worker libraries are stamped in 1999 while live trades stay on r
     assert.equal(new Date(entryTime).getUTCFullYear() >= 2025, true);
     assert.equal(new Date(exitTime).getUTCFullYear() >= 2025, true);
   }
+});
+
+test("compute worker resolves online-library neighbors back to live trade ids for cluster links", async () => {
+  const payload = await postAizipCompute({
+    candles: buildComputeCandles(360),
+    settings: {
+      antiCheatEnabled: false,
+      validationMode: "off",
+      parseMode: "utc",
+      chunkBars: 8,
+      dollarsPerMove: 100,
+      tpDollars: 100,
+      slDollars: 100,
+      checkEveryBar: true,
+      aiMethod: "knn",
+      enabledSessions: {
+        Tokyo: true,
+        Sydney: true,
+        London: true,
+        "New York": true
+      },
+      modelStates: {
+        Momentum: 1
+      },
+      aiLibrariesActive: ["base", "online"],
+      aiLibrariesSettings: {
+        base: { weight: 100, maxSamples: 128, tpDollars: 100, slDollars: 100 },
+        online: { weight: 100, maxSamples: 128 }
+      }
+    },
+    timeoutMs: 60_000
+  });
+
+  const result =
+    payload.res && typeof payload.res === "object" && !Array.isArray(payload.res)
+      ? (payload.res as {
+          trades?: Array<{
+            uid?: string;
+            closestClusterUid?: string | null;
+            entryNeighbors?: Array<{
+              uid?: string | null;
+              metaUid?: string | null;
+              metaTradeUid?: string | null;
+              metaLibraryUid?: string | null;
+              metaLib?: string | null;
+            }>;
+          }>;
+        })
+      : null;
+  assert.ok(result, "expected a compute result payload");
+
+  const trades = Array.isArray(result?.trades) ? result.trades : [];
+  assert.ok(trades.length > 1, "expected compute worker to produce live trades");
+
+  const onlineTrade = trades.find((trade) => trade?.entryNeighbors?.[0]?.metaLib === "online");
+  assert.ok(onlineTrade, "expected a live trade influenced by the Online Library");
+
+  const firstNeighbor = onlineTrade?.entryNeighbors?.[0];
+  const neighborUid = firstNeighbor?.metaUid ?? firstNeighbor?.uid ?? null;
+  assert.equal(typeof neighborUid, "string");
+  assert.equal(String(neighborUid).startsWith("live|"), true);
+  assert.equal(String(neighborUid).startsWith("online|"), false);
+  assert.equal(onlineTrade?.closestClusterUid, neighborUid);
+  assert.equal(firstNeighbor?.metaTradeUid, neighborUid);
+  assert.equal(String(firstNeighbor?.metaLibraryUid ?? "").startsWith("online|"), true);
 });
 
 test("compute worker does not silently inject the base library when none is selected", async () => {
