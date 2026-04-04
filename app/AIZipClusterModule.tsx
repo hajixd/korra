@@ -13161,7 +13161,25 @@ function ClusterMapInner({
     return { sessions, months, dows, hours, models };
   }, [trades, ghostEntries, libraryPoints, potential, candles, parseMode]);
 
+  const resolveProvidedLibraryCount = React.useCallback(
+    (libraryId: string): number | null => {
+      const normalizedLibraryId = String(libraryId ?? "").trim().toLowerCase();
+      if (!normalizedLibraryId) {
+        return null;
+      }
+
+      const rawCount = (libraryCounts as any)?.[normalizedLibraryId];
+      const numericCount = Number(rawCount);
+      return Number.isFinite(numericCount) ? Math.max(0, numericCount) : null;
+    },
+    [libraryCounts]
+  );
   const onlineLibraryTotalAll = useMemo(() => {
+    const providedCount = resolveProvidedLibraryCount("core");
+    if (providedCount != null) {
+      return providedCount;
+    }
+
     const acceptedTradeCount = Array.isArray(trades) ? trades.length : 0;
     if (acceptedTradeCount > 0) {
       return acceptedTradeCount;
@@ -13176,9 +13194,14 @@ function ClusterMapInner({
       }
     }
     return fallbackCount;
-  }, [libraryPoints, trades]);
+  }, [libraryPoints, resolveProvidedLibraryCount, trades]);
   // Ghost / suppressed library count should be stable regardless of Cluster Map view filters.
   const suppressedLibraryTotalAll = useMemo(() => {
+    const providedCount = resolveProvidedLibraryCount("suppressed");
+    if (providedCount != null) {
+      return providedCount;
+    }
+
     const explicitGhostCount = Array.isArray(ghostEntries) ? ghostEntries.length : 0;
     if (explicitGhostCount > 0) {
       return explicitGhostCount;
@@ -13193,7 +13216,7 @@ function ClusterMapInner({
       }
     }
     return fallbackCount;
-  }, [ghostEntries, libraryPoints]);
+  }, [ghostEntries, libraryPoints, resolveProvidedLibraryCount]);
   const stableLibraryCountsById = useMemo(() => {
     const next: Record<string, number> = {};
     const activeLibraryIds = new Set(
@@ -13377,12 +13400,6 @@ function ClusterMapInner({
       return true;
     };
     const entries = [];
-    const activeLibraryIdSet = new Set(
-      ((activeLibraries as any[]) || [])
-        .map((libraryId) => String(libraryId ?? "").trim().toLowerCase())
-        .filter(Boolean)
-    );
-    const onlineLibraryActive = activeLibraryIdSet.has("core");
     const suppressedLibActive =
       (legendToggles as any)["lib:suppressed"] === true;
     for (let i = 0; i < trades.length; i++) {
@@ -13479,83 +13496,6 @@ function ClusterMapInner({
         entryNeighbors: (t as any).entryNeighbors ?? [],
       });
 
-      if (onlineLibraryActive) {
-        const entryDtStr = (t.entryTime || "") as any;
-        const entryDt = entryDtStr ? parseDateFromString(entryDtStr, parseMode) : null;
-        const entryMonthIdx =
-          entryDt != null
-            ? parseMode === "utc"
-              ? entryDt.getUTCMonth()
-              : entryDt.getMonth()
-            : null;
-        const entryMonthKey = entryMonthIdx != null ? MONTH_SHORT[entryMonthIdx] : null;
-        const entryDow =
-          entryDt != null
-            ? parseMode === "utc"
-              ? entryDt.getUTCDay()
-              : entryDt.getDay()
-            : null;
-        const entryDowKey = typeof entryDow === "number" ? DOW_SHORT[entryDow] : null;
-        const entryHour =
-          entryDt != null
-            ? parseMode === "utc"
-              ? entryDt.getUTCHours()
-              : entryDt.getHours()
-            : null;
-        const entrySession = sessionFromTime(t.entryTime, parseMode);
-
-        entries.push({
-          id: `lib-core-${t.uid ?? t.id ?? i}-${t.entryIndex}`,
-          libId: "core",
-          metaLib: "core",
-          uid: `LC-${t.uid ?? t.id ?? i}`,
-          chunk,
-          meta,
-          timeFeature,
-          baseR: 6.4,
-          kind: "library",
-          signalIndex: t.signalIndex,
-          entryIndex: t.entryIndex,
-          exitIndex: t.exitIndex ?? null,
-          pnl,
-          win: pnl >= 0,
-          isOpen: false,
-          dir: t.direction,
-          entryTime: t.entryTime,
-          exitTime: t.exitTime,
-          session: entrySession,
-          entryModel,
-          exitModel: (t as any).exitModel ?? null,
-          monthKey: entryMonthKey,
-          dow: entryDow,
-          dowKey: entryDowKey,
-          hour: entryHour,
-          metaTime: t.entryTime,
-          metaSession: entrySession,
-          metaSuppressed: false,
-          label: pnl >= 0 ? 1 : -1,
-          closestCluster: t.closestCluster,
-          closestClusterUid: (t as any).closestClusterUid ?? null,
-          entryMargin:
-            (t as any).entryMargin ??
-            (t as any).entryConfidence ??
-            (t as any).aiConfidence ??
-            (t as any).confidence ??
-            (t as any).margin ??
-            null,
-          entryConfidence: (t as any).entryConfidence ?? null,
-          aiConfidence: (t as any).aiConfidence ?? null,
-          confidence: (t as any).confidence ?? null,
-          aiMargin: (t as any).aiMargin ?? null,
-          margin: (t as any).margin ?? null,
-          aiMode: (t as any).aiMode ?? null,
-          chunkType: t.chunkType,
-          exitReason: t.exitReason,
-          entryPrice: t.entryPrice,
-          suppressed: false,
-          entryNeighbors: (t as any).entryNeighbors ?? [],
-        });
-      }
     }
     const hasLiveOpenTrade = trades.some((t) => !!t.isOpen);
     if (

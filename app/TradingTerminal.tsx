@@ -27117,6 +27117,123 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     getEffectiveTradeConfidenceScore,
     shouldPrepareAiZipClusterData
   ]);
+  const aiClusterGhostEntries = useMemo(() => {
+    if (
+      !shouldPrepareAiZipClusterData ||
+      !aiClusterActiveLibraryIdSet.has(GHOST_LEARNING_LIBRARY_ID)
+    ) {
+      return [] as any[];
+    }
+
+    const acceptedTradeIds = new Set(backtestTrades.map((trade) => String(trade.id)));
+    const { rejected } = partitionAizipLibraryTradePool(
+      backtestTimeFilteredTrades,
+      acceptedTradeIds
+    );
+    const maxIndex = Math.max(0, aiZipClusterCandles.length - 1);
+
+    return rejected.map((trade, index) => {
+      const fallbackIndex =
+        maxIndex > 0
+          ? Math.round((index / Math.max(1, rejected.length - 1)) * maxIndex)
+          : 0;
+      const entryIndex = clamp(
+        aiZipClusterCandleIndexByUnix.get(Number(trade.entryTime)) ?? fallbackIndex,
+        0,
+        maxIndex
+      );
+      const exitIndex = clamp(
+        aiZipClusterCandleIndexByUnix.get(Number(trade.exitTime)) ??
+          Math.min(
+            maxIndex,
+            entryIndex +
+              Math.max(
+                1,
+                Math.floor((Number(trade.exitTime) - Number(trade.entryTime)) / 60)
+              )
+          ),
+        0,
+        maxIndex
+      );
+      const entryNeighbors = cloneTradeEntryNeighbors((trade as any).entryNeighbors);
+      const primaryNeighbor = entryNeighbors[0] ?? null;
+
+      return {
+        id: `ghost-${trade.id}`,
+        signalIndex: Math.max(0, entryIndex - 1),
+        entryIndex,
+        entryTime: Number(trade.entryTime),
+        dir: trade.side === "Long" ? 1 : -1,
+        model: trade.entrySource,
+        margin: getEffectiveTradeConfidenceScore(trade),
+        entryConfidence:
+          (trade as any).entryConfidence ??
+          (trade as any).confidence ??
+          getEffectiveTradeConfidenceScore(trade),
+        label:
+          (primaryNeighbor as any)?.label ??
+          (trade as any).closestCluster ??
+          null,
+        labelUid:
+          (trade as any).closestClusterUid ??
+          (primaryNeighbor as any)?.metaUid ??
+          (primaryNeighbor as any)?.uid ??
+          null,
+        aiMode:
+          (trade as any).aiMode === "knn" || (trade as any).aiMode === "hdbscan"
+            ? (trade as any).aiMode
+            : null,
+        pnl: trade.pnlUsd,
+        exitReason: getBacktestExitLabel(trade),
+        exitModel: (trade as any).exitModel ?? null,
+        exitIndex,
+        exitTime: Number(trade.exitTime),
+        entryPrice: trade.entryPrice,
+        entryNeighbors,
+        suppressed: true
+      };
+    });
+  }, [
+    aiClusterActiveLibraryIdSet,
+    aiZipClusterCandleIndexByUnix,
+    aiZipClusterCandles.length,
+    backtestTimeFilteredTrades,
+    backtestTrades,
+    getBacktestExitLabel,
+    getEffectiveTradeConfidenceScore,
+    shouldPrepareAiZipClusterData
+  ]);
+  const aiZipClusterLibraryRenderSignature = useMemo(() => {
+    if (!isClusterBacktestTabActive) {
+      return "inactive";
+    }
+
+    const activeLibraryIds = [...aiClusterActiveLibraries]
+      .map((libraryId) => String(libraryId).trim())
+      .filter(Boolean)
+      .sort();
+    const countSignature = activeLibraryIds
+      .map(
+        (libraryId) =>
+          `${libraryId}:${Math.max(0, Number(aiClusterLibraryCounts[libraryId] ?? 0))}`
+      )
+      .join(",");
+
+    return [
+      appliedClusterDisplayLibrariesSettled ? "settled" : "pending",
+      activeLibraryIds.join("|"),
+      Array.isArray(aiClusterLibraryPoints) ? aiClusterLibraryPoints.length : 0,
+      Array.isArray(aiClusterGhostEntries) ? aiClusterGhostEntries.length : 0,
+      countSignature
+    ].join("|");
+  }, [
+    aiClusterActiveLibraries,
+    aiClusterGhostEntries,
+    aiClusterLibraryCounts,
+    aiClusterLibraryPoints,
+    appliedClusterDisplayLibrariesSettled,
+    isClusterBacktestTabActive
+  ]);
   const aiZipClusterMapDataKey = useMemo(() => {
     if (!isClusterBacktestTabActive) {
       return "inactive";
@@ -27132,12 +27249,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       firstTradeId,
       lastTradeId,
       aiZipClusterSnapshotSignature,
+      aiZipClusterLibraryRenderSignature,
       appliedBacktestSettings.aiMode,
       appliedBacktestSettings.validationMode,
       appliedBacktestSettings.antiCheatEnabled ? "ac1" : "ac0"
     ].join("|");
   }, [
     aiZipClusterCandleWindowKey,
+    aiZipClusterLibraryRenderSignature,
     aiZipClusterSnapshotSignature,
     aiZipClusterTradeSource,
     appliedBacktestSettings.aiMode,
@@ -33368,7 +33487,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                         key={aiZipClusterMapDataKey}
                         candles={aiZipClusterCandles}
                         trades={aiZipClusterTrades}
-                        ghostEntries={[]}
+                        ghostEntries={aiClusterGhostEntries}
                         libraryPoints={aiClusterLibraryPoints}
                         activeLibraries={aiClusterActiveLibraries}
                         libraryCounts={aiClusterLibraryCounts}
