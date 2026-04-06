@@ -8274,6 +8274,11 @@ body.mobile-terminal-viewport-lock {
   gap: 8px;
 }
 
+.ai-zip-select-tile-shell {
+  display: grid;
+  gap: 8px;
+}
+
 .ai-zip-feature-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -8328,6 +8333,34 @@ body.mobile-terminal-viewport-lock {
   background: linear-gradient(135deg, rgba(90, 170, 255, 0.16), rgba(160, 90, 255, 0.12));
   color: rgba(240, 248, 255, 0.98);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
+}
+
+.ai-zip-select-tile-action {
+  border-radius: 12px;
+  border: 1px solid rgba(90, 170, 255, 0.22);
+  background: linear-gradient(135deg, rgba(90, 170, 255, 0.14), rgba(60, 220, 120, 0.1));
+  color: rgba(240, 248, 255, 0.96);
+  padding: 0.58rem 0.8rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    opacity 140ms ease;
+}
+
+.ai-zip-select-tile-action:hover:not(:disabled) {
+  border-color: rgba(90, 170, 255, 0.42);
+  background: linear-gradient(135deg, rgba(90, 170, 255, 0.22), rgba(60, 220, 120, 0.16));
+}
+
+.ai-zip-select-tile-action:disabled,
+.ai-zip-select-tile-action.active {
+  cursor: default;
+  opacity: 0.72;
 }
 
 .ai-zip-select-tile.feature {
