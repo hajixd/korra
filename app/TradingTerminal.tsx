@@ -14950,26 +14950,6 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       isGhostLearningLibraryId(libraryId)
     );
   }, [appliedBacktestSettings.selectedAiLibraries]);
-  const toggleAiModelTileState = useCallback((modelName: string, mouseButton: number) => {
-    setAiModelStates((current) => ({
-      ...current,
-      [modelName]: getNextAiModelState(getAiModelStateValue(current, modelName), mouseButton)
-    }));
-  }, []);
-  const addAiModelTileState = useCallback((modelName: string) => {
-    setAiModelStates((current) => {
-      const currentState = getAiModelStateValue(current, modelName);
-
-      if (currentState > 0) {
-        return current;
-      }
-
-      return {
-        ...current,
-        [modelName]: 1
-      };
-    });
-  }, []);
   const canRunAiLibrariesForSnapshot = useCallback(
     (
       libraryIds: readonly string[] | null | undefined,
@@ -32308,7 +32288,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
               <AiSettingsModal
                 title="MODELS"
-                subtitle="Left click: toggle ENTRY. Right click: toggle BOTH. Add enables ENTRY."
+                subtitle="Left click: toggle ENTRY. Right click: toggle BOTH."
                 size="wide"
                 bodyClassName="ai-zip-models-modal-body"
                 open={modelsModalOpen}
@@ -32317,50 +32297,33 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 <div className="ai-zip-model-grid">
                   {settingsModelNames.map((modelName) => {
                     const state = getAiModelStateValue(aiModelStates, modelName);
-                    const addLabel = state > 0 ? "Added" : "Add";
 
                     return (
-                      <div key={modelName} className="ai-zip-select-tile-shell">
-                        <button
-                          type="button"
-                          className={`ai-zip-select-tile model ${state > 0 ? "active" : ""}`}
-                          onPointerDown={(event) => {
-                            if (event.button !== 0) {
-                              return;
-                            }
-
-                            event.preventDefault();
-                            toggleAiModelTileState(modelName, 0);
-                          }}
-                          onContextMenu={(event) => {
-                            event.preventDefault();
-                            toggleAiModelTileState(modelName, 2);
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key !== "Enter" && event.key !== " ") {
-                              return;
-                            }
-
-                            event.preventDefault();
-                            toggleAiModelTileState(modelName, 0);
-                          }}
-                          title={`Left click: toggle ENTRY for ${modelName}. Right click: toggle BOTH for ${modelName}.`}
-                        >
-                          <strong>{modelName}</strong>
-                          <span>{getAiModelStateLabel(state)}</span>
-                          <em>
-                            {state === 2 ? "Entry + Exit" : state === 1 ? "Entry only" : "Disabled"}
-                          </em>
-                        </button>
-                        <button
-                          type="button"
-                          className={`ai-zip-select-tile-action ${state > 0 ? "active" : ""}`}
-                          onClick={() => addAiModelTileState(modelName)}
-                          disabled={state > 0}
-                        >
-                          {addLabel}
-                        </button>
-                      </div>
+                      <button
+                        key={modelName}
+                        type="button"
+                        className={`ai-zip-select-tile model ${state > 0 ? "active" : ""}`}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          setAiModelStates((current) => ({
+                            ...current,
+                            [modelName]: getNextAiModelState(
+                              getAiModelStateValue(current, modelName),
+                              event.button
+                            )
+                          }));
+                        }}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                        }}
+                        title={`Left click: toggle ENTRY for ${modelName}. Right click: toggle BOTH for ${modelName}.`}
+                      >
+                        <strong>{modelName}</strong>
+                        <span>{getAiModelStateLabel(state)}</span>
+                        <em>
+                          {state === 2 ? "Entry + Exit" : state === 1 ? "Entry only" : "Disabled"}
+                        </em>
+                      </button>
                     );
                   })}
                 </div>
