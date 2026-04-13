@@ -1293,7 +1293,16 @@ export const fetchTwelveDataCandles = async (params: {
     const stepMs = getStepMs(timeframe);
     const hasExplicitStart = startMs != null;
     const hasExplicitEnd = Number.isFinite(endMs);
-    if (hasExplicitStart && hasExplicitEnd && endMs >= startMs) {
+    const boundedRangeBars =
+      hasExplicitStart && hasExplicitEnd
+        ? Math.ceil((endMs - startMs) / Math.max(60_000, stepMs)) + 2
+        : Number.POSITIVE_INFINITY;
+    const shouldUseExactRangeRepair =
+      hasExplicitStart &&
+      hasExplicitEnd &&
+      endMs >= startMs &&
+      boundedRangeBars > MAX_PAGE_SIZE;
+    if (shouldUseExactRangeRepair) {
       let exactRangeCandles: TwelveDataCandleRecord[];
       try {
         exactRangeCandles = await fetchExactRangeCandles({
@@ -1344,10 +1353,6 @@ export const fetchTwelveDataCandles = async (params: {
 
       return payload;
     }
-    const boundedRangeBars =
-      hasExplicitStart && hasExplicitEnd
-        ? Math.ceil((endMs - startMs) / Math.max(60_000, stepMs)) + 2
-        : Number.POSITIVE_INFINITY;
     const desiredRangeBars =
       hasExplicitStart && Number.isFinite(boundedRangeBars)
         ? Math.max(requestedCount, boundedRangeBars)
