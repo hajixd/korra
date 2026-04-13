@@ -19,6 +19,18 @@ export const dynamic = "force-dynamic";
 const DEFAULT_LIMIT = 2500;
 const MIN_LIMIT = 10;
 const MAX_LIMIT = 300000;
+const RECENT_HISTORY_FAST_PATH_WINDOW_MS = 45 * 24 * 60 * 60_000;
+const TIMEFRAME_MS: Record<string, number> = {
+  M1: 60_000,
+  M5: 5 * 60_000,
+  M15: 15 * 60_000,
+  M30: 30 * 60_000,
+  H1: 60 * 60_000,
+  H4: 4 * 60 * 60_000,
+  D: 24 * 60 * 60_000,
+  W: 7 * 24 * 60 * 60_000,
+  M: 31 * 24 * 60 * 60_000
+};
 
 const toIsoDateTime = (input: string | null) => {
   if (!input) return null;
@@ -43,6 +55,37 @@ const compactCandlePayload = (payload: Awaited<ReturnType<typeof fetchTwelveData
     candle.volume
   ])
 });
+
+const filterCandlesToRange = (
+  candles: Awaited<ReturnType<typeof fetchTwelveDataCandles>>["candles"],
+  startMs: number,
+  endMs: number
+) => {
+  return candles.filter((candle) => candle.time >= startMs && candle.time <= endMs);
+};
+
+const recentCountPayloadCoversRange = (params: {
+  candles: Awaited<ReturnType<typeof fetchTwelveDataCandles>>["candles"];
+  startMs: number;
+  endMs: number;
+  stepMs: number;
+}) => {
+  const { candles, startMs, endMs, stepMs } = params;
+  if (!Array.isArray(candles) || candles.length === 0) {
+    return false;
+  }
+
+  const earliestTime = Number(candles[0]?.time ?? Number.NaN);
+  const latestTime = Number(candles[candles.length - 1]?.time ?? Number.NaN);
+  const toleranceMs = Math.max(stepMs * 2, 60_000);
+
+  return (
+    Number.isFinite(earliestTime) &&
+    Number.isFinite(latestTime) &&
+    earliestTime <= startMs + toleranceMs &&
+    latestTime >= endMs - toleranceMs
+  );
+};
 
 const buildTwelveDataHistoryErrorResponse = (params: {
   pair: string;
@@ -125,6 +168,53 @@ export async function GET(request: Request) {
     const endMs = end ? Date.parse(end) : Number.NaN;
     const hasExactRangeRequest =
       Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs;
+    const timeframeStepMs = TIMEFRAME_MS[timeframe] ?? TIMEFRAME_MS.M15;
+    const estimatedRangeBars = hasExactRangeRequest
+      ? Math.ceil((endMs - startMs) / Math.max(60_000, timeframeStepMs)) + 2
+      : Number.POSITIVE_INFINITY;
+    const shouldTryRecentFastPath =
+      hasExactRangeRequest &&
+      estimatedRangeBars > 0 &&
+      estimatedRangeBars <= count &&
+      endMs >= Date.now() - RECENT_HISTORY_FAST_PATH_WINDOW_MS;
+
+    if (shouldTryRecentFastPath) {
+      const recentPayload = await fetchTwelveDataCandles({
+        pair,
+        timeframe,
+        count: Math.max(count, estimatedRangeBars),
+        apiKeys: runtimeApiKeys
+      });
+      const filteredRecentCandles = filterCandlesToRange(recentPayload.candles, startMs, endMs);
+
+      if (
+        filteredRecentCandles.length > 0 &&
+        recentCountPayloadCoversRange({
+          candles: filteredRecentCandles,
+          startMs,
+          endMs,
+          stepMs: timeframeStepMs
+        })
+      ) {
+        return NextResponse.json(
+          compactCandlePayload({
+            pair,
+            timeframe,
+            start,
+            end,
+            count: filteredRecentCandles.length,
+            candles: filteredRecentCandles,
+            source: "twelve-data-recent-fast-path"
+          }),
+          {
+            headers: {
+              "Cache-Control": "no-store",
+              "X-Korra-History-Source": "twelve-data-recent-fast-path"
+            }
+          }
+        );
+      }
+    }
 
     if (hasExactRangeRequest) {
       const cachedRangeCandles = await loadFirebaseBackedHistoryRange({
