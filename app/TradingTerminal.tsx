@@ -151,6 +151,10 @@ import {
 } from "../lib/aiLibrarySettings";
 import { stableStringify } from "../lib/stableSerialization";
 import {
+  readBrowserCandleCache,
+  writeBrowserCandleCache
+} from "../lib/browserCandleCache";
+import {
   buildBacktestDateRangeFromPreset,
   isBacktestDatePreset,
   resolveBacktestPresetDateRange,
@@ -6739,8 +6743,19 @@ const shouldRetryMarketDataFailure = (
 };
 
 const CLIENT_CANDLE_CACHE_TTL_MS = 30_000;
+const PERSISTENT_HISTORY_RANGE_CANDLE_CACHE_TTL_MS = 12 * 60 * 60_000;
+const PERSISTENT_HISTORY_COUNT_CANDLE_CACHE_TTL_MS = 10 * 60_000;
 const clientCandleCache = new Map<string, { expiresAt: number; candles: Candle[] }>();
 const clientCandleInFlight = new Map<string, Promise<Candle[]>>();
+
+const resolvePersistentHistoryCandleCacheTtlMs = (options?: {
+  startIso?: string;
+  endIso?: string;
+}) => {
+  return options?.startIso && options?.endIso
+    ? PERSISTENT_HISTORY_RANGE_CANDLE_CACHE_TTL_MS
+    : PERSISTENT_HISTORY_COUNT_CANDLE_CACHE_TTL_MS;
+};
 
 const fetchMarketCandles = async (
   timeframe: Timeframe,
@@ -6849,6 +6864,15 @@ const fetchHistoryApiCandles = async (
 
   const requestPromise = (async () => {
     try {
+      const persistentCachedCandles = await readBrowserCandleCache(requestKey, nowMs);
+      if (persistentCachedCandles && persistentCachedCandles.length > 0) {
+        clientCandleCache.set(requestKey, {
+          expiresAt: Date.now() + CLIENT_CANDLE_CACHE_TTL_MS,
+          candles: persistentCachedCandles
+        });
+        return persistentCachedCandles;
+      }
+
       for (let attempt = 0; attempt <= MARKET_DATA_MAX_RETRIES; attempt += 1) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -6878,6 +6902,12 @@ const fetchHistoryApiCandles = async (
           clientCandleCache.set(requestKey, {
             expiresAt: Date.now() + CLIENT_CANDLE_CACHE_TTL_MS,
             candles
+          });
+          void writeBrowserCandleCache({
+            key: requestKey,
+            candles,
+            expiresAt:
+              Date.now() + resolvePersistentHistoryCandleCacheTtlMs(options)
           });
           return candles;
         } finally {
