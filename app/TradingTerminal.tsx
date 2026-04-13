@@ -151,6 +151,14 @@ import {
 } from "../lib/aiLibrarySettings";
 import { stableStringify } from "../lib/stableSerialization";
 import {
+  buildBacktestDateRangeFromPreset,
+  isBacktestDatePreset,
+  resolveBacktestPresetDateRange,
+  type BacktestDatePreset,
+  type BacktestPresetRange
+} from "../lib/backtestDatePresets";
+import { normalizeStrategyNotificationTradeHistory } from "../lib/strategyNotificationTradeHistory";
+import {
   AIZIP_BACKTEST_HISTORY_FETCH_TIMEOUT_MS,
   BASE_SEEDING_LIBRARY_IDS,
   GHOST_LEARNING_LIBRARY_ID,
@@ -760,6 +768,12 @@ const getHistoryTradeTimeLabel = (
   );
 };
 
+const getHistoryTradeMergeKey = (
+  trade: Pick<HistoryItem, "id" | "entryTime" | "exitTime">
+): string => {
+  return `${trade.id}|${Math.trunc(Number(trade.entryTime) || 0)}|${Math.trunc(Number(trade.exitTime) || 0)}`;
+};
+
 const normalizeBacktestHistoryRows = (rows: BacktestHistoryRow[]): HistoryItem[] => {
   return rows.map((row) => {
     const entryTime = row.entryTime as UTCTimestamp;
@@ -776,6 +790,24 @@ const normalizeBacktestHistoryRows = (rows: BacktestHistoryRow[]): HistoryItem[]
       entryTime,
       exitTime
     };
+  });
+};
+
+const normalizeStrategyNotificationHistoryItems = (value: unknown): HistoryItem[] => {
+  return normalizeStrategyNotificationTradeHistory(value).map((trade) => {
+    const entryTime = trade.entryTime as UTCTimestamp;
+    const exitTime = trade.exitTime as UTCTimestamp;
+    const entryAt = resolveHistoryTradeTimeLabel(trade.entryAt, entryTime);
+    const exitAt = resolveHistoryTradeTimeLabel(trade.exitAt, exitTime);
+
+    return hydrateFallbackPanelTrade({
+      ...trade,
+      time: resolveHistoryTradeTimeLabel(trade.time, exitTime) || exitAt,
+      entryAt,
+      exitAt,
+      entryTime,
+      exitTime
+    });
   });
 };
 
@@ -3665,19 +3697,6 @@ type StatsRefreshOperationSnapshot = {
   startedAtMs: number;
   updatedAtMs: number;
 };
-type BacktestDatePreset =
-  | "custom"
-  | "pastWeek"
-  | "past2Weeks"
-  | "pastMonth"
-  | "past3Months"
-  | "past6Months"
-  | "pastYear"
-  | "past2Years"
-  | "past5Years"
-  | "pastDecade";
-type BacktestPresetRange = Exclude<BacktestDatePreset, "custom">;
-
 type ModelRunRequest = {
   modelId: string;
   modelName: string;
@@ -3719,6 +3738,7 @@ type BacktestSettingsSnapshot = {
   precisionTimeframe: Timeframe;
   minutePreciseEnabled: boolean;
   inPreciseEnabled: boolean;
+  statsDatePreset: BacktestDatePreset;
   statsDateStart: string;
   statsDateEnd: string;
   enabledBacktestWeekdays: string[];
@@ -5868,100 +5888,6 @@ const BACKTEST_DATE_PRESET_OPTIONS: Array<{ id: BacktestDatePreset; label: strin
 const MODEL_RUN_DATE_PRESET_OPTIONS = BACKTEST_DATE_PRESET_OPTIONS.filter(
   (option): option is { id: BacktestPresetRange; label: string } => option.id !== "custom"
 );
-
-const BACKTEST_DATE_PRESET_SET = new Set<BacktestDatePreset>(
-  BACKTEST_DATE_PRESET_OPTIONS.map((option) => option.id)
-);
-
-const isBacktestDatePreset = (value: unknown): value is BacktestDatePreset => {
-  return typeof value === "string" && BACKTEST_DATE_PRESET_SET.has(value as BacktestDatePreset);
-};
-
-const toLocalDateInputValue = (value: Date) => {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, "0");
-  const day = String(value.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
-
-const startOfLocalDay = (value: Date) => {
-  const next = new Date(value);
-  next.setHours(0, 0, 0, 0);
-  return next;
-};
-
-const shiftLocalDateByMonths = (value: Date, monthsDelta: number) => {
-  const year = value.getFullYear();
-  const month = value.getMonth();
-  const day = value.getDate();
-  const target = new Date(year, month + monthsDelta, 1);
-  const maxDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
-  return new Date(target.getFullYear(), target.getMonth(), Math.min(day, maxDay));
-};
-
-const shiftLocalDateByYears = (value: Date, yearsDelta: number) => {
-  return shiftLocalDateByMonths(value, yearsDelta * 12);
-};
-
-const buildBacktestDateRangeFromPreset = (
-  preset: BacktestPresetRange,
-  now = new Date()
-): { startDate: string; endDate: string } => {
-  const endDate = startOfLocalDay(now);
-  endDate.setDate(endDate.getDate() - 1);
-  const startDate = new Date(endDate);
-
-  switch (preset) {
-    case "pastWeek":
-      startDate.setDate(startDate.getDate() - 7);
-      break;
-    case "past2Weeks":
-      startDate.setDate(startDate.getDate() - 14);
-      break;
-    case "pastMonth":
-      return {
-        startDate: toLocalDateInputValue(shiftLocalDateByMonths(endDate, -1)),
-        endDate: toLocalDateInputValue(endDate)
-      };
-    case "past3Months":
-      return {
-        startDate: toLocalDateInputValue(shiftLocalDateByMonths(endDate, -3)),
-        endDate: toLocalDateInputValue(endDate)
-      };
-    case "past6Months":
-      return {
-        startDate: toLocalDateInputValue(shiftLocalDateByMonths(endDate, -6)),
-        endDate: toLocalDateInputValue(endDate)
-      };
-    case "pastYear":
-      return {
-        startDate: toLocalDateInputValue(shiftLocalDateByYears(endDate, -1)),
-        endDate: toLocalDateInputValue(endDate)
-      };
-    case "past2Years":
-      return {
-        startDate: toLocalDateInputValue(shiftLocalDateByYears(endDate, -2)),
-        endDate: toLocalDateInputValue(endDate)
-      };
-    case "past5Years":
-      return {
-        startDate: toLocalDateInputValue(shiftLocalDateByYears(endDate, -5)),
-        endDate: toLocalDateInputValue(endDate)
-      };
-    case "pastDecade":
-      return {
-        startDate: toLocalDateInputValue(shiftLocalDateByYears(endDate, -10)),
-        endDate: toLocalDateInputValue(endDate)
-      };
-    default:
-      break;
-  }
-
-  return {
-    startDate: toLocalDateInputValue(startDate),
-    endDate: toLocalDateInputValue(endDate)
-  };
-};
 
 const BACKTEST_DEFAULT_DATE_RANGE = buildBacktestDateRangeFromPreset("pastYear");
 
@@ -13661,6 +13587,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab>("trade");
   const [mobileTradeLimit, setMobileTradeLimit] = useState(24);
   const [mobileViewportHeightPx, setMobileViewportHeightPx] = useState<number | null>(null);
+  const [strategyNotificationTradeHistory, setStrategyNotificationTradeHistory] = useState<
+    HistoryItem[]
+  >([]);
   const [mobileRecentTradesCache, setMobileRecentTradesCache] = useState<HistoryItem[]>([]);
   const [mobileTimelineOverrideSec, setMobileTimelineOverrideSec] = useState<number | null>(null);
   const [mobileActiveChartScrubIndex, setMobileActiveChartScrubIndex] = useState<number | null>(null);
@@ -13712,63 +13641,74 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, [aiModelModeActive, aiModelStates, settingsModelNames]);
 
   const buildCurrentBacktestSettingsSnapshot = useCallback(
-    (): BacktestSettingsSnapshot => ({
-      symbol: selectedSymbol,
-      timeframe: selectedBacktestTimeframe,
-      precisionTimeframe: effectiveSelectedBacktestPrecisionTimeframe,
-      minutePreciseEnabled: backtestPrecisionEnabled,
-      inPreciseEnabled,
-      statsDateStart,
-      statsDateEnd,
-      enabledBacktestWeekdays: [...enabledBacktestWeekdays],
-      enabledBacktestSessions: [...enabledBacktestSessions],
-      enabledBacktestMonths: [...enabledBacktestMonths],
-      enabledBacktestHours: [...enabledBacktestHours],
-      aiMode,
-      aiFilterEnabled,
-      confidenceThreshold,
-      aiExitStrictness,
-      aiExitLossTolerance,
-      aiExitWinTolerance,
-      useMitExit,
-      ancThreshold,
-      tpDollars,
-      slDollars,
-      dollarsPerMove,
-      stopMode,
-      breakEvenTriggerPct,
-      trailingStartPct,
-      trailingDistPct,
-      maxBarsInTrade,
-      maxConcurrentTrades,
-      aiModelStates: { ...effectiveAiModelStates },
-      aiFeatureLevels: { ...aiFeatureLevels },
-      aiFeatureModes: { ...aiFeatureModes },
-      selectedAiLibraries: [...selectedAiLibraries],
-      selectedAiLibrarySettings: cloneAiLibrarySettings(selectedAiLibrarySettings),
-      chunkBars,
-      distanceMetric,
-      knnNeighborSpace,
-      selectedAiDomains: [...selectedAiDomains],
-      remapOppositeOutcomes,
-      dimensionAmount,
-      compressionMethod,
-      kEntry,
-      kExit,
-      knnVoteMode,
-      hdbMinClusterSize,
-      hdbMinSamples,
-      hdbEpsQuantile,
-      staticLibrariesClusters,
-      antiCheatEnabled,
-      validationMode
-    }),
+    (): BacktestSettingsSnapshot => {
+      const resolvedDateRange = resolveBacktestPresetDateRange({
+        preset: statsDatePreset,
+        startDate: statsDateStart,
+        endDate: statsDateEnd,
+        preserveStoredStart: true
+      });
+
+      return {
+        symbol: selectedSymbol,
+        timeframe: selectedBacktestTimeframe,
+        precisionTimeframe: effectiveSelectedBacktestPrecisionTimeframe,
+        minutePreciseEnabled: backtestPrecisionEnabled,
+        inPreciseEnabled,
+        statsDatePreset,
+        statsDateStart: resolvedDateRange.startDate,
+        statsDateEnd: resolvedDateRange.endDate,
+        enabledBacktestWeekdays: [...enabledBacktestWeekdays],
+        enabledBacktestSessions: [...enabledBacktestSessions],
+        enabledBacktestMonths: [...enabledBacktestMonths],
+        enabledBacktestHours: [...enabledBacktestHours],
+        aiMode,
+        aiFilterEnabled,
+        confidenceThreshold,
+        aiExitStrictness,
+        aiExitLossTolerance,
+        aiExitWinTolerance,
+        useMitExit,
+        ancThreshold,
+        tpDollars,
+        slDollars,
+        dollarsPerMove,
+        stopMode,
+        breakEvenTriggerPct,
+        trailingStartPct,
+        trailingDistPct,
+        maxBarsInTrade,
+        maxConcurrentTrades,
+        aiModelStates: { ...effectiveAiModelStates },
+        aiFeatureLevels: { ...aiFeatureLevels },
+        aiFeatureModes: { ...aiFeatureModes },
+        selectedAiLibraries: [...selectedAiLibraries],
+        selectedAiLibrarySettings: cloneAiLibrarySettings(selectedAiLibrarySettings),
+        chunkBars,
+        distanceMetric,
+        knnNeighborSpace,
+        selectedAiDomains: [...selectedAiDomains],
+        remapOppositeOutcomes,
+        dimensionAmount,
+        compressionMethod,
+        kEntry,
+        kExit,
+        knnVoteMode,
+        hdbMinClusterSize,
+        hdbMinSamples,
+        hdbEpsQuantile,
+        staticLibrariesClusters,
+        antiCheatEnabled,
+        validationMode
+      };
+    },
     [
       selectedSymbol,
       selectedBacktestTimeframe,
       effectiveSelectedBacktestPrecisionTimeframe,
       backtestPrecisionEnabled,
       inPreciseEnabled,
+      statsDatePreset,
       statsDateStart,
       statsDateEnd,
       enabledBacktestWeekdays,
@@ -20008,6 +19948,16 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         raw.aiFeatureModes && typeof raw.aiFeatureModes === "object" && !Array.isArray(raw.aiFeatureModes)
           ? (raw.aiFeatureModes as Record<string, AiFeatureMode>)
           : fallback.aiFeatureModes;
+      const nextStatsDatePreset = isBacktestDatePreset(raw.statsDatePreset)
+        ? raw.statsDatePreset
+        : fallback.statsDatePreset;
+      const resolvedDateRange = resolveBacktestPresetDateRange({
+        preset: nextStatsDatePreset,
+        startDate:
+          typeof raw.statsDateStart === "string" ? raw.statsDateStart : fallback.statsDateStart,
+        endDate: typeof raw.statsDateEnd === "string" ? raw.statsDateEnd : fallback.statsDateEnd,
+        preserveStoredStart: true
+      });
 
       return serializeBacktestSettingsSnapshot({
         ...fallback,
@@ -20019,12 +19969,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
           raw.inPreciseEnabled != null
             ? Boolean(raw.inPreciseEnabled)
             : fallback.inPreciseEnabled,
-        statsDateStart:
-          typeof raw.statsDateStart === "string"
-            ? raw.statsDateStart
-            : fallback.statsDateStart,
-        statsDateEnd:
-          typeof raw.statsDateEnd === "string" ? raw.statsDateEnd : fallback.statsDateEnd,
+        statsDatePreset: nextStatsDatePreset,
+        statsDateStart: resolvedDateRange.startDate,
+        statsDateEnd: resolvedDateRange.endDate,
         enabledBacktestWeekdays: Array.isArray(raw.enabledBacktestWeekdays)
           ? raw.enabledBacktestWeekdays.map((entry) => String(entry))
           : fallback.enabledBacktestWeekdays,
@@ -20151,8 +20098,12 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       settingsModelNames
     ]
   );
+  const currentPresetMatchSignature = useMemo(
+    () => resolvePresetBacktestSignature(collectSettings()),
+    [collectSettings, resolvePresetBacktestSignature]
+  );
   const matchingSavedPreset = useMemo(() => {
-    const currentSignature = currentStrategyNotificationSettingsSignature;
+    const currentSignature = currentPresetMatchSignature;
     return (
       [...savedPresets]
         .sort((left, right) => right.savedAt - left.savedAt)
@@ -20160,7 +20111,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       null
     );
   }, [
-    currentStrategyNotificationSettingsSignature,
+    currentPresetMatchSignature,
     resolvePresetBacktestSignature,
     savedPresets
   ]);
@@ -20282,10 +20233,32 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     if (s.propTotalMaxLoss != null) setPropTotalMaxLoss(s.propTotalMaxLoss);
     if (s.propProfitTarget != null) setPropProfitTarget(s.propProfitTarget);
     if (s.propProjectionMethod != null) setPropProjectionMethod(s.propProjectionMethod);
-    if (isBacktestDatePreset(s.statsDatePreset)) setStatsDatePreset(s.statsDatePreset);
-    if (s.statsDateStart != null) setStatsDateStart(s.statsDateStart);
-    if (s.statsDateEnd != null) setStatsDateEnd(s.statsDateEnd);
-  }, [aiLibraryDefById, normalizeSelectedAiLibraries, selectedBacktestTimeframe]);
+    const nextStatsDatePreset = isBacktestDatePreset(s.statsDatePreset)
+      ? s.statsDatePreset
+      : null;
+    if (nextStatsDatePreset) {
+      const resolvedDateRange = resolveBacktestPresetDateRange({
+        preset: nextStatsDatePreset,
+        startDate:
+          typeof s.statsDateStart === "string" ? s.statsDateStart : statsDateStart,
+        endDate: typeof s.statsDateEnd === "string" ? s.statsDateEnd : statsDateEnd,
+        preserveStoredStart: true
+      });
+
+      setStatsDatePreset(nextStatsDatePreset);
+      setStatsDateStart(resolvedDateRange.startDate);
+      setStatsDateEnd(resolvedDateRange.endDate);
+    } else {
+      if (s.statsDateStart != null) setStatsDateStart(s.statsDateStart);
+      if (s.statsDateEnd != null) setStatsDateEnd(s.statsDateEnd);
+    }
+  }, [
+    aiLibraryDefById,
+    normalizeSelectedAiLibraries,
+    selectedBacktestTimeframe,
+    statsDateEnd,
+    statsDateStart
+  ]);
 
   useEffect(() => {
     try {
@@ -21437,6 +21410,35 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     scopedUploadedStrategyModelsStorageKey,
     uploadedStrategyModelsReady
   ]);
+
+  useEffect(() => {
+    if (!accountWorkspaceDocRef) {
+      setStrategyNotificationTradeHistory([]);
+      return;
+    }
+
+    const unsubscribe = onSnapshot(
+      accountWorkspaceDocRef,
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          setStrategyNotificationTradeHistory([]);
+          return;
+        }
+
+        const data = snapshot.data() as Record<string, unknown>;
+        setStrategyNotificationTradeHistory(
+          normalizeStrategyNotificationHistoryItems(data.strategyNotificationTradeHistory)
+        );
+      },
+      () => {
+        // Keep the latest local history visible if realtime sync hiccups.
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [accountWorkspaceDocRef]);
 
   useEffect(() => {
     if (!uploadedStrategyModelsReady) {
@@ -26358,6 +26360,24 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       return selectedBacktestDayTrades.some((trade) => trade.id === current) ? current : null;
     });
   }, [isCalendarBacktestTabActive, selectedBacktestDayTrades]);
+  const historySurfaceTrades = useMemo(() => {
+    const deduped = new Map<string, HistoryItem>();
+
+    for (const trade of strategyNotificationTradeHistory) {
+      deduped.set(getHistoryTradeMergeKey(trade), trade);
+    }
+
+    for (const trade of deferredBacktestAnalyticsTrades) {
+      deduped.set(getHistoryTradeMergeKey(trade), trade);
+    }
+
+    return [...deduped.values()].sort(
+      (a, b) =>
+        Number(b.exitTime) - Number(a.exitTime) ||
+        Number(b.entryTime) - Number(a.entryTime) ||
+        a.id.localeCompare(b.id)
+    );
+  }, [deferredBacktestAnalyticsTrades, strategyNotificationTradeHistory]);
 
   const filteredBacktestHistory = useMemo(() => {
     if (!isHistoryBacktestTabActive) {
@@ -26379,10 +26399,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     const searchTokens = normalizedQuery ? normalizedQuery.split(" ") : [];
 
     if (!query) {
-      return [...deferredBacktestAnalyticsTrades].sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
+      return historySurfaceTrades;
     }
 
-    return [...deferredBacktestAnalyticsTrades]
+    return [...historySurfaceTrades]
       .filter((trade) => {
         const cheated = isTradeCheatedByFutureDependency(trade);
         if (requireCheated != null && cheated !== requireCheated) {
@@ -26416,7 +26436,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
         return searchTokens.every((token) => haystack.includes(token));
       })
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
-  }, [backtestHistoryQuery, deferredBacktestAnalyticsTrades, isHistoryBacktestTabActive]);
+  }, [backtestHistoryQuery, historySurfaceTrades, isHistoryBacktestTabActive]);
 
   useEffect(() => {
     if (!isHistoryBacktestTabActive) {
@@ -26424,7 +26444,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     }
 
     setBacktestHistoryPage(1);
-  }, [backtestHistoryQuery, backtestTrades, isHistoryBacktestTabActive]);
+  }, [backtestHistoryQuery, historySurfaceTrades, isHistoryBacktestTabActive]);
 
   const backtestHistoryPageCount = Math.max(
     1,
@@ -26448,10 +26468,10 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     return filteredBacktestHistory.slice(startIndex, startIndex + BACKTEST_HISTORY_PAGE_SIZE);
   }, [filteredBacktestHistory, visibleBacktestHistoryPage]);
   const mobileRecentTrades = useMemo(() => {
-    return [...deferredBacktestAnalyticsTrades]
+    return [...historySurfaceTrades]
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime))
       .slice(0, mobileTradeLimit);
-  }, [deferredBacktestAnalyticsTrades, mobileTradeLimit]);
+  }, [historySurfaceTrades, mobileTradeLimit]);
   const mobileVisibleRecentTrades = useMemo(() => {
     return mobileRecentTrades.length > 0 ? mobileRecentTrades : mobileRecentTradesCache;
   }, [mobileRecentTrades, mobileRecentTradesCache]);
@@ -26459,13 +26479,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     const deduped = new Map<string, HistoryItem>();
 
     const registerTrade = (trade: HistoryItem) => {
-      if (!trade?.id || deduped.has(trade.id)) {
+      const mergeKey = getHistoryTradeMergeKey(trade);
+      if (!trade?.id || deduped.has(mergeKey)) {
         return;
       }
-      deduped.set(trade.id, trade);
+      deduped.set(mergeKey, trade);
     };
 
-    for (const trade of deferredBacktestAnalyticsTrades) {
+    for (const trade of historySurfaceTrades) {
       registerTrade(trade);
     }
 
@@ -26478,7 +26499,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     }
 
     return [...deduped.values()].sort((a, b) => Number(a.entryTime) - Number(b.entryTime));
-  }, [activePanelHistoryRows, deferredBacktestAnalyticsTrades, mobileRecentTradesCache]);
+  }, [activePanelHistoryRows, historySurfaceTrades, mobileRecentTradesCache]);
   const mobileTimelineStepSec = useMemo(() => {
     const candleTimes = selectedCandles
       .map((candle) => Number(toUtcTimestamp(candle.time)))
@@ -27063,8 +27084,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   );
   const mobileTimelineHistoryTrades = useMemo(() => {
     const sourceTrades =
-      deferredBacktestAnalyticsTrades.length > 0
-        ? deferredBacktestAnalyticsTrades
+      historySurfaceTrades.length > 0
+        ? historySurfaceTrades
         : mobileVisibleRecentTrades;
 
     return [...sourceTrades]
@@ -27072,7 +27093,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       .sort((a, b) => Number(b.exitTime) - Number(a.exitTime))
       .slice(0, mobileTradeLimit);
   }, [
-    deferredBacktestAnalyticsTrades,
+    historySurfaceTrades,
     mobileTradeLimit,
     mobileTimelineCursorSec,
     mobileVisibleRecentTrades
@@ -33551,15 +33572,15 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                             marginBottom: 6
                           }}
                         >
-                          {backtestTrades.length > 0 ? (
+                          {historySurfaceTrades.length > 0 ? (
                             <>
                               Showing{" "}
                               <b>{backtestHistoryPageStart > 0 ? `${backtestHistoryPageStart}-${backtestHistoryPageEnd}` : "0"}</b>{" "}
                               of <b>{filteredBacktestHistory.length}</b> filtered trades
-                              {filteredBacktestHistory.length !== backtestTrades.length ? (
+                              {filteredBacktestHistory.length !== historySurfaceTrades.length ? (
                                 <>
                                   {" "}
-                                  (<b>{backtestTrades.length}</b> total)
+                                  (<b>{historySurfaceTrades.length}</b> total)
                                 </>
                               ) : null}
                             </>

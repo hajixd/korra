@@ -9,10 +9,10 @@ import {
   type NotificationDeviceRecord,
   type NotificationDeviceRuntime
 } from "./notificationDevices";
-import { computeActiveStrategyNotificationSignalWithAiLibraries } from "./strategyNotificationAiReplay";
+import { computeStrategyNotificationRowsWithAiLibraries } from "./strategyNotificationAiReplay";
+import { selectActiveStrategyNotificationSignal } from "./strategyNotificationEngine";
 import {
   buildStrategyNotificationHistoryRequest,
-  HISTORY_LIMIT_BY_TIMEFRAME,
   MARKET_TIMEFRAME_BY_UI,
   buildTradeNotificationBody,
   formatTradeNotificationPrice,
@@ -23,6 +23,11 @@ import {
   serializeStrategyNotificationSettings
 } from "./strategyNotificationHelpers";
 import { getStrategyNotificationMarketWindow } from "./strategyNotificationMarketHours";
+import {
+  appendStrategyNotificationTradeHistory,
+  normalizeStrategyNotificationTradeHistory,
+  type StrategyNotificationHistoryTrade
+} from "./strategyNotificationTradeHistory";
 import { fetchTwelveDataCandles } from "./twelveDataMarketData";
 
 export type StrategyNotificationSweepResult = {
@@ -58,7 +63,7 @@ const EMPTY_DEVICE_RUNTIME: NotificationDeviceRuntime = {
 };
 
 const buildRuntimeFromSignal = (
-  signal: ReturnType<typeof computeActiveStrategyNotificationSignalWithAiLibraries>,
+  signal: ReturnType<typeof selectActiveStrategyNotificationSignal>,
   lastError: string | null,
   evaluatedAt: number
 ): NotificationDeviceRuntime => {
@@ -106,6 +111,33 @@ const updateDeviceRecord = (
   });
 };
 
+const toStrategyNotificationHistoryTrade = (
+  row: Parameters<typeof selectActiveStrategyNotificationSignal>[0]["rows"][number]
+): StrategyNotificationHistoryTrade => {
+  return {
+    id: String(row.id ?? "").trim(),
+    symbol: String(row.symbol ?? "").trim(),
+    side: row.side === "Short" ? "Short" : "Long",
+    result: row.result === "Loss" ? "Loss" : "Win",
+    entrySource: String(row.entrySource ?? "Notifications").trim() || "Notifications",
+    exitReason:
+      String(row.exitReason ?? "").trim() ||
+      (row.result === "Loss" ? "Stop Loss" : "Take Profit"),
+    pnlPct: Number(row.pnlPct) || 0,
+    pnlUsd: Number(row.pnlUsd) || 0,
+    time: "",
+    entryAt: "",
+    exitAt: "",
+    entryTime: Math.trunc(Number(row.entryTime) || 0),
+    exitTime: Math.trunc(Number(row.exitTime) || 0),
+    entryPrice: Number(row.entryPrice) || 0,
+    targetPrice: Number(row.targetPrice) || 0,
+    stopPrice: Number(row.stopPrice) || 0,
+    outcomePrice: Number(row.outcomePrice) || 0,
+    units: Number(row.units) || 0
+  };
+};
+
 const processUserStrategyNotifications = async (userDoc: {
   uid: string;
   data: Record<string, unknown>;
@@ -148,7 +180,11 @@ const processUserStrategyNotifications = async (userDoc: {
   let errorNotifications = 0;
   let processedDeviceCount = 0;
   let nextDevices = devices.slice();
+  let nextTradeHistory = normalizeStrategyNotificationTradeHistory(
+    userDoc.data.strategyNotificationTradeHistory
+  );
   let devicesChanged = false;
+  let tradeHistoryChanged = false;
   const candleCache = new Map<string, ReturnType<typeof fetchCandlesForSettings>>();
 
   const getCandlesForDevice = async (
@@ -189,7 +225,8 @@ const processUserStrategyNotifications = async (userDoc: {
       continue;
     }
 
-    const settings = device.strategySettings ?? fallbackUserSettings;
+    const settings =
+      normalizeStrategyNotificationSettings(device.strategySettings) ?? fallbackUserSettings;
     if (!settings) {
       continue;
     }
@@ -221,11 +258,48 @@ const processUserStrategyNotifications = async (userDoc: {
               evaluatedAt
             )
           : undefined;
-      const signal = computeActiveStrategyNotificationSignalWithAiLibraries({
+      const rows = computeStrategyNotificationRowsWithAiLibraries({
         candles,
         oneMinuteCandles,
         settings: group.settings
       });
+      const signal =
+        rows.length > 0
+          ? selectActiveStrategyNotificationSignal({
+              rows,
+              candles,
+              settings: group.settings
+            })
+          : null;
+      const previousGroupEvaluatedAt = group.devices.reduce((latest, device) => {
+        const lastEvaluatedAt = Number(device.strategyRuntime?.lastEvaluatedAt ?? 0);
+        return Number.isFinite(lastEvaluatedAt) ? Math.max(latest, lastEvaluatedAt) : latest;
+      }, 0);
+
+      if (previousGroupEvaluatedAt > 0 && rows.length > 0) {
+        const recentlyClosedTrades = rows
+          .filter((row) => {
+            const exitTimeMs = Math.trunc(Number(row.exitTime) * 1000);
+            return (
+              Number.isFinite(exitTimeMs) &&
+              exitTimeMs > previousGroupEvaluatedAt &&
+              exitTimeMs <= evaluatedAt
+            );
+          })
+          .map((row) => toStrategyNotificationHistoryTrade(row));
+
+        if (recentlyClosedTrades.length > 0) {
+          const mergedTradeHistory = appendStrategyNotificationTradeHistory(
+            nextTradeHistory,
+            recentlyClosedTrades
+          );
+
+          if (JSON.stringify(mergedTradeHistory) !== JSON.stringify(nextTradeHistory)) {
+            nextTradeHistory = mergedTradeHistory;
+            tradeHistoryChanged = true;
+          }
+        }
+      }
 
       for (const device of group.devices) {
         const previousRuntime = device.strategyRuntime ?? EMPTY_DEVICE_RUNTIME;
@@ -330,9 +404,12 @@ const processUserStrategyNotifications = async (userDoc: {
     }
   }
 
-  if (devicesChanged) {
+  if (devicesChanged || tradeHistoryChanged) {
     await patchFirebaseUserDocument(userDoc.uid, {
-      notificationDevices: nextDevices
+      ...(devicesChanged ? { notificationDevices: nextDevices } : {}),
+      ...(tradeHistoryChanged
+        ? { strategyNotificationTradeHistory: nextTradeHistory }
+        : {})
     });
   }
 

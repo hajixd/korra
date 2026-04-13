@@ -13,6 +13,7 @@ import {
 } from "../app/backtestHistoryShared";
 import { resolveStrategyRuntimeModelProfile } from "./strategyCatalog";
 import { buildStrategyReplayTradeBlueprints, type StrategyReplayModelProfile } from "./strategyModelBacktest";
+import type { BacktestDatePreset } from "./backtestDatePresets";
 
 type ModelProfile = StrategyReplayModelProfile;
 type StrategyNotificationLibrarySettingValue = boolean | number | string;
@@ -25,6 +26,7 @@ export type StrategyNotificationSettings = {
   aiMode: "off" | "knn" | "hdbscan";
   aiFilterEnabled: boolean;
   inPreciseEnabled: boolean;
+  statsDatePreset: BacktestDatePreset;
   statsDateStart: string;
   statsDateEnd: string;
   enabledBacktestWeekdays: string[];

@@ -1,6 +1,10 @@
 import type { StrategyNotificationSettings } from "./strategyNotificationEngine";
 import { stableStringify } from "./stableSerialization";
 import { normalizeAizipLibraryId } from "../app/aizipRuntime";
+import {
+  isBacktestDatePreset,
+  resolveBacktestPresetDateRange
+} from "./backtestDatePresets";
 
 export const MARKET_TIMEFRAME_BY_UI: Record<StrategyNotificationSettings["timeframe"], string> = {
   "1m": "M1",
@@ -38,6 +42,7 @@ export const DEFAULT_STRATEGY_NOTIFICATION_SETTINGS: StrategyNotificationSetting
   precisionTimeframe: "15m",
   minutePreciseEnabled: false,
   inPreciseEnabled: false,
+  statsDatePreset: "pastYear",
   statsDateStart: "",
   statsDateEnd: "",
   enabledBacktestWeekdays: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
@@ -214,6 +219,9 @@ export const normalizeStrategyNotificationSettings = (
     value.validationMode === "split" || value.validationMode === "synthetic"
       ? value.validationMode
       : "off";
+  const statsDatePreset = isBacktestDatePreset(value.statsDatePreset)
+    ? value.statsDatePreset
+    : DEFAULT_STRATEGY_NOTIFICATION_SETTINGS.statsDatePreset;
   const mapStringArray = (input: unknown, fallback: string[]) => {
     return Array.isArray(input) ? input.map((entry) => String(entry)) : fallback;
   };
@@ -273,6 +281,13 @@ export const normalizeStrategyNotificationSettings = (
     return legacyDefault || legacyCoreOnly ? [] : cleaned;
   };
 
+  const resolvedDateRange = resolveBacktestPresetDateRange({
+    preset: statsDatePreset,
+    startDate: String(value.statsDateStart ?? ""),
+    endDate: String(value.statsDateEnd ?? ""),
+    preserveStoredStart: true
+  });
+
   return {
     ...DEFAULT_STRATEGY_NOTIFICATION_SETTINGS,
     symbol: String(value.symbol ?? "XAUUSD").trim() || "XAUUSD",
@@ -283,8 +298,9 @@ export const normalizeStrategyNotificationSettings = (
     aiMode,
     aiFilterEnabled: Boolean(value.aiFilterEnabled),
     inPreciseEnabled: value.inPreciseEnabled === true,
-    statsDateStart: String(value.statsDateStart ?? ""),
-    statsDateEnd: String(value.statsDateEnd ?? ""),
+    statsDatePreset,
+    statsDateStart: resolvedDateRange.startDate,
+    statsDateEnd: resolvedDateRange.endDate,
     enabledBacktestWeekdays: mapStringArray(
       value.enabledBacktestWeekdays,
       DEFAULT_STRATEGY_NOTIFICATION_SETTINGS.enabledBacktestWeekdays
@@ -361,7 +377,16 @@ export const normalizeStrategyNotificationSettings = (
 
 export const serializeStrategyNotificationSettings = (
   settings: StrategyNotificationSettings
-) => stableStringify(settings);
+) =>
+  stableStringify({
+    ...settings,
+    ...resolveBacktestPresetDateRange({
+      preset: settings.statsDatePreset,
+      startDate: settings.statsDateStart,
+      endDate: settings.statsDateEnd,
+      preserveStoredStart: true
+    })
+  });
 
 const getUtcDayStartMsFromYmd = (ymd: string): number | null => {
   if (!ymd) {
