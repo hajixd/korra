@@ -9,7 +9,7 @@ import {
   type NotificationDeviceRecord,
   type NotificationDeviceRuntime
 } from "./notificationDevices";
-import { computeActiveStrategyNotificationSignal } from "./strategyNotificationEngine";
+import { computeActiveStrategyNotificationSignalWithAiLibraries } from "./strategyNotificationAiReplay";
 import {
   buildStrategyNotificationHistoryRequest,
   HISTORY_LIMIT_BY_TIMEFRAME,
@@ -58,7 +58,7 @@ const EMPTY_DEVICE_RUNTIME: NotificationDeviceRuntime = {
 };
 
 const buildRuntimeFromSignal = (
-  signal: ReturnType<typeof computeActiveStrategyNotificationSignal>,
+  signal: ReturnType<typeof computeActiveStrategyNotificationSignalWithAiLibraries>,
   lastError: string | null,
   evaluatedAt: number
 ): NotificationDeviceRuntime => {
@@ -221,7 +221,7 @@ const processUserStrategyNotifications = async (userDoc: {
               evaluatedAt
             )
           : undefined;
-      const signal = computeActiveStrategyNotificationSignal({
+      const signal = computeActiveStrategyNotificationSignalWithAiLibraries({
         candles,
         oneMinuteCandles,
         settings: group.settings

@@ -28,7 +28,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const DIMENSION_STANDARDIZATION_STD = 50;
 
-type AiLibrarySettingValue = boolean | number | string;
+export type PanelAnalyticsAiLibrarySettingValue = boolean | number | string;
+type AiLibrarySettingValue = PanelAnalyticsAiLibrarySettingValue;
 type AiLibrarySettings = Record<string, Record<string, AiLibrarySettingValue>>;
 type AiDistanceMetric =
   | "euclidean"
@@ -39,7 +40,7 @@ type AiDistanceMetric =
 type KnnNeighborSpace = "high" | "post" | "3d" | "2d";
 type KnnVoteMode = "distance" | "majority";
 
-type HistoryItem = {
+export type PanelAnalyticsHistoryItem = {
   id: string;
   symbol: string;
   side: "Long" | "Short";
@@ -60,6 +61,7 @@ type HistoryItem = {
   units: number;
   neighborVector?: number[] | null;
 } & BacktestTradeAiEntryMeta;
+type HistoryItem = PanelAnalyticsHistoryItem;
 
 type TradeAiEntrySnapshot = {
   entryConfidence: number;
@@ -72,7 +74,7 @@ type TradeAiEntrySnapshot = {
   entryNeighbors: BacktestEntryNeighbor[];
 };
 
-type LibraryPointPayload = {
+export type PanelAnalyticsLibraryPointPayload = {
   id?: string;
   uid?: string;
   libId?: string;
@@ -113,7 +115,7 @@ type LibraryNeighborAggregateEntry = {
   outcomeScore: number;
 };
 
-type BacktestFilterSettings = {
+export type PanelAnalyticsBacktestFilterSettings = {
   statsDateStart: string;
   statsDateEnd: string;
   inPreciseEnabled: boolean;
@@ -392,7 +394,7 @@ const getWeekdayLabel = (dateKey: string): string => {
   });
 };
 
-const getSessionLabel = (timestampSeconds: number): string => {
+export const getPanelAnalyticsSessionLabel = (timestampSeconds: number): string => {
   const date = new Date(Number(timestampSeconds) * 1000);
 
   if (Number.isNaN(date.getTime())) {
@@ -419,6 +421,8 @@ const getSessionLabel = (timestampSeconds: number): string => {
 
   return "London";
 };
+
+const getSessionLabel = getPanelAnalyticsSessionLabel;
 
 const getTradeRiskReward = (trade: HistoryItem) => {
   const riskDistance = Math.max(0.000001, Math.abs(trade.entryPrice - trade.stopPrice));
@@ -461,6 +465,8 @@ const buildTradeNeighborVector = (
     inPreciseEnabled: settings?.inPreciseEnabled === true
   });
 };
+type BacktestFilterSettings = PanelAnalyticsBacktestFilterSettings;
+type LibraryPointPayload = PanelAnalyticsLibraryPointPayload;
 
 const getTradeDirection = (trade: HistoryItem): number => {
   return trade.side === "Short" ? -1 : 1;
@@ -670,7 +676,7 @@ const resolveAiLibraryTargetPercent = (
     : clamp(baselinePercent, 0, 100);
 };
 
-const resolveAiLibraryTargetWinRate = (
+export const resolveAiLibraryTargetWinRate = (
   settings: Record<string, AiLibrarySettingValue>,
   baselineWinRate: number,
   loadedNeighborCount: number
@@ -684,7 +690,7 @@ const resolveAiLibraryTargetWinRate = (
   );
 };
 
-const resolveAiLibraryTargetBuyRate = (
+export const resolveAiLibraryTargetBuyRate = (
   settings: Record<string, AiLibrarySettingValue>,
   baselineBuyRate: number,
   loadedNeighborCount: number
@@ -698,7 +704,7 @@ const resolveAiLibraryTargetBuyRate = (
   );
 };
 
-const getPredicateRatePercent = <T,>(
+export const getPredicateRatePercent = <T,>(
   items: readonly T[],
   predicate: (item: T) => boolean
 ): number => {
@@ -746,7 +752,7 @@ const findTargetBalancedCounts = (
   };
 };
 
-const rebalanceItemsToTargetPercent = <T,>(
+export const rebalanceItemsToTargetPercent = <T,>(
   items: readonly T[],
   maxSamples: number,
   targetPositivePercent: number,
@@ -782,7 +788,7 @@ const rebalanceItemsToTargetPercent = <T,>(
     .map((entry) => entry.item);
 };
 
-const collectCappedItems = <T,>(
+export const collectCappedItems = <T,>(
   items: readonly T[],
   options: {
     cap: number;
@@ -1729,7 +1735,7 @@ const normalizeAiLibraryDefaultsById = (
   return out;
 };
 
-const computeAntiCheatBacktestContext = (params: {
+export const computeAntiCheatBacktestContext = (params: {
   panelSourceTrades: HistoryItem[];
   panelLibraryPoints: LibraryPointPayload[];
   panelBacktestFilterSettings: BacktestFilterSettings;

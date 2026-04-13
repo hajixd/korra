@@ -1,4 +1,6 @@
 import type { StrategyNotificationSettings } from "./strategyNotificationEngine";
+import { stableStringify } from "./stableSerialization";
+import { normalizeAizipLibraryId } from "../app/aizipRuntime";
 
 export const MARKET_TIMEFRAME_BY_UI: Record<StrategyNotificationSettings["timeframe"], string> = {
   "1m": "M1",
@@ -244,6 +246,32 @@ export const normalizeStrategyNotificationSettings = (
       ])
     );
   };
+  const normalizeSelectedAiLibraries = (input: unknown) => {
+    if (!Array.isArray(input)) {
+      return [];
+    }
+
+    const seen = new Set<string>();
+    const cleaned: string[] = [];
+
+    for (const entry of input) {
+      const libraryId = normalizeAizipLibraryId(String(entry ?? "").trim());
+      if (!libraryId || libraryId === "recent" || seen.has(libraryId)) {
+        continue;
+      }
+
+      seen.add(libraryId);
+      cleaned.push(libraryId);
+    }
+
+    const legacyDefault =
+      cleaned.length === 2 &&
+      cleaned.includes("online") &&
+      cleaned.includes("base");
+    const legacyCoreOnly = cleaned.length === 1 && cleaned[0] === "online";
+
+    return legacyDefault || legacyCoreOnly ? [] : cleaned;
+  };
 
   return {
     ...DEFAULT_STRATEGY_NOTIFICATION_SETTINGS,
@@ -292,7 +320,7 @@ export const normalizeStrategyNotificationSettings = (
     aiModelStates: mapRecordNumbers(value.aiModelStates),
     aiFeatureLevels: mapRecordNumbers(value.aiFeatureLevels),
     aiFeatureModes: mapRecordStrings(value.aiFeatureModes),
-    selectedAiLibraries: mapStringArray(value.selectedAiLibraries, []),
+    selectedAiLibraries: normalizeSelectedAiLibraries(value.selectedAiLibraries),
     selectedAiLibrarySettings:
       value.selectedAiLibrarySettings &&
       typeof value.selectedAiLibrarySettings === "object" &&
@@ -333,7 +361,7 @@ export const normalizeStrategyNotificationSettings = (
 
 export const serializeStrategyNotificationSettings = (
   settings: StrategyNotificationSettings
-) => JSON.stringify(settings);
+) => stableStringify(settings);
 
 const getUtcDayStartMsFromYmd = (ymd: string): number | null => {
   if (!ymd) {

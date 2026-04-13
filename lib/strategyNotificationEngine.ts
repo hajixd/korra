@@ -69,7 +69,7 @@ export type StrategyNotificationSettings = {
   validationMode: "off" | "split" | "synthetic";
 };
 
-type StrategyNotificationCandle = {
+export type StrategyNotificationCandle = {
   open: number;
   close: number;
   high: number;
@@ -305,7 +305,43 @@ const getSessionLabel = (timestampSeconds: number): string => {
   return "London";
 };
 
-const filterTradesByDateRange = (
+const resolveStrategyNotificationTradeTimeLabel = (
+  label: string | undefined,
+  timestampSeconds: number
+) => {
+  const normalizedLabel = String(label ?? "").trim();
+  if (normalizedLabel) {
+    return normalizedLabel;
+  }
+
+  const timestampMs = Math.floor(Number(timestampSeconds) * 1000);
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
+    return "";
+  }
+
+  return new Date(timestampMs).toISOString();
+};
+
+const normalizeStrategyNotificationHistoryRows = (
+  rows: BacktestHistoryRow[]
+): BacktestHistoryRow[] => {
+  return rows.map((row) => {
+    const entryTime = Number(row.entryTime);
+    const exitTime = Number(row.exitTime);
+
+    return {
+      ...row,
+      entryTime,
+      exitTime,
+      exitReason: String(row.exitReason ?? ""),
+      entryAt: resolveStrategyNotificationTradeTimeLabel(row.entryAt, entryTime),
+      exitAt: resolveStrategyNotificationTradeTimeLabel(row.exitAt, exitTime),
+      time: resolveStrategyNotificationTradeTimeLabel(row.time, exitTime)
+    };
+  });
+};
+
+export const filterStrategyNotificationTradesByDateRange = (
   trades: BacktestHistoryRow[],
   startYmd: string,
   endYmd: string
@@ -328,7 +364,7 @@ const filterTradesByDateRange = (
   });
 };
 
-const filterTradesBySessionBuckets = (
+export const filterStrategyNotificationTradesBySessionBuckets = (
   trades: BacktestHistoryRow[],
   settings: Pick<
     StrategyNotificationSettings,
@@ -354,7 +390,10 @@ const filterTradesBySessionBuckets = (
   });
 };
 
-const tradePassesAiEntryThresholds = (trade: BacktestHistoryRow, settings: StrategyNotificationSettings) => {
+export const tradePassesStrategyNotificationAiEntryThresholds = (
+  trade: BacktestHistoryRow,
+  settings: StrategyNotificationSettings
+) => {
   if (settings.aiMode === "off") {
     return true;
   }
@@ -382,12 +421,20 @@ const tradePassesAiEntryThresholds = (trade: BacktestHistoryRow, settings: Strat
   return true;
 };
 
-const computeStrategyNotificationRows = (args: {
+export const computeStrategyNotificationReplayRows = (args: {
   candles: StrategyNotificationCandle[];
   oneMinuteCandles?: StrategyNotificationCandle[];
   settings: StrategyNotificationSettings;
+  tpDollarsOverride?: number;
+  slDollarsOverride?: number;
 }): BacktestHistoryRow[] => {
-  const { candles, oneMinuteCandles, settings } = args;
+  const {
+    candles,
+    oneMinuteCandles,
+    settings,
+    tpDollarsOverride,
+    slDollarsOverride
+  } = args;
 
   if (candles.length < 48) {
     return [];
@@ -405,8 +452,8 @@ const computeStrategyNotificationRows = (args: {
     unitsPerMove: settings.dollarsPerMove,
     chunkBars: settings.chunkBars,
     entryMode: usesEveryBarMode(settings.aiMode, settings.aiFilterEnabled) ? "every-bar" : "signals",
-    tpDollars: settings.tpDollars,
-    slDollars: settings.slDollars,
+    tpDollars: tpDollarsOverride ?? settings.tpDollars,
+    slDollars: slDollarsOverride ?? settings.slDollars,
     stopMode: settings.stopMode,
     breakEvenTriggerPct: settings.breakEvenTriggerPct,
     trailingStartPct: settings.trailingStartPct,
@@ -444,8 +491,8 @@ const computeStrategyNotificationRows = (args: {
         Array.isArray(oneMinuteCandles) &&
         oneMinuteCandles.length > 0,
       modelNamesById,
-      tpDollars: settings.tpDollars,
-      slDollars: settings.slDollars,
+      tpDollars: tpDollarsOverride ?? settings.tpDollars,
+      slDollars: slDollarsOverride ?? settings.slDollars,
       stopMode: settings.stopMode,
       breakEvenTriggerPct: settings.breakEvenTriggerPct,
       trailingStartPct: settings.trailingStartPct,
@@ -458,11 +505,34 @@ const computeStrategyNotificationRows = (args: {
     return [];
   }
 
-  return filterTradesBySessionBuckets(
-    filterTradesByDateRange(rows, settings.statsDateStart, settings.statsDateEnd),
+  return normalizeStrategyNotificationHistoryRows(rows);
+};
+
+export const computeStrategyNotificationRows = (args: {
+  candles: StrategyNotificationCandle[];
+  oneMinuteCandles?: StrategyNotificationCandle[];
+  settings: StrategyNotificationSettings;
+}): BacktestHistoryRow[] => {
+  const { candles, settings, oneMinuteCandles } = args;
+  const rows = computeStrategyNotificationReplayRows({
+    candles,
+    oneMinuteCandles,
+    settings
+  });
+
+  if (rows.length === 0) {
+    return [];
+  }
+
+  return filterStrategyNotificationTradesBySessionBuckets(
+    filterStrategyNotificationTradesByDateRange(
+      rows,
+      settings.statsDateStart,
+      settings.statsDateEnd
+    ),
     settings
   )
-    .filter((trade) => tradePassesAiEntryThresholds(trade, settings))
+    .filter((trade) => tradePassesStrategyNotificationAiEntryThresholds(trade, settings))
     .sort(
       (left, right) =>
         right.entryTime - left.entryTime ||
@@ -513,7 +583,7 @@ export const selectActiveStrategyNotificationSignal = (args: {
             row.entryTime <= activeThresholdSec &&
             row.exitTime > activeThresholdSec
         ) &&
-        tradePassesAiEntryThresholds(row, settings)
+        tradePassesStrategyNotificationAiEntryThresholds(row, settings)
     )
     .sort(
       (left, right) =>

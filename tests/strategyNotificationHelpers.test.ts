@@ -7,7 +7,8 @@ import {
 } from "../lib/strategyNotificationEngine";
 import {
   DEFAULT_STRATEGY_NOTIFICATION_SETTINGS,
-  buildTradeNotificationBody
+  buildTradeNotificationBody,
+  serializeStrategyNotificationSettings
 } from "../lib/strategyNotificationHelpers";
 
 const TEST_SETTINGS: StrategyNotificationSettings = {
@@ -89,4 +90,46 @@ test("trade notification body includes the requested trade fields", () => {
   assert.match(body, /Take Profit: 2350\.13/);
   assert.match(body, /Stop Loss: 2290\.13/);
   assert.match(body, /Trigger Time:/);
+});
+
+test("strategy notification settings serialization is stable across key order", () => {
+  const left = {
+    ...DEFAULT_STRATEGY_NOTIFICATION_SETTINGS,
+    aiModelStates: {
+      Momentum: 2,
+      Fibonacci: 1
+    },
+    selectedAiLibrarySettings: {
+      base: {
+        weight: 100,
+        maxSamples: 200
+      },
+      terrific: {
+        count: 15,
+        weight: 90
+      }
+    }
+  } satisfies StrategyNotificationSettings;
+  const right = {
+    ...DEFAULT_STRATEGY_NOTIFICATION_SETTINGS,
+    selectedAiLibrarySettings: {
+      terrific: {
+        weight: 90,
+        count: 15
+      },
+      base: {
+        maxSamples: 200,
+        weight: 100
+      }
+    },
+    aiModelStates: {
+      Fibonacci: 1,
+      Momentum: 2
+    }
+  } satisfies StrategyNotificationSettings;
+
+  assert.equal(
+    serializeStrategyNotificationSettings(left),
+    serializeStrategyNotificationSettings(right)
+  );
 });

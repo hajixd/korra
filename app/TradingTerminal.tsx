@@ -149,6 +149,7 @@ import {
   AI_LIBRARY_MAX_ELIGIBLE_TRADE_WINDOW,
   AI_LIBRARY_MAX_SAMPLES
 } from "../lib/aiLibrarySettings";
+import { stableStringify } from "../lib/stableSerialization";
 import {
   AIZIP_BACKTEST_HISTORY_FETCH_TIMEOUT_MS,
   BASE_SEEDING_LIBRARY_IDS,
@@ -12356,7 +12357,7 @@ const cloneAiLibrarySettings = (settings: AiLibrarySettings): AiLibrarySettings 
 };
 
 const serializeBacktestSettingsSnapshot = (settings: BacktestSettingsSnapshot) =>
-  JSON.stringify(settings);
+  stableStringify(settings);
 
 const areAiModelStatesEqual = (
   left: BacktestSettingsSnapshot["aiModelStates"],
@@ -13541,6 +13542,9 @@ function TradingTerminalWorkspace({
   });
   const [aiFeatureModes, setAiFeatureModes] = useState<Record<string, AiFeatureMode>>(() => {
     return buildInitialAiFeatureModes();
+  });
+  const [selectedTradeHistoryFeatureId, setSelectedTradeHistoryFeatureId] = useState<string>(() => {
+    return TRADE_HISTORY_AI_FEATURE_OPTIONS[0]?.id ?? "";
   });
   const [selectedAiLibraries, setSelectedAiLibraries] = useState<string[]>([]);
   const [selectedAiLibraryId, setSelectedAiLibraryId] = useState("");
@@ -32953,70 +32957,131 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       <header className="ai-zip-feature-section-header">
                         <strong>{section.label}</strong>
                       </header>
-                      <div className="ai-zip-feature-grid">
-                        {section.features.map((feature) => {
-                          const level = aiFeatureLevels[feature.id] ?? 0;
-                          const mode = aiFeatureModes[feature.id] ?? "individual";
-                          const tradeHistoryFeature = isTradeHistoryFeatureId(feature.id);
-                          const dimsAdded =
-                            featureTakeCount(feature.id, level) *
-                            (
-                              tradeHistoryFeature || mode !== "individual"
-                                ? 1
-                                : getAiFeatureWindowBars(chunkBars)
-                            );
+                      {section.category === "tradeHistory" ? (() => {
+                        const selectedFeature =
+                          section.features.find((feature) => feature.id === selectedTradeHistoryFeatureId) ??
+                          section.features[0] ??
+                          null;
 
-                          return (
+                        if (!selectedFeature) {
+                          return null;
+                        }
+
+                        const level = aiFeatureLevels[selectedFeature.id] ?? 0;
+                        const dimsAdded = featureTakeCount(selectedFeature.id, level);
+                        const enabledTradeHistoryCount = section.features.filter(
+                          (feature) => (aiFeatureLevels[feature.id] ?? 0) > 0
+                        ).length;
+
+                        return (
+                          <div className="ai-zip-trade-history-picker">
+                            <label className="ai-zip-trade-history-select-wrap">
+                              <span>Trade History Feature</span>
+                              <select
+                                className="ai-zip-trade-history-select"
+                                value={selectedFeature.id}
+                                onChange={(event) => setSelectedTradeHistoryFeatureId(event.target.value)}
+                              >
+                                {section.features.map((feature) => (
+                                  <option key={feature.id} value={feature.id}>
+                                    {feature.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
                             <button
-                              key={feature.id}
                               type="button"
                               className={`ai-zip-select-tile feature ${level > 0 ? "active" : ""}`}
                               onMouseDown={(event) => {
                                 event.preventDefault();
-
-                                if (event.button === 2) {
-                                  if (tradeHistoryFeature) {
-                                    return;
-                                  }
-                                  setAiFeatureModes((current) => ({
-                                    ...current,
-                                    [feature.id]:
-                                      (current[feature.id] ?? "individual") === "individual"
-                                        ? "ensemble"
-                                        : "individual"
-                                  }));
-                                  return;
-                                }
-
                                 setAiFeatureLevels((current) => ({
                                   ...current,
-                                  [feature.id]: getNextAiFeatureLevel(current[feature.id] ?? 0)
+                                  [selectedFeature.id]: getNextAiFeatureLevel(
+                                    current[selectedFeature.id] ?? 0
+                                  )
                                 }));
                               }}
                               onContextMenu={(event) => {
                                 event.preventDefault();
                               }}
-                              title={
-                                tradeHistoryFeature
-                                  ? `${feature.label}: Left click cycles intensity. Trade History features always stay sequence-based.`
-                                  : `${feature.label}: Left click cycles intensity. Right click toggles Ensemble vs Individualization.`
-                              }
+                              title={`${selectedFeature.label}: Left click cycles intensity. Trade History features always stay sequence-based.`}
                             >
-                              <strong>{feature.label}</strong>
-                              <span>{feature.note ?? "Feature context for AI.zip embeddings."}</span>
+                              <strong>{selectedFeature.label}</strong>
+                              <span>{selectedFeature.note ?? "Feature context for AI.zip embeddings."}</span>
                               <em>
-                                {FEATURE_LEVEL_LABEL[level as AiFeatureLevel]} -{" "}
-                                {tradeHistoryFeature
-                                  ? "Sequence"
-                                  : mode === "ensemble"
-                                    ? "Ensemble"
-                                    : "Individualization"}{" "}
-                                - +{dimsAdded.toLocaleString("en-US")} dims
+                                {FEATURE_LEVEL_LABEL[level as AiFeatureLevel]} - Sequence - +
+                                {dimsAdded.toLocaleString("en-US")} dims -{" "}
+                                {enabledTradeHistoryCount.toLocaleString("en-US")} enabled
                               </em>
                             </button>
-                          );
-                        })}
-                      </div>
+                          </div>
+                        );
+                      })() : (
+                        <div className="ai-zip-feature-grid">
+                          {section.features.map((feature) => {
+                            const level = aiFeatureLevels[feature.id] ?? 0;
+                            const mode = aiFeatureModes[feature.id] ?? "individual";
+                            const tradeHistoryFeature = isTradeHistoryFeatureId(feature.id);
+                            const dimsAdded =
+                              featureTakeCount(feature.id, level) *
+                              (
+                                tradeHistoryFeature || mode !== "individual"
+                                  ? 1
+                                  : getAiFeatureWindowBars(chunkBars)
+                              );
+
+                            return (
+                              <button
+                                key={feature.id}
+                                type="button"
+                                className={`ai-zip-select-tile feature ${level > 0 ? "active" : ""}`}
+                                onMouseDown={(event) => {
+                                  event.preventDefault();
+
+                                  if (event.button === 2) {
+                                    if (tradeHistoryFeature) {
+                                      return;
+                                    }
+                                    setAiFeatureModes((current) => ({
+                                      ...current,
+                                      [feature.id]:
+                                        (current[feature.id] ?? "individual") === "individual"
+                                          ? "ensemble"
+                                          : "individual"
+                                    }));
+                                    return;
+                                  }
+
+                                  setAiFeatureLevels((current) => ({
+                                    ...current,
+                                    [feature.id]: getNextAiFeatureLevel(current[feature.id] ?? 0)
+                                  }));
+                                }}
+                                onContextMenu={(event) => {
+                                  event.preventDefault();
+                                }}
+                                title={
+                                  tradeHistoryFeature
+                                    ? `${feature.label}: Left click cycles intensity. Trade History features always stay sequence-based.`
+                                    : `${feature.label}: Left click cycles intensity. Right click toggles Ensemble vs Individualization.`
+                                }
+                              >
+                                <strong>{feature.label}</strong>
+                                <span>{feature.note ?? "Feature context for AI.zip embeddings."}</span>
+                                <em>
+                                  {FEATURE_LEVEL_LABEL[level as AiFeatureLevel]} -{" "}
+                                  {tradeHistoryFeature
+                                    ? "Sequence"
+                                    : mode === "ensemble"
+                                      ? "Ensemble"
+                                      : "Individualization"}{" "}
+                                  - +{dimsAdded.toLocaleString("en-US")} dims
+                                </em>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                     </section>
                   ))}
                 </div>

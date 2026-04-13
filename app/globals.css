@@ -8393,6 +8393,34 @@ body.mobile-terminal-viewport-lock {
   gap: 8px;
 }
 
+.ai-zip-trade-history-picker {
+  display: grid;
+  gap: 10px;
+}
+
+.ai-zip-trade-history-select-wrap {
+  display: grid;
+  gap: 6px;
+}
+
+.ai-zip-trade-history-select-wrap span {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.ai-zip-trade-history-select {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 18, 34, 0.88);
+  color: rgba(255, 255, 255, 0.9);
+  padding: 10px 12px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
 .ai-zip-feature-section-header {
   display: flex;
   align-items: center;
