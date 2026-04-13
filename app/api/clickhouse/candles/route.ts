@@ -10,6 +10,7 @@ import {
   isTwelveDataRetryableMessage,
   setTwelveDataRuntimeApiKeys
 } from "../../../../lib/twelveDataMarketData";
+import { loadFirebaseBackedHistoryRange } from "../../../../lib/firebaseHistoryStorageCache";
 import { ensureTwelveDataEnvLoaded, getFallbackEnvValue } from "../../../../lib/serverEnvFallback";
 
 export const runtime = "nodejs";
@@ -118,6 +119,52 @@ export async function GET(request: Request) {
     }
     if (!hasConfiguredTwelveDataApiKeys()) {
       throw new Error("Missing TWELVE_DATA_API_KEY.");
+    }
+
+    const startMs = start ? Date.parse(start) : Number.NaN;
+    const endMs = end ? Date.parse(end) : Number.NaN;
+    const hasExactRangeRequest =
+      Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs;
+
+    if (hasExactRangeRequest) {
+      const cachedRangeCandles = await loadFirebaseBackedHistoryRange({
+        pair,
+        timeframe,
+        startMs,
+        endMs,
+        fetchRange: async ({ startMs: chunkStartMs, endMs: chunkEndMs }) => {
+          const payload = await fetchTwelveDataCandles({
+            pair,
+            timeframe,
+            count,
+            start: new Date(chunkStartMs).toISOString(),
+            end: new Date(chunkEndMs).toISOString(),
+            apiKeys: runtimeApiKeys
+          });
+
+          return payload.candles;
+        }
+      });
+
+      if (cachedRangeCandles && cachedRangeCandles.length > 0) {
+        return NextResponse.json(
+          compactCandlePayload({
+            pair,
+            timeframe,
+            start,
+            end,
+            count: cachedRangeCandles.length,
+            candles: cachedRangeCandles,
+            source: "firebase-storage-cache"
+          }),
+          {
+            headers: {
+              "Cache-Control": "no-store",
+              "X-Korra-History-Source": "firebase-storage-cache"
+            }
+          }
+        );
+      }
     }
 
     const payload = await fetchTwelveDataCandles({
