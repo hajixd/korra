@@ -140,6 +140,7 @@ import {
   removeNotificationDevice,
   upsertNotificationDevice
 } from "../lib/notificationDevices";
+import { isNotificationBroadcastAdmin } from "../lib/notificationBroadcastAccess";
 import {
   AI_LIBRARY_DEFAULT_EXTREME_TRADE_COUNT,
   AI_LIBRARY_DEFAULT_MAX_SAMPLES,
@@ -13059,6 +13060,12 @@ function TradingTerminalWorkspace({
   }, [currentUser.uid, firebaseDb]);
   const currentUserDisplayName = useMemo(() => resolveUserDisplayName(currentUser), [currentUser]);
   const currentUserInitials = useMemo(() => resolveUserInitials(currentUser), [currentUser]);
+  const canSendNotificationToEveryone = useMemo(() => {
+    return isNotificationBroadcastAdmin({
+      displayName: currentUserDisplayName,
+      email: currentUser.email
+    });
+  }, [currentUser.email, currentUserDisplayName]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -13175,6 +13182,13 @@ function TradingTerminalWorkspace({
   );
   const [profileDialogStatus, setProfileDialogStatus] = useState("");
   const [profileDialogBusy, setProfileDialogBusy] = useState(false);
+  const [broadcastNotificationBusySide, setBroadcastNotificationBusySide] = useState<
+    "buy" | "sell" | null
+  >(null);
+  const [broadcastNotificationStatus, setBroadcastNotificationStatus] = useState("");
+  const [broadcastNotificationStatusTone, setBroadcastNotificationStatusTone] = useState<
+    "success" | "error" | null
+  >(null);
   const [seenNotificationIds, setSeenNotificationIds] = useState<string[]>([]);
   const [hoveredTime, setHoveredTime] = useState<number | null>(null);
   const [chartContextMenu, setChartContextMenu] = useState<MainChartContextMenuState | null>(null);
@@ -20152,6 +20166,73 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
     setMobileNotificationsEnabled(true);
   }, [mobileNotificationsEnabled, savedPresets.length, savedPresetsReady]);
+
+  const handleSendNotificationToEveryone = useCallback(
+    async (side: "buy" | "sell") => {
+      const firebaseAuth = getFirebaseClientAuth();
+      if (!firebaseAuth?.currentUser) {
+        setBroadcastNotificationStatusTone("error");
+        setBroadcastNotificationStatus("Sign in again to send the broadcast notification.");
+        return;
+      }
+
+      setBroadcastNotificationBusySide(side);
+      setBroadcastNotificationStatus("");
+      setBroadcastNotificationStatusTone(null);
+
+      try {
+        const idToken = await firebaseAuth.currentUser.getIdToken();
+        const timeZone =
+          typeof Intl !== "undefined"
+            ? Intl.DateTimeFormat().resolvedOptions().timeZone
+            : undefined;
+        const response = await fetch("/api/notifications/broadcast", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+            "Content-Type": "application/json"
+          },
+          cache: "no-store",
+          body: JSON.stringify({
+            side,
+            settings: currentStrategyNotificationSettings,
+            timeZone
+          })
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              ok?: boolean;
+              error?: unknown;
+              deviceCount?: unknown;
+              symbol?: unknown;
+            }
+          | null;
+
+        if (!response.ok || !payload?.ok) {
+          throw new Error(String(payload?.error ?? "Failed to send the broadcast notification."));
+        }
+
+        const deviceCount = Math.max(0, Math.trunc(Number(payload.deviceCount ?? 0)));
+        const deviceLabel = deviceCount === 1 ? "1 device" : `${deviceCount} devices`;
+        const sideLabel = side === "buy" ? "Buy" : "Sell";
+        const symbol =
+          String(payload.symbol ?? currentStrategyNotificationSettings.symbol ?? "XAUUSD").trim() ||
+          "XAUUSD";
+        setBroadcastNotificationStatusTone("success");
+        setBroadcastNotificationStatus(
+          `${sideLabel} notification sent to ${deviceLabel} for ${symbol}.`
+        );
+      } catch (error) {
+        setBroadcastNotificationStatusTone("error");
+        setBroadcastNotificationStatus(
+          (error as Error).message || "Failed to send the broadcast notification."
+        );
+      } finally {
+        setBroadcastNotificationBusySide(null);
+      }
+    },
+    [currentStrategyNotificationSettings]
+  );
 
 
   const handleResetSettings = useCallback(() => {
@@ -29129,6 +29210,45 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                       <span className="mobile-phone-toggle-knob" />
                     </button>
                   </div>
+                  {canSendNotificationToEveryone ? (
+                    <div className="mobile-phone-broadcast-row">
+                      <div className="mobile-phone-toggle-copy">
+                        <strong>Send Notification to everyone</strong>
+                        <small>Simulate a buy or sell trade alert on every enabled device.</small>
+                      </div>
+                      <div className="mobile-phone-broadcast-actions">
+                        <button
+                          type="button"
+                          className="mobile-phone-broadcast-btn buy"
+                          onClick={() => {
+                            void handleSendNotificationToEveryone("buy");
+                          }}
+                          disabled={broadcastNotificationBusySide !== null}
+                        >
+                          {broadcastNotificationBusySide === "buy" ? "Sending..." : "Buy"}
+                        </button>
+                        <button
+                          type="button"
+                          className="mobile-phone-broadcast-btn sell"
+                          onClick={() => {
+                            void handleSendNotificationToEveryone("sell");
+                          }}
+                          disabled={broadcastNotificationBusySide !== null}
+                        >
+                          {broadcastNotificationBusySide === "sell" ? "Sending..." : "Sell"}
+                        </button>
+                      </div>
+                      {broadcastNotificationStatus ? (
+                        <div
+                          className={`mobile-phone-broadcast-status${
+                            broadcastNotificationStatusTone === "error" ? " error" : " success"
+                          }`}
+                        >
+                          {broadcastNotificationStatus}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <button
                     type="button"
                     className="mobile-phone-action-btn"
@@ -29489,6 +29609,35 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               >
                 {testNotificationBusy ? "Sending Test Notification..." : "Test Notification"}
               </button>
+              {canSendNotificationToEveryone ? (
+                <div className="profile-menu-broadcast">
+                  <span className="profile-menu-broadcast-label">
+                    Send Notification to everyone
+                  </span>
+                  <div className="profile-menu-broadcast-actions">
+                    <button
+                      type="button"
+                      className="profile-menu-broadcast-btn buy"
+                      onClick={() => {
+                        void handleSendNotificationToEveryone("buy");
+                      }}
+                      disabled={broadcastNotificationBusySide !== null}
+                    >
+                      {broadcastNotificationBusySide === "buy" ? "Sending Buy..." : "Buy"}
+                    </button>
+                    <button
+                      type="button"
+                      className="profile-menu-broadcast-btn sell"
+                      onClick={() => {
+                        void handleSendNotificationToEveryone("sell");
+                      }}
+                      disabled={broadcastNotificationBusySide !== null}
+                    >
+                      {broadcastNotificationBusySide === "sell" ? "Sending Sell..." : "Sell"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               {testNotificationStatus ? (
                 <div
                   className={`profile-menu-status${
@@ -29496,6 +29645,15 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                   }`}
                 >
                   {testNotificationStatus}
+                </div>
+              ) : null}
+              {broadcastNotificationStatus ? (
+                <div
+                  className={`profile-menu-status${
+                    broadcastNotificationStatusTone === "error" ? " error" : " success"
+                  }`}
+                >
+                  {broadcastNotificationStatus}
                 </div>
               ) : null}
               <button

@@ -258,9 +258,8 @@ const tradePassesAiEntryThresholds = (trade: BacktestHistoryRow, settings: Strat
 export const computeActiveStrategyNotificationSignal = (args: {
   candles: StrategyNotificationCandle[];
   settings: StrategyNotificationSettings;
-  nowMs?: number;
 }): BacktestHistoryRow | null => {
-  const { candles, settings, nowMs } = args;
+  const { candles, settings } = args;
 
   if (candles.length < 48) {
     return null;
@@ -322,8 +321,21 @@ export const computeActiveStrategyNotificationSignal = (args: {
     return null;
   }
 
+  return selectActiveStrategyNotificationSignal({
+    rows,
+    candles,
+    settings
+  });
+};
+
+export const selectActiveStrategyNotificationSignal = (args: {
+  rows: BacktestHistoryRow[];
+  candles: StrategyNotificationCandle[];
+  settings: StrategyNotificationSettings;
+}): BacktestHistoryRow | null => {
+  const { rows, candles, settings } = args;
   const latestCandleTimeMs = candles[candles.length - 1]?.time ?? Date.now();
-  const activeThresholdSec = Math.floor((nowMs ?? latestCandleTimeMs) / 1000);
+  const activeThresholdSec = Math.floor(latestCandleTimeMs / 1000);
 
   const activeRows = rows
     .filter(

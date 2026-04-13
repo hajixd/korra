@@ -769,6 +769,59 @@ body.account-screen-loading-lock {
   color: #f5a4af;
 }
 
+.profile-menu-broadcast {
+  padding: 0.72rem 0.82rem;
+  border-top: 1px solid #1a2438;
+  border-bottom: 1px solid #1a2438;
+  display: grid;
+  gap: 0.54rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.profile-menu-broadcast-label {
+  color: #e6edf9;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.profile-menu-broadcast-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.48rem;
+}
+
+.profile-menu-broadcast-btn {
+  border: 1px solid #24324b;
+  border-radius: 8px;
+  background: #111a2a;
+  color: #dce6f8;
+  padding: 0.52rem 0.6rem;
+  font-size: 0.67rem;
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    border-color 0.12s,
+    color 0.12s;
+}
+
+.profile-menu-broadcast-btn.buy:hover:not(:disabled) {
+  border-color: rgba(103, 231, 152, 0.68);
+  background: rgba(32, 76, 56, 0.72);
+  color: #effff5;
+}
+
+.profile-menu-broadcast-btn.sell:hover:not(:disabled) {
+  border-color: rgba(242, 119, 133, 0.68);
+  background: rgba(88, 35, 44, 0.72);
+  color: #fff0f2;
+}
+
+.profile-menu-broadcast-btn:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
 .profile-dialog-backdrop {
   position: fixed;
   inset: 0;
@@ -2988,6 +3041,56 @@ body.mobile-terminal-viewport-lock {
 
 .mobile-phone-toggle.disabled .mobile-phone-toggle-knob {
   background: rgba(255, 255, 255, 0.82);
+}
+
+.mobile-phone-broadcast-row {
+  min-height: 54px;
+  padding: 0.74rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: grid;
+  gap: 0.68rem;
+}
+
+.mobile-phone-broadcast-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.62rem;
+}
+
+.mobile-phone-broadcast-btn {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #f9fcf8;
+  padding: 0.78rem 0.9rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.mobile-phone-broadcast-btn.buy {
+  border-color: rgba(118, 239, 120, 0.18);
+}
+
+.mobile-phone-broadcast-btn.sell {
+  border-color: rgba(255, 124, 139, 0.18);
+}
+
+.mobile-phone-broadcast-btn:disabled {
+  opacity: 0.72;
+}
+
+.mobile-phone-broadcast-status {
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.mobile-phone-broadcast-status.success {
+  color: #87e7bb;
+}
+
+.mobile-phone-broadcast-status.error {
+  color: #f5a4af;
 }
 
 .mobile-phone-action-btn {

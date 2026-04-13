@@ -6,6 +6,7 @@ export type NotificationDeviceRuntime = {
   lastSignalEntryPrice: number | null;
   lastSignalTakeProfit: number | null;
   lastSignalStopLoss: number | null;
+  lastSignalTriggerTime: number | null;
   lastSignalUnits: number | null;
   lastEvaluatedAt: number | null;
   lastError: string | null;
@@ -53,6 +54,9 @@ const normalizeStrategyRuntime = (value: unknown): NotificationDeviceRuntime | n
     ),
     lastSignalStopLoss: normalizeNullableNumber(
       (value as { lastSignalStopLoss?: unknown }).lastSignalStopLoss
+    ),
+    lastSignalTriggerTime: normalizeNullableNumber(
+      (value as { lastSignalTriggerTime?: unknown }).lastSignalTriggerTime
     ),
     lastSignalUnits: normalizeNullableNumber((value as { lastSignalUnits?: unknown }).lastSignalUnits),
     lastEvaluatedAt: normalizeNullableNumber(

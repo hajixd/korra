@@ -1,34 +1,27 @@
-import type { BacktestHistoryRow } from "../app/backtestHistoryShared";
 import { runCopyTradeSweep } from "./copyTradeWorker";
 import { sendPushNotification } from "./firebaseServerNotifications";
-import { listFirebaseUserDocuments, patchFirebaseUserDocument } from "./firebaseUserDocuments";
-import { normalizeNotificationDevices, type NotificationDeviceRecord, type NotificationDeviceRuntime } from "./notificationDevices";
 import {
-  computeActiveStrategyNotificationSignal,
-  type StrategyNotificationSettings
-} from "./strategyNotificationEngine";
+  listFirebaseUserDocuments,
+  patchFirebaseUserDocument
+} from "./firebaseUserDocuments";
+import {
+  normalizeNotificationDevices,
+  type NotificationDeviceRecord,
+  type NotificationDeviceRuntime
+} from "./notificationDevices";
+import { computeActiveStrategyNotificationSignal } from "./strategyNotificationEngine";
+import {
+  HISTORY_LIMIT_BY_TIMEFRAME,
+  MARKET_TIMEFRAME_BY_UI,
+  buildTradeNotificationBody,
+  formatTradeNotificationPrice,
+  formatTradeNotificationUnits,
+  normalizeStrategyNotificationMarketCandles,
+  normalizeStrategyNotificationPair,
+  normalizeStrategyNotificationSettings
+} from "./strategyNotificationHelpers";
 import { getStrategyNotificationMarketWindow } from "./strategyNotificationMarketHours";
 import { fetchTwelveDataCandles } from "./twelveDataMarketData";
-
-const MARKET_TIMEFRAME_BY_UI: Record<StrategyNotificationSettings["timeframe"], string> = {
-  "1m": "M1",
-  "5m": "M5",
-  "15m": "M15",
-  "1H": "H1",
-  "4H": "H4",
-  "1D": "D",
-  "1W": "W"
-};
-
-const HISTORY_LIMIT_BY_TIMEFRAME: Record<StrategyNotificationSettings["timeframe"], number> = {
-  "1m": 5000,
-  "5m": 5000,
-  "15m": 5000,
-  "1H": 3000,
-  "4H": 1800,
-  "1D": 900,
-  "1W": 240
-};
 
 export type StrategyNotificationSweepResult = {
   totalUsers: number;
@@ -50,143 +43,20 @@ export type StrategyNotificationSweepResult = {
   marketTimeZone: string;
 };
 
-const normalizePair = (symbol: string): string => {
-  const normalized = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  if (!normalized) {
-    return "XAU_USD";
-  }
-  if (normalized === "XAUUSD") {
-    return "XAU_USD";
-  }
-  if (normalized.length === 6) {
-    return `${normalized.slice(0, 3)}_${normalized.slice(3)}`;
-  }
-  return "XAU_USD";
-};
-
-const normalizeMarketCandles = (
-  candles: Array<{
-    time: number;
-    open: number;
-    high: number;
-    low: number;
-    close: number;
-    volume?: number;
-  }>
-) => {
-  return candles
-    .map((candle) => {
-      const time = Number(candle.time);
-      const open = Number(candle.open);
-      const high = Number(candle.high);
-      const low = Number(candle.low);
-      const close = Number(candle.close);
-      const volumeRaw = Number(candle.volume);
-
-      if (
-        !Number.isFinite(time) ||
-        !Number.isFinite(open) ||
-        !Number.isFinite(high) ||
-        !Number.isFinite(low) ||
-        !Number.isFinite(close)
-      ) {
-        return null;
-      }
-
-      return {
-        time,
-        open,
-        high,
-        low,
-        close,
-        ...(Number.isFinite(volumeRaw) && volumeRaw >= 0 ? { volume: volumeRaw } : {})
-      };
-    })
-    .filter((value): value is NonNullable<typeof value> => value !== null)
-    .sort((left, right) => left.time - right.time);
-};
-
-const normalizeSettings = (raw: unknown): StrategyNotificationSettings | null => {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return null;
-  }
-
-  const value = raw as Record<string, unknown>;
-  const timeframe = String(value.timeframe ?? "").trim() as StrategyNotificationSettings["timeframe"];
-  if (!(timeframe in MARKET_TIMEFRAME_BY_UI)) {
-    return null;
-  }
-
-  const aiMode =
-    value.aiMode === "knn" || value.aiMode === "hdbscan" ? value.aiMode : "off";
-
-  return {
-    symbol: String(value.symbol ?? "XAUUSD").trim() || "XAUUSD",
-    timeframe,
-    aiMode,
-    aiFilterEnabled: Boolean(value.aiFilterEnabled),
-    inPreciseEnabled: value.inPreciseEnabled === true,
-    confidenceThreshold: Number(value.confidenceThreshold ?? 0) || 0,
-    ancThreshold: Number(value.ancThreshold ?? 0) || 0,
-    dollarsPerMove: Number(value.dollarsPerMove ?? 25) || 25,
-    chunkBars: Math.max(1, Number(value.chunkBars ?? 24) || 24),
-    maxBarsInTrade: Math.max(0, Number(value.maxBarsInTrade ?? 0) || 0),
-    maxConcurrentTrades: Math.max(0, Number(value.maxConcurrentTrades ?? 1) || 1),
-    tpDollars: Number(value.tpDollars ?? 1000) || 1000,
-    slDollars: Number(value.slDollars ?? 1000) || 1000,
-    stopMode: Number(value.stopMode ?? 0) || 0,
-    breakEvenTriggerPct: Number(value.breakEvenTriggerPct ?? 50) || 50,
-    trailingStartPct: Number(value.trailingStartPct ?? 50) || 50,
-    trailingDistPct: Number(value.trailingDistPct ?? 30) || 30,
-    aiModelStates:
-      value.aiModelStates && typeof value.aiModelStates === "object" && !Array.isArray(value.aiModelStates)
-        ? Object.fromEntries(
-            Object.entries(value.aiModelStates as Record<string, unknown>).map(([key, modelState]) => [
-              key,
-              Number(modelState ?? 0) || 0
-            ])
-          )
-        : {}
-  };
-};
-
 const EMPTY_DEVICE_RUNTIME: NotificationDeviceRuntime = {
   lastSignalId: null,
   lastSignalSide: null,
   lastSignalEntryPrice: null,
   lastSignalTakeProfit: null,
   lastSignalStopLoss: null,
+  lastSignalTriggerTime: null,
   lastSignalUnits: null,
   lastEvaluatedAt: null,
   lastError: null
 };
 
-const formatNotificationPrice = (value: number | null | undefined): string => {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric.toFixed(2) : "—";
-};
-
-const formatNotificationUnits = (value: number | null | undefined): string => {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? String(Number(numeric.toFixed(2))) : "—";
-};
-
-const buildRowBody = (
-  label: string,
-  row: Pick<BacktestHistoryRow, "side" | "entryPrice" | "targetPrice" | "stopPrice" | "units">,
-  symbol: string
-) => {
-  return [
-    `${symbol} · ${row.side} ${label}`,
-    `Entry Price: ${formatNotificationPrice(row.entryPrice)}`,
-    `Take Profit: ${formatNotificationPrice(row.targetPrice)}`,
-    `Stop Loss: ${formatNotificationPrice(row.stopPrice)}`,
-    `Unit Size: ${formatNotificationUnits(row.units)}`
-  ].join("\n");
-};
-
 const buildRuntimeFromSignal = (
-  signal: BacktestHistoryRow | null,
+  signal: ReturnType<typeof computeActiveStrategyNotificationSignal>,
   lastError: string | null,
   evaluatedAt: number
 ): NotificationDeviceRuntime => {
@@ -196,19 +66,24 @@ const buildRuntimeFromSignal = (
     lastSignalEntryPrice: signal?.entryPrice ?? null,
     lastSignalTakeProfit: signal?.targetPrice ?? null,
     lastSignalStopLoss: signal?.stopPrice ?? null,
+    lastSignalTriggerTime:
+      signal && Number.isFinite(signal.entryTime) ? signal.entryTime * 1000 : null,
     lastSignalUnits: signal?.units ?? null,
     lastEvaluatedAt: evaluatedAt,
     lastError
   };
 };
 
-const fetchCandlesForSettings = async (settings: StrategyNotificationSettings) => {
+const fetchCandlesForSettings = async (settings: {
+  symbol: string;
+  timeframe: keyof typeof MARKET_TIMEFRAME_BY_UI;
+}) => {
   const payload = await fetchTwelveDataCandles({
-    pair: normalizePair(settings.symbol),
+    pair: normalizeStrategyNotificationPair(settings.symbol),
     timeframe: MARKET_TIMEFRAME_BY_UI[settings.timeframe],
     count: HISTORY_LIMIT_BY_TIMEFRAME[settings.timeframe] ?? 5000
   });
-  return normalizeMarketCandles(payload.candles);
+  return normalizeStrategyNotificationMarketCandles(payload.candles);
 };
 
 const updateDeviceRecord = (
@@ -235,7 +110,9 @@ const processUserStrategyNotifications = async (userDoc: {
   errorNotifications: number;
 }> => {
   const devices = normalizeNotificationDevices(userDoc.data.notificationDevices);
-  const fallbackUserSettings = normalizeSettings(userDoc.data.strategyNotificationSettings);
+  const fallbackUserSettings = normalizeStrategyNotificationSettings(
+    userDoc.data.strategyNotificationSettings
+  );
   const hasEnabledDevices = devices.some((device) => device.enabled);
   if (!hasEnabledDevices) {
     return {
@@ -247,7 +124,8 @@ const processUserStrategyNotifications = async (userDoc: {
     };
   }
 
-  const hasAnyStrategyConfigured = devices.some((device) => device.strategySettings != null) || fallbackUserSettings != null;
+  const hasAnyStrategyConfigured =
+    devices.some((device) => device.strategySettings != null) || fallbackUserSettings != null;
   if (!hasAnyStrategyConfigured) {
     return {
       processed: false,
@@ -266,7 +144,7 @@ const processUserStrategyNotifications = async (userDoc: {
   let devicesChanged = false;
   const candleCache = new Map<string, ReturnType<typeof fetchCandlesForSettings>>();
 
-  const getCandlesForDevice = async (settings: StrategyNotificationSettings) => {
+  const getCandlesForDevice = async (settings: NonNullable<typeof fallbackUserSettings>) => {
     const cacheKey = `${settings.symbol}|${settings.timeframe}`;
     let cached = candleCache.get(cacheKey);
     if (!cached) {
@@ -294,8 +172,7 @@ const processUserStrategyNotifications = async (userDoc: {
       const candles = await getCandlesForDevice(settings);
       const signal = computeActiveStrategyNotificationSignal({
         candles,
-        settings,
-        nowMs: evaluatedAt
+        settings
       });
 
       if (previousRuntime.lastSignalId && previousRuntime.lastSignalId !== signal?.id) {
@@ -303,22 +180,24 @@ const processUserStrategyNotifications = async (userDoc: {
           ownerUid: userDoc.uid,
           targetTokens: [device.token],
           title: `${settings.symbol} ${previousRuntime.lastSignalSide ?? "trade"} exit`,
-          body: buildRowBody(
-            "Exit",
-            {
-              side: (previousRuntime.lastSignalSide as BacktestHistoryRow["side"]) ?? "Long",
-              entryPrice: previousRuntime.lastSignalEntryPrice ?? Number.NaN,
-              targetPrice: previousRuntime.lastSignalTakeProfit ?? Number.NaN,
-              stopPrice: previousRuntime.lastSignalStopLoss ?? Number.NaN,
-              units: previousRuntime.lastSignalUnits ?? Number.NaN
-            },
-            settings.symbol
-          ),
+          body: buildTradeNotificationBody({
+            symbol: settings.symbol,
+            side: previousRuntime.lastSignalSide ?? "Trade",
+            label: "exit",
+            entryPrice: previousRuntime.lastSignalEntryPrice,
+            takeProfit: previousRuntime.lastSignalTakeProfit,
+            stopLoss: previousRuntime.lastSignalStopLoss,
+            triggerTimeMs: previousRuntime.lastSignalTriggerTime
+          }),
           link: "/",
           data: {
             eventType: "strategy_trade_closed",
             symbol: settings.symbol,
-            side: previousRuntime.lastSignalSide ?? ""
+            side: previousRuntime.lastSignalSide ?? "",
+            entryPrice: formatTradeNotificationPrice(previousRuntime.lastSignalEntryPrice),
+            takeProfit: formatTradeNotificationPrice(previousRuntime.lastSignalTakeProfit),
+            stopLoss: formatTradeNotificationPrice(previousRuntime.lastSignalStopLoss),
+            triggerTime: String(previousRuntime.lastSignalTriggerTime ?? "")
           }
         });
         exitNotifications += 1;
@@ -329,16 +208,25 @@ const processUserStrategyNotifications = async (userDoc: {
           ownerUid: userDoc.uid,
           targetTokens: [device.token],
           title: `${settings.symbol} ${signal.side} entry`,
-          body: buildRowBody("Entry", signal, settings.symbol),
+          body: buildTradeNotificationBody({
+            symbol: settings.symbol,
+            side: signal.side,
+            label: "entry",
+            entryPrice: signal.entryPrice,
+            takeProfit: signal.targetPrice,
+            stopLoss: signal.stopPrice,
+            triggerTimeMs: signal.entryTime * 1000
+          }),
           link: "/",
           data: {
             eventType: "strategy_trade_opened",
             symbol: settings.symbol,
             side: signal.side,
-            entryPrice: formatNotificationPrice(signal.entryPrice),
-            takeProfit: formatNotificationPrice(signal.targetPrice),
-            stopLoss: formatNotificationPrice(signal.stopPrice),
-            unitSize: formatNotificationUnits(signal.units)
+            entryPrice: formatTradeNotificationPrice(signal.entryPrice),
+            takeProfit: formatTradeNotificationPrice(signal.targetPrice),
+            stopLoss: formatTradeNotificationPrice(signal.stopPrice),
+            triggerTime: String(signal.entryTime * 1000),
+            unitSize: formatTradeNotificationUnits(signal.units)
           }
         });
         entryNotifications += 1;
