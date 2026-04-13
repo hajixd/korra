@@ -3623,6 +3623,7 @@ type AiFeatureDef = {
   label: string;
   note?: string;
   model?: string;
+  category?: "core" | "model" | "tradeHistory";
 };
 
 type AiLibraryFieldType = "boolean" | "number" | "select" | "text";
@@ -3866,17 +3867,78 @@ const AI_MODEL_FALLBACK_NAMES = [
   AI_MODEL_MODEL_NAME
 ] as const;
 
+const AI_FEATURE_CATEGORY_ORDER = ["core", "model", "tradeHistory"] as const;
+const AI_FEATURE_CATEGORY_LABELS: Record<(typeof AI_FEATURE_CATEGORY_ORDER)[number], string> = {
+  core: "Core Features",
+  model: "Model Features",
+  tradeHistory: "Trade History"
+};
+const normalizeAiFeatureModelId = (value: string): string => {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+};
+const TRADE_HISTORY_FEATURE_PREFIX = "th__";
+const TRADE_HISTORY_LOOKBACKS = [1, 2, 3, 5, 10, 15, 20, 30, 50, 100] as const;
+const TRADE_HISTORY_MODEL_NAMES = Array.from(
+  new Set([
+    ...STRATEGY_MODEL_CATALOG.map((model) => model.name),
+    ...AI_MODEL_FALLBACK_NAMES
+  ])
+);
+
+const buildTradeHistoryFeatureId = (modelName: string, lookback: number) => {
+  return `${TRADE_HISTORY_FEATURE_PREFIX}${normalizeAiFeatureModelId(modelName)}__${lookback}`;
+};
+
+const buildTradeHistoryDimensionNames = (lookback: number): string[] => {
+  return Array.from({ length: lookback }, (_, index) => {
+    if (index === 0) {
+      return "Most recent trade";
+    }
+    return `${index + 1} trades back`;
+  });
+};
+
+const TRADE_HISTORY_FEATURE_META_BY_ID = new Map<
+  string,
+  { featureId: string; modelId: string; modelName: string; lookback: number }
+>();
+
 const BASE_AI_FEATURE_OPTIONS: AiFeatureDef[] = [
-  { id: "pricePath", label: "Price Path", note: "OHLC and return shape inside the current window." },
-  { id: "rangeTrend", label: "Range / Trend", note: "Window range plus directional drift." },
-  { id: "wicks", label: "Wicks", note: "Wick versus body structure." },
-  { id: "time", label: "Time", note: "Time-of-day and intraday cycle context." },
-  { id: "temporal", label: "Temporal", note: "Explicit year, month, weekday, and hour context." },
-  { id: "position", label: "Position", note: "Position inside the local range and level proximity." },
+  {
+    id: "pricePath",
+    label: "Price Path",
+    note: "OHLC and return shape inside the current window.",
+    category: "core"
+  },
+  {
+    id: "rangeTrend",
+    label: "Range / Trend",
+    note: "Window range plus directional drift.",
+    category: "core"
+  },
+  { id: "wicks", label: "Wicks", note: "Wick versus body structure.", category: "core" },
+  { id: "time", label: "Time", note: "Time-of-day and intraday cycle context.", category: "core" },
+  {
+    id: "temporal",
+    label: "Temporal",
+    note: "Explicit year, month, weekday, and hour context.",
+    category: "core"
+  },
+  {
+    id: "position",
+    label: "Position",
+    note: "Position inside the local range and level proximity.",
+    category: "core"
+  },
   {
     id: "topography",
     label: "Topography",
-    note: "Terrain roughness: pivots, curvature, and choppiness."
+    note: "Terrain roughness: pivots, curvature, and choppiness.",
+    category: "core"
   }
 ];
 
@@ -3886,7 +3948,8 @@ const MODEL_AI_FEATURE_OPTIONS_BY_MODEL: Record<string, AiFeatureDef[]> = {
       id: "mf__momentum__core",
       label: "Momentum Feature",
       note: "Trend, persistence, acceleration, and drift context.",
-      model: "Momentum"
+      model: "Momentum",
+      category: "model"
     }
   ],
   "Mean Reversion": [
@@ -3894,7 +3957,8 @@ const MODEL_AI_FEATURE_OPTIONS_BY_MODEL: Record<string, AiFeatureDef[]> = {
       id: "mf__mean_reversion__core",
       label: "Mean Reversion Feature",
       note: "Z-score, crossings, overshoot, and snapback context.",
-      model: "Mean Reversion"
+      model: "Mean Reversion",
+      category: "model"
     }
   ],
   Seasons: [
@@ -3902,7 +3966,8 @@ const MODEL_AI_FEATURE_OPTIONS_BY_MODEL: Record<string, AiFeatureDef[]> = {
       id: "mf__seasons__core",
       label: "Seasonality Feature",
       note: "Day-of-year and time-of-day phase with seasonal volatility context.",
-      model: "Seasons"
+      model: "Seasons",
+      category: "model"
     }
   ],
   "Time of Day": [
@@ -3910,7 +3975,8 @@ const MODEL_AI_FEATURE_OPTIONS_BY_MODEL: Record<string, AiFeatureDef[]> = {
       id: "mf__time_of_day__core",
       label: "Time-of-Day Feature",
       note: "Hour phase plus intraday drift and volatility context.",
-      model: "Time of Day"
+      model: "Time of Day",
+      category: "model"
     }
   ],
   Fibonacci: [
@@ -3918,7 +3984,8 @@ const MODEL_AI_FEATURE_OPTIONS_BY_MODEL: Record<string, AiFeatureDef[]> = {
       id: "mf__fibonacci__core",
       label: "Fibonacci Feature",
       note: "Distances to key fib levels plus swing context.",
-      model: "Fibonacci"
+      model: "Fibonacci",
+      category: "model"
     }
   ],
   "Support / Resistance": [
@@ -3926,13 +3993,39 @@ const MODEL_AI_FEATURE_OPTIONS_BY_MODEL: Record<string, AiFeatureDef[]> = {
       id: "mf__support_resistance__core",
       label: "S/R Feature",
       note: "Support and resistance proximity with touch density context.",
-      model: "Support / Resistance"
+      model: "Support / Resistance",
+      category: "model"
     }
   ]
 };
 
 const MODEL_AI_FEATURE_OPTIONS = Object.values(MODEL_AI_FEATURE_OPTIONS_BY_MODEL).flat();
-const AI_FEATURE_OPTIONS: AiFeatureDef[] = [...BASE_AI_FEATURE_OPTIONS, ...MODEL_AI_FEATURE_OPTIONS];
+const TRADE_HISTORY_AI_FEATURE_OPTIONS: AiFeatureDef[] = TRADE_HISTORY_MODEL_NAMES.flatMap((modelName) =>
+  TRADE_HISTORY_LOOKBACKS.map((lookback) => {
+    const featureId = buildTradeHistoryFeatureId(modelName, lookback);
+    TRADE_HISTORY_FEATURE_META_BY_ID.set(featureId, {
+      featureId,
+      modelId: normalizeAiFeatureModelId(modelName),
+      modelName,
+      lookback
+    });
+    return {
+      id: featureId,
+      label: `${modelName} - Past ${lookback}`,
+      note:
+        lookback === 1
+          ? "Previous trade result for this model as W/L."
+          : `Previous ${lookback} trade results for this model as a W/L sequence.`,
+      model: modelName,
+      category: "tradeHistory"
+    };
+  })
+);
+const AI_FEATURE_OPTIONS: AiFeatureDef[] = [
+  ...BASE_AI_FEATURE_OPTIONS,
+  ...MODEL_AI_FEATURE_OPTIONS,
+  ...TRADE_HISTORY_AI_FEATURE_OPTIONS
+];
 
 const FEATURE_LEVEL_LABEL: Record<AiFeatureLevel, string> = {
   0: "None",
@@ -3957,6 +4050,14 @@ const FEATURE_LEVEL_TAKES: Record<string, number[]> = {
   mf__fibonacci__core: [0, 4, 8, 12, 16],
   mf__support_resistance__core: [0, 4, 8, 12, 16]
 };
+
+for (const feature of TRADE_HISTORY_AI_FEATURE_OPTIONS) {
+  const meta = TRADE_HISTORY_FEATURE_META_BY_ID.get(feature.id);
+  if (!meta) {
+    continue;
+  }
+  FEATURE_LEVEL_TAKES[feature.id] = [0, meta.lookback, meta.lookback, meta.lookback, meta.lookback];
+}
 const AI_LIBRARY_LEGACY_MAX_SAMPLE_VALUES = new Set([8_000, 10_000]);
 
 const getAiFeatureWindowBars = (windowBars: number): number => {
@@ -4048,7 +4149,8 @@ const buildInitialAiFeatureLevels = (): Record<string, AiFeatureLevel> => {
   const next: Record<string, AiFeatureLevel> = {};
 
   for (const feature of AI_FEATURE_OPTIONS) {
-    next[feature.id] = feature.id.startsWith("mf__") ? 0 : 2;
+    next[feature.id] =
+      feature.category === "tradeHistory" || feature.id.startsWith("mf__") ? 0 : 2;
   }
 
   return next;
@@ -5335,6 +5437,22 @@ const DIMENSION_FEATURE_NAME_BANK: Record<string, string[]> = {
   ]
 };
 
+for (const feature of TRADE_HISTORY_AI_FEATURE_OPTIONS) {
+  const meta = TRADE_HISTORY_FEATURE_META_BY_ID.get(feature.id);
+  if (!meta) {
+    continue;
+  }
+  DIMENSION_FEATURE_NAME_BANK[feature.id] = buildTradeHistoryDimensionNames(meta.lookback);
+}
+
+const getTradeHistoryFeatureMeta = (featureId: string) => {
+  return TRADE_HISTORY_FEATURE_META_BY_ID.get(featureId) ?? null;
+};
+
+const isTradeHistoryFeatureId = (featureId: string): boolean => {
+  return getTradeHistoryFeatureMeta(featureId) !== null;
+};
+
 const featureTakeCount = (featureId: string, level: number): number => {
   const normalizedLevel = clamp(Math.round(level) || 0, 0, 4);
   const steps = FEATURE_LEVEL_TAKES[featureId] ?? [0, 2, 4, 6, 8];
@@ -5359,7 +5477,11 @@ const countConfiguredAiFeatureDimensions = (
       continue;
     }
 
-    total += take * ((featureModes[feature.id] ?? "individual") === "individual" ? parts : 1);
+    total += take * (
+      isTradeHistoryFeatureId(feature.id) || (featureModes[feature.id] ?? "individual") !== "individual"
+        ? 1
+        : parts
+    );
   }
 
   return total;
@@ -10511,6 +10633,68 @@ const buildDimensionFeatureLagBuckets = (
   return buckets;
 };
 
+const getTradeHistoryOutcomeValue = (trade: Pick<HistoryItem, "result">): number => {
+  return trade.result === "Win" ? 1 : trade.result === "Loss" ? -1 : 0;
+};
+
+const buildTradeHistoryFeatureValueLookup = (
+  sourceTrades: HistoryItem[],
+  featureIds: string[]
+): Map<string, Map<string, number[]>> => {
+  const relevantMeta = featureIds
+    .map((featureId) => getTradeHistoryFeatureMeta(featureId))
+    .filter(
+      (
+        meta
+      ): meta is NonNullable<ReturnType<typeof getTradeHistoryFeatureMeta>> => meta !== null
+    );
+
+  if (relevantMeta.length === 0 || sourceTrades.length === 0) {
+    return new Map();
+  }
+
+  const sortedTrades = [...sourceTrades].sort(
+    (left, right) =>
+      Number(left.entryTime) - Number(right.entryTime) ||
+      Number(left.exitTime) - Number(right.exitTime) ||
+      left.id.localeCompare(right.id)
+  );
+  const maxLookback = relevantMeta.reduce(
+    (maximum, meta) => Math.max(maximum, meta.lookback),
+    0
+  );
+  const historyByModelId = new Map<string, number[]>();
+  const lookup = new Map<string, Map<string, number[]>>();
+
+  for (const meta of relevantMeta) {
+    historyByModelId.set(meta.modelId, []);
+  }
+
+  for (const trade of sortedTrades) {
+    const perTrade = new Map<string, number[]>();
+
+    for (const meta of relevantMeta) {
+      const history = historyByModelId.get(meta.modelId) ?? [];
+      const values = Array.from({ length: meta.lookback }, (_, index) => {
+        return history.length > index ? history[history.length - 1 - index] ?? 0 : 0;
+      });
+      perTrade.set(meta.featureId, values);
+    }
+
+    lookup.set(trade.id, perTrade);
+
+    const tradeModelId = createModelId(String(trade.entrySource ?? ""));
+    const history = historyByModelId.get(tradeModelId) ?? [];
+    history.push(getTradeHistoryOutcomeValue(trade));
+    if (history.length > maxLookback) {
+      history.splice(0, history.length - maxLookback);
+    }
+    historyByModelId.set(tradeModelId, history);
+  }
+
+  return lookup;
+};
+
 const buildDimensionProfileSegments = (
   dimension: Pick<DimensionStatRow, "min" | "max" | "qLow" | "qHigh" | "winLow" | "winHigh">
 ): Array<{ start: number; end: number }> => {
@@ -10593,8 +10777,9 @@ const buildDimensionFeatureBlueprintFromSettings = (
     }
 
     const mode = settings.aiFeatureModes[feature.id] ?? "individual";
-    const parts = mode === "individual" ? partsGlobal : 1;
-    const showLag = mode === "individual";
+    const supportsLagMode = !isTradeHistoryFeatureId(feature.id);
+    const parts = supportsLagMode && mode === "individual" ? partsGlobal : 1;
+    const showLag = supportsLagMode && mode === "individual";
     const bank = DIMENSION_FEATURE_NAME_BANK[feature.id] ?? [];
     const list: Array<{ key: string; idx: number; lag: number }> = [];
 
@@ -10678,35 +10863,51 @@ const buildTradeDimensionValueLookup = (
   settings: Pick<BacktestSettingsSnapshot, "chunkBars" | "timeframe">,
   backtestSeriesMap: Record<string, Candle[]>,
   seriesMap: Record<string, Candle[]>,
-  blueprint: DimensionFeatureBlueprint
+  blueprint: DimensionFeatureBlueprint,
+  tradeHistoryValues?: Map<string, number[]> | null
 ): Map<string, number> | null => {
   const row = trade as Record<string, unknown>;
   const symbol = typeof row.symbol === "string" ? row.symbol : "";
   const timeframeKey = symbol ? symbolTimeframeKey(symbol, settings.timeframe) : "";
-  const candles = pickLongestCandleSeries(
-    timeframeKey ? backtestSeriesMap[timeframeKey] : undefined,
-    timeframeKey ? seriesMap[timeframeKey] : undefined,
-    symbol ? backtestSeriesMap[symbol] : undefined,
-    symbol ? seriesMap[symbol] : undefined
-  );
-  const entryTimeMs = toHistoryLabelTimestampMs(row.entryTime);
-
-  if (!symbol || candles.length === 0 || entryTimeMs == null) {
-    return null;
-  }
-
-  const entryIndex = findCandleIndexAtOrBefore(candles, entryTimeMs);
-  const buckets =
-    entryIndex >= 0 ? buildDimensionFeatureLagBuckets(candles, entryIndex, settings.chunkBars) : null;
-
-  if (!buckets) {
-    return null;
-  }
-
   const values = new Map<string, number>();
+  const requiresCandleBuckets = Object.keys(blueprint.perFeatureDims).some(
+    (featureId) => !isTradeHistoryFeatureId(featureId)
+  );
+  let buckets: Record<string, number[][]> | null = null;
+
+  if (requiresCandleBuckets) {
+    const candles = pickLongestCandleSeries(
+      timeframeKey ? backtestSeriesMap[timeframeKey] : undefined,
+      timeframeKey ? seriesMap[timeframeKey] : undefined,
+      symbol ? backtestSeriesMap[symbol] : undefined,
+      symbol ? seriesMap[symbol] : undefined
+    );
+    const entryTimeMs = toHistoryLabelTimestampMs(row.entryTime);
+
+    if (!symbol || candles.length === 0 || entryTimeMs == null) {
+      return tradeHistoryValues && tradeHistoryValues.size > 0 ? values : null;
+    }
+
+    const entryIndex = findCandleIndexAtOrBefore(candles, entryTimeMs);
+    buckets =
+      entryIndex >= 0 ? buildDimensionFeatureLagBuckets(candles, entryIndex, settings.chunkBars) : null;
+
+    if (!buckets) {
+      return tradeHistoryValues && tradeHistoryValues.size > 0 ? values : null;
+    }
+  }
 
   for (const [featureId, list] of Object.entries(blueprint.perFeatureDims)) {
-    const byLag = buckets[featureId] ?? [];
+    if (isTradeHistoryFeatureId(featureId)) {
+      const historyValues = tradeHistoryValues?.get(featureId) ?? [];
+      for (const item of list) {
+        const value = Number(historyValues[item.idx] ?? 0);
+        values.set(item.key, Number.isFinite(value) ? value : 0);
+      }
+      continue;
+    }
+
+    const byLag = buckets?.[featureId] ?? [];
 
     for (const item of list) {
       const value = Number(byLag[item.lag]?.[item.idx] ?? 0);
@@ -10848,6 +11049,13 @@ const buildDimensionStatsSummary = (params: {
   const evaluationTrades = splitAllowed ? sortedTrades.slice(splitIndex) : sortedTrades;
   const blueprint = buildDimensionFeatureBlueprintFromSettings(settings);
   const dimensionDefs = blueprint.defs;
+  const tradeHistoryFeatureIds = Array.from(
+    new Set(
+      dimensionDefs
+        .map((dimension) => dimension.featureId)
+        .filter((featureId) => isTradeHistoryFeatureId(featureId))
+    )
+  );
 
   if (dimensionDefs.length === 0 || evaluationTrades.length === 0) {
     return {
@@ -10864,6 +11072,10 @@ const buildDimensionStatsSummary = (params: {
   }
 
   const valuesByDimension = new Map<string, number[]>();
+  const tradeHistoryLookupByTradeId = buildTradeHistoryFeatureValueLookup(
+    sortedTrades,
+    tradeHistoryFeatureIds
+  );
 
   for (const dimension of dimensionDefs) {
     valuesByDimension.set(dimension.key, []);
@@ -10877,7 +11089,8 @@ const buildDimensionStatsSummary = (params: {
       settings,
       backtestSeriesMap,
       seriesMap,
-      blueprint
+      blueprint,
+      tradeHistoryLookupByTradeId.get(trade.id) ?? null
     );
 
     if (!values) {
@@ -14950,6 +15163,13 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const selectedAiFeatureCount = useMemo(() => {
     return AI_FEATURE_OPTIONS.filter((feature) => (aiFeatureLevels[feature.id] ?? 0) > 0).length;
   }, [aiFeatureLevels]);
+  const aiFeatureSections = useMemo(() => {
+    return AI_FEATURE_CATEGORY_ORDER.map((category) => ({
+      category,
+      label: AI_FEATURE_CATEGORY_LABELS[category],
+      features: AI_FEATURE_OPTIONS.filter((feature) => (feature.category ?? "core") === category)
+    })).filter((section) => section.features.length > 0);
+  }, []);
   const configuredAiFeatureDimensionCount = useMemo(() => {
     return countConfiguredAiFeatureDimensions(aiFeatureLevels, aiFeatureModes, chunkBars);
   }, [aiFeatureLevels, aiFeatureModes, chunkBars]);
@@ -19710,7 +19930,237 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     propDailyMaxLoss, propTotalMaxLoss, propProfitTarget, propProjectionMethod,
     statsDatePreset, statsDateStart, statsDateEnd,
   ]);
-  const currentLoadedPresetLabel = loadedPresetSession?.name ?? "No Preset Loaded";
+  const resolvePresetBacktestSignature = useCallback(
+    (source?: Record<string, any> | null) => {
+      const fallback = buildCurrentBacktestSettingsSnapshot();
+      const raw =
+        source && typeof source === "object" && !Array.isArray(source) ? source : {};
+      const nextBacktestTimeframe = isTimeframe(raw.selectedBacktestTimeframe)
+        ? raw.selectedBacktestTimeframe
+        : isTimeframe(raw.selectedTimeframe)
+          ? raw.selectedTimeframe
+          : fallback.timeframe;
+      const requestedPrecisionTimeframe = isTimeframe(raw.selectedBacktestPrecisionTimeframe)
+        ? raw.selectedBacktestPrecisionTimeframe
+        : raw.minutePreciseEnabled === true
+          ? "1m"
+          : nextBacktestTimeframe;
+      const nextBacktestPrecisionTimeframe = clampBacktestPrecisionTimeframe(
+        nextBacktestTimeframe,
+        requestedPrecisionTimeframe
+      );
+      const nextAiMode =
+        raw.aiMode === "knn" || raw.aiMode === "hdbscan"
+          ? raw.aiMode
+          : fallback.aiMode;
+      const nextAiFilterEnabled =
+        raw.aiFilterEnabled != null
+          ? Boolean(raw.aiFilterEnabled)
+          : raw.aiModelEnabled === true
+            ? false
+            : fallback.aiFilterEnabled;
+      const nextAiModelStates =
+        raw.aiModelStates && typeof raw.aiModelStates === "object" && !Array.isArray(raw.aiModelStates)
+          ? syncAiModelStates(
+              raw.aiModelStates as Record<string, AiModelState>,
+              settingsModelNames
+            )
+          : fallback.aiModelStates;
+      const effectiveAiModelStatesForSignature =
+        nextAiMode !== "off" && !nextAiFilterEnabled
+          ? forceSingleAiModelSelection(
+              nextAiModelStates,
+              settingsModelNames,
+              AI_MODEL_MODEL_NAME
+            )
+          : nextAiModelStates;
+      const nextSelectedAiLibraries =
+        raw.selectedAiLibraries != null
+          ? normalizeSelectedAiLibraries(raw.selectedAiLibraries)
+          : fallback.selectedAiLibraries;
+      const nextSelectedAiLibrarySettings =
+        raw.selectedAiLibrarySettings != null
+          ? normalizeStoredAiLibrarySettings(raw.selectedAiLibrarySettings, aiLibraryDefById)
+          : fallback.selectedAiLibrarySettings;
+      const nextDistanceMetric: AiDistanceMetric =
+        raw.distanceMetric === "cosine" ||
+        raw.distanceMetric === "manhattan" ||
+        raw.distanceMetric === "chebyshev"
+          ? raw.distanceMetric
+          : "euclidean";
+      const nextNeighborSpace: KnnNeighborSpace =
+        raw.knnNeighborSpace === "high" ||
+        raw.knnNeighborSpace === "3d" ||
+        raw.knnNeighborSpace === "2d"
+          ? raw.knnNeighborSpace
+          : "post";
+      const nextVoteMode: KnnVoteMode =
+        raw.knnVoteMode === "distance" ? "distance" : "majority";
+      const nextFeatureLevels =
+        raw.aiFeatureLevels && typeof raw.aiFeatureLevels === "object" && !Array.isArray(raw.aiFeatureLevels)
+          ? (raw.aiFeatureLevels as Record<string, AiFeatureLevel>)
+          : fallback.aiFeatureLevels;
+      const nextFeatureModes =
+        raw.aiFeatureModes && typeof raw.aiFeatureModes === "object" && !Array.isArray(raw.aiFeatureModes)
+          ? (raw.aiFeatureModes as Record<string, AiFeatureMode>)
+          : fallback.aiFeatureModes;
+
+      return serializeBacktestSettingsSnapshot({
+        ...fallback,
+        symbol: String(raw.selectedSymbol ?? fallback.symbol).trim() || fallback.symbol,
+        timeframe: nextBacktestTimeframe,
+        precisionTimeframe: nextBacktestPrecisionTimeframe,
+        minutePreciseEnabled: nextBacktestPrecisionTimeframe !== nextBacktestTimeframe,
+        inPreciseEnabled:
+          raw.inPreciseEnabled != null
+            ? Boolean(raw.inPreciseEnabled)
+            : fallback.inPreciseEnabled,
+        statsDateStart:
+          typeof raw.statsDateStart === "string"
+            ? raw.statsDateStart
+            : fallback.statsDateStart,
+        statsDateEnd:
+          typeof raw.statsDateEnd === "string" ? raw.statsDateEnd : fallback.statsDateEnd,
+        enabledBacktestWeekdays: Array.isArray(raw.enabledBacktestWeekdays)
+          ? raw.enabledBacktestWeekdays.map((entry) => String(entry))
+          : fallback.enabledBacktestWeekdays,
+        enabledBacktestSessions: Array.isArray(raw.enabledBacktestSessions)
+          ? raw.enabledBacktestSessions.map((entry) => String(entry))
+          : fallback.enabledBacktestSessions,
+        enabledBacktestMonths: Array.isArray(raw.enabledBacktestMonths)
+          ? raw.enabledBacktestMonths
+              .map((entry) => Math.trunc(Number(entry)))
+              .filter((entry) => Number.isFinite(entry))
+          : fallback.enabledBacktestMonths,
+        enabledBacktestHours: Array.isArray(raw.enabledBacktestHours)
+          ? raw.enabledBacktestHours
+              .map((entry) => Math.trunc(Number(entry)))
+              .filter((entry) => Number.isFinite(entry))
+          : fallback.enabledBacktestHours,
+        aiMode: nextAiMode,
+        aiFilterEnabled: nextAiFilterEnabled,
+        confidenceThreshold:
+          raw.confidenceThreshold != null
+            ? Number(raw.confidenceThreshold) || 0
+            : fallback.confidenceThreshold,
+        aiExitStrictness:
+          raw.aiExitStrictness != null
+            ? Number(raw.aiExitStrictness) || 0
+            : fallback.aiExitStrictness,
+        aiExitLossTolerance:
+          raw.aiExitLossTolerance != null
+            ? Number(raw.aiExitLossTolerance) || 0
+            : fallback.aiExitLossTolerance,
+        aiExitWinTolerance:
+          raw.aiExitWinTolerance != null
+            ? Number(raw.aiExitWinTolerance) || 0
+            : fallback.aiExitWinTolerance,
+        useMitExit:
+          raw.useMitExit != null ? Boolean(raw.useMitExit) : fallback.useMitExit,
+        ancThreshold:
+          raw.ancThreshold != null ? Number(raw.ancThreshold) || 0 : fallback.ancThreshold,
+        tpDollars:
+          raw.tpDollars != null ? Number(raw.tpDollars) || 0 : fallback.tpDollars,
+        slDollars:
+          raw.slDollars != null ? Number(raw.slDollars) || 0 : fallback.slDollars,
+        dollarsPerMove:
+          raw.dollarsPerMove != null
+            ? Number(raw.dollarsPerMove) || 0
+            : fallback.dollarsPerMove,
+        stopMode: raw.stopMode != null ? Number(raw.stopMode) || 0 : fallback.stopMode,
+        breakEvenTriggerPct:
+          raw.breakEvenTriggerPct != null
+            ? Number(raw.breakEvenTriggerPct) || 0
+            : fallback.breakEvenTriggerPct,
+        trailingStartPct:
+          raw.trailingStartPct != null
+            ? Number(raw.trailingStartPct) || 0
+            : fallback.trailingStartPct,
+        trailingDistPct:
+          raw.trailingDistPct != null
+            ? Number(raw.trailingDistPct) || 0
+            : fallback.trailingDistPct,
+        maxBarsInTrade:
+          raw.maxBarsInTrade != null
+            ? Number(raw.maxBarsInTrade) || 0
+            : fallback.maxBarsInTrade,
+        maxConcurrentTrades:
+          raw.maxConcurrentTrades != null
+            ? clamp(Math.floor(Number(raw.maxConcurrentTrades) || 1), 1, 500)
+            : fallback.maxConcurrentTrades,
+        aiModelStates: { ...effectiveAiModelStatesForSignature },
+        aiFeatureLevels: { ...nextFeatureLevels },
+        aiFeatureModes: { ...nextFeatureModes },
+        selectedAiLibraries: [...nextSelectedAiLibraries],
+        selectedAiLibrarySettings: cloneAiLibrarySettings(nextSelectedAiLibrarySettings),
+        chunkBars: raw.chunkBars != null ? Number(raw.chunkBars) || 0 : fallback.chunkBars,
+        distanceMetric: nextDistanceMetric,
+        knnNeighborSpace: nextNeighborSpace,
+        selectedAiDomains: Array.isArray(raw.selectedAiDomains)
+          ? raw.selectedAiDomains.map((entry) => String(entry))
+          : fallback.selectedAiDomains,
+        remapOppositeOutcomes:
+          raw.remapOppositeOutcomes != null
+            ? Boolean(raw.remapOppositeOutcomes)
+            : fallback.remapOppositeOutcomes,
+        dimensionAmount:
+          raw.dimensionAmount != null
+            ? Number(raw.dimensionAmount) || 0
+            : fallback.dimensionAmount,
+        compressionMethod:
+          raw.compressionMethod != null
+            ? normalizeAiCompressionMethod(raw.compressionMethod)
+            : fallback.compressionMethod,
+        kEntry: raw.kEntry != null ? Number(raw.kEntry) || 0 : fallback.kEntry,
+        kExit: raw.kExit != null ? Number(raw.kExit) || 0 : fallback.kExit,
+        knnVoteMode: nextVoteMode,
+        hdbMinClusterSize:
+          raw.hdbMinClusterSize != null
+            ? Number(raw.hdbMinClusterSize) || 0
+            : fallback.hdbMinClusterSize,
+        hdbMinSamples:
+          raw.hdbMinSamples != null
+            ? Number(raw.hdbMinSamples) || 0
+            : fallback.hdbMinSamples,
+        hdbEpsQuantile:
+          raw.hdbEpsQuantile != null
+            ? Number(raw.hdbEpsQuantile) || 0
+            : fallback.hdbEpsQuantile,
+        staticLibrariesClusters:
+          raw.staticLibrariesClusters != null
+            ? Boolean(raw.staticLibrariesClusters)
+            : fallback.staticLibrariesClusters,
+        antiCheatEnabled:
+          raw.antiCheatEnabled != null
+            ? Boolean(raw.antiCheatEnabled)
+            : fallback.antiCheatEnabled,
+        validationMode:
+          raw.validationMode != null
+            ? normalizeAiValidationMode(raw.validationMode)
+            : fallback.validationMode
+      });
+    },
+    [
+      aiLibraryDefById,
+      buildCurrentBacktestSettingsSnapshot,
+      normalizeSelectedAiLibraries,
+      settingsModelNames
+    ]
+  );
+  const matchingSavedPreset = useMemo(() => {
+    const currentSignature = currentStrategyNotificationSettingsSignature;
+    return (
+      [...savedPresets]
+        .sort((left, right) => right.savedAt - left.savedAt)
+        .find((preset) => resolvePresetBacktestSignature(preset.settings) === currentSignature) ??
+      null
+    );
+  }, [
+    currentStrategyNotificationSettingsSignature,
+    resolvePresetBacktestSignature,
+    savedPresets
+  ]);
+  const currentLoadedPresetLabel = matchingSavedPreset?.name ?? "No Preset Loaded";
 
   const applySettings = useCallback((s: Record<string, any>) => {
     if (s.selectedSymbol != null) setSelectedSymbol(s.selectedSymbol);
@@ -26734,14 +27184,16 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, [scopedMobileRecentTradesCacheStorageKey]);
 
   useEffect(() => {
-    if (!loadedPresetSession) {
-      return;
-    }
+    const nextName = matchingSavedPreset?.name ?? null;
 
-    if (!savedPresets.some((preset) => preset.name === loadedPresetSession.name)) {
-      setLoadedPresetSession(null);
-    }
-  }, [loadedPresetSession, savedPresets]);
+    setLoadedPresetSession((current) => {
+      const currentName = current?.name ?? null;
+      if (currentName === nextName) {
+        return current;
+      }
+      return nextName ? { name: nextName } : null;
+    });
+  }, [matchingSavedPreset?.name]);
 
   useEffect(() => {
     if (typeof window === "undefined" || mobileRecentTrades.length === 0) {
@@ -32495,53 +32947,78 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
                 open={featuresModalOpen}
                 onClose={() => setFeaturesModalOpen(false)}
               >
-                <div className="ai-zip-feature-grid">
-                  {AI_FEATURE_OPTIONS.map((feature) => {
-                    const level = aiFeatureLevels[feature.id] ?? 0;
-                    const mode = aiFeatureModes[feature.id] ?? "individual";
-                    const dimsAdded =
-                      featureTakeCount(feature.id, level) *
-                      (mode === "individual" ? getAiFeatureWindowBars(chunkBars) : 1);
+                <div className="ai-zip-feature-sections">
+                  {aiFeatureSections.map((section) => (
+                    <section key={section.category} className="ai-zip-feature-section">
+                      <header className="ai-zip-feature-section-header">
+                        <strong>{section.label}</strong>
+                      </header>
+                      <div className="ai-zip-feature-grid">
+                        {section.features.map((feature) => {
+                          const level = aiFeatureLevels[feature.id] ?? 0;
+                          const mode = aiFeatureModes[feature.id] ?? "individual";
+                          const tradeHistoryFeature = isTradeHistoryFeatureId(feature.id);
+                          const dimsAdded =
+                            featureTakeCount(feature.id, level) *
+                            (
+                              tradeHistoryFeature || mode !== "individual"
+                                ? 1
+                                : getAiFeatureWindowBars(chunkBars)
+                            );
 
-                    return (
-                      <button
-                        key={feature.id}
-                        type="button"
-                        className={`ai-zip-select-tile feature ${level > 0 ? "active" : ""}`}
-                        onMouseDown={(event) => {
-                          event.preventDefault();
+                          return (
+                            <button
+                              key={feature.id}
+                              type="button"
+                              className={`ai-zip-select-tile feature ${level > 0 ? "active" : ""}`}
+                              onMouseDown={(event) => {
+                                event.preventDefault();
 
-                          if (event.button === 2) {
-                            setAiFeatureModes((current) => ({
-                              ...current,
-                              [feature.id]:
-                                (current[feature.id] ?? "individual") === "individual"
-                                  ? "ensemble"
-                                  : "individual"
-                            }));
-                            return;
-                          }
+                                if (event.button === 2) {
+                                  if (tradeHistoryFeature) {
+                                    return;
+                                  }
+                                  setAiFeatureModes((current) => ({
+                                    ...current,
+                                    [feature.id]:
+                                      (current[feature.id] ?? "individual") === "individual"
+                                        ? "ensemble"
+                                        : "individual"
+                                  }));
+                                  return;
+                                }
 
-                          setAiFeatureLevels((current) => ({
-                            ...current,
-                            [feature.id]: getNextAiFeatureLevel(current[feature.id] ?? 0)
-                          }));
-                        }}
-                        onContextMenu={(event) => {
-                          event.preventDefault();
-                        }}
-                        title={`${feature.label}: Left click cycles intensity. Right click toggles Ensemble vs Individualization.`}
-                      >
-                        <strong>{feature.label}</strong>
-                        <span>{feature.note ?? "Feature context for AI.zip embeddings."}</span>
-                        <em>
-                          {FEATURE_LEVEL_LABEL[level as AiFeatureLevel]} -{" "}
-                          {mode === "ensemble" ? "Ensemble" : "Individualization"} - +
-                          {dimsAdded.toLocaleString("en-US")} dims
-                        </em>
-                      </button>
-                    );
-                  })}
+                                setAiFeatureLevels((current) => ({
+                                  ...current,
+                                  [feature.id]: getNextAiFeatureLevel(current[feature.id] ?? 0)
+                                }));
+                              }}
+                              onContextMenu={(event) => {
+                                event.preventDefault();
+                              }}
+                              title={
+                                tradeHistoryFeature
+                                  ? `${feature.label}: Left click cycles intensity. Trade History features always stay sequence-based.`
+                                  : `${feature.label}: Left click cycles intensity. Right click toggles Ensemble vs Individualization.`
+                              }
+                            >
+                              <strong>{feature.label}</strong>
+                              <span>{feature.note ?? "Feature context for AI.zip embeddings."}</span>
+                              <em>
+                                {FEATURE_LEVEL_LABEL[level as AiFeatureLevel]} -{" "}
+                                {tradeHistoryFeature
+                                  ? "Sequence"
+                                  : mode === "ensemble"
+                                    ? "Ensemble"
+                                    : "Individualization"}{" "}
+                                - +{dimsAdded.toLocaleString("en-US")} dims
+                              </em>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
                 </div>
               </AiSettingsModal>
 

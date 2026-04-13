@@ -15,14 +15,27 @@ import { resolveStrategyRuntimeModelProfile } from "./strategyCatalog";
 import { buildStrategyReplayTradeBlueprints, type StrategyReplayModelProfile } from "./strategyModelBacktest";
 
 type ModelProfile = StrategyReplayModelProfile;
+type StrategyNotificationLibrarySettingValue = boolean | number | string;
 
 export type StrategyNotificationSettings = {
   symbol: string;
   timeframe: "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
+  precisionTimeframe: "1m" | "5m" | "15m" | "1H" | "4H" | "1D" | "1W";
+  minutePreciseEnabled: boolean;
   aiMode: "off" | "knn" | "hdbscan";
   aiFilterEnabled: boolean;
-  inPreciseEnabled?: boolean;
+  inPreciseEnabled: boolean;
+  statsDateStart: string;
+  statsDateEnd: string;
+  enabledBacktestWeekdays: string[];
+  enabledBacktestSessions: string[];
+  enabledBacktestMonths: number[];
+  enabledBacktestHours: number[];
   confidenceThreshold: number;
+  aiExitStrictness: number;
+  aiExitLossTolerance: number;
+  aiExitWinTolerance: number;
+  useMitExit: boolean;
   ancThreshold: number;
   dollarsPerMove: number;
   chunkBars: number;
@@ -35,6 +48,25 @@ export type StrategyNotificationSettings = {
   trailingStartPct: number;
   trailingDistPct: number;
   aiModelStates: Record<string, number>;
+  aiFeatureLevels: Record<string, number>;
+  aiFeatureModes: Record<string, string>;
+  selectedAiLibraries: string[];
+  selectedAiLibrarySettings: Record<string, Record<string, StrategyNotificationLibrarySettingValue>>;
+  distanceMetric: "euclidean" | "cosine" | "manhattan" | "chebyshev";
+  knnNeighborSpace: "high" | "post" | "3d" | "2d";
+  selectedAiDomains: string[];
+  remapOppositeOutcomes: boolean;
+  dimensionAmount: number;
+  compressionMethod: "umap" | "pca" | "jl" | "hash" | "variance" | "subsample";
+  kEntry: number;
+  kExit: number;
+  knnVoteMode: "distance" | "majority";
+  hdbMinClusterSize: number;
+  hdbMinSamples: number;
+  hdbEpsQuantile: number;
+  staticLibrariesClusters: boolean;
+  antiCheatEnabled: boolean;
+  validationMode: "off" | "split" | "synthetic";
 };
 
 type StrategyNotificationCandle = {
@@ -227,6 +259,101 @@ const getTradeAverageNeighborContributionAtEntryScore = (trade: BacktestHistoryR
   );
 };
 
+const getUtcDayStartMsFromYmd = (ymd: string): number | null => {
+  if (!ymd) {
+    return null;
+  }
+  const value = Date.parse(`${ymd}T00:00:00Z`);
+  return Number.isFinite(value) ? value : null;
+};
+
+const getUtcDayEndExclusiveMsFromYmd = (ymd: string): number | null => {
+  const startMs = getUtcDayStartMsFromYmd(ymd);
+  return startMs == null ? null : startMs + 86_400_000;
+};
+
+const getWeekdayLabel = (timestampSeconds: number): string => {
+  const date = new Date(Number(timestampSeconds) * 1000);
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][date.getUTCDay()] ?? "Sun";
+};
+
+const getSessionLabel = (timestampSeconds: number): string => {
+  const date = new Date(Number(timestampSeconds) * 1000);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Sydney";
+  }
+
+  const hour = date.getUTCHours() + date.getUTCMinutes() / 60;
+
+  if (hour >= 16 || hour < 1) {
+    return "Tokyo";
+  }
+
+  if (hour >= 12 && hour < 21) {
+    return "Sydney";
+  }
+
+  if (hour >= 0 && hour < 9) {
+    return "London";
+  }
+
+  if (hour >= 5 && hour < 14) {
+    return "New York";
+  }
+
+  return "London";
+};
+
+const filterTradesByDateRange = (
+  trades: BacktestHistoryRow[],
+  startYmd: string,
+  endYmd: string
+): BacktestHistoryRow[] => {
+  const startMs = getUtcDayStartMsFromYmd(startYmd);
+  const endExclusiveMs = getUtcDayEndExclusiveMsFromYmd(endYmd);
+
+  return trades.filter((trade) => {
+    const tradeMs = Number(trade.entryTime) * 1000;
+    if (!Number.isFinite(tradeMs)) {
+      return false;
+    }
+    if (startMs !== null && tradeMs < startMs) {
+      return false;
+    }
+    if (endExclusiveMs !== null && tradeMs >= endExclusiveMs) {
+      return false;
+    }
+    return true;
+  });
+};
+
+const filterTradesBySessionBuckets = (
+  trades: BacktestHistoryRow[],
+  settings: Pick<
+    StrategyNotificationSettings,
+    | "enabledBacktestWeekdays"
+    | "enabledBacktestSessions"
+    | "enabledBacktestMonths"
+    | "enabledBacktestHours"
+  >
+): BacktestHistoryRow[] => {
+  return trades.filter((trade) => {
+    const weekday = getWeekdayLabel(trade.exitTime);
+    const session = getSessionLabel(trade.entryTime);
+    const exitDate = new Date(Number(trade.exitTime) * 1000);
+    const monthIndex = exitDate.getUTCMonth();
+    const entryHour = new Date(Number(trade.entryTime) * 1000).getUTCHours();
+
+    return (
+      settings.enabledBacktestWeekdays.includes(weekday) &&
+      settings.enabledBacktestSessions.includes(session) &&
+      settings.enabledBacktestMonths.includes(monthIndex) &&
+      settings.enabledBacktestHours.includes(entryHour)
+    );
+  });
+};
+
 const tradePassesAiEntryThresholds = (trade: BacktestHistoryRow, settings: StrategyNotificationSettings) => {
   if (settings.aiMode === "off") {
     return true;
@@ -255,19 +382,20 @@ const tradePassesAiEntryThresholds = (trade: BacktestHistoryRow, settings: Strat
   return true;
 };
 
-export const computeActiveStrategyNotificationSignal = (args: {
+const computeStrategyNotificationRows = (args: {
   candles: StrategyNotificationCandle[];
+  oneMinuteCandles?: StrategyNotificationCandle[];
   settings: StrategyNotificationSettings;
-}): BacktestHistoryRow | null => {
-  const { candles, settings } = args;
+}): BacktestHistoryRow[] => {
+  const { candles, oneMinuteCandles, settings } = args;
 
   if (candles.length < 48) {
-    return null;
+    return [];
   }
 
   const modelProfiles = buildModelProfilesFromStates(settings.aiModelStates);
   if (modelProfiles.length === 0) {
-    return null;
+    return [];
   }
 
   const blueprints = buildStrategyReplayTradeBlueprints({
@@ -291,7 +419,7 @@ export const computeActiveStrategyNotificationSignal = (args: {
     settings.maxConcurrentTrades
   );
   if (constrainedBlueprints.length === 0) {
-    return null;
+    return [];
   }
 
   const modelNamesById = modelProfiles.reduce<Record<string, string>>((accumulator, profile) => {
@@ -305,7 +433,16 @@ export const computeActiveStrategyNotificationSignal = (args: {
       candleSeriesBySymbol: {
         [settings.symbol]: toBacktestCandles(candles)
       },
-      minutePreciseEnabled: false,
+      oneMinuteCandlesBySymbol:
+        settings.minutePreciseEnabled && Array.isArray(oneMinuteCandles) && oneMinuteCandles.length > 0
+          ? {
+              [settings.symbol]: toBacktestCandles(oneMinuteCandles)
+            }
+          : undefined,
+      minutePreciseEnabled:
+        settings.minutePreciseEnabled &&
+        Array.isArray(oneMinuteCandles) &&
+        oneMinuteCandles.length > 0,
       modelNamesById,
       tpDollars: settings.tpDollars,
       slDollars: settings.slDollars,
@@ -316,6 +453,35 @@ export const computeActiveStrategyNotificationSignal = (args: {
     }),
     constrainedBlueprints.length
   );
+
+  if (rows.length === 0) {
+    return [];
+  }
+
+  return filterTradesBySessionBuckets(
+    filterTradesByDateRange(rows, settings.statsDateStart, settings.statsDateEnd),
+    settings
+  )
+    .filter((trade) => tradePassesAiEntryThresholds(trade, settings))
+    .sort(
+      (left, right) =>
+        right.entryTime - left.entryTime ||
+        right.exitTime - left.exitTime ||
+        left.id.localeCompare(right.id)
+    );
+};
+
+export const computeActiveStrategyNotificationSignal = (args: {
+  candles: StrategyNotificationCandle[];
+  oneMinuteCandles?: StrategyNotificationCandle[];
+  settings: StrategyNotificationSettings;
+}): BacktestHistoryRow | null => {
+  const { candles, settings, oneMinuteCandles } = args;
+  const rows = computeStrategyNotificationRows({
+    candles,
+    oneMinuteCandles,
+    settings
+  });
 
   if (rows.length === 0) {
     return null;
@@ -334,14 +500,19 @@ export const selectActiveStrategyNotificationSignal = (args: {
   settings: StrategyNotificationSettings;
 }): BacktestHistoryRow | null => {
   const { rows, candles, settings } = args;
-  const latestCandleTimeMs = candles[candles.length - 1]?.time ?? Date.now();
-  const activeThresholdSec = Math.floor(latestCandleTimeMs / 1000);
+  const activeThresholdsSec = candles
+    .slice(-3)
+    .map((candle) => Math.floor(Number(candle.time) / 1000))
+    .filter((value) => Number.isFinite(value));
 
   const activeRows = rows
     .filter(
       (row) =>
-        row.entryTime <= activeThresholdSec &&
-        row.exitTime > activeThresholdSec &&
+        activeThresholdsSec.some(
+          (activeThresholdSec) =>
+            row.entryTime <= activeThresholdSec &&
+            row.exitTime > activeThresholdSec
+        ) &&
         tradePassesAiEntryThresholds(row, settings)
     )
     .sort(

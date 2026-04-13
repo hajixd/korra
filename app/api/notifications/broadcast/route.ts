@@ -10,6 +10,7 @@ import { isNotificationBroadcastAdmin } from "../../../../lib/notificationBroadc
 import { normalizeNotificationDevices } from "../../../../lib/notificationDevices";
 import type { StrategyNotificationSettings } from "../../../../lib/strategyNotificationEngine";
 import {
+  DEFAULT_STRATEGY_NOTIFICATION_SETTINGS,
   MARKET_TIMEFRAME_BY_UI,
   buildTradeNotificationBody,
   formatTradeNotificationPrice,
@@ -26,27 +27,6 @@ type BroadcastRequestBody = {
   side?: unknown;
   settings?: unknown;
   timeZone?: unknown;
-};
-
-const DEFAULT_BROADCAST_SETTINGS: StrategyNotificationSettings = {
-  symbol: "XAUUSD",
-  timeframe: "15m",
-  aiMode: "off",
-  aiFilterEnabled: false,
-  inPreciseEnabled: false,
-  confidenceThreshold: 0,
-  ancThreshold: 0,
-  dollarsPerMove: 25,
-  chunkBars: 24,
-  maxBarsInTrade: 0,
-  maxConcurrentTrades: 1,
-  tpDollars: 1000,
-  slDollars: 1000,
-  stopMode: 0,
-  breakEvenTriggerPct: 50,
-  trailingStartPct: 50,
-  trailingDistPct: 30,
-  aiModelStates: {}
 };
 
 const normalizeSide = (value: unknown): "buy" | "sell" | null => {
@@ -129,7 +109,7 @@ export async function POST(request: Request) {
   const settings =
     normalizeStrategyNotificationSettings(body?.settings) ??
     normalizeStrategyNotificationSettings(userDocument?.data.strategyNotificationSettings) ??
-    DEFAULT_BROADCAST_SETTINGS;
+    DEFAULT_STRATEGY_NOTIFICATION_SETTINGS;
   const enabledDeviceCount = await getEnabledDeviceCount();
   if (enabledDeviceCount === 0) {
     return NextResponse.json(

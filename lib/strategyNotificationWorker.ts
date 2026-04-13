@@ -11,6 +11,7 @@ import {
 } from "./notificationDevices";
 import { computeActiveStrategyNotificationSignal } from "./strategyNotificationEngine";
 import {
+  buildStrategyNotificationHistoryRequest,
   HISTORY_LIMIT_BY_TIMEFRAME,
   MARKET_TIMEFRAME_BY_UI,
   buildTradeNotificationBody,
@@ -18,7 +19,8 @@ import {
   formatTradeNotificationUnits,
   normalizeStrategyNotificationMarketCandles,
   normalizeStrategyNotificationPair,
-  normalizeStrategyNotificationSettings
+  normalizeStrategyNotificationSettings,
+  serializeStrategyNotificationSettings
 } from "./strategyNotificationHelpers";
 import { getStrategyNotificationMarketWindow } from "./strategyNotificationMarketHours";
 import { fetchTwelveDataCandles } from "./twelveDataMarketData";
@@ -77,11 +79,16 @@ const buildRuntimeFromSignal = (
 const fetchCandlesForSettings = async (settings: {
   symbol: string;
   timeframe: keyof typeof MARKET_TIMEFRAME_BY_UI;
+  count: number;
+  start?: string | null;
+  end?: string | null;
 }) => {
   const payload = await fetchTwelveDataCandles({
     pair: normalizeStrategyNotificationPair(settings.symbol),
     timeframe: MARKET_TIMEFRAME_BY_UI[settings.timeframe],
-    count: HISTORY_LIMIT_BY_TIMEFRAME[settings.timeframe] ?? 5000
+    count: settings.count,
+    start: settings.start,
+    end: settings.end
   });
   return normalizeStrategyNotificationMarketCandles(payload.candles);
 };
@@ -144,15 +151,38 @@ const processUserStrategyNotifications = async (userDoc: {
   let devicesChanged = false;
   const candleCache = new Map<string, ReturnType<typeof fetchCandlesForSettings>>();
 
-  const getCandlesForDevice = async (settings: NonNullable<typeof fallbackUserSettings>) => {
-    const cacheKey = `${settings.symbol}|${settings.timeframe}`;
+  const getCandlesForDevice = async (
+    settings: NonNullable<typeof fallbackUserSettings>,
+    timeframe: NonNullable<typeof fallbackUserSettings>["timeframe"],
+    evaluatedAt: number
+  ) => {
+    const request = buildStrategyNotificationHistoryRequest({
+      settings,
+      timeframe,
+      nowMs: evaluatedAt
+    });
+    const cacheKey = JSON.stringify(request);
     let cached = candleCache.get(cacheKey);
     if (!cached) {
-      cached = fetchCandlesForSettings(settings);
+      cached = fetchCandlesForSettings({
+        symbol: settings.symbol,
+        timeframe,
+        count: request.count,
+        start: request.start,
+        end: request.end
+      });
       candleCache.set(cacheKey, cached);
     }
     return cached;
   };
+
+  const evaluationGroups = new Map<
+    string,
+    {
+      settings: NonNullable<typeof fallbackUserSettings>;
+      devices: NotificationDeviceRecord[];
+    }
+  >();
 
   for (const device of devices) {
     if (!device.enabled) {
@@ -165,108 +195,138 @@ const processUserStrategyNotifications = async (userDoc: {
     }
 
     processedDeviceCount += 1;
+    const signature = serializeStrategyNotificationSettings(settings);
+    const existingGroup = evaluationGroups.get(signature);
+    if (existingGroup) {
+      existingGroup.devices.push(device);
+      continue;
+    }
+    evaluationGroups.set(signature, {
+      settings,
+      devices: [device]
+    });
+  }
+
+  for (const group of evaluationGroups.values()) {
     const evaluatedAt = Date.now();
-    const previousRuntime = device.strategyRuntime ?? EMPTY_DEVICE_RUNTIME;
 
     try {
-      const candles = await getCandlesForDevice(settings);
+      const candles = await getCandlesForDevice(group.settings, group.settings.timeframe, evaluatedAt);
+      const oneMinuteCandles =
+        group.settings.minutePreciseEnabled &&
+        group.settings.precisionTimeframe !== group.settings.timeframe
+          ? await getCandlesForDevice(
+              group.settings,
+              group.settings.precisionTimeframe,
+              evaluatedAt
+            )
+          : undefined;
       const signal = computeActiveStrategyNotificationSignal({
         candles,
-        settings
+        oneMinuteCandles,
+        settings: group.settings
       });
 
-      if (previousRuntime.lastSignalId && previousRuntime.lastSignalId !== signal?.id) {
-        await sendPushNotification({
-          ownerUid: userDoc.uid,
-          targetTokens: [device.token],
-          title: `${settings.symbol} ${previousRuntime.lastSignalSide ?? "trade"} exit`,
-          body: buildTradeNotificationBody({
-            symbol: settings.symbol,
-            side: previousRuntime.lastSignalSide ?? "Trade",
-            label: "exit",
-            entryPrice: previousRuntime.lastSignalEntryPrice,
-            takeProfit: previousRuntime.lastSignalTakeProfit,
-            stopLoss: previousRuntime.lastSignalStopLoss,
-            triggerTimeMs: previousRuntime.lastSignalTriggerTime
-          }),
-          link: "/",
-          data: {
-            eventType: "strategy_trade_closed",
-            symbol: settings.symbol,
-            side: previousRuntime.lastSignalSide ?? "",
-            entryPrice: formatTradeNotificationPrice(previousRuntime.lastSignalEntryPrice),
-            takeProfit: formatTradeNotificationPrice(previousRuntime.lastSignalTakeProfit),
-            stopLoss: formatTradeNotificationPrice(previousRuntime.lastSignalStopLoss),
-            triggerTime: String(previousRuntime.lastSignalTriggerTime ?? "")
-          }
-        });
-        exitNotifications += 1;
-      }
+      for (const device of group.devices) {
+        const previousRuntime = device.strategyRuntime ?? EMPTY_DEVICE_RUNTIME;
 
-      if (signal && previousRuntime.lastSignalId !== signal.id) {
-        await sendPushNotification({
-          ownerUid: userDoc.uid,
-          targetTokens: [device.token],
-          title: `${settings.symbol} ${signal.side} entry`,
-          body: buildTradeNotificationBody({
-            symbol: settings.symbol,
-            side: signal.side,
-            label: "entry",
-            entryPrice: signal.entryPrice,
-            takeProfit: signal.targetPrice,
-            stopLoss: signal.stopPrice,
-            triggerTimeMs: signal.entryTime * 1000
-          }),
-          link: "/",
-          data: {
-            eventType: "strategy_trade_opened",
-            symbol: settings.symbol,
-            side: signal.side,
-            entryPrice: formatTradeNotificationPrice(signal.entryPrice),
-            takeProfit: formatTradeNotificationPrice(signal.targetPrice),
-            stopLoss: formatTradeNotificationPrice(signal.stopPrice),
-            triggerTime: String(signal.entryTime * 1000),
-            unitSize: formatTradeNotificationUnits(signal.units)
-          }
-        });
-        entryNotifications += 1;
-      }
+        if (previousRuntime.lastSignalId && previousRuntime.lastSignalId !== signal?.id) {
+          await sendPushNotification({
+            ownerUid: userDoc.uid,
+            targetTokens: [device.token],
+            title: `${group.settings.symbol} ${previousRuntime.lastSignalSide ?? "trade"} exit`,
+            body: buildTradeNotificationBody({
+              symbol: group.settings.symbol,
+              side: previousRuntime.lastSignalSide ?? "Trade",
+              label: "exit",
+              entryPrice: previousRuntime.lastSignalEntryPrice,
+              takeProfit: previousRuntime.lastSignalTakeProfit,
+              stopLoss: previousRuntime.lastSignalStopLoss,
+              triggerTimeMs: previousRuntime.lastSignalTriggerTime
+            }),
+            link: "/",
+            data: {
+              eventType: "strategy_trade_closed",
+              symbol: group.settings.symbol,
+              side: previousRuntime.lastSignalSide ?? "",
+              entryPrice: formatTradeNotificationPrice(previousRuntime.lastSignalEntryPrice),
+              takeProfit: formatTradeNotificationPrice(previousRuntime.lastSignalTakeProfit),
+              stopLoss: formatTradeNotificationPrice(previousRuntime.lastSignalStopLoss),
+              triggerTime: String(previousRuntime.lastSignalTriggerTime ?? "")
+            }
+          });
+          exitNotifications += 1;
+        }
 
-      nextDevices = updateDeviceRecord(nextDevices, device.token, (currentDevice) => ({
-        ...currentDevice,
-        strategySettings: settings,
-        strategyRuntime: buildRuntimeFromSignal(signal, null, evaluatedAt),
-        updatedAt: Math.max(currentDevice.updatedAt, evaluatedAt)
-      }));
-      devicesChanged = true;
+        if (signal && previousRuntime.lastSignalId !== signal.id) {
+          await sendPushNotification({
+            ownerUid: userDoc.uid,
+            targetTokens: [device.token],
+            title: `${group.settings.symbol} ${signal.side} entry`,
+            body: buildTradeNotificationBody({
+              symbol: group.settings.symbol,
+              side: signal.side,
+              label: "entry",
+              entryPrice: signal.entryPrice,
+              takeProfit: signal.targetPrice,
+              stopLoss: signal.stopPrice,
+              triggerTimeMs: signal.entryTime * 1000
+            }),
+            link: "/",
+            data: {
+              eventType: "strategy_trade_opened",
+              symbol: group.settings.symbol,
+              side: signal.side,
+              entryPrice: formatTradeNotificationPrice(signal.entryPrice),
+              takeProfit: formatTradeNotificationPrice(signal.targetPrice),
+              stopLoss: formatTradeNotificationPrice(signal.stopPrice),
+              triggerTime: String(signal.entryTime * 1000),
+              unitSize: formatTradeNotificationUnits(signal.units)
+            }
+          });
+          entryNotifications += 1;
+        }
+
+        nextDevices = updateDeviceRecord(nextDevices, device.token, (currentDevice) => ({
+          ...currentDevice,
+          strategySettings: group.settings,
+          strategyRuntime: buildRuntimeFromSignal(signal, null, evaluatedAt),
+          updatedAt: Math.max(currentDevice.updatedAt, evaluatedAt)
+        }));
+        devicesChanged = true;
+      }
     } catch (error) {
       const message = (error as Error).message || "Strategy notification worker failed.";
-      if (message !== previousRuntime.lastError) {
-        await sendPushNotification({
-          ownerUid: userDoc.uid,
-          targetTokens: [device.token],
-          title: `${settings.symbol} notifications need attention`,
-          body: message,
-          link: "/",
-          data: {
-            eventType: "strategy_notification_error",
-            symbol: settings.symbol
-          }
-        });
-        errorNotifications += 1;
-      }
 
-      nextDevices = updateDeviceRecord(nextDevices, device.token, (currentDevice) => ({
-        ...currentDevice,
-        strategySettings: settings,
-        strategyRuntime: {
-          ...previousRuntime,
-          lastEvaluatedAt: evaluatedAt,
-          lastError: message
-        },
-        updatedAt: Math.max(currentDevice.updatedAt, evaluatedAt)
-      }));
-      devicesChanged = true;
+      for (const device of group.devices) {
+        const previousRuntime = device.strategyRuntime ?? EMPTY_DEVICE_RUNTIME;
+        if (message !== previousRuntime.lastError) {
+          await sendPushNotification({
+            ownerUid: userDoc.uid,
+            targetTokens: [device.token],
+            title: `${group.settings.symbol} notifications need attention`,
+            body: message,
+            link: "/",
+            data: {
+              eventType: "strategy_notification_error",
+              symbol: group.settings.symbol
+            }
+          });
+          errorNotifications += 1;
+        }
+
+        nextDevices = updateDeviceRecord(nextDevices, device.token, (currentDevice) => ({
+          ...currentDevice,
+          strategySettings: group.settings,
+          strategyRuntime: {
+            ...previousRuntime,
+            lastEvaluatedAt: evaluatedAt,
+            lastError: message
+          },
+          updatedAt: Math.max(currentDevice.updatedAt, evaluatedAt)
+        }));
+        devicesChanged = true;
+      }
     }
   }
 

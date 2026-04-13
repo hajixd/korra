@@ -5,27 +5,16 @@ import {
   selectActiveStrategyNotificationSignal,
   type StrategyNotificationSettings
 } from "../lib/strategyNotificationEngine";
-import { buildTradeNotificationBody } from "../lib/strategyNotificationHelpers";
+import {
+  DEFAULT_STRATEGY_NOTIFICATION_SETTINGS,
+  buildTradeNotificationBody
+} from "../lib/strategyNotificationHelpers";
 
 const TEST_SETTINGS: StrategyNotificationSettings = {
+  ...DEFAULT_STRATEGY_NOTIFICATION_SETTINGS,
   symbol: "XAUUSD",
   timeframe: "15m",
-  aiMode: "off",
-  aiFilterEnabled: false,
-  inPreciseEnabled: false,
-  confidenceThreshold: 0,
-  ancThreshold: 0,
-  dollarsPerMove: 25,
-  chunkBars: 24,
-  maxBarsInTrade: 0,
-  maxConcurrentTrades: 1,
-  tpDollars: 1000,
-  slDollars: 1000,
-  stopMode: 0,
-  breakEvenTriggerPct: 50,
-  trailingStartPct: 50,
-  trailingDistPct: 30,
-  aiModelStates: {}
+  precisionTimeframe: "15m"
 };
 
 const buildRow = (overrides: Partial<BacktestHistoryRow>): BacktestHistoryRow => ({
@@ -65,6 +54,24 @@ test("strategy notifications choose the trade active on the latest candle", () =
   });
 
   assert.equal(signal?.id, "active-on-latest");
+});
+
+test("strategy notifications can still surface a trade active within the previous two candles", () => {
+  const signal = selectActiveStrategyNotificationSignal({
+    rows: [
+      buildRow({ id: "older-trade", entryTime: 60, exitTime: 120 }),
+      buildRow({ id: "active-on-previous-candle", entryTime: 180, exitTime: 260 }),
+      buildRow({ id: "future-trade", entryTime: 320, exitTime: 420 })
+    ],
+    candles: [
+      { time: 180_000, open: 2300, high: 2310, low: 2290, close: 2305 },
+      { time: 240_000, open: 2305, high: 2315, low: 2300, close: 2310 },
+      { time: 300_000, open: 2310, high: 2318, low: 2306, close: 2312 }
+    ],
+    settings: TEST_SETTINGS
+  });
+
+  assert.equal(signal?.id, "active-on-previous-candle");
 });
 
 test("trade notification body includes the requested trade fields", () => {

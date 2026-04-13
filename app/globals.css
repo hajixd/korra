@@ -8383,6 +8383,32 @@ body.mobile-terminal-viewport-lock {
   gap: 8px;
 }
 
+.ai-zip-feature-sections {
+  display: grid;
+  gap: 14px;
+}
+
+.ai-zip-feature-section {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-zip-feature-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ai-zip-feature-section-header strong {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.66);
+}
+
 .ai-zip-select-tile {
   border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.12);
