@@ -364,7 +364,11 @@ export const loadFirebaseBackedHistoryRange = async (params: {
   });
 
   await runWithConcurrency(chunkStates, 6, async (state) => {
-    state.cached = await readStoredChunk(pair, timeframe, state.chunkKey);
+    try {
+      state.cached = await readStoredChunk(pair, timeframe, state.chunkKey);
+    } catch {
+      state.cached = null;
+    }
   });
 
   await runWithConcurrency(chunkStates, 2, async (state) => {
@@ -409,7 +413,11 @@ export const loadFirebaseBackedHistoryRange = async (params: {
       timeframe
     );
     state.cached = merged;
-    await writeStoredChunk(pair, timeframe, state.chunkKey, merged);
+    try {
+      await writeStoredChunk(pair, timeframe, state.chunkKey, merged);
+    } catch {
+      // Storage caching is optional; serve the merged candles even if persistence fails.
+    }
   });
 
   return sortAndDedupeCandles(

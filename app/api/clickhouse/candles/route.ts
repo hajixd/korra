@@ -217,24 +217,31 @@ export async function GET(request: Request) {
     }
 
     if (hasExactRangeRequest) {
-      const cachedRangeCandles = await loadFirebaseBackedHistoryRange({
-        pair,
-        timeframe,
-        startMs,
-        endMs,
-        fetchRange: async ({ startMs: chunkStartMs, endMs: chunkEndMs }) => {
-          const payload = await fetchTwelveDataCandles({
-            pair,
-            timeframe,
-            count,
-            start: new Date(chunkStartMs).toISOString(),
-            end: new Date(chunkEndMs).toISOString(),
-            apiKeys: runtimeApiKeys
-          });
+      let cachedRangeCandles: Awaited<
+        ReturnType<typeof loadFirebaseBackedHistoryRange>
+      > = null;
+      try {
+        cachedRangeCandles = await loadFirebaseBackedHistoryRange({
+          pair,
+          timeframe,
+          startMs,
+          endMs,
+          fetchRange: async ({ startMs: chunkStartMs, endMs: chunkEndMs }) => {
+            const payload = await fetchTwelveDataCandles({
+              pair,
+              timeframe,
+              count,
+              start: new Date(chunkStartMs).toISOString(),
+              end: new Date(chunkEndMs).toISOString(),
+              apiKeys: runtimeApiKeys
+            });
 
-          return payload.candles;
-        }
-      });
+            return payload.candles;
+          }
+        });
+      } catch {
+        cachedRangeCandles = null;
+      }
 
       if (cachedRangeCandles && cachedRangeCandles.length > 0) {
         return NextResponse.json(
