@@ -778,6 +778,23 @@ const getHistoryTradeMergeKey = (
   return `${trade.id}|${Math.trunc(Number(trade.entryTime) || 0)}|${Math.trunc(Number(trade.exitTime) || 0)}`;
 };
 
+const mergeHistoryItems = (...groups: ReadonlyArray<readonly HistoryItem[]>): HistoryItem[] => {
+  const deduped = new Map<string, HistoryItem>();
+
+  for (const group of groups) {
+    for (const trade of group) {
+      deduped.set(getHistoryTradeMergeKey(trade), trade);
+    }
+  }
+
+  return [...deduped.values()].sort(
+    (a, b) =>
+      Number(b.exitTime) - Number(a.exitTime) ||
+      Number(b.entryTime) - Number(a.entryTime) ||
+      a.id.localeCompare(b.id)
+  );
+};
+
 const normalizeBacktestHistoryRows = (rows: BacktestHistoryRow[]): HistoryItem[] => {
   return rows.map((row) => {
     const entryTime = row.entryTime as UTCTimestamp;
@@ -813,6 +830,14 @@ const normalizeStrategyNotificationHistoryItems = (value: unknown): HistoryItem[
       exitTime
     });
   });
+};
+
+const normalizeCachedHistoryItems = (value: unknown): HistoryItem[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return mergeHistoryItems(normalizeAiExitPostHocTrades(value, []));
 };
 
 const resolveTradeLikeKeys = (value: unknown): string[] => {
@@ -13217,10 +13242,6 @@ function TradingTerminalWorkspace({
     () => scopeStorageKey(PRESETS_STORAGE_KEY, currentUser.uid),
     [currentUser.uid]
   );
-  const scopedMobileRecentTradesCacheStorageKey = useMemo(
-    () => scopeStorageKey(MOBILE_RECENT_TRADES_CACHE_STORAGE_KEY, currentUser.uid),
-    [currentUser.uid]
-  );
   const scopedUploadedStrategyModelsStorageKey = useMemo(
     () => scopeStorageKey(UPLOADED_STRATEGY_MODELS_STORAGE_KEY, currentUser.uid),
     [currentUser.uid]
@@ -13621,6 +13642,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     HistoryItem[]
   >([]);
   const [mobileRecentTradesCache, setMobileRecentTradesCache] = useState<HistoryItem[]>([]);
+  const [mobileRecentTradesCacheLoadedKey, setMobileRecentTradesCacheLoadedKey] =
+    useState<string | null>(null);
   const [mobileTimelineOverrideSec, setMobileTimelineOverrideSec] = useState<number | null>(null);
   const [mobileActiveChartScrubIndex, setMobileActiveChartScrubIndex] = useState<number | null>(null);
   const [mobileMarketChartScrubIndex, setMobileMarketChartScrubIndex] = useState<number | null>(null);
@@ -20132,6 +20155,14 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
     () => resolvePresetBacktestSignature(collectSettings()),
     [collectSettings, resolvePresetBacktestSignature]
   );
+  const scopedMobileRecentTradesCacheStorageKey = useMemo(
+    () =>
+      scopeStorageKey(
+        `${MOBILE_RECENT_TRADES_CACHE_STORAGE_KEY}:${encodeURIComponent(currentPresetMatchSignature)}`,
+        currentUser.uid
+      ),
+    [currentPresetMatchSignature, currentUser.uid]
+  );
   const matchingSavedPreset = useMemo(() => {
     const currentSignature = currentPresetMatchSignature;
     return (
@@ -26390,24 +26421,19 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       return selectedBacktestDayTrades.some((trade) => trade.id === current) ? current : null;
     });
   }, [isCalendarBacktestTabActive, selectedBacktestDayTrades]);
-  const historySurfaceTrades = useMemo(() => {
-    const deduped = new Map<string, HistoryItem>();
-
-    for (const trade of strategyNotificationTradeHistory) {
-      deduped.set(getHistoryTradeMergeKey(trade), trade);
-    }
-
-    for (const trade of deferredBacktestAnalyticsTrades) {
-      deduped.set(getHistoryTradeMergeKey(trade), trade);
-    }
-
-    return [...deduped.values()].sort(
-      (a, b) =>
-        Number(b.exitTime) - Number(a.exitTime) ||
-        Number(b.entryTime) - Number(a.entryTime) ||
-        a.id.localeCompare(b.id)
-    );
+  const authoritativeHistorySurfaceTrades = useMemo(() => {
+    return mergeHistoryItems(strategyNotificationTradeHistory, deferredBacktestAnalyticsTrades);
   }, [deferredBacktestAnalyticsTrades, strategyNotificationTradeHistory]);
+  const hasAuthoritativeHistorySurfaceTrades = backtestHasRun && backtestHistorySeedReady;
+  const historySurfaceTrades = useMemo(() => {
+    return hasAuthoritativeHistorySurfaceTrades
+      ? authoritativeHistorySurfaceTrades
+      : mergeHistoryItems(mobileRecentTradesCache, authoritativeHistorySurfaceTrades);
+  }, [
+    authoritativeHistorySurfaceTrades,
+    hasAuthoritativeHistorySurfaceTrades,
+    mobileRecentTradesCache
+  ]);
 
   const filteredBacktestHistory = useMemo(() => {
     if (!isHistoryBacktestTabActive) {
@@ -26524,12 +26550,8 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       registerTrade(trade);
     }
 
-    for (const trade of mobileRecentTradesCache) {
-      registerTrade(trade);
-    }
-
     return [...deduped.values()].sort((a, b) => Number(a.entryTime) - Number(b.entryTime));
-  }, [activePanelHistoryRows, historySurfaceTrades, mobileRecentTradesCache]);
+  }, [activePanelHistoryRows, historySurfaceTrades]);
   const mobileTimelineStepSec = useMemo(() => {
     const candleTimes = selectedCandles
       .map((candle) => Number(toUtcTimestamp(candle.time)))
@@ -27120,11 +27142,9 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
 
     return [...sourceTrades]
       .filter((trade) => Number(trade.exitTime) <= mobileTimelineCursorSec)
-      .sort((a, b) => Number(b.exitTime) - Number(a.exitTime))
-      .slice(0, mobileTradeLimit);
+      .sort((a, b) => Number(b.exitTime) - Number(a.exitTime));
   }, [
     historySurfaceTrades,
-    mobileTradeLimit,
     mobileTimelineCursorSec,
     mobileVisibleRecentTrades
   ]);
@@ -27202,9 +27222,21 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   const socialVisiblePresets = useMemo(() => {
     return socialPresets.slice(0, 36);
   }, [socialPresets]);
+  const persistedMobileHistoryTrades = useMemo(() => {
+    return hasAuthoritativeHistorySurfaceTrades
+      ? authoritativeHistorySurfaceTrades
+      : mergeHistoryItems(mobileRecentTradesCache, authoritativeHistorySurfaceTrades);
+  }, [
+    authoritativeHistorySurfaceTrades,
+    hasAuthoritativeHistorySurfaceTrades,
+    mobileRecentTradesCache
+  ]);
 
   useEffect(() => {
+    setMobileRecentTradesCacheLoadedKey(null);
+
     if (typeof window === "undefined") {
+      setMobileRecentTradesCacheLoadedKey(scopedMobileRecentTradesCacheStorageKey);
       return;
     }
 
@@ -27212,29 +27244,15 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
       const raw = localStorage.getItem(scopedMobileRecentTradesCacheStorageKey);
       if (!raw) {
         setMobileRecentTradesCache([]);
+        setMobileRecentTradesCacheLoadedKey(scopedMobileRecentTradesCacheStorageKey);
         return;
       }
 
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) {
-        setMobileRecentTradesCache([]);
-        return;
-      }
-
-      const normalized = parsed
-        .filter((item): item is HistoryItem => {
-          return (
-            item != null &&
-            typeof item === "object" &&
-            typeof (item as HistoryItem).id === "string" &&
-            typeof (item as HistoryItem).symbol === "string"
-          );
-        })
-        .slice(0, 32);
-
-      setMobileRecentTradesCache(normalized);
+      setMobileRecentTradesCache(normalizeCachedHistoryItems(JSON.parse(raw)));
+      setMobileRecentTradesCacheLoadedKey(scopedMobileRecentTradesCacheStorageKey);
     } catch {
       setMobileRecentTradesCache([]);
+      setMobileRecentTradesCacheLoadedKey(scopedMobileRecentTradesCacheStorageKey);
     }
   }, [scopedMobileRecentTradesCacheStorageKey]);
 
@@ -27251,21 +27269,43 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
   }, [matchingSavedPreset?.name]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || mobileRecentTrades.length === 0) {
+    if (
+      mobileRecentTradesCacheLoadedKey !== scopedMobileRecentTradesCacheStorageKey ||
+      typeof window === "undefined"
+    ) {
       return;
     }
 
-    setMobileRecentTradesCache(mobileRecentTrades);
+    if (persistedMobileHistoryTrades.length === 0) {
+      setMobileRecentTradesCache((current) => (current.length === 0 ? current : []));
+
+      try {
+        localStorage.removeItem(scopedMobileRecentTradesCacheStorageKey);
+      } catch {
+        // Ignore storage failures for the mobile recent-trades cache.
+      }
+      return;
+    }
+
+    setMobileRecentTradesCache((current) => {
+      const currentSerialized = JSON.stringify(current);
+      const nextSerialized = JSON.stringify(persistedMobileHistoryTrades);
+      return currentSerialized === nextSerialized ? current : persistedMobileHistoryTrades;
+    });
 
     try {
       localStorage.setItem(
         scopedMobileRecentTradesCacheStorageKey,
-        JSON.stringify(mobileRecentTrades)
+        JSON.stringify(persistedMobileHistoryTrades)
       );
     } catch {
       // Ignore storage failures for the mobile recent-trades cache.
     }
-  }, [mobileRecentTrades, scopedMobileRecentTradesCacheStorageKey]);
+  }, [
+    mobileRecentTradesCacheLoadedKey,
+    persistedMobileHistoryTrades,
+    scopedMobileRecentTradesCacheStorageKey
+  ]);
 
   useEffect(() => {
     if (mobileSavedPresets.length === 0) {
@@ -29535,7 +29575,7 @@ const [compressionMethod, setCompressionMethod] = useState<AiCompressionMethod>(
               <section className="mobile-phone-card mobile-phone-card-history">
                 <div className="mobile-phone-card-head">
                   <div className="mobile-phone-card-copy">
-                    <span className="mobile-phone-card-kicker">Recent Trades</span>
+                    <span className="mobile-phone-card-kicker">Trade History</span>
                     <h2>History</h2>
                   </div>
                   <span className="mobile-phone-count-chip">
